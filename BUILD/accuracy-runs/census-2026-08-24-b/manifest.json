@@ -10,10 +10,10 @@
     "n": 229
   },
   "cause_counts_ranked": {
-    "marks_cell_notation_not_parsed": 135,
+    "marks_cell_notation_not_parsed": 108,
+    "mark_aggregation_overcount": 47,
     "paper_profile_misconfiguration": 40,
     "marks_column_detection_failure": 24,
-    "mark_aggregation_overcount": 20,
     "genuine_mark_total_mismatch": 10,
     "table_layout_extraction_failure": 0,
     "UNCLASSIFIED": 0
@@ -21,9 +21,9 @@
   "counts_sum_to_229": true,
   "d7_hypothesis": {
     "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
-    "n_explained": 159,
+    "n_explained": 132,
     "n_total": 229,
-    "share": 0.6943,
+    "share": 0.5764,
     "falsifiable": true,
     "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
   },
@@ -33,11 +33,11 @@
     "breakdown_by_subject_and_paper": {
       "0625 p2": 40
     },
-    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty."
+    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug, labelled here on a demonstrated branch difference (_changes_parse_path confirms MCQ vs. THEORY_CORE actually sends classify_one down a different code path), not an attempted counterfactual reparse. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty."
   },
   "ruled_out_metadata_defect_not_a_cause": {
     "file": "lemely/io/det/profiles.py:52",
-    "detail": "profiles.py maps 0625 paper 3 to THEORY_EXTENDED via paper_type_by_number, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf) -- a real metadata discrepancy, structurally identical to the 0625 p2 bug. It is deliberately NOT counted among paper_profile_misconfiguration's 229-scheme causes: classify_one only ever branches on metadata.paper_type once (MCQ vs. not-MCQ, see classify_one/_classify_mcq/_classify_theory), and THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so reclassifying under the cover-text-implied type would not change which code path parses these 34 schemes -- the counterfactual gate (_changes_parse_path) falsifies it as a cause. It is recorded here as a separate, ruled-out metadata defect, flagged for the human alongside question 2 on #88, and equally NOT repaired here -- git diff against lemely/io/det/profiles.py is empty."
+    "detail": "profiles.py maps 0625 paper 3 to THEORY_EXTENDED via paper_type_by_number, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf) -- a real metadata discrepancy, structurally identical to the 0625 p2 bug. It is deliberately NOT counted among paper_profile_misconfiguration's 229-scheme causes: classify_one only ever branches on metadata.paper_type once (MCQ vs. not-MCQ, see classify_one/_classify_mcq/_classify_theory), and THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so reclassifying under the cover-text-implied type would not change which code path parses any 0625 p3 scheme in this failure set -- the counterfactual gate (_changes_parse_path) falsifies it as a cause for all of them, whatever their exact count (this script does not separately track a 0625-p3-only count; round 1's '34' was a since-superseded classification, not a number re-derived by this run). It is recorded here as a separate, ruled-out metadata defect, flagged for the human alongside question 2 on #88, and equally NOT repaired here -- git diff against lemely/io/det/profiles.py is empty."
   },
   "reproduce": {
     "cost": "free, zero network, ~229 PDFs re-parsed with pdfplumber",

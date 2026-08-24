@@ -22,43 +22,80 @@ the output; table cell text is read in-process and discarded.
 Zero Gemini calls: only ``lemely.io.det.*`` is imported. No network.
 
 Cause taxonomy (seven buckets, checked in this priority order — the first
-rule whose evidence is found wins):
+rule whose evidence is found wins). Round 3's brief established a general
+property that every bucket below must satisfy: a cause label may only be
+assigned when there is a **sufficiency condition** — positive evidence that
+the named mechanism can actually produce the observed magnitude — checked in
+code, not just claimed in prose. A row failing its bucket's sufficiency
+condition falls through to the next bucket in priority order, ending at
+``UNCLASSIFIED`` if nothing else claims it; ``UNCLASSIFIED`` growing is a
+correct outcome, not a defect. Each entry below states its sufficiency
+condition and where it is enforced:
 
 1. ``paper_profile_misconfiguration``  — cover text names a paper type that
    the subject profile's ``paper_type_by_number`` overrides (the 0625 p2
-   class), GATED on a counterfactual: the label only fires when reclassifying
-   under the cover-text-implied ``PaperType`` would actually change the
-   downstream parse path (MCQ vs. not-MCQ is the only branch ``classify_one``
-   takes on ``metadata.paper_type``). This excludes 0625 p3 (profiles.py maps
-   THEORY_EXTENDED, cover text implies THEORY_CORE — both non-MCQ, so the
-   discrepancy is real but causally inert for this pipeline; see
-   ``manifest.json``'s ``ruled_out_metadata_defect_not_a_cause``). Classified,
-   NOT repaired — this script never touches ``lemely/io/det/profiles.py``.
+   class). Sufficiency condition: a DEMONSTRATED branch difference, not
+   merely a metadata discrepancy — ``_changes_parse_path`` checks that
+   reclassifying under the cover-text-implied ``PaperType`` would actually
+   send ``classify_one`` down a different branch (MCQ vs. not-MCQ is the only
+   branch it takes on ``metadata.paper_type``). This excludes 0625 p3
+   (profiles.py maps THEORY_EXTENDED, cover text implies THEORY_CORE — both
+   non-MCQ, so the discrepancy is real but causally inert for this pipeline;
+   see ``manifest.json``'s ``ruled_out_metadata_defect_not_a_cause``).
+   Enforced in ``classify_profile_misconfiguration``. Classified, NOT
+   repaired — this script never touches ``lemely/io/det/profiles.py``.
 2. ``table_layout_extraction_failure`` — a pipeline stage before reconciliation
    raised ``ParseError`` (no tables found, no valid rows, indicative-content /
    levels-based section, etc.), or an MCQ answer key came up short of
-   ``maximum_mark`` by more than half.
+   ``maximum_mark`` by more than half. Sufficiency condition: the failure is
+   DIRECTLY OBSERVED — either an exception was actually raised by the stage
+   itself, or the parsed count is short by more than half of
+   ``maximum_mark`` (rows dropped, not a small residual mismatch). Enforced
+   inline in ``_classify_mcq``/``_classify_theory`` at each ``ParseError``
+   catch and the ``computed < maximum_mark / 2`` check.
 3. ``marks_column_detection_failure`` — no column of the merged table
    satisfied ``is_marks_column``/``find_mcq_answer_col``; the detector had to
-   fall back to a column that is not actually a marks column.
+   fall back to a column that is not actually a marks column. Sufficiency
+   condition: DIRECTLY OBSERVED by re-running the same right-to-left scan
+   ``detect_columns`` uses (``find_real_marks_col``) and finding it returns
+   None — not inferred from a mismatched total.
 4. ``marks_cell_notation_not_parsed`` — a real marks column WAS found, but one
    or more of its cells were empty/unparsed and got defaulted (1-mark
    default), which can move ``computed_total`` away from ``maximum_mark``.
-5. ``mark_aggregation_overcount`` — every structural check above is clean yet
+   Sufficiency condition (round-3 fix): empty cells default to 1 mark each
+   (``lemely/io/det/rows.py``'s ``make_point``), so N empty cells can inflate
+   ``computed_total`` by AT MOST N. The bucket is claimed only when
+   ``computed_total <= maximum_mark`` or ``computed_total - maximum_mark <=
+   empty_count`` — i.e. the observed delta is within what the defaulting
+   mechanism can actually produce. Enforced in ``classify_theory_residual``.
+   Rows whose excess exceeds ``empty_count`` fall through to
+   ``mismatch_cause`` (bucket 5 or 6) instead.
+5. ``mark_aggregation_overcount`` — every structural check above is clean, or
+   the notation bucket's sufficiency condition failed, yet
    ``computed_total > maximum_mark``: positively-evidenced overcounting (e.g.
    double-counted alternative-answer branches), not a plain "totals don't
-   match" residual.
+   match" residual. Sufficiency condition: the direction alone
+   (``computed_total > maximum_mark``) IS the positive evidence — an excess
+   above the target can only come from something being counted that
+   shouldn't be. Enforced in ``mismatch_cause``.
 6. ``genuine_mark_total_mismatch`` — every structural check above is clean
-   (real column found, zero defaulted cells, tables extracted, profile
-   mapping consistent with cover text) yet ``computed_total < maximum_mark``.
-   This is the residual, hardest-to-positively-confirm bucket; it states what
-   was ruled out (overcount, column detection, cell parsing) rather than
-   being used as a default — it requires the absence of every other
-   explanation.
+   (real column found, empty-cell defaulting ruled out or insufficient to
+   explain the delta, tables extracted, profile mapping consistent with
+   cover text) yet ``computed_total < maximum_mark``. This is the residual,
+   hardest-to-positively-confirm bucket; its sufficiency condition is
+   negative by construction — it requires the ABSENCE of every other
+   explanation (not an overcount, not a column-detection failure, not a
+   cell-notation delta the defaulting mechanism can explain) rather than
+   being used as a default. Enforced in ``mismatch_cause`` /
+   ``classify_theory_residual``.
 7. ``UNCLASSIFIED`` — anything else (PDF missing on disk, an exception outside
-   the anticipated ``ParseError`` set, metadata extraction itself failing).
-   The denominator is never narrowed: an unclassifiable scheme lands here
-   with what was observed, it is not dropped.
+   the anticipated ``ParseError`` set, metadata extraction itself failing, or
+   any row whose evidence failed every bucket's sufficiency condition above).
+   Sufficiency condition: none required by design — this is the "no positive
+   evidence for any named mechanism" bucket, and growing it is the correct,
+   honest outcome of a failed sufficiency check. The denominator is never
+   narrowed: an unclassifiable scheme lands here with what was observed, it
+   is not dropped.
 """
 
 from __future__ import annotations
@@ -108,6 +145,16 @@ ALL_CAUSES: tuple[str, ...] = (
 )
 
 _QUOTED_RE = re.compile(r"['\"][^'\"]*['\"]")
+# rows.py:242's ParseError embeds a PDF-derived q_cell inside a
+# SINGLE-quoted span that is itself parenthesised: f"...('{q_cell}'): ...".
+# If q_cell contains an apostrophe (e.g. "student's response"), the naive
+# quote-to-quote scan above stops at that inner apostrophe and leaks the
+# remainder of the PDF text. This pattern matches greedily from the first
+# quote after "(" to the LAST matching quote immediately before ")" -- so an
+# embedded apostrophe is swallowed as part of the redacted span rather than
+# terminating it early. Applied before ``_QUOTED_RE`` so the general regex
+# never sees the parenthesised span at all.
+_PAREN_QUOTED_RE = re.compile(r"\((['\"])(.*)\1\)")
 
 
 def sanitize_evidence(text: str) -> str:
@@ -117,8 +164,11 @@ def sanitize_evidence(text: str) -> str:
     in quotes (e.g. "Level-descriptor row ('...'): ..."). Only derived
     labels/counts are safe to commit (MISSION 12.7) -- this replaces any
     quoted span with a placeholder before an exception message is written
-    into ``classified-failures.txt``.
+    into ``classified-failures.txt``. The parenthesised-quote pattern is
+    handled first (see ``_PAREN_QUOTED_RE``) so a stray apostrophe inside the
+    quoted PDF text cannot truncate the redaction and leak the rest of it.
     """
+    text = _PAREN_QUOTED_RE.sub("('[redacted]')", text)
     return _QUOTED_RE.sub("'[redacted]'", text)
 
 # Keyword -> implied PaperType, in the SAME priority order as
@@ -250,6 +300,71 @@ def mismatch_cause(computed_total: int, maximum_mark: int) -> str:
     if computed_total > maximum_mark:
         return "mark_aggregation_overcount"
     return "genuine_mark_total_mismatch"
+
+
+def classify_theory_residual(
+    computed_total: int, maximum_mark: int, empty_count: int, marks_col: int
+) -> dict[str, Any]:
+    """Decide the theory-path residual cause once a real marks column and its
+    empty-cell count are known -- the sufficiency-gated core of
+    ``_classify_theory``, pulled out as a pure function so the gate is
+    unit-testable without re-parsing a PDF (round-3 brief).
+
+    Sufficiency condition for ``marks_cell_notation_not_parsed``: empty marks
+    cells default to 1 mark each (``lemely/io/det/rows.py``'s
+    ``make_point``), so N empty cells can inflate ``computed_total`` away
+    from ``maximum_mark`` by AT MOST N. The bucket is claimed only when that
+    bound actually covers the observed delta -- ``computed_total <=
+    maximum_mark`` (defaulting can only ever push the total up, so being at
+    or below the target is always consistent with under-counted cells), or
+    ``computed_total - maximum_mark <= empty_count`` (the excess is within
+    what the empty cells could have contributed). Any row failing both falls
+    through to ``mismatch_cause``, carrying the empty-cell fact forward in
+    the evidence string rather than silently dropping it -- an excess larger
+    than ``empty_count`` is evidence the empty cells are NOT the (sole)
+    explanation, not evidence that no notation problem exists at all.
+    """
+    if empty_count > 0 and (
+        computed_total <= maximum_mark or (computed_total - maximum_mark) <= empty_count
+    ):
+        return {
+            "cause": "marks_cell_notation_not_parsed",
+            "evidence": (
+                f"marks_col={marks_col}: {empty_count} empty marks cell(s) defaulted to 1; "
+                f"computed_total={computed_total} maximum_mark={maximum_mark} "
+                f"(delta explainable by defaulting: at most {empty_count})"
+            ),
+        }
+
+    if computed_total != maximum_mark:
+        cause = mismatch_cause(computed_total, maximum_mark)
+        empty_note = (
+            f"{empty_count} empty marks cell(s) were also defaulted but cannot explain the "
+            f"full delta (excess exceeds empty_count={empty_count}); "
+            if empty_count > 0
+            else ""
+        )
+        ruled_out = (
+            "an overcount (computed_total < maximum_mark), "
+            if cause == "genuine_mark_total_mismatch"
+            else ""
+        )
+        return {
+            "cause": cause,
+            "evidence": (
+                f"marks_col={marks_col} well-detected; {empty_note}ruling out "
+                f"{ruled_out}column detection and (sufficient) cell-notation parsing as the "
+                f"cause; computed_total={computed_total} maximum_mark={maximum_mark}"
+            ),
+        }
+
+    return {
+        "cause": "UNCLASSIFIED",
+        "evidence": (
+            f"theory path reconciled cleanly (computed_total={computed_total}) "
+            "but was in the det-failure set -- reconcile discrepancy not reproduced"
+        ),
+    }
 
 
 def count_empty_marks_cells(rows: list[list[str | None]], marks_col: int) -> int:
@@ -436,38 +551,12 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
     computed = _reconcile._leaf_marks(questions)
     maximum_mark = metadata.maximum_mark
 
-    if empty_count > 0:
-        return {
-            "cause": "marks_cell_notation_not_parsed",
-            "evidence": (
-                f"marks_col={real_marks_col}: {empty_count} empty marks cell(s) defaulted to 1; "
-                f"computed_total={computed} maximum_mark={maximum_mark}"
-            ),
-        }
-
-    if computed != maximum_mark:
-        cause = mismatch_cause(computed, maximum_mark)
-        ruled_out = (
-            "an overcount (computed_total < maximum_mark), "
-            if cause == "genuine_mark_total_mismatch"
-            else ""
-        )
-        return {
-            "cause": cause,
-            "evidence": (
-                f"marks_col={real_marks_col} well-detected, 0 defaulted cells, ruling out "
-                f"{ruled_out}column detection and cell-notation parsing as the cause; "
-                f"computed_total={computed} maximum_mark={maximum_mark}"
-            ),
-        }
-
-    return {
-        "cause": "UNCLASSIFIED",
-        "evidence": (
-            f"theory path reconciled cleanly (computed_total={computed}) "
-            "but was in the det-failure set -- reconcile discrepancy not reproduced"
-        ),
-    }
+    return classify_theory_residual(
+        computed_total=computed,
+        maximum_mark=maximum_mark,
+        empty_count=empty_count,
+        marks_col=real_marks_col,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -555,7 +644,10 @@ def main() -> None:
             "detail": (
                 "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its "
                 "cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's "
-                "documented bug. Classified under paper_profile_misconfiguration by this "
+                "documented bug, labelled here on a demonstrated branch difference "
+                "(_changes_parse_path confirms MCQ vs. THEORY_CORE actually sends "
+                "classify_one down a different code path), not an attempted counterfactual "
+                "reparse. Classified under paper_profile_misconfiguration by this "
                 "census. NOT repaired here: question 2 on #88 is an unanswered human "
                 "decision, and fixing it would move ~40 schemes between DA1 strata and "
                 "invalidate #88's preflight denominator. git diff against "
@@ -574,8 +666,11 @@ def main() -> None:
                 "not-MCQ, see classify_one/_classify_mcq/_classify_theory), and "
                 "THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so "
                 "reclassifying under the cover-text-implied type would not change which "
-                "code path parses these 34 schemes -- the counterfactual gate "
-                "(_changes_parse_path) falsifies it as a cause. It is recorded here as a "
+                "code path parses any 0625 p3 scheme in this failure set -- the counterfactual "
+                "gate (_changes_parse_path) falsifies it as a cause for all of them, whatever "
+                "their exact count (this script does not separately track a 0625-p3-only "
+                "count; round 1's '34' was a since-superseded classification, not a number "
+                "re-derived by this run). It is recorded here as a "
                 "separate, ruled-out metadata defect, flagged for the human alongside "
                 "question 2 on #88, and equally NOT repaired here -- git diff against "
                 "lemely/io/det/profiles.py is empty."

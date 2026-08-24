@@ -1429,45 +1429,73 @@ than re-run the parse, which would pay the Gemini cost twice.
 
 ## G — #45 (M2.2) census complete: the 229 det-failures are classified, ranked, $0 spend
 
-**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 2, corrected after
-review) · **Status:** artifact committed, not a blocker — recorded here so M3
-can cite it without re-deriving. Zero Gemini calls, zero network: the 229 PDFs
-already restored to `/home/sico/PaperScraper/papers` were re-parsed offline
-through `lemely.io.det.*`'s own stages a second time. This script never
-instantiates `DeterministicMarkSchemeParser` and never calls
-`reconcile.check` at all — it compares `reconcile._leaf_marks(questions)` to
-`metadata.maximum_mark` directly, so there is no `escalate_on_mark_mismatch`
-flag in play (round 1 of this issue incorrectly claimed one was).
+**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 3, corrected after
+review — a sufficiency-condition gate on `marks_cell_notation_not_parsed`
+replaced round 2's unconditional rule) · **Status:** artifact committed, not
+a blocker — recorded here so M3 can cite it without re-deriving. Zero Gemini
+calls, zero network: the 229 PDFs already restored to
+`/home/sico/PaperScraper/papers` were re-parsed offline through
+`lemely.io.det.*`'s own stages a second time. This script never instantiates
+`DeterministicMarkSchemeParser` and never calls `reconcile.check` at all — it
+compares `reconcile._leaf_marks(questions)` to `metadata.maximum_mark`
+directly, so there is no `escalate_on_mark_mismatch` flag in play (round 1 of
+this issue incorrectly claimed one was).
 
 **Where the evidence lives:** `BUILD/accuracy-runs/census-2026-08-24-b/` —
 `classify_failures.py` (the diagnostic script; also the source of the pure
 helpers unit-tested in `tests/test_census_45.py`), `manifest.json` (ranked
 counts, the D7 hypothesis's measured share, the profile-misconfiguration
 breakdown), and `classified-failures.txt` (one `stem<TAB>cause<TAB>evidence`
-row per of the 229 stems — the ranked work-list for M3's D7 repairs).
+row per stem, covering all 229 stems — the ranked work-list for M3's D7
+repairs).
+
+**Round 3: every cause label now carries a checked sufficiency condition —
+positive evidence the named mechanism can produce the observed magnitude —
+not just a structural signal.** Round 2's `marks_cell_notation_not_parsed`
+rule fired unconditionally whenever a real marks column had any empty cell,
+even though empty cells default to 1 mark each
+(`lemely/io/det/rows.py`'s `make_point`) and so N empty cells can inflate
+`computed_total` by AT MOST N. Review reproduced 27/135 rows in that bucket
+whose excess exceeded their `empty_count` (e.g. `0606_m20_ms_12`: empty=4,
+excess=20) — the label was falsified by its own evidence string. The rule is
+now gated: `marks_cell_notation_not_parsed` is claimed only when
+`computed_total <= maximum_mark` or `computed_total - maximum_mark <=
+empty_count`; every row failing that (all seven buckets were audited against
+the same property — see `classify_failures.py`'s module docstring for each
+bucket's stated sufficiency condition) falls through to `mismatch_cause`,
+landing in `mark_aggregation_overcount` since every one of the 27
+counterexample rows has `computed_total > maximum_mark`.
 
 **Ranked cause counts (sum to 229, denominator never narrowed, every bucket
-seeded so a zero count is reported rather than omitted):**
+seeded so a zero count is reported rather than omitted; recomputed by a live
+re-run of `classify_failures.py` in the same commit as this table):**
 
 | cause | n | share |
 |---|---|---|
-| `marks_cell_notation_not_parsed` | 135 | 59.0% |
+| `marks_cell_notation_not_parsed` | 108 | 47.2% |
+| `mark_aggregation_overcount` | 47 | 20.5% |
 | `paper_profile_misconfiguration` | 40 | 17.5% |
 | `marks_column_detection_failure` | 24 | 10.5% |
-| `mark_aggregation_overcount` | 20 | 8.7% |
 | `genuine_mark_total_mismatch` | 10 | 4.4% |
 | `table_layout_extraction_failure` | 0 | 0.0% |
 | `UNCLASSIFIED` | 0 | 0.0% |
 
-**D7 turned from a hypothesis into a measurement.** D7 hypothesised that
+**D7 turned from a hypothesis into a measurement — and round 3 corrects the
+headline downward, on evidence.** D7 hypothesised that
 `parse_marks_cell`/`is_marks_column` failures explain the det-parser failure
 set. Measured (not assumed by construction): `marks_column_detection_failure`
-+ `marks_cell_notation_not_parsed` = **159/229 (69.4%)**. The other **70/229
-(30.6%)** are NOT explained by D7 — 40 are the profile-misconfiguration class
-below, 20 are positively-evidenced overcounts (`mark_aggregation_overcount`),
-and 10 are structurally clean parses whose total still comes up short with no
-more specific explanation available (`genuine_mark_total_mismatch`), i.e. D7
-is the dominant explanation but not the whole failure set.
++ `marks_cell_notation_not_parsed` = **132/229 (57.6%)** — down from round
+2's overstated 159/229 (69.4%), which counted 27 rows the sufficiency gate
+above now correctly excludes. The other **97/229 (42.4%)** are NOT explained
+by D7 — 47 are positively-evidenced overcounts
+(`mark_aggregation_overcount`, up from 20 now that the 27 falsified
+notation-bucket rows have been correctly reclassified into it), 40 are the
+profile-misconfiguration class below, and 10 are structurally clean parses
+whose total still comes up short with no more specific explanation available
+(`genuine_mark_total_mismatch`). D7 is still the largest single explanation
+but is no longer close to a two-thirds majority of the failure set — this
+downward revision is the census working as designed, not a defect to be
+argued away.
 
 **The residual mismatch bucket is split, not a single "totals don't match"
 catch-all.** Round 1 put every `computed_total != maximum_mark` residual
@@ -1475,11 +1503,13 @@ catch-all.** Round 1 put every `computed_total != maximum_mark` residual
 `genuine_mark_total_mismatch`, including rows where `computed_total >
 maximum_mark` — an overcount, which is a *positive* finding (something got
 double-counted), not the same claim as "the total came up short with no
-further explanation". These are now split: `mark_aggregation_overcount`
-(computed_total > maximum_mark, 20 schemes) vs. `genuine_mark_total_mismatch`
-(computed_total < maximum_mark, 10 schemes, and its evidence string now states
-what was ruled out — overcount, column detection, cell-notation parsing —
-rather than only what didn't match).
+further explanation". These are split: `mark_aggregation_overcount`
+(computed_total > maximum_mark — now also the fallthrough target for
+notation-bucket rows whose excess the empty-cell defaulting cannot explain,
+47 schemes total) vs. `genuine_mark_total_mismatch` (computed_total <
+maximum_mark, 10 schemes, and its evidence string states what was ruled out —
+overcount, column detection, sufficient cell-notation parsing — rather than
+only what didn't match).
 
 **The `paper_profile_misconfiguration` rule is now gated on a counterfactual,
 and round 1's "second bug instance" claim for 0625 p3 was wrong.** Round 1
@@ -1492,11 +1522,13 @@ theory that this mirrored the real 0625 p2 bug. It does not: `classify_one`
 branch, so the discrepancy really does change which parser code path runs.
 0625 p3's mapped type (THEORY_EXTENDED) and cover-implied type (THEORY_CORE)
 are on the *same* side (both non-MCQ) — reclassifying under the cover text
-would not change the parse path, so the discrepancy cannot be why these 34
-schemes are in the det-failure set. `classify_failures.py`'s
-`_changes_parse_path` counterfactual gate now falsifies the p3 case and only
-the real 0625 p2 finding (40 schemes) remains in
-`paper_profile_misconfiguration`.
+would not change the parse path, so the discrepancy cannot be why any 0625 p3
+scheme is in the det-failure set, whatever its exact count (this census does
+not separately track a 0625-p3-only count; round 1's "34" above is that
+round's own since-superseded classification, not a number re-derived by this
+script). `classify_failures.py`'s `_changes_parse_path` counterfactual gate
+now falsifies the p3 case and only the real 0625 p2 finding (40 schemes)
+remains in `paper_profile_misconfiguration`.
 
 **`profiles.py:52`'s 0625 p3 discrepancy is real but is recorded as a
 separate, ruled-out metadata defect — not a second confirmed cause.** It is

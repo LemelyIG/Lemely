@@ -114,11 +114,114 @@ class MismatchCauseSplitTests(unittest.TestCase):
     def test_computed_total_below_maximum_mark_is_genuine_mismatch(self) -> None:
         self.assertEqual(mod.mismatch_cause(38, 40), "genuine_mark_total_mismatch")
 
-    def test_computed_total_equal_is_not_a_mismatch_caller_responsibility(self) -> None:
-        # mismatch_cause is only called once computed != maximum_mark; equal
-        # inputs are not this helper's contract to guard, but it must not
-        # silently mislabel an overcount as equal-and-fine.
+    def test_equal_totals_is_an_out_of_contract_call_not_a_supported_case(self) -> None:
+        # mismatch_cause's documented contract is "called once computed !=
+        # maximum_mark" (see classify_failures.py callers) -- equal inputs are
+        # NOT a case this helper is asked to classify in production. This
+        # pins the current defensive fallback (genuine_mark_total_mismatch,
+        # not a crash) as a characterisation test of out-of-contract input,
+        # not an endorsement that "computed == maximum_mark" is a real
+        # mismatch cause (round-3 NIT 9: clarify, don't just assert).
         self.assertEqual(mod.mismatch_cause(40, 40), "genuine_mark_total_mismatch")
+
+
+class TheoryResidualSufficiencyTests(unittest.TestCase):
+    """Sufficiency-condition gate for the theory-path residual causes.
+
+    Empty marks cells default to 1 mark each (``lemely/io/det/rows.py``'s
+    ``make_point``), so N empty cells can inflate ``computed_total`` away from
+    ``maximum_mark`` by AT MOST N. ``marks_cell_notation_not_parsed`` may only
+    be claimed when that bound actually explains the observed delta; anything
+    larger is positively-evidenced overcounting that empty-cell defaulting
+    cannot produce, and must fall through to ``mismatch_cause`` (round-3
+    brief, blocking defect: 27/135 rows previously violated this).
+    """
+
+    def test_excess_larger_than_empty_count_falls_through_to_overcount(self) -> None:
+        # Shape of the round-3 brief's own counterexample (0606_m20_ms_12:
+        # empty=4, excess=20 -- 20 > 4, so defaulting cannot explain it).
+        result = mod.classify_theory_residual(
+            computed_total=60, maximum_mark=40, empty_count=4, marks_col=2
+        )
+        self.assertEqual(result["cause"], "mark_aggregation_overcount")
+        self.assertIn("empty", result["evidence"].lower())
+
+    def test_computed_leq_maximum_with_empty_cells_still_lands_in_notation_bucket(self) -> None:
+        # Positive case: computed_total <= maximum_mark is always explainable
+        # by *some* cells being under-counted via defaulting -- the gate must
+        # not over-correct away the real notation-bucket finding.
+        result = mod.classify_theory_residual(
+            computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
+        )
+        self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+    def test_small_explainable_excess_still_lands_in_notation_bucket(self) -> None:
+        # excess (2) <= empty_count (4) -> within the magnitude the defaulting
+        # mechanism can produce -- must still land in the notation bucket.
+        result = mod.classify_theory_residual(
+            computed_total=42, maximum_mark=40, empty_count=4, marks_col=2
+        )
+        self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+    def test_excess_exactly_equal_to_empty_count_is_the_boundary_and_still_explainable(
+        self,
+    ) -> None:
+        result = mod.classify_theory_residual(
+            computed_total=44, maximum_mark=40, empty_count=4, marks_col=2
+        )
+        self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+    def test_zero_empty_cells_goes_straight_to_mismatch_cause(self) -> None:
+        result = mod.classify_theory_residual(
+            computed_total=50, maximum_mark=40, empty_count=0, marks_col=2
+        )
+        self.assertEqual(result["cause"], "mark_aggregation_overcount")
+
+    def test_excess_larger_than_empty_count_can_still_resolve_via_mismatch_cause(self) -> None:
+        # Falling through must actually re-run mismatch_cause's own
+        # comparison, not hardcode overcount: computed_total > maximum_mark
+        # with an unexplainable excess still resolves via mismatch_cause,
+        # which for computed_total > maximum_mark is mark_aggregation_overcount.
+        result = mod.classify_theory_residual(
+            computed_total=61, maximum_mark=40, empty_count=1, marks_col=2
+        )
+        self.assertEqual(result["cause"], "mark_aggregation_overcount")
+        self.assertIn("empty", result["evidence"].lower())
+
+    def test_zero_empty_cells_and_clean_totals_is_unclassified(self) -> None:
+        result = mod.classify_theory_residual(
+            computed_total=40, maximum_mark=40, empty_count=0, marks_col=2
+        )
+        self.assertEqual(result["cause"], "UNCLASSIFIED")
+
+
+class SanitizeEvidenceTests(unittest.TestCase):
+    def test_redacts_a_simple_quoted_span(self) -> None:
+        out = mod.sanitize_evidence("select_tables: no table matched header 'Question'")
+        self.assertNotIn("Question", out)
+        self.assertIn("[redacted]", out)
+
+    def test_redacts_parenthesised_quote_with_apostrophe_inside(self) -> None:
+        # rows.py:242's actual ParseError shape: f"Level-descriptor row
+        # ('{q_cell}'): document uses levels-based marking..." -- if q_cell
+        # itself contains an apostrophe (e.g. "student's response"), a
+        # naive quote-to-quote regex stops at that inner apostrophe and
+        # leaks the rest of the PDF-derived text. This is the exact case
+        # the round-3 brief's SHOULD-FIX 7 flags as unverified.
+        raw = (
+            "Level-descriptor row ('student's response level'): document uses "
+            "levels-based marking — fall back to Gemini parser"
+        )
+        out = mod.sanitize_evidence(raw)
+        self.assertNotIn("student", out)
+        self.assertNotIn("response", out)
+        self.assertNotIn("level'", out)
+        self.assertIn("[redacted]", out)
+        self.assertIn("document uses", out)  # non-quoted prose survives
+
+    def test_text_with_no_quotes_is_unchanged(self) -> None:
+        raw = "Theory table contained no questions after parsing"
+        self.assertEqual(mod.sanitize_evidence(raw), raw)
 
 
 class PureHelperTests(unittest.TestCase):
