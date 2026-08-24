@@ -1303,3 +1303,66 @@ mark-scheme parsing pass authorised.
 **Raised:** 2026-08-24 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## F — #88 (M2.1b) awaits three human decisions; the parse itself is done and free
+
+**Raised:** 2026-08-24 · **Status:** OPEN — waiting on the human, not on
+infrastructure. **No spend has occurred.**
+
+The zero-cost half of #88 is **complete**: the deterministic parser ran over
+all 479 restored mark schemes and produced **250 parsed (52.2%)**, **229
+failures**, and **12,358 leaf questions** — at $0.00. The costed preflight is
+posted on #88 as the authorisation required.
+
+### Why this is a blocker rather than "just spend the money"
+
+`BUILD/ACCURACY-INBOX.md` (2026-08-24T01:14:03+03:00) authorised the parsing
+pass *"enough to reach the ~300-leaf target"*. **That target is already met
+about 41× over, at zero cost.** Every condition attached to the authorisation
+was satisfied — det first, preflight posted — but the *goal it was granted for*
+turned out to require no spend at all.
+
+The only remaining reason to spend is a finding this run discovered and the
+human could not have known when writing the directive: DA1's **parse-path**
+stratum is `det`-if-det-succeeded / `Gemini`-if-det-failed, so the nine
+Gemini-path strata are **empty by construction** and can only be filled by
+paying to parse the det failure set. That is a **different justification** from
+the authorised one. Per the #27 precedent recorded in the inbox, a changed
+premise is stopped on and asked about, never re-reasoned into still applying.
+
+### The three questions
+
+1. **Spend $4.88–$6.83 to populate the Gemini-path strata?** If no, #57 must
+   either drop the parse-path axis or freeze over det-only leaves — both are
+   amendments to DA1, which is **H4 (#49) human territory**, not the
+   orchestrator's.
+2. **Fix `lemely/io/det/profiles.py:50` first?** `_PHYSICS_PROFILE` maps
+   `2: PaperType.THEORY_CORE`, but the cover text reads **`Paper 2 Multiple
+   Choice (Extended)`** (verified in `0625_m19_ms_22.pdf`, `0625_s19_ms_21.pdf`).
+   `paper_type()` (`profiles.py:23`) consults the number map **first**, so the
+   correct cover-text evidence is never reached. All 40 of `0625` p2 fail,
+   while correctly-mapped p1 parses 40/40. The fix is free, is a real bug on
+   its own merits, cuts the paid set by 40 schemes and the bill by ~15% — and
+   it **moves 40 schemes between strata**, so it must land *before* any
+   preflight is acted on or the denominator is wrong.
+3. **What becomes of the 2894 unbanded leaves?** 23.4% of all leaves carry
+   `marks = 0/unknown` and fit **none** of DA1's `1 / 2 / 3+` bands. Under the
+   drop-only rule, excluding them is permanent. Recorded on no issue before now.
+
+### One operational fact that binds whatever is decided
+
+`per_run_token_ceiling` is **2,000,000** (`lemely.toml:19`), and every preflight
+scenario totals **2.65M–3.51M tokens**. The parse **cannot run as a single
+job**; it must be batched, or the ceiling raised deliberately. `_check_cost_ceiling`
+is a pre-flight check that cannot stop a call already in flight, so batching is
+the control, not the ceiling.
+
+### For #45 (M2.2)
+
+All 229 failures logged the same event, `mark_total_mismatch_escalating`. That
+is a **symptom, not a classification** — one uniform symptom across 229 schemes
+is consistent with several distinct causes, and classifying them is #45's job.
+The failure set is #45's census input; #45 has been commented to take it rather
+than re-run the parse, which would pay the Gemini cost twice.
