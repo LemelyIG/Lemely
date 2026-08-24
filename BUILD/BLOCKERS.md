@@ -1571,10 +1571,26 @@ re-run of `classify_failures.py` in the same commit as this table):**
 | `genuine_mark_total_mismatch` | 70 | 30.6% |
 | `marks_cell_notation_not_parsed` | 48 | 21.0% |
 | `mark_aggregation_overcount` | 47 | 20.5% |
-| `paper_profile_misconfiguration` | 40 | 17.5% |
+| `paper_profile_misconfiguration` † | 40 | 17.5% |
 | `marks_column_detection_failure` | 24 | 10.5% |
 | `table_layout_extraction_failure` | 0 | 0.0% |
 | `UNCLASSIFIED` | 0 | 0.0% |
+
+**† `paper_profile_misconfiguration` — 40 is the bucket population, not the
+causal count.** The counterfactual reparse committed later on this same branch
+(`BUILD/accuracy-runs/counterfactual-0625p2-2026-08-24/`) moved **39 of the 40**
+from FAIL to PASS by correcting `profiles.py:50` alone, so those 39 are
+causally demonstrated. The 40th, **`0625_s24_ms_21`, is misattributed**: it
+fails identically before and after the profile fix. Its real cause was found by
+direct observation (`BUILD/accuracy-runs/mechanism-0625-s24-ms-21-2026-08-24/`)
+and is a *distinct* defect — CAIE withdrew question 14, so the answer cell holds
+the literal `'Question Discounted'`, and `find_mcq_answer_col`
+(`lemely/io/det/mcq.py:23`) requires **all** non-empty values in a candidate
+column to be A/B/C/D, so one non-letter cell disqualifies the whole column and
+`parse_mcq_tables` skips the entire table (28 questions lost to one cell). The
+count stays 40 here because it is what the classifier assigned and what
+`manifest.json` records; **a `profiles.py` fix must not be taken to retire this
+row.** Blast radius of the mcq.py defect, measured: 1 of 479 schemes.
 
 **D7 turned from a hypothesis into a measurement, and round 5 corrects the
 headline downward again — this time sharply, and explicitly as an upper
@@ -1722,7 +1738,12 @@ from live zero-cost re-runs; `lemely/io/det/profiles.py` has zero diff throughou
 `spend_usd` never moved from **1.488057** — the entire five-round census cost
 **$0.00**; and no gate, threshold or assertion was ever weakened. The
 `paper_profile_misconfiguration` (40) and `mark_aggregation_overcount` (47)
-buckets are positively evidenced and are usable by M3 today.
+buckets are positively evidenced and are usable by M3 today — with one
+correction M3 must carry: of the 40 profile rows, **39 are causally
+demonstrated** by the counterfactual reparse and the 40th, `0625_s24_ms_21`, is
+**misattributed** and carries a distinct `lemely/io/det/mcq.py` defect that a
+`profiles.py` fix does not touch. See the † note under the ranked table. Cite
+the bucket as 39 causal + 1 misattributed, never as 40 causal.
 
 **Do not** resolve this by relaxing a criterion in prose, and **do not** let the
 next run start a round 6. It waits for the human.

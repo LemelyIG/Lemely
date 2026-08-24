@@ -20,6 +20,7 @@ Two things are tested:
 from __future__ import annotations
 
 import importlib.util
+import re
 import sys
 import unittest
 from pathlib import Path
@@ -41,6 +42,27 @@ def _load_module():
 
 
 mod = _load_module()
+
+
+def _row_signals(stem: str) -> tuple[int, int, int]:
+    """Read ``(empty_count, computed_total, maximum_mark)`` for one stem.
+
+    Sourced from the committed ``classified-failures.txt`` so a regeneration of
+    the census cannot silently desynchronise a hand-copied number in a test
+    (see the round-4/round-5 drift documented at the call site). A stem that is
+    missing, or a row whose evidence does not carry all three signals, fails
+    loudly rather than falling back to a literal.
+    """
+    path = _CENSUS_B / "classified-failures.txt"
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.startswith(f"{stem}\t"):
+            continue
+        empty = re.search(r"(\d+) empty marks cell\(s\)", line)
+        totals = re.search(r"computed_total=(\d+) maximum_mark=(\d+)", line)
+        if empty is None or totals is None:
+            raise AssertionError(f"{stem}: row in {path.name} lacks the expected signals: {line!r}")
+        return int(empty.group(1)), int(totals.group(1)), int(totals.group(2))
+    raise AssertionError(f"{stem}: no row in {path.name} -- the artifact and this test disagree")
 
 
 class ClassifyProfileMisconfigurationTests(unittest.TestCase):
@@ -220,25 +242,27 @@ class TheoryResidualSufficiencyTests(unittest.TestCase):
     def test_deficit_counterexamples_from_round_4_brief_do_not_land_in_notation_bucket(
         self,
     ) -> None:
-        # The other 3 verified deficit counterexample rows (empty_count,
-        # computed_total, maximum_mark triples taken from the live re-run of
-        # classify_failures.py against the real corpus, i.e.
-        # classified-failures.txt -- NOT the round-4 brief's own approximate
-        # list, two of whose six named rows turn out on the real maximum_mark
-        # to be excess-explainable (computed_total > maximum_mark), not
-        # deficit counterexamples at all: 0625_w21_ms_43 (empty=119,
-        # computed=90, maximum_mark=80 -> excess=10<=119, correctly stays in
-        # the bucket) and 0625_w21_ms_53 (empty=54, computed=41,
-        # maximum_mark=40 -> excess=1<=54, likewise). Using the brief's
-        # approximate numbers instead of the real ones would misrepresent the
-        # evidence, so only the four rows independently verified against
-        # classified-failures.txt are pinned here (0606_w23_ms_11 is pinned
-        # separately above).
+        # The other 3 verified deficit counterexample rows. Their
+        # (empty_count, computed_total, maximum_mark) triples are READ FROM the
+        # committed round-5 classified-failures.txt rather than hand-copied,
+        # because hand-copying is exactly how they went stale before: this test
+        # previously pinned the round-4 values (96/69/60) with a comment
+        # claiming they had been verified against the artifact, while round 5's
+        # own empty_count re-derivation -- landed in this same branch -- had
+        # already moved them to 69/60/54. The test still passed, because stale
+        # and real inputs land in the same bucket, so the false claim was
+        # invisible. Deriving them makes that desynchronisation impossible.
+        #
+        # NOT the round-4 brief's own approximate list, two of whose six named
+        # rows turn out on the real maximum_mark to be excess-explainable
+        # (computed_total > maximum_mark) and not deficit counterexamples at
+        # all: 0625_w21_ms_43 (empty=90, computed=90, maximum_mark=80 ->
+        # excess=10<=90, correctly stays in the bucket) and 0625_w21_ms_53
+        # (empty=27, computed=41, maximum_mark=40 -> excess=1<=27, likewise).
+        # Those two figures are likewise the round-5 artifact's, not the
+        # brief's approximate 119 and 54.
         counterexamples = [
-            # (empty_count, computed_total, maximum_mark)
-            (96, 78, 80),  # 0625_w21_ms_41
-            (69, 61, 80),  # 0606_w19_ms_13
-            (60, 54, 80),  # 0606_s23_ms_22
+            _row_signals(stem) for stem in ("0625_w21_ms_41", "0606_w19_ms_13", "0606_s23_ms_22")
         ]
         for empty_count, computed_total, maximum_mark in counterexamples:
             with self.subTest(
