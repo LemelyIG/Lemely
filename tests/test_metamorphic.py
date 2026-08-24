@@ -152,6 +152,35 @@ class TestRenameMarkPointIds(unittest.TestCase):
         self.assertIn("1(a)", skipped)
         self.assertIn("referenced", skipped["1(a)"].lower())
 
+    def test_rewrites_required_with_so_no_reference_is_left_dangling(self) -> None:
+        """``AnswerPoint.required_with`` holds *the id of another mark point*.
+
+        It is a structured cross-reference, not free text, so the
+        ``_free_text_of`` guard cannot see it — ``answer_points`` is excluded
+        from that serialisation by construction. A rename that rewrote the ids
+        but not this field would leave the dependency pointing at an id that no
+        longer exists, changing what the scheme means rather than only how it
+        is labelled, and any resulting mark change would be an artefact of the
+        transform rather than a marker defect.
+        """
+        question = _plain_question()
+        cast("list[dict[str, object]]", question["answer_points"])[1]["required_with"] = "p1"
+
+        scheme, skipped = rename_mark_point_ids(_scheme([question]))
+
+        # A relabelling is meaning-preserving here, so the leaf keeps its
+        # coverage rather than being skipped.
+        self.assertEqual(skipped, {})
+
+        target = scheme.get_question_by_id("1(a)")
+        assert target is not None
+        ids = {p.id for p in target.answer_points}
+        dangling = [
+            p.id for p in target.answer_points if p.required_with and p.required_with not in ids
+        ]
+        self.assertEqual(dangling, [])
+        self.assertEqual(target.answer_points[1].required_with, "mp_p1")
+
 
 class TestNormaliseAnswerWhitespace(unittest.TestCase):
     def test_collapses_runs_and_strips(self) -> None:

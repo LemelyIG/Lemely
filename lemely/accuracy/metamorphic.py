@@ -29,6 +29,12 @@ skipped with a recorded reason rather than marked or silently dropped:
   ``marking_guidance`` and ``notes``; renaming underneath that text leaves a
   dangling reference and changes what the marker reads.
 
+  Free text is the case that must be *skipped*, because a transform cannot
+  safely rewrite prose. The one **structured** cross-reference,
+  ``AnswerPoint.required_with``, is rewritten instead — it names an id
+  outright, so the rename can carry it and the leaf keeps its coverage rather
+  than being discarded.
+
 Skips are a first-class outcome here, reported per question exactly like holds
 and violations. A property that could not be applied to a leaf is *not* a leaf
 that passed.
@@ -219,6 +225,13 @@ def rename_mark_point_ids(scheme: MarkScheme) -> tuple[MarkScheme, dict[str, str
                 )
         for point in points:
             point["id"] = f"{_RENAME_PREFIX}{point['id']}"
+            # `required_with` names another point's id. It is structured data
+            # rather than free text, so `_free_text_of` cannot see it; rewrite
+            # it here or the dependency is left pointing at an id that no
+            # longer exists.
+            required_with = point.get("required_with")
+            if required_with:
+                point["required_with"] = f"{_RENAME_PREFIX}{required_with}"
         return None
 
     skipped = _map_questions(cast("list[dict[str, object]]", raw["questions"]), transform)

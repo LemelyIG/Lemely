@@ -195,8 +195,18 @@ def main() -> None:
         "whitespace_gap": whitespace_gap(),
         "interpretation": {
             "a_violation": (
-                "Existence proof — one leaf whose marks move under a "
-                "meaning-preserving perturbation is a real defect at any n."
+                "DEPENDS ON THE PARSE PATH, because the marker is not "
+                "deterministic. The published A/A floor (#27, "
+                "aa-floor-2026-08-23-a) measured mean pairwise churn over 10 "
+                "identical-config repeats at 0.0 det-only and 0.1565 "
+                "gemini-only. On a DET leaf a violation is therefore an "
+                "existence proof: identical inputs never once disagreed. On a "
+                "GEMINI leaf it is NOT — two identical runs already differ on "
+                "~1 leaf in 6, and this design marks each leaf once per arm "
+                "with no same-input control, so a lone gemini violation cannot "
+                "be attributed to the perturbation rather than to churn. "
+                "Attributing gemini-path violations needs a repeat control "
+                "arm, which costs further calls and is not authorised here."
             ),
             "no_violation": (
                 "Weak. At 11 and 21 distinct leaves this licenses only 'no "
