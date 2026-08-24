@@ -1825,3 +1825,34 @@ cheap branch. The 2026-08-24 gate-9 directive says in terms: *"If you are
 unsure for a given item, say so and ask rather than assuming the cheaper
 branch."* This is that case, and the cheap branch is the recommended one —
 which is exactly why it needs the human, not an agent's own say-so.
+
+### Second, independent ask on #38: acceptance bullet 2 is harmful as written
+
+Measured on the same 478 schemes, $0. Of the **177 papers carrying defaults**:
+
+| bucket | papers | effect of deleting the minted points (bullet 2) |
+|---|---:|---|
+| over-sum (leaf sum > declared max) | **78** | plausibly helps — the phantom-mark story |
+| under-sum (leaf sum < declared max) | **75** | makes it worse — paper is already short |
+| exact (leaf sum == declared max) | **24** | breaks a correct paper; **672 points** at stake |
+
+So the issue's premise holds for **78 of 177 (44%)** and bullet 2 is actively
+harmful on the other **99 (56%)**. `0625_s19_ms_43` — the paper the issue was
+written from — is a genuine over-sum instance and bullet 4's regression test is
+well-chosen; it is simply **not representative**, and generalising from it is
+what produces a change that helps 44% and harms 56%.
+
+This *strengthens* bullets 1 and 3. The corpus cannot say whether a given
+minted 1 is right — only that it was **written rather than read**. That is
+exactly what `marks_defaulted` provenance plus a working
+`escalate_on_defaulted_marks` are for. Bullet 2 guesses, and guesses wrong more
+often than right on this corpus.
+
+Recommended restatement, **not applied**: an unparseable marks cell still mints
+a point, flagged `marks_defaulted`; whether the paper escalates is
+`escalate_on_defaulted_marks`'s call, not the row parser's. The 75 under-sum
+papers belong in front of the fidelity gate (#39), not the row parser.
+
+Reproduce with `scripts/accuracy_defaulted_census.py <dir>` — it self-checks
+against this issue's own 3-defaults/+2-delta example before reporting any
+corpus number.
