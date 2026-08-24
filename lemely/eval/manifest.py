@@ -20,6 +20,13 @@ from pydantic import BaseModel, ConfigDict
 
 Split = Literal["train", "dev", "test"]
 
+# Defined here (not in :mod:`lemely.eval.records`, its more natural home)
+# because ``records.py`` already imports ``StrictModel`` from this module --
+# a reverse import would be circular. ``lemely.eval.records`` re-imports
+# ``Arm`` from here so ``from lemely.eval.records import Arm`` keeps working
+# for existing callers; this module is the single source of truth for it.
+Arm = Literal["extract+mark", "oracle+mark"]
+
 
 class StrictModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
@@ -37,6 +44,17 @@ class RunManifest(StrictModel):
     cache_mode: Literal["read_write", "bypass", "refresh"]
     split: Split
     corpus_digest: str
+    arm: Arm | None = None
+    """The run-level arm override passed to ``measure_accuracy(arm=...)``
+    (#28/M0.4), if any. ``None`` means no override was requested -- the arm
+    each case ran was derived per case from whether it had a ``scan_path``,
+    which is what every run before this field existed actually did. Folded
+    into ``params_fingerprint`` (see ``_build_run_manifest`` in
+    ``lemely.accuracy.harness``) so the two arms of an ablation sweep archive
+    distinguishable manifests. Defaults to ``None`` -- load-bearing: a
+    missing key with a default is accepted by this ``StrictModel``'s
+    ``extra="forbid"`` even though an unknown key is rejected, so manifests
+    archived before this field existed keep parsing."""
 
 
 class LabelManifest(StrictModel):

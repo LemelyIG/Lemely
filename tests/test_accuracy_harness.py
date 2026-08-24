@@ -1070,6 +1070,56 @@ class RunManifestTests(unittest.TestCase):
 
         self.assertNotEqual(before, after)
 
+    def test_params_fingerprint_distinguishes_arms(self):
+        """The two arms of an M0.4 ablation sweep (#28) must archive
+        distinguishable manifests. Before this fix ``arm`` was not part of
+        ``fingerprint_raw`` at all, so ``oracle+mark`` and ``extract+mark``
+        runs -- identical in every other knob -- hashed to the same
+        ``params_fingerprint``, and the pair of archived runs #28 exists to
+        produce would be indistinguishable evidence the moment M0.3's
+        cross-run comparator reads them.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings = self._settings_with_models()
+        oracle = _build_run_manifest(
+            "run-oracle",
+            [self._case()],
+            settings,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+            arm="oracle+mark",
+        )
+        extract = _build_run_manifest(
+            "run-extract",
+            [self._case()],
+            settings,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+            arm="extract+mark",
+        )
+        self.assertNotEqual(
+            oracle.params_fingerprint,
+            extract.params_fingerprint,
+            "the arm override must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_for_no_arm_override_is_unchanged(self):
+        """``arm=None`` (today's default -- no override, per-case selection by
+        ``scan_path``) must reproduce the exact pre-change fingerprint for
+        otherwise-identical inputs. Pinned as a literal (not re-derived by
+        calling ``_build_run_manifest`` again) so a future change to the hash
+        inputs is caught by this test rather than silently accepted.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings = self._settings_with_models()
+        manifest = _build_run_manifest(
+            "run-x",
+            [self._case()],
+            settings,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertEqual(manifest.params_fingerprint, "e81756064e0f")
+
     def test_manifest_is_a_run_manifest_instance(self):
         from lemely.accuracy.harness import measure_accuracy
         from lemely.eval.manifest import RunManifest

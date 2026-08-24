@@ -535,6 +535,7 @@ def _build_run_manifest(
     prompt_versions: dict[str, str],
     gemini_client: object = None,
     split: Split = "dev",
+    arm: Arm | None = None,
 ) -> RunManifest:
     """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
 
@@ -572,20 +573,32 @@ def _build_run_manifest(
         # rather than by the models (spec §3.3 names all seven components).
         # ``_MAX_OUTPUT_TOKENS`` is included for the same reason
         # ``GeminiClient._params_fingerprint`` includes it: it can change the
-        # output. The per-call response-schema hash is deliberately absent —
-        # this manifest is run-level and a run issues calls under several
-        # schemas, so there is no single schema to name here. That is a
-        # narrower claim than the per-call fingerprint, not a weaker version
-        # of it.
+        # output. ``arm`` (#28/M0.4) is included for the same reason again:
+        # it is a run-level knob that changes what a case actually runs
+        # (real vision extraction vs. the ground-truth bypass), so two arms
+        # of the same ablation sweep — identical models, temperature, etc. —
+        # must NOT hash to the same params_fingerprint, or the pair of
+        # archived runs the sweep exists to produce becomes indistinguishable
+        # evidence the moment a cross-run comparator reads them. The per-call
+        # response-schema hash is deliberately absent — this manifest is
+        # run-level and a run issues calls under several schemas, so there is
+        # no single schema to name here. That is a narrower claim than the
+        # per-call fingerprint, not a weaker version of it. The ``arm``
+        # suffix is appended only when an override is actually in effect
+        # (``arm is not None``) so a run with no override keeps hashing
+        # exactly as it did before this knob existed — "no override" is not
+        # itself a fourth, distinguishable value.
         fingerprint_raw = (
             f"{sorted(models_by_task.items())}"
             f"|{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
             f"|{sorted(gemini.thinking_budget_for.items())}"
             f"|{_MAX_OUTPUT_TOKENS}"
         )
+        if arm is not None:
+            fingerprint_raw += f"|arm={arm}"
     else:
         models_by_task = {}
-        fingerprint_raw = ""
+        fingerprint_raw = "" if arm is None else f"|arm={arm}"
 
     return RunManifest(
         run_id=run_id,
@@ -597,6 +610,7 @@ def _build_run_manifest(
         cache_mode=getattr(gemini_client, "default_cache_mode", "read_write"),
         split=split,
         corpus_digest=_corpus_digest(cases),
+        arm=arm,
     )
 
 
@@ -862,6 +876,7 @@ def measure_accuracy(
             prompt_versions,
             gemini_client=gemini_client,
             split=split,
+            arm=arm,
         ),
         eval_records=eval_records,
         funnel=funnel,

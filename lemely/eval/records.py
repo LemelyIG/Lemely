@@ -4,15 +4,20 @@
 ``StrictModel``/``Split`` scaffolding already defined in
 :mod:`lemely.eval.manifest` (landed with #31/M0.7a) rather than redefining
 either — see that module's docstring for why the two manifests share it.
+``Arm`` is likewise defined in :mod:`lemely.eval.manifest` (not here) and
+re-imported below: ``RunManifest`` needs it too (#28), and this module
+already depends on ``lemely.eval.manifest`` for ``StrictModel``, so defining
+``Arm`` there and importing it here is the direction that avoids a circular
+import.
 """
 
 from __future__ import annotations
 
 from typing import Literal
 
+from lemely.eval.manifest import Arm as Arm
 from lemely.eval.manifest import StrictModel
 
-Arm = Literal["extract+mark", "oracle+mark"]
 ParsePath = Literal["det", "gemini"]
 Outcome = Literal["correct", "over", "under", "abstain", "unmatched", "excluded"]
 IdMatch = Literal["exact", "fuzzy", "unmatched"]
