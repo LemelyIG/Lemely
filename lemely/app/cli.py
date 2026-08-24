@@ -1141,6 +1141,92 @@ def measure_accuracy_cmd(
         raise click.exceptions.Exit(1)
 
 
+@cli.command("label")
+@click.argument("paper_id")
+@click.option(
+    "--split",
+    type=click.Choice(["train", "dev", "test"]),
+    default="train",
+    show_default=True,
+    help="Split this paper belongs to, recorded in the label manifest (spec §6).",
+)
+@click.option(
+    "--labeller-id",
+    default=None,
+    help="Labeller identity, recorded in the label manifest. Defaults to $USER.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=int, default=8765, show_default=True)
+def label_cmd(paper_id: str, split: str, labeller_id: str | None, host: str, port: int) -> None:
+    """Start the two-pass blind labeller server for PAPER_ID (spec §6, M2.3/#46).
+
+    Delegates entirely into :mod:`lemely.labelling` — this command must not
+    inline labeller logic here, so the "labeller stays blind to the
+    correction pipeline" import-linter contract can target that module
+    narrowly rather than this file (which imports the correction pipeline
+    for other commands).
+    """
+    from lemely.labelling.server import run_labeller
+
+    resolved_labeller_id = labeller_id or os.environ.get("USER", "anonymous")
+    run_labeller(
+        paper_id,
+        split=cast("Literal['train', 'dev', 'test']", split),
+        labeller_id=resolved_labeller_id,
+        host=host,
+        port=port,
+    )
+
+
+@cli.command("label-verify")
+@click.argument("paper_id")
+@click.pass_context
+def label_verify_cmd(ctx: click.Context, paper_id: str) -> None:
+    """Verify PAPER_ID's tamper-evident label hash chains (spec §6, #46 repair pass 3).
+
+    Exits non-zero if either ``transcription.jsonl`` or ``marking.jsonl`` is
+    broken. Without this command, ``verify_chain`` had no production
+    caller — a human auditing the label corpus had no way to actually run
+    the tamper-evidence check the spec calls for; this just delegates into
+    :func:`lemely.labelling.verify.verify_paper_labels`.
+    """
+    from lemely.labelling.verify import verify_paper_labels
+
+    verification = verify_paper_labels(paper_id)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "paperId": verification.paper_id,
+                "ok": verification.ok,
+                "files": {
+                    name: (
+                        None
+                        if result is None
+                        else {
+                            "ok": result.ok,
+                            "brokenIndex": result.broken_index,
+                            "reason": result.reason,
+                        }
+                    )
+                    for name, result in verification.files.items()
+                },
+            }
+        )
+    else:
+        click.echo(f"Label chain verification for {paper_id}:")
+        for name, result in verification.files.items():
+            if result is None:
+                click.echo(f"  {name}: no file (skipped)")
+            elif result.ok:
+                click.echo(f"  {name}: OK")
+            else:
+                click.echo(f"  {name}: BROKEN at record {result.broken_index} — {result.reason}")
+
+    if not verification.ok:
+        raise click.exceptions.Exit(1)
+
+
 @cli.command("ui")
 @click.option("--host", default=None)
 @click.option("--port", default=None, type=int)
