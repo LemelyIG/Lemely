@@ -1747,3 +1747,81 @@ the bucket as 39 causal + 1 misattributed, never as 40 causal.
 
 **Do not** resolve this by relaxing a criterion in prose, and **do not** let the
 next run start a round 6. It waits for the human.
+
+---
+
+## H — The accuracy harness NEVER runs the det mark-scheme parser, so gate-9 cannot see #38
+
+**Raised:** 2026-08-25 · **Status:** OPEN, needs a human ruling · **Cost to find:** $0
+(det path only; ledger unmoved at 1.488057)
+
+This one is not about a single issue. It is an **instrument gap** that silently
+changes what MISSION §9 gate 9 can and cannot prove, and §D's table above
+asserts the opposite of it for #38.
+
+### The finding, read at source
+
+Every golden case ships an **already-parsed `mark_scheme.json`**, and the
+harness deserializes it directly:
+
+- `lemely/accuracy/harness.py:82-83` — the case layout comment:
+  `mark_scheme.json  — already-parsed JSON mark scheme`
+- `lemely/accuracy/harness.py:103-109` —
+  `MarkScheme.model_validate_json(ms_path.read_text(...))`
+- `lemely/accuracy/harness.py:352-355` — the harness says so itself:
+
+  > `parse_path` is a known gap: spec §1 defines it as the *mark scheme's*
+  > parsing path (`det` = deterministic pdfplumber parser, `gemini` = AI
+  > fallback), a per-paper property `load_golden_cases` **does not observe**
+  > (it deserializes an already-parsed `mark_scheme.json` directly).
+
+Confirmed against the fixture directories: each contains `answers.json`,
+`case.json`, `mark_scheme.json`, `scan.pdf`. The **only** PDF is `scan.pdf` —
+the student script, which feeds vision extraction, not scheme parsing.
+
+### Three consequences, in increasing order of importance
+
+1. **A gate-9 sweep for #38 is null by construction.** #38 changes
+   `lemely/io/det/rows.py`. The harness never executes that file. Before and
+   after would read the identical checked-in JSON and the delta would be
+   exactly zero — at full sweep cost. Buying that number would be buying noise.
+   **§D's row `#38 M1.3 | mark-lowering; §9 gate 9 over/under non-regression`
+   is wrong on this point** and should be read alongside this section.
+
+2. **It generalises.** *Every* det mark-scheme-parser change the programme will
+   ever make is invisible to the instrument, present and future — which puts it
+   squarely under MISSION §2 ("the instrument comes first") rather than under
+   any one issue. #39's det-path private-use-codepoint detector is partly
+   affected the same way; #39's Gemini paper-level gate and #41's marker-prompt
+   changes are **not** (those run for real).
+
+3. **The published `det`/`gemini` split is not the parse path.** Per the same
+   docstring, the adapter substitutes `result.question_type` (`mcq` → `det`,
+   `theory` → `gemini`). So the ablation's "det 8/8 = 100%, gemini 16/23 =
+   69.6%" is **mcq-vs-theory**, not deterministic-vs-AI scheme parsing. That is
+   already conceded in the docstring, but it is not visible next to the
+   published figures, and it is the same signal #47 acceptance bullet 3
+   ("stratified across both parse paths det AND gemini") assumes exists —
+   consistent with the #88 q1 chain already recorded.
+
+### The ruling needed (posted on #38 as (a)/(b)/(c))
+
+- **(a)** Land #38 on a deterministic proof — corpus census + the
+  failing-before/passing-after regression test — waiving gate 9 **for this item
+  on the stated ground that the instrument provably cannot see the change**.
+- **(b)** Regenerate the golden `mark_scheme.json` fixtures through the det
+  parser so scheme-parsing becomes measurable. Honest fix, but it **rewrites
+  the measurement corpus**: MISSION §12.2 (irreversible data operation) and
+  §12.5 (frozen-split membership), needs its own authorisation, and would break
+  comparability with every figure published to date including the 2026-08-24
+  ablation.
+- **(c)** Block #38 until (b) happens, as M3 parse-path-parity work.
+
+Recommended, not acted on: **(a)** for #38 now, with **(b)** opened as its own
+instrument issue, because consequence 2 outlives #38.
+
+**Do not** let a future run quietly treat (a) as settled because it is the
+cheap branch. The 2026-08-24 gate-9 directive says in terms: *"If you are
+unsure for a given item, say so and ask rather than assuming the cheaper
+branch."* This is that case, and the cheap branch is the recommended one —
+which is exactly why it needs the human, not an agent's own say-so.
