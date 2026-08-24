@@ -1,0 +1,41 @@
+{
+  "analysis": "churn_vs_aa_floor",
+  "run_label": "ablation-2026-08-24-a",
+  "records_examined": [
+    "BUILD/accuracy-runs/ablation-2026-08-24-a/records-extract-mark.jsonl",
+    "BUILD/accuracy-runs/ablation-2026-08-24-a/manifest.json",
+    "BUILD/accuracy-runs/ablation-2026-08-24-a/manifest-extract-mark.json",
+    "BUILD/accuracy-runs/ablation-2026-08-24-a/paired-analysis-ablation-2026-08-24-a.json"
+  ],
+  "this_run": {
+    "arms_completed": ["extract+mark"],
+    "arms_missing": ["oracle+mark (blocked by open issue #28 -- dead code path, no CLI/harness way to force it)"],
+    "n_records": 71,
+    "distinct_leaves": 31,
+    "repeats_of_any_single_arm": 1,
+    "reason_churn_not_computable": "Churn/A-A comparison requires >=2 repeats at identical configuration to pair against each other. This run made exactly one repeat of exactly one arm, so there is no within-run pair to compute pairwise leaf-outcome disagreement from. The 77.4% (24/31) leaf accuracy is a single draw, not a delta from anything, per the sweep summary's own anomaly note.",
+    "reason_ab_not_computable": "oracle+mark arm produced zero records (n_records=0), so no paired McNemar / ablation_2x2 comparison is possible either. paired-analysis-ablation-2026-08-24-a.json (already computed by a prior step in this workspace, using lemely.eval.analyses.mcnemar / ablation_2x2) independently confirms this: verdict=NOT_APPLICABLE, b=c=n_pairs=0."
+  },
+  "published_aa_floor": {
+    "source": "BUILD/DECISIONS.md DA9 (## DA9 -- The A/A churn floor: 11.6% of leaf outcomes flip at constant configuration (#27, M0.3))",
+    "issue_27_state": "CLOSED (closedAt 2026-08-23T13:40:12Z)",
+    "run_id": "aa-floor-2026-08-23-a",
+    "corpus": "same 11-case / 31-leaf golden corpus used by this run",
+    "repeats": 10,
+    "repeat_pairs": 45,
+    "pooled_pairwise_leaf_churn_pct": 11.61,
+    "pooled_pairwise_leaf_churn_fraction": "162/1395",
+    "gemini_path_churn_pct": 15.65,
+    "gemini_path_churn_fraction": "162/1035",
+    "det_path_churn_pct": 0.0,
+    "det_path_churn_fraction": "0/360",
+    "leaves_that_ever_churned": "9 of 31, 95% Wilson [16.1%, 46.6%]",
+    "rule": "Any A/B delta on the gemini path smaller than 11.6 percentage points is within noise and must be reported as noise. The det-path floor is 0.0%; an arm that touches only the det path is not subject to the pooled 11.6% figure."
+  },
+  "conclusion": {
+    "published_floor_exists": true,
+    "observed_churn_this_run": -1,
+    "observed_ab_delta_this_run": -1,
+    "delta_vs_floor": "Not judgeable. This run has no repeat structure (1 repeat of 1 arm) and no second arm (oracle+mark blocked by open #28), so there is no within-run churn figure and no A/B delta to compare against the published 11.6% (gemini) / 0.0% (det) floor at all. The floor exists and is available for whoever eventually runs a real paired oracle+mark vs extract+mark comparison, but it has nothing to be compared against from this workspace's data."
+  }
+}

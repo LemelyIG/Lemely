@@ -1250,3 +1250,11 @@ outcome as the thing it is correcting. Read §D as history, not as policy.
 **Consequently resolved:** §B (#36) and §C (#40) are both decided — see the
 2026-08-24 inbox entries. §E (#57) is unblocked via option A, with a
 mark-scheme parsing pass authorised.
+
+---
+
+## #28 — M0.4 — Oracle-transcription ablation (the 2×2)
+
+**Raised:** 2026-08-24 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
