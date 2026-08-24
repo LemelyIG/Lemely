@@ -5,9 +5,12 @@ stems from ``../census-2026-08-24-a/det-failures.txt``, locates each PDF under
 the restored corpus, re-runs the deterministic parsing pipeline stage-by-stage
 (``extract_metadata`` -> ``select_tables``/MCQ table extraction ->
 ``detect_columns``/``is_marks_column`` -> ``build_questions`` ->
-``reconcile.check``, with ``escalate_on_mark_mismatch=False`` so a mismatch
-does not abort the run before we can see the structural state that produced
-it), and applies a rule-based classifier over the captured signals.
+``reconcile._leaf_marks``), comparing the leaf-mark total to
+``metadata.maximum_mark`` directly rather than calling
+``reconcile.check``/going through ``DeterministicMarkSchemeParser`` at all --
+so there is no ``escalate_on_mark_mismatch`` flag in play here, and a mismatch
+never aborts the run before the structural state that produced it is visible
+-- and applies a rule-based classifier over the captured signals.
 
 Every classification rule is a **pure function** of already-captured signals
 (cover text vs. mapped ``PaperType``, whether a column search hit a real match
@@ -18,13 +21,19 @@ the output; table cell text is read in-process and discarded.
 
 Zero Gemini calls: only ``lemely.io.det.*`` is imported. No network.
 
-Cause taxonomy (six buckets, checked in this priority order — the first rule
-whose evidence is found wins):
+Cause taxonomy (seven buckets, checked in this priority order — the first
+rule whose evidence is found wins):
 
 1. ``paper_profile_misconfiguration``  — cover text names a paper type that
    the subject profile's ``paper_type_by_number`` overrides (the 0625 p2
-   class). Classified, NOT repaired — this script never touches
-   ``lemely/io/det/profiles.py``.
+   class), GATED on a counterfactual: the label only fires when reclassifying
+   under the cover-text-implied ``PaperType`` would actually change the
+   downstream parse path (MCQ vs. not-MCQ is the only branch ``classify_one``
+   takes on ``metadata.paper_type``). This excludes 0625 p3 (profiles.py maps
+   THEORY_EXTENDED, cover text implies THEORY_CORE — both non-MCQ, so the
+   discrepancy is real but causally inert for this pipeline; see
+   ``manifest.json``'s ``ruled_out_metadata_defect_not_a_cause``). Classified,
+   NOT repaired — this script never touches ``lemely/io/det/profiles.py``.
 2. ``table_layout_extraction_failure`` — a pipeline stage before reconciliation
    raised ``ParseError`` (no tables found, no valid rows, indicative-content /
    levels-based section, etc.), or an MCQ answer key came up short of
@@ -35,12 +44,18 @@ whose evidence is found wins):
 4. ``marks_cell_notation_not_parsed`` — a real marks column WAS found, but one
    or more of its cells were empty/unparsed and got defaulted (1-mark
    default), which can move ``computed_total`` away from ``maximum_mark``.
-5. ``genuine_mark_total_mismatch`` — every structural check above is clean
+5. ``mark_aggregation_overcount`` — every structural check above is clean yet
+   ``computed_total > maximum_mark``: positively-evidenced overcounting (e.g.
+   double-counted alternative-answer branches), not a plain "totals don't
+   match" residual.
+6. ``genuine_mark_total_mismatch`` — every structural check above is clean
    (real column found, zero defaulted cells, tables extracted, profile
-   mapping consistent with cover text) yet ``computed_total != maximum_mark``.
-   This is the residual, hardest-to-positively-confirm bucket; it is not used
-   as a default — it requires the absence of every other explanation.
-6. ``UNCLASSIFIED`` — anything else (PDF missing on disk, an exception outside
+   mapping consistent with cover text) yet ``computed_total < maximum_mark``.
+   This is the residual, hardest-to-positively-confirm bucket; it states what
+   was ruled out (overcount, column detection, cell parsing) rather than
+   being used as a default — it requires the absence of every other
+   explanation.
+7. ``UNCLASSIFIED`` — anything else (PDF missing on disk, an exception outside
    the anticipated ``ParseError`` set, metadata extraction itself failing).
    The denominator is never narrowed: an unclassifiable scheme lands here
    with what was observed, it is not dropped.
@@ -64,19 +79,47 @@ from lemely.io.det.mcq import find_mcq_answer_col, parse_mcq_tables
 from lemely.io.det.profiles import SubjectProfile, get_profile
 from lemely.io.det.rows import build_questions
 from lemely.io.det.tables import select_tables
+from lemely.runtime.config import DetParserSettings
 from lemely.runtime.errors import ParseError
 
 CORPUS_ROOT = Path("/home/sico/PaperScraper/papers")
 CENSUS_A_DIR = Path(__file__).resolve().parent.parent / "census-2026-08-24-a"
 OUT_DIR = Path(__file__).resolve().parent
 
-# Same defaults as DeterministicMarkSchemeParser, except escalate_on_mark_mismatch
-# is off so a mismatch does not abort the run before we can inspect the
-# structural state that produced it.
-MAX_MARK_PER_POINT = 40
-HEADER_KEYWORDS = frozenset(
-    {"question", "answer", "marks", "guidance", "notes", "input", "output"}
+# Same knobs DeterministicMarkSchemeParser uses (lemely/runtime/config.py's
+# DetParserSettings), read from that single source rather than hardcoded
+# copies that could silently drift from the production defaults. This script
+# never instantiates the parser itself and never consults
+# ``escalate_on_mark_mismatch`` -- see the module docstring.
+_DET_CFG = DetParserSettings()
+MAX_MARK_PER_POINT = _DET_CFG.max_mark_per_point
+HEADER_KEYWORDS = _DET_CFG.header_keywords
+
+# Cause taxonomy, in priority order -- see module docstring. Used to seed the
+# Counter so cause_counts_ranked never silently omits a zero-count bucket.
+ALL_CAUSES: tuple[str, ...] = (
+    "paper_profile_misconfiguration",
+    "table_layout_extraction_failure",
+    "marks_column_detection_failure",
+    "marks_cell_notation_not_parsed",
+    "mark_aggregation_overcount",
+    "genuine_mark_total_mismatch",
+    "UNCLASSIFIED",
 )
+
+_QUOTED_RE = re.compile(r"['\"][^'\"]*['\"]")
+
+
+def sanitize_evidence(text: str) -> str:
+    """Strip any quoted PDF-derived text from a ParseError-derived string.
+
+    ``lemely.io.det.rows``'s ``ParseError`` messages embed raw cell/prose text
+    in quotes (e.g. "Level-descriptor row ('...'): ..."). Only derived
+    labels/counts are safe to commit (MISSION 12.7) -- this replaces any
+    quoted span with a placeholder before an exception message is written
+    into ``classified-failures.txt``.
+    """
+    return _QUOTED_RE.sub("'[redacted]'", text)
 
 # Keyword -> implied PaperType, in the SAME priority order as
 # SubjectProfile.paper_type's cover-text fallback branch (lemely/io/det/profiles.py).
@@ -110,16 +153,37 @@ def cover_text_implied_paper_type(cover_text: str) -> PaperType | None:
     return None
 
 
+def _changes_parse_path(mapped: PaperType, implied: PaperType) -> bool:
+    """True iff *mapped* vs *implied* would send ``classify_one`` down a
+    different branch.
+
+    ``classify_one`` only ever branches on ``metadata.paper_type`` once: MCQ
+    vs. not-MCQ (``_classify_mcq`` vs. ``_classify_theory``). A profile/cover
+    disagreement that keeps both sides on the same side of that MCQ/not-MCQ
+    line (e.g. THEORY_CORE vs. THEORY_EXTENDED, the 0625 p3 case) is real as
+    a metadata discrepancy but causally inert for this pipeline -- it cannot
+    be the reason a scheme is in the det-failure set.
+    """
+    return (mapped == PaperType.MCQ) != (implied == PaperType.MCQ)
+
+
 def classify_profile_misconfiguration(
     paper_number: int, cover_text: str, profile: SubjectProfile
 ) -> str | None:
     """Return evidence if the profile's ``paper_type_by_number`` overrides a
-    DIFFERENT type than the cover text itself implies, else None.
+    DIFFERENT type than the cover text itself implies AND that difference
+    would actually change the downstream parse path, else None.
 
     This is the 0625 p2 class from #88's manifest: ``paper_type_by_number``
     maps paper 2 to THEORY_CORE, so ``profile.paper_type`` never even reads
-    the cover text (which reads "Paper 2 Multiple Choice (Extended)").  A
-    pure function of (paper_number, cover_text, profile) — no PDF I/O.
+    the cover text (which reads "Paper 2 Multiple Choice (Extended)") -- and
+    MCQ vs. THEORY_CORE really does send the pipeline down a different
+    branch. The counterfactual gate (``_changes_parse_path``) excludes the
+    0625 p3 case (THEORY_EXTENDED mapped vs. THEORY_CORE implied -- both
+    non-MCQ, no path change), which is a real profiles.py discrepancy but not
+    a cause of this parse failing (see ``manifest.json``'s
+    ``ruled_out_metadata_defect_not_a_cause``). A pure function of
+    (paper_number, cover_text, profile) — no PDF I/O.
     """
     if paper_number not in profile.paper_type_by_number:
         # The number map doesn't override anything for this paper — the
@@ -130,6 +194,8 @@ def classify_profile_misconfiguration(
     mapped = profile.paper_type_by_number[paper_number]
     implied = cover_text_implied_paper_type(cover_text)
     if implied is None or implied == mapped:
+        return None
+    if not _changes_parse_path(mapped, implied):
         return None
     return (
         f"paper_number={paper_number} maps to {mapped.value} via "
@@ -169,6 +235,21 @@ def profile_misconfiguration_breakdown(rows: list[tuple[str, str, str]]) -> Coun
         paper_number = m.group(1) if m else "?"
         breakdown[f"{subject_code} p{paper_number}"] += 1
     return breakdown
+
+
+def mismatch_cause(computed_total: int, maximum_mark: int) -> str:
+    """Split the final-residual mismatch bucket: overcount vs. genuine mismatch.
+
+    ``computed_total > maximum_mark`` is positively-evidenced overcounting
+    (e.g. a double-counted alternative-answer branch) — a distinct, more
+    specific claim than "the totals don't match", so it gets its own bucket
+    rather than being folded into ``genuine_mark_total_mismatch``, which is
+    reserved for stating what was *ruled out* (not an overcount; column
+    detection and cell parsing were clean).
+    """
+    if computed_total > maximum_mark:
+        return "mark_aggregation_overcount"
+    return "genuine_mark_total_mismatch"
 
 
 def count_empty_marks_cells(rows: list[list[str | None]], marks_col: int) -> int:
@@ -214,7 +295,10 @@ def classify_one(pdf_path: Path) -> dict[str, Any]:
             try:
                 metadata = _meta.extract_metadata(pdf, pdf_path)
             except ParseError as exc:
-                return {"cause": "UNCLASSIFIED", "evidence": f"metadata extraction failed: {exc}"}
+                return {
+                    "cause": "UNCLASSIFIED",
+                    "evidence": f"metadata extraction failed: {sanitize_evidence(str(exc))}",
+                }
 
             profile = get_profile(metadata.subject_code)
             evidence = classify_profile_misconfiguration(
@@ -229,7 +313,10 @@ def classify_one(pdf_path: Path) -> dict[str, Any]:
                 return _classify_mcq(pdf, metadata)
             return _classify_theory(pdf, metadata)
     except Exception as exc:  # noqa: BLE001 - census must never crash on one scheme
-        return {"cause": "UNCLASSIFIED", "evidence": f"unexpected {type(exc).__name__}: {exc}"}
+        return {
+            "cause": "UNCLASSIFIED",
+            "evidence": f"unexpected {type(exc).__name__}: {sanitize_evidence(str(exc))}",
+        }
 
 
 def _classify_mcq(pdf: Any, metadata: Any) -> dict[str, Any]:
@@ -257,7 +344,10 @@ def _classify_mcq(pdf: Any, metadata: Any) -> dict[str, Any]:
     try:
         questions = parse_mcq_tables(all_tables)
     except ParseError as exc:
-        return {"cause": "table_layout_extraction_failure", "evidence": f"MCQ path: {exc}"}
+        return {
+            "cause": "table_layout_extraction_failure",
+            "evidence": f"MCQ path: {sanitize_evidence(str(exc))}",
+        }
 
     computed = len(questions)  # each MCQ Question carries marks=1
     maximum_mark = metadata.maximum_mark
@@ -271,7 +361,7 @@ def _classify_mcq(pdf: Any, metadata: Any) -> dict[str, Any]:
         }
     if computed != maximum_mark:
         return {
-            "cause": "genuine_mark_total_mismatch",
+            "cause": mismatch_cause(computed, maximum_mark),
             "evidence": f"MCQ path: computed_total={computed} maximum_mark={maximum_mark}",
         }
     return {
@@ -287,7 +377,10 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
     try:
         tables = select_tables(pdf, page_start=2, max_mark=MAX_MARK_PER_POINT)
     except ParseError as exc:
-        return {"cause": "table_layout_extraction_failure", "evidence": f"select_tables: {exc}"}
+        return {
+            "cause": "table_layout_extraction_failure",
+            "evidence": f"select_tables: {sanitize_evidence(str(exc))}",
+        }
     if not tables:
         return {
             "cause": "table_layout_extraction_failure",
@@ -335,7 +428,10 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
             merged, layout, max_mark=MAX_MARK_PER_POINT, header_keywords=HEADER_KEYWORDS
         )
     except ParseError as exc:
-        return {"cause": "table_layout_extraction_failure", "evidence": f"build_questions: {exc}"}
+        return {
+            "cause": "table_layout_extraction_failure",
+            "evidence": f"build_questions: {sanitize_evidence(str(exc))}",
+        }
 
     computed = _reconcile._leaf_marks(questions)
     maximum_mark = metadata.maximum_mark
@@ -350,10 +446,17 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
         }
 
     if computed != maximum_mark:
+        cause = mismatch_cause(computed, maximum_mark)
+        ruled_out = (
+            "an overcount (computed_total < maximum_mark), "
+            if cause == "genuine_mark_total_mismatch"
+            else ""
+        )
         return {
-            "cause": "genuine_mark_total_mismatch",
+            "cause": cause,
             "evidence": (
-                f"marks_col={real_marks_col} well-detected, 0 defaulted cells, "
+                f"marks_col={real_marks_col} well-detected, 0 defaulted cells, ruling out "
+                f"{ruled_out}column detection and cell-notation parsing as the cause; "
                 f"computed_total={computed} maximum_mark={maximum_mark}"
             ),
         }
@@ -386,7 +489,9 @@ def main() -> None:
 
     rows: list[str] = []
     classified: list[tuple[str, str, str]] = []
-    causes: Counter[str] = Counter()
+    # Seeded with every taxonomy label so a zero-count bucket is reported as
+    # 0, not silently omitted from cause_counts_ranked.
+    causes: Counter[str] = Counter({label: 0 for label in ALL_CAUSES})
 
     for i, stem in enumerate(stems, 1):
         pdf_path = _find_pdf(stem)
@@ -438,8 +543,9 @@ def main() -> None:
                 "This count is measured from re-running the pipeline's own column/cell "
                 "detectors over each failing PDF, not assumed from the hypothesis by "
                 "construction -- other causes (paper_profile_misconfiguration, "
-                "table_layout_extraction_failure, genuine_mark_total_mismatch, "
-                "UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
+                "table_layout_extraction_failure, mark_aggregation_overcount, "
+                "genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever "
+                "their evidence is more specific."
             ),
         },
         "known_bug_classified_not_fixed": {
@@ -455,14 +561,24 @@ def main() -> None:
                 "invalidate #88's preflight denominator. git diff against "
                 "lemely/io/det/profiles.py is empty."
             ),
-            "new_finding_not_in_88s_manifest": (
-                "This census's rule also fires on 0625 p3 (34 schemes, see "
-                "breakdown_by_subject_and_paper): profiles.py maps paper 3 to "
-                "THEORY_EXTENDED, but every sampled p3 cover page reads 'Paper 3 Core "
-                "Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf). This looks like a "
-                "SECOND, previously-undocumented instance of the same profiles.py class of "
-                "bug, not a classifier false positive -- flagged for the human alongside "
-                "question 2 on #88, and equally NOT repaired here."
+        },
+        "ruled_out_metadata_defect_not_a_cause": {
+            "file": "lemely/io/det/profiles.py:52",
+            "detail": (
+                "profiles.py maps 0625 paper 3 to THEORY_EXTENDED via "
+                "paper_type_by_number, but every sampled p3 cover page reads 'Paper 3 Core "
+                "Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf) -- a real metadata "
+                "discrepancy, structurally identical to the 0625 p2 bug. It is deliberately "
+                "NOT counted among paper_profile_misconfiguration's 229-scheme causes: "
+                "classify_one only ever branches on metadata.paper_type once (MCQ vs. "
+                "not-MCQ, see classify_one/_classify_mcq/_classify_theory), and "
+                "THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so "
+                "reclassifying under the cover-text-implied type would not change which "
+                "code path parses these 34 schemes -- the counterfactual gate "
+                "(_changes_parse_path) falsifies it as a cause. It is recorded here as a "
+                "separate, ruled-out metadata defect, flagged for the human alongside "
+                "question 2 on #88, and equally NOT repaired here -- git diff against "
+                "lemely/io/det/profiles.py is empty."
             ),
         },
         "reproduce": {

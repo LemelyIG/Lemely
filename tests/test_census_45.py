@@ -79,6 +79,79 @@ class ClassifyProfileMisconfigurationTests(unittest.TestCase):
         evidence = mod.classify_profile_misconfiguration(99, "Paper 99 Multiple Choice", profile)
         self.assertIsNone(evidence)
 
+    def test_0625_p3_core_extended_is_not_flagged_no_path_change(self) -> None:
+        # profiles.py maps p3 to THEORY_EXTENDED but the cover text reads
+        # "Paper 3 Core Theory" -> implies THEORY_CORE. Both mapped and implied
+        # are non-MCQ, so classify_one would take the SAME (_classify_theory)
+        # branch either way -- the discrepancy is causally inert and must NOT
+        # be counted as paper_profile_misconfiguration (round-2 review MUST-FIX).
+        profile = get_profile("0625")
+        cover_text = (
+            "UNIVERSITY OF CAMBRIDGE INTERNATIONAL EXAMINATIONS\n"
+            "Cambridge IGCSE\n"
+            "0625 PHYSICS\n"
+            "0625/32\n"
+            "Paper 3 Core Theory\n"
+            "Maximum Mark: 80\n"
+        )
+        evidence = mod.classify_profile_misconfiguration(3, cover_text, profile)
+        self.assertIsNone(evidence)
+
+    def test_0625_p2_mcq_still_flagged_after_counterfactual_gate(self) -> None:
+        # Regression guard: the gate must not over-correct away the real p2
+        # finding, where mapped=THEORY_CORE vs implied=MCQ IS a path change.
+        profile = get_profile("0625")
+        cover_text = "Paper 2 Multiple Choice (Extended)\nMaximum Mark: 40\n"
+        evidence = mod.classify_profile_misconfiguration(2, cover_text, profile)
+        self.assertIsNotNone(evidence)
+        self.assertIn("mcq", evidence.lower())
+
+
+class MismatchCauseSplitTests(unittest.TestCase):
+    def test_computed_total_exceeds_maximum_mark_splits_to_overcount_bucket(self) -> None:
+        self.assertEqual(mod.mismatch_cause(50, 40), "mark_aggregation_overcount")
+
+    def test_computed_total_below_maximum_mark_is_genuine_mismatch(self) -> None:
+        self.assertEqual(mod.mismatch_cause(38, 40), "genuine_mark_total_mismatch")
+
+    def test_computed_total_equal_is_not_a_mismatch_caller_responsibility(self) -> None:
+        # mismatch_cause is only called once computed != maximum_mark; equal
+        # inputs are not this helper's contract to guard, but it must not
+        # silently mislabel an overcount as equal-and-fine.
+        self.assertEqual(mod.mismatch_cause(40, 40), "genuine_mark_total_mismatch")
+
+
+class PureHelperTests(unittest.TestCase):
+    def test_find_real_marks_col_returns_none_on_fallback(self) -> None:
+        # No column here satisfies is_marks_column (no numeric-looking marks
+        # cells at all) -> the right-to-left scan must return None, not
+        # silently fall back to the rightmost column.
+        rows: list[list[str | None]] = [
+            ["Q1", "some answer text", "more text"],
+            ["Q2", "another answer", "other text"],
+        ]
+        result = mod.find_real_marks_col(rows, ncols=3, max_mark=40)
+        self.assertIsNone(result)
+
+    def test_count_empty_marks_cells(self) -> None:
+        rows: list[list[str | None]] = [
+            ["1", "answer one", "2"],
+            ["2", "answer two", ""],
+            ["", "", ""],  # not a data row: everything else is empty too
+            ["3", "answer three", None],
+        ]
+        # marks_col = 2; two data rows have an empty/None marks cell.
+        self.assertEqual(mod.count_empty_marks_cells(rows, marks_col=2), 2)
+
+    def test_profile_misconfiguration_breakdown_groups_by_subject_and_paper(self) -> None:
+        rows = [
+            ("0625_s21_ms_21", "paper_profile_misconfiguration", "paper_number=2 maps to ..."),
+            ("0625_w20_ms_21", "paper_profile_misconfiguration", "paper_number=2 maps to ..."),
+            ("0580_s19_ms_11", "table_layout_extraction_failure", "no tables found"),
+        ]
+        breakdown = mod.profile_misconfiguration_breakdown(rows)
+        self.assertEqual(breakdown, {"0625 p2": 2})
+
 
 # ---------------------------------------------------------------------------
 # Denominator-never-narrowed: mechanical, artifact-only (no PDF re-parsing).
@@ -92,8 +165,11 @@ def _read_stems(path: Path) -> list[str]:
 class DenominatorNeverNarrowedTests(unittest.TestCase):
     def test_every_det_failure_stem_is_classified_exactly_once(self) -> None:
         classified_path = _CENSUS_B / "classified-failures.txt"
-        if not classified_path.exists():
-            self.skipTest("classify_failures.py has not been run yet")
+        self.assertTrue(
+            classified_path.exists(),
+            f"missing committed artifact {classified_path} -- a deleted census artifact "
+            "must fail this test, not silently pass as skipped",
+        )
 
         input_stems = _read_stems(_CENSUS_A / "det-failures.txt")
         rows = _read_stems(classified_path)

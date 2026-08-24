@@ -1429,54 +1429,86 @@ than re-run the parse, which would pay the Gemini cost twice.
 
 ## G — #45 (M2.2) census complete: the 229 det-failures are classified, ranked, $0 spend
 
-**Raised:** 2026-08-24 · **Status:** artifact committed, not a blocker — recorded
-here so M3 can cite it without re-deriving. Zero Gemini calls, zero network:
-the 229 PDFs already restored to `/home/sico/PaperScraper/papers` were
-re-parsed offline through `lemely.io.det.*`'s own stages a second time, this
-run with `escalate_on_mark_mismatch` effectively disabled so each pipeline
-could reach a structural state instead of aborting at the first
-`mark_total_mismatch_escalating`.
+**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 2, corrected after
+review) · **Status:** artifact committed, not a blocker — recorded here so M3
+can cite it without re-deriving. Zero Gemini calls, zero network: the 229 PDFs
+already restored to `/home/sico/PaperScraper/papers` were re-parsed offline
+through `lemely.io.det.*`'s own stages a second time. This script never
+instantiates `DeterministicMarkSchemeParser` and never calls
+`reconcile.check` at all — it compares `reconcile._leaf_marks(questions)` to
+`metadata.maximum_mark` directly, so there is no `escalate_on_mark_mismatch`
+flag in play (round 1 of this issue incorrectly claimed one was).
 
 **Where the evidence lives:** `BUILD/accuracy-runs/census-2026-08-24-b/` —
-`classify_failures.py` (the diagnostic script; also the source of the two pure
+`classify_failures.py` (the diagnostic script; also the source of the pure
 helpers unit-tested in `tests/test_census_45.py`), `manifest.json` (ranked
 counts, the D7 hypothesis's measured share, the profile-misconfiguration
 breakdown), and `classified-failures.txt` (one `stem<TAB>cause<TAB>evidence`
 row per of the 229 stems — the ranked work-list for M3's D7 repairs).
 
-**Ranked cause counts (sum to 229, denominator never narrowed):**
+**Ranked cause counts (sum to 229, denominator never narrowed, every bucket
+seeded so a zero count is reported rather than omitted):**
 
 | cause | n | share |
 |---|---|---|
-| `marks_cell_notation_not_parsed` | 108 | 47.2% |
-| `paper_profile_misconfiguration` | 74 | 32.3% |
-| `genuine_mark_total_mismatch` | 27 | 11.8% |
-| `marks_column_detection_failure` | 20 | 8.7% |
+| `marks_cell_notation_not_parsed` | 135 | 59.0% |
+| `paper_profile_misconfiguration` | 40 | 17.5% |
+| `marks_column_detection_failure` | 24 | 10.5% |
+| `mark_aggregation_overcount` | 20 | 8.7% |
+| `genuine_mark_total_mismatch` | 10 | 4.4% |
 | `table_layout_extraction_failure` | 0 | 0.0% |
 | `UNCLASSIFIED` | 0 | 0.0% |
 
 **D7 turned from a hypothesis into a measurement.** D7 hypothesised that
 `parse_marks_cell`/`is_marks_column` failures explain the det-parser failure
 set. Measured (not assumed by construction): `marks_column_detection_failure`
-+ `marks_cell_notation_not_parsed` = **128/229 (55.9%)**. The other **101/229
-(44.1%)** are NOT explained by D7 — 74 are the profile-misconfiguration class
-below, and 27 are structurally clean parses whose total still does not
-reconcile (`genuine_mark_total_mismatch`), i.e. D7 was a real but partial
-explanation, not the whole failure set.
++ `marks_cell_notation_not_parsed` = **159/229 (69.4%)**. The other **70/229
+(30.6%)** are NOT explained by D7 — 40 are the profile-misconfiguration class
+below, 20 are positively-evidenced overcounts (`mark_aggregation_overcount`),
+and 10 are structurally clean parses whose total still comes up short with no
+more specific explanation available (`genuine_mark_total_mismatch`), i.e. D7
+is the dominant explanation but not the whole failure set.
 
-**A second, previously-undocumented instance of #88's `profiles.py:50` bug
-class was found, NOT fixed.** #88 documented only 0625 p2 (cover text "Paper 2
-Multiple Choice (Extended)" vs. `paper_type_by_number[2] = THEORY_CORE`, 40
-schemes). This census's rule — cover-text keyword scan vs. the profile's
-number-map override, checked for every failing scheme, not just p2 — also
-fires on **0625 p3, 34 schemes**: `paper_type_by_number[3] = THEORY_EXTENDED`,
-but every sampled p3 cover page reads *"Paper 3 Core Theory"* (verified in
-`0625_m19_ms_32.pdf`, `0625_s21_ms_32.pdf`). Together p2+p3 account for all 74
-`paper_profile_misconfiguration` rows. **Neither is repaired here** —
-`git diff` against `lemely/io/det/profiles.py` is empty after this issue —
-per the explicit instruction not to move DA1 strata out from under #88's
-pending human decision (question 2, still open). This p3 finding should be
-folded into that same human question rather than answered independently.
+**The residual mismatch bucket is split, not a single "totals don't match"
+catch-all.** Round 1 put every `computed_total != maximum_mark` residual
+(after clean column detection and zero defaulted cells) into
+`genuine_mark_total_mismatch`, including rows where `computed_total >
+maximum_mark` — an overcount, which is a *positive* finding (something got
+double-counted), not the same claim as "the total came up short with no
+further explanation". These are now split: `mark_aggregation_overcount`
+(computed_total > maximum_mark, 20 schemes) vs. `genuine_mark_total_mismatch`
+(computed_total < maximum_mark, 10 schemes, and its evidence string now states
+what was ruled out — overcount, column detection, cell-notation parsing —
+rather than only what didn't match).
+
+**The `paper_profile_misconfiguration` rule is now gated on a counterfactual,
+and round 1's "second bug instance" claim for 0625 p3 was wrong.** Round 1
+counted 74 schemes into this bucket, including 34 from 0625 p3 (cover text
+"Paper 3 Core Theory" vs. `paper_type_by_number[3] = THEORY_EXTENDED`) on the
+theory that this mirrored the real 0625 p2 bug. It does not: `classify_one`
+(mirroring the production pipeline) only ever branches on
+`metadata.paper_type` once — MCQ vs. not-MCQ. 0625 p2's mapped type
+(THEORY_CORE) and cover-implied type (MCQ) are on *different* sides of that
+branch, so the discrepancy really does change which parser code path runs.
+0625 p3's mapped type (THEORY_EXTENDED) and cover-implied type (THEORY_CORE)
+are on the *same* side (both non-MCQ) — reclassifying under the cover text
+would not change the parse path, so the discrepancy cannot be why these 34
+schemes are in the det-failure set. `classify_failures.py`'s
+`_changes_parse_path` counterfactual gate now falsifies the p3 case and only
+the real 0625 p2 finding (40 schemes) remains in
+`paper_profile_misconfiguration`.
+
+**`profiles.py:52`'s 0625 p3 discrepancy is real but is recorded as a
+separate, ruled-out metadata defect — not a second confirmed cause.** It is
+still a genuine mismatch between what `paper_type_by_number` maps and what the
+cover text says (verified in `0625_m19_ms_32.pdf`, `0625_s21_ms_32.pdf`), and
+it is still flagged for the human alongside question 2 on #88 — but it is
+**not** counted among the 229's causes, per the MCQ-only-branching evidence
+above. `git diff` against `lemely/io/det/profiles.py` is empty after this
+issue, and this p3 finding is recorded in `manifest.json`'s
+`ruled_out_metadata_defect_not_a_cause`, not folded into
+`known_bug_classified_not_fixed` (which now holds only the 0625 p2, 40-scheme
+finding).
 
 **Not mark-changing:** no marking-engine or `lemely/eval` code changed; per
 the 2026-08-24 gate-9 scope decision this issue needed no before/after A/B

@@ -10,29 +10,34 @@
     "n": 229
   },
   "cause_counts_ranked": {
-    "marks_cell_notation_not_parsed": 108,
-    "paper_profile_misconfiguration": 74,
-    "genuine_mark_total_mismatch": 27,
-    "marks_column_detection_failure": 20
+    "marks_cell_notation_not_parsed": 135,
+    "paper_profile_misconfiguration": 40,
+    "marks_column_detection_failure": 24,
+    "mark_aggregation_overcount": 20,
+    "genuine_mark_total_mismatch": 10,
+    "table_layout_extraction_failure": 0,
+    "UNCLASSIFIED": 0
   },
   "counts_sum_to_229": true,
   "d7_hypothesis": {
     "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
-    "n_explained": 128,
+    "n_explained": 159,
     "n_total": 229,
-    "share": 0.559,
+    "share": 0.6943,
     "falsifiable": true,
-    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
+    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
   },
   "known_bug_classified_not_fixed": {
     "file": "lemely/io/det/profiles.py:50",
-    "count_in_this_bucket": 74,
+    "count_in_this_bucket": 40,
     "breakdown_by_subject_and_paper": {
-      "0625 p2": 40,
-      "0625 p3": 34
+      "0625 p2": 40
     },
-    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty.",
-    "new_finding_not_in_88s_manifest": "This census's rule also fires on 0625 p3 (34 schemes, see breakdown_by_subject_and_paper): profiles.py maps paper 3 to THEORY_EXTENDED, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf). This looks like a SECOND, previously-undocumented instance of the same profiles.py class of bug, not a classifier false positive -- flagged for the human alongside question 2 on #88, and equally NOT repaired here."
+    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty."
+  },
+  "ruled_out_metadata_defect_not_a_cause": {
+    "file": "lemely/io/det/profiles.py:52",
+    "detail": "profiles.py maps 0625 paper 3 to THEORY_EXTENDED via paper_type_by_number, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf) -- a real metadata discrepancy, structurally identical to the 0625 p2 bug. It is deliberately NOT counted among paper_profile_misconfiguration's 229-scheme causes: classify_one only ever branches on metadata.paper_type once (MCQ vs. not-MCQ, see classify_one/_classify_mcq/_classify_theory), and THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so reclassifying under the cover-text-implied type would not change which code path parses these 34 schemes -- the counterfactual gate (_changes_parse_path) falsifies it as a cause. It is recorded here as a separate, ruled-out metadata defect, flagged for the human alongside question 2 on #88, and equally NOT repaired here -- git diff against lemely/io/det/profiles.py is empty."
   },
   "reproduce": {
     "cost": "free, zero network, ~229 PDFs re-parsed with pdfplumber",
