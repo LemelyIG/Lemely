@@ -10,11 +10,11 @@
     "n": 229
   },
   "cause_counts_ranked": {
-    "marks_cell_notation_not_parsed": 104,
+    "genuine_mark_total_mismatch": 70,
+    "marks_cell_notation_not_parsed": 48,
     "mark_aggregation_overcount": 47,
     "paper_profile_misconfiguration": 40,
     "marks_column_detection_failure": 24,
-    "genuine_mark_total_mismatch": 14,
     "table_layout_extraction_failure": 0,
     "UNCLASSIFIED": 0
   },
@@ -22,11 +22,20 @@
   "table_layout_extraction_failure_note": "count=0: this bucket's ParseError catches are enforced on BOTH the MCQ and theory paths, but the 'computed < maximum_mark / 2' shortfall heuristic (round-4 fix) is enforced ONLY on the MCQ path (_classify_mcq) -- the theory path has no equivalent check, so a large theory-path deficit falls through to classify_theory_residual's mismatch_cause instead of landing here. This count is therefore a lower bound on structural extraction failures, not a claim that none occurred on the theory path under a maximum_mark/2 heuristic; an earlier draft of the module docstring claimed theory-path enforcement that was never implemented -- corrected in this round.",
   "d7_hypothesis": {
     "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
-    "n_explained": 128,
+    "n_explained": 72,
     "n_total": 229,
-    "share": 0.559,
+    "share": 0.3144,
     "falsifiable": true,
-    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
+    "is_upper_bound": true,
+    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific. Round 5: marks_cell_notation_not_parsed's own sufficiency check is now excess-side only (see manifest's absence of a deficit disjunct) -- the deficit direction is a consistency-check-only note, not an enforced bound, because a defaulted AnswerPoint is not guaranteed to reach computed_total at all (lemely/io/det/rows.py's flush() only sums a leaf's AnswerPoints when that leaf's q_row_had_answer flag was set). This D7 share is therefore published explicitly as an UPPER BOUND on what the column/cell-detection hypothesis explains, not a fully enforced count."
+  },
+  "excess_bound_near_vacuous": {
+    "count": 2,
+    "stems": [
+      "0625_w20_ms_42",
+      "0625_w21_ms_43"
+    ],
+    "detail": "Rows in marks_cell_notation_not_parsed whose empty_count >= maximum_mark: the excess sufficiency check (computed_total - maximum_mark <= empty_count) is technically satisfied but close to vacuous there, since a bound that large barely constrains anything. The round-5 population fix (count_defaulted_answer_points) sharply reduced how often this happens -- round 4's raw-row count put 4 rows at empty_count >= maximum_mark, one as high as 119 for a maximum_mark of 80 -- but does not eliminate it entirely for schemes with a genuinely high fraction of defaulted cells. Recorded here rather than silently claimed away; these rows are still correctly in the denominator and still labelled, just with a weaker-than-usual bound."
   },
   "known_bug_classified_not_fixed": {
     "file": "lemely/io/det/profiles.py:50",

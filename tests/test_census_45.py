@@ -135,6 +135,11 @@ class TheoryResidualSufficiencyTests(unittest.TestCase):
     larger is positively-evidenced overcounting that empty-cell defaulting
     cannot produce, and must fall through to ``mismatch_cause`` (round-3
     brief, blocking defect: 27/135 rows previously violated this).
+
+    Round 5: the DEFICIT side of this gate (``empty_count <= computed_total``)
+    is retired as a causal classifier -- see ``DeficitConsistencyCheckOnlyTests``
+    below and the module docstring's bucket-4 entry. The EXCESS side is
+    unaffected and still enforced exactly as round 4 left it.
     """
 
     def test_excess_larger_than_empty_count_falls_through_to_overcount(self) -> None:
@@ -146,14 +151,17 @@ class TheoryResidualSufficiencyTests(unittest.TestCase):
         self.assertEqual(result["cause"], "mark_aggregation_overcount")
         self.assertIn("empty", result["evidence"].lower())
 
-    def test_computed_leq_maximum_with_empty_cells_still_lands_in_notation_bucket(self) -> None:
-        # Positive case: computed_total <= maximum_mark is always explainable
-        # by *some* cells being under-counted via defaulting -- the gate must
-        # not over-correct away the real notation-bucket finding.
+    def test_computed_leq_maximum_with_empty_cells_no_longer_lands_in_notation_bucket(
+        self,
+    ) -> None:
+        # Round 5 (was "still_lands_in_notation_bucket" through round 4):
+        # a deficit shape is no longer a positive classifier for this bucket
+        # -- see DeficitConsistencyCheckOnlyTests for why the bound is
+        # unsound even over the corrected (AnswerPoint) population.
         result = mod.classify_theory_residual(
             computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
         )
-        self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+        self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
 
     def test_small_explainable_excess_still_lands_in_notation_bucket(self) -> None:
         # excess (2) <= empty_count (4) -> within the magnitude the defaulting
@@ -244,14 +252,90 @@ class TheoryResidualSufficiencyTests(unittest.TestCase):
                 )
                 self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
 
-    def test_deficit_at_or_above_empty_count_still_lands_in_notation_bucket(self) -> None:
-        # Positive case, unchanged from round 3: computed_total >= empty_count
-        # and <= maximum_mark IS within what the defaulting mechanism can
-        # produce -- the round-4 fix must not over-correct away this finding.
+    def test_deficit_at_or_above_empty_count_no_longer_a_positive_case(self) -> None:
+        # Round 3/4 treated "computed_total >= empty_count and <=
+        # maximum_mark" as a positive, bucket-claiming case. Round 5 retires
+        # that disjunct entirely (DeficitConsistencyCheckOnlyTests) -- this
+        # exact input is now a duplicate of the deficit test above, kept as
+        # its own test so a future edit can't silently resurrect the old
+        # behaviour for this specific input without a test failing.
         result = mod.classify_theory_residual(
             computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
         )
+        self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+
+class DeficitConsistencyCheckOnlyTests(unittest.TestCase):
+    """Round 5: no sound two-sided magnitude bound survives for the deficit
+    direction, even once ``empty_count`` is re-derived over the correct
+    (AnswerPoint) population (``count_defaulted_answer_points``) -- see the
+    module docstring's bucket-4 entry and ``BUILD/ACCURACY-STATE.md``'s
+    round-5 commit message for the proof sketch.
+
+    Root cause of why the deficit bound cannot be salvaged: a defaulted
+    ``AnswerPoint`` is not guaranteed to ever reach ``computed_total`` at
+    all. ``lemely/io/det/rows.py``'s ``flush()`` only sums a leaf's
+    ``AnswerPoint``s into ``Question.marks`` when that leaf's own
+    ``q_row_had_answer`` flag was set (i.e. the Q-number row itself carried
+    an answer, or an EITHER/OR bracket appeared) -- a very common table shape
+    (Q-number row with NO answer, all marks on continuation rows below it)
+    never sets that flag, so the leaf's ``Question.marks`` stays at
+    whatever ``push_question`` set (0, when that row's own marks cell was
+    blank), regardless of what the continuation rows' ``AnswerPoint.marks``
+    values are. So "every empty cell contributes >= 1 to computed_total" is
+    false in general, not just under the wrong (raw-row) population --
+    ``CountDefaultedAnswerPointsTests.test_does_not_change_build_questions_output``
+    demonstrates the same shape.
+
+    Because of this, the deficit disjunct is retired as a CAUSAL classifier:
+    ``marks_cell_notation_not_parsed`` may only be claimed via the EXCESS
+    side now. A deficit shape (``computed_total <= maximum_mark`` with
+    ``empty_count > 0``) always falls through to ``mismatch_cause``, carrying
+    a consistency-check-only note in its evidence rather than an enforced
+    bound.
+    """
+
+    def test_deficit_shape_falls_through_to_mismatch_cause(self) -> None:
+        # Before round 5, classify_theory_residual's deficit_explainable
+        # disjunct (empty_count <= computed_total <= maximum_mark) claimed
+        # this bucket for ANY row satisfying that arithmetic. It must land
+        # OUTSIDE marks_cell_notation_not_parsed now.
+        result = mod.classify_theory_residual(
+            computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
+        )
+        self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
+        self.assertEqual(result["cause"], "genuine_mark_total_mismatch")
+
+    def test_deficit_evidence_states_upper_bound_deficit_side_unbounded(self) -> None:
+        result = mod.classify_theory_residual(
+            computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
+        )
+        self.assertIn("upper bound, deficit side unbounded", result["evidence"])
+
+    def test_zero_empty_count_deficit_carries_no_spurious_note(self) -> None:
+        # No empty cells at all -> nothing to caveat; the note must not
+        # appear when empty_count is 0 (there is no defaulting mechanism in
+        # play to caveat about).
+        result = mod.classify_theory_residual(
+            computed_total=38, maximum_mark=40, empty_count=0, marks_col=2
+        )
+        self.assertNotIn("upper bound, deficit side unbounded", result["evidence"])
+
+    def test_excess_side_still_enforced_unchanged(self) -> None:
+        # The excess-side sufficiency check is unaffected by the round-5
+        # downgrade: it remains sound as a NECESSARY-condition bound, since a
+        # defaulted point contributes AT MOST 1 to computed_total whether or
+        # not it actually flows into a leaf's Question.marks.
+        result = mod.classify_theory_residual(
+            computed_total=42, maximum_mark=40, empty_count=4, marks_col=2
+        )
         self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+    def test_excess_beyond_empty_count_still_falls_through(self) -> None:
+        result = mod.classify_theory_residual(
+            computed_total=61, maximum_mark=40, empty_count=1, marks_col=2
+        )
+        self.assertEqual(result["cause"], "mark_aggregation_overcount")
 
 
 class TheoryPathHalfShortfallDocstringTests(unittest.TestCase):
@@ -340,6 +424,114 @@ class PureHelperTests(unittest.TestCase):
         self.assertEqual(breakdown, {"0625 p2": 2})
 
 
+class ExcessBoundNearVacuousStemsTests(unittest.TestCase):
+    """The excess sufficiency check is technically satisfied but close to
+    vacuous when ``empty_count >= maximum_mark`` -- honestly surfaced in the
+    manifest (``excess_bound_near_vacuous``) rather than silently claimed
+    as a tight bound.
+    """
+
+    def test_flags_only_rows_with_empty_count_at_or_above_maximum_mark(self) -> None:
+        rows = [
+            (
+                "stem_vacuous",
+                "marks_cell_notation_not_parsed",
+                "marks_col=6: 90 empty marks cell(s) defaulted to 1; "
+                "computed_total=98 maximum_mark=80 (excess explainable by defaulting: at most 90)",
+            ),
+            (
+                "stem_tight",
+                "marks_cell_notation_not_parsed",
+                "marks_col=2: 4 empty marks cell(s) defaulted to 1; "
+                "computed_total=42 maximum_mark=40 (excess explainable by defaulting: at most 4)",
+            ),
+            (
+                "stem_other_bucket",
+                "genuine_mark_total_mismatch",
+                "marks_col=2 well-detected; 90 empty marks cell(s) were also defaulted "
+                "(upper bound, deficit side unbounded); computed_total=30 maximum_mark=80",
+            ),
+        ]
+        result = mod.excess_bound_near_vacuous_stems(rows)
+        self.assertEqual(result, ["stem_vacuous"])
+
+
+class CountDefaultedAnswerPointsTests(unittest.TestCase):
+    """Round 5's re-derivation of ``empty_count`` over the population that
+    actually feeds ``computed_total`` (AnswerPoints created by
+    ``build_questions``), replacing ``count_empty_marks_cells``' raw-table-row
+    scan for that purpose (round-5 root cause: the two counts were measuring
+    different populations -- ``count_empty_marks_cells`` could report
+    ``empty_count=119`` for a scheme whose ``maximum_mark`` is 80, which
+    cannot have 119 answer points at all).
+    """
+
+    def test_counts_only_created_answer_points_not_raw_rows(self) -> None:
+        from lemely.io.det.columns import ColumnLayout
+
+        # Row 0 and row 2 are Q-number-only rows with NO answer text -- they
+        # never reach make_point at all (no AnswerPoint is created), yet
+        # count_empty_marks_cells' raw-row scan counts them anyway because
+        # their Q-cell is non-empty and their marks cell is blank. Row 1 has
+        # a real, correctly-parsed (non-defaulted) marks value. Row 3 is the
+        # ONLY row that both produces an AnswerPoint AND had its marks value
+        # actually defaulted by make_point.
+        rows: list[list[str | None]] = [
+            ["1(a)", "", ""],
+            ["", "actual answer text one", "1"],
+            ["1(b)", "", ""],
+            ["", "actual answer text two", ""],
+        ]
+        layout = ColumnLayout(q_col=0, answer_col_end=2, guidance_col=None, marks_col=2)
+
+        old_count = mod.count_empty_marks_cells(rows, marks_col=2)
+        new_count = mod.count_defaulted_answer_points(
+            rows, layout, mod.MAX_MARK_PER_POINT, mod.HEADER_KEYWORDS
+        )
+
+        self.assertEqual(old_count, 3, "sanity: old raw-row scan sees 3 blank-marks data rows")
+        self.assertEqual(
+            new_count,
+            1,
+            "corrected count must only see the ONE row that actually created a "
+            "defaulted AnswerPoint",
+        )
+
+    def test_does_not_change_build_questions_output(self) -> None:
+        # The instrumentation must be a transparent pass-through: deriving
+        # empty_count must never perturb the actual parse result that feeds
+        # computed_total. Also demonstrates the DeficitConsistencyCheckOnlyTests
+        # root cause directly: this leaf's own Q-row carries no answer, so
+        # neither of its two AnswerPoints (one parsed, one defaulted) is
+        # summed into Question.marks -- computed_total is 0 despite a
+        # non-zero empty_count.
+        from lemely.io.det import reconcile as _reconcile
+        from lemely.io.det.columns import ColumnLayout
+        from lemely.io.det.rows import build_questions
+
+        rows: list[list[str | None]] = [
+            ["1(a)", "", ""],
+            ["", "actual answer text one", "1"],
+            ["", "actual answer text two", ""],
+        ]
+        layout = ColumnLayout(q_col=0, answer_col_end=2, guidance_col=None, marks_col=2)
+        kwargs = {"max_mark": mod.MAX_MARK_PER_POINT, "header_keywords": mod.HEADER_KEYWORDS}
+
+        before = build_questions(rows, layout, **kwargs)
+        before_total = _reconcile._leaf_marks(before)
+
+        empty_count = mod.count_defaulted_answer_points(
+            rows, layout, mod.MAX_MARK_PER_POINT, mod.HEADER_KEYWORDS
+        )
+
+        after = build_questions(rows, layout, **kwargs)
+        after_total = _reconcile._leaf_marks(after)
+
+        self.assertEqual(before_total, after_total, "instrumentation must not change the parse")
+        self.assertEqual(empty_count, 1)
+        self.assertEqual(before_total, 0, "root cause: the defaulted point never reaches marks")
+
+
 # ---------------------------------------------------------------------------
 # Denominator-never-narrowed: mechanical, artifact-only (no PDF re-parsing).
 # ---------------------------------------------------------------------------
@@ -347,6 +539,30 @@ class PureHelperTests(unittest.TestCase):
 
 def _read_stems(path: Path) -> list[str]:
     return [line.strip() for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+
+
+class ManifestPublishesUpperBoundTests(unittest.TestCase):
+    """Round 5: with the deficit disjunct downgraded to consistency-check-
+    only, D7's headline share is no longer a fully-enforced count for the
+    ``marks_cell_notation_not_parsed`` half of it -- the manifest must say so
+    explicitly rather than silently implying the old two-sided bound still
+    holds (acceptance criterion: "D7's share is published explicitly as an
+    upper bound rather than an enforced count").
+    """
+
+    def test_d7_hypothesis_note_states_upper_bound(self) -> None:
+        import json
+
+        manifest = json.loads((_CENSUS_B / "manifest.json").read_text(encoding="utf-8"))
+        note = manifest["d7_hypothesis"]["note"]
+        self.assertIn("upper bound", note.lower())
+
+    def test_counts_still_sum_to_229(self) -> None:
+        import json
+
+        manifest = json.loads((_CENSUS_B / "manifest.json").read_text(encoding="utf-8"))
+        self.assertTrue(manifest["counts_sum_to_229"])
+        self.assertEqual(sum(manifest["cause_counts_ranked"].values()), 229)
 
 
 class DenominatorNeverNarrowedTests(unittest.TestCase):

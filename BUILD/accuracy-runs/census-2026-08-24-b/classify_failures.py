@@ -69,20 +69,35 @@ condition and where it is enforced:
 4. ``marks_cell_notation_not_parsed`` — a real marks column WAS found, but one
    or more of its cells were empty/unparsed and got defaulted (1-mark
    default), which can move ``computed_total`` away from ``maximum_mark``.
-   Sufficiency condition (round-4 fix — round 3 only bounded the EXCESS
-   side): empty cells default to EXACTLY 1 mark each
-   (``lemely/io/det/rows.py``'s ``make_point``), so (a) N empty cells can
-   inflate ``computed_total`` by AT MOST N above what the non-empty cells
-   alone would sum to, and (b) since every empty cell still contributes 1,
-   ``computed_total`` can never validly fall BELOW ``empty_count`` under this
-   mechanism. The bucket is claimed only when the TWO-SIDED bound holds:
-   ``empty_count <= computed_total <= maximum_mark`` (deficit side — the
-   defaulting mechanism cannot explain a total lower than the number of
-   defaulted cells) or ``computed_total - maximum_mark <= empty_count``
-   (excess side, unchanged from round 3). Enforced in
-   ``classify_theory_residual``. Rows failing both — including a deficit
-   with ``computed_total < empty_count`` — fall through to
-   ``mismatch_cause`` (bucket 5 or 6) instead.
+   Sufficiency condition (round-5 fix — see below; round 4 bounded a
+   two-sided claim that turned out unsound, round 3 bounded only the EXCESS
+   side): ``empty_count`` is now measured by ``count_defaulted_answer_points``
+   over the SAME population that feeds ``computed_total`` — AnswerPoints
+   actually created by ``build_questions`` whose marks value was defaulted by
+   ``lemely/io/det/rows.py``'s ``make_point`` — rather than raw table rows
+   (round-4's ``count_empty_marks_cells``, whose population mismatch let one
+   scheme report ``empty_count=119`` against a ``maximum_mark`` of 80, which
+   cannot have 119 answer points at all). Even over this corrected
+   population, only the EXCESS side survives as a sound bound: a defaulted
+   point contributes AT MOST 1 to ``computed_total``, so
+   ``computed_total - maximum_mark <= empty_count`` remains a valid
+   necessary-condition check. The DEFICIT side ("every empty cell
+   contributes >= 1, so ``computed_total`` can never fall below
+   ``empty_count``") does NOT survive: ``lemely/io/det/rows.py``'s ``flush()``
+   only sums a leaf's AnswerPoints into ``Question.marks`` when that leaf's
+   ``q_row_had_answer`` flag was set, which a common table shape (Q-number
+   row with no answer, all marks on continuation rows below it) never sets —
+   so a defaulted AnswerPoint can contribute exactly 0 to ``computed_total``,
+   not >= 1. The deficit disjunct is therefore RETIRED as a causal
+   classifier and kept only as a consistency-check-only note in the
+   evidence string (``"upper bound, deficit side unbounded"``) — it no
+   longer gates the bucket. The bucket is claimed only when
+   ``empty_count > 0`` AND the excess bound holds
+   (``computed_total > maximum_mark`` and
+   ``computed_total - maximum_mark <= empty_count``). Enforced in
+   ``classify_theory_residual``. See ``manifest.json``'s ``d7_hypothesis``
+   note: D7's share is published explicitly as an upper bound, not an
+   enforced count, because of this downgrade.
 5. ``mark_aggregation_overcount`` — every structural check above is clean, or
    the notation bucket's sufficiency condition failed, yet
    ``computed_total > maximum_mark``: positively-evidenced overcounting (e.g.
@@ -300,6 +315,38 @@ def profile_misconfiguration_breakdown(rows: list[tuple[str, str, str]]) -> Coun
     return breakdown
 
 
+_EMPTY_MAX_IN_EVIDENCE_RE = re.compile(
+    r"(\d+) empty marks cell.*maximum_mark=(\d+)"
+)
+
+
+def excess_bound_near_vacuous_stems(rows: list[tuple[str, str, str]]) -> list[str]:
+    """Return stems classified ``marks_cell_notation_not_parsed`` whose
+    ``empty_count >= maximum_mark`` — the excess sufficiency check
+    (``computed_total - maximum_mark <= empty_count``) is technically
+    satisfied for these but close to vacuous, since a bound that large
+    barely constrains anything (round-5 residual: the population fix
+    (``count_defaulted_answer_points``) sharply reduced how often this
+    happens -- round 4's raw-row count put 4 rows at empty_count >=
+    maximum_mark, one as high as 119 for a maximum_mark of 80 -- but does
+    not eliminate it entirely for schemes with a genuinely high fraction of
+    defaulted cells). A pure function of already-classified rows, exists so
+    this residual limitation is surfaced honestly in the manifest rather
+    than silently claimed away.
+    """
+    stems: list[str] = []
+    for stem, cause, evidence in rows:
+        if cause != "marks_cell_notation_not_parsed":
+            continue
+        m = _EMPTY_MAX_IN_EVIDENCE_RE.search(evidence)
+        if m is None:
+            continue
+        empty_count, maximum_mark = int(m.group(1)), int(m.group(2))
+        if empty_count >= maximum_mark:
+            stems.append(stem)
+    return stems
+
+
 def mismatch_cause(computed_total: int, maximum_mark: int) -> str:
     """Split the final-residual mismatch bucket: overcount vs. genuine mismatch.
 
@@ -319,51 +366,65 @@ def classify_theory_residual(
     computed_total: int, maximum_mark: int, empty_count: int, marks_col: int
 ) -> dict[str, Any]:
     """Decide the theory-path residual cause once a real marks column and its
-    empty-cell count are known -- the sufficiency-gated core of
-    ``_classify_theory``, pulled out as a pure function so the gate is
-    unit-testable without re-parsing a PDF (round-3 brief).
+    (population-correct) defaulted-AnswerPoint count are known -- the
+    sufficiency-gated core of ``_classify_theory``, pulled out as a pure
+    function so the gate is unit-testable without re-parsing a PDF
+    (round-3 brief). ``empty_count`` must be measured by
+    ``count_defaulted_answer_points`` (round 5), not ``count_empty_marks_cells``
+    (round 4 and earlier) -- see the module docstring's bucket-4 entry for why.
 
-    Sufficiency condition for ``marks_cell_notation_not_parsed`` (round-4
-    fix -- round 3 bounded only the EXCESS side, leaving the deficit side
-    unconditional): empty marks cells default to EXACTLY 1 mark each
-    (``lemely/io/det/rows.py``'s ``make_point``), so (a) N empty cells can
+    Sufficiency condition for ``marks_cell_notation_not_parsed`` (round 5 --
+    round 4 bounded a two-sided claim that turned out unsound on the deficit
+    side even over the corrected population; round 3 bounded only the EXCESS
+    side). Empty marks cells default to EXACTLY 1 mark each
+    (``lemely/io/det/rows.py``'s ``make_point``), so N empty cells can
     inflate ``computed_total`` above what the non-empty cells alone would
-    sum to by AT MOST N, and (b) ``computed_total`` can never validly fall
-    BELOW ``empty_count`` under this mechanism, since every empty cell still
-    contributes 1. The bucket is claimed only when the TWO-SIDED bound holds
-    -- ``empty_count <= computed_total <= maximum_mark`` (deficit side: the
-    defaulting mechanism cannot explain a total lower than the number of
-    defaulted cells, and cannot on its own explain a total above
-    ``maximum_mark`` either), or ``computed_total - maximum_mark <=
-    empty_count`` (excess side, unchanged from round 3: the excess is within
-    what the empty cells could have contributed). Any row failing both falls
-    through to ``mismatch_cause``, carrying the empty-cell fact forward in
-    the evidence string rather than silently dropping it -- a deficit below
-    ``empty_count``, or an excess larger than ``empty_count``, is evidence
-    the empty cells are NOT the (sole) explanation, not evidence that no
-    notation problem exists at all.
+    sum to by AT MOST N -- this EXCESS bound survives as a sound
+    necessary-condition check regardless of population, because a defaulted
+    point contributes AT MOST 1 whether or not it is actually summed into a
+    leaf's ``Question.marks``. The DEFICIT claim ("computed_total can never
+    fall below empty_count, since every empty cell still contributes 1") does
+    NOT survive: ``lemely/io/det/rows.py``'s ``flush()`` only sums a leaf's
+    AnswerPoints into ``Question.marks`` when that leaf's own
+    ``q_row_had_answer`` flag was set (the Q-number row itself carried an
+    answer, or an EITHER/OR bracket appeared) -- a common table shape
+    (Q-number row with NO answer, marks on continuation rows below it) never
+    sets that flag, so a defaulted AnswerPoint can contribute exactly 0 to
+    ``computed_total``, not >= 1 as round 3/4 assumed.
+
+    The bucket is therefore claimed ONLY via the EXCESS side:
+    ``empty_count > 0`` and ``computed_total > maximum_mark`` and
+    ``computed_total - maximum_mark <= empty_count``. A deficit shape
+    (``computed_total <= maximum_mark``) always falls through to
+    ``mismatch_cause`` now; when ``empty_count > 0`` its evidence carries an
+    explicit consistency-check-only note (``"upper bound, deficit side
+    unbounded"``) rather than an enforced bound, so a reader cannot mistake
+    the empty-cell fact for a ruled-in or ruled-out cause in that direction.
     """
-    deficit_explainable = empty_count <= computed_total <= maximum_mark
     excess_explainable = computed_total > maximum_mark and (
         computed_total - maximum_mark
     ) <= empty_count
-    if empty_count > 0 and (deficit_explainable or excess_explainable):
+    if empty_count > 0 and excess_explainable:
         return {
             "cause": "marks_cell_notation_not_parsed",
             "evidence": (
                 f"marks_col={marks_col}: {empty_count} empty marks cell(s) defaulted to 1; "
                 f"computed_total={computed_total} maximum_mark={maximum_mark} "
-                f"(delta explainable by defaulting: at most {empty_count})"
+                f"(excess explainable by defaulting: at most {empty_count})"
             ),
         }
 
     if computed_total != maximum_mark:
         cause = mismatch_cause(computed_total, maximum_mark)
-        if empty_count > 0 and computed_total < empty_count:
+        if empty_count > 0 and computed_total <= maximum_mark:
+            # Deficit direction: consistency-check-only, NOT an enforced
+            # bound -- see this function's docstring for why the deficit
+            # claim is unsound even over the corrected population.
             empty_note = (
-                f"{empty_count} empty marks cell(s) were also defaulted but cannot explain "
-                f"the full delta (computed_total={computed_total} is BELOW empty_count="
-                f"{empty_count}, which defaulting alone cannot produce); "
+                f"{empty_count} empty marks cell(s) were also defaulted (upper bound, "
+                "deficit side unbounded: a defaulted AnswerPoint is not guaranteed to "
+                "reach computed_total at all, so this count neither confirms nor rules "
+                "out empty-cell defaulting as a cause here); "
             )
         elif empty_count > 0:
             empty_note = (
@@ -396,12 +457,18 @@ def classify_theory_residual(
 
 
 def count_empty_marks_cells(rows: list[list[str | None]], marks_col: int) -> int:
-    """Count data rows where the marks column cell is empty.
+    """Count RAW TABLE ROWS where the marks column cell is empty.
 
-    An empty marks cell is exactly the case where ``build_questions`` defaults
-    an ``AnswerPoint``'s marks to 1 (see ``rows.make_point``) — the "cell was
-    not parsed" case for a column that otherwise fully qualifies as a marks
-    column (``is_marks_column`` only inspects non-empty cells).
+    Superseded for ``classify_theory_residual``'s ``empty_count`` by
+    ``count_defaulted_answer_points`` (round 5) -- kept here (and still
+    unit-tested) only as the documented, characterised counterexample of
+    what NOT to use: this scans every "data row" with a blank marks cell,
+    including rows that ``build_questions`` never turns into an
+    ``AnswerPoint`` at all (e.g. a Q-number row with no answer text of its
+    own), which is why it could report ``empty_count=119`` for a scheme
+    whose ``maximum_mark`` is 80 -- a population that cannot physically hold
+    119 answer points. See ``count_defaulted_answer_points`` for the
+    population-correct replacement.
     """
     count = 0
     for row in rows:
@@ -413,6 +480,73 @@ def count_empty_marks_cells(rows: list[list[str | None]], marks_col: int) -> int
         if not cell.strip():
             count += 1
     return count
+
+
+def count_defaulted_answer_points(
+    rows: list[list[str | None]],
+    layout: Any,
+    max_mark: int,
+    header_keywords: frozenset[str],
+) -> int:
+    """Count AnswerPoints ``build_questions`` actually created whose marks
+    value was DEFAULTED by ``lemely/io/det/rows.py``'s ``make_point`` (i.e.
+    their marks cell failed to parse), by re-running row-building once with
+    transparent instrumentation -- the population-correct replacement for
+    ``count_empty_marks_cells``' raw-table-row scan (round-5 root cause: the
+    two counts were measuring different populations, so ``empty_count`` and
+    ``computed_total`` were not commensurable).
+
+    Mechanism, kept strictly read-only/diagnostic and never touching
+    ``lemely/io/det/rows.py``: monkeypatches two names in that module's OWN
+    namespace, for the duration of this one call only --
+
+    * ``parse_marks_cell`` — records, per call, whether the real function
+      returned ``None`` (an unparseable/empty cell).
+    * ``AnswerPoint`` — records, at each construction, whether the most
+      recent ``parse_marks_cell`` call (see above) was ``None``.
+
+    Both wrappers are transparent pass-throughs: they call straight through
+    to the real function/class and return its exact result unchanged, so
+    this does not alter ``build_questions``' actual output in any way (the
+    caller re-runs ``build_questions`` separately, unpatched, to get the
+    real ``computed_total`` -- this function exists only to OBSERVE, on the
+    identical input, how many of the AnswerPoints actually created got the
+    1-mark default).
+
+    Correctness of the parse-call/point-construction pairing relies on one
+    property of ``build_questions``' row loop, verified by reading
+    ``lemely/io/det/rows.py``'s source: exactly one ``parse_marks_cell`` call
+    happens per non-blank row (unconditionally, before any row-type branch),
+    and AT MOST one ``make_point``/``AnswerPoint`` call happens per row
+    thereafter, always consuming that SAME row's parsed value -- so "the most
+    recent parse_marks_cell call was None" is an exact per-row correlate of
+    "this AnswerPoint was defaulted", not an approximation.
+    """
+    from lemely.io.det import rows as _rows_mod
+
+    state = {"last_call_was_default": False, "defaulted": 0}
+    real_parse_marks_cell = _rows_mod.parse_marks_cell
+    real_answer_point = _rows_mod.AnswerPoint
+
+    def _spy_parse_marks_cell(raw: str, cap: int) -> Any:
+        result = real_parse_marks_cell(raw, cap)
+        state["last_call_was_default"] = result is None
+        return result
+
+    def _spy_answer_point(*args: Any, **kwargs: Any) -> Any:
+        if state["last_call_was_default"]:
+            state["defaulted"] += 1
+        return real_answer_point(*args, **kwargs)
+
+    _rows_mod.parse_marks_cell = _spy_parse_marks_cell  # type: ignore[assignment]
+    _rows_mod.AnswerPoint = _spy_answer_point  # type: ignore[assignment]
+    try:
+        _rows_mod.build_questions(rows, layout, max_mark=max_mark, header_keywords=header_keywords)
+    finally:
+        _rows_mod.parse_marks_cell = real_parse_marks_cell
+        _rows_mod.AnswerPoint = real_answer_point
+
+    return state["defaulted"]
 
 
 # ---------------------------------------------------------------------------
@@ -563,8 +697,6 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
             ),
         }
 
-    empty_count = count_empty_marks_cells(merged, real_marks_col)
-
     layout = detect_columns(merged, max_mark=MAX_MARK_PER_POINT)
     try:
         questions = build_questions(
@@ -578,6 +710,12 @@ def _classify_theory(pdf: Any, metadata: Any) -> dict[str, Any]:
 
     computed = _reconcile._leaf_marks(questions)
     maximum_mark = metadata.maximum_mark
+    # Round 5: empty_count is re-derived over the SAME population that
+    # feeds `computed` (AnswerPoints build_questions actually created), not
+    # raw table rows -- see count_defaulted_answer_points' docstring.
+    empty_count = count_defaulted_answer_points(
+        merged, layout, MAX_MARK_PER_POINT, HEADER_KEYWORDS
+    )
 
     return classify_theory_residual(
         computed_total=computed,
@@ -626,6 +764,7 @@ def main() -> None:
     (OUT_DIR / "classified-failures.txt").write_text("\n".join(rows) + "\n", encoding="utf-8")
 
     profile_breakdown = profile_misconfiguration_breakdown(classified)
+    near_vacuous_stems = excess_bound_near_vacuous_stems(classified)
 
     assert sum(causes.values()) == len(stems) == 229, (
         f"denominator drift: {sum(causes.values())} classified vs {len(stems)} input stems"
@@ -668,13 +807,37 @@ def main() -> None:
             "n_total": len(stems),
             "share": round(d7_hypothesis_n / len(stems), 4) if stems else 0.0,
             "falsifiable": True,
+            "is_upper_bound": True,
             "note": (
                 "This count is measured from re-running the pipeline's own column/cell "
                 "detectors over each failing PDF, not assumed from the hypothesis by "
                 "construction -- other causes (paper_profile_misconfiguration, "
                 "table_layout_extraction_failure, mark_aggregation_overcount, "
                 "genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever "
-                "their evidence is more specific."
+                "their evidence is more specific. Round 5: marks_cell_notation_not_parsed's "
+                "own sufficiency check is now excess-side only (see manifest's absence of a "
+                "deficit disjunct) -- the deficit direction is a consistency-check-only note, "
+                "not an enforced bound, because a defaulted AnswerPoint is not guaranteed to "
+                "reach computed_total at all (lemely/io/det/rows.py's flush() only sums a "
+                "leaf's AnswerPoints when that leaf's q_row_had_answer flag was set). This "
+                "D7 share is therefore published explicitly as an UPPER BOUND on what the "
+                "column/cell-detection hypothesis explains, not a fully enforced count."
+            ),
+        },
+        "excess_bound_near_vacuous": {
+            "count": len(near_vacuous_stems),
+            "stems": near_vacuous_stems,
+            "detail": (
+                "Rows in marks_cell_notation_not_parsed whose empty_count >= maximum_mark: "
+                "the excess sufficiency check (computed_total - maximum_mark <= empty_count) "
+                "is technically satisfied but close to vacuous there, since a bound that "
+                "large barely constrains anything. The round-5 population fix "
+                "(count_defaulted_answer_points) sharply reduced how often this happens -- "
+                "round 4's raw-row count put 4 rows at empty_count >= maximum_mark, one as "
+                "high as 119 for a maximum_mark of 80 -- but does not eliminate it entirely "
+                "for schemes with a genuinely high fraction of defaulted cells. Recorded "
+                "here rather than silently claimed away; these rows are still correctly in "
+                "the denominator and still labelled, just with a weaker-than-usual bound."
             ),
         },
         "known_bug_classified_not_fixed": {
