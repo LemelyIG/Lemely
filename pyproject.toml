@@ -127,6 +127,10 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
   "TC003",
 ]
 "tests/architecture/**" = ["S607", "S603"]
+# Fixed-argument subprocess.run (fresh-interpreter import isolation) and
+# urllib.request.urlopen against a http://127.0.0.1 URL this same test spun
+# up — both are the deliberate mechanism, not untrusted input.
+"tests/eval/test_labeller_blindness.py" = ["S603", "S310"]
 "lemely/runtime/logging.py" = ["ANN401"]
 # Prompt files contain long strings and non-ASCII characters by design.
 "lemely/io/prompts/**" = ["E501", "RUF001", "TCH"]
@@ -237,6 +241,7 @@ ignore_errors = true
 module = [
   "lemely.eval.manifest",
   "lemely.eval.records",
+  "lemely.labelling.records",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",
@@ -345,6 +350,16 @@ name = "Evaluation analyses must stay pure — no IO, no app"
 type = "forbidden"
 source_modules = ["lemely.eval"]
 forbidden_modules = ["lemely.io", "lemely.app"]
+
+[[tool.importlinter.contracts]]
+name = "The blind labeller must not depend on the correction pipeline"
+type = "forbidden"
+source_modules = ["lemely.labelling"]
+forbidden_modules = [
+  "lemely.core.correction",
+  "lemely.io.correction_ai",
+  "lemely.core.schemas",
+]
 
 [tool.pyright]
 venvPath = '.'

@@ -1123,3 +1123,81 @@ class SaveResultRoundTripTests(unittest.TestCase):
         self.assertEqual(rate["n"], len(records))
         self.assertEqual(rate["review_rate_total"], 0.0)
         self.assertEqual(rate["review_rate_signal"], 0.0)
+
+
+class CoherenceTriggerWiringTests(unittest.TestCase):
+    """M1.5 (#40) SHOULD-FIX: the correction_ai -> harness coherence-trigger
+    wiring is stringly-typed (``_review_triggers`` substring-matches every
+    ``_check_coherence`` review_reason against
+    ``lemely.io.correction_ai.COHERENCE_TRIGGER_MARKER``). A reworded message
+    on one side without updating the other would make
+    ``coherence_trigger_rate`` silently read 0.0 with every unit test still
+    green, because the two sides were never exercised together end to end.
+    This test drives the REAL production message through
+    ``_build_ai_corrected`` -> ``QuestionResult`` -> ``_review_triggers`` (via
+    ``question_result_to_eval_record``), rather than hand-typing a literal
+    review_reason string, so it fails if either side of the wiring drifts.
+    """
+
+    def test_real_coherence_review_reason_produces_coherence_mismatch_trigger(self) -> None:
+        from lemely.accuracy.harness import QuestionResult, question_result_to_eval_record
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="method", marks=1),
+                AnswerPoint(id="p2", point="final answer", marks=1),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        mark = AIMarkResponse(
+            awarded_marks=2,
+            confidence=1.0,
+            matched_point_ids=["p1"],  # implies [1, 1]; awarded_marks=2 is outside it.
+            feedback="test",
+        )
+        cq = _build_ai_corrected(question, "answer", mark)
+        self.assertTrue(cq.needs_teacher_review)  # sanity: the gate actually fired
+
+        result = QuestionResult(
+            question_id="2",
+            question_type="theory",
+            predicted_marks=cq.awarded_marks,
+            truth_marks=1,
+            confidence_score=mark.confidence,
+            needs_teacher_review=cq.needs_teacher_review,
+            review_reason=cq.review_reason,
+        )
+        record = question_result_to_eval_record(
+            result, run_id="wiring-test", paper_id="p1", arm="extract+mark"
+        )
+        self.assertIn("coherence_mismatch", record.triggers)
+        self.assertIn("needs_teacher_review", record.triggers)
+
+    def test_review_reason_without_the_marker_does_not_fire_coherence_trigger(self) -> None:
+        """Negative control: a review reason from a DIFFERENT gate (e.g. low
+        confidence) must not spuriously carry the coherence trigger."""
+        from lemely.accuracy.harness import QuestionResult, question_result_to_eval_record
+
+        result = QuestionResult(
+            question_id="1",
+            question_type="theory",
+            predicted_marks=1,
+            truth_marks=1,
+            confidence_score=0.5,
+            needs_teacher_review=True,
+            review_reason="confidence 0.50 is below review threshold 0.90",
+        )
+        record = question_result_to_eval_record(
+            result, run_id="wiring-test", paper_id="p1", arm="extract+mark"
+        )
+        self.assertNotIn("coherence_mismatch", record.triggers)
+        self.assertIn("needs_teacher_review", record.triggers)

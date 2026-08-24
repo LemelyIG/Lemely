@@ -11,6 +11,7 @@ from __future__ import annotations
 from lemely.eval.analyses import (
     MCNEMAR_IMPROVEMENT_N_FLOOR,
     ablation_2x2,
+    coherence_trigger_rate,
     exclusion_funnel,
     mcnemar,
     mcnemar_improvement_p_value,
@@ -28,6 +29,7 @@ __all__ = [
     "LabelManifest",
     "RunManifest",
     "ablation_2x2",
+    "coherence_trigger_rate",
     "exclusion_funnel",
     "mcnemar",
     "mcnemar_improvement_p_value",

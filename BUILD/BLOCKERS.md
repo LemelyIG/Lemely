@@ -750,10 +750,12 @@ moment Actions can run.
 
 ---
 
-## OPEN — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge
+## RESOLVED — 2026-08-22 — GitHub Actions is billing-blocked: no PR can merge
 
-**Raised:** 2026-08-22 · **Status:** **OPEN — needs a human with org billing
-access.** Nothing in this repository can resolve it.
+**Raised:** 2026-08-22 · **Status:** **RESOLVED 2026-08-23**, by the human
+making the repository **public** — see the resolution note at the end of this
+section. It did need a human with org billing access, exactly as this section
+said; nothing in the repository could have resolved it.
 
 ### What is broken
 
@@ -821,6 +823,38 @@ recorded as an open question rather than guessed at.
   has nothing to do with correctness.
 
 ### RESOLVED — 2026-08-23. Actions provisions runners again; the waiver is void
+
+**How it was fixed: the human made the repository public.** Recorded because
+the mechanism is not interchangeable with the other routes this section
+proposed. The diagnosis was exhausted free-tier minutes against a $0 spending
+limit on a private repo — GitHub's annotation covers both that and a failed
+payment, and the discriminating endpoints (`orgs/.../settings/billing/actions`,
+`orgs/.../actions/permissions`) returned `410` and `403` respectively, so the
+run that raised this could not tell the two apart. The human confirmed it was
+minute exhaustion. Public repositories get unlimited Actions minutes, so the
+constraint is now structurally gone rather than reset — it will not recur next
+billing cycle, and no spending limit needs watching.
+
+Three consequences that outlive the blocker, none of them CI:
+
+1. **Branch protection and rulesets are now available.** Both previously
+   returned `403 "Upgrade to GitHub Pro or make this repository public"`, which
+   is precisely why four PRs could merge with `mergeStateStatus: UNSTABLE` and
+   zero CI. Required status checks on `develop` would make the
+   `allow_merge_without_ci` waiver structurally unnecessary rather than merely
+   lapsed. **Not enabled as of this writing.**
+2. **Secret scanning and push protection are free here and are `disabled`.**
+   Push protection blocks a credential at `git push` rather than reporting it
+   afterwards. A history scan found nothing to rotate — `.env` was never
+   committed (`.gitignore:42`), no `AIza…` or `GEMINI_API_KEY=<value>` hits
+   across all refs, and every `service_role` hit is a variable name or a
+   `"..."` placeholder — but that is a point-in-time result, not a control.
+3. **A self-hosted runner is now the unsafe option, and earlier advice in this
+   programme said the opposite.** That advice was correct for a private repo:
+   the standard warning is about untrusted fork PRs, which a private repo does
+   not receive. A public repo does, and a self-hosted runner would execute
+   fork-PR code on the host. Moot as well as unsafe now that minutes are free —
+   but the reversal is recorded so the old reasoning is not found and reused.
 
 Confirmed by the `steps` test this file itself prescribed as the only valid one,
 re-run against the API rather than taken from the state file: run
@@ -916,3 +950,303 @@ not the constraint — authorisation is.
 - **Did not re-run or extend the #27 A/A floor.** It is published and ratified;
   MISSION §12.9 forbids re-running at higher `n` to chase significance.
 - **Did not move any board item to Ready** to manufacture startable work.
+
+---
+
+## B: #36 (M1.1) — two of the issue's own acceptance bullets conflict once the third is implemented
+
+**Status: OPEN. Blocked on a human decision, not on engineering.** Opened
+2026-08-23. Branch `feature/accuracy-36-the-confidence-unit-must-ship-as-one`
+exists, one signed commit `2cae804`, tree clean, all local gates green, **no PR
+opened**. Board item stays *In progress*.
+
+### The conflict
+
+- **Bullet 1** requires extraction confidence to actually drive per-question
+  confidence. It is currently unmet: `_build_mcq_corrected`'s success branch
+  (`lemely/io/correction_ai.py:182-194`) still hardcodes
+  `confidence_score=1.0 / HIGH / needs_teacher_review=False`, so the new
+  `extraction_confidence` field is threaded but read by no decision path.
+- **Bullet 2** as written asks that "a raw-0.90 single-letter answer with
+  `source_region` set ends at ≤0.20, **not 0.23 or 1.00**". Those two rejected
+  values come from **two different inputs** on `develop`, not one: a clean
+  single letter took an uncapped `+0.1` (→1.00), while an MCQ *hint* whose
+  answer is not A/B/C/D took `min(conf, 0.2)` and leaked to 0.23. Satisfying
+  the bullet literally means capping clean single letters at 0.2 — a **new**
+  ceiling, not the "cap ordering fixed" the bullet's own title describes.
+- **Bullet 7** requires `review_rate_signal ≤ 8%`. Implementing 1 and 2-as-
+  written makes every correctly-extracted MCQ read LOW / needs-review — the
+  whole det path, 8 of 31 golden leaves (~26%) — on top of a `review_rate_signal`
+  already measured at **32.58%**. §9 gate 8 judges the ratchet on that number.
+
+### Why this was escalated instead of decided
+
+The engineering-clean reading is (A): delete only the bonus, leave the 0.2 cap
+on the mcq-hint-non-letter case where `develop` had it, so a clean letter keeps
+its raw confidence (0.90 + 0.03 = 0.93, which **violates** bullet 2's "≤0.20").
+That reading was **not** taken unilaterally for one reason: **it is the option
+that makes the gated metric easier.** Lowering MCQ review volume is exactly the
+narrowed-denominator / moved-goalpost shape `accuracy-reviewer` exists to catch,
+and an agent picking it on its own judgement is indistinguishable from that
+failure mode even when the argument is good. Structurally this is the **DA1**
+situation — a spec sentence unsatisfiable as written — and DA1's precedent is to
+propose the amendment and leave the spec alone until the human says.
+
+### What unblocks it
+
+A choice on #36 between **(A)** cap scoped to the non-letter case, bullet 2
+amended to name that input; **(B)** cap all MCQ-shaped answers at 0.2 as bullet 2
+literally reads, accept every correct MCQ becoming needs-review, and formally
+retire bullet 7 for M1.1 (it is already unmet at 32.58%, and gate 8 keeps the M0
+breach recorded-not-blocking, so this may be the honest answer); or **(C)**
+something else. Full evidence is in the 2026-08-23 comment on issue #36.
+
+### Resolved in this cycle, recorded so it is not re-litigated
+
+`paper_grade_confidence` originally weighted by `truth_marks`, which is marks
+**earned**, not the tariff — 23 of 71 baseline rows dropped, including the
+corpus minima `marker_conf` 0.55 and 0.65, biasing every band upward and making
+an all-zero paper vanish. Fixed by weighting on the tariff via a new
+`EvalRecord.maximum_marks: int | None = None`; the default is load-bearing
+(`StrictModel` is `extra="forbid"`, which rejects unknown keys but accepts a
+missing key with a default), so the published `aa-floor-2026-08-23-a` evidence
+still parses — verified, all 71 rows load. Rows weighted 48/71 → 71/71.
+
+**Bullet 6 is unmet and the fix did not rescue it.** The hypothesis that the
+`truth_marks` bias caused the all-HIGH degeneracy was **wrong**: the
+distribution is all-HIGH before and after (0.947 / 0.9197 / 1.0 / 0.9362 /
+0.982). Recorded as measured. It is structurally guaranteed while `marker_conf`
+is pinned at 1.0 for every correct MCQ, so re-read it once bullet 1 lands.
+
+---
+
+## #36 — M1.1 — The confidence unit (must ship as one commit)
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullets 1, 2 and 7 conflict — full write-up
+in **section B above**, and in the 2026-08-23 comment on #36. Branch
+`feature/accuracy-36-the-confidence-unit-must-ship-as-one` is implemented,
+reviewed and complete at `2cae804` (signed, gates green); it is **not
+abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
+from scratch. Board Status set back to Backlog. Resolve the blocker, append a
+RESOLVED line here, and move the item back to Ready.
+
+## C: #40 (M1.5) — a live review-escalation trigger is shipping unmeasured
+
+**Status: OPEN. Blocked on a human decision (authorise a sweep, or accept the
+gap explicitly).** Opened 2026-08-23. Branch
+`feature/accuracy-40-coherence-gate-awarded-marks-must`, **PR #83 OPEN and NOT
+merged**, CI green, six review dimensions clean. Board item moved off *In
+review*.
+
+### The blocker
+
+Acceptance bullet 4 of #40 — *"contribution to `review_rate` measured and
+reported separately"* — is **unmet**, and the thing it guards is real:
+
+- `_check_coherence` is a **fourth OR-branch** of `needs_teacher_review`
+  (`lemely/io/correction_ai.py:464`:
+  `low_confidence or out_of_range or value_mismatch or coherence_mismatch`),
+  so the gate creates review flags that would not otherwise exist.
+- `_review_triggers` (`lemely/accuracy/harness.py`) appends
+  `"coherence_mismatch"` **alongside** the generic `"needs_teacher_review"`,
+  never instead of it, and `review_rate` counts a leaf as reviewed on any
+  non-`random_audit` trigger. So the gate **raises** `review_rate_signal` and
+  `review_rate_total`.
+- **MISSION §9 gate 8:** *"Any change that could raise review volume is
+  measured against the ratchet **before** merge, not after."* No before/after
+  corpus number exists.
+
+The measured `review_rate_signal` is already **32.58%** against an 8% target,
+so this trigger consumes headroom that is already gone.
+
+### Why the measurement could not simply be taken
+
+- The historical route is barred: the 181 cached `AIMarkResponse` payloads
+  under `.lemely-cache/gemini/` carry `matched_point_ids` but **no
+  question-identity linkage** and no manifest, and `gemini.py` exposes no
+  zero-spend cache-hit-only replay mode (only `read_write`/`bypass`/`refresh`).
+- The forward route is barred by authorisation, not by capability: a live
+  sweep spends money and none is authorised.
+
+### Corrections this blocker also records
+
+1. **"#40 landed" is false.** Commit `a7b99e3`'s message says
+   *"#40 landed; clear in-progress marker"*. It never landed. The message
+   cannot be rewritten (pushed, and CI ran on it), so it is corrected here and
+   in the state pointer rather than silently left standing.
+2. **The orchestrator's "the machinery is delivered and wired, only the number
+   awaits a sweep" was wrong** — `coherence_trigger_rate()` had *zero* call
+   sites until `4a9e216`. The reporting path is now wired and test-covered;
+   still no corpus number.
+3. **"Reported separately" was being read as "review-budget neutral."** It is
+   not. The *metric* is kept out of the gate; the *trigger* still moves
+   `review_rate`. The comment in `cli.py` and the `_review_triggers` docstring
+   both implied otherwise and have been corrected.
+
+### What unblocks it
+
+Either **(a)** authorise the sweep that produces `coherence_trigger_rate` and
+the before/after delta to `review_rate_signal`/`review_rate_total` on the
+corpus (record it in DECISIONS.md, then #40 lands); or **(b)** decide
+explicitly that a live review-escalation trigger may ship unmeasured ahead of
+the M0.9 ratchet being armed, and say so on #40 — at which point the bullet is
+formally retired rather than quietly skipped. A third option, **(c)**, is to
+add a cache-hit-only replay mode to `gemini.py` (zero spend by construction)
+and measure that way, but that is new scope and belongs in its own issue.
+
+---
+
+## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+---
+
+## D: M1 as a whole is gated on measurement authorisation, not on engineering
+
+**Status: OPEN — a note for the human, not a separate defect.** Raised
+2026-08-23 after #36 and #40 both parked on human decisions in the same run.
+
+Two M1 items were taken start-to-finish this run. Both are engineering-complete
+with green gates, and **both stopped for the same underlying reason**: a number
+is required before merge, and producing it needs a sweep nobody has authorised.
+
+- **#36 (M1.1)** — bullet 7 (`review_rate_signal <= 8%`) sits against a
+  measured 32.58%, and bullets 1/2/7 are mutually unsatisfiable as written
+  (§B).
+- **#40 (M1.5)** — bullet 4 requires the coherence trigger's contribution to
+  `review_rate` measured *before* merge, per MISSION §9 gate 8 (§C).
+
+This is not a coincidence of two issues. **MISSION §9 gate 9** states the M1
+milestone gates apply *"on every M1 item: non-regression on the signed
+over/under split (α=0.05) is the blocking condition; McNemar reported, not
+gated; flag recall not below the M0 baseline."* Every one of those is a
+measurement over a corpus. So on the current reading, **no M1 item can merge
+without a sweep**, and the remaining unstarted items look the same:
+
+| Item | Why it needs a number |
+|---|---|
+| #37 M1.2 | co-commit requires "the metric's CI-target re-derivation" |
+| #38 M1.3 | mark-lowering; §9 gate 9 over/under non-regression |
+| #39 M1.4 | mark-lowering; same |
+| #41 M1.6 | mark-raising **and** bumps a prompt `VERSION` (invalidates cache) |
+| #58 M1.8 | acceptance bullet 4 mandates `cache_mode=bypass` — a live sweep |
+
+**The practical consequence.** Authorising one sweep does not just unblock one
+issue — it is the thing standing between the programme and the whole of M1.
+Conversely, continuing to take M1 items one at a time will keep producing
+complete-but-unmergeable branches, which is what happened twice today.
+
+**Not claimed here:** that §9 gate 9 *must* be read per-item rather than
+once at milestone close. That reading is the strict one and is what this run
+followed; a human may reasonably rule it applies at M1 completion instead,
+which would let several items land now and be measured together. **That
+re-reading is itself a decision worth making explicitly**, and it is cheaper
+than authorising five separate sweeps.
+
+---
+
+## E: #57 (M0.7b) is blocked — the restored corpus is PDFs, and the split needs PARSED schemes
+
+**Status: OPEN. Blocked on a human decision about spend.** Raised 2026-08-23,
+immediately after #44 merged.
+
+### What #44 actually delivered, and what it did not
+
+#44 restored **1488 PDFs** and a committed digest manifest. It did **not**
+produce structured mark schemes: `find /home/sico/PaperScraper/papers -name
+'*.json'` (excluding the catalogue) returns **0**. The only parsed schemes in
+the tree are the **11** `tests/golden/*/mark_scheme.json` files — **71 leaf
+questions** — plus 2 JSONs under `Sources/`.
+
+### Why that blocks #57
+
+#57's binding constraints (posted on the issue, from DA1) require strata of
+**syllabus code × parse path (det/Gemini) × tariff band (1 / 2 / 3+ marks)**.
+Tariff band and parse path are properties of a *parsed* scheme. A PDF supplies
+neither. So the "restored corpus" #57 is supposed to stratify over cannot be
+enumerated into leaf questions at all in its current form.
+
+The target is ~300 leaves (10/60/30 → ≈30/180/90). Available: 71.
+
+### Why freezing over the 71 golden leaves would be a mistake, not a shortcut
+
+The constraints do say *"Splits land under target n; M0.5's exclusion funnel
+publishes the shortfall"*, so under-target is anticipated — but they also say
+**"Amendments — drop-only … never draw a backfill"** and the membership is
+**frozen**. Freezing over 71 leaves while 1488 unparsed papers sit on disk
+would be **irreversible by rule**, would discard most of what #44 was run to
+obtain, and would permanently cap the labelling corpus at roughly a quarter of
+its intended size. The drop-only rule exists to stop backfilling *after* a
+principled freeze — not to license freezing early and calling the gap a
+shortfall.
+
+### The missing step nobody scoped
+
+Between #44 (fetch PDFs) and #57 (split leaf questions) there is an unlisted
+prerequisite: **parse the restored corpus into structured mark schemes.** The
+det parser handles MCQ schemes at zero cost, but theory schemes go through the
+Gemini mark-scheme parser, which **spends money**. No authorisation exists for
+that, and #28's standing rule is that spend waits for the human.
+
+### What unblocks it
+
+- **(A)** Authorise a mark-scheme parsing pass over enough of the restored
+  corpus to reach ~300 leaves, with a costed preflight first; then #57 runs as
+  specified.
+- **(B)** Rule that #57 may freeze over a smaller corpus, stating explicitly
+  that the resulting n is accepted and permanent under the drop-only rule.
+- **(C)** Scope the parsing step as its own issue (it plausibly overlaps #45,
+  M2.2's failure-reason census over failing mark schemes, which also needs
+  parsed schemes).
+
+**Not started, deliberately.** #57 was read, its constraints were read, and the
+prerequisite gap was found before any branch was cut — not discovered halfway
+through an implementation.
+
+---
+
+## #57 — M0.7b — Freeze the split membership over the restored corpus
+
+**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on PREREQUISITE GAP: #44 restored 1488 PDFs but ZERO parsed mark schemes; this issue's strata need tariff band + parse path, which only a parsed scheme supplies. 71 golden leaves available vs a ~300 target. Freezing over 71 would be irreversible under the drop-only rule. Needs a human call on parsing spend — BUILD/BLOCKERS.md section E.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## SUPERSEDED — §D is retired by the 2026-08-24 gate-9 scoping directive
+
+`## D: M1 as a whole is gated on measurement authorisation, not on engineering`
+above recorded the **strict per-item** reading of MISSION §9 gate 9. The human
+retired that reading on **2026-08-24T01:14:03**:
+
+> gate 9 applies per item **only to mark-changing items**. #38 (M1.3), #39
+> (M1.4) and #41 (M1.6) change awarded marks and each need their own
+> before/after measurement before merge. Items that change confidence, review
+> routing or reporting **without** changing awarded marks land on engineering
+> grounds and fold into a single milestone-close sweep at M1 completion.
+
+The test is **what the code does, not which milestone the issue sits in**: if a
+diff can change the mark a student receives, it needs its number first.
+
+§D is left in place rather than deleted — it is the reasoning that produced two
+complete-but-unmergeable branches on 2026-08-23, and the directive names that
+outcome as the thing it is correcting. Read §D as history, not as policy.
+
+**Consequently resolved:** §B (#36) and §C (#40) are both decided — see the
+2026-08-24 inbox entries. §E (#57) is unblocked via option A, with a
+mark-scheme parsing pass authorised.

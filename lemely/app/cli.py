@@ -1036,7 +1036,7 @@ def measure_accuracy_cmd(
         measure_accuracy,
         save_result,
     )
-    from lemely.eval.analyses import review_rate
+    from lemely.eval.analyses import coherence_trigger_rate, review_rate
     from lemely.eval.review_gate import evaluate_review_rate_gate
     from lemely.io.gemini import GeminiClient
 
@@ -1119,10 +1119,111 @@ def measure_accuracy_cmd(
     if gate["blocking_failure"]:
         failed.append("review_rate_gate: " + "; ".join(gate["breaches"]))
 
+    # M1.5 (#40) bullet 4: the coherence gate's own contribution to review
+    # volume, measured and reported SEPARATELY from review_rate above —
+    # never folded into it, and never fed into the review-rate gate/ratchet.
+    # This is reporting only: it does not affect `failed` or the exit code.
+    #
+    # Read that precisely: it is the coherence_trigger_rate METRIC that is
+    # kept out of the gate. The coherence TRIGGER itself is NOT neutral —
+    # `_check_coherence` is a fourth OR-branch of `needs_teacher_review`
+    # (`correction_ai.py`), so a coherence-flagged leaf also carries the
+    # generic "needs_teacher_review" trigger and therefore DOES raise
+    # `review_rate_signal` and `review_rate_total`. This line exists to make
+    # that cost visible; it does not make the cost zero.
+    ctr = coherence_trigger_rate(result.eval_records)
+    click.echo(f"Coherence trigger rate: {ctr['coherence_trigger_rate']:.3f} (n={ctr['n']})")
+
     if failed:
         click.echo("\nTargets missed:", err=True)
         for f in failed:
             click.echo(f"  x {f}", err=True)
+        raise click.exceptions.Exit(1)
+
+
+@cli.command("label")
+@click.argument("paper_id")
+@click.option(
+    "--split",
+    type=click.Choice(["train", "dev", "test"]),
+    default="train",
+    show_default=True,
+    help="Split this paper belongs to, recorded in the label manifest (spec §6).",
+)
+@click.option(
+    "--labeller-id",
+    default=None,
+    help="Labeller identity, recorded in the label manifest. Defaults to $USER.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=int, default=8765, show_default=True)
+def label_cmd(paper_id: str, split: str, labeller_id: str | None, host: str, port: int) -> None:
+    """Start the two-pass blind labeller server for PAPER_ID (spec §6, M2.3/#46).
+
+    Delegates entirely into :mod:`lemely.labelling` — this command must not
+    inline labeller logic here, so the "labeller stays blind to the
+    correction pipeline" import-linter contract can target that module
+    narrowly rather than this file (which imports the correction pipeline
+    for other commands).
+    """
+    from lemely.labelling.server import run_labeller
+
+    resolved_labeller_id = labeller_id or os.environ.get("USER", "anonymous")
+    run_labeller(
+        paper_id,
+        split=cast("Literal['train', 'dev', 'test']", split),
+        labeller_id=resolved_labeller_id,
+        host=host,
+        port=port,
+    )
+
+
+@cli.command("label-verify")
+@click.argument("paper_id")
+@click.pass_context
+def label_verify_cmd(ctx: click.Context, paper_id: str) -> None:
+    """Verify PAPER_ID's tamper-evident label hash chains (spec §6, #46 repair pass 3).
+
+    Exits non-zero if either ``transcription.jsonl`` or ``marking.jsonl`` is
+    broken. Without this command, ``verify_chain`` had no production
+    caller — a human auditing the label corpus had no way to actually run
+    the tamper-evidence check the spec calls for; this just delegates into
+    :func:`lemely.labelling.verify.verify_paper_labels`.
+    """
+    from lemely.labelling.verify import verify_paper_labels
+
+    verification = verify_paper_labels(paper_id)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "paperId": verification.paper_id,
+                "ok": verification.ok,
+                "files": {
+                    name: (
+                        None
+                        if result is None
+                        else {
+                            "ok": result.ok,
+                            "brokenIndex": result.broken_index,
+                            "reason": result.reason,
+                        }
+                    )
+                    for name, result in verification.files.items()
+                },
+            }
+        )
+    else:
+        click.echo(f"Label chain verification for {paper_id}:")
+        for name, result in verification.files.items():
+            if result is None:
+                click.echo(f"  {name}: no file (skipped)")
+            elif result.ok:
+                click.echo(f"  {name}: OK")
+            else:
+                click.echo(f"  {name}: BROKEN at record {result.broken_index} — {result.reason}")
+
+    if not verification.ok:
         raise click.exceptions.Exit(1)
 
 
