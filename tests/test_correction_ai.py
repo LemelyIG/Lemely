@@ -12,12 +12,13 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
-from lemely.core.loose_schemas import MarkScheme
+from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
+    ConfidenceBand,
     ExtractedAnswer,
     ExtractedAnswers,
 )
-from lemely.io.correction_ai import correct_paper
+from lemely.io.correction_ai import _build_mcq_corrected, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError
@@ -158,6 +159,143 @@ class HybridCorrectPaperTests(unittest.TestCase):
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.awarded_marks, 2)  # clamped
+
+    def test_extraction_confidence_propagates_through_mcq_path(self) -> None:
+        """CorrectedQuestion.extraction_confidence carries the extractor's confidence (#36/M1.1)."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.77),
+                ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.42),
+            ],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.extraction_confidence, 0.77)
+
+    def test_extraction_confidence_propagates_through_ai_marked_path(self) -> None:
+        """extraction_confidence flows into the AI-marked (non-MCQ) CorrectedQuestion too."""
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1", "p2"], "ok")])
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.42),
+            ],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.extraction_confidence, 0.42)
+
+    def test_mcq_confidence_score_tracks_extraction_confidence(self) -> None:
+        """MUST-FIX 1 (#36 repair): a correct MCQ's confidence_score must MOVE with
+        extraction_confidence, not stay hardcoded at 1.0 (D13). Two different
+        extraction confidences on the same correct letter must produce two
+        different confidence_score values, each equal to the extraction
+        confidence that produced it.
+        """
+        high = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.93)],
+        )
+        low = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.55)],
+        )
+        result_high = correct_paper(
+            mark_scheme=self.ms, extracted_answers=high, gemini_client=None, mcq_only=True
+        )
+        result_low = correct_paper(
+            mark_scheme=self.ms, extracted_answers=low, gemini_client=None, mcq_only=True
+        )
+        q_high = next(q for q in result_high.questions if q.question_id == "1")
+        q_low = next(q for q in result_low.questions if q.question_id == "1")
+
+        self.assertEqual(q_high.awarded_marks, q_high.maximum_marks)  # correct answer
+        self.assertEqual(q_low.awarded_marks, q_low.maximum_marks)  # correct answer
+        self.assertNotEqual(q_high.confidence_score, q_low.confidence_score)
+        self.assertEqual(q_high.confidence_score, 0.93)
+        self.assertEqual(q_low.confidence_score, 0.55)
+
+    def test_high_extraction_confidence_correct_mcq_is_not_flagged(self) -> None:
+        """Sanity check on option A: a clean single-letter extraction at ~0.93
+        (the option-A steady state) must land HIGH and unflagged -- correct
+        MCQs must not flood the review queue.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.93)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms, extracted_answers=extracted, gemini_client=None, mcq_only=True
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.confidence, ConfidenceBand.HIGH)
+        self.assertFalse(q1.needs_teacher_review)
+
+    def test_low_extraction_confidence_correct_mcq_is_routed_to_review(self) -> None:
+        """The point of the fix: a correct MCQ whose LETTER was read with low
+        extraction confidence must be flagged for review, not auto-graded at
+        1.0/HIGH -- the deterministic comparison being certain does not mean
+        the extraction it was applied to was certain.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.55)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms, extracted_answers=extracted, gemini_client=None, mcq_only=True
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.awarded_marks, q1.maximum_marks)  # still correct
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertNotEqual(q1.confidence, ConfidenceBand.HIGH)
+
+
+class MCQAbstainHardeningTests(unittest.TestCase):
+    """Defensive hardening for a latent, unreachable branch (D15, spec §2.2(ii)).
+
+    ``Question`` itself forbids ``mcq_answer=None`` for an MCQ-typed question
+    (see the model validator raising in ``loose_schemas.py``), so this branch
+    cannot be reached through any real parsing path today — this is NOT a
+    regression test for a live defect, it documents the defensive hardening
+    added to ``_build_mcq_corrected`` in case that invariant is ever violated
+    (e.g. a future relaxed parser, a hand-built fixture). Before this change,
+    a Question with ``mcq_answer=None`` silently fell through to
+    ``awarded_marks=0, confidence_score=1.0, HIGH, needs_teacher_review=False``
+    — a wrong mark reported with full, unflagged confidence.
+    """
+
+    def test_mcq_answer_none_abstains_with_low_confidence_and_review_flag(self) -> None:
+        question = Question.model_construct(
+            id="1",
+            parent_id=None,
+            marks=1,
+            type=QuestionType.MCQ,
+            mcq_answer=None,
+            parts=[],
+            topic_hint=None,
+        )
+        result = _build_mcq_corrected(question, "A")
+        self.assertEqual(result.confidence_score, 0.0)
+        self.assertTrue(result.needs_teacher_review)
+        self.assertIsNotNone(result.review_reason)
 
 
 class ECFContextTests(unittest.TestCase):

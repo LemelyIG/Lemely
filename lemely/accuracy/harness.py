@@ -156,6 +156,8 @@ class QuestionResult:
     truth_marks: int
     confidence_score: float
     needs_teacher_review: bool
+    extraction_confidence: float | None = None
+    maximum_marks: int | None = None
     review_reason: str | None = None
 
     @property
@@ -366,8 +368,14 @@ def question_result_to_eval_record(
     `CorrectedQuestion` for this leaf at all) cases are built directly as
     `EvalRecord`s by `measure_accuracy` itself, bypassing this adapter
     entirely, since a `QuestionResult` has no "excluded"/"unmatched" concept
-    to hold them. `extraction_conf` is `None`: extraction-side confidence is
-    not threaded into `QuestionResult` today.
+    to hold them. `extraction_conf` is read from `result.extraction_confidence`
+    (spec §4 M1.1): extraction-side confidence, threaded from
+    `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`,
+    is `None` only when no answer was extracted for this question.
+    `maximum_marks` (spec §4 M1.1) is read from `result.maximum_marks` --
+    the question's tariff, threaded from `CorrectedQuestion.maximum_marks`,
+    used by `paper_grade_confidence` to weight by marks available rather
+    than marks earned.
     """
     if result.predicted_marks == result.truth_marks:
         outcome: Literal["correct", "over", "under"] = "correct"
@@ -389,10 +397,11 @@ def question_result_to_eval_record(
         predicted_marks=result.predicted_marks,
         truth_marks=result.truth_marks,
         outcome=outcome,
-        extraction_conf=None,
+        extraction_conf=result.extraction_confidence,
         marker_conf=result.confidence_score,
         id_match="exact",
         triggers=_review_triggers(result.needs_teacher_review, result.review_reason),
+        maximum_marks=result.maximum_marks,
     )
 
 
@@ -466,11 +475,18 @@ def _metrics_from_eval_records(
 
 
 def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]:
-    """Build calibration buckets from theory-question results only (AI-marked)."""
+    """Build calibration buckets from every question result, MCQ and theory alike.
+
+    D19 (spec §2.1): previously filtered to ``question_type == "theory"``
+    only, silently excluding every MCQ result from the calibration curve.
+    MCQ confidence is a real (deterministic, band-derived) signal too, so it
+    belongs in the same curve. This does not touch `mark_accuracy_theory`'s
+    own theory-only selection in `_compute_metrics` — D19 is specifically
+    about the calibration curve.
+    """
     buckets = _make_calibration_buckets()
     for r in results:
-        if r.question_type == "theory":
-            _assign_to_bucket(buckets, r.confidence_score, r.is_correct)
+        _assign_to_bucket(buckets, r.confidence_score, r.is_correct)
     return buckets
 
 
@@ -751,6 +767,7 @@ def measure_accuracy(
                         marker_conf=cq.confidence_score,
                         id_match="unmatched",
                         triggers=_review_triggers(cq.needs_teacher_review, cq.review_reason),
+                        maximum_marks=cq.maximum_marks,
                     )
                 )
                 continue
@@ -763,6 +780,14 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
+                # Only real vision extraction produces a measured extraction
+                # confidence; the oracle+mark bypass injects a constant 1.0
+                # `ExtractedAnswer.confidence` purely to satisfy the schema
+                # (ground-truth text has no genuine extraction confidence),
+                # so it must not flow into the measured `extraction_conf`
+                # field as if it were a real signal.
+                extraction_confidence=cq.extraction_confidence if arm == "extract+mark" else None,
+                maximum_marks=cq.maximum_marks,
                 review_reason=cq.review_reason,
             )
             all_results.append(question_result)

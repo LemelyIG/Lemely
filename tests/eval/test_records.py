@@ -7,7 +7,11 @@ from pydantic import ValidationError
 
 from lemely.eval.records import EvalRecord
 
-# Spec §3.3 "The record model" — EvalRecord field list, exactly.
+# Spec §3.3 "The record model" — EvalRecord field list, plus `maximum_marks`
+# (spec §4 M1.1, #36): the question's tariff, added so
+# `paper_grade_confidence` can weight by marks available instead of the
+# spec's original `truth_marks` (marks EARNED, discovered to be the wrong
+# weight -- see lemely.eval.analyses.paper_grade_confidence's docstring).
 _SPEC_3_3_EVAL_RECORD_FIELDS = {
     "run_id",
     "arm",
@@ -23,6 +27,7 @@ _SPEC_3_3_EVAL_RECORD_FIELDS = {
     "marker_conf",
     "id_match",
     "triggers",
+    "maximum_marks",
 }
 
 

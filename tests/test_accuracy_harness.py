@@ -245,6 +245,20 @@ class MetricComputationTests(unittest.TestCase):
         self.assertEqual(second.predictions, 1)
         self.assertEqual(second.correct, 0)
 
+    def test_mcq_results_enter_the_calibration_curve(self) -> None:
+        """MCQ QuestionResults must appear in a non-empty calibration bucket (D19, #36/M1.1).
+
+        Before this change, ``_build_calibration`` filtered to
+        ``question_type == "theory"`` only, silently dropping every MCQ
+        result from the curve.
+        """
+        from lemely.accuracy.harness import _build_calibration
+
+        results = [self._qr(1, 1, 0.95, False, is_mcq=True)]
+        buckets = _build_calibration(results)
+        total_predictions = sum(b.predictions for b in buckets)
+        self.assertEqual(total_predictions, 1)
+
 
 class MeasureAccuracyTests(unittest.TestCase):
     """Tests for measure_accuracy()'s scan_path-gated extraction path.
@@ -695,6 +709,24 @@ class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
         ]
         derived = _metrics_from_eval_records(eval_records, id_match_rate=1.0)
         self.assertEqual(legacy, derived)
+
+    def test_extraction_conf_propagates_from_question_result(self) -> None:
+        """question_result_to_eval_record must not hardcode extraction_conf=None (#36/M1.1)."""
+        from lemely.accuracy.harness import QuestionResult, question_result_to_eval_record
+
+        result = QuestionResult(
+            question_id="1",
+            question_type="mcq",
+            predicted_marks=1,
+            truth_marks=1,
+            confidence_score=0.95,
+            needs_teacher_review=False,
+            extraction_confidence=0.77,
+        )
+        record = question_result_to_eval_record(
+            result, run_id="test-run", paper_id="paper-1", arm="extract+mark"
+        )
+        self.assertEqual(record.extraction_conf, 0.77)
 
     def test_measure_accuracy_pipeline_matches_legacy_compute_metrics(self):
         """Runs the real measure_accuracy() pipeline (both arms) and checks its

@@ -120,9 +120,35 @@ class AICorrector:
         return result
 
 
-def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQuestion:
+def _build_mcq_corrected(
+    question: Question,
+    answer: str | None,
+    extraction_confidence: float | None = None,
+) -> CorrectedQuestion:
     """Deterministic MCQ correction for one question."""
     expected = question.mcq_answer.value if question.mcq_answer else None
+    if question.mcq_answer is None:
+        # Defensive hardening, not a live fix (D15, spec §2.2(ii)): `Question`'s
+        # own validator forbids an MCQ-typed question with `mcq_answer=None`,
+        # so this branch is unreachable through any real parsing path today.
+        # Without it, a Question that violated that invariant would silently
+        # fall through to `is_correct = answer.upper() == None` → False →
+        # awarded_marks=0 reported at HIGH/1.0 confidence with no review flag
+        # — a wrong mark asserted with full, unflagged confidence.
+        return CorrectedQuestion(
+            question_id=question.id,
+            awarded_marks=0,
+            maximum_marks=question.marks,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=True,
+            student_answer=answer,
+            expected_answer=None,
+            topic=question.topic_hint,
+            review_reason="mark scheme has no mcq_answer for this question",
+            marker_source="deterministic",
+            extraction_confidence=extraction_confidence,
+        )
     if answer is None or answer == "":
         return CorrectedQuestion(
             question_id=question.id,
@@ -136,6 +162,7 @@ def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQue
             topic=question.topic_hint,
             review_reason="missing answer",
             marker_source="deterministic",
+            extraction_confidence=extraction_confidence,
         )
     if answer.upper() not in {"A", "B", "C", "D"}:
         return CorrectedQuestion(
@@ -150,19 +177,48 @@ def _build_mcq_corrected(question: Question, answer: str | None) -> CorrectedQue
             topic=question.topic_hint,
             review_reason="invalid MCQ answer",
             marker_source="deterministic",
+            extraction_confidence=extraction_confidence,
         )
     is_correct = answer.upper() == expected
+    # #36 MUST-FIX 1 (repair pass): the deterministic letter comparison itself
+    # is certain GIVEN the extraction, so confidence in the awarded mark is
+    # confidence that the letter was read correctly. Propagate
+    # extraction_confidence into confidence_score instead of hardcoding 1.0
+    # (D13) -- the old code threaded extraction_confidence through as inert
+    # metadata that nothing read. Fall back to 1.0 only when there is
+    # genuinely no extraction signal at all -- there is no basis to invent
+    # uncertainty that was never measured. Two call paths reach that same
+    # 1.0 by different routes, and the distinction matters if either is ever
+    # changed: the oracle path passes `extraction_confidence=None` and is
+    # caught by the fallback here, whereas `_flatten_answers`' plain
+    # `Mapping[str, str]` branch supplies a literal `1.0` in its tuple
+    # (`(str(v), None, 1.0)`) and so never reaches the fallback at all.
+    # Band and review-flag are DERIVED from that score via the
+    # module's one calibrated cut-offs, not hand-rolled: a clean single
+    # letter (option A's ~0.90-0.93 steady state) still lands HIGH and
+    # unflagged, so correct MCQs do not flood the review queue; a letter the
+    # extractor genuinely read with low confidence now correctly gets
+    # flagged even though the mark itself is correct.
+    mcq_confidence_score = extraction_confidence if extraction_confidence is not None else 1.0
+    mcq_needs_review = mcq_confidence_score < REVIEW_CONFIDENCE_THRESHOLD
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=question.marks if is_correct else 0,
         maximum_marks=question.marks,
-        confidence=ConfidenceBand.HIGH,
-        confidence_score=1.0,
-        needs_teacher_review=False,
+        confidence=confidence_band_for_score(mcq_confidence_score),
+        confidence_score=mcq_confidence_score,
+        needs_teacher_review=mcq_needs_review,
         student_answer=answer.upper(),
         expected_answer=expected,
         topic=question.topic_hint,
+        review_reason=(
+            f"extraction confidence {mcq_confidence_score:.2f} below review threshold "
+            f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            if mcq_needs_review
+            else None
+        ),
         marker_source="deterministic",
+        extraction_confidence=extraction_confidence,
     )
 
 
@@ -404,6 +460,7 @@ def _build_ai_corrected(
     student_answer: str,
     mark: AIMarkResponse,
     student_working: str | None = None,
+    extraction_confidence: float | None = None,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
 
@@ -469,10 +526,15 @@ def _build_ai_corrected(
         marker_source="ai",
         feedback=mark.feedback,
         matched_point_ids=matched_point_ids,
+        extraction_confidence=extraction_confidence,
     )
 
 
-def _build_missing_corrected(question: Question, student_answer: str | None) -> CorrectedQuestion:
+def _build_missing_corrected(
+    question: Question,
+    student_answer: str | None,
+    extraction_confidence: float | None = None,
+) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=0,
@@ -485,6 +547,7 @@ def _build_missing_corrected(question: Question, student_answer: str | None) -> 
         topic=question.topic_hint,
         review_reason="non-MCQ question not marked (--mcq-only or no AI client)",
         marker_source="missing",
+        extraction_confidence=extraction_confidence,
     )
 
 
@@ -541,9 +604,10 @@ def correct_paper(
         answer_tuple = answers.get(q.id)
         student_answer = answer_tuple[0] if answer_tuple else None
         student_working = answer_tuple[1] if answer_tuple else None
+        extraction_confidence = answer_tuple[2] if answer_tuple else None
 
         if q.type == QuestionType.MCQ:
-            cq = _build_mcq_corrected(q, student_answer)
+            cq = _build_mcq_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = cq.awarded_marks
             bus.publish(
@@ -558,7 +622,7 @@ def correct_paper(
             )
             continue
         if ai is None:
-            cq = _build_missing_corrected(q, student_answer)
+            cq = _build_missing_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
             bus.publish(
@@ -588,7 +652,7 @@ def correct_paper(
             )
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
-            cq = _build_missing_corrected(q, student_answer)
+            cq = _build_missing_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"}))
             # Deliberately no index/total here: the per-question counter belongs to
             # MARKING_PROGRESS, and ERROR is not a progress frame. This `index` is
@@ -599,7 +663,9 @@ def correct_paper(
                 message=f"AI marking failed for q={q.id}: {exc!s}",
             )
             continue
-        cq = _build_ai_corrected(q, student_answer or "", mark, student_working)
+        cq = _build_ai_corrected(
+            q, student_answer or "", mark, student_working, extraction_confidence
+        )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
         bus.publish(

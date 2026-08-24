@@ -10,8 +10,8 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExtractedAnswers
-from lemely.io.answer_extraction import GeminiAnswerExtractor
+from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.io.answer_extraction import GeminiAnswerExtractor, _calibrate_confidence
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.events import EventType, bus
@@ -327,3 +327,88 @@ class ExtractionProgressCounterTests(unittest.TestCase):
 
         self.assertEqual(result.answers, [])
         self.assertEqual(frames, [])
+
+
+class CalibrateConfidenceTests(unittest.TestCase):
+    """Regression tests for the rebuilt ``_calibrate_confidence`` (#36/M1.1).
+
+    D14/D19 (spec §2.1): the old heuristic added an unconditional +0.1 bonus
+    to any single-letter (A/B/C/D) answer and applied the MCQ/short-answer
+    caps BEFORE the source_region/working_out bonuses, in the same branch
+    chain — so a raw 0.90 could leak all the way to 1.00 (0.90 + 0.1 = 1.00,
+    never capped), or an MCQ-hinted answer with source_region set could leak
+    to 0.20 + 0.03 = 0.23, or a short non-MCQ answer with both working_out
+    and source_region set could leak to 0.30 + 0.05 + 0.03 = 0.38. The
+    rebuilt version deletes the +0.1 single-letter bonus entirely and applies
+    every cap as the LAST step, after all additive bonuses, so none of these
+    three leaks can recur.
+    """
+
+    def test_raw_high_confidence_single_letter_answer_is_not_boosted_toward_one(self) -> None:
+        """A raw 0.90 clean single-letter answer keeps its raw confidence.
+
+        Not boosted to 1.00 by the deleted +0.1 bonus, and -- #36 bullet 2
+        (amended) -- NOT slammed to <=0.20 either: the 0.2 cap only applies
+        to the mcq-hint-with-a-non-letter-answer case (a bad extraction), and
+        a clean A/B/C/D letter is a good extraction.
+        """
+        answer = ExtractedAnswer(
+            question_id="1", answer="A", confidence=0.90, source_region=None, working_out=None
+        )
+        result = _calibrate_confidence(answer)
+        self.assertEqual(result, 0.90)
+
+    def test_clean_single_letter_with_source_region_keeps_raw_confidence(self) -> None:
+        """A clean single-letter answer is a GOOD extraction and must not be capped.
+
+        #36 bullet 2 (amended): the old bullet conflated two different
+        inputs under one "MCQ-shaped" cap -- on develop a clean single
+        letter produced 1.00 (via the deleted +0.1 bonus) while an
+        mcq-hint-non-letter produced 0.23 (via the cap leak). The rebuilt
+        heuristic scopes the 0.2 cap to the mcq-hint-non-letter case only, so
+        a clean letter with source_region set gets just the +0.03 bonus:
+        0.90 + 0.03 = 0.93, never capped to 0.20.
+        """
+        answer = ExtractedAnswer(
+            question_id="1",
+            answer="A",
+            confidence=0.90,
+            source_region="top-right",
+            working_out=None,
+        )
+        result = _calibrate_confidence(answer)
+        self.assertEqual(result, 0.93)
+
+    def test_mcq_hint_with_non_single_letter_answer_and_source_region_caps_at_point_two(
+        self,
+    ) -> None:
+        """MCQ hint (not the single-letter heuristic) + source_region set must
+        land at exactly 0.200, not leak to 0.230 (0.20 + 0.03) via a bonus
+        applied after the cap.
+        """
+        answer = ExtractedAnswer(
+            question_id="1",
+            answer="42",  # not single-letter -- exercises question_type_hint, not answer text
+            confidence=0.90,
+            source_region="top-right",
+            working_out=None,
+        )
+        result = _calibrate_confidence(answer, question_type_hint="mcq")
+        self.assertEqual(result, 0.200)
+
+    def test_short_non_mcq_with_working_out_and_source_region_caps_at_point_three(
+        self,
+    ) -> None:
+        """Short non-MCQ answer + working_out + source_region must land at
+        exactly 0.300, not leak to 0.380 (0.30 + 0.05 + 0.03) via bonuses
+        applied after the short-answer cap.
+        """
+        answer = ExtractedAnswer(
+            question_id="1",
+            answer="5",  # len < 2 -> short-answer cap, not the MCQ cap
+            confidence=0.90,
+            source_region="top-right",
+            working_out="carried the 1",
+        )
+        result = _calibrate_confidence(answer, question_type_hint="theory")
+        self.assertEqual(result, 0.300)

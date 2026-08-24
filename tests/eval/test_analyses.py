@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import inspect
+import json
 import math
 import random
 from pathlib import Path
+
+import pytest
 
 from lemely.eval.analyses import (
     MCNEMAR_IMPROVEMENT_N_FLOOR,
@@ -15,6 +18,7 @@ from lemely.eval.analyses import (
     mcnemar,
     mcnemar_improvement_p_value,
     paired_proportion_min_n,
+    paper_grade_confidence,
     review_rate,
     risk_coverage,
     wilson,
@@ -699,3 +703,224 @@ class TestQuestionLevelFiltering:
 
         funnel = exclusion_funnel(records)
         assert funnel["total"] == 1
+
+
+class TestPaperGradeConfidence:
+    """paper_grade_confidence: marks-weighted mean of per-question marker_conf,
+    banded per paper (spec §4 M1.1) -- NOT a min-over-questions."""
+
+    def test_marks_weighted_mean_arithmetic(self) -> None:
+        # weights 1 and 3 (truth_marks): (0.5*1 + 0.9*3) / 4 = 3.2/4 = 0.80
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.5),
+            _rec(paper_id="p1", question_id="2", truth_marks=3, marker_conf=0.9),
+        ]
+        result = paper_grade_confidence(records)
+        score, band = result["p1"]
+        assert score == 0.8
+        assert band == "MEDIUM"
+
+    def test_boundary_at_exactly_0_85_is_high(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.85)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert score == 0.85
+        assert band == "HIGH"
+
+    def test_boundary_at_exactly_0_65_is_medium(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.65)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert score == 0.65
+        assert band == "MEDIUM"
+
+    def test_just_below_0_65_is_low(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.6499)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert band == "LOW"
+
+    def test_min_over_questions_would_disagree_with_the_weighted_mean(self) -> None:
+        """One low-confidence, low-weight question must not drag the whole
+        paper down to LOW the way a min-over-questions rule would."""
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.10),
+            _rec(paper_id="p1", question_id="2", truth_marks=9, marker_conf=0.95),
+        ]
+        score, band = paper_grade_confidence(records)["p1"]
+        # weighted mean: (0.10*1 + 0.95*9)/10 = 8.65/10 = 0.865 -> HIGH
+        assert score == pytest.approx(0.865)
+        assert band == "HIGH"
+
+    def test_weights_by_tariff_maximum_marks_not_earned_truth_marks(self) -> None:
+        """A 6-mark question answered wrong (truth_marks=0) must still weigh
+        6, not 0 and not clamped to 1 -- weighting must use the question's
+        tariff (``maximum_marks``), never what the student happened to earn.
+        ``max(truth_marks, 1)`` would still weigh this row 1, not 6, and
+        would still under-weight a wrongly-answered high-tariff question
+        relative to a rightly-answered one -- the same bias, merely
+        attenuated. This is the MUST-FIX regression test for #36.
+        """
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                truth_marks=0,
+                maximum_marks=6,
+                marker_conf=0.2,
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="2",
+                truth_marks=1,
+                maximum_marks=1,
+                marker_conf=0.9,
+            ),
+        ]
+        score, band = paper_grade_confidence(records)["p1"]
+        # weighted by tariff: (0.2*6 + 0.9*1)/7 = 2.1/7 = 0.3
+        assert score == pytest.approx(0.3)
+        assert band == "LOW"
+
+    def test_all_zero_truth_marks_paper_gets_a_real_band(self) -> None:
+        """A paper where every question scored zero marks must not vanish
+        from the result. Before the fix, ``if not r.truth_marks: continue``
+        dropped every row of an all-zero paper, so ``total_weight`` stayed 0
+        and the paper was omitted entirely -- exactly the papers a
+        grade-confidence signal should be most sensitive to. With no
+        ``maximum_marks`` supplied here either, the weight falls back to
+        ``r.truth_marks or 1`` = 1 per row (equal weighting), not to zero.
+        """
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=0, marker_conf=0.9),
+            _rec(paper_id="p1", question_id="2", truth_marks=0, marker_conf=0.7),
+        ]
+        result = paper_grade_confidence(records)
+        assert "p1" in result, "an all-zero-truth_marks paper must not vanish from the result"
+        score, band = result["p1"]
+        assert score == pytest.approx((0.9 + 0.7) / 2)
+        assert band == "MEDIUM"
+
+    def test_excludes_point_level_rows(self) -> None:
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.9),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                mark_point_id="1a",
+                truth_marks=1,
+                marker_conf=0.1,
+            ),
+        ]
+        score, _band = paper_grade_confidence(records)["p1"]
+        assert score == 0.9
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "#36 acceptance bullet 6 ('on the M0 baseline the paper-level band "
+            "distribution is not degenerate') is still UNMET after MUST-FIX 1 "
+            "(propagating extraction_confidence into the MCQ path's "
+            "confidence_score). Re-measured directly from this saved corpus: "
+            "every row's extraction_conf is None (the saved A/A-floor records "
+            "predate per-answer extraction-confidence capture), so the fix's "
+            "fallback-to-1.0 branch applies uniformly and the MCQ paper still "
+            "bands HIGH at score 1.0 -- identical to before the fix. This is "
+            "not a defect in the fix (verified directly: confidence_score DOES "
+            "track extraction_confidence when it is present -- see "
+            "tests/test_correction_ai.py::HybridCorrectPaperTests::"
+            "test_mcq_confidence_score_tracks_extraction_confidence). The "
+            "prerequisite this bullet needs is a re-run of the M0 baseline "
+            "that actually captures extraction confidence per MCQ answer; "
+            "that is a measurement task, not a code fix, and out of scope for "
+            "this repair pass (no Gemini spend permitted here). If this XPASSes "
+            "after such a re-run, remove the xfail and assert the real "
+            "distribution."
+        ),
+    )
+    def test_m0_baseline_band_distribution_reported_honestly(self) -> None:
+        """Re-scored from the saved M0 A/A-floor records (no new spend, per
+        the sequencing constraint on #36).
+
+        The expected per-paper scores are computed HERE, independently, by
+        looping over the same input rows the production function sees --
+        not pasted from an earlier run's output. A hardcoded 16-significant-
+        figure float is a change-detector, not a test: it would pass or fail
+        based on floating-point noise nobody could reason about from the
+        assertion alone. ``_independent_weighted_mean`` below intentionally
+        does not import or call :func:`paper_grade_confidence`; it recomputes
+        the marks-weighted mean directly from the filtered rows so a bug
+        shared between production and test code cannot cancel out.
+
+        None of these published rows carry ``maximum_marks`` (the field did
+        not exist when they were written), so the weight here still falls
+        back to ``truth_marks``. This is therefore an honest report of the
+        *current* band distribution on this corpus, not a claim about what a
+        tariff-weighted rerun would show -- see the docstring on
+        :func:`paper_grade_confidence` for that distinction.
+        """
+        run_dir = (
+            Path(__file__).resolve().parents[2]
+            / "BUILD"
+            / "accuracy-runs"
+            / ("aa-floor-2026-08-23-a")
+        )
+        records_path = run_dir / "records-repeat-01.jsonl"
+        assert records_path.exists(), "expected the saved M0 A/A-floor records"
+
+        records = [
+            EvalRecord.model_validate(json.loads(line))
+            for line in records_path.read_text().splitlines()
+            if line.strip()
+        ]
+        result = paper_grade_confidence(records)
+        assert result, "expected at least one paper"
+
+        def _independent_weighted_mean(paper_id: str) -> float:
+            numerator = 0.0
+            denominator = 0.0
+            for r in records:
+                if r.paper_id != paper_id or r.mark_point_id is not None:
+                    continue
+                if r.marker_conf is None:
+                    continue
+                weight = r.maximum_marks if r.maximum_marks else (r.truth_marks or 1)
+                numerator += r.marker_conf * weight
+                denominator += weight
+            assert denominator > 0
+            return numerator / denominator
+
+        def _independent_band(score: float) -> str:
+            # Recomputed independently of `_band_for_score` for the same
+            # reason `_independent_weighted_mean` avoids `paper_grade_confidence`.
+            if score >= 0.85:
+                return "HIGH"
+            if score >= 0.65:
+                return "MEDIUM"
+            return "LOW"
+
+        expected_paper_ids = {
+            "0580_s23_qp_22_theory",
+            "0606_s23_qp_12_theory",
+            "0625_m20_qp_12_mcq",
+            "0625_s20_qp_31_theory",
+            "0625_w21_qp_32_theory_nested",
+        }
+        assert set(result) == expected_paper_ids
+
+        # Reported, not assumed non-degenerate: whatever the real band
+        # distribution comes out to below is the honest finding (spec §9
+        # gate 8 discipline -- never narrow a denominator or relabel a
+        # metric to force a particular distribution).
+        bands = {band for _score, band in result.values()}
+        for paper_id in expected_paper_ids:
+            score, band = result[paper_id]
+            assert score == pytest.approx(_independent_weighted_mean(paper_id))
+            assert band == _independent_band(score)
+
+        # #36 acceptance bullet 6 asserted as MET (xfail(strict=True) above
+        # documents why it is currently not): this must NOT stay a green
+        # assertion of the degenerate distribution. On this saved corpus
+        # every extraction_conf is None, so MUST-FIX 1's propagation fix has
+        # no row to act on and the MCQ paper still bands HIGH at 1.0 -- the
+        # distribution is still degenerate. See the xfail reason for the
+        # full honest finding and the missing prerequisite (a baseline
+        # re-run that captures per-answer extraction confidence).
+        assert bands != {"HIGH"}, f"band distribution: {result}"
