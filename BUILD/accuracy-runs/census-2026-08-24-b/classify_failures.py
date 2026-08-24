@@ -46,13 +46,20 @@ condition and where it is enforced:
    repaired — this script never touches ``lemely/io/det/profiles.py``.
 2. ``table_layout_extraction_failure`` — a pipeline stage before reconciliation
    raised ``ParseError`` (no tables found, no valid rows, indicative-content /
-   levels-based section, etc.), or an MCQ answer key came up short of
-   ``maximum_mark`` by more than half. Sufficiency condition: the failure is
-   DIRECTLY OBSERVED — either an exception was actually raised by the stage
-   itself, or the parsed count is short by more than half of
-   ``maximum_mark`` (rows dropped, not a small residual mismatch). Enforced
-   inline in ``_classify_mcq``/``_classify_theory`` at each ``ParseError``
-   catch and the ``computed < maximum_mark / 2`` check.
+   levels-based section, etc.), or, on the MCQ path only, the parsed answer
+   count came up short of ``maximum_mark`` by more than half. Sufficiency
+   condition: the failure is DIRECTLY OBSERVED — either an exception was
+   actually raised by the stage itself, or (MCQ path only) the parsed count
+   is short by more than half of ``maximum_mark`` (rows dropped, not a small
+   residual mismatch). The ``ParseError`` catches are enforced inline in both
+   ``_classify_mcq`` and ``_classify_theory``; the ``computed < maximum_mark
+   / 2`` shortfall check is enforced ONLY in ``_classify_mcq`` (round-4
+   correction — an earlier draft of this docstring claimed it was also
+   enforced in ``_classify_theory``; it never was). The theory path has no
+   equivalent shortfall heuristic, so a large theory-path deficit falls
+   through to ``classify_theory_residual``'s ``mismatch_cause`` instead —
+   see ``manifest.json``'s ``table_layout_extraction_failure`` note, which is
+   qualified accordingly.
 3. ``marks_column_detection_failure`` — no column of the merged table
    satisfied ``is_marks_column``/``find_mcq_answer_col``; the detector had to
    fall back to a column that is not actually a marks column. Sufficiency
@@ -62,13 +69,19 @@ condition and where it is enforced:
 4. ``marks_cell_notation_not_parsed`` — a real marks column WAS found, but one
    or more of its cells were empty/unparsed and got defaulted (1-mark
    default), which can move ``computed_total`` away from ``maximum_mark``.
-   Sufficiency condition (round-3 fix): empty cells default to 1 mark each
-   (``lemely/io/det/rows.py``'s ``make_point``), so N empty cells can inflate
-   ``computed_total`` by AT MOST N. The bucket is claimed only when
-   ``computed_total <= maximum_mark`` or ``computed_total - maximum_mark <=
-   empty_count`` — i.e. the observed delta is within what the defaulting
-   mechanism can actually produce. Enforced in ``classify_theory_residual``.
-   Rows whose excess exceeds ``empty_count`` fall through to
+   Sufficiency condition (round-4 fix — round 3 only bounded the EXCESS
+   side): empty cells default to EXACTLY 1 mark each
+   (``lemely/io/det/rows.py``'s ``make_point``), so (a) N empty cells can
+   inflate ``computed_total`` by AT MOST N above what the non-empty cells
+   alone would sum to, and (b) since every empty cell still contributes 1,
+   ``computed_total`` can never validly fall BELOW ``empty_count`` under this
+   mechanism. The bucket is claimed only when the TWO-SIDED bound holds:
+   ``empty_count <= computed_total <= maximum_mark`` (deficit side — the
+   defaulting mechanism cannot explain a total lower than the number of
+   defaulted cells) or ``computed_total - maximum_mark <= empty_count``
+   (excess side, unchanged from round 3). Enforced in
+   ``classify_theory_residual``. Rows failing both — including a deficit
+   with ``computed_total < empty_count`` — fall through to
    ``mismatch_cause`` (bucket 5 or 6) instead.
 5. ``mark_aggregation_overcount`` — every structural check above is clean, or
    the notation bucket's sufficiency condition failed, yet
@@ -310,23 +323,31 @@ def classify_theory_residual(
     ``_classify_theory``, pulled out as a pure function so the gate is
     unit-testable without re-parsing a PDF (round-3 brief).
 
-    Sufficiency condition for ``marks_cell_notation_not_parsed``: empty marks
-    cells default to 1 mark each (``lemely/io/det/rows.py``'s
-    ``make_point``), so N empty cells can inflate ``computed_total`` away
-    from ``maximum_mark`` by AT MOST N. The bucket is claimed only when that
-    bound actually covers the observed delta -- ``computed_total <=
-    maximum_mark`` (defaulting can only ever push the total up, so being at
-    or below the target is always consistent with under-counted cells), or
-    ``computed_total - maximum_mark <= empty_count`` (the excess is within
+    Sufficiency condition for ``marks_cell_notation_not_parsed`` (round-4
+    fix -- round 3 bounded only the EXCESS side, leaving the deficit side
+    unconditional): empty marks cells default to EXACTLY 1 mark each
+    (``lemely/io/det/rows.py``'s ``make_point``), so (a) N empty cells can
+    inflate ``computed_total`` above what the non-empty cells alone would
+    sum to by AT MOST N, and (b) ``computed_total`` can never validly fall
+    BELOW ``empty_count`` under this mechanism, since every empty cell still
+    contributes 1. The bucket is claimed only when the TWO-SIDED bound holds
+    -- ``empty_count <= computed_total <= maximum_mark`` (deficit side: the
+    defaulting mechanism cannot explain a total lower than the number of
+    defaulted cells, and cannot on its own explain a total above
+    ``maximum_mark`` either), or ``computed_total - maximum_mark <=
+    empty_count`` (excess side, unchanged from round 3: the excess is within
     what the empty cells could have contributed). Any row failing both falls
     through to ``mismatch_cause``, carrying the empty-cell fact forward in
-    the evidence string rather than silently dropping it -- an excess larger
-    than ``empty_count`` is evidence the empty cells are NOT the (sole)
-    explanation, not evidence that no notation problem exists at all.
+    the evidence string rather than silently dropping it -- a deficit below
+    ``empty_count``, or an excess larger than ``empty_count``, is evidence
+    the empty cells are NOT the (sole) explanation, not evidence that no
+    notation problem exists at all.
     """
-    if empty_count > 0 and (
-        computed_total <= maximum_mark or (computed_total - maximum_mark) <= empty_count
-    ):
+    deficit_explainable = empty_count <= computed_total <= maximum_mark
+    excess_explainable = computed_total > maximum_mark and (
+        computed_total - maximum_mark
+    ) <= empty_count
+    if empty_count > 0 and (deficit_explainable or excess_explainable):
         return {
             "cause": "marks_cell_notation_not_parsed",
             "evidence": (
@@ -338,12 +359,19 @@ def classify_theory_residual(
 
     if computed_total != maximum_mark:
         cause = mismatch_cause(computed_total, maximum_mark)
-        empty_note = (
-            f"{empty_count} empty marks cell(s) were also defaulted but cannot explain the "
-            f"full delta (excess exceeds empty_count={empty_count}); "
-            if empty_count > 0
-            else ""
-        )
+        if empty_count > 0 and computed_total < empty_count:
+            empty_note = (
+                f"{empty_count} empty marks cell(s) were also defaulted but cannot explain "
+                f"the full delta (computed_total={computed_total} is BELOW empty_count="
+                f"{empty_count}, which defaulting alone cannot produce); "
+            )
+        elif empty_count > 0:
+            empty_note = (
+                f"{empty_count} empty marks cell(s) were also defaulted but cannot explain the "
+                f"full delta (excess exceeds empty_count={empty_count}); "
+            )
+        else:
+            empty_note = ""
         ruled_out = (
             "an overcount (computed_total < maximum_mark), "
             if cause == "genuine_mark_total_mismatch"
@@ -618,6 +646,18 @@ def main() -> None:
         },
         "cause_counts_ranked": dict(causes.most_common()),
         "counts_sum_to_229": sum(causes.values()) == 229,
+        "table_layout_extraction_failure_note": (
+            f"count={causes.get('table_layout_extraction_failure', 0)}: this bucket's "
+            "ParseError catches are enforced on BOTH the MCQ and theory paths, but the "
+            "'computed < maximum_mark / 2' shortfall heuristic (round-4 fix) is enforced "
+            "ONLY on the MCQ path (_classify_mcq) -- the theory path has no equivalent "
+            "check, so a large theory-path deficit falls through to "
+            "classify_theory_residual's mismatch_cause instead of landing here. This count "
+            "is therefore a lower bound on structural extraction failures, not a claim that "
+            "none occurred on the theory path under a maximum_mark/2 heuristic; an earlier "
+            "draft of the module docstring claimed theory-path enforcement that was never "
+            "implemented -- corrected in this round."
+        ),
         "d7_hypothesis": {
             "statement": (
                 "D7 hypothesised that parse_marks_cell/is_marks_column failures "

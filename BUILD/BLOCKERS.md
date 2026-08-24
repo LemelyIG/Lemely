@@ -1429,9 +1429,11 @@ than re-run the parse, which would pay the Gemini cost twice.
 
 ## G — #45 (M2.2) census complete: the 229 det-failures are classified, ranked, $0 spend
 
-**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 3, corrected after
-review — a sufficiency-condition gate on `marks_cell_notation_not_parsed`
-replaced round 2's unconditional rule) · **Status:** artifact committed, not
+**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 4, corrected after
+review — round 3's sufficiency-condition gate on
+`marks_cell_notation_not_parsed` bounded only the EXCESS side; round 4 adds
+the mirror-image DEFICIT bound, and corrects a docstring claim of theory-path
+enforcement that was never implemented) · **Status:** artifact committed, not
 a blocker — recorded here so M3 can cite it without re-deriving. Zero Gemini
 calls, zero network: the 229 PDFs already restored to
 `/home/sico/PaperScraper/papers` were re-parsed offline through
@@ -1440,6 +1442,40 @@ calls, zero network: the 229 PDFs already restored to
 compares `reconcile._leaf_marks(questions)` to `metadata.maximum_mark`
 directly, so there is no `escalate_on_mark_mismatch` flag in play (round 1 of
 this issue incorrectly claimed one was).
+
+**Round 4: the sufficiency condition on `marks_cell_notation_not_parsed` is
+now a genuine TWO-SIDED bound.** Round 3 fixed only the excess direction
+(`computed_total - maximum_mark <= empty_count`); its deficit disjunct,
+`computed_total <= maximum_mark`, applied no magnitude check at all. Empty
+marks cells default to EXACTLY 1 mark each
+(`lemely/io/det/rows.py`'s `make_point`), so `computed_total` can never
+validly fall BELOW `empty_count` under that mechanism — yet 4 committed rows
+did: `0606_w23_ms_11` (empty=65, computed_total=0, its own evidence string
+falsifying the label), `0625_w21_ms_41` (empty=96, computed=78),
+`0606_w19_ms_13` (empty=69, computed=61), `0606_s23_ms_22` (empty=60,
+computed=54). The gate is now `empty_count <= computed_total <=
+maximum_mark` (deficit side) OR `computed_total - maximum_mark <=
+empty_count` (excess side, unchanged); rows failing both fall through to
+`mismatch_cause`. All 4 land in `genuine_mark_total_mismatch`. (Two of the
+round-4 review brief's six named rows, `0625_w21_ms_43` and `0625_w21_ms_53`,
+turn out on their real `maximum_mark` to be excess-explainable —
+`computed_total > maximum_mark` there — so they correctly stay in the
+notation bucket; only 4 of the 6 named rows were genuine deficit
+counterexamples, verified directly against `classified-failures.txt`.)
+
+**Round 4: a docstring claim of theory-path enforcement that never existed is
+corrected, not implemented.** The module docstring said bucket 2's
+`computed < maximum_mark / 2` shortfall check was "enforced inline in
+`_classify_mcq`/`_classify_theory`"; the sole occurrence was inside
+`_classify_mcq`. Rather than add an untested new heuristic to the theory path
+under review pressure, the docstring is corrected to state the true,
+narrower claim: the shortfall check is MCQ-path-only.
+`manifest.json`'s new `table_layout_extraction_failure_note` field states
+this explicitly, so the published `table_layout_extraction_failure = 0` is
+not read as evidence that no theory-path shortfall exists under that
+heuristic — it is a lower bound, because the heuristic was never applied
+there. This choice does not change any cause count in the table below (no
+theory-path row was reclassified).
 
 **Where the evidence lives:** `BUILD/accuracy-runs/census-2026-08-24-b/` —
 `classify_failures.py` (the diagnostic script; also the source of the pure
@@ -1472,30 +1508,35 @@ re-run of `classify_failures.py` in the same commit as this table):**
 
 | cause | n | share |
 |---|---|---|
-| `marks_cell_notation_not_parsed` | 108 | 47.2% |
+| `marks_cell_notation_not_parsed` | 104 | 45.4% |
 | `mark_aggregation_overcount` | 47 | 20.5% |
 | `paper_profile_misconfiguration` | 40 | 17.5% |
 | `marks_column_detection_failure` | 24 | 10.5% |
-| `genuine_mark_total_mismatch` | 10 | 4.4% |
+| `genuine_mark_total_mismatch` | 14 | 6.1% |
 | `table_layout_extraction_failure` | 0 | 0.0% |
 | `UNCLASSIFIED` | 0 | 0.0% |
 
-**D7 turned from a hypothesis into a measurement — and round 3 corrects the
-headline downward, on evidence.** D7 hypothesised that
+**D7 turned from a hypothesis into a measurement — and round 4 corrects the
+headline downward again, on evidence.** D7 hypothesised that
 `parse_marks_cell`/`is_marks_column` failures explain the det-parser failure
 set. Measured (not assumed by construction): `marks_column_detection_failure`
-+ `marks_cell_notation_not_parsed` = **132/229 (57.6%)** — down from round
-2's overstated 159/229 (69.4%), which counted 27 rows the sufficiency gate
-above now correctly excludes. The other **97/229 (42.4%)** are NOT explained
-by D7 — 47 are positively-evidenced overcounts
-(`mark_aggregation_overcount`, up from 20 now that the 27 falsified
-notation-bucket rows have been correctly reclassified into it), 40 are the
-profile-misconfiguration class below, and 10 are structurally clean parses
-whose total still comes up short with no more specific explanation available
-(`genuine_mark_total_mismatch`). D7 is still the largest single explanation
-but is no longer close to a two-thirds majority of the failure set — this
-downward revision is the census working as designed, not a defect to be
-argued away.
++ `marks_cell_notation_not_parsed` = **128/229 (55.9%)** — down from round
+3's 132/229 (57.6%), itself down from round 2's overstated 159/229 (69.4%).
+The round-4 movement (132 → 128, -4 schemes, -1.7pp) is entirely the 4
+deficit-side notation-bucket rows above, correctly reclassified into
+`genuine_mark_total_mismatch` once the sufficiency gate was made two-sided —
+not a reflection of the MUST-FIX-2 docstring correction, which reclassified
+nothing. The other **101/229 (44.1%)** are NOT explained by D7 — 47 are
+positively-evidenced overcounts (`mark_aggregation_overcount`, unchanged from
+round 3), 40 are the profile-misconfiguration class below, and 14 are
+structurally clean parses whose total still comes up short with no more
+specific explanation available (`genuine_mark_total_mismatch`, up from 10 now
+that the 4 falsified deficit-side notation-bucket rows have been correctly
+reclassified into it). D7 is still the largest single explanation but is
+further from a two-thirds majority of the failure set than round 3 published
+— this downward revision is the census working as designed, not a defect to
+be argued away; no bucket was loosened in prose to preserve the round-3
+figure.
 
 **The residual mismatch bucket is split, not a single "totals don't match"
 catch-all.** Round 1 put every `computed_total != maximum_mark` residual
@@ -1507,9 +1548,11 @@ further explanation". These are split: `mark_aggregation_overcount`
 (computed_total > maximum_mark — now also the fallthrough target for
 notation-bucket rows whose excess the empty-cell defaulting cannot explain,
 47 schemes total) vs. `genuine_mark_total_mismatch` (computed_total <
-maximum_mark, 10 schemes, and its evidence string states what was ruled out —
-overcount, column detection, sufficient cell-notation parsing — rather than
-only what didn't match).
+maximum_mark, 14 schemes as of round 4 — up from round 3's 10 now that the 4
+deficit-side notation-bucket rows above are also correctly reclassified into
+it — and its evidence string states what was ruled out — overcount, column
+detection, sufficient cell-notation parsing — rather than only what didn't
+match).
 
 **The `paper_profile_misconfiguration` rule is now gated on a counterfactual,
 and round 1's "second bug instance" claim for 0625 p3 was wrong.** Round 1

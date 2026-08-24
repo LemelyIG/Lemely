@@ -194,6 +194,90 @@ class TheoryResidualSufficiencyTests(unittest.TestCase):
         )
         self.assertEqual(result["cause"], "UNCLASSIFIED")
 
+    def test_deficit_below_empty_count_does_not_land_in_notation_bucket(self) -> None:
+        # Round-4 brief's headline counterexample: 0606_w23_ms_11 -- empty=65,
+        # computed_total=0. Each empty cell defaults to >=1 mark
+        # (lemely/io/det/rows.py's make_point), so computed_total can never
+        # validly fall BELOW empty_count under that mechanism. Round 3 bounded
+        # only the excess side; the pre-round-4 deficit disjunct
+        # (`computed_total <= maximum_mark`) was unconditional and would
+        # wrongly claim this row. It must fall through to mismatch_cause
+        # instead (genuine_mark_total_mismatch, since 0 < maximum_mark).
+        result = mod.classify_theory_residual(
+            computed_total=0, maximum_mark=80, empty_count=65, marks_col=2
+        )
+        self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
+        self.assertEqual(result["cause"], "genuine_mark_total_mismatch")
+
+    def test_deficit_counterexamples_from_round_4_brief_do_not_land_in_notation_bucket(
+        self,
+    ) -> None:
+        # The other 3 verified deficit counterexample rows (empty_count,
+        # computed_total, maximum_mark triples taken from the live re-run of
+        # classify_failures.py against the real corpus, i.e.
+        # classified-failures.txt -- NOT the round-4 brief's own approximate
+        # list, two of whose six named rows turn out on the real maximum_mark
+        # to be excess-explainable (computed_total > maximum_mark), not
+        # deficit counterexamples at all: 0625_w21_ms_43 (empty=119,
+        # computed=90, maximum_mark=80 -> excess=10<=119, correctly stays in
+        # the bucket) and 0625_w21_ms_53 (empty=54, computed=41,
+        # maximum_mark=40 -> excess=1<=54, likewise). Using the brief's
+        # approximate numbers instead of the real ones would misrepresent the
+        # evidence, so only the four rows independently verified against
+        # classified-failures.txt are pinned here (0606_w23_ms_11 is pinned
+        # separately above).
+        counterexamples = [
+            # (empty_count, computed_total, maximum_mark)
+            (96, 78, 80),  # 0625_w21_ms_41
+            (69, 61, 80),  # 0606_w19_ms_13
+            (60, 54, 80),  # 0606_s23_ms_22
+        ]
+        for empty_count, computed_total, maximum_mark in counterexamples:
+            with self.subTest(
+                empty_count=empty_count, computed_total=computed_total, maximum_mark=maximum_mark
+            ):
+                result = mod.classify_theory_residual(
+                    computed_total=computed_total,
+                    maximum_mark=maximum_mark,
+                    empty_count=empty_count,
+                    marks_col=2,
+                )
+                self.assertNotEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+    def test_deficit_at_or_above_empty_count_still_lands_in_notation_bucket(self) -> None:
+        # Positive case, unchanged from round 3: computed_total >= empty_count
+        # and <= maximum_mark IS within what the defaulting mechanism can
+        # produce -- the round-4 fix must not over-correct away this finding.
+        result = mod.classify_theory_residual(
+            computed_total=38, maximum_mark=40, empty_count=2, marks_col=2
+        )
+        self.assertEqual(result["cause"], "marks_cell_notation_not_parsed")
+
+
+class TheoryPathHalfShortfallDocstringTests(unittest.TestCase):
+    """MUST-FIX 2 (round-4 brief): the module docstring claimed the
+    ``computed < maximum_mark / 2`` shortfall check is enforced in BOTH
+    ``_classify_mcq`` and ``_classify_theory``. Verified false -- the sole
+    occurrence was inside ``_classify_mcq``. Resolution taken here: correct
+    the docstring to state the true, narrower claim (MCQ-path-only) rather
+    than implement a new, untested heuristic on the theory path. This test
+    pins that resolution so a future edit cannot silently re-introduce the
+    false claim without a test noticing.
+    """
+
+    def test_docstring_no_longer_claims_theory_path_enforcement(self) -> None:
+        doc = mod.__doc__ or ""
+        self.assertIn("_classify_mcq", doc)
+        # The corrected docstring must not claim the shortfall check is
+        # enforced in _classify_theory -- it must say ONLY in _classify_mcq.
+        self.assertIn("enforced ONLY in ``_classify_mcq``", doc)
+
+    def test_classify_theory_has_no_half_shortfall_heuristic(self) -> None:
+        import inspect
+
+        source = inspect.getsource(mod._classify_theory)
+        self.assertNotIn("maximum_mark / 2", source)
+
 
 class SanitizeEvidenceTests(unittest.TestCase):
     def test_redacts_a_simple_quoted_span(self) -> None:

@@ -10,20 +10,21 @@
     "n": 229
   },
   "cause_counts_ranked": {
-    "marks_cell_notation_not_parsed": 108,
+    "marks_cell_notation_not_parsed": 104,
     "mark_aggregation_overcount": 47,
     "paper_profile_misconfiguration": 40,
     "marks_column_detection_failure": 24,
-    "genuine_mark_total_mismatch": 10,
+    "genuine_mark_total_mismatch": 14,
     "table_layout_extraction_failure": 0,
     "UNCLASSIFIED": 0
   },
   "counts_sum_to_229": true,
+  "table_layout_extraction_failure_note": "count=0: this bucket's ParseError catches are enforced on BOTH the MCQ and theory paths, but the 'computed < maximum_mark / 2' shortfall heuristic (round-4 fix) is enforced ONLY on the MCQ path (_classify_mcq) -- the theory path has no equivalent check, so a large theory-path deficit falls through to classify_theory_residual's mismatch_cause instead of landing here. This count is therefore a lower bound on structural extraction failures, not a claim that none occurred on the theory path under a maximum_mark/2 heuristic; an earlier draft of the module docstring claimed theory-path enforcement that was never implemented -- corrected in this round.",
   "d7_hypothesis": {
     "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
-    "n_explained": 132,
+    "n_explained": 128,
     "n_total": 229,
-    "share": 0.5764,
+    "share": 0.559,
     "falsifiable": true,
     "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific."
   },
