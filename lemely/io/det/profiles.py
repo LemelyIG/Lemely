@@ -87,12 +87,22 @@ _PHYSICS_PROFILE = SubjectProfile(
         # from the file's creation (810ac08) until 2026-08-25; confirmed wrong
         # against the real 0625_s23_ms_22.pdf cover page.
         2: PaperType.MCQ,
-        # FLAGGED, NOT CHANGED: CAIE 0625 Paper 3 is Theory (Core), so this
-        # entry looks wrong too — but it has not been confirmed against a real
-        # cover page the way paper 2 was, and this fix is already mark-changing
-        # enough to need its own measurement. Cover text now outranks the table
-        # either way, so a Paper 3 scheme parsed from a real PDF resolves
-        # correctly regardless of this line.
+        # WRONG, AND DELIBERATELY LEFT WRONG. CAIE 0625 Paper 3 is Theory
+        # (Core); this says Extended. Confirmed against a real cover page —
+        # 0625_m19_ms_32.pdf reads "Paper 3 Core Theory".
+        #
+        # It is left as-is because the cover text now outranks it, so every
+        # Paper 3 scheme parsed from a real PDF already resolves to
+        # THEORY_CORE. Measured over the 489-scheme corpus: 40 schemes move
+        # theory_extended -> theory_core, and that move is CAUSALLY INERT for
+        # parsing — scheme_format is POINT_BASED either way, so the parse path
+        # is byte-identical and only the metadata label changes.
+        #
+        # Correcting the constant as well would be right, but it would be an
+        # unmeasured second change riding on this one; it belongs in its own
+        # issue with the Core/Extended tier consequences costed. What must NOT
+        # happen is someone "tidying" this line while also reverting the
+        # lookup order, which would silently reinstate the wrong answer.
         3: PaperType.THEORY_EXTENDED,
         4: PaperType.THEORY_EXTENDED,
         5: PaperType.PRACTICAL,

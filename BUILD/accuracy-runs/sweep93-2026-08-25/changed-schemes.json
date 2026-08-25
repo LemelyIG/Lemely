@@ -1,0 +1,569 @@
+[
+  {
+    "stem": "0625_s20_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s23_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_m19_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_m19_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s19_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s19_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s19_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s19_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s19_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s19_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w19_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w19_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w19_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w19_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w19_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w19_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_m20_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_m20_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s20_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s20_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s20_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s20_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s20_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w20_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w20_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w20_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w20_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w20_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w20_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_m21_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_m21_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s21_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s21_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s21_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s21_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s21_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s21_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w21_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w21_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w21_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w21_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w21_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w21_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_m22_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_m22_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s22_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s22_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s22_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s22_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s22_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s22_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s23_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s23_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s23_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s23_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s23_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s23_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w23_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w23_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w23_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w23_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w23_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w23_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s24_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s24_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s24_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s24_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s24_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s24_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w24_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w24_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w24_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_w24_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w24_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_w24_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s25_ms_21",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s25_ms_22",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s25_ms_23",
+    "code": "0625",
+    "paper": 2,
+    "old": "theory_core",
+    "new": "mcq"
+  },
+  {
+    "stem": "0625_s25_ms_31",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s25_ms_32",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  },
+  {
+    "stem": "0625_s25_ms_33",
+    "code": "0625",
+    "paper": 3,
+    "old": "theory_extended",
+    "new": "theory_core"
+  }
+]
