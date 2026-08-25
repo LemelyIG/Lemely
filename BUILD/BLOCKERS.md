@@ -1347,6 +1347,50 @@ mark-scheme parsing pass authorised.
 
 Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
 
+**RESOLVED 2026-08-25 — the mechanism landed the same day this was written, and
+nobody updated the record.** Verified at source, not inferred: **PR #87 merged
+2026-08-24T03:31Z**, is on `develop` and in this branch's history, and supplies
+exactly the missing forcing mechanism —
+
+- `lemely/accuracy/harness.py:626` — `arm: Literal["extract+mark", "oracle+mark"] | None`
+- `lemely/accuracy/harness.py:705-710` — when `arm` is set, `case_arm = arm`
+  **uniformly**, overriding the `scan_path` auto-selection; the oracle bypass at
+  `:733` is reachable
+- `lemely/accuracy/harness.py:678-684` — `arm="extract+mark"` raises up front if
+  any case lacks a `scan_path`; no silent fallback
+- `lemely/app/cli.py:1013-1025` — a `--arm` flag, wired to `measure_accuracy(arm=…)` at `:1081`
+
+Tested, not merely present: `tests/test_accuracy_harness.py:313` and `:352`
+(`test_both_arms_over_same_cases_produce_ablation_2x2_nonzero`). This entry's
+own release condition — *"until a mechanism exists to force oracle+mark over
+cases that already have a scan_path"* — **is met**.
+
+**But do NOT read this as "M0.4 is done."** #28 is CLOSED with **every
+acceptance box unticked**, and the only ablation ever run
+(`ablation-2026-08-24-a`) is published as **NOT REPORTABLE** — zero oracle+mark
+records, no delta, `same_denominator_both_arms=false`. The issue was closed on
+PR #87, i.e. on the *mechanism*, while M0.4's deliverable is the **2×2 itself**.
+The number has never been produced.
+
+**Re-running would not be §12.9 significance-chasing.** That rule bars re-running
+a NOT REPORTABLE sweep at higher `n` to chase significance. This run was not
+underpowered — one arm of a two-arm experiment did not execute at all, so a
+re-run is the *first* correct execution, not a second attempt. No larger `n` is
+proposed. The blocker text above says "do NOT re-run **until** a mechanism
+exists", which presupposes re-running is right once one does.
+
+**Still needs a human, and the board item is deliberately NOT force-moved.** It
+sits in Backlog while the issue is CLOSED; which column is right depends on the
+ruling. The 2026-08-24T01:14:03 directive authorised this sweep specifically
+(no per-item cap, costed preflight before spend, `--cache-mode bypass` never
+`refresh` per E2, stop-and-ask at $20.00 of $25.00) and that authorisation is
+**unspent** — the ~$0.06 of `ablation-2026-08-24-a` went on the broken
+single-arm run. The open question, posted on #28 as (a)/(b)/(c): **does a spend
+authorisation granted while the issue was open survive the issue being
+CLOSED?** Recommended (a) — reopen and run — but **not acted on**, because
+choosing the reading that unlocks spending is precisely the move the #27 rebuke
+was about.
+
 ---
 
 ## F — #88 (M2.1b) awaits three human decisions; the parse itself is done and free
