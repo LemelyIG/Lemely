@@ -655,7 +655,21 @@ def cmd_done(number: int) -> int:
     return 0
 
 
-def _append_blocker(issue: Issue, on_desc: str) -> None:
+def _append_blocker(issue: Issue, on_desc: str) -> bool:
+    """Append a blocker section for *issue*, unless one is already there.
+
+    Returns True if a section was written, False if one already existed.
+
+    Blocking the same issue twice used to append a second, byte-identical stub —
+    #40 ended up in BUILD/BLOCKERS.md twice that way. The file's contract is
+    never-delete, so a duplicate cannot simply be tidied away later; it has to
+    not be written. The heading is matched on the issue NUMBER alone, because
+    the title can be edited on GitHub after the first block.
+    """
+    heading = f"## #{issue.number} — "
+    if BLOCKERS_FILE.exists() and heading in BLOCKERS_FILE.read_text(encoding="utf-8"):
+        return False
+
     stamp = dt.datetime.now(dt.UTC).strftime("%Y-%m-%d")
     section = (
         "\n---\n\n"
@@ -667,6 +681,7 @@ def _append_blocker(issue: Issue, on_desc: str) -> None:
     )
     with BLOCKERS_FILE.open("a", encoding="utf-8") as fh:
         fh.write(section)
+    return True
 
 
 def cmd_block(number: int, on: str) -> int:
@@ -679,8 +694,15 @@ def cmd_block(number: int, on: str) -> int:
         f"Blocked on {on_desc}. Status set back to Backlog by accuracy_board; "
         f"logged in BUILD/BLOCKERS.md.",
     )
-    _append_blocker(issue, on_desc)
-    print(f"#{number} set to Backlog, blocker logged: {on_desc}")
+    written = _append_blocker(issue, on_desc)
+    if written:
+        print(f"#{number} set to Backlog, blocker logged: {on_desc}")
+    else:
+        print(
+            f"#{number} set to Backlog; BUILD/BLOCKERS.md already has a section for "
+            f"#{number}, so nothing was appended. Update that section by hand if the "
+            "reason has changed."
+        )
     return 0
 
 

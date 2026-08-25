@@ -1044,7 +1044,7 @@ is pinned at 1.0 for every correct MCQ, so re-read it once bullet 1 lands.
 
 ## #36 — M1.1 — The confidence unit (must ship as one commit)
 
-**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+**Raised:** 2026-08-23 · **Status:** OPEN → RESOLVED 2026-08-25 · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on HUMAN DECISION: acceptance bullets 1, 2 and 7 conflict — full write-up
 in **section B above**, and in the 2026-08-23 comment on #36. Branch
@@ -1053,6 +1053,16 @@ reviewed and complete at `2cae804` (signed, gates green); it is **not
 abandoned**, it is waiting on a choice between options A/B/C. Do not restart #36
 from scratch. Board Status set back to Backlog. Resolve the blocker, append a
 RESOLVED line here, and move the item back to Ready.
+
+**RESOLVED 2026-08-25 — the blocker was a decision, and the human made it.**
+#36 is CLOSED (2026-08-24T01:41:06Z). The 2026-08-24T01:14:03 directive chose
+**option A**: scope the 0.2 confidence cap to the mcq-hint-non-letter case where
+`develop` had it, so a clean single letter keeps its raw confidence. Option B
+(cap every MCQ-shaped answer) was declined on product grounds — it would have
+recreated the exact pathology **B3 above** was opened to fix, sending every
+*correct* MCQ answer to the review queue. Acceptance bullet 7
+(`review_rate_signal <= 8%`) is **DEFERRED to the M0.9 ratchet work and is NOT
+met** — recorded deferred-unmet, never as met. #36 landed on bullets 1-6.
 
 ## C: #40 (M1.5) — a live review-escalation trigger is shipping unmeasured
 
@@ -1122,19 +1132,21 @@ and measure that way, but that is new scope and belongs in its own issue.
 
 ## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
 
-**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+**Raised:** 2026-08-23 · **Status:** OPEN → RESOLVED 2026-08-25 · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
 
 ---
 
-## #40 — M1.5 — Coherence gate: awarded marks must reconcile with matched point ids
-
-**Raised:** 2026-08-23 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
-
-Blocked on HUMAN DECISION: acceptance bullet 4 unmet — the coherence trigger raises review_rate by an unmeasured amount, and MISSION 9 gate 8 requires that measured BEFORE merge. Options A/B/C in BUILD/BLOCKERS.md section C and the 2026-08-23 comment on #40. PR #83 is OPEN, green, complete at 80bed91 — do NOT restart #40 from scratch.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
-
----
+**RESOLVED 2026-08-25 — landed, with acceptance bullet 4 formally RETIRED-UNMET.**
+#40 is CLOSED (2026-08-23T22:59:34Z); PR #83 merged green on all 5 CI jobs
+(run 32659077135). The 2026-08-24T01:14:03 directive retired bullet 4
+explicitly — not skipped, not recorded met — and required the retirement note to
+state that **a live review-escalation trigger shipped ahead of the M0.9 ratchet
+being armed, so its contribution to `review_rate` is unmeasured.** That note is
+on the issue, posted before the merge. Consistent with the same directive's
+gate-9 scoping: #40 changes review routing, not awarded marks, so no per-item
+sweep was owed.
 
 ---
 
@@ -1343,7 +1355,7 @@ mark-scheme parsing pass authorised.
 
 ## #28 — M0.4 — Oracle-transcription ablation (the 2×2)
 
-**Raised:** 2026-08-24 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+**Raised:** 2026-08-24 · **Status:** OPEN → RESOLVED 2026-08-25 · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
 
@@ -1390,6 +1402,14 @@ authorisation granted while the issue was open survive the issue being
 CLOSED?** Recommended (a) — reopen and run — but **not acted on**, because
 choosing the reading that unlocks spending is precisely the move the #27 rebuke
 was about.
+
+**Status-line correction 2026-08-25:** the `**Status:** OPEN` line above predates
+the RESOLVED note that follows it and was never updated; #28 is CLOSED
+(2026-08-24T03:31:28Z). Recorded for completeness, per the 2026-08-25T12:03:43
+directive: #28 stays closed **with its acceptance boxes unticked** — that is the
+honest record, the 2x2 still does not exist, and PR #87's arm mechanism landing
+is **not** permission to spend. A spend authorisation does not survive its issue
+being closed.
 
 ---
 
