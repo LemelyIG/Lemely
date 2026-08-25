@@ -1,0 +1,412 @@
+{
+  "label": "sweep37",
+  "issue": 37,
+  "authorised_by": "A5, inbox 2026-08-25T14:24:52",
+  "cache_mode": "bypass",
+  "design": "extraction run ONCE per case; both normalisers over the identical raw extraction; paired",
+  "leaves": 39,
+  "id_positional_fallback_fires": 0,
+  "id_match_rate_old": 1.0,
+  "id_match_rate_new": 1.0,
+  "id_match_rate_target_current": 0.99,
+  "mark_correct_old": 33,
+  "mark_correct_new": 32,
+  "mcnemar_b_old_only": 1,
+  "mcnemar_c_new_only": 0,
+  "mcnemar_discordant": 1,
+  "spend_usd_before": 1.972739,
+  "spend_usd_after": 2.255062,
+  "spend_usd_delta": 0.282324,
+  "records": [
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "1",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "2",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "4",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "12a",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "12b",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "14",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "correct",
+      "question_id": "19",
+      "truth_marks": 3,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 3,
+      "new_predicted": 3
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "1",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "2",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "4",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "12a",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "12b",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "14",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "partial",
+      "question_id": "19",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "1",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "2",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "4",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "12a",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "12b",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "14",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0580_s23_qp_22_theory",
+      "fixture_variant": "wrong",
+      "question_id": "19",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "1",
+      "truth_marks": 3,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 3,
+      "new_predicted": 3
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "2",
+      "truth_marks": 3,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 3,
+      "new_predicted": 3
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "3a",
+      "truth_marks": 3,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 3,
+      "new_predicted": 3
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "3b",
+      "truth_marks": 4,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 4,
+      "new_predicted": 4
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "4a",
+      "truth_marks": 4,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 4,
+      "new_predicted": 4
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "correct",
+      "question_id": "4b",
+      "truth_marks": 3,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 3,
+      "new_predicted": 3
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "1",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "2",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "3a",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "3b",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "4a",
+      "truth_marks": 2,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 2,
+      "new_predicted": 2
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "partial",
+      "question_id": "4b",
+      "truth_marks": 1,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "1",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "2",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "3a",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "3b",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 1,
+      "new_predicted": 1
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "4a",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "fixture_variant": "wrong",
+      "question_id": "4b",
+      "truth_marks": 0,
+      "old_id_matched": true,
+      "new_id_matched": true,
+      "old_predicted": 0,
+      "new_predicted": 0
+    }
+  ]
+}
