@@ -43,38 +43,35 @@ def normalize_extracted_answers(
 ) -> ExtractedAnswers:
     """Re-map extracted answer IDs to canonical manifest IDs.
 
-    First pass: fuzzy match by canonical form.
-    Second pass: positional fallback for any remaining unmatched answers.
+    One pass only: match by canonical form. An answer whose id matches nothing
+    **keeps its original id** and is left unmatched.
+
+    #37 (M1.2) deleted the second pass. It was a positional fallback: any
+    answer that matched nothing was handed the next unclaimed manifest id, in
+    order. That is a guess wearing a genuine id — and because every downstream
+    consumer keys on ``question_id``, the guess became indistinguishable from a
+    real match. Two concrete harms:
+
+    * ``id_match_rate`` counted post-fallback coverage, not id agreement. A
+      guessed answer was stamped ``id_match="exact"`` and the metric could not
+      fall below its target no matter how badly extraction drifted.
+    * One missing answer shifted every later unmatched one by a slot, so a
+      single extraction gap silently re-aligned an entire paper against the
+      wrong questions.
+
+    A gap is honest and shows up as ``UNMATCHED``; a silent realignment is not.
+    Unmatched answers are deliberately NOT dropped here — the caller needs to
+    see them to count them.
     """
-    import structlog as _sl
-
-    _norm_log = _sl.get_logger().bind(component="id_normalization")
-
     canonical_map: dict[str, str] = {_canonical_id(mid): mid for mid in manifest_ids}
-    claimed: set[str] = set()
     new_answers: list[ExtractedAnswer] = []
-    unmatched_positions: list[int] = []
 
     for ans in extracted.answers:
         canon = _canonical_id(ans.question_id)
         if canon in canonical_map:
-            target = canonical_map[canon]
-            new_answers.append(ans.model_copy(update={"question_id": target}))
-            claimed.add(target)
+            new_answers.append(ans.model_copy(update={"question_id": canonical_map[canon]}))
         else:
-            unmatched_positions.append(len(new_answers))
             new_answers.append(ans)
-
-    unclaimed = [mid for mid in manifest_ids if mid not in claimed]
-    for seq, pos in enumerate(unmatched_positions):
-        if seq < len(unclaimed):
-            target = unclaimed[seq]
-            _norm_log.warning(
-                "id_positional_fallback",
-                extracted_id=new_answers[pos].question_id,
-                mapped_to=target,
-            )
-            new_answers[pos] = new_answers[pos].model_copy(update={"question_id": target})
 
     return extracted.model_copy(update={"answers": new_answers})
 

@@ -368,7 +368,23 @@ def question_result_to_eval_record(
     `CorrectedQuestion` for this leaf at all) cases are built directly as
     `EvalRecord`s by `measure_accuracy` itself, bypassing this adapter
     entirely, since a `QuestionResult` has no "excluded"/"unmatched" concept
-    to hold them. `extraction_conf` is read from `result.extraction_confidence`
+    to hold them.
+
+    **That claim only became true with #37 (M1.2).** Until the positional
+    fallback was deleted from `normalize_extracted_answers`, "the extractor
+    returned an answer for this id" was manufactured rather than observed: any
+    unmatched answer was handed a leftover manifest id, so it arrived here
+    looking matched and was stamped ``"exact"``. The confirmation is now real.
+
+    **``"fuzzy"`` is still never emitted, and that is a known gap, not an
+    accident.** `normalize_extracted_answers` matches on canonical form, so
+    "1 b" → "1(b)" is a *fuzzy* match that this adapter records as ``"exact"``.
+    Telling the two apart needs raw-vs-canonical provenance carried out of
+    extraction, which changes `extract_answers`' contract and its three web
+    call sites — deliberately out of scope here and flagged on #37 rather than
+    silently rounded to "exact" as if the distinction had been made.
+
+    `extraction_conf` is read from `result.extraction_confidence`
     (spec §4 M1.1): extraction-side confidence, threaded from
     `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`,
     is `None` only when no answer was extracted for this question.

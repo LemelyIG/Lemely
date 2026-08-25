@@ -234,7 +234,16 @@ class IDNormalizationTests(unittest.TestCase):
         normalized = normalize_extracted_answers(extracted, manifest_ids)
         self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
 
-    def test_normalize_positional_fallback(self):
+    def test_unrecognised_id_is_left_unmatched_not_guessed(self):
+        """#37: the positional fallback is DELETED. An unmatched id stays unmatched.
+
+        This test previously asserted the opposite — that
+        "completely_unrecognised" was silently rewritten to the first leftover
+        manifest id. That rewrite is the defect: it stamps a guess with a
+        genuine id, so every downstream consumer (and `id_match_rate`) treats a
+        guessed answer as a matched one. A gap is honest; a silent realignment
+        is not.
+        """
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
         from lemely.io.answer_extraction import normalize_extracted_answers
 
@@ -247,8 +256,40 @@ class IDNormalizationTests(unittest.TestCase):
             ],
         )
         normalized = normalize_extracted_answers(extracted, manifest_ids)
-        # Positional fallback: first extracted answer → first manifest ID
-        self.assertEqual(normalized.answers[0].question_id, "1(a)(i)")
+        self.assertEqual(normalized.answers[0].question_id, "completely_unrecognised")
+        self.assertNotIn(
+            "1(a)(i)",
+            {a.question_id for a in normalized.answers},
+            "an unmatched answer must not be handed a manifest id it never matched",
+        )
+
+    def test_one_missing_answer_does_not_shift_every_later_one(self):
+        """The concrete harm the fallback caused, pinned as a regression test.
+
+        With the fallback in place, a single unrecognised answer consumed the
+        first leftover manifest id and pushed every subsequent unmatched answer
+        one slot along. Here 1(b) and 1(c) match by canonical form and must be
+        untouched, while the junk id must not be allowed to claim 1(a).
+        """
+        from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+        from lemely.io.answer_extraction import normalize_extracted_answers
+
+        manifest_ids = ["1(a)", "1(b)", "1(c)"]
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.pdf",
+            answers=[
+                ExtractedAnswer(question_id="???", answer="junk", confidence=0.3),
+                ExtractedAnswer(question_id="1 b", answer="B", confidence=0.9),
+                ExtractedAnswer(question_id="1 c", answer="C", confidence=0.9),
+            ],
+        )
+        normalized = normalize_extracted_answers(extracted, manifest_ids)
+        by_id = {a.question_id: a.answer for a in normalized.answers}
+        self.assertEqual(by_id.get("1(b)"), "B")
+        self.assertEqual(by_id.get("1(c)"), "C")
+        self.assertNotIn("1(a)", by_id, "1(a) was never extracted and must stay absent")
+        self.assertEqual(by_id.get("???"), "junk")
 
 
 class ExtractionProgressCounterTests(unittest.TestCase):
