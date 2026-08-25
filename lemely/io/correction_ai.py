@@ -21,8 +21,8 @@ from lemely.core.schemas import (
 )
 from lemely.io.gemini import GeminiClient
 from lemely.io.prompts.correction_ai import (
-    MARKER_SYSTEM_PROMPT,
     VERSION,
+    build_marker_system_prompt,
     build_marker_user_prompt,
 )
 from lemely.io.validation import validate_mark_scheme
@@ -46,10 +46,23 @@ def _flatten_answers(
 
 
 class AICorrector:
-    """Marks individual non-MCQ questions via the shared GeminiClient."""
+    """Marks individual non-MCQ questions via the shared GeminiClient.
 
-    def __init__(self, gemini_client: GeminiClient) -> None:
+    ``generic_marking_principles`` is this paper's own printed Generic Marking
+    Principles (``MarkScheme.metadata.generic_marking_principles``), baked into
+    the per-paper marker system prompt so the A-mark award condition is driven
+    from them rather than a hard-coded blanket rule (#41, A13 ruling). Empty
+    when the paper's GMP section could not be parsed, in which case the prompt
+    falls back to strict M-then-A dependency.
+    """
+
+    def __init__(
+        self,
+        gemini_client: GeminiClient,
+        generic_marking_principles: list[str] | None = None,
+    ) -> None:
         self._client = gemini_client
+        self._system_prompt = build_marker_system_prompt(generic_marking_principles or [])
 
     def mark_question(
         self,
@@ -64,7 +77,7 @@ class AICorrector:
         )
 
         result = self._client.generate_structured(
-            system_prompt=MARKER_SYSTEM_PROMPT,
+            system_prompt=self._system_prompt,
             user_prompt=user_prompt,
             response_schema=AIMarkResponse,
             prompt_version=VERSION,
@@ -82,7 +95,7 @@ class AICorrector:
                 escalation_model=f"{g.model_for('correction')} (thinking)",
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: First-pass confidence was low. Re-evaluate carefully."
                 ),
@@ -105,7 +118,7 @@ class AICorrector:
                 escalation_model=g.escalation_model,
             )
             result = self._client.generate_structured(
-                system_prompt=MARKER_SYSTEM_PROMPT,
+                system_prompt=self._system_prompt,
                 user_prompt=(
                     user_prompt + "\n\nNOTE: A previous marking attempt returned low confidence. "
                     "Please re-evaluate carefully before responding."
@@ -591,7 +604,11 @@ def correct_paper(
             "This paper contains non-MCQ questions. Pass a GeminiClient or set mcq_only=True."
         )
 
-    ai = AICorrector(gemini_client) if (gemini_client and not mcq_only) else None
+    ai = (
+        AICorrector(gemini_client, scheme.metadata.generic_marking_principles)
+        if (gemini_client and not mcq_only)
+        else None
+    )
 
     corrected: list[CorrectedQuestion] = []
     # `index` comes from enumerate over `leaves` — the true position in the work

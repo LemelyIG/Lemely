@@ -4,9 +4,47 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import Question
 
-VERSION = "4"
+VERSION = "5"
 
-MARKER_SYSTEM_PROMPT = """
+# Fallback rule, used only when a paper's own printed Generic Marking Principles
+# could not be parsed (loose_schemas.py MarkSchemeMetadata.generic_marking_principles
+# == [] because extraction genuinely failed to find/parse a GMP section — not
+# because the scheme legitimately carries none, e.g. MCQ). Per the A13 ruling
+# (issue #41 body, 2026-08-25T12:03:43+03:00), this strict M-then-A dependency
+# is the fallback, not the default — see loose_schemas.py:83.
+_STRICT_A_MARK_DEPENDENCY_RULE = """\
+- A marks are accuracy marks: this mark scheme's Generic Marking Principles could not be
+  parsed, so apply the CAIE default STRICT DEPENDENCY rule: an A mark is dependent on the
+  preceding M mark and requires the correct numerical value.
+  Do not award an A mark if its associated M mark was not earned."""
+
+
+def _a_mark_rule_section(generic_marking_principles: list[str]) -> str:
+    """Build the A-mark award-condition text for the marker system prompt.
+
+    When the paper's own printed Generic Marking Principles were parsed, the
+    A-mark award condition is driven from those principles (verbatim, so the
+    marker applies this paper's actual rules rather than a hard-coded blanket
+    "no M means no A"). When principles could not be parsed, fall back to the
+    strict M-then-A dependency rule.
+    """
+    if not generic_marking_principles:
+        return _STRICT_A_MARK_DEPENDENCY_RULE
+    principles_block = "\n".join(
+        f"  {i}. {p}" for i, p in enumerate(generic_marking_principles, start=1)
+    )
+    return (
+        "- A marks are accuracy marks. This paper's own printed Generic Marking Principles "
+        "(below) govern when an A mark may be awarded relative to its preceding M mark — "
+        "apply them directly; do NOT apply a blanket 'no M mark means no A mark' rule unless "
+        "these principles say so:\n"
+        f"{principles_block}\n"
+        "  If, and only if, these principles are silent on M/A dependency for a given mark "
+        "point, treat the A mark as dependent on its preceding M mark (the CAIE norm)."
+    )
+
+
+MARKER_SYSTEM_PROMPT_TEMPLATE = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
 IGCSE / O-Level / A-Level paper. Apply the mark scheme strictly and consistently.
 
@@ -22,8 +60,7 @@ Rules:
 - M marks are method marks: award when the student demonstrates a correct method step,
   even if they made an arithmetic slip that leads to a wrong final value. If a WORKING block
   is supplied, look there for evidence of the method step.
-- A marks are accuracy marks: dependent on the preceding M mark and require the correct
-  numerical value. Do not award an A mark if its associated M mark was not earned.
+{a_mark_rule}
 - B marks are independent: award when the specific fact or value is correct, regardless of
   other marks.
 - If WORKING is supplied and the student's final ANSWER is wrong but the working shows
@@ -89,6 +126,22 @@ Student: "g is approximately 10 N/kg"
 -> awarded_marks=0, confidence=0.68, matched_point_ids=[],
    feedback="B1 not awarded: mark scheme requires cao; 10 N/kg is an approximation not accepted here."
 """
+
+
+def build_marker_system_prompt(generic_marking_principles: list[str]) -> str:
+    """Compose the per-paper marker system prompt.
+
+    Injects this paper's own printed Generic Marking Principles (from
+    ``MarkScheme.metadata.generic_marking_principles``, populated by
+    ``det/gmp.py::extract_gmp`` on the det path or the Gemini parse path in
+    ``mark_scheme_parsing.py``) so the A-mark award condition is driven from
+    those principles rather than a hard-coded blanket rule. Falls back to the
+    strict M-then-A dependency rule only when principles could not be parsed
+    (``generic_marking_principles == []``).
+    """
+    return MARKER_SYSTEM_PROMPT_TEMPLATE.format(
+        a_mark_rule=_a_mark_rule_section(generic_marking_principles)
+    )
 
 
 def build_marker_user_prompt(

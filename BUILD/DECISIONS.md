@@ -11327,3 +11327,54 @@ catch-all from the strata count); the census `manifest.json`; three citations in
 believed on the day; rewriting it would falsify the audit trail. They are
 superseded by this entry, and the original buggy census output is preserved
 verbatim at `census-leaves.txt` beside the corrected one for the same reason.
+
+## DA13 — M1.6: the marker prompt is paper-scoped now, and the A-mark rule follows the paper's own GMP (#41)
+
+**Implements the A13 ruling**, issue #41 body, 2026-08-25T12:03:43+03:00: drive
+the A-mark award condition from each paper's own printed Generic Marking
+Principles when they were parsed; fall back to strict M-then-A dependency only
+when `MarkScheme.metadata.generic_marking_principles == []` because parsing
+genuinely failed to find/parse a GMP section.
+
+### What changed
+
+`lemely/io/prompts/correction_ai.py`: `VERSION` 4 -> 5 (the only prompt VERSION
+touched in this diff — `answer_extraction.py` and `mark_scheme_parsing.py` are
+untouched). The static module-level `MARKER_SYSTEM_PROMPT` constant is gone,
+replaced by `MARKER_SYSTEM_PROMPT_TEMPLATE` plus
+`build_marker_system_prompt(generic_marking_principles: list[str]) -> str`,
+which composes the system prompt per paper: when principles are non-empty they
+are injected verbatim (numbered, in the parsed order) as the operative A-mark
+rule; when empty, the prompt falls back to the strict "no M mark, no A mark"
+sentence (`loose_schemas.py:83`'s STRICT_DEPENDENCY norm).
+
+`lemely/io/correction_ai.py`: `AICorrector.__init__` now takes an optional
+`generic_marking_principles: list[str] | None` and builds one
+`self._system_prompt` for the paper, used at all three Gemini call sites in
+`mark_question` (initial call, thinking-budget retry, Pro escalation) — the
+previous static-constant bug (an escalation retry could go out with a stale
+prompt if only some call sites were updated) is structurally avoided by
+building the prompt once per `AICorrector` instance and reusing it. `correct_paper`
+constructs `AICorrector(gemini_client, scheme.metadata.generic_marking_principles)`
+using the already-loaded `scheme` from `_load_mark_scheme`.
+
+### What is deliberately NOT bundled here
+
+The gate-9 before/after sweep pre-authorised at `BUILD/ACCURACY-INBOX.md` line
+122 (2026-08-25T14:36:24+03:00) — costed preflight posted to issue #41 before
+spend, $20 stop-and-ask, scoped to the unparseable-principles-vs-empty-by-design
+population — is **not** run by this commit. This commit is the code change and
+its regression tests only; the sweep is a separate measurement step (its own
+preflight, its own adversarial review) that must run before the mark-changing
+effect of this fix is reported as a number anywhere. Until that sweep runs, the
+mark-lowering-for-some-papers effect described in the issue's own risk list is
+implemented but not yet measured.
+
+### Tests
+
+`tests/test_correction_ai.py::BuildMarkerSystemPromptTests` — four regression
+tests: parsed-principles-appear-verbatim, principles-present-means-no-strict-
+fallback-text, principles-empty-means-strict-fallback-text-present, and a
+VERSION==5 smoke test. All four fail against the pre-change code (import error
+for the first three — `build_marker_system_prompt` did not exist; the fourth
+would have failed on `VERSION == "4"`) and pass after.

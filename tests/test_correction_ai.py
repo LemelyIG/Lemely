@@ -20,9 +20,15 @@ from lemely.core.schemas import (
 )
 from lemely.io.correction_ai import _build_mcq_corrected, correct_paper
 from lemely.io.gemini import GeminiClient
+from lemely.io.prompts.correction_ai import VERSION, build_marker_system_prompt
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError
 from lemely.runtime.events import EventType, bus
+
+# The strict M-then-A dependency sentence. This is the *fallback* rule text
+# (#41 / A13 ruling): it must appear only when a paper's Generic Marking
+# Principles could not be parsed, never when they were.
+_STRICT_A_MARK_SENTENCE = "Do not award an A mark if its associated M mark was not earned."
 
 
 def _hybrid_paper_mark_scheme() -> MarkScheme:
@@ -1353,3 +1359,62 @@ class MarkingProgressCounterTests(unittest.TestCase):
             [f["marker_source"] for f in frames],
             ["deterministic", "missing", "missing", "missing", "missing"],
         )
+
+
+class BuildMarkerSystemPromptTests(unittest.TestCase):
+    """M1.6 (#41): the marker prompt must carry the paper's own printed GMP,
+    with the strict M-then-A dependency rule reserved for when GMP parsing
+    genuinely failed (A13 ruling, issue #41 body, 2026-08-25T12:03:43+03:00).
+    """
+
+    def test_build_marker_system_prompt_injects_parsed_gmp(self) -> None:
+        principles = [
+            "Marks are awarded for correct results or correct working.",
+            "Where a candidate uses a valid method not given in the mark scheme, "
+            "full credit is given as if the standard method had been used.",
+        ]
+        prompt = build_marker_system_prompt(principles)
+        for principle in principles:
+            self.assertIn(principle, prompt)
+
+    def test_the_principles_branch_still_carries_an_unconditional_dependency_default(
+        self,
+    ) -> None:
+        """Documents what the prompt ACTUALLY does — A13 is NOT yet satisfied.
+
+        This test replaces one that asserted only the absence of the single
+        literal sentence ``_STRICT_A_MARK_SENTENCE`` while a semantically
+        identical instruction sat two lines below it in the same prompt. That
+        test passed vacuously: it certified the A13 ruling ("strict M-then-A is
+        the fallback only, never the primary rule") as implemented when it is
+        not, and would have stayed green for any rewording.
+
+        The measured reason it is not implemented: the principles branch ends
+        with "if, and only if, these principles are silent on M/A dependency
+        ... treat the A mark as dependent on its preceding M mark", and across
+        the golden corpus **0 of 36 parsed principle strings mention M/A
+        dependency at all** — CAIE Generic Marking Principles are about
+        awarding fairly and consistently, not about mark-code semantics. So
+        the "silent" condition holds for every mark point of every paper and
+        the blanket rule remains operative for 100% of the corpus.
+
+        Asserting the true behaviour keeps the suite honest while the #12.7
+        ruling on the silent case is outstanding. **When that ruling lands this
+        test must be replaced**, not deleted quietly — it is the marker for
+        unfinished work, and a green suite must not imply bullet 2 is done.
+        """
+        principles = ["Marks are awarded for correct results or correct working."]
+        prompt = build_marker_system_prompt(principles)
+
+        self.assertIn(principles[0], prompt)
+        self.assertNotIn(_STRICT_A_MARK_SENTENCE, prompt, "the literal fallback sentence")
+        # ...but a semantically equivalent unconditional default is present anyway,
+        # which is precisely why the old assertion proved nothing.
+        self.assertIn("treat the A mark as dependent on its preceding M mark", prompt)
+
+    def test_a_mark_rule_falls_back_to_strict_dependency_when_unparseable(self) -> None:
+        prompt = build_marker_system_prompt([])
+        self.assertIn(_STRICT_A_MARK_SENTENCE, prompt)
+
+    def test_correction_ai_prompt_version_is_5(self) -> None:
+        self.assertEqual(VERSION, "5")

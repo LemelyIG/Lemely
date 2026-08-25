@@ -7,11 +7,11 @@ from lemely.io.prompts.answer_extraction import (
     VERSION as EXTRACTOR_PROMPT_VERSION,
 )
 from lemely.io.prompts.correction_ai import (
-    MARKER_SYSTEM_PROMPT,
-    build_marker_user_prompt,
+    VERSION as MARKER_PROMPT_VERSION,
 )
 from lemely.io.prompts.correction_ai import (
-    VERSION as MARKER_PROMPT_VERSION,
+    build_marker_system_prompt,
+    build_marker_user_prompt,
 )
 
 from .mark_scheme_parsing import *
