@@ -2063,3 +2063,76 @@ cannot itself represent" means *publish the empty cells honestly* — **not**
 right outcome is a published table with 9 empty cells and an explicit det-only
 statement, never a quiet redefinition of the strata to the cells that are full.
 That is the narrowed-denominator failure mode exactly.
+
+---
+
+## K — `id_match` is a hard-coded literal; the "exact 71/71" artifacts prove nothing (#37)
+
+**Raised:** 2026-08-25 · **Status:** OPEN · **Cost:** $0 (source reads + two
+existing artifacts; ledger unmoved at 1.488057).
+
+Found while testing whether #37's gate-9 sweep is *informative* — the question
+that made #38's sweep null (§H). For #37 the answer is the opposite, and the
+detour turned up a measurement defect worth its own entry.
+
+### #37's sweep IS on a live path — the §H waiver does not transfer
+
+```
+measure_accuracy (arm extract+mark, harness.py:725)
+  -> grading.extract_answers                (grading.py:52-53)
+     -> GeminiAnswerExtractor.__call__      (answer_extraction.py:146)
+        -> normalize_extracted_answers      (answer_extraction.py:187 -> :40)
+```
+
+`normalize_extracted_answers` has exactly **one** production caller and it sits
+on the harness's extraction arm. **#37 cannot be waived on
+"the instrument is blind" grounds** the way #38 can.
+
+### But `id_match` never compares anything
+
+Assigned by hand at three sites, never computed:
+
+```
+harness.py:402   id_match="exact"       # QuestionResult -> EvalRecord adapter
+harness.py:788   id_match="unmatched"   # excluded leaf
+harness.py:817   id_match="unmatched"   # unmatched leaf
+```
+
+`"fuzzy"` is **never emitted anywhere** — the three-valued domain is two-valued
+in practice. The harness says why the first is unconditional
+(`harness.py:364-370`): the adapter is only called for a leaf the extractor
+already returned an answer for.
+
+### So the positional fallback is invisible to it, by construction
+
+`answer_extraction.py:68-77` **overwrites** the answer's `question_id` with a
+genuine manifest id and logs `id_positional_fallback` at WARNING. After that
+line a positionally-guessed answer is indistinguishable from a real match, so
+the harness stamps `id_match="exact"`. **The reassignment is laundered into
+`exact`** — which is exactly #37's "silent realignment" complaint, located.
+
+### Therefore this reassuring-looking evidence is worthless
+
+```
+tests/golden/results/2026-08-22-f7be062.json   records=71  id_match={'exact': 71}
+tests/golden/results/2026-08-22-79f5fa8.json   records=71  id_match={'exact': 71}
+```
+
+**Neither is evidence the fallback never fired.** `exact` is a constant, so both
+are equally consistent with the fallback firing on **zero** records and on **all
+71**. Do not cite either as a clean bill of health — this is evidence note **E1**'s
+trap in a new place, and worse: E1 was a stale denominator, this field never had
+a computation behind it at all.
+
+### Consequences
+
+- Bullet 3 ("the metric now measures genuine id agreement rather than
+  post-fallback coverage") is **confirmed at source**, not merely asserted:
+  `id_match_rate` = `matched_extraction_ids / total_extraction_questions` over
+  **post-normalisation** ids, and its 0.99 target was set against that. The
+  same-commit rule guarding the red-CI window is right; do not relax it.
+- Ask #5 is sharper, not changed: #37 needs the gate-9 spend authorised **or an
+  explicit waiver on grounds other than instrument-blindness**.
+- **Free when the sweep runs:** count the `id_positional_fallback` WARNING lines
+  to get the fire rate nobody currently has. Capture it in the same run rather
+  than paying for a second sweep.
