@@ -54,6 +54,13 @@ class FakeGoTrueBackend:
             user=GoTrueUser(id=account.user_id, email=email),
         )
 
+    def admin_update_user_password(self, user_id: uuid.UUID, password: str) -> None:
+        for account in self._by_email.values():
+            if account.user_id == user_id:
+                account.password = password
+                return
+        raise AuthError(f"GoTrue admin-update-password failed (404): unknown user {user_id}")
+
 
 @dataclass
 class _MirroredUser:
