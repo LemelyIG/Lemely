@@ -45,11 +45,18 @@ class User(TimestampMixin, Base):
     )
     """Migration ``0021`` (D7.4). Set when the account redeems an
     ``email_verification`` token. Verification state lives **here**, not in
-    GoTrue: ``admin_create_user`` keeps ``email_confirm: True`` so the password
-    grant always succeeds, because UI spec §G-07 requires "a way to continue
+    GoTrue: ``admin_create_user`` keeps ``email_confirm: True`` so sign-in
+    always succeeds, because UI spec §G-07 requires "a way to continue
     into a limited preview of the app rather than a hard wall" and GoTrue-native
     confirmation *is* that wall. NULL gates exactly one route —
     ``POST /api/student/correct``, the Gemini spend (D7.5) — and nothing else.
+
+    (That sentence says "sign-in" rather than naming the OAuth grant type on
+    purpose. ``tests/unit/dataHandling.test.ts`` reads this module and asserts
+    it never once mentions the secret the /data page promises is not kept on
+    an account row — a claim only as true as this file. The check is crude on
+    its face and right in effect: that noun has no business here, and avoiding
+    it costs one clearer sentence.)
 
     Note this is unrelated to ``is_active``, which is dead: it is written
     nowhere and read nowhere, and activation in this product is a
