@@ -908,6 +908,52 @@ class ProfileTests(unittest.TestCase):
         profile = get_profile("9999")
         self.assertEqual(profile.paper_type(2, ""), PaperType.THEORY_EXTENDED)
 
+    def test_0625_paper_2_is_mcq(self) -> None:
+        """0625 Paper 2 is "Multiple Choice (Extended)", not Theory (Core).
+
+        ``profiles.py`` mapped ``2: THEORY_CORE`` from the day the file was
+        created (810ac08) and never changed. Confirmed against the real
+        0625_s23_ms_22.pdf, whose cover page reads "Paper 2 Multiple Choice
+        (Extended) May/June 2023".
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(2), PaperType.MCQ)
+
+    def test_cover_text_wins_over_a_contradicting_number_map(self) -> None:
+        """The actual defect: the number map used to short-circuit the cover.
+
+        A wrong constant silently overrode correct evidence sitting right there
+        in the document, and the next wrong constant would have done the same.
+        Paper 4 is mapped THEORY_EXTENDED; a cover that says otherwise wins.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(4, "Paper 4 Multiple Choice (Extended)"),
+            PaperType.MCQ,
+        )
+        self.assertEqual(
+            profile.paper_type(1, "Paper 1 Theory (Core)"),
+            PaperType.THEORY_CORE,
+        )
+
+    def test_number_map_still_used_when_the_cover_says_nothing(self) -> None:
+        """No cover evidence must fall back to the table, not to the default."""
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(5), PaperType.PRACTICAL)
+        self.assertEqual(profile.paper_type(5, ""), PaperType.PRACTICAL)
+
+    def test_unrecognised_cover_text_falls_back_to_the_number_map(self) -> None:
+        """Cover text only wins where it carries an actual paper-type keyword.
+
+        Otherwise a cover page whose wording we do not model would silently
+        demote every paper to the THEORY_EXTENDED default.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(5, "Cambridge IGCSE — May/June 2023 — 45 minutes"),
+            PaperType.PRACTICAL,
+        )
+
     def test_register_profile_roundtrip(self) -> None:
         register_profile(
             SubjectProfile(code="9998", name="TestSubject", paper_type_by_number={1: PaperType.MCQ})

@@ -12,6 +12,32 @@ from dataclasses import dataclass, field
 from lemely.core.loose_schemas import PaperType
 
 
+def _paper_type_from_cover(cover_text: str) -> PaperType | None:
+    """Read a PaperType off the cover page, or ``None`` if it says nothing.
+
+    ``None`` is the point of this helper: "the cover carries no paper-type
+    keyword" has to be distinguishable from "the cover says THEORY_EXTENDED",
+    or an unmodelled cover page would outrank the number map and silently
+    demote every such paper to the default.
+
+    Order matters. "Multiple Choice (Extended)" contains *both* "multiple
+    choice" and "extended", and "Alternative to Practical" contains
+    "practical", so the more specific phrase is tested first in each pair.
+    """
+    lower = cover_text.lower()
+    if "multiple choice" in lower:
+        return PaperType.MCQ
+    if "alternative to practical" in lower:
+        return PaperType.ALTERNATIVE_PRACTICAL
+    if "practical" in lower:
+        return PaperType.PRACTICAL
+    if "core" in lower:
+        return PaperType.THEORY_CORE
+    if "extended" in lower:
+        return PaperType.THEORY_EXTENDED
+    return None
+
+
 @dataclass
 class SubjectProfile:
     """Per-subject metadata for the deterministic parser."""
@@ -21,20 +47,30 @@ class SubjectProfile:
     paper_type_by_number: dict[int, PaperType] = field(default_factory=dict)
 
     def paper_type(self, paper_number: int, cover_text: str = "") -> PaperType:
-        """Resolve PaperType from paper number, then cover-text keywords."""
+        """Resolve PaperType from the cover text, falling back to paper number.
+
+        **The cover text wins.** It is evidence read off the document being
+        parsed; ``paper_type_by_number`` is a hard-coded table maintained by
+        hand, and a syllabus can change a component's type without anyone
+        editing it here.
+
+        This order is deliberate and was a bug fix. The table used to be
+        consulted first and returned immediately, so a wrong constant silently
+        overrode a cover page that plainly contradicted it: ``0625`` mapped
+        paper 2 to ``THEORY_CORE`` while every 0625 Paper 2 cover reads
+        "Paper 2 Multiple Choice (Extended)". The wrong entry was not just
+        wrong, it was *unfalsifiable by the document*, and the next wrong
+        constant would have behaved the same way.
+
+        The table is still the fallback, and it still matters: most callers
+        pass no ``cover_text`` at all, and a cover page carrying no paper-type
+        keyword must not demote a known paper to the default.
+        """
+        from_cover = _paper_type_from_cover(cover_text)
+        if from_cover is not None:
+            return from_cover
         if paper_number in self.paper_type_by_number:
             return self.paper_type_by_number[paper_number]
-        lower = cover_text.lower()
-        if "multiple choice" in lower:
-            return PaperType.MCQ
-        if "alternative to practical" in lower:
-            return PaperType.ALTERNATIVE_PRACTICAL
-        if "practical" in lower:
-            return PaperType.PRACTICAL
-        if "core" in lower:
-            return PaperType.THEORY_CORE
-        if "extended" in lower:
-            return PaperType.THEORY_EXTENDED
         return PaperType.THEORY_EXTENDED
 
 
@@ -47,7 +83,16 @@ _PHYSICS_PROFILE = SubjectProfile(
     name="Physics",
     paper_type_by_number={
         1: PaperType.MCQ,
-        2: PaperType.THEORY_CORE,
+        # 0625 Paper 2 is "Multiple Choice (Extended)". This read THEORY_CORE
+        # from the file's creation (810ac08) until 2026-08-25; confirmed wrong
+        # against the real 0625_s23_ms_22.pdf cover page.
+        2: PaperType.MCQ,
+        # FLAGGED, NOT CHANGED: CAIE 0625 Paper 3 is Theory (Core), so this
+        # entry looks wrong too — but it has not been confirmed against a real
+        # cover page the way paper 2 was, and this fix is already mark-changing
+        # enough to need its own measurement. Cover text now outranks the table
+        # either way, so a Paper 3 scheme parsed from a real PDF resolves
+        # correctly regardless of this line.
         3: PaperType.THEORY_EXTENDED,
         4: PaperType.THEORY_EXTENDED,
         5: PaperType.PRACTICAL,
