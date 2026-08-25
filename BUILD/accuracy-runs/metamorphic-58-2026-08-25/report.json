@@ -1,0 +1,1937 @@
+{
+  "label": "metamorphic-58-2026-08-25",
+  "issue": 58,
+  "acceptance_bullet": 4,
+  "cache_mode": "bypass",
+  "cases": 11,
+  "correct_paper_invocations": 28,
+  "spend_usd_before": 1.390218,
+  "spend_usd_after": 1.66962,
+  "spend_usd_delta": 0.279402,
+  "report": {
+    "counts": {
+      "held": 87,
+      "violated": 1,
+      "skipped": 125
+    },
+    "outcomes": [
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 4,
+        "perturbed_marks": 4,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p1' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 4,
+        "perturbed_marks": 4,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p2' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p1' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p2' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "carries an is_alternative point, which is defined relative to the previous point \u2014 reordering would not preserve meaning"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p1' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "mark-point id 'p2' is referenced in the question's own free text; renaming would leave it dangling"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "3b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0606_s23_qp_12_theory",
+        "question_id": "4b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "3",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "5",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "6",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "7",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "8",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "3",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "5",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "6",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "7",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "8",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "no mark points to rename"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "1",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "2",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "3",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "4",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "5",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "6",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "7",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_m20_qp_12_mcq",
+        "question_id": "8",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 4,
+        "perturbed_marks": 4,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 4,
+        "perturbed_marks": 4,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "violated",
+        "baseline_marks": 1,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "held",
+        "baseline_marks": 0,
+        "perturbed_marks": 0,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1a_i",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "1b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "4a",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "5b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "11b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_s20_qp_31_theory",
+        "question_id": "12c",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_i",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_ii",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "fewer than two mark points, so a permutation is a no-op"
+      },
+      {
+        "property": "reorder_mark_points",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_i",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_ii",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "rename_mark_point_ids",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1b",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_i",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1a_ii",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0625_w21_qp_32_theory_nested",
+        "question_id": "1b",
+        "status": "skipped",
+        "baseline_marks": null,
+        "perturbed_marks": null,
+        "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op"
+      }
+    ]
+  }
+}

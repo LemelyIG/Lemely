@@ -130,3 +130,62 @@ def test_spend_usd_increment_still_works(state_file):
 
     spend = next(line for line in path.read_text().split("\n") if line.startswith("spend_usd:"))
     assert spend.split(": ", 1)[1].startswith("1.4")
+
+
+class TestAppendBlockerIsIdempotent:
+    """``block`` must not append a second stub for an issue it already logged.
+
+    BUILD/BLOCKERS.md is under a never-delete contract, so a duplicated section
+    cannot be tidied away after the fact — it has to not be written. #40 was
+    appended twice by the old unconditional ``open(..., "a")`` and had to be
+    de-duplicated by hand on 2026-08-25 under an explicit human authorisation.
+    """
+
+    def _issue(self, board, number: int, title: str):
+        return board.Issue(
+            number=number,
+            title=title,
+            state="OPEN",
+            parent=23,
+            status="Ready",
+            size=None,
+            item_id="item-id",
+        )
+
+    def test_second_block_for_the_same_issue_appends_nothing(self, tmp_path, monkeypatch):
+        board = _load_board()
+        blockers = tmp_path / "BLOCKERS.md"
+        blockers.write_text("# BLOCKERS\n", encoding="utf-8")
+        monkeypatch.setattr(board, "BLOCKERS_FILE", blockers)
+
+        issue = self._issue(board, 40, "Coherence gate")
+        assert board._append_blocker(issue, "a human decision") is True
+        after_first = blockers.read_text(encoding="utf-8")
+        assert after_first.count("## #40 — ") == 1
+
+        # Same issue, different stated reason: still no second section.
+        assert board._append_blocker(issue, "something else entirely") is False
+        assert blockers.read_text(encoding="utf-8") == after_first
+
+    def test_a_retitled_issue_is_still_recognised(self, tmp_path, monkeypatch):
+        """The heading is matched on the number, because titles get edited."""
+        board = _load_board()
+        blockers = tmp_path / "BLOCKERS.md"
+        blockers.write_text("# BLOCKERS\n", encoding="utf-8")
+        monkeypatch.setattr(board, "BLOCKERS_FILE", blockers)
+
+        assert board._append_blocker(self._issue(board, 51, "Old title"), "x") is True
+        assert board._append_blocker(self._issue(board, 51, "New title"), "x") is False
+        assert blockers.read_text(encoding="utf-8").count("## #51 — ") == 1
+
+    def test_a_different_issue_still_gets_its_own_section(self, tmp_path, monkeypatch):
+        board = _load_board()
+        blockers = tmp_path / "BLOCKERS.md"
+        blockers.write_text("# BLOCKERS\n", encoding="utf-8")
+        monkeypatch.setattr(board, "BLOCKERS_FILE", blockers)
+
+        assert board._append_blocker(self._issue(board, 40, "A"), "x") is True
+        assert board._append_blocker(self._issue(board, 41, "B"), "x") is True
+        text = blockers.read_text(encoding="utf-8")
+        assert text.count("## #40 — ") == 1
+        assert text.count("## #41 — ") == 1

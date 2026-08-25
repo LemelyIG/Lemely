@@ -11208,3 +11208,58 @@ existing 181 cached `AIMarkResponse` payloads — that part of this entry
 stands uncorrected. But any future authorised sweep over fresh (or newly
 question-identity-linked) data will now compute and print the number, which
 was not true before this correction.
+
+## DA11 — the ledger file is authoritative for spend, and the header is a programme-wide SUM
+
+**Decided 2026-08-25**, discharging inbox item 7 of the 2026-08-25T17:36:27
+directive ("reconcile the two ledger bases and record which is authoritative").
+
+### The discrepancy, and its actual cause
+
+The directive noted `report.json`'s `spend_usd_before` 1.390218 against the
+state header's `spend_usd` 1.488057, about $0.098 apart, and asked which is
+authoritative. The cause is not drift or a bad increment. It is this:
+
+**`outputs/gemini_spend.json` is per-worktree, gitignored local state.**
+`.gitignore:46` ignores `outputs/`, and `CostLedger._path` is the relative
+`outputs/gemini_spend.json`, so every worktree keeps its own independent
+ledger and none of them is committed. Four exist:
+
+| worktree | cumulative_usd |
+|---|---|
+| `Lemely` (main) | 0.402869 |
+| `Lemely-worktrees/accuracy` | 1.958713 |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
+
+A figure read from *this* worktree's ledger therefore counts only the spend
+issued *from this worktree*, and the header — which has been carried forward
+across worktrees since the programme moved out of `Lemely` — is the larger
+number for a real reason. The `0.402869` in main is recognisably the `0.4026`
+the 2026-08-18 seed recorded as the starting figure.
+
+### The decision
+
+1. **The ledger files are authoritative for money actually spent.** They are
+   written by `CostLedger.add` on every call, in-process, and cannot be
+   forgotten by an agent writing up a run.
+2. **`spend_usd` in the state header means the PROGRAMME-WIDE total, and is the
+   SUM across all worktree ledgers** — not this worktree's ledger alone.
+   Recording one worktree's ledger there understates real spend, which is the
+   direction that matters for a ceiling check.
+3. **Neither `report.json`'s spend fields nor a `run.log` `usd_cost` sum is a
+   substitute.** The 2026-08-25 control arm proved this the hard way: two copies
+   ran concurrently against one ledger, so `report.json`'s delta silently
+   included the other copy's spend and the log's `usd_cost` sum came out
+   $0.238111 against a true ledger delta of $0.287153 because concurrent
+   appends lost writes. Derived figures are reconstructions; the ledger is the
+   record.
+
+### The hazard this leaves, recorded rather than fixed
+
+The ledger is gitignored local state, so **it does not survive deletion of a
+worktree, and it is invisible to CI and to any other machine.** The programme's
+only durable record of cumulative spend is a hand-maintained line in a markdown
+header. That is a real fragility and it is not fixed here — fixing it means
+committing the ledger or moving it outside the worktree, which is a data
+decision for the human, not a bookkeeping change to make silently.
