@@ -1,0 +1,54 @@
+{
+  "issue": 59,
+  "purpose": "Rasterisation settings for the real-handwriting fixtures (#59 DECISION 1). The three source PDFs are the original CAIE question papers with vector stylus ink on top and INTACT TEXT LAYERS; extraction must never see them unflattened, or it would read the printed question text without vision.",
+  "settings": {
+    "dpi": 150.0,
+    "colour_mode": "RGB",
+    "target_page_px_a4": "1240x1754",
+    "renderer": "pypdfium2 PdfPage.render(scale=dpi/72)",
+    "why_these_settings": "Matches lemely/accuracy/synth.py:133 page_size=(1240,1754) and :159 resolution=150.0 \u2014 A4 at 150 DPI. The synthetic arm and the handwriting arm must render at the same scale or a resolution difference sits inside a measurement whose whole purpose is to isolate handwriting.",
+    "observed_vs_target_width": "Rendered pages are 1241x1754, not the synthetic renderer's 1240x1754. A4 is 595.276pt wide and 595.276 * 150/72 = 1240.16, which pypdfium2 rounds UP. The difference is ONE pixel of width (0.08%) and is recorded rather than described as an exact match \u2014 it is far below any plausible effect on extraction, but the claim 'identical geometry' would have been false."
+  },
+  "reproducibility": "Byte-deterministic: PDF /Title, /CreationDate and /ModDate are pinned, so a re-render of the same input reproduces output_sha256 exactly. This was MEASURED rather than assumed \u2014 before pinning them, two consecutive runs produced three different digests, which would have made every output_sha256 below a false claim.",
+  "acceptance_check": "source_text_chars must be non-zero and output_text_chars must be 0 for every file. The script exits non-zero otherwise rather than writing a fixture that would silently measure nothing.",
+  "text_char_counts_differ_from_the_2026_08_25_audit": "The human's audit recorded 34,090 / 32,961 / 32,259 characters for s25 / w24 / w25; this script counts 23,727 / 24,754 / 22,961 via pypdfium2 get_textpage().get_text_range(). The gap is a counting-method difference (whitespace and layout-reconstruction handling differ between extractors), not a different file \u2014 the SHA256 of each input is recorded above, so which bytes were rendered is not in doubt. Noted rather than silently adopting whichever number is convenient; the finding that matters is direction, non-zero -> zero, and every extractor agrees on that.",
+  "outputs_not_committed": "The rendered pages are verbatim CAIE question-paper content. MISSION 12.7 makes publishing real-paper content a human decision, and the 2026-08-25 authorisation to commit the parsed mark schemes stated it was NOT blanket permission for future real-paper content. Only these digests are committed, which is enough to verify a re-render reproduces the same bytes.",
+  "files": [
+    {
+      "source": "0625_s25_qp_42.pdf",
+      "source_sha256": "9426e1d728135388d0b7639de8fa4deb25b373a36a7381f73462d11f6f5b63e1",
+      "source_text_chars": 23727,
+      "pages": 20,
+      "page_pixel_sizes": [
+        "1241x1754"
+      ],
+      "output": "0625_s25_qp_42.pdf",
+      "output_sha256": "5df676514864e3720356ba9ba4588c2e739bb20f20d0ba25c7f933e246f9829d",
+      "output_text_chars": 0
+    },
+    {
+      "source": "0625_w24_qp_42.pdf",
+      "source_sha256": "d1a03008efc740b8c1bb14a48a861c8e13b3a376e3294a3bcd2202f7beaa32c8",
+      "source_text_chars": 24754,
+      "pages": 16,
+      "page_pixel_sizes": [
+        "1241x1754"
+      ],
+      "output": "0625_w24_qp_42.pdf",
+      "output_sha256": "bc6bf703d1cf9234798a3d68e103d4919f595b58d6edf578c2a05643d8eaa4e9",
+      "output_text_chars": 0
+    },
+    {
+      "source": "0625_w25_qp_42.pdf",
+      "source_sha256": "07b2b80c6a73fac7d47444ff6e03767405465fd10bb8b3b39304e87d8da4626d",
+      "source_text_chars": 22961,
+      "pages": 18,
+      "page_pixel_sizes": [
+        "1241x1754"
+      ],
+      "output": "0625_w25_qp_42.pdf",
+      "output_sha256": "892fdfe50b49913a1f3b75c1711e4a56a69fe4f10f2143a525beac41e634fff0",
+      "output_text_chars": 0
+    }
+  ]
+}
