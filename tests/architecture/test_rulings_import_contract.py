@@ -18,6 +18,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from tests.architecture.lint_imports_lock import lint_imports_lock
+
 _REPO_ROOT = Path(__file__).resolve().parents[2]
 _SCRATCH_MODULE = _REPO_ROOT / "lemely" / "labelling" / "_scratch_rulings_violation.py"
 _SCRATCH_MODULE_SOURCE = (
@@ -59,6 +61,11 @@ def test_a_deliberate_violation_is_caught_and_the_real_package_stays_clean(tmp_p
     single worker regardless of scheduling, without relying on any
     ``pytest-xdist`` distribution mode.
     """
+    with lint_imports_lock():
+        _plant_lint_and_clean(tmp_path)
+
+
+def _plant_lint_and_clean(tmp_path: Path) -> None:
     # Defensive: a prior crashed run of this test may have left the scratch
     # module behind (lint-imports does static analysis of the installed
     # package tree and cannot be pointed at a tmp_path copy of it).

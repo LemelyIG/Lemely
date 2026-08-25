@@ -502,31 +502,46 @@ class MarkingLeafRecord(TypedDict):
     as plain data, never as an imported label-IO type.
     """
 
+    paper_id: str
     question_id: str
     awarded_marks: int
     mark_point_id: str | None
     mark_point_verdicts: dict[str, bool]
 
 
-def _distinct_marking_leaves(records: list[MarkingLeafRecord]) -> dict[str, int]:
+def _distinct_marking_leaves(records: list[MarkingLeafRecord]) -> dict[tuple[str, str], int]:
     """Collapse raw marking records to one ``awarded_marks`` per distinct leaf.
 
-    Duplicate per-mark-point rows for the same ``question_id`` must not be
-    counted as separate leaves (spec §9 gate 7: agreement is reported over
-    distinct leaves, never raw records). A leaf's question-level row
-    (``mark_point_id is None``) is preferred as the representative when
-    present; every mark-point row for one leaf carries the same
-    ``awarded_marks`` value by construction, so falling back to any row in
-    the group when no question-level row exists is order-independent.
+    **Leaf identity is ``(paper_id, question_id)``** — the same key
+    :func:`_group_by_leaf` and :func:`_distinct_leaves` use for DA6. Keying
+    on ``question_id`` alone would merge ``1a`` from every paper into one
+    leaf, shrinking the denominator *and* silently discarding every
+    disagreement but one: exactly the D18 narrowed-denominator shape this
+    programme exists to eliminate, and a direct breach of spec §9 gate 7.
+
+    Repeated records for one leaf must not be counted as separate leaves.
+    **The last record wins.** The label log is append-only
+    (``lemely.labelling.records``), so a labeller correcting a mistake
+    appends a second record rather than editing the first; taking the
+    earliest would let a stale value drive the agreement figure while the
+    correction sits unread in the same file.
+
+    A question-level row (``mark_point_id is None``) is preferred over a
+    per-mark-point row for the same leaf, but only among the *latest* rows —
+    and no invariant is assumed about mark-point rows agreeing with each
+    other. (``MarkingRecordPayload`` carries no ``mark_point_id`` at all
+    today, so on current data every row is question-level; the branch exists
+    for the per-mark-point shape spec §6 anticipates, and must not be
+    justified by a construction that does not exist.)
     """
-    by_leaf: dict[str, list[MarkingLeafRecord]] = {}
+    by_leaf: dict[tuple[str, str], list[MarkingLeafRecord]] = {}
     for r in records:
-        by_leaf.setdefault(r["question_id"], []).append(r)
-    result: dict[str, int] = {}
-    for question_id, group in by_leaf.items():
+        by_leaf.setdefault((r["paper_id"], r["question_id"]), []).append(r)
+    result: dict[tuple[str, str], int] = {}
+    for leaf_key, group in by_leaf.items():
         question_level = [r for r in group if r.get("mark_point_id") is None]
-        representative = question_level[0] if question_level else group[0]
-        result[question_id] = representative["awarded_marks"]
+        representative = question_level[-1] if question_level else group[-1]
+        result[leaf_key] = representative["awarded_marks"]
     return result
 
 
@@ -545,8 +560,9 @@ def agreement_wilson(
     no per-leaf field that could be mistaken for a corrected A-label, only
     the aggregate ``(n, successes, point, lower, upper)`` summary.
 
-    **Denominator, named explicitly**: distinct leaves (spec §9 gate 7,
-    ``_distinct_marking_leaves``) present in **both** ``a_records`` and
+    **Denominator, named explicitly**: distinct leaves — keyed
+    ``(paper_id, question_id)`` per DA6 (spec §9 gate 7,
+    ``_distinct_marking_leaves``) — present in **both** ``a_records`` and
     ``b_records``. A leaf A marked but B did not sample (or vice versa) is
     excluded from ``n`` — it is missing data, not a disagreement.
 
@@ -555,11 +571,9 @@ def agreement_wilson(
     """
     a_leaves = _distinct_marking_leaves(a_records)
     b_leaves = _distinct_marking_leaves(b_records)
-    shared_question_ids = set(a_leaves) & set(b_leaves)
-    n = len(shared_question_ids)
-    successes = sum(
-        1 for question_id in shared_question_ids if a_leaves[question_id] == b_leaves[question_id]
-    )
+    shared_leaves = set(a_leaves) & set(b_leaves)
+    n = len(shared_leaves)
+    successes = sum(1 for leaf in shared_leaves if a_leaves[leaf] == b_leaves[leaf])
     return _wilson_interval(successes=successes, n=n, z=z)
 
 

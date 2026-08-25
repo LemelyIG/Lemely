@@ -389,10 +389,12 @@ class TestAgreementWilson:
         *,
         question_id: str,
         awarded_marks: int,
+        paper_id: str = "paper-1",
         mark_point_id: str | None = None,
         mark_point_verdicts: dict[str, bool] | None = None,
     ) -> dict[str, object]:
         return {
+            "paper_id": paper_id,
             "question_id": question_id,
             "awarded_marks": awarded_marks,
             "mark_point_id": mark_point_id,
@@ -492,6 +494,48 @@ class TestAgreementWilson:
         result = agreement_wilson(a_records, b_records)
         assert result["n"] == 2
         assert result["successes"] == 2
+
+    def test_same_question_id_in_two_papers_is_two_leaves_not_one(self) -> None:
+        """Leaf identity is ``(paper_id, question_id)`` (DA6), never the bare id.
+
+        Keyed on ``question_id`` alone this collapses to a single leaf: the
+        denominator drops from 2 to 1 **and** the real disagreement in
+        ``paper-2`` is silently discarded, so agreement reads 1/1 = 100%.
+        That is the D18 narrowed-denominator shape.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(paper_id="paper-1", question_id="1a", awarded_marks=2),
+            self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=2),
+        ]
+        b_records = [
+            self._leaf_record(paper_id="paper-1", question_id="1a", awarded_marks=2),  # agree
+            self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=0),  # disagree
+        ]
+        result = agreement_wilson(a_records, b_records)
+        assert result["n"] == 2, "one leaf per paper, not one leaf across papers"
+        assert result["successes"] == 1, "the paper-2 disagreement must not be swallowed"
+
+    def test_a_corrected_resubmission_supersedes_the_earlier_record(self) -> None:
+        """The label log is append-only, so the LAST record for a leaf wins.
+
+        A labeller who marks 2, notices the mistake and appends 0 has
+        corrected their label. Taking the earliest record would drive the
+        agreement figure from a value its own author has already retracted.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),  # first attempt
+            self._leaf_record(question_id="1", awarded_marks=0),  # correction
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=0),
+        ]
+        result = agreement_wilson(a_records, b_records)
+        assert result["n"] == 1
+        assert result["successes"] == 1, "A's correction stands, not A's first attempt"
 
 
 class TestRiskCoverage:
