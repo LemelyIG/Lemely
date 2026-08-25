@@ -7,6 +7,8 @@ import sys
 import unittest
 from pathlib import Path
 
+from tests.architecture.lint_imports_lock import lint_imports_lock
+
 
 def _lint_imports_command() -> str:
     """Resolve `lint-imports` next to the running interpreter.
@@ -21,12 +23,16 @@ def _lint_imports_command() -> str:
 
 class ImportLinterTests(unittest.TestCase):
     def test_all_contracts_pass(self) -> None:
-        result = subprocess.run(
-            [_lint_imports_command()],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        # Held for the whole subprocess: sibling xdist workers plant
+        # deliberate violations in the real package tree to prove contracts
+        # fire, and this reader must not observe one mid-plant.
+        with lint_imports_lock():
+            result = subprocess.run(
+                [_lint_imports_command()],
+                capture_output=True,
+                text=True,
+                check=False,
+            )
         stdout_summary = result.stdout[:500] if result.stdout else ""
         stderr_summary = result.stderr[:200] if result.stderr else ""
         self.assertEqual(

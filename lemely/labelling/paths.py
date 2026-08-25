@@ -93,3 +93,14 @@ def mark_scheme_path(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> Path
     _validate_identifier(paper_id, kind="paper_id")
     schemes_root = eval_root / "mark_schemes"
     return _require_within(schemes_root / f"{paper_id}.json", schemes_root)
+
+
+def rulings_path(eval_root: Path = DEFAULT_EVAL_ROOT) -> Path:
+    """The single append-only, hash-chained ruling log (DA3/#52, spec §3.1).
+
+    Deliberately ``eval_root / "rulings.jsonl"`` — a single repo-root file,
+    not per-paper like :func:`transcription_path` / :func:`marking_path`:
+    rulings are conventions that apply across papers, not observations about
+    one paper.
+    """
+    return eval_root / "rulings.jsonl"
