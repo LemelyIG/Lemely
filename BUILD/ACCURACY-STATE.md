@@ -1,6 +1,6 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: run-2026-08-24-a
+run_pointer: run-2026-08-25-a
 worktree: /home/sico/Lemely-worktrees/accuracy
 branch: feature/accuracy-58-label-free-metamorphic-tests-for-the
 last_run_label: metamorphic-58-2026-08-25
@@ -42,6 +42,31 @@ touching this body or the key order). **Do not hand-edit the header while the
 supervisor is running** — a manual edit racing a `state set` write can be
 clobbered, and any edit that breaks the `key: value` shape at column zero
 breaks the supervisor's `grep -m1` reads and its 50%/80% spend alarms with it.
+
+## The `review_rate` figure in full (moved out of the header 2026-08-25)
+
+The header key carries the number; the analysis behind it lives here. It was
+moved because the supervisor pastes the header value **verbatim** into every
+outbound notification's preamble, so a ~600-character paragraph there crowded
+the actual alert payload out of every message the human receives. Nothing
+in-repo parses this value: `lemely/eval/review_gate.py` takes
+`last_merged_review_rate` as a function parameter sourced from
+`BUILD/review-rate-baseline.json` and `lemely/runtime/config.py:168`, and the
+header-shape fixture in `tests/test_accuracy_board_state.py:46` is
+`"review_rate: 19.1%"`. **No measured value changed in this move.**
+
+**29.03%**, single-repeat extract+mark, run `ablation-2026-08-24-a` — 9/31
+leaves (det 0/8; gemini 9/23 = 39.1%). Per-paper p95 is 66.7% against a 15%
+ceiling on only 5 papers, which is **UNDERPOWERED as a percentile**. It is
+identical to `last_merged_review_rate` 29.03% (`BUILD/review-rate-baseline.json`,
+`lemely/runtime/config.py:168`) because it is the same corpus under the same
+computation.
+
+**DA9a is still binding: do NOT arm the ratchet against 29.03%.** The A/A floor's
+measured mean over 10 live repeats was **32.58%** (range 29.03–41.94%), so 29.03%
+is the **bottom** of the observed range — arming `min(10%, last_merged)` against
+it would gate on a figure that unchanged code exceeds 7 times in 10. Restate it
+distribution-aware first (#36).
 
 ## Evidence log — halt runs, 2026-08-22
 

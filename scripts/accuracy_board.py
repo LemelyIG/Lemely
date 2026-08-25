@@ -458,6 +458,48 @@ def cmd_next(as_json: bool) -> int:
     return 0
 
 
+_UNTICKED_BOX = re.compile(r"^\s*-\s*\[ \]", re.MULTILINE)
+
+#: H issues MISSION 14 records as closed by the human or with human verification,
+#: and explicitly forbids reopening. They still carry unticked boxes, so the audit
+#: below reports them as a quiet note rather than an alarm — an alarm that fires on
+#: known-settled issues every run is one nobody reads, which is the failure this
+#: audit exists to prevent.
+_HUMAN_VERIFIED_CLOSED_H = frozenset({34, 48, 50, 60})
+
+
+def _closed_h_with_unmet_boxes(leaves: list[Issue]) -> list[tuple[Issue, int]]:
+    """Return closed H issues that still carry unticked acceptance boxes.
+
+    MISSION 3.5 says H-numbered issues are human tasks that are never closed. The
+    ``_h_guard`` enforces that on this script's own mutation paths, but it cannot
+    intercept a close performed straight through the GitHub UI or API — which is
+    exactly how #49, #51, #52 and #55 were all closed in a 71-second window on
+    2026-08-18 with their boxes unticked. Every run afterwards read
+    ``open H (human only): none`` and took it to mean "no human work outstanding".
+
+    So audit the closed ones too, and shout about any that were never actually
+    finished. A retired bullet is recorded as ticked-and-struck, so it does not
+    trip this; only a genuinely unmet box does.
+    """
+    flagged: list[tuple[Issue, int]] = []
+    for leaf in sorted(
+        (i for i in leaves if _H_TITLE.match(i.title) and i.state == "CLOSED"),
+        key=_leaf_key,
+    ):
+        try:
+            raw = _run_gh(
+                ["issue", "view", str(leaf.number), "--repo", OWNER_REPO, "--json", "body"]
+            )
+            body = str(json.loads(raw).get("body") or "")
+        except (BoardError, json.JSONDecodeError):
+            continue  # never let the audit break `status`
+        unmet = len(_UNTICKED_BOX.findall(body))
+        if unmet:
+            flagged.append((leaf, unmet))
+    return flagged
+
+
 def cmd_status(as_json: bool) -> int:
     issues = _fetch_issues()
     leaves = _accuracy_leaves(issues)
@@ -471,6 +513,7 @@ def cmd_status(as_json: bool) -> int:
         (leaf for leaf in leaves if _H_TITLE.match(leaf.title) and leaf.state == "OPEN"),
         key=_leaf_key,
     )
+    h_unmet = _closed_h_with_unmet_boxes(leaves)
     in_progress = sorted(
         (leaf for leaf in leaves if leaf.status in ("In progress", "In review")),
         key=_leaf_key,
@@ -489,6 +532,9 @@ def cmd_status(as_json: bool) -> int:
                     "milestone_counts": counts,
                     "epics": [_issue_dict(e) for e in epics],
                     "h_open": [_issue_dict(h) for h in h_open],
+                    "h_closed_with_unmet_boxes": [
+                        _issue_dict(h, {"unmet_boxes": n}) for h, n in h_unmet
+                    ],
                     "in_progress": [_issue_dict(i) for i in in_progress],
                     "blocked": [
                         _issue_dict(leaf, {"blocked_by": unmet}) for leaf, unmet in blocked
@@ -524,6 +570,18 @@ def cmd_status(as_json: bool) -> int:
             print(f"open H (human only): #{h.number} {h.title}")
     else:
         print("open H (human only): none")
+    for h, n_boxes in h_unmet:
+        if h.number in _HUMAN_VERIFIED_CLOSED_H:
+            print(
+                f"note: closed H #{h.number} has {n_boxes} unticked box(es), but MISSION 14 "
+                f"records it human-verified closed — do not reopen."
+            )
+            continue
+        print(
+            f"!! H-ISSUE CLOSED WITH {n_boxes} UNMET ACCEPTANCE BOX(ES): #{h.number} {h.title}\n"
+            f"   MISSION 3.5 says H issues are never closed. Do NOT read this as settled; "
+            f"treat it as OPEN and escalate to the human."
+        )
     if blocked:
         for leaf, unmet in blocked:
             waits = ", ".join(f"#{d}" for d in unmet)
