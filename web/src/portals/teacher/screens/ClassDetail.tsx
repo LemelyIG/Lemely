@@ -43,7 +43,14 @@ export function useClassDetailContext(): ClassDetailContext {
   return useOutletContext<ClassDetailContext>()
 }
 
-function JoinCodeChip({ code }: { code: string }) {
+/**
+ * Exported for Task 21 / D7.10: the create-first-class step
+ * (`screens/CreateFirstClass.tsx`) shows the join code for the class a
+ * teacher has just created, and reuses this rather than a second
+ * copy-to-clipboard chip — the same artifact, the same affordance, two
+ * places it needs to appear.
+ */
+export function JoinCodeChip({ code }: { code: string }) {
   const [copied, setCopied] = useState(false)
   async function copy() {
     try {
