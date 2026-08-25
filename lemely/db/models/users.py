@@ -40,6 +40,32 @@ class User(TimestampMixin, Base):
     display_name: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     phone: Mapped[str | None] = mapped_column(sa.String, nullable=True)
     is_active: Mapped[bool] = mapped_column(sa.Boolean, nullable=False, server_default=sa.false())
+    email_verified_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Migration ``0021`` (D7.4). Set when the account redeems an
+    ``email_verification`` token. Verification state lives **here**, not in
+    GoTrue: ``admin_create_user`` keeps ``email_confirm: True`` so the password
+    grant always succeeds, because UI spec §G-07 requires "a way to continue
+    into a limited preview of the app rather than a hard wall" and GoTrue-native
+    confirmation *is* that wall. NULL gates exactly one route —
+    ``POST /api/student/correct``, the Gemini spend (D7.5) — and nothing else.
+
+    Note this is unrelated to ``is_active``, which is dead: it is written
+    nowhere and read nowhere, and activation in this product is a
+    *subscription* concept (``/api/admin/activations/*``), not a user one."""
+
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Migration ``0021`` (D7.11). Set at signup when the G-03 consent box is
+    ticked. The consent is to ``/data`` — the data-handling page that actually
+    exists — not to a terms-of-service document, because this repository has
+    none and PRODUCT.md forbids fabricating one. Nullable because every account
+    created before this migration (and every parent, who signs up through no
+    form at all) has no such timestamp and inventing one would be a lie about a
+    consent nobody gave."""
+
     locale: Mapped[str] = mapped_column(sa.String, nullable=False, server_default=sa.literal("en"))
     friend_code: Mapped[str | None] = mapped_column(sa.String(8), nullable=True, unique=True)
     """Migration ``0015`` (P5.4 chunk A). ``users`` has no ``username`` column,
