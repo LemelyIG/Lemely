@@ -74,10 +74,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
-    # ── SCHOOL_ADMIN (7) ────────────────────
+    # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/{seat_id}/revoke"): SCHOOL_ADMIN,
+    # D7.3/spec §1.2: mints a redeemable seat invite code (the alternative to
+    # `invite_student` above, which creates the account outright). Same
+    # school_admin-only guard, same reason - a seat is a school_admin's to
+    # give out, not a teacher's.
+    ("POST", "/api/school/seats/invite-code"): SCHOOL_ADMIN,
     # P4.7 (UI spec K-01/K-03). Same router, so the same guard by construction —
     # but declared individually here on purpose: property 2 is a freeze, and a
     # route inheriting a guard it should not have is exactly what a
@@ -106,16 +111,21 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (3) ────────────────────
+    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
+    # D7.3/spec §1.2: mints a redeemable class invite code. Router-level guard
+    # on `classes.py` is the STAFF triple; narrowed here, per-route, to just
+    # the two roles that may manage a class's roster (D3.1) - platform_admin
+    # cannot reach this route, mirroring every other class-mutating route.
+    ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
     # ── PARENT (4) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (6) ────────────────────
+    # ── PUBLIC (7) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     ("POST", "/api/auth/otp/request"): PUBLIC,
     ("POST", "/api/auth/otp/verify"): PUBLIC,
@@ -128,7 +138,13 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/auth/refresh"): PUBLIC,
     ("POST", "/api/auth/signup"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
-    # ── AUTH_ANY (12) ────────────────────
+    # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
+    # by design - a visitor sees what a code joins *before* creating an
+    # account, and `InviteService.preview` is written to be paranoid about
+    # disclosure precisely because this route carries no bearer token at all
+    # (see its own docstring for the "no id, no roster, no count" rule).
+    ("GET", "/api/invites/{code}"): PUBLIC,
+    # ── AUTH_ANY (13) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
@@ -141,6 +157,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/notifications/push/unsubscribe"): AUTH_ANY,
     ("POST", "/api/notifications/read-all"): AUTH_ANY,
     ("POST", "/api/notifications/{notification_id}/read"): AUTH_ANY,
+    # D7.3/spec §1.2: redeem is authenticated but role-agnostic - an invite's
+    # own `role` decides what redeeming it does, not the caller's platform
+    # role, so this is `get_auth_context` alone (no `require_role`), the same
+    # AUTH_ANY shape as the `/api/me/*` routes above.
+    ("POST", "/api/invites/{code}/redeem"): AUTH_ANY,
     # ── STAFF (40) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
@@ -437,7 +458,7 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    assert len(_NON_PUBLIC) == len(ROUTES) - 6  # 5 auth entrypoints + /api/health
+    assert len(_NON_PUBLIC) == len(ROUTES) - 7  # 5 auth entrypoints + /api/health + invite preview
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

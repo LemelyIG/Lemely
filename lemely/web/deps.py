@@ -34,6 +34,7 @@ from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.friend_repo import FriendService
 from lemely.db.history_repo import DbHistoryStore
+from lemely.db.invite_repo import InviteService
 from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
@@ -755,6 +756,24 @@ def get_school_provisioning_service() -> SchoolProvisioningService:
     )
 
 
+@lru_cache(maxsize=1)
+def get_invite_service() -> InviteService:
+    """Return the process-wide :class:`InviteService` singleton (D7.3, spec §1.2).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other class-scoped service composes, so a class
+    invite's redemption reuses the identical
+    :meth:`~lemely.db.class_repo.ClassService.join_by_code` every
+    self-enrolling student already goes through (D3.1) — never a second,
+    independently-derived enrolment path. Unlike :func:`get_seat_service`,
+    this needs no account-creation seam: redemption always attaches an
+    *existing* account (its route is authenticated), never creates one.
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return InviteService(get_sessionmaker(get_settings()), get_class_service())
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -793,3 +812,4 @@ def reset_singletons() -> None:
     get_platform_admin_service.cache_clear()
     get_school_admin_service.cache_clear()
     get_school_provisioning_service.cache_clear()
+    get_invite_service.cache_clear()

@@ -23,6 +23,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.core.history import HistoryStoreProtocol
+from lemely.db.invite_repo import InviteOwnershipError, InviteQuotaExceededError, InviteService
 from lemely.db.models.enums import Role
 from lemely.db.school_admin_repo import (
     ClassesWouldBeOrphanedError,
@@ -40,6 +41,7 @@ from lemely.db.seat_repo import (
 from lemely.web.deps import (
     AuthContext,
     get_history_store,
+    get_invite_service,
     get_school_admin_service,
     get_seat_service,
     require_role,
@@ -52,6 +54,8 @@ from lemely.web.deps import (
 # reads for the same students. Cross-router import matches the existing house
 # style — `classes.py` itself imports `_mean` from `teacher.py`.
 from lemely.web.routers.classes import _average_for
+from lemely.web.routers.invites import _invite_to_dto
+from lemely.web.schemas_invites import InviteCodeDTO, MintSeatInviteRequestDTO
 from lemely.web.schemas_school import (
     InviteStudentRequestDTO,
     InviteStudentResponseDTO,
@@ -164,6 +168,33 @@ def invite_student(
         email=result.email,
         temporaryPassword=password if generated else None,
     )
+
+
+@router.post("/school/seats/invite-code", response_model=InviteCodeDTO)
+def mint_seat_invite_code(
+    body: MintSeatInviteRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.school_admin))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+) -> InviteCodeDTO:
+    """Mint a redeemable seat invite code in ``schoolId``, reserving its seat (D7.3/G-08).
+
+    The alternative to :func:`invite_student`: rather than creating the
+    account outright and handing back a temporary password, this mints a
+    code a visitor previews (``GET /api/invites/{code}``) and redeems after
+    signing up themselves — the student sees which school they are joining
+    before committing, closing spec §1.2. The seat is reserved the instant
+    this call succeeds (see
+    :meth:`~lemely.db.invite_repo.InviteService.mint_seat_invite`), so a
+    school at its quota is a **409** here exactly as it is for
+    :func:`invite_student`.
+    """
+    try:
+        invite = service.mint_seat_invite(auth.user_id, body.schoolId)
+    except InviteOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except InviteQuotaExceededError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _invite_to_dto(invite)
 
 
 @router.get("/school/overview", response_model=SchoolOverviewListDTO)
