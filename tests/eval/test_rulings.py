@@ -265,3 +265,99 @@ def test_applies_to_rejects_unknown_leaf_field_keys_gracefully() -> None:
 
 if __name__ == "__main__":
     pytest.main([__file__])
+
+
+class TestPendingTailCannotBeFaked:
+    """DA3 requires the pending tail at ZERO before the irreversible split freeze.
+
+    A resolution record that answers nothing must not drive that gate green.
+    """
+
+    def test_a_resolution_naming_an_unparked_id_does_not_clear_anything(
+        self, tmp_path: Path
+    ) -> None:
+        from lemely.labelling.rulings import (
+            append_pending_ruling,
+            count_pending,
+            list_orphan_resolutions,
+            resolve_pending_ruling,
+        )
+
+        append_pending_ruling(
+            paper_id="0625_s24_ms_21",
+            question_id="1a",
+            question="Does ECF apply across parts here?",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+            pending_id="real-question",
+        )
+        # Resolves an id that was never parked -- a typo, or a fabricated record.
+        resolve_pending_ruling(
+            pending_id="never-parked",
+            resolving_ruling_id="ruling-1",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+        )
+
+        assert count_pending(eval_root=tmp_path) == 1, (
+            "an unmatched resolution must not answer a real open question"
+        )
+        orphans = list_orphan_resolutions(eval_root=tmp_path)
+        assert len(orphans) == 1, "and it must be surfaced, not silently dropped"
+
+    def test_a_resolution_appended_before_its_question_does_not_retroactively_answer_it(
+        self, tmp_path: Path
+    ) -> None:
+        from lemely.labelling.rulings import (
+            append_pending_ruling,
+            count_pending,
+            resolve_pending_ruling,
+        )
+
+        # Resolution first, question second -- impossible in a real session,
+        # but nothing in an append-only file prevents writing it.
+        resolve_pending_ruling(
+            pending_id="q-1",
+            resolving_ruling_id="ruling-1",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+        )
+        append_pending_ruling(
+            paper_id="0625_s24_ms_21",
+            question_id="1a",
+            question="Does the list rule over-tariff this?",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+            pending_id="q-1",
+        )
+
+        assert count_pending(eval_root=tmp_path) == 1, (
+            "a question cannot be answered before it was asked"
+        )
+
+    def test_the_ordinary_parked_then_resolved_sequence_still_clears(self, tmp_path: Path) -> None:
+        """The guard must not break the case it exists to protect."""
+        from lemely.labelling.rulings import (
+            append_pending_ruling,
+            count_pending,
+            list_orphan_resolutions,
+            resolve_pending_ruling,
+        )
+
+        append_pending_ruling(
+            paper_id="0625_s24_ms_21",
+            question_id="1a",
+            question="Does ECF apply across parts here?",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+            pending_id="q-1",
+        )
+        resolve_pending_ruling(
+            pending_id="q-1",
+            resolving_ruling_id="ruling-1",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+        )
+
+        assert count_pending(eval_root=tmp_path) == 0
+        assert list_orphan_resolutions(eval_root=tmp_path) == []

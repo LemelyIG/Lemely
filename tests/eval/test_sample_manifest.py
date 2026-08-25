@@ -154,3 +154,30 @@ class TestNoStratumIsStarvedToZero:
 
         small = {q for _, q in selected if q.startswith("small-")}
         assert len(small) == 1, "a non-empty stratum must never round away to nothing"
+
+
+class TestFractionIsValidated:
+    def test_a_negative_fraction_is_rejected_not_applied_as_a_slice(self) -> None:
+        """``ceil(40 * -0.1)`` is ``-4``; ``ranked[:-4]`` selects 36 of 40.
+
+        A typo'd sign would silently turn a 10% sample into a 90% one.
+        """
+        import pytest
+
+        population = _synthetic_population(n_per_band=40)
+        with pytest.raises(ValueError, match=r"fraction must be in \(0, 1\]"):
+            select_relabel_sample(population, relabel_salt="salt-alpha", fraction=-0.10)
+
+    def test_a_fraction_above_one_is_rejected(self) -> None:
+        import pytest
+
+        population = _synthetic_population(n_per_band=40)
+        with pytest.raises(ValueError, match=r"fraction must be in \(0, 1\]"):
+            select_relabel_sample(population, relabel_salt="salt-alpha", fraction=1.5)
+
+    def test_a_zero_fraction_is_rejected_rather_than_silently_sampling_nothing(self) -> None:
+        import pytest
+
+        population = _synthetic_population(n_per_band=40)
+        with pytest.raises(ValueError, match=r"fraction must be in \(0, 1\]"):
+            select_relabel_sample(population, relabel_salt="salt-alpha", fraction=0.0)

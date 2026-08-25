@@ -212,10 +212,37 @@ def resolve_pending_ruling(
     return append_record(rulings_path(eval_root), payload.model_dump(mode="json"))
 
 
-def _pending_and_resolved_ids(eval_root: Path) -> tuple[list[dict[str, object]], set[str]]:
+def _walk_pending(
+    eval_root: Path,
+) -> tuple[list[dict[str, object]], set[str], list[dict[str, object]]]:
+    """Single in-order pass returning (pending records, resolved ids, orphan resolutions).
+
+    **A resolution only counts if it FOLLOWS the pending record it names.**
+    The chain is append-only and ordered, so "resolved" is an event that
+    happens *after* the question is parked; a resolution appended earlier
+    cannot retroactively answer it, and one naming a ``pending_id`` that was
+    never parked at all (a typo, a copied id, a fabricated record) answers
+    nothing.
+
+    Why this is worth enforcing rather than trusting: DA3 requires the
+    pending tail to reach **zero before the split freeze**, and the freeze is
+    irreversible. A flat file-global set of resolved ids would let a single
+    unmatched resolution record drive ``count_pending()`` to zero while a
+    real judgment question sat unanswered — a gate reporting green on a
+    corpus that has not met its condition, in front of the one operation
+    that cannot be undone.
+
+    Unmatched resolutions are **not silently dropped**: they are returned as
+    orphans so :func:`list_orphan_resolutions` can surface them. Ignoring
+    them for counting purposes fails *closed* (the pending count stays high),
+    which is the safe direction, but they still indicate a corrupt or
+    mistaken log and a human should see them.
+    """
     records = read_records(rulings_path(eval_root))
     pending_records: list[dict[str, object]] = []
+    seen_pending_ids: set[str] = set()
     resolved_ids: set[str] = set()
+    orphan_resolutions: list[dict[str, object]] = []
     for record in records:
         payload = record["payload"]
         if not isinstance(payload, dict):
@@ -228,25 +255,45 @@ def _pending_and_resolved_ids(eval_root: Path) -> tuple[list[dict[str, object]],
             and "resolving_ruling_id" not in payload
         )
         if is_pending:
+            pending_id = payload["pending_id"]
+            if not isinstance(pending_id, str):
+                raise TypeError(
+                    f"corrupt ruling record: 'pending_id' is not a string, got {type(pending_id)!r}"
+                )
             pending_records.append(record)
+            seen_pending_ids.add(pending_id)
         elif "resolving_ruling_id" in payload:
             pending_id = payload["pending_id"]
             if not isinstance(pending_id, str):
                 raise TypeError(
                     f"corrupt ruling record: 'pending_id' is not a string, got {type(pending_id)!r}"
                 )
-            resolved_ids.add(pending_id)
-    return pending_records, resolved_ids
+            if pending_id in seen_pending_ids:
+                resolved_ids.add(pending_id)
+            else:
+                orphan_resolutions.append(record)
+    return pending_records, resolved_ids, orphan_resolutions
 
 
 def list_pending(eval_root: Path = DEFAULT_EVAL_ROOT) -> list[dict[str, object]]:
     """List every ``pending_ruling`` record not yet resolved."""
-    pending_records, resolved_ids = _pending_and_resolved_ids(eval_root)
+    pending_records, resolved_ids, _ = _walk_pending(eval_root)
     return [
         record
         for record in pending_records
         if record["payload"]["pending_id"] not in resolved_ids  # type: ignore[index]
     ]
+
+
+def list_orphan_resolutions(eval_root: Path = DEFAULT_EVAL_ROOT) -> list[dict[str, object]]:
+    """Resolution records naming a ``pending_id`` never parked before them.
+
+    Always empty in a well-formed log. A non-empty result means the log is
+    corrupt or a resolution was written against the wrong id — it must be
+    investigated before the freeze, not netted off against the pending count.
+    """
+    _, _, orphan_resolutions = _walk_pending(eval_root)
+    return orphan_resolutions
 
 
 def count_pending(eval_root: Path = DEFAULT_EVAL_ROOT) -> int:

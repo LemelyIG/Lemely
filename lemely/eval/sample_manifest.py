@@ -131,7 +131,15 @@ def select_relabel_sample(
     the agreement figure entirely while the docstring claimed it was never
     starved. Rounding up costs at most one extra leaf per stratum and keeps
     every non-empty stratum represented.
+
+    ``fraction`` must lie in ``(0, 1]``. A negative value is rejected rather
+    than applied: ``ceil(40 * -0.1)`` is ``-4``, and ``ranked[:-4]`` is a
+    *slice from the end* that would quietly select 36 of 40 leaves — a
+    typo'd sign turning a 10% sample into a 90% one with no error anywhere.
     """
+    if not 0 < fraction <= 1:
+        raise ValueError(f"fraction must be in (0, 1], got {fraction!r}")
+
     strata: dict[str, list[LeafForSampling]] = {}
     for leaf in leaves:
         strata.setdefault(stratify_by(leaf), []).append(leaf)
