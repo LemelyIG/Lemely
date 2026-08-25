@@ -1283,7 +1283,7 @@ From here the plan states files, interfaces, tests and binding constraints rathe
 ```
 pre-commit run --all-files
 pytest -q --tb=short
-cd web && npm run typecheck && npm run lint && npm run test:unit && npm run test:e2e
+cd web && npm run typecheck && npm run lint && npm run test && npm run test:e2e
 ```
 
 - [ ] **Step 7: Commit and push**
