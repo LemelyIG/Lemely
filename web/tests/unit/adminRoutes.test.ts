@@ -97,6 +97,47 @@ describe("the admin lanes are mounted and guarded — P4.7", () => {
   })
 })
 
+/*
+ * Task 22 (D7.8) — the Schools screen closes spec §1.1's missing first link,
+ * so it matters more than usual here that the guard actually sits over it.
+ * `/platform/schools` carries no `RequireAuth` of its own: it is a plain
+ * child of `platformAdminRoute`, guarded only because `routes.tsx` wraps
+ * `platformAdminRoute.element` — the `<AdminLayout>` every child renders
+ * inside of, via `<Outlet />` — in `RequireAuth allowedRoles={
+ * PLATFORM_ADMIN_ROLES}`. So the two things worth pinning are not "does
+ * `/platform/schools` have a guard" (it has none to find) but "is the route
+ * actually registered under the subtree that guard covers" and "does that
+ * guard's role list still read exactly as expected" — which is exactly the
+ * one-directional-assertion trap this file's own opening comment names: a
+ * screen added to the wrong lane, or added unguarded at the top level, would
+ * still typecheck, still lint, and still render perfectly for a
+ * platform_admin. Only a test that also checks the other four roles catches it.
+ */
+describe("Task 22 · /platform/schools is registered under the guarded platform subtree", () => {
+  it("registers a schools child route on platformAdminRoute, not schoolAdminRoute", () => {
+    expect(
+      platformAdminRoute.children?.some((route) => route.path === "schools"),
+      "/platform/schools is not a child of platformAdminRoute",
+    ).toBe(true)
+    expect(
+      schoolAdminRoute.children?.some((route) => route.path === "schools"),
+      "a schools route leaked into schoolAdminRoute, the wrong lane",
+    ).toBe(false)
+  })
+
+  it("reaches platform_admin", () => {
+    const platform = allowedRolesOf(appRoutes.find((r) => r.path === "platform")!.element)
+    expect(platform).toContain("platform_admin")
+  })
+
+  it("does not reach the other four roles", () => {
+    const platform = allowedRolesOf(appRoutes.find((r) => r.path === "platform")!.element)
+    for (const role of ["student", "parent", "teacher", "school_admin"]) {
+      expect(platform, `platform_admin's guard must not admit ${role}`).not.toContain(role)
+    }
+  })
+})
+
 describe("the teacher portal's role list — P4.7", () => {
   /*
    * Read off the mounted route rather than the source text, so a change to the
@@ -185,6 +226,8 @@ describe("the admin screens never render a raw error message — P4.7", () => {
     "src/portals/admin/screens/PlatformConsole.tsx",
     "src/portals/admin/screens/Activations.tsx",
     "src/portals/admin/screens/PipelineHealth.tsx",
+    // Task 22 (D7.8).
+    "src/portals/admin/screens/Schools.tsx",
   ]
 
   it.each(SCREENS)("%s renders no `error.message`", (relative) => {

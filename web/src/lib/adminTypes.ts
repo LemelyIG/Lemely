@@ -125,3 +125,86 @@ export interface PipelineHealth {
    * not by anything a request can reach. */
   markingAccuracyNote: string
 }
+
+// ── Schools (D7.8, spec §1.1: the account graph's missing first link) ──────
+//
+// Before `lemely/web/routers/admin.py` grew these four routes, no production
+// code path created a `School` row or a `school_admin` account, so
+// `POST /api/school/teachers/invite` — the only teacher-creation path D1.7
+// allows — was unreachable in any real deployment. Mirrors
+// `lemely/web/schemas_admin.py` field-for-field, same as every interface
+// above it in this file.
+
+/** One school_admin staffing a school, for the roster on the schools list. */
+export interface SchoolAdminSummary {
+  userId: string
+  email: string
+  displayName: string | null
+}
+
+/** One school's provisioning state: quota, seat usage, and its admins.
+ *
+ * `seatsAssigned` counts non-revoked seats — the identical definition
+ * `SeatUsage`'s own `used` already uses (`schoolTypes.ts`), so a seat count
+ * never means two different things depending on which screen reads it.
+ * `seatsAvailable` is sent rather than left for the screen to derive, so
+ * "how many seats are free" is a counted fact in every reader, not a
+ * `quota - assigned` a screen could get wrong at the edges (it is never
+ * negative on the wire, even when usage briefly exceeds a lowered quota). */
+export interface SchoolSummary {
+  schoolId: string
+  name: string
+  seatQuota: number
+  seatsAssigned: number
+  seatsAvailable: number
+  admins: SchoolAdminSummary[]
+}
+
+/** Response for `GET /api/admin/schools`. Every school on the platform — a
+ * platform admin has no tenant to scope to (D1.6/D1.10), so this is
+ * everything there is, not a caller-owned subset. */
+export interface SchoolList {
+  schools: SchoolSummary[]
+}
+
+/** Body for `POST /api/admin/schools`. `seatQuota` is required rather than
+ * defaulted: a platform admin creating a school is the one moment a real
+ * commercial quota should be set (D7.2 is why self-service signup never gets
+ * to create a school at all — it would carry a quota of 0 and sit unusable
+ * until a platform admin intervened anyway). */
+export interface CreateSchoolRequest {
+  name: string
+  seatQuota: number
+}
+
+/** Body for `PATCH /api/admin/schools/{id}`. Both fields optional and
+ * independently settable, so a name correction is never forced to resend
+ * (and risk clobbering) a quota someone else is mid-edit on. A quota that
+ * would fall below the seats already assigned is refused with a 409 naming
+ * both numbers — see `schoolUpdateFailureMessage` in `adminOutcome.ts`. */
+export interface UpdateSchoolRequest {
+  name?: string | null
+  seatQuota?: number | null
+}
+
+/** Body for `POST /api/admin/schools/{id}/admins`. Same credential handling
+ * as `InviteTeacherRequest` (`schoolTypes.ts`): no email provider exists in
+ * v1 (D7.6), so `password` is left unset here and the backend always
+ * generates one rather than the console ever asking a platform admin to
+ * invent a credential. */
+export interface CreateSchoolAdminRequest {
+  email: string
+  displayName?: string | null
+  password?: string | null
+}
+
+/** Response for `POST /api/admin/schools/{id}/admins`. `temporaryPassword` is
+ * non-null only when the caller omitted `password` in the request — true for
+ * every call this console makes. Shown once: the backend keeps only its
+ * hash, and no email is sent for it in v1. */
+export interface CreateSchoolAdminResponse {
+  userId: string
+  membershipId: string
+  email: string
+  temporaryPassword: string | null
+}
