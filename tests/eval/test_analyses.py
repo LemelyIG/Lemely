@@ -335,6 +335,165 @@ class TestWilson:
         assert result["lower"] < normal_lower
 
 
+class TestWilsonIntervalExtraction:
+    """Regression: ``_wilson_interval`` is the arithmetic ``wilson()`` was built on.
+
+    #98 extracts ``wilson()``'s interval arithmetic into a pure
+    ``(successes, n, z) -> WilsonResult`` helper. This test would fail if the
+    extraction silently changed the arithmetic: it recomputes the exact
+    values from ``TestWilson`` directly against the helper, independent of
+    ``EvalRecord``/``wilson()``.
+    """
+
+    def test_matches_wilsons_own_output_for_equivalent_inputs(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(8)] + [
+            _rec(question_id=str(i), outcome="under") for i in range(8, 10)
+        ]
+        via_wilson = wilson(records)
+        via_helper = _wilson_interval(successes=8, n=10)
+        assert via_helper == via_wilson
+
+    def test_matches_wilsons_extreme_point_estimate_regression_value(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        result = _wilson_interval(successes=10, n=10)
+        assert result["n"] == 10
+        assert result["point"] == 1.0
+        assert result["lower"] == 0.7224598312333834
+        assert result["upper"] == 1.0
+
+    def test_zero_n_returns_full_uncertainty(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        result = _wilson_interval(successes=0, n=0)
+        assert result == {"n": 0, "successes": 0, "point": 0.0, "lower": 0.0, "upper": 1.0}
+
+    def test_custom_z_is_honoured_same_as_wilsons_z_kwarg(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(8)] + [
+            _rec(question_id=str(i), outcome="under") for i in range(8, 10)
+        ]
+        via_wilson = wilson(records, z=1.5)
+        via_helper = _wilson_interval(successes=8, n=10, z=1.5)
+        assert via_helper == via_wilson
+
+
+class TestAgreementWilson:
+    """Synthetic-only tests for the labeller-A/labeller-B agreement computation (#98, DA2/#51)."""
+
+    def _leaf_record(
+        self,
+        *,
+        question_id: str,
+        awarded_marks: int,
+        mark_point_id: str | None = None,
+        mark_point_verdicts: dict[str, bool] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": mark_point_id,
+            "mark_point_verdicts": mark_point_verdicts or {},
+        }
+
+    def test_agreement_uses_wilson_interval_arithmetic(self) -> None:
+        from lemely.eval.analyses import _wilson_interval, agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            self._leaf_record(question_id="3", awarded_marks=0),
+            self._leaf_record(question_id="4", awarded_marks=3),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),  # agree
+            self._leaf_record(question_id="2", awarded_marks=1),  # agree
+            self._leaf_record(question_id="3", awarded_marks=1),  # disagree
+            self._leaf_record(question_id="4", awarded_marks=3),  # agree
+        ]
+        result = agreement_wilson(a_records, b_records)
+        expected = _wilson_interval(successes=3, n=4)
+        assert result["n"] == expected["n"]
+        assert result["successes"] == expected["successes"]
+        assert result["point"] == expected["point"]
+        assert result["lower"] == expected["lower"]
+        assert result["upper"] == expected["upper"]
+
+    def test_denominator_is_distinct_leaves_not_raw_records(self) -> None:
+        """Duplicate per-leaf (mark-point-level) records must collapse to
+        one leaf each before agreement counts them -- never raw records."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(
+                question_id="1",
+                awarded_marks=2,
+                mark_point_id="1a",
+                mark_point_verdicts={"1a": True},
+            ),
+            self._leaf_record(
+                question_id="1",
+                awarded_marks=2,
+                mark_point_id="1b",
+                mark_point_verdicts={"1b": True},
+            ),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        # 4 raw records for A but only 2 distinct leaves (question_id 1, 2).
+        result = agreement_wilson(a_records, b_records)
+        assert result["n"] == 2
+        assert result["successes"] == 2
+
+    def test_never_mutates_reorders_or_supersedes_as_records(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=5),
+        ]
+        import copy
+
+        a_before = copy.deepcopy(a_records)
+        a_ids_before = [id(r) for r in a_records]
+
+        result = agreement_wilson(a_records, b_records)
+
+        assert a_records == a_before
+        assert [id(r) for r in a_records] == a_ids_before
+        # The result carries no field that could be mistaken for a corrected
+        # A-label -- it is a plain Wilson-shaped summary, nothing per-leaf.
+        assert set(result.keys()) == {"n", "successes", "point", "lower", "upper"}
+
+    def test_only_leaves_present_in_both_a_and_b_count(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            self._leaf_record(question_id="3", awarded_marks=0),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            # question_id 3 was not in B's sample -- excluded, not a disagreement
+        ]
+        result = agreement_wilson(a_records, b_records)
+        assert result["n"] == 2
+        assert result["successes"] == 2
+
+
 class TestRiskCoverage:
     def test_happy_path_curve_is_monotonic_in_coverage(self) -> None:
         records = [

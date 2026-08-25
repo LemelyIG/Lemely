@@ -12,7 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
-from lemely.labelling.paths import DEFAULT_EVAL_ROOT, marking_path, transcription_path
+from lemely.labelling.paths import DEFAULT_EVAL_ROOT, marking_path, rulings_path, transcription_path
 from lemely.labelling.records import read_records, record_hash
 
 if TYPE_CHECKING:
@@ -87,3 +87,13 @@ def verify_paper_labels(paper_id: str, eval_root: Path = DEFAULT_EVAL_ROOT) -> P
         if not result.ok:
             ok = False
     return PaperVerification(paper_id=paper_id, ok=ok, files=files)
+
+
+def verify_rulings_chain(eval_root: Path = DEFAULT_EVAL_ROOT) -> ChainVerification:
+    """Verify ``eval/rulings.jsonl``'s hash chain (DA3/#52).
+
+    Thin wrapper over the already-generic :func:`verify_chain` so the
+    ruling log can be verified the same way as the per-paper label chains,
+    without a reader needing to know its path helper.
+    """
+    return verify_chain(rulings_path(eval_root))

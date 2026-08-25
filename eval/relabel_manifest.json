@@ -1,0 +1,13 @@
+{
+  "$comment": "Pre-committed relabel-sample selection rule (#98, DA2/#51, spec §6). The RULE and the SALT are committed here, now; MEMBERSHIP is deliberately not computed or shipped in this file -- #47 (labelling) has not completed, and DA2 requires membership to be derivable only after the full labelled leaf population exists, so a labeller cannot know in advance which leaves are being watched.",
+  "relabel_salt": "0988f43b87da74b61019a5ff2ad7aa18e2e6080730d25063bbb0717a1bd58f9d",
+  "rule": "The relabel sample is the lowest 10% of labelled leaves by sha256(relabel_salt || question_id), computed within stratum, proportional to stratum size. No RNG or seeded shuffle is used anywhere in the selection.",
+  "selection_fraction": 0.1,
+  "stratify_by": "DA1 mark band (1 / 2 / 3+)",
+  "stratification_note": "Two authorising records disagree on the stratification axis: DA2 / the 2026-08-19T01:05 inbox item specifies the full 3-axis DA1 stratum (syllabus code x parse path x tariff band); the 2026-08-25T14:41:54 authorisation specifies mark-band-only (1 / 2 / 3+), proportional. This manifest implements the later, more specific reading (mark-band-only). The axis is an explicit single-place parameter in lemely/eval/sample_manifest.py (_stratum_by_mark_band, passed as select_relabel_sample's stratify_by argument) so switching to the full 3-axis stratum is a one-line change, not a rewrite -- flagged here rather than silently resolved, per the issue's own instruction.",
+  "leaf_population_reference": "DA12: 9,464 true leaves in three populated mark bands (1: 4,559 / 2: 2,742 / 3+: 2,163), no fourth band, no exclusions. Recorded for context only -- this manifest does not itself enumerate or read that population.",
+  "selection_function": "lemely.eval.sample_manifest.select_relabel_sample",
+  "membership": null,
+  "membership_computed": false,
+  "membership_note": "Membership is NOT computed here. #47 has not completed. It is derived later by running select_relabel_sample(leaves, relabel_salt=<the salt above>) over the completed labelled leaf population."
+}

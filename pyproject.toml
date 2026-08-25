@@ -242,6 +242,7 @@ module = [
   "lemely.eval.manifest",
   "lemely.eval.records",
   "lemely.labelling.records",
+  "lemely.labelling.rulings",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",

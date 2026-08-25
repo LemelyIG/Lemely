@@ -452,6 +452,28 @@ class WilsonResult(TypedDict):
     upper: float
 
 
+def _wilson_interval(*, successes: int, n: int, z: float = 1.96) -> WilsonResult:
+    """95%-by-default Wilson score interval on a bare ``(successes, n)`` pair.
+
+    Pure arithmetic, no knowledge of ``EvalRecord`` or any leaf-collapse
+    rule — :func:`wilson` (question-level, scored, distinct-leaf mark
+    accuracy) and :func:`agreement_wilson` (labeller-A/labeller-B agreement)
+    both delegate to this one implementation rather than forking it (#98).
+    Returns full uncertainty (``[0.0, 1.0]``) at ``n == 0`` rather than
+    dividing by zero.
+    """
+    if n == 0:
+        return {"n": 0, "successes": 0, "point": 0.0, "lower": 0.0, "upper": 1.0}
+
+    phat = successes / n
+    denominator = 1 + z**2 / n
+    center = phat + z**2 / (2 * n)
+    margin = z * math.sqrt(phat * (1 - phat) / n + z**2 / (4 * n**2))
+    lower = max(0.0, (center - margin) / denominator)
+    upper = min(1.0, (center + margin) / denominator)
+    return {"n": n, "successes": successes, "point": phat, "lower": lower, "upper": upper}
+
+
 def wilson(records: list[EvalRecord], *, z: float = 1.96) -> WilsonResult:
     """95%-by-default Wilson score interval on the ``correct`` proportion.
 
@@ -461,17 +483,84 @@ def wilson(records: list[EvalRecord], *, z: float = 1.96) -> WilsonResult:
     """
     leaves = _distinct_leaves(_scored(_question_level(records)))
     n = len(leaves)
-    if n == 0:
-        return {"n": 0, "successes": 0, "point": 0.0, "lower": 0.0, "upper": 1.0}
-
     successes = sum(1 for r in leaves if r.outcome == "correct")
-    phat = successes / n
-    denominator = 1 + z**2 / n
-    center = phat + z**2 / (2 * n)
-    margin = z * math.sqrt(phat * (1 - phat) / n + z**2 / (4 * n**2))
-    lower = max(0.0, (center - margin) / denominator)
-    upper = min(1.0, (center + margin) / denominator)
-    return {"n": n, "successes": successes, "point": phat, "lower": lower, "upper": upper}
+    return _wilson_interval(successes=successes, n=n, z=z)
+
+
+# ---------------------------------------------------------------------------
+# agreement_wilson
+# ---------------------------------------------------------------------------
+
+
+class MarkingLeafRecord(TypedDict):
+    """One labeller-marking record over a leaf (spec §6 pass-2 shape, kept plain).
+
+    Deliberately a bare ``TypedDict``, not
+    ``lemely.labelling.records.MarkingRecordPayload`` — this module's "no
+    IO, no app" purity contract forbids importing ``lemely.labelling``
+    (which does filesystem IO), so label-record data crosses the boundary
+    as plain data, never as an imported label-IO type.
+    """
+
+    question_id: str
+    awarded_marks: int
+    mark_point_id: str | None
+    mark_point_verdicts: dict[str, bool]
+
+
+def _distinct_marking_leaves(records: list[MarkingLeafRecord]) -> dict[str, int]:
+    """Collapse raw marking records to one ``awarded_marks`` per distinct leaf.
+
+    Duplicate per-mark-point rows for the same ``question_id`` must not be
+    counted as separate leaves (spec §9 gate 7: agreement is reported over
+    distinct leaves, never raw records). A leaf's question-level row
+    (``mark_point_id is None``) is preferred as the representative when
+    present; every mark-point row for one leaf carries the same
+    ``awarded_marks`` value by construction, so falling back to any row in
+    the group when no question-level row exists is order-independent.
+    """
+    by_leaf: dict[str, list[MarkingLeafRecord]] = {}
+    for r in records:
+        by_leaf.setdefault(r["question_id"], []).append(r)
+    result: dict[str, int] = {}
+    for question_id, group in by_leaf.items():
+        question_level = [r for r in group if r.get("mark_point_id") is None]
+        representative = question_level[0] if question_level else group[0]
+        result[question_id] = representative["awarded_marks"]
+    return result
+
+
+def agreement_wilson(
+    a_records: list[MarkingLeafRecord],
+    b_records: list[MarkingLeafRecord],
+    *,
+    z: float = 1.96,
+) -> WilsonResult:
+    """Inter-annotator agreement between labeller A and labeller B (DA2/#51/H7).
+
+    Per DA2, this is genuine two-labeller agreement, not delayed
+    self-agreement. **On disagreement, A's label stands** — this function is
+    read-only: it never mutates, reorders, or appends to ``a_records``
+    (or ``b_records``), and its return type (:class:`WilsonResult`) carries
+    no per-leaf field that could be mistaken for a corrected A-label, only
+    the aggregate ``(n, successes, point, lower, upper)`` summary.
+
+    **Denominator, named explicitly**: distinct leaves (spec §9 gate 7,
+    ``_distinct_marking_leaves``) present in **both** ``a_records`` and
+    ``b_records``. A leaf A marked but B did not sample (or vice versa) is
+    excluded from ``n`` — it is missing data, not a disagreement.
+
+    Delegates the interval arithmetic to :func:`_wilson_interval` — the same
+    helper :func:`wilson` uses — rather than a second implementation.
+    """
+    a_leaves = _distinct_marking_leaves(a_records)
+    b_leaves = _distinct_marking_leaves(b_records)
+    shared_question_ids = set(a_leaves) & set(b_leaves)
+    n = len(shared_question_ids)
+    successes = sum(
+        1 for question_id in shared_question_ids if a_leaves[question_id] == b_leaves[question_id]
+    )
+    return _wilson_interval(successes=successes, n=n, z=z)
 
 
 # ---------------------------------------------------------------------------
