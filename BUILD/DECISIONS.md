@@ -11263,3 +11263,67 @@ only durable record of cumulative spend is a hand-maintained line in a markdown
 header. That is a real fragility and it is not fixed here — fixing it means
 committing the ledger or moving it outside the worktree, which is a data
 decision for the human, not a bookkeeping change to make silently.
+
+---
+
+## DA12 — the honest leaf denominator is 9,464, not 12,358 (#88 item 3)
+
+**Ratified by the human**, 2026-08-25, `BUILD/ACCURACY-INBOX.md`
+2026-08-25T17:36:27+03:00 item 3: *"the 2,894 'unbanded leaves' are PARENT
+questions, not leaves. Zero true leaves are unbanded. True leaf count is 9,464,
+not 12,358. Nothing is dropped and the drop-only rule is not triggered. Correct
+the 12,358 figure wherever it is cited."*
+
+### What was wrong
+
+`BUILD/accuracy-runs/census-2026-08-24-a/census_leaves.py` selected leaves with
+`[q for q in flat if not getattr(q, "sub_questions", None)]`. `Question` has no
+`sub_questions` field — its child list is `parts`
+(`lemely/core/loose_schemas.py:1008`). `getattr` therefore returned `None` for
+every question, the filter was a **no-op**, and everything the census called
+"LEAF questions" was **every question at every depth**.
+
+The same bug wore a second hat. Because parents carry no tariff of their own,
+they all landed in the script's `0/unknown` catch-all, which then printed as a
+fourth band — producing both the "2,894 unbanded leaves (23.4%)" story and the
+discredited "DA1 strata populated: 12".
+
+### What is true
+
+Re-run of the fixed script over the same surviving 250 parsed schemes
+(`/tmp/acc57-full/out`), output at
+`BUILD/accuracy-runs/census-2026-08-24-a/census-leaves-corrected.txt`:
+
+| quantity | value |
+|---|---|
+| all questions, flat | 12,358 |
+| of which parents | 2,894 |
+| parents carrying own marks | **0** |
+| **true leaves** | **9,464** |
+| unbanded true leaves | **0** |
+| DA1 strata populated | 9 of 18 |
+
+Band counts are unchanged (1: 4,559 · 2: 2,742 · 3+: 2,163) and the nine
+populated stratum cells sum to exactly 9,464 — those figures were always
+right and must **not** be "fixed".
+
+### Why this matters beyond bookkeeping
+
+The error ran toward **overstatement**: the headline inflated the leaf corpus by
+**30.6%**. Any n-floor, power or headroom figure computed against 12,358 is
+inflated, and must be recomputed against 9,464. Nothing is dropped, and DA1's
+drop-only rule was never triggered — the 2,894 were never in the leaf
+population to begin with.
+
+### Where it was corrected, and where it deliberately was not
+
+Corrected: `census_leaves.py` (the bug itself, plus it now prints the flat and
+leaf totals side by side so they can never be conflated again, and excludes the
+catch-all from the strata count); the census `manifest.json`; three citations in
+`BUILD/BLOCKERS.md`.
+
+**Not corrected, on purpose:** the two dated `BUILD/JOURNAL.md` entries of
+2026-08-24 that quote 12,358. The journal is an append-only record of what was
+believed on the day; rewriting it would falsify the audit trail. They are
+superseded by this entry, and the original buggy census output is preserved
+verbatim at `census-leaves.txt` beside the corrected one for the same reason.
