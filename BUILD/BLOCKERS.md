@@ -1317,8 +1317,15 @@ claims above are now falsified by measurement and must not be cited:
   (52.2% of 479)** at **$0.00**. Evidence:
   `BUILD/accuracy-runs/census-2026-08-24-a/`.
 - *"71 golden leaves available vs a ~300 target"* — the det path alone yields
-  **12,358 leaf questions**, roughly **41× the ~300 target**. Leaf volume was
+  **9,464 leaf questions**, roughly **32× the ~300 target**. Leaf volume was
   never the binding constraint.
+  *(Corrected 2026-08-25, ratified by the human as #88 item 3: this line read
+  **12,358** and **41×**. 12,358 was every question at every depth — 2,894
+  parents + 9,464 true leaves — because `census_leaves.py` filtered on a
+  `sub_questions` field that `Question` does not have. The conclusion is
+  unchanged and the error ran toward overstatement; see
+  `BUILD/accuracy-runs/census-2026-08-24-a/manifest.json` →
+  `leaves.CORRECTION_2026-08-25`.)*
 
 **#57 stays blocked**, but on the real constraint, which is **stratum
 coverage**: 9 of DA1's 18 strata are populated (all det-path); the 9
@@ -1420,8 +1427,10 @@ infrastructure. **No spend has occurred.**
 
 The zero-cost half of #88 is **complete**: the deterministic parser ran over
 all 479 restored mark schemes and produced **250 parsed (52.2%)**, **229
-failures**, and **12,358 leaf questions** — at $0.00. The costed preflight is
-posted on #88 as the authorisation required.
+failures**, and **9,464 leaf questions** (12,358 questions at every depth, of
+which 2,894 are parents) — at $0.00. The costed preflight is posted on #88 as
+the authorisation required. *(Leaf figure corrected 2026-08-25 per #88 item 3;
+it read 12,358.)*
 
 **Where the evidence lives (added 2026-08-24).** The census originally existed
 only in `/tmp/acc57-full`, which is not durable. It has been re-verified — every
@@ -2050,9 +2059,12 @@ Dependencies checked: #46 **CLOSED**, #31 **CLOSED**, #50 **CLOSED**, #57
 Owner is **human** (6–8 h), so a green dependency list makes this
 *human*-startable, never agent-startable.
 
-Volume is fine — 12,358 leaf questions from 250 det-parsed schemes, 9,464 of
-them tariff-banded, against a ~300 target (31× headroom). The old
-"Available: 71" framing is dead.
+Volume is fine — **9,464 leaf questions** from 250 det-parsed schemes, **all
+9,464 tariff-banded**, against a ~300 target (31× headroom). The old
+"Available: 71" framing is dead. *(Corrected 2026-08-25 per #88 item 3: this
+read "12,358 leaf questions … 9,464 of them tariff-banded", which framed the
+2,894 parents as unbanded leaves. There are zero unbanded true leaves; the
+headroom multiple is unchanged because it was always computed off 9,464.)*
 
 But acceptance bullet 3 (*"stratified across both parse paths — det and
 gemini"*) is **currently unsatisfiable**. From
