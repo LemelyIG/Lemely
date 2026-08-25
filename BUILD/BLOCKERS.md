@@ -1900,3 +1900,79 @@ papers belong in front of the fidelity gate (#39), not the row parser.
 Reproduce with `scripts/accuracy_defaulted_census.py <dir>` — it self-checks
 against this issue's own 3-defaults/+2-delta example before reporting any
 corpus number.
+
+---
+
+## I — #39 (M1.4): bullets 5 and 9 are not jointly satisfiable, and bullet 6 does not reproduce
+
+**Raised:** 2026-08-25 · **Status:** OPEN, needs a human ruling · **Cost:** $0
+(det path only; ledger unmoved at 1.488057). Measured with
+`scripts/accuracy_glyph_census.py` over **478 of 479** restored schemes
+(1 ParseError) — **22,825 answer points** — plus all 10 golden fixtures.
+
+This is separate from §H. It does not touch #39's bullet-4 design question or
+its gate-9 authorisation; both still block the issue independently.
+
+### Bullet 5 as literally written over-fires 3.4×
+
+Two candidate rules were built and measured side by side:
+
+| rule | fires | notes |
+|---|---:|---|
+| **naive** — bullet 5 verbatim: expression, newline, expression, no operator | **426** | |
+| **strict** — exactly two numeric segments and nothing else | **96** | across 73 schemes |
+| all-numeric tabular blocks (3+ stacked rows) | 50 | bullet 7's FP class |
+
+The naive rule over-fires the strict one by **330 points (3.4×)** on histogram
+frequency densities, Venn-diagram cell counts, matrix blocks and marker
+guidance text with numbers in it — e.g. `'5\n7\n3\n5'`, `'8\n18\n5'`,
+`'E\nDo not have Do not have\na computer a phone\n23 2 7\n8'`. None is a
+fraction bar. Shipping at that precision escalates hundreds of well-formed
+points and drives review rate up, against gate 8 and anti-goal 3.
+
+### But tightening it breaks a CONFIRMED real case in the measurement corpus
+
+Across the 10 golden fixtures there are exactly **two distinct** hits, both on
+`0625_s20_qp_31`, and **both are verified genuine** — each reconciles
+arithmetically against the next answer point in its own question:
+
+- `11b/p2` `'(V\ns\n=) (64 \n 240) \n 960'` → **(64 × 240) / 960 = 16**,
+  matching `p3 = '16 (V)'`. **naive fires; strict MISSES.** The point carries
+  non-numeric fragments (`(V`, `s`, `=)`), so "exactly two numeric segments" is
+  false. Note this point's two newlines encode *two different* lost operators —
+  an implicit multiplication inside the numerator **and** the fraction bar.
+- `12c/p2` `'36\n8'` → **36 / 8 = 4.5**, matching `p3 = '4.5 (mg)'`. Both fire.
+
+So `11b/p2` is not "expression, newline, expression" at all — it is
+expression/newline/expression/newline/expression where **only the second
+newline is the bar**. Bullet 5's phrasing does not describe the case the issue
+is built on.
+
+**Conclusion: no threshold on a newline-shape rule gives zero false positives
+(bullet 9) while catching the confirmed real case.** The distinguishing
+information is not in the text — it is the horizontal rule in the PDF's
+geometry, linearised away before the string exists. Recovering it means
+consulting layout during parsing (a `pdfplumber` rect under a numeric run), not
+pattern-matching afterwards. **That redesign is NOT proposed or implemented
+here** — it is recorded so nobody discovers it halfway through the issue.
+
+### Bullet 6 does not reproduce: zero private-use codepoints, not six
+
+Bullet 6 says *"Private-use-codepoint detector applied on the det path, where
+all 6 instances live."* Searching U+E000–U+F8FF across **all 22,825 det answer
+points in 478 schemes and all 10 golden fixtures returns ZERO hits.**
+
+Not a claim that the original 6 were imagined — they may live in a different
+field (metadata, guidance, question stems), a different corpus snapshot, or a
+pre-#88 parse. But **as written it does not reproduce**, and a detector cannot
+be regression-tested against a corpus holding no positive instance. Bullet 6
+needs its evidence re-established or re-scoped before implementation.
+
+### Bullet 7 stands — the one bullet the corpus fully supports
+
+The issue cites 272 of 1,000 det points containing newlines (27.2%). Over
+22,825 points: **7,963 (34.9%)**. Same order, same conclusion.
+
+**Do not** resolve any of this by loosening bullet 9. A zero-false-positive
+requirement is what makes the gate safe to put in front of review routing; the
+right move is to fix bullet 5 and 6, not to relax the acceptance test they fail.
