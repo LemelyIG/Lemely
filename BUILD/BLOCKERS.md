@@ -1347,6 +1347,50 @@ mark-scheme parsing pass authorised.
 
 Blocked on IMPLEMENTATION REQUIRED FIRST, not more spend: the oracle+mark arm is dead code (harness.py:670-671 picks the arm from case.scan_path and all 11 fixtures ship scan.pdf), so run ablation-2026-08-24-a produced ONE arm and NO 2x2. Acceptance bullet 1 ('Both arms run over all fixtures') is implementation work. Do NOT re-run the sweep until a mechanism exists to force oracle+mark over cases that already have a scan_path. See the 2026-08-24 comment on #28.. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
 
+**RESOLVED 2026-08-25 — the mechanism landed the same day this was written, and
+nobody updated the record.** Verified at source, not inferred: **PR #87 merged
+2026-08-24T03:31Z**, is on `develop` and in this branch's history, and supplies
+exactly the missing forcing mechanism —
+
+- `lemely/accuracy/harness.py:626` — `arm: Literal["extract+mark", "oracle+mark"] | None`
+- `lemely/accuracy/harness.py:705-710` — when `arm` is set, `case_arm = arm`
+  **uniformly**, overriding the `scan_path` auto-selection; the oracle bypass at
+  `:733` is reachable
+- `lemely/accuracy/harness.py:678-684` — `arm="extract+mark"` raises up front if
+  any case lacks a `scan_path`; no silent fallback
+- `lemely/app/cli.py:1013-1025` — a `--arm` flag, wired to `measure_accuracy(arm=…)` at `:1081`
+
+Tested, not merely present: `tests/test_accuracy_harness.py:313` and `:352`
+(`test_both_arms_over_same_cases_produce_ablation_2x2_nonzero`). This entry's
+own release condition — *"until a mechanism exists to force oracle+mark over
+cases that already have a scan_path"* — **is met**.
+
+**But do NOT read this as "M0.4 is done."** #28 is CLOSED with **every
+acceptance box unticked**, and the only ablation ever run
+(`ablation-2026-08-24-a`) is published as **NOT REPORTABLE** — zero oracle+mark
+records, no delta, `same_denominator_both_arms=false`. The issue was closed on
+PR #87, i.e. on the *mechanism*, while M0.4's deliverable is the **2×2 itself**.
+The number has never been produced.
+
+**Re-running would not be §12.9 significance-chasing.** That rule bars re-running
+a NOT REPORTABLE sweep at higher `n` to chase significance. This run was not
+underpowered — one arm of a two-arm experiment did not execute at all, so a
+re-run is the *first* correct execution, not a second attempt. No larger `n` is
+proposed. The blocker text above says "do NOT re-run **until** a mechanism
+exists", which presupposes re-running is right once one does.
+
+**Still needs a human, and the board item is deliberately NOT force-moved.** It
+sits in Backlog while the issue is CLOSED; which column is right depends on the
+ruling. The 2026-08-24T01:14:03 directive authorised this sweep specifically
+(no per-item cap, costed preflight before spend, `--cache-mode bypass` never
+`refresh` per E2, stop-and-ask at $20.00 of $25.00) and that authorisation is
+**unspent** — the ~$0.06 of `ablation-2026-08-24-a` went on the broken
+single-arm run. The open question, posted on #28 as (a)/(b)/(c): **does a spend
+authorisation granted while the issue was open survive the issue being
+CLOSED?** Recommended (a) — reopen and run — but **not acted on**, because
+choosing the reading that unlocks spending is precisely the move the #27 rebuke
+was about.
+
 ---
 
 ## F — #88 (M2.1b) awaits three human decisions; the parse itself is done and free
@@ -1426,3 +1470,669 @@ is a **symptom, not a classification** — one uniform symptom across 229 scheme
 is consistent with several distinct causes, and classifying them is #45's job.
 The failure set is #45's census input; #45 has been commented to take it rather
 than re-run the parse, which would pay the Gemini cost twice.
+
+## G — #45 (M2.2) census complete: the 229 det-failures are classified, ranked, $0 spend
+
+**Raised:** 2026-08-24 · **Revised:** 2026-08-24 (round 5, corrected after
+review — round 4's TWO-SIDED bound on `marks_cell_notation_not_parsed` rested
+on a false premise: its `empty_count` was measured over raw table rows, not
+the AnswerPoint population that actually feeds `computed_total`, and even
+once that population mismatch is fixed, the DEFICIT side of the bound is
+unsound for a structural reason in `lemely/io/det/rows.py`'s `flush()` — see
+below) · **Status:** artifact committed, not a blocker — recorded here so M3
+can cite it without re-deriving. Zero Gemini calls, zero network: the 229
+PDFs already restored to `/home/sico/PaperScraper/papers` were re-parsed
+offline through `lemely.io.det.*`'s own stages a second time. This script
+never instantiates `DeterministicMarkSchemeParser` and never calls
+`reconcile.check` at all — it compares `reconcile._leaf_marks(questions)` to
+`metadata.maximum_mark` directly, so there is no `escalate_on_mark_mismatch`
+flag in play (round 1 of this issue incorrectly claimed one was).
+
+**Round 5: the round-4 deficit bound compared incommensurable quantities, and
+even fixed, the deficit direction is unsound — it is now consistency-check-
+only, not an enforced bound.** Round 4's `count_empty_marks_cells` iterated
+RAW TABLE ROWS, while `computed_total` sums `AnswerPoint`s AFTER
+`build_questions` merges rows — different populations. The proof is on the
+face of the round-4 artifact: `0625_w21_ms_43` reported `empty_count=119` for
+a scheme whose `maximum_mark` is 80, which cannot have 119 answer points at
+all; four rows carried `empty_count >= maximum_mark`. `empty_count` is now
+measured by `count_defaulted_answer_points`, which re-runs `build_questions`
+once with transparent instrumentation (two module-level monkeypatches in
+`lemely/io/det/rows.py`'s own namespace, restored immediately after, that
+never change any return value) and counts only the `AnswerPoint`s the state
+machine actually created whose marks value was defaulted by `make_point`.
+Even over this corrected population, the DEFICIT claim ("every empty cell
+contributes >= 1, so `computed_total` can never fall below `empty_count`")
+does not survive: `flush()` only sums a leaf's `AnswerPoint`s into
+`Question.marks` when that leaf's own `q_row_had_answer` flag was set (the
+Q-number row itself carried an answer, or an EITHER/OR bracket appeared) — a
+common table shape (Q-number row with no answer, marks on continuation rows
+below it) never sets that flag, so a defaulted `AnswerPoint` can contribute
+exactly 0 to `computed_total`, not >= 1. The EXCESS side remains sound (a
+defaulted point contributes AT MOST 1, whether or not it is actually summed),
+so `marks_cell_notation_not_parsed` is now claimed ONLY via
+`computed_total > maximum_mark` and `computed_total - maximum_mark <=
+empty_count`. A deficit shape now always falls through to `mismatch_cause`,
+carrying a consistency-check-only note ("upper bound, deficit side
+unbounded") rather than an enforced bound. This is a large, honest downward
+correction, not a defect to argue away: `marks_cell_notation_not_parsed` goes
+from round 4's 104/229 to **48/229**, and D7's headline share is republished
+below as an explicit upper bound.
+
+**Residual limitation, disclosed rather than hidden: the excess bound is
+still near-vacuous for 2/48 notation-bucket rows.** The population fix does
+not make the excess check tight everywhere — `manifest.json`'s new
+`excess_bound_near_vacuous` field lists `0625_w20_ms_42` (empty=82,
+maximum_mark=80) and `0625_w21_ms_43` (empty=90, maximum_mark=80), where
+`empty_count >= maximum_mark` makes `computed_total - maximum_mark <=
+empty_count` barely constrain anything. This is down from round 4's 4 rows
+(one at empty_count=119 for a maximum_mark of 80) to 2, and both are far
+closer to `maximum_mark` than round 4's inflated counts were — a real
+improvement, not a full fix. Both rows stay correctly in the denominator and
+labelled; the manifest states the caveat rather than claiming a tight bound
+that doesn't exist.
+
+**SUPERSEDED BY ROUND 5 — the premise below is FALSE as implemented, and the
+"genuine TWO-SIDED bound" claim is RETRACTED.** `count_empty_marks_cells`
+counted **raw table rows**, while `computed_total` sums **`AnswerPoint`s after
+`build_questions` merges rows** — two different populations. So "every empty
+cell contributes 1, therefore `computed_total` can never fall below
+`empty_count`" does not hold, and every magnitude bound derived from comparing
+the two compared incommensurable quantities. The artifact said so on its face:
+`0625_w21_ms_43` reported `empty_count=119` for a scheme whose `maximum_mark`
+is 80 — it cannot have 119 points at all. The orchestrator endorsed this
+premise in the round-4 brief without checking how `empty_count` was measured;
+that is why round 4 produced a "bound" that was not one. Left in place
+unedited below, per the never-delete rule, as the record of what was believed.
+
+**Round 4 (SUPERSEDED, see above): the sufficiency condition on
+`marks_cell_notation_not_parsed` is
+now a genuine TWO-SIDED bound.** Round 3 fixed only the excess direction
+(`computed_total - maximum_mark <= empty_count`); its deficit disjunct,
+`computed_total <= maximum_mark`, applied no magnitude check at all. Empty
+marks cells default to EXACTLY 1 mark each
+(`lemely/io/det/rows.py`'s `make_point`), so `computed_total` can never
+validly fall BELOW `empty_count` under that mechanism — yet 4 committed rows
+did: `0606_w23_ms_11` (empty=65, computed_total=0, its own evidence string
+falsifying the label), `0625_w21_ms_41` (empty=96, computed=78),
+`0606_w19_ms_13` (empty=69, computed=61), `0606_s23_ms_22` (empty=60,
+computed=54). The gate is now `empty_count <= computed_total <=
+maximum_mark` (deficit side) OR `computed_total - maximum_mark <=
+empty_count` (excess side, unchanged); rows failing both fall through to
+`mismatch_cause`. All 4 land in `genuine_mark_total_mismatch`. (Two of the
+round-4 review brief's six named rows, `0625_w21_ms_43` and `0625_w21_ms_53`,
+turn out on their real `maximum_mark` to be excess-explainable —
+`computed_total > maximum_mark` there — so they correctly stay in the
+notation bucket; only 4 of the 6 named rows were genuine deficit
+counterexamples, verified directly against `classified-failures.txt`.)
+
+**Round 4: a docstring claim of theory-path enforcement that never existed is
+corrected, not implemented.** The module docstring said bucket 2's
+`computed < maximum_mark / 2` shortfall check was "enforced inline in
+`_classify_mcq`/`_classify_theory`"; the sole occurrence was inside
+`_classify_mcq`. Rather than add an untested new heuristic to the theory path
+under review pressure, the docstring is corrected to state the true,
+narrower claim: the shortfall check is MCQ-path-only.
+`manifest.json`'s new `table_layout_extraction_failure_note` field states
+this explicitly, so the published `table_layout_extraction_failure = 0` is
+not read as evidence that no theory-path shortfall exists under that
+heuristic — it is a lower bound, because the heuristic was never applied
+there. This choice does not change any cause count in the table below (no
+theory-path row was reclassified).
+
+**Where the evidence lives:** `BUILD/accuracy-runs/census-2026-08-24-b/` —
+`classify_failures.py` (the diagnostic script; also the source of the pure
+helpers unit-tested in `tests/test_census_45.py`), `manifest.json` (ranked
+counts, the D7 hypothesis's measured share, the profile-misconfiguration
+breakdown), and `classified-failures.txt` (one `stem<TAB>cause<TAB>evidence`
+row per stem, covering all 229 stems — the ranked work-list for M3's D7
+repairs).
+
+**Round 3: every cause label now carries a checked sufficiency condition —
+positive evidence the named mechanism can produce the observed magnitude —
+not just a structural signal.** Round 2's `marks_cell_notation_not_parsed`
+rule fired unconditionally whenever a real marks column had any empty cell,
+even though empty cells default to 1 mark each
+(`lemely/io/det/rows.py`'s `make_point`) and so N empty cells can inflate
+`computed_total` by AT MOST N. Review reproduced 27/135 rows in that bucket
+whose excess exceeded their `empty_count` (e.g. `0606_m20_ms_12`: empty=4,
+excess=20) — the label was falsified by its own evidence string. That
+round-3 rule (`computed_total <= maximum_mark` OR `computed_total -
+maximum_mark <= empty_count`) is superseded twice over since: round 4
+replaced the unconditional deficit disjunct with a magnitude-checked one, and
+round 5 (see above) retired the deficit disjunct as a causal classifier
+entirely, keeping it only as a consistency-check-only note. The CURRENT rule
+is stated in the round-5 entry above and in `classify_failures.py`'s module
+docstring (bucket 4), which every bucket's sufficiency condition is checked
+against.
+
+**Ranked cause counts (sum to 229, denominator never narrowed, every bucket
+seeded so a zero count is reported rather than omitted; recomputed by a live
+re-run of `classify_failures.py` in the same commit as this table):**
+
+| cause | n | share |
+|---|---|---|
+| `genuine_mark_total_mismatch` | 70 | 30.6% |
+| `marks_cell_notation_not_parsed` | 48 | 21.0% |
+| `mark_aggregation_overcount` | 47 | 20.5% |
+| `paper_profile_misconfiguration` † | 40 | 17.5% |
+| `marks_column_detection_failure` | 24 | 10.5% |
+| `table_layout_extraction_failure` | 0 | 0.0% |
+| `UNCLASSIFIED` | 0 | 0.0% |
+
+**† `paper_profile_misconfiguration` — 40 is the bucket population, not the
+causal count.** The counterfactual reparse committed later on this same branch
+(`BUILD/accuracy-runs/counterfactual-0625p2-2026-08-24/`) moved **39 of the 40**
+from FAIL to PASS by correcting `profiles.py:50` alone, so those 39 are
+causally demonstrated. The 40th, **`0625_s24_ms_21`, is misattributed**: it
+fails identically before and after the profile fix. Its real cause was found by
+direct observation (`BUILD/accuracy-runs/mechanism-0625-s24-ms-21-2026-08-24/`)
+and is a *distinct* defect — CAIE withdrew question 14, so the answer cell holds
+the literal `'Question Discounted'`, and `find_mcq_answer_col`
+(`lemely/io/det/mcq.py:23`) requires **all** non-empty values in a candidate
+column to be A/B/C/D, so one non-letter cell disqualifies the whole column and
+`parse_mcq_tables` skips the entire table (28 questions lost to one cell). The
+count stays 40 here because it is what the classifier assigned and what
+`manifest.json` records; **a `profiles.py` fix must not be taken to retire this
+row.** Blast radius of the mcq.py defect, measured: 1 of 479 schemes.
+
+**D7 turned from a hypothesis into a measurement, and round 5 corrects the
+headline downward again — this time sharply, and explicitly as an upper
+bound.** D7 hypothesised that `parse_marks_cell`/`is_marks_column` failures
+explain the det-parser failure set. Measured (not assumed by construction):
+`marks_column_detection_failure` + `marks_cell_notation_not_parsed` =
+**72/229 (31.4%)** — down from round 4's 128/229 (55.9%), itself down from
+round 3's 132/229 (57.6%) and round 2's overstated 159/229 (69.4%). The
+round-5 movement (128 → 72, -56 schemes, -24.5pp) is the empty-count
+population fix plus the deficit-disjunct retirement described above: the 56
+schemes that round 4 classified into `marks_cell_notation_not_parsed` via a
+deficit shape (`computed_total <= maximum_mark`, no longer a positive
+classifier) fall through to `mismatch_cause`, landing in
+`genuine_mark_total_mismatch`. `manifest.json`'s `d7_hypothesis.is_upper_bound`
+is `true`: this share is a ceiling on what the column/cell-detection
+hypothesis explains, not a fully-enforced count, because the surviving
+sufficiency check (excess-side only) is a necessary, not sufficient,
+condition. The other **157/229 (68.6%)** are NOT explained by D7 — 70 show a mark-total
+deficit, **of which 55 (79%) have defaulted `AnswerPoint`s and an unresolved
+empty-cell explanation**, 47 are positively-evidenced overcounts
+(`mark_aggregation_overcount`, unchanged since round 3), and 40 are the
+profile-misconfiguration class below.
+
+**CORRECTED 2026-08-24 — the previous wording here was falsified by the very
+artifact it summarised.** It described those 70 rows as "structurally clean
+parses whose total still comes up short with no more specific explanation
+available". A recount of `classified-failures.txt` shows 55 of the 70 carry the
+evidence note *"this count neither confirms nor rules out empty-cell defaulting
+as a cause here"* — the opposite of "no more specific explanation available".
+The dependent headline **"D7 is no longer the largest single explanation —
+`genuine_mark_total_mismatch` now is" is WITHDRAWN**: that bucket is the
+*least*-evidenced one in the taxonomy, it enforces direction only with no
+magnitude bound in code, and it grew 14 → 70 purely by absorbing rows retired
+from other buckets. A ranking cannot be led by a bucket that means "we do not
+know". This is the same falsified-record failure that this branch's own
+ancestor commit `3f50781` was written to correct.
+
+**The residual mismatch bucket is split, not a single "totals don't match"
+catch-all.** Round 1 put every `computed_total != maximum_mark` residual
+(after clean column detection and zero defaulted cells) into
+`genuine_mark_total_mismatch`, including rows where `computed_total >
+maximum_mark` — an overcount, which is a *positive* finding (something got
+double-counted), not the same claim as "the total came up short with no
+further explanation". These are split: `mark_aggregation_overcount`
+(computed_total > maximum_mark — also the fallthrough target for
+notation-bucket rows whose excess the empty-cell defaulting cannot explain,
+47 schemes total, unchanged since round 3) vs. `genuine_mark_total_mismatch`
+(computed_total < maximum_mark, 70 schemes as of round 5 — up sharply from
+round 4's 14 now that the deficit direction is no longer a positive
+classifier for the notation bucket — and its evidence string states what was
+ruled out — overcount, column detection, sufficient cell-notation parsing —
+rather than only what didn't match).
+
+**The `paper_profile_misconfiguration` rule is now gated on a counterfactual,
+and round 1's "second bug instance" claim for 0625 p3 was wrong.** Round 1
+counted 74 schemes into this bucket, including 34 from 0625 p3 (cover text
+"Paper 3 Core Theory" vs. `paper_type_by_number[3] = THEORY_EXTENDED`) on the
+theory that this mirrored the real 0625 p2 bug. It does not: `classify_one`
+(mirroring the production pipeline) only ever branches on
+`metadata.paper_type` once — MCQ vs. not-MCQ. 0625 p2's mapped type
+(THEORY_CORE) and cover-implied type (MCQ) are on *different* sides of that
+branch, so the discrepancy really does change which parser code path runs.
+0625 p3's mapped type (THEORY_EXTENDED) and cover-implied type (THEORY_CORE)
+are on the *same* side (both non-MCQ) — reclassifying under the cover text
+would not change the parse path, so the discrepancy cannot be why any 0625 p3
+scheme is in the det-failure set, whatever its exact count (this census does
+not separately track a 0625-p3-only count; round 1's "34" above is that
+round's own since-superseded classification, not a number re-derived by this
+script). `classify_failures.py`'s `_changes_parse_path` counterfactual gate
+now falsifies the p3 case and only the real 0625 p2 finding (40 schemes)
+remains in `paper_profile_misconfiguration`.
+
+**`profiles.py:52`'s 0625 p3 discrepancy is real but is recorded as a
+separate, ruled-out metadata defect — not a second confirmed cause.** It is
+still a genuine mismatch between what `paper_type_by_number` maps and what the
+cover text says (verified in `0625_m19_ms_32.pdf`, `0625_s21_ms_32.pdf`), and
+it is still flagged for the human alongside question 2 on #88 — but it is
+**not** counted among the 229's causes, per the MCQ-only-branching evidence
+above. `git diff` against `lemely/io/det/profiles.py` is empty after this
+issue, and this p3 finding is recorded in `manifest.json`'s
+`ruled_out_metadata_defect_not_a_cause`, not folded into
+`known_bug_classified_not_fixed` (which now holds only the 0625 p2, 40-scheme
+finding).
+
+**Not mark-changing:** no marking-engine or `lemely/eval` code changed; per
+the 2026-08-24 gate-9 scope decision this issue needed no before/after A/B
+sweep, and none was run.
+
+### ESCALATED 2026-08-24 — #45 needs a HUMAN DESIGN DECISION; agent rounds are STOPPED
+
+**Status: #45 is NOT landable and no round 6 will be attempted.** A stopping
+rule was pre-committed in commit `d2131a6`, *before* round 5 ran, precisely so
+this call could not be made after seeing a result: *if round 5 blocks on the
+same defect class a fifth time, stop delegating and escalate.* It did. It is.
+
+**The defect class, stated once:** a cause bucket assigned without positive,
+checked evidence that the named mechanism can produce the observed magnitude.
+
+| round | what blocked | D7 headline |
+|---|---|---|
+| 1 | `genuine_mark_total_mismatch` a residual dumping ground; an inert cause (0625 p3) counted; false escalation to the human | 55.9% |
+| 2 | `marks_cell_notation_not_parsed` claimed a mechanism that cannot produce the magnitude | 69.4% (false) |
+| 3 | the fix applied to the excess side only; docstring claimed enforcement that did not exist | 57.6% |
+| 4 | the "two-sided bound" bounded the total, not the magnitude; premise applied to 4 rows, waived on 2 identical ones | 55.9% |
+| 5 | deficit rows retired *into* `genuine_mark_total_mismatch`, which has no magnitude bound at all — the evidence-free bucket **grew 14 → 70** | withdrawn |
+
+Five rounds, and the headline oscillated 55.9 → 69.4 → 57.6 → 55.9 → withdrawn.
+Round 5 did fix the root cause the orchestrator found (`empty_count` re-derived
+over the `AnswerPoint` population, `is_upper_bound: true` published honestly),
+and it still blocked — because the rows have to go *somewhere*, and every
+"somewhere" available is a bucket whose criterion cannot be checked.
+
+**Why this is a design question and not another patch.** The classifier infers
+causes from aggregate arithmetic — `computed_total` vs `maximum_mark` vs a
+count of defaulted points — without re-running the parse and observing the
+mechanism. Every sufficiency condition built on that is a proxy, and each round
+falsified the previous proxy. Two structural facts make this concrete:
+
+- **117/229 (51%)** sit in buckets 5+6 with **no coded magnitude bound**.
+- **`UNCLASSIFIED = 0` is structurally unreachable** for exactly the rows that
+  need it: `classify_theory_residual` only returns it when
+  `computed_total == maximum_mark`. The "honest unknown bucket" guarantee that
+  rounds 3-5 were briefed to rely on **cannot fire**.
+
+So the census cannot honestly say "we don't know" for a mark-total mismatch,
+which is why every round had to put those rows in a bucket that claims to know.
+
+**The question for the human.** *Can aggregate-arithmetic cause inference yield
+a sound bound at all — or must a real classification re-run the parse and
+observe the mechanism directly?* Depending on the answer, the 55 indeterminate
+rows go to one of:
+
+1. **`UNCLASSIFIED`** — make it reachable for mismatch rows. Honest; leaves 55
+   of 229 (24%) unranked, and M3 gets a smaller but trustworthy work-list.
+2. **A new, explicitly-named `cause_indeterminate` bucket** — separates "no
+   cause found" from "not investigable by arithmetic". Same information, but it
+   names *why* it is unknown.
+3. **Instrument the parser** — re-run each failing scheme with tracing and
+   record the observed mechanism. Costs a free re-parse and real implementation
+   work, and is the only option that produces a genuinely evidenced ranking.
+
+**What is already sound and should survive whatever is chosen:** the denominator
+is honestly held at 229 across all five rounds; the artifacts are byte-reproduced
+from live zero-cost re-runs; `lemely/io/det/profiles.py` has zero diff throughout;
+`spend_usd` never moved from **1.488057** — the entire five-round census cost
+**$0.00**; and no gate, threshold or assertion was ever weakened. The
+`paper_profile_misconfiguration` (40) and `mark_aggregation_overcount` (47)
+buckets are positively evidenced and are usable by M3 today — with one
+correction M3 must carry: of the 40 profile rows, **39 are causally
+demonstrated** by the counterfactual reparse and the 40th, `0625_s24_ms_21`, is
+**misattributed** and carries a distinct `lemely/io/det/mcq.py` defect that a
+`profiles.py` fix does not touch. See the † note under the ranked table. Cite
+the bucket as 39 causal + 1 misattributed, never as 40 causal.
+
+**Do not** resolve this by relaxing a criterion in prose, and **do not** let the
+next run start a round 6. It waits for the human.
+
+---
+
+## H — The accuracy harness NEVER runs the det mark-scheme parser, so gate-9 cannot see #38
+
+**Raised:** 2026-08-25 · **Status:** OPEN, needs a human ruling · **Cost to find:** $0
+(det path only; ledger unmoved at 1.488057)
+
+This one is not about a single issue. It is an **instrument gap** that silently
+changes what MISSION §9 gate 9 can and cannot prove, and §D's table above
+asserts the opposite of it for #38.
+
+### The finding, read at source
+
+Every golden case ships an **already-parsed `mark_scheme.json`**, and the
+harness deserializes it directly:
+
+- `lemely/accuracy/harness.py:82-83` — the case layout comment:
+  `mark_scheme.json  — already-parsed JSON mark scheme`
+- `lemely/accuracy/harness.py:103-109` —
+  `MarkScheme.model_validate_json(ms_path.read_text(...))`
+- `lemely/accuracy/harness.py:352-355` — the harness says so itself:
+
+  > `parse_path` is a known gap: spec §1 defines it as the *mark scheme's*
+  > parsing path (`det` = deterministic pdfplumber parser, `gemini` = AI
+  > fallback), a per-paper property `load_golden_cases` **does not observe**
+  > (it deserializes an already-parsed `mark_scheme.json` directly).
+
+Confirmed against the fixture directories: each contains `answers.json`,
+`case.json`, `mark_scheme.json`, `scan.pdf`. The **only** PDF is `scan.pdf` —
+the student script, which feeds vision extraction, not scheme parsing.
+
+### Three consequences, in increasing order of importance
+
+1. **A gate-9 sweep for #38 is null by construction.** #38 changes
+   `lemely/io/det/rows.py`. The harness never executes that file. Before and
+   after would read the identical checked-in JSON and the delta would be
+   exactly zero — at full sweep cost. Buying that number would be buying noise.
+   **§D's row `#38 M1.3 | mark-lowering; §9 gate 9 over/under non-regression`
+   is wrong on this point** and should be read alongside this section.
+
+2. **It generalises.** *Every* det mark-scheme-parser change the programme will
+   ever make is invisible to the instrument, present and future — which puts it
+   squarely under MISSION §2 ("the instrument comes first") rather than under
+   any one issue. #39's det-path private-use-codepoint detector is partly
+   affected the same way; #39's Gemini paper-level gate and #41's marker-prompt
+   changes are **not** (those run for real).
+
+3. **The published `det`/`gemini` split is not the parse path.** Per the same
+   docstring, the adapter substitutes `result.question_type` (`mcq` → `det`,
+   `theory` → `gemini`). So the ablation's "det 8/8 = 100%, gemini 16/23 =
+   69.6%" is **mcq-vs-theory**, not deterministic-vs-AI scheme parsing. That is
+   already conceded in the docstring, but it is not visible next to the
+   published figures, and it is the same signal #47 acceptance bullet 3
+   ("stratified across both parse paths det AND gemini") assumes exists —
+   consistent with the #88 q1 chain already recorded.
+
+### The ruling needed (posted on #38 as (a)/(b)/(c))
+
+- **(a)** Land #38 on a deterministic proof — corpus census + the
+  failing-before/passing-after regression test — waiving gate 9 **for this item
+  on the stated ground that the instrument provably cannot see the change**.
+- **(b)** Regenerate the golden `mark_scheme.json` fixtures through the det
+  parser so scheme-parsing becomes measurable. Honest fix, but it **rewrites
+  the measurement corpus**: MISSION §12.2 (irreversible data operation) and
+  §12.5 (frozen-split membership), needs its own authorisation, and would break
+  comparability with every figure published to date including the 2026-08-24
+  ablation.
+- **(c)** Block #38 until (b) happens, as M3 parse-path-parity work.
+
+Recommended, not acted on: **(a)** for #38 now, with **(b)** opened as its own
+instrument issue, because consequence 2 outlives #38.
+
+**Do not** let a future run quietly treat (a) as settled because it is the
+cheap branch. The 2026-08-24 gate-9 directive says in terms: *"If you are
+unsure for a given item, say so and ask rather than assuming the cheaper
+branch."* This is that case, and the cheap branch is the recommended one —
+which is exactly why it needs the human, not an agent's own say-so.
+
+### Second, independent ask on #38: acceptance bullet 2 is harmful as written
+
+Measured on the same 478 schemes, $0. Of the **177 papers carrying defaults**:
+
+| bucket | papers | effect of deleting the minted points (bullet 2) |
+|---|---:|---|
+| over-sum (leaf sum > declared max) | **78** | plausibly helps — the phantom-mark story |
+| under-sum (leaf sum < declared max) | **75** | makes it worse — paper is already short |
+| exact (leaf sum == declared max) | **24** | breaks a correct paper; **672 points** at stake |
+
+So the issue's premise holds for **78 of 177 (44%)** and bullet 2 is actively
+harmful on the other **99 (56%)**. `0625_s19_ms_43` — the paper the issue was
+written from — is a genuine over-sum instance and bullet 4's regression test is
+well-chosen; it is simply **not representative**, and generalising from it is
+what produces a change that helps 44% and harms 56%.
+
+This *strengthens* bullets 1 and 3. The corpus cannot say whether a given
+minted 1 is right — only that it was **written rather than read**. That is
+exactly what `marks_defaulted` provenance plus a working
+`escalate_on_defaulted_marks` are for. Bullet 2 guesses, and guesses wrong more
+often than right on this corpus.
+
+Recommended restatement, **not applied**: an unparseable marks cell still mints
+a point, flagged `marks_defaulted`; whether the paper escalates is
+`escalate_on_defaulted_marks`'s call, not the row parser's. The 75 under-sum
+papers belong in front of the fidelity gate (#39), not the row parser.
+
+Reproduce with `scripts/accuracy_defaulted_census.py <dir>` — it self-checks
+against this issue's own 3-defaults/+2-delta example before reporting any
+corpus number.
+
+---
+
+## I — #39 (M1.4): bullets 5 and 9 are not jointly satisfiable, and bullet 6 does not reproduce
+
+**Raised:** 2026-08-25 · **Status:** OPEN, needs a human ruling · **Cost:** $0
+(det path only; ledger unmoved at 1.488057). Measured with
+`scripts/accuracy_glyph_census.py` over **478 of 479** restored schemes
+(1 ParseError) — **22,825 answer points** — plus all 10 golden fixtures.
+
+This is separate from §H. It does not touch #39's bullet-4 design question or
+its gate-9 authorisation; both still block the issue independently.
+
+### Bullet 5 as literally written over-fires 3.4×
+
+Two candidate rules were built and measured side by side:
+
+| rule | fires | notes |
+|---|---:|---|
+| **naive** — bullet 5 verbatim: expression, newline, expression, no operator | **426** | |
+| **strict** — exactly two numeric segments and nothing else | **96** | across 73 schemes |
+| all-numeric tabular blocks (3+ stacked rows) | 50 | bullet 7's FP class |
+
+The naive rule over-fires the strict one by **330 points (3.4×)** on histogram
+frequency densities, Venn-diagram cell counts, matrix blocks and marker
+guidance text with numbers in it — e.g. `'5\n7\n3\n5'`, `'8\n18\n5'`,
+`'E\nDo not have Do not have\na computer a phone\n23 2 7\n8'`. None is a
+fraction bar. Shipping at that precision escalates hundreds of well-formed
+points and drives review rate up, against gate 8 and anti-goal 3.
+
+### But tightening it breaks a CONFIRMED real case in the measurement corpus
+
+Across the 10 golden fixtures there are exactly **two distinct** hits, both on
+`0625_s20_qp_31`, and **both are verified genuine** — each reconciles
+arithmetically against the next answer point in its own question:
+
+- `11b/p2` `'(V\ns\n=) (64 \n 240) \n 960'` → **(64 × 240) / 960 = 16**,
+  matching `p3 = '16 (V)'`. **naive fires; strict MISSES.** The point carries
+  non-numeric fragments (`(V`, `s`, `=)`), so "exactly two numeric segments" is
+  false. Note this point's two newlines encode *two different* lost operators —
+  an implicit multiplication inside the numerator **and** the fraction bar.
+- `12c/p2` `'36\n8'` → **36 / 8 = 4.5**, matching `p3 = '4.5 (mg)'`. Both fire.
+
+So `11b/p2` is not "expression, newline, expression" at all — it is
+expression/newline/expression/newline/expression where **only the second
+newline is the bar**. Bullet 5's phrasing does not describe the case the issue
+is built on.
+
+**Conclusion: no threshold on a newline-shape rule gives zero false positives
+(bullet 9) while catching the confirmed real case.** The distinguishing
+information is not in the text — it is the horizontal rule in the PDF's
+geometry, linearised away before the string exists. Recovering it means
+consulting layout during parsing (a `pdfplumber` rect under a numeric run), not
+pattern-matching afterwards. **That redesign is NOT proposed or implemented
+here** — it is recorded so nobody discovers it halfway through the issue.
+
+### Bullet 6 does not reproduce: zero private-use codepoints, not six
+
+Bullet 6 says *"Private-use-codepoint detector applied on the det path, where
+all 6 instances live."* Searching U+E000–U+F8FF across **all 22,825 det answer
+points in 478 schemes and all 10 golden fixtures returns ZERO hits.**
+
+Not a claim that the original 6 were imagined — they may live in a different
+field (metadata, guidance, question stems), a different corpus snapshot, or a
+pre-#88 parse. But **as written it does not reproduce**, and a detector cannot
+be regression-tested against a corpus holding no positive instance. Bullet 6
+needs its evidence re-established or re-scoped before implementation.
+
+### Bullet 7 stands — the one bullet the corpus fully supports
+
+The issue cites 272 of 1,000 det points containing newlines (27.2%). Over
+22,825 points: **7,963 (34.9%)**. Same order, same conclusion.
+
+**Do not** resolve any of this by loosening bullet 9. A zero-false-positive
+requirement is what makes the gate safe to put in front of review routing; the
+right move is to fix bullet 5 and 6, not to relax the acceptance test they fail.
+
+---
+
+## J — #59 (M2.5) needs a real scan that has never existed; #47 (M2.4) has no gemini leaves
+
+**Raised:** 2026-08-25 · **Status:** OPEN · **Cost:** $0 (metadata reads and an
+existing manifest; ledger unmoved at 1.488057). Both issues had **zero
+comments** until this run and were absent from every prior "full verified
+status" enumeration.
+
+### #59 — the "real" arm of a synthetic-vs-real comparison does not exist
+
+Acceptance bullet 1 asks for the extraction arm run over *"the synthetic **and
+the real scan** of the same paper (`0625_s20_qp_31`, `0625_m20_qp_12`)"*.
+
+Its only recorded dependency, #56, is **CLOSED** — so on paper it is startable.
+It is not. Checked at source rather than assumed:
+
+- `lemely/accuracy/synth.py:154-162` pins the output PDF's metadata for
+  byte-determinism, including `title="lemely-synthetic-scan"`.
+- Reading the metadata off every `scan.pdf` under `tests/golden/`:
+  **`Title='lemely-synthetic-scan'` — 11 of 11 cases, no exceptions.**
+- Structurally identical too: 1 page, **0 text characters, 1 image** each, i.e.
+  rasterised renderer output, not a scanned document.
+- A repo-wide search for any real or photographed scan artefact returns nothing.
+
+**The corpus is 100% synthetic. The "real" arm has never been produced**, so
+the comparison has one of its two arms in existence.
+
+**And the harness has nowhere to put one.** `GoldenCase` carries exactly one
+scan slot — `harness.py:66` (`scan_path: Path | None`) and `harness.py:115`
+(`scan_path = case_dir / "scan.pdf"`): one path, one hard-coded filename, per
+case. "The same paper, two scans" is not expressible in the current data model.
+So the issue's **Effort: S** is wrong — bullet 1 alone is corpus acquisition
+plus a harness change.
+
+Asks posted on #59: do real scans exist outside the repo; if they must be
+produced, is that authorised and by whom (MISSION §12.7); and does the
+`GoldenCase` pairing model belong in #59 or its own issue. *Not* re-raising
+B1's stale privacy framing — the question is existence and authorisation.
+
+Flagged for whoever runs it: the issue's Why says the two error directions
+cancel, but the deflating half is what #56 was closed to fix. If #56 removed it,
+the residual is **one-directional inflation**, making every synthetic-corpus
+extraction figure an *optimistic* bound rather than an unsigned one. Unverified;
+it changes how bullet 3 should be worded.
+
+### #47 — volume is ample, but 9 of the 18 DA1 strata are empty and all of them are gemini
+
+Dependencies checked: #46 **CLOSED**, #31 **CLOSED**, #50 **CLOSED**, #57
+**OPEN**. So #57 is the only live blocker and the chain #88 → #57 → #47 holds.
+Owner is **human** (6–8 h), so a green dependency list makes this
+*human*-startable, never agent-startable.
+
+Volume is fine — 12,358 leaf questions from 250 det-parsed schemes, 9,464 of
+them tariff-banded, against a ~300 target (31× headroom). The old
+"Available: 71" framing is dead.
+
+But acceptance bullet 3 (*"stratified across both parse paths — det and
+gemini"*) is **currently unsatisfiable**. From
+`BUILD/accuracy-runs/census-2026-08-24-a/manifest.json`, all 9 populated cells:
+
+```
+0580 x det x 1 : 1992   0606 x det x 1 :  46   0625 x det x 1 : 2521
+0580 x det x 2 : 2110   0606 x det x 2 : 107   0625 x det x 2 :  525
+0580 x det x 3+: 1635   0606 x det x 3+: 239   0625 x det x 3+:  289
+```
+
+**Every populated cell is `det`; the gemini half of the design is empty.** The
+manifest's own `parser` field says why: `"det only (no --use-gemini)"`. The 229
+det-failure schemes were never Gemini-parsed and contributed no leaves at all.
+A split frozen over this corpus can only contain det leaves — which is what
+makes #88's q1 load-bearing and puts #57's authorised Gemini pass on #47's
+critical path, though #57 never mentions #47.
+
+**Do not conflate this with §H.** §H is the `EvalRecord` `parse_path` gap inside
+the harness (`harness.py:352-355`, substituted by `question_type`). This is the
+**corpus** parse, where the signal is genuinely available per scheme and simply
+has not been generated for 229 of 479. Two different absences, same name; only
+this one blocks #47.
+
+**Bullet 4 must not be used to paper over it.** "Including cells the det parser
+cannot itself represent" means *publish the empty cells honestly* — **not**
+"an all-det split satisfies bullet 3". If the Gemini pass never happens, the
+right outcome is a published table with 9 empty cells and an explicit det-only
+statement, never a quiet redefinition of the strata to the cells that are full.
+That is the narrowed-denominator failure mode exactly.
+
+---
+
+## K — `id_match` is a hard-coded literal; the "exact 71/71" artifacts prove nothing (#37)
+
+**Raised:** 2026-08-25 · **Status:** OPEN · **Cost:** $0 (source reads + two
+existing artifacts; ledger unmoved at 1.488057).
+
+Found while testing whether #37's gate-9 sweep is *informative* — the question
+that made #38's sweep null (§H). For #37 the answer is the opposite, and the
+detour turned up a measurement defect worth its own entry.
+
+### #37's sweep IS on a live path — the §H waiver does not transfer
+
+```
+measure_accuracy (arm extract+mark, harness.py:725)
+  -> grading.extract_answers                (grading.py:52-53)
+     -> GeminiAnswerExtractor.__call__      (answer_extraction.py:146)
+        -> normalize_extracted_answers      (answer_extraction.py:187 -> :40)
+```
+
+`normalize_extracted_answers` has exactly **one** production caller and it sits
+on the harness's extraction arm. **#37 cannot be waived on
+"the instrument is blind" grounds** the way #38 can.
+
+### But `id_match` never compares anything
+
+Assigned by hand at three sites, never computed:
+
+```
+harness.py:402   id_match="exact"       # QuestionResult -> EvalRecord adapter
+harness.py:788   id_match="unmatched"   # excluded leaf
+harness.py:817   id_match="unmatched"   # unmatched leaf
+```
+
+`"fuzzy"` is **never emitted anywhere** — the three-valued domain is two-valued
+in practice. The harness says why the first is unconditional
+(`harness.py:364-370`): the adapter is only called for a leaf the extractor
+already returned an answer for.
+
+### So the positional fallback is invisible to it, by construction
+
+`answer_extraction.py:68-77` **overwrites** the answer's `question_id` with a
+genuine manifest id and logs `id_positional_fallback` at WARNING. After that
+line a positionally-guessed answer is indistinguishable from a real match, so
+the harness stamps `id_match="exact"`. **The reassignment is laundered into
+`exact`** — which is exactly #37's "silent realignment" complaint, located.
+
+### Therefore this reassuring-looking evidence is worthless
+
+```
+tests/golden/results/2026-08-22-f7be062.json   records=71  id_match={'exact': 71}
+tests/golden/results/2026-08-22-79f5fa8.json   records=71  id_match={'exact': 71}
+```
+
+**Neither is evidence the fallback never fired.** `exact` is a constant, so both
+are equally consistent with the fallback firing on **zero** records and on **all
+71**. Do not cite either as a clean bill of health — this is evidence note **E1**'s
+trap in a new place, and worse: E1 was a stale denominator, this field never had
+a computation behind it at all.
+
+### Consequences
+
+- Bullet 3 ("the metric now measures genuine id agreement rather than
+  post-fallback coverage") is **confirmed at source**, not merely asserted:
+  `id_match_rate` = `matched_extraction_ids / total_extraction_questions` over
+  **post-normalisation** ids, and its 0.99 target was set against that. The
+  same-commit rule guarding the red-CI window is right; do not relax it.
+- Ask #5 is sharper, not changed: #37 needs the gate-9 spend authorised **or an
+  explicit waiver on grounds other than instrument-blindness**.
+- **Free when the sweep runs:** count the `id_positional_fallback` WARNING lines
+  to get the fire rate nobody currently has. Capture it in the same run rather
+  than paying for a second sweep.

@@ -1,14 +1,14 @@
 # ACCURACY-STATE.md — resume pointer for the accuracy programme
 
-run_pointer: run-2026-08-24-a
+run_pointer: run-2026-08-25-a
 worktree: /home/sico/Lemely-worktrees/accuracy
-branch: none
+branch: feature/accuracy-45-failure-reason-census-over-the-failing
 last_run_label: ablation-2026-08-24-a
-last_run_headline: NOT REPORTABLE as an ablation: the oracle+mark arm produced zero records (blocked on open #28 — measure_accuracy() picks the arm from case.scan_path and all 11 golden cases ship scan.pdf, so the oracle branch is dead code), so there is no A/B delta to test against the published 11.61% A/A floor and same_denominator_both_arms=false. What the run does support, descriptively and single-arm only: extract+mark leaf accuracy 77.4% (24/31 distinct leaves, Wilson 95% CI [60.2%, 88.6%]; det 8/8=100% CI [67.6%,100%] UNDERPOWERED, gemini 16/23=69.6% CI [49.1%,84.4%]), cache genuinely bypassed (0 hits), abstain/unmatched/under kept in the denominator, 0 excluded. Reportable finding in its own right: a real review-budget ratchet breach — review_rate_signal = review_rate_total = 29.03% (9/31 leaves; det 0/8, gemini 9/23=39.1%) against the 8%/10% ceilings, and per-paper p95 66.7% against 15% on only 5 papers (UNDERPOWERED as a percentile). It does NOT show that extraction helps or hurts marking, does NOT establish any delta, and n=31 is far below the MCNEMAR_IMPROVEMENT_N_FLOOR of 219 leaf-pairs. Note: the harness manifest's own mark_accuracy=0.9014 is over 71 pre-collapse rows and must not be cited as the leaf-level figure.
-review_rate: 29.03% single-repeat extract+mark, ablation-2026-08-24-a (9/31 leaves; det 0/8, gemini 9/23=39.1%; per-paper p95 66.7% on n=5 papers, UNDERPOWERED). Identical to last_merged_review_rate 29.03% (BUILD/review-rate-baseline.json, lemely/runtime/config.py:168) — same corpus, same computation. DA9a still binding: the aa-floor MEASURED MEAN over 10 live repeats was 32.58% (range 29.03-41.94%), so 29.03% is the BOTTOM of the range and arming min(10%, last_merged) against it gates on a figure unchanged code exceeds 7 times in 10 (#36).
+last_run_headline: NOT REPORTABLE as an ablation: the oracle+mark arm produced zero records (blocked on open #28 — measure_accuracy() picks the arm from case.scan_path and all 11 golden cases ship scan.pdf, so the oracle branch is dead code), so there is no A/B delta to test against the published 11.61% A/A floor and same_denominator_both_arms=false. What the run does support, descriptively and single-arm only: extract+mark leaf accuracy 77.4% (24/31 distinct leaves, Wilson 95% CI [60.2%, 88.6%]; det 8/8=100% CI [67.6%,100%] UNDERPOWERED, gemini 16/23=69.6% CI [49.1%,84.4%]), cache genuinely bypassed (0 hits), abstain/unmatched/under kept in the denominator, 0 excluded. Reportable finding in its own right: a real review-budget ratchet breach — review_rate_signal = review_rate_total = 29.03% (9/31 leaves; det 0/8, gemini 9/23=39.1%) against the 8%/10% ceilings, and per-paper p95 66.7% against 15% on only 5 papers (UNDERPOWERED as a percentile). It does NOT show that extraction helps or hurts marking, does NOT establish any delta, and n=31 is far below the MCNEMAR_IMPROVEMENT_N_FLOOR of 219 leaf-pairs. Note: the harness manifest's own mark_accuracy=0.9014 is over 71 pre-collapse rows and must not be cited as the leaf-level figure. *** CORRECTION 2026-08-25: the parenthetical above describes why THAT run failed and is accurate for it, but its blocker framing is now STALE TWICE OVER -- #28 is CLOSED, and the forcing mechanism it says is missing LANDED IN PR #87 (merged 2026-08-24T03:31Z, on develop): harness.py:705-710 makes `arm` override scan_path uniformly and cli.py:1013-1025 exposes --arm. No measured value in this headline is altered. The 2x2 STILL DOES NOT EXIST and M0.4 is closed with every acceptance box unticked; see BLOCKERS '#28' RESOLVED note and the 2026-08-25 comment on #28 for the (a)/(b)/(c) ruling that is required before any re-run.
+review_rate: 29.03% (9/31 leaves, single-repeat extract+mark, ablation-2026-08-24-a). UNDERPOWERED; DO NOT arm the ratchet against it (DA9a — it is the BOTTOM of the 29.03-41.94% A/A range, mean 32.58%). Full analysis in this file's body.
 ratchet: unarmed; ratchet constant remains 29.03% (config.py:168) and the M0 breach stays recorded-not-blocking. DO NOT arm against 29.03% — see review_rate above and DA9a: restate it distribution-aware first (#36).
 spend_usd: 1.488057
-in_the_middle_of: #45 (M2.2 failure-reason census) STARTED this run and is the live item; accuracy-issue-execute launched in-session over branch feature/accuracy-45-failure-reason-census-over-the-failing. Work state (not a handle): #45 scoped, constraints posted as issue comment 5392675412, implementation in flight, unreviewed, no PR. If this run died mid-workflow the workflow is UN-RUN, not pending (MISSION 7) — re-run accuracy-issue-execute {issue:45} from scratch. ZERO SPEND item: no --use-gemini, no network; ledger unchanged at 1.488057. *** WHY #45 COULD START: #88 is In progress but BLOCKED-AND-RECORDED on the human (3 questions posted 2026-08-24T04:33Z, still unanswered on the 4th consecutive run), tree clean and no branch held, so MISSION 3.2's 'PR landed, OR blocked and recorded' clause is satisfied and the shared-worktree hazard it names is absent. This REVERSES the prior run's reading that #88 held the only slot; reversed on 3.2's own text, not on convenience. #88 IS NOT TOUCHED — its 3 questions stay open and unanswered. *** DO NOT let #45 fix lemely/io/det/profiles.py:50 (0625 p2 -> THEORY_CORE): it is question 2 on #88, awaiting the human, and it moves 40 schemes between DA1 strata, invalidating #88's preflight denominator. Classify it as a cause only. *** develop has 7 unpushed commits; supervisor PASS covers 3f50781 (= current develop tip).
+in_the_middle_of: RUN 20 — THE PROGRAMME IS UNBLOCKED. 17 human directives arrived (2026-08-25T12:03/12:35); 8 fully actioned + 2 part-actioned this run, 7 NOT STARTED. NO SPEND, ledger unmoved at 1.488057. DONE: #49 REOPENED (A3) — split membership NOT FROZEN, #57 correctly re-blocked; process gap diagnosed (all four H issues closed MANUALLY by Xart3mis in a 71-second window 2026-08-18T22:14-22:15, no PR/commit; _h_guard cannot intercept a GitHub-side close) and STRUCTURALLY FIXED in 586fb3b — board status now alarms on closed H issues with unticked boxes. Issue bodies amended: #38 (A6 waiver + A7 over-sum narrowing), #39 (A8/A10/A11 retirements, A9 parser-side + sweep deferred, bullet 9 held). #28 ruling posted (authorisation does not survive issue closure — now the general rule). NEW ISSUES: #93 (A2 profiles.py), #94 (A4 parser instrumentation), #95 (A6b fixture rebuild, DO NOT EXECUTE). *** NEXT RUN, IN THIS ORDER: (1) A4 — SHIP #45: branch feature/accuracy-45-failure-reason-census-over-the-failing is reviewed-clean, 38/38 green, lemely/ diff EMPTY; run accuracy-pr-land {issue:45, branch:<that>, base:develop}. (2) A1 — measure #58 bullet 4 (~$0.144 corrected authorised; STOP AND ASK if it projects materially above), tick honestly, land PR #90 (OPEN/CLEAN, 5 checks green). (3) #88 q3 — investigate the 2,894 unbanded leaves at ZERO COST before any freeze; do NOT apply drop-only; do not cite the bogus 'DA1 strata populated: 12' (honest figure is 9 of 18). (4) A13/#41 bullet 2 — wire det/gmp.py extract_gmp into the marker prompt, strict M-then-A fallback, ONE commit for the M1 prompt VERSION. (5) A5 — #37 sweep, costed preflight posted FIRST, count id_positional_fallback WARNING lines in the SAME run. (6) #59 handwriting corpus (supersedes A12): rasterise the 3 ink-annotated PDFs in /home/sico/Downloads before use, restate as a HANDWRITING not scan comparison, scrape 0625_w25_ms_42. (7) Commit the 250 parsed MarkScheme JSONs. *** AWAITING HUMAN: whether to reopen #51/#52/#55 — closed identically to #49 with ZERO boxes ticked each (4/5/4 unmet); A3 named only #49 so they were left alone. *** A2 ORDERING IS BINDING: #93 must land BEFORE any #57 preflight and BEFORE the split freeze. 18 COMMITS UNPUSHED; origin/develop at 8847f59.
 ---
 
 ## Contract — keep this file THIN
@@ -42,6 +42,31 @@ touching this body or the key order). **Do not hand-edit the header while the
 supervisor is running** — a manual edit racing a `state set` write can be
 clobbered, and any edit that breaks the `key: value` shape at column zero
 breaks the supervisor's `grep -m1` reads and its 50%/80% spend alarms with it.
+
+## The `review_rate` figure in full (moved out of the header 2026-08-25)
+
+The header key carries the number; the analysis behind it lives here. It was
+moved because the supervisor pastes the header value **verbatim** into every
+outbound notification's preamble, so a ~600-character paragraph there crowded
+the actual alert payload out of every message the human receives. Nothing
+in-repo parses this value: `lemely/eval/review_gate.py` takes
+`last_merged_review_rate` as a function parameter sourced from
+`BUILD/review-rate-baseline.json` and `lemely/runtime/config.py:168`, and the
+header-shape fixture in `tests/test_accuracy_board_state.py:46` is
+`"review_rate: 19.1%"`. **No measured value changed in this move.**
+
+**29.03%**, single-repeat extract+mark, run `ablation-2026-08-24-a` — 9/31
+leaves (det 0/8; gemini 9/23 = 39.1%). Per-paper p95 is 66.7% against a 15%
+ceiling on only 5 papers, which is **UNDERPOWERED as a percentile**. It is
+identical to `last_merged_review_rate` 29.03% (`BUILD/review-rate-baseline.json`,
+`lemely/runtime/config.py:168`) because it is the same corpus under the same
+computation.
+
+**DA9a is still binding: do NOT arm the ratchet against 29.03%.** The A/A floor's
+measured mean over 10 live repeats was **32.58%** (range 29.03–41.94%), so 29.03%
+is the **bottom** of the observed range — arming `min(10%, last_merged)` against
+it would gate on a figure that unchanged code exceeds 7 times in 10. Restate it
+distribution-aware first (#36).
 
 ## Evidence log — halt runs, 2026-08-22
 

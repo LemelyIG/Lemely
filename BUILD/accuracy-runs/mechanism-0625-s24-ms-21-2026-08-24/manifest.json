@@ -1,0 +1,48 @@
+{
+  "label": "mechanism-0625-s24-ms-21-2026-08-24",
+  "issues": [
+    45
+  ],
+  "kind": "direct-observation cause for the one row the 0625 p2 counterfactual proved misattributed",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "network": "none",
+  "context": "counterfactual-0625p2-2026-08-24 showed 39/40 paper_profile_misconfiguration rows are causally explained by profiles.py:50, and that 0625_s24_ms_21 is NOT \u2014 it still fails after the fix with the same signature. This identifies its actual cause by observing the mechanism directly rather than inferring it from aggregate arithmetic.",
+  "cause": {
+    "name_proposed": "mcq_answer_column_disqualified_by_non_letter_cell",
+    "trigger": "CAIE withdrew question 14 from this paper, so its answer cell reads the literal label 'Question Discounted' instead of an A/B/C/D letter. This is legitimate mark-scheme content, not an extraction artefact \u2014 the table is extracted correctly.",
+    "mechanism": "find_mcq_answer_col (lemely/io/det/mcq.py:23) requires ALL non-empty values in a candidate column to be in {A,B,C,D}. One non-letter cell therefore disqualifies the answer column outright; no other column qualifies (the marks column is all '1'), so it returns None and parse_mcq_tables (mcq.py:41-42) `continue`s past the ENTIRE table. The loss is all-or-nothing per table and silent.",
+    "irony_worth_recording": "parse_mcq_tables:50 already has a per-row guard ('ans_cell not in _MCQ_LETTERS: continue') that would have skipped exactly this one row harmlessly. The all-or-nothing column detector fires first and costs the other 27 rows in that table."
+  },
+  "measured": {
+    "tables": 2,
+    "table_0": {
+      "data_rows": 29,
+      "answer_col": null,
+      "discounted_cells": 1
+    },
+    "table_1": {
+      "data_rows": 13,
+      "answer_col": 3,
+      "discounted_cells": 0
+    },
+    "parsed_as_extracted": 12,
+    "parsed_after_neutralising_the_one_cell": 40,
+    "questions_lost_to_a_single_cell": 28
+  },
+  "blast_radius": {
+    "corpus_scanned": 479,
+    "schemes_with_a_DISCOUNTED_QUESTION": 1,
+    "stems": [
+      "0625_s24_ms_21"
+    ],
+    "false_grouping_corrected": "A naive text search for 'discounted' matches 3 schemes, but in 0606_s22_ms_13 and 0606_s24_ms_11 the word is ordinary maths marking prose ('negative root discounted', 'A0 if negative root not discounted') and has nothing to do with a withdrawn question. Checked in context rather than counted from the grep. The real radius is 1 of 479."
+  },
+  "bearing_on_45": "A worked example for the escalated question. The cause is invisible to aggregate arithmetic \u2014 computed_total vs maximum_mark cannot distinguish 'a question was withdrawn' from any other shortfall \u2014 but is unambiguous on direct observation, and no bucket in the current taxonomy names it. That is evidence that option 3 (instrument the parser) yields genuinely evidenced causes where the arithmetic proxies could not. It does NOT choose between options 1/2/3, which stays the human's decision.",
+  "not_fixed": "lemely/io/det/mcq.py is UNTOUCHED and its diff is empty. Relaxing find_mcq_answer_col would change det parse output and therefore awarded marks, so under the 2026-08-24 gate-9 directive it is mark-changing and needs the human's call \u2014 the same reason profiles.py:50 was left alone.",
+  "reproduce": {
+    "command": ".venv/bin/python BUILD/accuracy-runs/mechanism-0625-s24-ms-21-2026-08-24/mechanism_0625_s24_ms_21.py",
+    "cost": "free, zero network"
+  },
+  "not_committed": "no answer letters and no mark-scheme text \u2014 only counts, the stem, and the cell's label (MISSION \u00a712.7)"
+}

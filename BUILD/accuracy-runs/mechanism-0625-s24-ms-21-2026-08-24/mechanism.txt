@@ -1,0 +1,6 @@
+0625_s24_ms_21: tables=2 parsed_questions=12
+  table 0: rows=29 answer_col=None discounted_cells=1
+  table 1: rows=13 answer_col=3 discounted_cells=0
+
+cells neutralised: 1
+parsed before=12  after=40  recovered=28
