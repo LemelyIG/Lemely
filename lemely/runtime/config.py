@@ -214,7 +214,9 @@ class AuthSettings(BaseModel):
 
     Email/password identity is delegated to Supabase GoTrue; these knobs govern
     the token lifetimes the backend mints under (D1.5 — the backend is the sole
-    issuer) and the in-memory parent phone-OTP challenge lifecycle, both owned by
+    issuer), the ``auth_tokens`` verification/reset lifetimes
+    ``lemely.db.auth_token_repo.AuthTokenService`` mints under (D7.7), and the
+    in-memory parent phone-OTP challenge lifecycle — all owned by
     ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
     ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
     """
@@ -231,6 +233,22 @@ class AuthSettings(BaseModel):
     # the token being bound to a `devices` row, so signing that device out (or
     # evicting it past the 3-device cap) kills it immediately regardless of exp.
     refresh_token_ttl_seconds: int = Field(default=60 * 60 * 24 * 30, ge=300)
+    # Lifetime of an email-verification token (D7.4/D7.7), 24 hours. Generous on
+    # purpose: verification only soft-gates the Gemini spend behind
+    # `POST /api/student/correct` (D7.5) — the account itself is fully usable
+    # while unverified — so there is little cost to a link that is still good
+    # the next day, and a lot of value in not making a student re-signup because
+    # they read their inbox after dinner instead of immediately.
+    email_verification_ttl_seconds: int = Field(default=60 * 60 * 24, ge=300)
+    # Lifetime of a password-reset token (D7.7), 1 hour. Deliberately much
+    # shorter than verification: a reset token is a bearer credential that lets
+    # its holder take the account over outright (set a new password, no old one
+    # required, and `AuthService.reset_password` then signs out every device) —
+    # a stale copy of that sitting in an inbox for a day is a materially
+    # different risk from a stale verification link, which unlocks nothing an
+    # attacker could not already reach by other means (D7's binding design
+    # decision: the two purposes must not share a lifetime).
+    password_reset_ttl_seconds: int = Field(default=60 * 60, ge=300)
     # Time-to-live for a pending OTP challenge, in seconds.
     otp_ttl_seconds: int = Field(default=300, ge=1)
     # Maximum verify attempts before a challenge is locked out.

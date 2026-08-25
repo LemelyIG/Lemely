@@ -133,6 +133,39 @@ def test_mint_returns_plaintext_and_stores_only_a_hash(
     assert row.used_at is None
 
 
+# ── mint: per-call ttl override ─────────────────────────────────────────────
+
+
+def test_mint_per_call_ttl_overrides_the_constructor_default(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The per-call ``ttl_seconds`` wins over the constructor default.
+
+    This is what lets a single shared ``AuthTokenService`` instance serve both
+    a long-lived verification token and a short-lived reset token (D7's
+    binding rule that the two purposes must not share a lifetime) instead of
+    ``deps.py`` wiring two differently-configured instances. Proven by expiry,
+    not by inspecting the row: a token minted with a short override must be
+    expired at a clock point where a token minted off the (much longer)
+    constructor default, on the very same service instance, is not - so the
+    override cannot be a global mutation that leaked into the second mint.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    clock = _FrozenClock(datetime(2026, 1, 1, tzinfo=UTC))
+    service = AuthTokenService(pg_sessionmaker, clock=clock, ttl_seconds=3600)
+
+    overridden = service.mint(user_id, AuthTokenPurpose.email_verification, ttl_seconds=60)
+    off_default = service.mint(user_id, AuthTokenPurpose.password_reset)
+
+    clock.advance(61)
+
+    with pytest.raises(TokenExpired):
+        service.redeem(overridden, AuthTokenPurpose.email_verification)
+    # The constructor's 3600s default has not elapsed - the override applied
+    # only to the call that requested it.
+    assert service.redeem(off_default, AuthTokenPurpose.password_reset) == user_id
+
+
 # ── redeem: happy path ──────────────────────────────────────────────────────
 
 

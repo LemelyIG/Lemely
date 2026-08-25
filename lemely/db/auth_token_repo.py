@@ -162,7 +162,13 @@ class AuthTokenService:
         self._clock: Callable[[], datetime] = clock if clock is not None else _utcnow
         self._ttl = timedelta(seconds=ttl_seconds)
 
-    def mint(self, user_id: uuid.UUID | str, purpose: AuthTokenPurpose) -> str:
+    def mint(
+        self,
+        user_id: uuid.UUID | str,
+        purpose: AuthTokenPurpose,
+        *,
+        ttl_seconds: int | None = None,
+    ) -> str:
         """Mint a fresh single-use token for ``user_id``/``purpose`` and return it.
 
         The return value is the **only** place the plaintext token ever
@@ -177,19 +183,39 @@ class AuthTokenService:
         older outstanding token. Callers that want "only the newest link
         works" call :meth:`revoke_all` first.
 
+        Args:
+            user_id: Owner of the minted token.
+            purpose: Which lifecycle this token belongs to - part of every
+                future redemption lookup (module docstring rule 2), never
+                inferred from the token itself.
+            ttl_seconds: Per-call override of the constructor's ``ttl_seconds``
+                default. Verification and reset tokens must not share a
+                lifetime - a reset token is a credential that can take an
+                account over outright, a verification token is far lower
+                risk - so :class:`~lemely.auth.service.AuthService` mints both
+                purposes from **one** shared :class:`AuthTokenService`
+                instance, passing ``settings.auth.email_verification_ttl_seconds``
+                or ``settings.auth.password_reset_ttl_seconds`` here per call,
+                rather than requiring the caller to stand up two differently
+                configured instances just to get two different lifetimes.
+                Defaults to ``None``, which keeps the constructor's
+                ``ttl_seconds`` unchanged - every caller that predates this
+                parameter (and every call that omits it) is unaffected.
+
         Returns:
             The plaintext token to embed in the emitted link.
         """
         uid = _as_uuid(user_id)
         token = secrets.token_urlsafe(_TOKEN_ENTROPY_BYTES)
         now = self._clock()
+        ttl = self._ttl if ttl_seconds is None else timedelta(seconds=ttl_seconds)
         with self._sessionmaker() as session, session.begin():
             session.add(
                 AuthToken(
                     user_id=uid,
                     purpose=purpose,
                     token_hash=_hash_token(token),
-                    expires_at=now + self._ttl,
+                    expires_at=now + ttl,
                 )
             )
         return token
