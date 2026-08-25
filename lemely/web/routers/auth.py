@@ -102,6 +102,27 @@ def _to_challenge(exc: DeviceLimitReachedError) -> DeviceLimitChallengeDTO:
     )
 
 
+def _cooldown_detail(exc: CooldownError) -> str:
+    """Human wording for a 429, deliberately not ``str(exc)``.
+
+    ``CooldownError.__str__`` is ``f"Cooldown active for {key!r}; retry in
+    {retry_after:.0f}s."`` — a log line, and the ``key`` is the caller's own
+    email address (signup, password reset) or their raw user id (resend). It is
+    their own data rather than a stranger's, so this is a copy defect and not a
+    disclosure one; it is still the exact shape ``lib/*Outcome.ts`` exists to
+    keep off a screen, and a ``repr()``'d address is not a sentence anybody
+    wrote for a reader.
+
+    ``lemely/auth/otp.py`` already sets the precedent this follows: "OTP already
+    sent; retry in 12s." — a human sentence, carrying the one fact the reader
+    needs, naming nothing they did not ask about. ``authOutcome.ts``'s rule is
+    to keep a 429's server wording *where a human wrote it for a human*, so the
+    honest fix is to make that true here rather than to have the client discard
+    it.
+    """
+    return f"Please wait {exc.retry_after:.0f}s before trying again."
+
+
 @router.post("/auth/signup", response_model=TokenResponseDTO)
 def signup(
     body: SignupRequestDTO,
@@ -151,7 +172,7 @@ def signup(
         try:
             cooldown.check_and_stamp(body.email)
         except CooldownError as exc:
-            raise HTTPException(status_code=429, detail=str(exc)) from exc
+            raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
     try:
         result = service.signup(
             body.email,
@@ -308,7 +329,7 @@ def resend_verification(
     try:
         cooldown.check_and_stamp(auth.user_id)
     except CooldownError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+        raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
     try:
         dev_link = service.resend_verification(uuid.UUID(auth.user_id))
     except AuthError as exc:
@@ -340,7 +361,7 @@ def request_password_reset(
     try:
         cooldown.check_and_stamp(body.email)
     except CooldownError as exc:
-        raise HTTPException(status_code=429, detail=str(exc)) from exc
+        raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
     dev_link = service.request_password_reset(body.email)
     return PasswordResetRequestResponseDTO(devLink=dev_link)
 
