@@ -43,6 +43,7 @@ from lemely.web.deps import (
     get_auth_context,
     get_auth_service,
     get_device_registry,
+    get_user_mirror,
     reset_singletons,
 )
 from tests.auth_fakes import FakeGoTrueBackend, FakeUserMirror
@@ -131,9 +132,10 @@ def _three_rows() -> list[DeviceRow]:
 def login_context() -> Iterator[tuple[TestClient, StubRegistry]]:
     settings = Settings()
     registry = StubRegistry(_three_rows())
+    mirror = FakeUserMirror()
     service = AuthService(
         gotrue=FakeGoTrueBackend(),
-        mirror=FakeUserMirror(),
+        mirror=mirror,
         sms=MockSmsProvider(),
         otp_store=OtpStore(
             clock=lambda: datetime.now(UTC),
@@ -147,10 +149,22 @@ def login_context() -> Iterator[tuple[TestClient, StubRegistry]]:
     )
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
+    # Issue #10: /auth/signup now reads the mirror for a read-only
+    # duplicate-address pre-check (see routers/auth.py's `signup` docstring).
+    # Override it to the same mirror `service` is built on, keeping this
+    # fixture's own hermetic claim (its module docstring) true rather than
+    # falling back to the real DbUserMirror against a database this file
+    # otherwise never touches.
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
     client = TestClient(app)
     client.post(
         "/api/auth/signup",
-        json={"email": "s@example.com", "password": "pw-123456", "role": "student"},
+        json={
+            "email": "s@example.com",
+            "password": "pw-123456",
+            "role": "student",
+            "acceptedTerms": True,
+        },
     )
     registry.rows = _three_rows()  # the signup consumed a slot; reset to "at the cap"
     registry.registered.clear()

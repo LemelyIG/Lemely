@@ -125,7 +125,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (7) ────────────────────
+    # ── PUBLIC (10) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     ("POST", "/api/auth/otp/request"): PUBLIC,
     ("POST", "/api/auth/otp/verify"): PUBLIC,
@@ -137,6 +137,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # `test_a_refresh_token_cannot_be_used_as_a_bearer_token`).
     ("POST", "/api/auth/refresh"): PUBLIC,
     ("POST", "/api/auth/signup"): PUBLIC,
+    # Issue #10 / D7 §4.3, three of the four new account-lifecycle routes.
+    # Each redeems (or requests) a single-use token that IS the credential —
+    # there is no caller identity to authenticate yet (verify-email,
+    # password-reset/confirm) or the identity must stay unconfirmed by design
+    # (password-reset/request's binding anti-enumeration rule: a 404 here
+    # would be an oracle for which addresses hold an account).
+    ("POST", "/api/auth/verify-email"): PUBLIC,
+    ("POST", "/api/auth/password-reset/request"): PUBLIC,
+    ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
@@ -144,7 +153,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (13) ────────────────────
+    # ── AUTH_ANY (14) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
@@ -162,6 +171,12 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # role, so this is `get_auth_context` alone (no `require_role`), the same
     # AUTH_ANY shape as the `/api/me/*` routes above.
     ("POST", "/api/invites/{code}/redeem"): AUTH_ANY,
+    # Issue #10 / D7 §4.3: re-mint and re-send is scoped to "whoever this
+    # token belongs to", never to a caller-supplied address (an attacker
+    # could otherwise fill a body field with someone else's email) - so it is
+    # `get_auth_context` alone, the same AUTH_ANY shape as the invite-redeem
+    # route above, not a `require_role` guard.
+    ("POST", "/api/auth/verify-email/resend"): AUTH_ANY,
     # ── STAFF (40) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
@@ -458,7 +473,10 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    assert len(_NON_PUBLIC) == len(ROUTES) - 7  # 5 auth entrypoints + /api/health + invite preview
+    # 8 auth entrypoints (the original 5 + issue #10's verify-email,
+    # password-reset/request, password-reset/confirm) + /api/health + invite
+    # preview.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 10
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

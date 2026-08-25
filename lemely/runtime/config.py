@@ -215,10 +215,15 @@ class AuthSettings(BaseModel):
     Email/password identity is delegated to Supabase GoTrue; these knobs govern
     the token lifetimes the backend mints under (D1.5 — the backend is the sole
     issuer), the ``auth_tokens`` verification/reset lifetimes
-    ``lemely.db.auth_token_repo.AuthTokenService`` mints under (D7.7), and the
-    in-memory parent phone-OTP challenge lifecycle — all owned by
-    ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
-    ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
+    ``lemely.db.auth_token_repo.AuthTokenService`` mints under (D7.7), the
+    in-memory parent phone-OTP challenge lifecycle, and the two
+    ``lemely.auth.cooldown.CooldownStore`` resend windows (D7.12) — the first
+    three owned by ``lemely.auth.service.AuthService``, the cooldowns enforced
+    one layer up in ``lemely.web.routers.auth`` (a ``CooldownStore`` is a
+    router-level throttle, not a fact about an identity, so it is not a
+    constructor argument of ``AuthService`` the way the token services are).
+    Override via ``lemely.toml`` under the ``[auth]`` section or via
+    ``LEMELY_AUTH__*`` env vars.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -258,6 +263,22 @@ class AuthSettings(BaseModel):
     # Minimum seconds between successive OTP issues for the same phone. Stops an
     # attacker resetting the attempt counter by re-requesting before lockout.
     otp_min_resend_seconds: int = Field(default=30, ge=0)
+    # D7.12: reuses D1.7 item 2's OTP-resend-cooldown mechanism
+    # (``lemely.auth.cooldown.CooldownStore``) for the cheapest abuse shape on
+    # the two *public, unauthenticated* auth routes that mint an account or
+    # trigger a mail-like send from a caller-supplied address: signup and
+    # password-reset-request. Both are keyed by the submitted email and share
+    # this one window — they are the same question ("how often may this
+    # address trigger a side effect") asked twice, so a second knob would add
+    # a number to tune without buying any real independence between the two.
+    signup_and_reset_cooldown_seconds: int = Field(default=30, ge=0)
+    # D7.12, the authenticated counterpart of the knob above. Guards
+    # ``verify-email/resend``, which is reached only by a signed-in caller
+    # asking to re-send *their own* verification mail — a different trust
+    # level and a different key (``user_id``, not an attacker-suppliable
+    # email) from ``signup_and_reset_cooldown_seconds``, so it is tuned
+    # separately rather than sharing that store.
+    resend_verification_cooldown_seconds: int = Field(default=30, ge=0)
 
 
 class IntegritySettings(BaseModel):

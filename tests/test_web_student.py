@@ -6,15 +6,20 @@ seeded :class:`~lemely.io.history_store.HistoryStore` and the pure-core analytic
 theory/integrity for history-sourced papers, subject ranks) are asserted to be
 their typed-neutral defaults rather than mock demo numbers.
 
-No Gemini client is exercised anywhere in this module — the one path that did
-(``POST /plan``'s ``narrate`` flag) was retired with the route in P4.10 chunk D
-(D4.22). Study plans now live on ``/api/student/study-plan`` and onboarding on
-``/api/me/student-profile*``, each tested in its own module.
+No Gemini client is exercised anywhere in this module except by
+``test_correct_succeeds_once_verified``, which needs a genuine ``complete``
+frame (not merely "not 403") to prove D7.5's verified-email gate — the one
+path that did before it was retired with ``POST /plan`` in P4.10 chunk D
+(D4.22) — and mocks it the same way ``tests/test_student_correct.py`` does
+(never a live call; MISSION §8 / the suite-wide guard in ``conftest.py``
+would raise if it tried). Study plans now live on ``/api/student/study-plan``
+and onboarding on ``/api/me/student-profile*``, each tested in its own module.
 """
 
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -585,10 +590,31 @@ def test_result_negative_index_is_404(client: TestClient) -> None:
 
 
 # ── Correct a paper (SSE) ─────────────────────────────────────────────────────
+#
+# D7.5 gates this one route on a verified email (``lemely.web.deps.require_verified_email``,
+# reading ``users.email_verified_at``), so every test below that reaches the
+# handler body now needs a caller the mirror actually resolves as verified —
+# `seeded_store`'s friendly string id ("maya") is not a UUID and cannot stand
+# in here the way it does for the read-only Overview/Subject routes above,
+# which never touch the mirror at all. `_verified_mirror` is the smallest
+# double that satisfies the gate.
+
+
+def _verified_mirror() -> MagicMock:
+    """A ``UserMirror`` double whose ``get_by_id`` always reports verified."""
+    mirror = MagicMock()
+    mirror.get_by_id.return_value = SimpleNamespace(email_verified_at="2020-01-01T00:00:00+00:00")
+    return mirror
 
 
 def test_correct_requires_a_body(client: TestClient) -> None:
     """POST /correct now takes a JSON ``{paperId}`` body; a body-less call is 422."""
+    student_id = uuid.uuid4()
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(student_id), role="student"
+    )
+    client.app.dependency_overrides[get_user_mirror] = _verified_mirror  # type: ignore[union-attr]
+
     assert client.post("/api/student/correct").status_code == 422
 
 
@@ -609,11 +635,183 @@ def test_correct_unknown_paper_is_404(seeded_store: HistoryStore) -> None:
     app.dependency_overrides[get_history_store] = lambda: seeded_store
     app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
-        user_id=STUDENT_ID, role="student"
+        user_id=str(uuid.uuid4()), role="student"
     )
+    app.dependency_overrides[get_user_mirror] = _verified_mirror
     api = TestClient(app)
     resp = api.post("/api/student/correct", json={"paperId": "missing"})
     assert resp.status_code == 404
+    app.dependency_overrides.clear()
+
+
+def test_correct_is_403_for_an_unverified_account(seeded_store: HistoryStore) -> None:
+    """D7.5: the Gemini spend is the gated operation.
+
+    ``require_verified_email`` (``lemely.web.deps``) runs as a dependency
+    ahead of every other collaborator this route declares, so a rejection
+    here never touches the upload repo, Gemini, or storage — this override
+    map is deliberately as bare as ``test_correct_requires_a_body``'s,
+    proving that nothing past the gate needs to be wired for the gate itself
+    to fire correctly.
+    """
+    mirror = MagicMock()
+    mirror.get_by_id.return_value = SimpleNamespace(email_verified_at=None)
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(uuid.uuid4()), role="student"
+    )
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    api = TestClient(app)
+
+    resp = api.post("/api/student/correct", json={"paperId": str(uuid.uuid4())})
+
+    assert resp.status_code == 403, resp.text
+    # A stable, machine-readable marker — never prose (spec §4.6) — the
+    # frontend's `lib/authOutcome.ts`-family outcome modules match on.
+    assert resp.json()["detail"] == {"code": "email_unverified"}
+    app.dependency_overrides.clear()
+
+
+def test_upload_is_not_gated_by_verification(seeded_store: HistoryStore) -> None:
+    """Deliberate: a student who has already photographed a paper must not
+    lose the capture to a verification wall. D7.5 gates marking, not upload.
+
+    Same unverified mirror as ``test_correct_is_403_for_an_unverified_account``
+    — the only variable that changes is the route. Upload's own collaborators
+    (repo, storage) are mocked to succeed cleanly so a genuine 200 is the
+    proof, rather than merely tolerating "any error that is not a 403" —
+    which an unrelated 500 from an unmocked collaborator would also satisfy
+    and so would prove nothing.
+    """
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+
+    mirror = MagicMock()
+    mirror.get_by_id.return_value = SimpleNamespace(email_verified_at=None)
+    upload_repo = MagicMock()
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(uuid.uuid4()), role="student"
+    )
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_storage_backend] = lambda: MagicMock()
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"]
+    upload_repo.create_upload.assert_called_once()
+    app.dependency_overrides.clear()
+
+
+def test_correct_succeeds_once_verified(
+    pg_sessionmaker: sessionmaker[Session],
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The other direction. A guard asserted one way could be permanently
+    closed and still pass.
+
+    Deliberately the *full* happy path — Gemini mocked, extraction
+    monkeypatched, real Postgres-backed repos, exactly the recipe
+    ``tests/test_student_correct.py`` uses — rather than merely asserting
+    "not 403": a verified caller must reach a genuine ``complete`` SSE frame,
+    not just some other failure that happens not to be the gate's.
+    """
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+    from lemely.db.attempt_repo import AttemptRepository
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.io.gemini import GeminiClient
+    from lemely.runtime.config import Settings, load_settings
+    from lemely.web.deps import (
+        get_attempt_repo,
+        get_gemini_client,
+        get_settings,
+        get_storage_backend,
+        get_student_upload_repo,
+    )
+    from lemely.web.routers import student as student_router_module
+    from tests.storage_fakes import FakeStorageBackend
+
+    def _mcq_scheme() -> MarkScheme:
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 1,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "mcq",
+                    "maximum_mark": 1,
+                    "scheme_format": "mcq",
+                },
+                "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+            }
+        )
+
+    def _extracted() -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="paper",
+            source_scan="scan.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+        )
+
+    verified_at = datetime.now(UTC)
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student, email_verified_at=verified_at)
+
+    base = load_settings()
+    data = base.model_dump()
+    data["paths"]["output_dir"] = tmp_path / "outputs"
+    data["gemini_api_key"] = None  # forces the no-key branch; no ScanMetadataExtractor call
+    settings = Settings.model_validate(data)
+
+    monkeypatch.setattr(student_router_module, "resolve_mark_scheme", lambda *a, **k: _mcq_scheme())
+    monkeypatch.setattr(student_router_module, "extract_answers", lambda *a, **k: _extracted())
+
+    # ONE instance, captured by both overrides below: `get_storage_backend` is
+    # re-resolved on every request, so a lambda that constructed a fresh
+    # `FakeStorageBackend()` per call would silently read back from an empty
+    # store on `/correct` — the upload it needs to grade would never have
+    # been written to *this* instance.
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_settings] = lambda: settings
+    app.dependency_overrides[get_gemini_client] = lambda: MagicMock(spec=GeminiClient)
+    app.dependency_overrides[get_attempt_repo] = lambda: AttemptRepository(pg_sessionmaker)
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    api = TestClient(app)
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+
+    assert resp.status_code == 200, resp.text
+    assert '"phase": "complete"' in resp.text
+    assert "[DONE]" in resp.text
     app.dependency_overrides.clear()
 
 
@@ -698,6 +896,7 @@ def _seed_pg_user(
     *,
     display_name: str | None = None,
     phone: str | None = None,
+    email_verified_at: datetime | None = None,
 ) -> uuid.UUID:
     uid = uuid.uuid4()
     with sm.begin() as session:
@@ -708,6 +907,7 @@ def _seed_pg_user(
                 role=role,
                 display_name=display_name,
                 phone=phone,
+                email_verified_at=email_verified_at,
             )
         )
     return uid
