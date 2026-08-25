@@ -1976,3 +1976,90 @@ The issue cites 272 of 1,000 det points containing newlines (27.2%). Over
 **Do not** resolve any of this by loosening bullet 9. A zero-false-positive
 requirement is what makes the gate safe to put in front of review routing; the
 right move is to fix bullet 5 and 6, not to relax the acceptance test they fail.
+
+---
+
+## J — #59 (M2.5) needs a real scan that has never existed; #47 (M2.4) has no gemini leaves
+
+**Raised:** 2026-08-25 · **Status:** OPEN · **Cost:** $0 (metadata reads and an
+existing manifest; ledger unmoved at 1.488057). Both issues had **zero
+comments** until this run and were absent from every prior "full verified
+status" enumeration.
+
+### #59 — the "real" arm of a synthetic-vs-real comparison does not exist
+
+Acceptance bullet 1 asks for the extraction arm run over *"the synthetic **and
+the real scan** of the same paper (`0625_s20_qp_31`, `0625_m20_qp_12`)"*.
+
+Its only recorded dependency, #56, is **CLOSED** — so on paper it is startable.
+It is not. Checked at source rather than assumed:
+
+- `lemely/accuracy/synth.py:154-162` pins the output PDF's metadata for
+  byte-determinism, including `title="lemely-synthetic-scan"`.
+- Reading the metadata off every `scan.pdf` under `tests/golden/`:
+  **`Title='lemely-synthetic-scan'` — 11 of 11 cases, no exceptions.**
+- Structurally identical too: 1 page, **0 text characters, 1 image** each, i.e.
+  rasterised renderer output, not a scanned document.
+- A repo-wide search for any real or photographed scan artefact returns nothing.
+
+**The corpus is 100% synthetic. The "real" arm has never been produced**, so
+the comparison has one of its two arms in existence.
+
+**And the harness has nowhere to put one.** `GoldenCase` carries exactly one
+scan slot — `harness.py:66` (`scan_path: Path | None`) and `harness.py:115`
+(`scan_path = case_dir / "scan.pdf"`): one path, one hard-coded filename, per
+case. "The same paper, two scans" is not expressible in the current data model.
+So the issue's **Effort: S** is wrong — bullet 1 alone is corpus acquisition
+plus a harness change.
+
+Asks posted on #59: do real scans exist outside the repo; if they must be
+produced, is that authorised and by whom (MISSION §12.7); and does the
+`GoldenCase` pairing model belong in #59 or its own issue. *Not* re-raising
+B1's stale privacy framing — the question is existence and authorisation.
+
+Flagged for whoever runs it: the issue's Why says the two error directions
+cancel, but the deflating half is what #56 was closed to fix. If #56 removed it,
+the residual is **one-directional inflation**, making every synthetic-corpus
+extraction figure an *optimistic* bound rather than an unsigned one. Unverified;
+it changes how bullet 3 should be worded.
+
+### #47 — volume is ample, but 9 of the 18 DA1 strata are empty and all of them are gemini
+
+Dependencies checked: #46 **CLOSED**, #31 **CLOSED**, #50 **CLOSED**, #57
+**OPEN**. So #57 is the only live blocker and the chain #88 → #57 → #47 holds.
+Owner is **human** (6–8 h), so a green dependency list makes this
+*human*-startable, never agent-startable.
+
+Volume is fine — 12,358 leaf questions from 250 det-parsed schemes, 9,464 of
+them tariff-banded, against a ~300 target (31× headroom). The old
+"Available: 71" framing is dead.
+
+But acceptance bullet 3 (*"stratified across both parse paths — det and
+gemini"*) is **currently unsatisfiable**. From
+`BUILD/accuracy-runs/census-2026-08-24-a/manifest.json`, all 9 populated cells:
+
+```
+0580 x det x 1 : 1992   0606 x det x 1 :  46   0625 x det x 1 : 2521
+0580 x det x 2 : 2110   0606 x det x 2 : 107   0625 x det x 2 :  525
+0580 x det x 3+: 1635   0606 x det x 3+: 239   0625 x det x 3+:  289
+```
+
+**Every populated cell is `det`; the gemini half of the design is empty.** The
+manifest's own `parser` field says why: `"det only (no --use-gemini)"`. The 229
+det-failure schemes were never Gemini-parsed and contributed no leaves at all.
+A split frozen over this corpus can only contain det leaves — which is what
+makes #88's q1 load-bearing and puts #57's authorised Gemini pass on #47's
+critical path, though #57 never mentions #47.
+
+**Do not conflate this with §H.** §H is the `EvalRecord` `parse_path` gap inside
+the harness (`harness.py:352-355`, substituted by `question_type`). This is the
+**corpus** parse, where the signal is genuinely available per scheme and simply
+has not been generated for 229 of 479. Two different absences, same name; only
+this one blocks #47.
+
+**Bullet 4 must not be used to paper over it.** "Including cells the det parser
+cannot itself represent" means *publish the empty cells honestly* — **not**
+"an all-det split satisfies bullet 3". If the Gemini pass never happens, the
+right outcome is a published table with 9 empty cells and an explicit det-only
+statement, never a quiet redefinition of the strata to the cells that are full.
+That is the narrowed-denominator failure mode exactly.
