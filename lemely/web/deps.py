@@ -48,6 +48,7 @@ from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.school_admin_repo import SchoolAdminService
+from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
@@ -705,6 +706,55 @@ def require_role(*allowed: Role) -> Callable[[AuthContext], AuthContext]:
     return _guard
 
 
+class AuthServiceSchoolAdminCreator:
+    """Real ``SchoolAdminAccountCreator`` (school_provisioning_repo) over :class:`AuthService`.
+
+    Sibling of :class:`AuthServiceTeacherCreator`/:class:`AuthServiceStudentCreator`,
+    pinned to :attr:`Role.school_admin`. This is the seam D7.8 and spec §1.1 are
+    about: before it, the only caller in the codebase that ever minted a
+    ``school_admin`` was ``lemely/db/seed.py``, calling ``AuthService.signup``
+    directly. Reachable now only through the platform-admin schools router
+    (``lemely/web/routers/admin.py``, gated to :attr:`Role.platform_admin`), which
+    is exactly the authenticated-admin surface D1.7 reserves elevated-role
+    creation for.
+    """
+
+    def __init__(self, auth_service: AuthService) -> None:
+        """Wrap an :class:`AuthService` used to create school_admin identities."""
+        self._auth = auth_service
+
+    def create_school_admin(
+        self,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+    ) -> uuid.UUID:
+        """Create a school_admin account and return its ``public.users`` id."""
+        return self._auth.signup(
+            email, password, Role.school_admin, display_name=display_name
+        ).user_id
+
+
+@lru_cache(maxsize=1)
+def get_school_provisioning_service() -> SchoolProvisioningService:
+    """Return the process-wide :class:`SchoolProvisioningService` singleton (D7.8).
+
+    Wired with the DB session factory and an :class:`AuthServiceSchoolAdminCreator`
+    that provisions a school's admin through the same GoTrue-backed signup path
+    every other admin-created identity uses. This getter, and the router it feeds,
+    are the account graph's missing first link (spec §1.1): before them, no
+    production code path created a ``School`` row or a ``school_admin`` account,
+    which made ``POST /api/school/teachers/invite`` — the only teacher-creation
+    path D1.7 allows — unreachable in any real deployment. Tests override this
+    dependency with a service built on a fake account creator and a throwaway
+    Postgres database.
+    """
+    return SchoolProvisioningService(
+        get_sessionmaker(get_settings()),
+        AuthServiceSchoolAdminCreator(get_auth_service()),
+    )
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -734,3 +784,12 @@ def reset_singletons() -> None:
     get_exam_calendar_service.cache_clear()
     get_notification_service.cache_clear()
     get_push_transport.cache_clear()
+    # The three admin-surface singletons. `get_platform_admin_service` and
+    # `get_school_admin_service` were absent here before issue #10 — an
+    # omission, not a policy: this function's docstring promises to clear
+    # *all* cached singletons, and a test that swapped settings silently kept
+    # whichever of these it had already built. Added together so the promise
+    # is true rather than nearly true.
+    get_platform_admin_service.cache_clear()
+    get_school_admin_service.cache_clear()
+    get_school_provisioning_service.cache_clear()
