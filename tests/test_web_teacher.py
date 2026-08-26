@@ -403,12 +403,19 @@ def _seed_history_record(
 
 
 def _key_settings(settings: Settings) -> Settings:
-    """Return a copy of ``settings`` carrying a dummy API key."""
+    """Return a copy of ``settings`` carrying a dummy API key.
+
+    Uses :meth:`~pydantic.BaseModel.model_copy` for the same reason the
+    ``settings`` fixture above does: ``model_dump()``/``model_validate()``
+    round-trips a ``BaseSettings`` back through ``env_settings``, which
+    outranks the explicit data, so a developer's exported ``GEMINI_API_KEY``
+    silently replaced this dummy and the tests ran against a real credential
+    locally while CI ran them against ``"test-key"``. ``model_copy`` sets the
+    field and nothing else.
+    """
     from pydantic import SecretStr
 
-    data = settings.model_dump()
-    data["gemini_api_key"] = SecretStr("test-key")
-    return Settings.model_validate(data)
+    return settings.model_copy(update={"gemini_api_key": SecretStr("test-key")})
 
 
 def test_upload_filename_cannot_escape_sandbox(client: TestClient, settings: Settings) -> None:
