@@ -1,0 +1,863 @@
+{
+ "label": "alt-marker-diagnosis-2026-08-26",
+ "issue": 112,
+ "relates_to": [
+  "#110 (sibling det defect, different mechanism)",
+  "#45's mark_aggregation_overcount bucket (47 of 229 det failures)",
+  "BUILD/accuracy-runs/det-mismatch-diagnosis-2026-08-26 (run 35, which raised the suspicion this refutes)"
+ ],
+ "kind": "read-only diagnosis of the det parser alternative-branch detector",
+ "spend_usd": 0.0,
+ "gemini_calls": 0,
+ "method": "Parsed each PDF in #45's mark_aggregation_overcount bucket with DetParserSettings(escalate_on_mark_mismatch=False) so the question tree survives inspection. ONLY the escalation was disabled. Nothing written; no fixture, corpus file or committed scheme touched.",
+ "RUN_35_SUSPICION_REFUTED": {
+  "suspicion": "Run 35 recorded, explicitly as suspicion not proof, that 0606_s23_ms_12's leaves worth 16 and 18 marks on an 80-mark paper were 'consistent with total/summary rows ingested as leaves' (16+18=34 against a +36 overcount). It named the confirming test: open those two leaves' text.",
+  "test": "Opened both leaves' answer_points and read them.",
+  "result": "REFUTED. Neither is a summary row. Both are genuine question content: they are question 9 split across a page break into two same-id leaves, each carrying MULTIPLE ALTERNATIVE SOLUTION METHODS collapsed into one leaf. The 18-mark leaf carries the SAME answer point three times (indices 0, 4 and 10 are byte-identical: 'Shaded area = ... 2ln6+ ...'), once per alternative route.",
+  "consequence": "The 16+18=34 vs +36 arithmetic was a coincidence. Recording the refutation so it is not re-tested."
+ },
+ "DEFECT_FOUND": {
+  "summary": "The det alternative-branch detector misses every alternative marker in these papers, so mutually exclusive solution routes are SUMMED instead of being treated as alternatives.",
+  "mechanism_at_source": {
+   "file": "lemely/io/det/rows.py",
+   "lines": "316-330",
+   "detail": "The detector fires only when the answer cell EQUALS 'OR'/'EITHER' (rows.py:317) or starts with 'OR '/'EITHER ' — marker plus a SPACE (rows.py:325,328). pdfplumber returns the marker and the following working in ONE cell separated by a NEWLINE, so neither branch matches.",
+   "sub_defect_1": "marker followed by '\\n' rather than ' ' or end-of-cell is not matched",
+   "sub_defect_2": "the literal word 'Alternative' — which is what CAIE 0606 prints — is not in the marker vocabulary at all, in any form",
+   "sub_defect_3": "HARDER, counted in NEITHER bound below: the marker is sometimes not at cell start, e.g. 0606_s23_ms_12 leaf 33b carries '⩽ ⩽\\nAlternative\\n9x2 -28x+3*0' where an operator fragment from the previous row precedes it. The 59 missed markers are therefore themselves a LOWER BOUND."
+  },
+  "direct_evidence_0606_s23_ms_12": "All 6 alternative markers in the paper are followed by '\\n' and all 82 answer points carry is_alternative=False. Markers: leaf 2[4] 'ALTERNATIVE', leaf 44b[3] 'ALTERNATIVE', leaf 9[2] 'EITHER', leaf 9[6] 'OR', leaf 9[1] 'OR', leaf 9[5] 'ALTERNATIVE'.",
+  "why_it_can_only_overcount": "An unflagged alternative adds marks that CAIE never intends to be awarded together, so the defect strictly inflates computed_total. It cannot produce a deficit."
+ },
+ "PREVALENCE": {
+  "population": "#45's mark_aggregation_overcount bucket, 47 papers; 46 parsed, 1 error",
+  "papers_affected": 18,
+  "papers_parsed": 46,
+  "missed_markers_total": 59,
+  "bucket_overcount_marks": 673,
+  "marks_lower_bound": 77,
+  "marks_upper_bound": 246,
+  "lower_bound_definition": "marks on the marker-bearing point only",
+  "upper_bound_definition": "marks from the marker-bearing point to the end of its leaf — the detector's OWN sticky semantics (rows.py:318 in_alt_branch persists to the next question) had the marker matched",
+  "papers_upper_bound_would_fully_reconcile": 11,
+  "by_syllabus": {
+   "0606": 17,
+   "0625": 1
+  }
+ },
+ "HONEST_VERDICT": "The defect is REAL and directly observed, but it is NOT the explanation for the overcount bucket. Even the upper bound leaves ~63% of the 673-mark bucket overcount unaccounted for, and 7 of the 18 affected papers are not reconciled even by the upper bound. It is also near-exclusively an Additional Mathematics phenomenon (17 of 18 affected papers are 0606), so it is a targeted fix, not a general one. Stated this way rather than reported as a solved bucket.",
+ "SELECTION_EFFECT_WORTH_RECORDING": "Scanning the 250 SUCCESSFULLY-parsed schemes at /tmp/acc57-full/out found 2 candidate hits, BOTH false positives ('OR:' and a word beginning 'Or b'). That is not evidence the defect is rare — it is structural: a scheme exhibiting this defect overcounts and is escalated by mark_total_mismatch_escalating, so it CANNOT appear in the parsed corpus. Any prevalence for this defect measured over outputs/schemes/ or the parsed corpus is zero BY CONSTRUCTION. This is the narrowed-denominator shape (D18) in another costume, and it is why the measurement above deliberately runs over the FAILURE set instead.",
+ "not_re_run": "Run 35's diagnosis, the #95 probe and #45's census were NOT re-run — all are on disk under BUILD/accuracy-runs/.",
+ "per_paper": [
+  {
+   "paper": "0606_w19_ms_11",
+   "syllabus": "0606",
+   "computed_total": 97,
+   "declared_max": 80,
+   "overcount": 17,
+   "missed_markers": 12,
+   "marks_lower_bound": 12,
+   "marks_upper_bound": 39,
+   "examples": [
+    {
+     "leaf": "7i",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\n6 = lg A + 3.4 lg b\nor 3.6 = lg A + 2.2 lg b"
+    },
+    {
+     "leaf": "7i",
+     "marker": "OR",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Or\nGradient = lg b = 2"
+    },
+    {
+     "leaf": "8ii",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\n1( )( )\n4+3 5+11+2 5 7+ 5\n2\n1( )( )\n= 15+5 5 7+ 5\n2\n1"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s23_ms_12",
+   "syllabus": "0606",
+   "computed_total": 116,
+   "declared_max": 80,
+   "overcount": 36,
+   "missed_markers": 6,
+   "marks_lower_bound": 15,
+   "marks_upper_bound": 38,
+   "examples": [
+    {
+     "leaf": "2",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Alternative\n(( ) )( ( ))\n2+ 5 x-3 x+ 2- 5"
+    },
+    {
+     "leaf": "4b",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\nOC =30.45"
+    },
+    {
+     "leaf": "9",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Either\n 4 \n 3+ dx=3x+2ln(2x+1)\n \n 2x+1"
+    }
+   ]
+  },
+  {
+   "paper": "0606_w21_ms_13",
+   "syllabus": "0606",
+   "computed_total": 94,
+   "declared_max": 80,
+   "overcount": 14,
+   "missed_markers": 5,
+   "marks_lower_bound": 5,
+   "marks_upper_bound": 29,
+   "examples": [
+    {
+     "leaf": "6a",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\nStarts with 8: 1680"
+    },
+    {
+     "leaf": "8b",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\n1\nGradient of perpendicular = −\n5"
+    },
+    {
+     "leaf": "9a",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\n7.96=4m+c\n3.76=2m+c"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s21_ms_21",
+   "syllabus": "0606",
+   "computed_total": 108,
+   "declared_max": 80,
+   "overcount": 28,
+   "missed_markers": 5,
+   "marks_lower_bound": 6,
+   "marks_upper_bound": 22,
+   "examples": [
+    {
+     "leaf": "2",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\nlny = p + qlnx soi"
+    },
+    {
+     "leaf": "3b",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n 1 2\n(2x+12)2 =11x2 simplified to\n \n4x2−73x+144="
+    },
+    {
+     "leaf": "9",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Alternative\nsin6x\n−cos6xdx =− +c\n6"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s19_ms_22",
+   "syllabus": "0606",
+   "computed_total": 86,
+   "declared_max": 80,
+   "overcount": 6,
+   "missed_markers": 4,
+   "marks_lower_bound": 4,
+   "marks_upper_bound": 18,
+   "examples": [
+    {
+     "leaf": "1",
+     "marker": "EITHER",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Either:\nQuotient rule:\nd\n(sinx)=cosx soi\ndx"
+    },
+    {
+     "leaf": "1",
+     "marker": "OR",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Or:\nProduct rule on y=(sinx)(lnx2)−1\nd\n(sinx)=cosx soi\ndx"
+    },
+    {
+     "leaf": "4",
+     "marker": "EITHER",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Either:\n1\nA= πx2 oe, soi\n4"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s21_ms_13",
+   "syllabus": "0606",
+   "computed_total": 92,
+   "declared_max": 80,
+   "overcount": 12,
+   "missed_markers": 3,
+   "marks_lower_bound": 4,
+   "marks_upper_bound": 16,
+   "examples": [
+    {
+     "leaf": "5",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\ney =mx2 +c"
+    },
+    {
+     "leaf": "7a_ii",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Alternative\n2 teachers: 70\n3 teachers: 210\n4 teachers: 175\n5"
+    },
+    {
+     "leaf": "11a",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n(10−x)2\nx2 +x(10−x)+ =4\n4\nor (10−2y)2 +2y(10−2y)"
+    }
+   ]
+  },
+  {
+   "paper": "0606_w19_ms_12",
+   "syllabus": "0606",
+   "computed_total": 84,
+   "declared_max": 80,
+   "overcount": 4,
+   "missed_markers": 5,
+   "marks_lower_bound": 7,
+   "marks_upper_bound": 16,
+   "examples": [
+    {
+     "leaf": "6b",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\n2\nlog x+ =3\n7 log x\n7"
+    },
+    {
+     "leaf": "6b",
+     "marker": "OR",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Or\nlgx lg7\n+2 =3 or lg1000\nlg7 lgx"
+    },
+    {
+     "leaf": "8a_i",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Either\n2 1 1 2 1\n   \n1 3 0 4 1 3\n   \n  4\n1 1 2  2  or 1 1  \n"
+    }
+   ]
+  },
+  {
+   "paper": "0606_w21_ms_12",
+   "syllabus": "0606",
+   "computed_total": 98,
+   "declared_max": 80,
+   "overcount": 18,
+   "missed_markers": 3,
+   "marks_lower_bound": 3,
+   "marks_upper_bound": 14,
+   "examples": [
+    {
+     "leaf": "5",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\nx\nMaximum when sin =1\n3\nx\nor minimum when sin =−1\n3"
+    },
+    {
+     "leaf": "5",
+     "marker": "OR",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "or\ndy 5 x\n= cos\ndx 3 3\ndy x\nWhen =0, sin =+1 or −1\ndx 3"
+    },
+    {
+     "leaf": "8a",
+     "marker": "EITHER",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Either\nStarting with a 6: 120 ways"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s22_ms_13",
+   "syllabus": "0606",
+   "computed_total": 91,
+   "declared_max": 80,
+   "overcount": 11,
+   "missed_markers": 3,
+   "marks_lower_bound": 5,
+   "marks_upper_bound": 11,
+   "examples": [
+    {
+     "leaf": "2c",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Alternative\nArea =\n1  1 \n64π- ×64×1.35... - ×64×2.683\n   \n2 "
+    },
+    {
+     "leaf": "5b",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 2,
+     "text_head": "Alternative\n-2cos3t"
+    },
+    {
+     "leaf": "9b",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n1 sin2θ\n=2x-1 and y+1=\nsin2θ cos2θ"
+    }
+   ]
+  },
+  {
+   "paper": "0606_w20_ms_13",
+   "syllabus": "0606",
+   "computed_total": 89,
+   "declared_max": 80,
+   "overcount": 9,
+   "missed_markers": 2,
+   "marks_lower_bound": 2,
+   "marks_upper_bound": 9,
+   "examples": [
+    {
+     "leaf": "7a",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\na+b−25=0 oe"
+    },
+    {
+     "leaf": "11a",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n2sin2 x+3sinx−2\n=2 ( 1−cos2 x ) +3sinx−2"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s22_ms_12",
+   "syllabus": "0606",
+   "computed_total": 94,
+   "declared_max": 80,
+   "overcount": 14,
+   "missed_markers": 2,
+   "marks_lower_bound": 2,
+   "marks_upper_bound": 8,
+   "examples": [
+    {
+     "leaf": "2",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n1 cos2θ\nx= and y+2= soi\ncos2θ sin2θ"
+    },
+    {
+     "leaf": "10a_i",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n(x-13)\ny2 =\n3"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s19_ms_21",
+   "syllabus": "0606",
+   "computed_total": 83,
+   "declared_max": 80,
+   "overcount": 3,
+   "missed_markers": 2,
+   "marks_lower_bound": 2,
+   "marks_upper_bound": 6,
+   "examples": [
+    {
+     "leaf": "10ii",
+     "marker": "EITHER",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Either: Finds midpoint AB\ntheir p+1 3+4\n,\n \n 2 2"
+    },
+    {
+     "leaf": "10ii",
+     "marker": "OR",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Or: finds midpoint AB\ntheir p+1 3+4\n,\n \n 2 2"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s21_ms_11",
+   "syllabus": "0606",
+   "computed_total": 82,
+   "declared_max": 80,
+   "overcount": 2,
+   "missed_markers": 2,
+   "marks_lower_bound": 2,
+   "marks_upper_bound": 6,
+   "examples": [
+    {
+     "leaf": "6a_iii",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n[Ends with 9]:48"
+    },
+    {
+     "leaf": "8a",
+     "marker": "EITHER",
+     "next_char": ":",
+     "marks": 1,
+     "text_head": "Either:\nUsing x=5+3 3\n( )( )\ny= 2− 3 52+30 3 +5+3 3−1\n=14+8 "
+    }
+   ]
+  },
+  {
+   "paper": "0606_s22_ms_11",
+   "syllabus": "0606",
+   "computed_total": 99,
+   "declared_max": 80,
+   "overcount": 19,
+   "missed_markers": 1,
+   "marks_lower_bound": 1,
+   "marks_upper_bound": 4,
+   "examples": [
+    {
+     "leaf": "4b_ii",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n4x2 + 4x + 1 = 16x2 – 32x + 16"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s23_ms_11",
+   "syllabus": "0606",
+   "computed_total": 87,
+   "declared_max": 80,
+   "overcount": 7,
+   "missed_markers": 1,
+   "marks_lower_bound": 3,
+   "marks_upper_bound": 3,
+   "examples": [
+    {
+     "leaf": "1a",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 3,
+     "text_head": "Alternative\nBy comparing coefficients:\na(x2 +2bx+b2)+c=5x2 -"
+    }
+   ]
+  },
+  {
+   "paper": "0606_w20_ms_12",
+   "syllabus": "0606",
+   "computed_total": 83,
+   "declared_max": 80,
+   "overcount": 3,
+   "missed_markers": 1,
+   "marks_lower_bound": 1,
+   "marks_upper_bound": 3,
+   "examples": [
+    {
+     "leaf": "8b_iii",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\nEnds with 3 18"
+    }
+   ]
+  },
+  {
+   "paper": "0606_s21_ms_12",
+   "syllabus": "0606",
+   "computed_total": 100,
+   "declared_max": 80,
+   "overcount": 20,
+   "missed_markers": 1,
+   "marks_lower_bound": 1,
+   "marks_upper_bound": 2,
+   "examples": [
+    {
+     "leaf": "3b",
+     "marker": "ALTERNATIVE",
+     "next_char": "\n",
+     "marks": 1,
+     "text_head": "Alternative\n2 3 3\nb= a+ c+ b\n5 5 5"
+    }
+   ]
+  },
+  {
+   "paper": "0625_w24_ms_31",
+   "syllabus": "0625",
+   "computed_total": 84,
+   "declared_max": 80,
+   "overcount": 4,
+   "missed_markers": 1,
+   "marks_lower_bound": 2,
+   "marks_upper_bound": 2,
+   "examples": [
+    {
+     "leaf": "9a",
+     "marker": "EITHER",
+     "next_char": ":",
+     "marks": 2,
+     "text_head": "either:\nclose switch\n(see if) lamp lights OR reading on amme"
+    }
+   ]
+  },
+  {
+   "paper": "0580_s23_ms_43",
+   "syllabus": "0580",
+   "computed_total": 139,
+   "declared_max": 130,
+   "overcount": 9,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_m19_ms_22",
+   "syllabus": "0606",
+   "computed_total": 87,
+   "declared_max": 80,
+   "overcount": 7,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_m20_ms_12",
+   "syllabus": "0606",
+   "computed_total": 100,
+   "declared_max": 80,
+   "overcount": 20,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_m20_ms_22",
+   "syllabus": "0606",
+   "computed_total": 99,
+   "declared_max": 80,
+   "overcount": 19,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_m22_ms_12",
+   "syllabus": "0606",
+   "computed_total": 97,
+   "declared_max": 80,
+   "overcount": 17,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_m22_ms_22",
+   "syllabus": "0606",
+   "computed_total": 100,
+   "declared_max": 80,
+   "overcount": 20,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s19_ms_11",
+   "syllabus": "0606",
+   "computed_total": 104,
+   "declared_max": 80,
+   "overcount": 24,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s21_ms_22",
+   "syllabus": "0606",
+   "computed_total": 86,
+   "declared_max": 80,
+   "overcount": 6,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s22_ms_22",
+   "syllabus": "0606",
+   "computed_total": 102,
+   "declared_max": 80,
+   "overcount": 22,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s23_ms_13",
+   "syllabus": "0606",
+   "computed_total": 94,
+   "declared_max": 80,
+   "overcount": 14,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s23_ms_21",
+   "syllabus": "0606",
+   "computed_total": 96,
+   "declared_max": 80,
+   "overcount": 16,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s24_ms_12",
+   "syllabus": "0606",
+   "computed_total": 112,
+   "declared_max": 80,
+   "overcount": 32,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s24_ms_13",
+   "syllabus": "0606",
+   "computed_total": 86,
+   "declared_max": 80,
+   "overcount": 6,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s24_ms_21",
+   "syllabus": "0606",
+   "computed_total": 88,
+   "declared_max": 80,
+   "overcount": 8,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s25_ms_11",
+   "syllabus": "0606",
+   "computed_total": 120,
+   "declared_max": 80,
+   "overcount": 40,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s25_ms_12",
+   "syllabus": "0606",
+   "computed_total": 99,
+   "declared_max": 80,
+   "overcount": 19,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s25_ms_22",
+   "syllabus": "0606",
+   "computed_total": 111,
+   "declared_max": 80,
+   "overcount": 31,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_s25_ms_23",
+   "syllabus": "0606",
+   "computed_total": 89,
+   "declared_max": 80,
+   "overcount": 9,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w20_ms_11",
+   "syllabus": "0606",
+   "computed_total": 84,
+   "declared_max": 80,
+   "overcount": 4,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w21_ms_21",
+   "syllabus": "0606",
+   "computed_total": 93,
+   "declared_max": 80,
+   "overcount": 13,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w21_ms_22",
+   "syllabus": "0606",
+   "computed_total": 89,
+   "declared_max": 80,
+   "overcount": 9,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w21_ms_23",
+   "syllabus": "0606",
+   "computed_total": 86,
+   "declared_max": 80,
+   "overcount": 6,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w23_ms_12",
+   "syllabus": "0606",
+   "computed_total": 93,
+   "declared_max": 80,
+   "overcount": 13,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w23_ms_21",
+   "syllabus": "0606",
+   "computed_total": 98,
+   "declared_max": 80,
+   "overcount": 18,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w24_ms_11",
+   "syllabus": "0606",
+   "computed_total": 94,
+   "declared_max": 80,
+   "overcount": 14,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w24_ms_12",
+   "syllabus": "0606",
+   "computed_total": 105,
+   "declared_max": 80,
+   "overcount": 25,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0606_w24_ms_23",
+   "syllabus": "0606",
+   "computed_total": 92,
+   "declared_max": 80,
+   "overcount": 12,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  },
+  {
+   "paper": "0625_s21_ms_42",
+   "syllabus": "0625",
+   "computed_total": 93,
+   "declared_max": 80,
+   "overcount": 13,
+   "missed_markers": 0,
+   "marks_lower_bound": 0,
+   "marks_upper_bound": 0,
+   "examples": []
+  }
+ ],
+ "errors": [
+  {
+   "paper": "0606_s19_ms_12",
+   "error": "ParseError: MarkScheme validation failed for 0606_s19_ms_12.pdf: 1 validation error for MarkScheme\nquestions.10\n  Value error, Question '11': sum of primary mark points (5) exceeds total marks (1). [t"
+  }
+ ]
+}

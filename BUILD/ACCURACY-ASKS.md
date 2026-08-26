@@ -227,6 +227,40 @@ so "same paper, two renders" is not expressible. That is a data-model change
 and #59's stated "Effort: S" is wrong. Authorise it as its own work, or park
 #59?
 
+## B15 — #112: fix the alternative-marker defect, or leave it?
+
+New this run (36), zero spend, evidence at
+`BUILD/accuracy-runs/alt-marker-diagnosis-2026-08-26/`. The det
+alternative-branch detector matches `OR`/`EITHER` only as the whole cell or
+followed by a **space**; pdfplumber returns marker and working in one cell
+separated by a **newline**, so every marker is missed and mutually exclusive
+solution routes are **summed**. `Alternative`, the word CAIE 0606 prints, is
+not in the vocabulary at all.
+
+**Measured over #45's `mark_aggregation_overcount` bucket (46 parsed):** 18
+papers affected, 59 missed markers, **77–246 marks** of a 673-mark bucket
+overcount (11.4%–36.6%). **17 of 18 affected papers are 0606.**
+
+**My recommendation is to fix sub-defects 1 and 2 only** (whitespace-tolerant
+match, plus the `Alternative` keyword) and scope sub-defect 3 — marker not at
+cell start — separately. Flagging that this recommendation is the *cheaper*
+branch, so weigh it accordingly.
+
+**It is mark-changing** and needs its own before/after sweep, and it overlaps
+#110 on `0606_s23_ms_12`. Three options:
+
+1. Fix 1+2 now, sweep once jointly with #110.
+2. Fix all three, accepting a cell-splitting decision.
+3. Leave it — the escalation gate already routes these papers to Gemini, so
+   the marks never reach a student. The cost is that #88's paid denominator
+   stays 18 papers larger than it needs to be.
+
+**Related trap, not a decision:** prevalence for this defect measured over the
+parsed corpus is **zero by construction** — an affected scheme overcounts and
+is escalated, so it cannot be in `outputs/schemes/`. Anyone costing #88's
+Gemini path from the parsed corpus will read a clean bill of health that is an
+artefact of the selection.
+
 ## B14 — still owed on the H issues
 
 Not decisions I can make or work around (MISSION §3.5):
