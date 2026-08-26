@@ -11791,3 +11791,103 @@ open — so nothing here moves an existing denominator. After H7 publishes,
 changing the unit would be a moved-target problem. That is the same argument
 #105 made for its own two items, and it is the whole reason this lands against a
 measurement with no data yet.
+
+---
+
+## DA19 — #94's premise was falsified, and MCQ silent loss is 1 paper in 80
+
+**Date:** 2026-08-27 (run 50) · **Authority:** #94 (human decision A4, split out
+of #45) · **Spend: $0.00**, det-only. Landed as PR #142.
+
+### What was corrected
+
+#94 asserted that the det parser drops questions silently — *"a scheme that
+yields 12 questions instead of 40 looks identical to one that legitimately has
+12."* **Measured before writing any code: it does not.** Re-parsing
+`0625_s24_ms_21` with today's code gives
+
+```
+[warning] mark_total_mismatch_escalating computed_total=12 discrepancy=28 maximum_mark=40
+ParseError: Mark total mismatch for 0625_s24_ms_21.pdf: parsed 12, expected 40
+```
+
+`reconcile` compares the parsed mark total against the cover page's
+`maximum_mark`, in both escalating and non-escalating modes. The premise most
+likely stopped holding when **#93** landed and this paper began being typed MCQ
+at all.
+
+**What WAS silent is the mechanism.** Nothing said a 29-row table had been
+discarded, or why. "This paper failed" is a census bucket; "one withdrawn
+question disqualified its whole answer column" is a work order. That is the gap
+#142 closes, and #94's acceptance bullet 3 is recorded **restated, not ticked as
+written**.
+
+### The prevalence, which cuts against the issue's framing
+
+479 mark schemes opened, 0 unreadable, **80 MCQ-typed** (the only papers
+`mcq.py` runs on):
+
+| | |
+|---|---|
+| papers with a discarded table | **1** |
+| papers with a shortfall | **1**, fully accounted for by that discard |
+| distinct disqualifying values corpus-wide | **1** — `QUESTION DISCOUNTED` |
+| questions parsed | **40** on 79 papers, **12** on one |
+
+**The eventual repair is a one-paper repair on today's corpus.** Recorded so it
+is not sized as though 28-question losses were widespread. This is not an
+argument the instrumentation was wasted: the prevalence was *unknown* before,
+not small, and only counting could tell the difference.
+
+### A counter that must not be misread
+
+`rows_discarded_in_kept_tables` reads **2 on 79 of the 80 papers** and that is
+**not loss** — it is the header row of each of the two tables every paper has.
+No paper exceeds 2. Its baseline is 2, not 0.
+
+Evidence: `BUILD/accuracy-runs/mcq-loss-inventory-2026-08-27/`.
+
+---
+
+## DA20 — a render is not a leaf: the second GoldenCase axis (#137, B13)
+
+**Date:** 2026-08-27 (run 51) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B13** — *"AUTHORISED as its own work: the multi-render
+`GoldenCase` data-model change gets its own issue and its own effort estimate.
+#59's stated 'Effort: S' is void. #59 runs after it."* · **Spend: $0.00.**
+Landed as PR #143.
+
+### The decision
+
+`GoldenCase` now carries **two orthogonal axes**, and conflating them would
+corrupt every denominator in the programme:
+
+| axis | means | is it a new case? |
+|---|---|---|
+| `fixture_variant` | same paper, different **answers** | **yes** — separate directory, shares `paper_id` (DA6/DA14) |
+| `renders` | same paper, same answers, different **image** | **no** |
+
+Renders are discovered from `scan.<render>.pdf` siblings and collected onto the
+**one** case for that directory. `scan_path` still points at `scan.pdf`, so every
+existing consumer and fixture is untouched.
+
+### The rejected alternative, recorded because it is the tempting one
+
+**Minting a second `paper_id`** for the other render. DA6 keys a distinct leaf on
+`(paper_id, question_id)`, so that would present the same leaves twice as if
+independent — inflating `n` and understating variance. It is the same trap #134
+declined for the whitespace fixture (DA14), and the docstring says so at the
+point where someone would be tempted to do it.
+
+### Verified, not asserted
+
+Against the real corpus: **12 cases, 31 distinct leaves, 78 rows** — unchanged,
+matching DA14 exactly. **No published figure moves**, so no restatement is owed.
+
+### What this deliberately does not do
+
+**Nothing iterates renders yet.** That is #59's work. Whatever iterates them must
+state its denominator explicitly: renders are not leaves. #59 also remains blocked
+on two things this does not touch — the handwritten renders are verbatim CAIE
+content and cannot be committed without a MISSION §12.7 decision, and the
+measurement is unauthorised live spend.
