@@ -1,0 +1,112 @@
+{
+  "status": "ABORTED BY ORCHESTRATOR at 6 of 190 \u2014 preflight falsified, stopped and asked",
+  "schemes_completed": 6,
+  "schemes_total": 190,
+  "gemini_calls": 8,
+  "calls_per_scheme": 1.3333333333333333,
+  "ledger_before": 2.2997573500000583,
+  "ledger_after": 2.720069,
+  "spent_usd": 0.42031164999994175,
+  "per_scheme_usd": 0.07005194166665696,
+  "preflight_per_scheme_usd": 0.03821052631578947,
+  "ratio_to_preflight": 1.8333152777775237,
+  "projected_total_usd_190": 13.309868916664822,
+  "preflight_total_usd": 7.26,
+  "tokens_per_scheme_input_plus_output": 38146.666666666664,
+  "projected_tokens_190": 7247866.666666666,
+  "preflight_tokens": 3600000,
+  "ceiling_set_in_DA13": 5000000,
+  "ceiling_would_trip_at_scheme": 131.07305138063614,
+  "means": {
+    "input": 8630,
+    "output": 19980,
+    "thoughts": 7099.5
+  },
+  "reconciliation": {
+    "priced_output_only": 0.420312,
+    "priced_output_plus_thoughts": 0.562302,
+    "note": "output_tokens ALREADY includes thoughts_tokens; output-only reproduces the ledger exactly, so adding thoughts double-counts."
+  },
+  "calls": [
+    {
+      "input_tokens": 8499,
+      "output_tokens": 25647,
+      "thoughts_tokens": 7265,
+      "usd_cost": 0.066667,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:20:25.874596Z"
+    },
+    {
+      "input_tokens": 8757,
+      "output_tokens": 14337,
+      "thoughts_tokens": 7996,
+      "usd_cost": 0.03847,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:21:30.042231Z"
+    },
+    {
+      "input_tokens": 8499,
+      "output_tokens": 14974,
+      "thoughts_tokens": 7996,
+      "usd_cost": 0.039985,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:22:32.608685Z"
+    },
+    {
+      "input_tokens": 8499,
+      "output_tokens": 13217,
+      "thoughts_tokens": 7996,
+      "usd_cost": 0.035592,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:23:33.946694Z"
+    },
+    {
+      "input_tokens": 8639,
+      "output_tokens": 18276,
+      "thoughts_tokens": 5394,
+      "usd_cost": 0.048282,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:24:51.973033Z"
+    },
+    {
+      "input_tokens": 8757,
+      "output_tokens": 20438,
+      "thoughts_tokens": 4153,
+      "usd_cost": 0.053722,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:26:17.418131Z"
+    },
+    {
+      "input_tokens": 8891,
+      "output_tokens": 23459,
+      "thoughts_tokens": 7999,
+      "usd_cost": 0.061315,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:27:56.403719Z"
+    },
+    {
+      "input_tokens": 8499,
+      "output_tokens": 29492,
+      "thoughts_tokens": 7997,
+      "usd_cost": 0.07628,
+      "cache_hit": false,
+      "model": "gemini-2.5-flash",
+      "task": "mark_scheme",
+      "timestamp": "2026-08-26T16:29:57.249858Z"
+    }
+  ]
+}
