@@ -6,6 +6,7 @@ import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
+import { appRoutes } from "@/routes"
 
 /*
  * P3.1 · the IA restructure (DECISION D1.1-5), pinned.
@@ -408,5 +409,116 @@ describe("resolveTrail — D1.5's back affordance", () => {
    */
   it("degrades to no trail on a path it does not recognise", () => {
     expect(resolveTrail("/teacher/some/future/screen")).toHaveLength(1)
+  })
+})
+
+/*
+ * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes, asserted
+ * in both directions the same way `marketing.test.ts` already asserts the
+ * marketing lane. That file's own header explains why: a guard placed around
+ * the wrong subtree passes typecheck, lint and every design gate silently,
+ * and the only thing that catches it is a test that says out loud which
+ * routes are public and which are not — reading the route table itself,
+ * not trusting a comment about it. Five of the nine below are wrapped in
+ * `LoginRoute`; four are deliberately not, and the "not wrapped" pair is the
+ * exception most likely to look like an oversight to a future reader and get
+ * "fixed" into a bug, which is exactly why both directions are asserted for
+ * every one of the nine rather than only the positive case.
+ */
+describe("the nine signup/verify/reset/join routes — Task 19", () => {
+  const NEW_PATHS = [
+    "/signup",
+    "/signup/student",
+    "/signup/teacher",
+    "/verify-email",
+    "/verify-email/:token",
+    "/reset",
+    "/reset/:token",
+    "/join",
+    "/join/:code",
+  ]
+
+  const WRAPPED = ["/signup", "/signup/student", "/signup/teacher", "/reset", "/reset/:token"]
+
+  // The two G-07 routes and the two G-08 routes. Named as its own constant,
+  // not just "the rest of NEW_PATHS", so a reviewer can see the exact set the
+  // exception applies to without cross-referencing WRAPPED.
+  const UNWRAPPED = ["/verify-email", "/verify-email/:token", "/join", "/join/:code"]
+
+  /**
+   * Walk a route element tree looking for a component by display name.
+   *
+   * A near-duplicate of `marketing.test.ts`'s own helper of the same name and
+   * shape, kept local rather than imported across test files: this file's
+   * subject is nav facts across every portal and this describe block's
+   * subject is nine specific routes, and reaching into a sibling test file
+   * for an eight-line helper would tie that file's freedom to change its own
+   * helper to this block's needs. Works on `LoginRoute` even though it is not
+   * exported from `routes.tsx` (only `appRoutes` is): the walk inspects
+   * already-constructed React elements at runtime, keyed on the component
+   * function's own `.name`, which does not depend on the binding being
+   * exported from its module.
+   */
+  function containsComponent(node: unknown, name: string): boolean {
+    if (!node || typeof node !== "object") return false
+    if (Array.isArray(node)) return node.some((n) => containsComponent(n, name))
+    const el = node as { type?: unknown; props?: { children?: unknown } }
+    const type = el.type as { name?: string; displayName?: string } | undefined
+    if (type && (type.name === name || type.displayName === name)) return true
+    return containsComponent(el.props?.children, name)
+  }
+
+  it.each(NEW_PATHS)("registers %s at the top level", (path) => {
+    expect(appRoutes.some((r) => r.path === path), `${path} is not mounted`).toBe(true)
+  })
+
+  it("covers all nine, so this suite cannot pass by naming fewer than the spec does", () => {
+    expect(WRAPPED.length + UNWRAPPED.length).toBe(NEW_PATHS.length)
+    expect(new Set([...WRAPPED, ...UNWRAPPED])).toEqual(new Set(NEW_PATHS))
+  })
+
+  it.each(WRAPPED)(
+    "wraps %s in LoginRoute, bouncing a signed-in visitor to their own portal",
+    (path) => {
+      const route = appRoutes.find((r) => r.path === path)
+      expect(route, `${path} is not mounted`).toBeDefined()
+      expect(containsComponent(route!.element, "LoginRoute"), `${path} is not wrapped`).toBe(true)
+    },
+  )
+
+  /*
+   * The inverse, and the assertion this describe block exists for. Wrapping
+   * either pair back in `LoginRoute` would bounce a signed-in visitor away
+   * before the screen ever rendered for them, which is precisely what Task 19
+   * rules out: G-07 must stay reachable for the signed-in-but-unverified
+   * account it is for, and G-08 must stay reachable for the signed-in student
+   * redeeming a second class's code (D1.10's seat/school-linking case). Read
+   * "does not contain LoginRoute" together with the two lines above it: with
+   * no `LoginRoute` anywhere in the tree, there is nothing in this file that
+   * would redirect a signed-in visitor away from either route, which is what
+   * "reachable with a session" reduces to at the level a static route table
+   * can prove — the two screens branch on the session internally to render a
+   * different view (see `VerifyEmail.tsx`'s `SignedInPending`/`SignedOutPending`
+   * split and `JoinWithCode.tsx`'s two-hook split), never to leave the route.
+   */
+  it.each(UNWRAPPED)(
+    "does NOT wrap %s in LoginRoute, so it stays reachable with a signed-in session",
+    (path) => {
+      const route = appRoutes.find((r) => r.path === path)
+      expect(route, `${path} is not mounted`).toBeDefined()
+      expect(containsComponent(route!.element, "LoginRoute"), `${path} is wrapped`).toBe(false)
+    },
+  )
+
+  // The other guard this file could have been wrapped in by mistake. None of
+  // the nine is a portal screen, so `RequireAuth` — which refuses a
+  // signed-OUT visitor rather than a signed-in one — must appear on none of
+  // them, wrapped or not.
+  it.each(NEW_PATHS)("does not put %s behind RequireAuth", (path) => {
+    const route = appRoutes.find((r) => r.path === path)
+    expect(route, `${path} is not mounted`).toBeDefined()
+    expect(containsComponent(route!.element, "RequireAuth"), `${path} is behind RequireAuth`).toBe(
+      false,
+    )
   })
 })

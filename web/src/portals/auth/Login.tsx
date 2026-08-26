@@ -9,6 +9,7 @@ import { ApiError } from "@/lib/api"
 import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceTypes"
 import { takeSessionExpired } from "@/lib/auth/storage"
 import { signInFailureMessage } from "@/lib/authOutcome"
+import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
 
 /*
@@ -101,6 +102,16 @@ export function AuthFrame({
   )
 }
 
+/**
+ * Matches `SignupRoleSelect.tsx` and `SignupDetails.tsx`'s own link recipe
+ * exactly, so every text link on a signed-out auth screen looks and behaves
+ * like the same control. Extracted here (Task 19) now that this file uses it
+ * three times over rather than once: the existing parent link below, plus the
+ * two G-04 spec names this screen as missing, "Sign up" and forgot-password.
+ */
+const LINK_CLASS =
+  "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
@@ -156,17 +167,30 @@ export function Login() {
   return (
     <AuthFrame
       footer={
-        /* UI spec §G-04: "Parent → G-05 (parents authenticate by phone)".
-           Parents have no password to type here — this is the only way in. */
-        <p className="text-body-sm text-ink-muted">
-          Are you a parent?{" "}
-          <Link
-            to="/login/parent"
-            className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          >
-            Sign in with your phone
-          </Link>
-        </p>
+        <div className="flex flex-col items-center gap-2">
+          {/*
+           * UI spec §G-04's "Sign up" link (Task 19). Listed first: a visitor
+           * with no Lemely account at all is the more common reason to be
+           * looking at this footer than one who has an account and has
+           * forgotten the password to it, and `/signup` is a role branch
+           * (G-02), not a form of its own, so this link costs the reader
+           * nothing to follow if it turns out to be the wrong door.
+           */}
+          <p className="text-body-sm text-ink-muted">
+            New to Lemely?{" "}
+            <Link to="/signup" className={LINK_CLASS}>
+              Create an account
+            </Link>
+          </p>
+          {/* UI spec §G-04: "Parent → G-05 (parents authenticate by phone)".
+             Parents have no password to type here — this is the only way in. */}
+          <p className="text-body-sm text-ink-muted">
+            Are you a parent?{" "}
+            <Link to="/login/parent" className={LINK_CLASS}>
+              Sign in with your phone
+            </Link>
+          </p>
+        </div>
       }
     >
       <form
@@ -204,6 +228,17 @@ export function Login() {
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />
+
+        {/*
+         * UI spec §G-04's forgot-password link (Task 19), self-aligned to the
+         * field it answers rather than grouped into the footer with the
+         * sign-up and parent links above/below: those two are "wrong screen
+         * entirely" exits to a different flow, and this one is "same account,
+         * one field away" for a reader who has just looked at Password.
+         */}
+        <Link to="/reset" className={cn(LINK_CLASS, "self-end text-body-sm")}>
+          Forgot your password?
+        </Link>
 
         {/*
          * The form-level error sits with the control that produced it. A

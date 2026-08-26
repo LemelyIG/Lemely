@@ -110,6 +110,65 @@ describe("the marketing lane is public — P4.9", () => {
   })
 })
 
+/*
+ * Task 19 (spec §4.4) · marketing CTAs point at `/signup`, not `/login`.
+ *
+ * A source-text check rather than a rendered one, matching this file's own
+ * established method above (`does not mount the marketing route inside the
+ * student portal` reads `student/index.tsx` as text for the same reason):
+ * `vitest.config.ts` runs the node environment on purpose, with no jsdom and
+ * no React Testing Library, so there is nothing here to click a `<Button>`
+ * and inspect what `navigate` was called with. Reading the source for the
+ * literal call sites is the honest substitute available at this layer, and
+ * it is exactly the kind of fact — "this string appears in this file" — that
+ * a source-text check is good at pinning down.
+ *
+ * Before Task 19, `/signup` did not exist, so every CTA on this page
+ * (correctly, at the time) pointed at `/login` — spec §1's own problem
+ * statement records that as the headline finding this whole redesign closes.
+ * Now that `/signup` exists, a `navigate("/login")` reappearing here is a
+ * regression to that exact defect, not a stylistic choice, which is why this
+ * gets its own test rather than living only as a comment in `Landing.tsx`.
+ */
+describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../src/portals/marketing/Landing.tsx"),
+    "utf8",
+  )
+
+  it("contains no navigate(\"/login\") call anywhere on the page", () => {
+    expect(source).not.toMatch(/navigate\(["']\/login["']\)/)
+  })
+
+  /*
+   * Three call sites, not two: the hero's primary CTA, the close CTA, and the
+   * per-plan CTA in the "Plans" section. That third one renders nothing today
+   * — `pricing` is `[]` (the `landing copy claims only what the product does`
+   * describe block above pins that directly) — but the source line exists and
+   * was `navigate("/login")` before this task, so it is corrected along with
+   * the two live ones rather than left to silently reintroduce the pre-signup
+   * routing the moment a real plan ships.
+   */
+  it("routes exactly three CTAs to /signup", () => {
+    const matches = source.match(/navigate\(["']\/signup["']\)/g) ?? []
+    expect(matches).toHaveLength(3)
+  })
+
+  /*
+   * The hero's *secondary* CTA ("For centres and teachers") is deliberately
+   * excluded from both checks above: it was never a `navigate("/login")` call
+   * to begin with, and its own comment in `Landing.tsx` explains why it
+   * scrolls to the "who it serves" section instead of navigating anywhere.
+   * Pinned here so a future edit that folds it into the signup-routing
+   * pattern above (a plausible-looking "consistency" fix) has to remove this
+   * assertion on purpose rather than by accident.
+   */
+  it("leaves the hero's secondary CTA scrolling to a section, not navigating", () => {
+    expect(source).toMatch(/scrollIntoView/)
+    expect(source).toMatch(/SERVES_SECTION_ID/)
+  })
+})
+
 describe("landing copy claims only what the product does — P4.9", () => {
   /** Every string a visitor can read on the page, flattened. */
   const allCopy = [
