@@ -545,12 +545,35 @@ def _distinct_marking_leaves(records: list[MarkingLeafRecord]) -> dict[tuple[str
     return result
 
 
+class AgreementResult(WilsonResult):
+    """A Wilson interval that carries its own exclusion funnel (§9 gate 7).
+
+    Gate 7 requires a reported rate to name its denominator **and its
+    exclusions**. Naming them in a docstring does not satisfy it: a docstring
+    does not travel with the published figure, and a reader handed
+    ``n=28, point=0.86`` cannot tell whether 2 leaves were excluded or 200 —
+    the difference between a sound 10% sample and a silently narrowed one.
+
+    ``a_only`` and ``b_only`` are **aggregate counts only**. Per DA2, on
+    disagreement labeller A's label stands, so nothing per-leaf may appear
+    here: a per-leaf field would be one refactor away from being read as a
+    corrected A-label.
+    """
+
+    a_only: int
+    """Distinct leaves A marked that B did not — missing data, not disagreement."""
+
+    b_only: int
+    """Distinct leaves B marked that A did not — missing data, not disagreement."""
+
+
 def agreement_wilson(
     a_records: list[MarkingLeafRecord],
     b_records: list[MarkingLeafRecord],
     *,
+    rulings_settled: bool,
     z: float = 1.96,
-) -> WilsonResult:
+) -> AgreementResult:
     """Inter-annotator agreement between labeller A and labeller B (DA2/#51/H7).
 
     Per DA2, this is genuine two-labeller agreement, not delayed
@@ -566,15 +589,50 @@ def agreement_wilson(
     ``b_records``. A leaf A marked but B did not sample (or vice versa) is
     excluded from ``n`` — it is missing data, not a disagreement.
 
+    Those exclusions are **returned, not just described** — see
+    :class:`AgreementResult`. Gate 7 is not satisfied by a docstring.
+
+    ``rulings_settled`` is a **required** keyword with no default, and this
+    call raises when it is false. It is how DA3 and DA5 stop being prose:
+
+    - **DA3** requires the ``pending_ruling`` tail to reach zero before the
+      split freeze, and the freeze is irreversible.
+    - **DA5** requires #52's ruling sweep to run **before** #51's sample.
+
+    Neither can be checked here — an import-linter contract ("Evaluation
+    analyses must stay pure — no IO") bars this module from importing
+    :mod:`lemely.labelling`, which does filesystem reads. Forcing the caller
+    to pass the answer puts the precondition at the one place a number is
+    actually produced, instead of leaving it in ``DECISIONS.md`` for a future
+    run to walk past — which is how #49 was closed with an unmet box.
+
+    **The flag must come from**
+    :func:`lemely.labelling.rulings.assert_rulings_settled`, never a literal
+    ``True``. A hard-coded ``True`` at a call site is the same defect as no
+    check at all, and it is visible in review precisely because it has to be
+    written down.
+
     Delegates the interval arithmetic to :func:`_wilson_interval` — the same
     helper :func:`wilson` uses — rather than a second implementation.
     """
+    if not rulings_settled:
+        raise ValueError(
+            "refusing to compute agreement: rulings are not settled. DA3 requires "
+            "the pending_ruling tail at zero (and no orphan resolutions) before the "
+            "split freeze, and DA5 requires #52's sweep before #51's sample. Call "
+            "lemely.labelling.rulings.assert_rulings_settled() and pass its result."
+        )
     a_leaves = _distinct_marking_leaves(a_records)
     b_leaves = _distinct_marking_leaves(b_records)
     shared_leaves = set(a_leaves) & set(b_leaves)
     n = len(shared_leaves)
     successes = sum(1 for leaf in shared_leaves if a_leaves[leaf] == b_leaves[leaf])
-    return _wilson_interval(successes=successes, n=n, z=z)
+    interval = _wilson_interval(successes=successes, n=n, z=z)
+    return {
+        **interval,
+        "a_only": len(set(a_leaves) - set(b_leaves)),
+        "b_only": len(set(b_leaves) - set(a_leaves)),
+    }
 
 
 # ---------------------------------------------------------------------------
