@@ -87,23 +87,31 @@ _PHYSICS_PROFILE = SubjectProfile(
         # from the file's creation (810ac08) until 2026-08-25; confirmed wrong
         # against the real 0625_s23_ms_22.pdf cover page.
         2: PaperType.MCQ,
-        # WRONG, AND DELIBERATELY LEFT WRONG. CAIE 0625 Paper 3 is Theory
-        # (Core); this says Extended. Confirmed against a real cover page —
-        # 0625_m19_ms_32.pdf reads "Paper 3 Core Theory".
+        # CAIE 0625 Paper 3 is Theory (Core). This read THEORY_EXTENDED from
+        # the file's creation (810ac08) until 2026-08-26; confirmed wrong
+        # against a real cover page — 0625_m19_ms_32.pdf reads "Paper 3 Core
+        # Theory".
         #
-        # It is left as-is because the cover text now outranks it, so every
-        # Paper 3 scheme parsed from a real PDF already resolves to
-        # THEORY_CORE. Measured over the 489-scheme corpus: 40 schemes move
-        # theory_extended -> theory_core, and that move is CAUSALLY INERT for
-        # parsing — scheme_format is POINT_BASED either way, so the parse path
-        # is byte-identical and only the metadata label changes.
+        # An earlier revision of this branch left it wrong on purpose, on the
+        # grounds that it would be an unmeasured second change riding on the
+        # lookup-order fix. The human ruled otherwise (ask B7, 2026-08-26):
+        # fold it in here — same file, same bug class, same waived sweep.
         #
-        # Correcting the constant as well would be right, but it would be an
-        # unmeasured second change riding on this one; it belongs in its own
-        # issue with the Core/Extended tier consequences costed. What must NOT
-        # happen is someone "tidying" this line while also reverting the
-        # lookup order, which would silently reinstate the wrong answer.
-        3: PaperType.THEORY_EXTENDED,
+        # Correcting it is safe without its own measurement, and that is a
+        # measured claim rather than an assumption: the cover text already
+        # outranks this table, so every Paper 3 scheme parsed from a real PDF
+        # resolved to THEORY_CORE regardless. Over the 489-scheme corpus 40
+        # schemes move theory_extended -> theory_core, and the move is
+        # CAUSALLY INERT for parsing — scheme_format is POINT_BASED either
+        # way, so the parse path is byte-identical and only the metadata
+        # label changes. What the constant actually governs is the FALLBACK:
+        # a scheme whose cover text is missing or unreadable no longer
+        # defaults to the wrong tier.
+        #
+        # What must NOT happen is someone "tidying" this line while also
+        # reverting the lookup order, which would silently reinstate the
+        # wrong answer.
+        3: PaperType.THEORY_CORE,
         4: PaperType.THEORY_EXTENDED,
         5: PaperType.PRACTICAL,
         6: PaperType.ALTERNATIVE_PRACTICAL,

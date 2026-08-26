@@ -942,6 +942,24 @@ class ProfileTests(unittest.TestCase):
         self.assertEqual(profile.paper_type(5), PaperType.PRACTICAL)
         self.assertEqual(profile.paper_type(5, ""), PaperType.PRACTICAL)
 
+    def test_0625_paper_3_falls_back_to_core_theory_not_extended(self) -> None:
+        """B7: the 0625 paper-3 constant is THEORY_CORE, not THEORY_EXTENDED.
+
+        CAIE 0625 Paper 3 is Theory (Core); the table said Extended from the
+        file's creation until 2026-08-26. This pins the **fallback**, which is
+        the only thing the constant still governs — when a real cover page is
+        present it says "Paper 3 Core Theory" and outranks the table anyway,
+        which is why correcting the constant is causally inert for parsing
+        (``scheme_format`` is POINT_BASED either way). The case that changes
+        is a scheme whose cover text is missing or unreadable: it used to
+        default to the wrong tier.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(3), PaperType.THEORY_CORE)
+        self.assertEqual(profile.paper_type(3, ""), PaperType.THEORY_CORE)
+        # Paper 4 genuinely is Extended — guard against an over-broad fix.
+        self.assertEqual(profile.paper_type(4), PaperType.THEORY_EXTENDED)
+
     def test_unrecognised_cover_text_falls_back_to_the_number_map(self) -> None:
         """Cover text only wins where it carries an actual paper-type keyword.
 
