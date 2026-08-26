@@ -348,11 +348,40 @@ The membership check is doing the wrong job here: the guard §3.3/§3.4 exists
 for is the **H-issue** guard, and membership is a poor proxy for it — an
 off-board issue is not an H issue, it is just untracked.
 
-1. Add the six off-board issues to the board (and whatever opens issues does so
+1. Add the off-board issues to the board (and whatever opens issues does so
    from then on). Keeps one rule, no code change.
 2. **Decouple `cmd_comment` from `_require_issue`**, keeping the H-issue guard
    on it — comments are not board mutations. **My recommendation**; flagging
    that it is also the branch that makes my own work easier, so weigh it.
+
+### Update, run 38 — this is worse than filed, and it now blocks landing
+
+B17 was filed as a *commenting* problem. It is not: `_require_issue` gates
+`start`, `comment` **and `done`**. Run 38 hit the third one.
+
+**#120's code is merged** (PR #123 → `d25a106`, all five CI jobs green) **and
+issue #120 is still OPEN**, because `accuracy_board.py done 120` exits **1**
+with *"not on the project board"* — not the H-guard's exit 2. So **MISSION §13's
+Definition of Done is unreachable by any sanctioned route** for every
+run-generated issue. Currently that is **#114, #120, #121, #122, #124**.
+
+I did **not** close it with a bare `gh issue close`. B17 is an open ask, and
+re-deriving a gate away while waiting for you is precisely the run-27 mistake.
+So the debt is recorded rather than paid.
+
+**A second, independent cause found while there:** the PR body said
+`Closes #120` and GitHub did **not** auto-close it, because GitHub only
+auto-closes linked issues when a PR merges into the repository's **default**
+branch (`main`). Every accuracy PR merges into `develop`. So even a board-tracked
+issue would not self-close — option 1 alone does not fix this half.
+
+Adding a third option, since the two above now look insufficient:
+
+3. Give `accuracy_board.py` a `done` path that closes a non-H issue **not**
+   on the board, keeping the H-guard by checking the issue's H-number/label
+   directly rather than using board membership as a proxy for it. Membership
+   was always the wrong proxy: an off-board issue is not an H issue, it is
+   just untracked.
 
 ## B18 — three `test_web_teacher.py` tests are red in isolation (not a decision, a finding)
 
@@ -368,3 +397,44 @@ worktree with `develop`'s own `conftest.py`. It is the same *family* as #114
 (a test depending on ambient state) and the supervisor's full-suite PASS hides
 it, which is why nobody has seen it. Wants its own issue; I did not open one
 because the board script could not comment on it either (B17).
+
+### RESOLVED, run 38 — opened as #120, fixed, merged as `d25a106`
+
+**No decision was needed and none was taken** — you had already recorded this
+as a finding, so it was worked as independent unblocked work under MISSION §12.
+
+**The cause was not what this ask guessed.** I wrote above that "some other
+module's patching makes the call fail or return falsy". That is wrong, and the
+real mechanism matters more:
+
+`Settings` is a `pydantic-settings` `BaseSettings` whose
+`settings_customise_sources` (`lemely/runtime/config.py:392-398`) ranks
+`env_settings` **above** explicit init data — and `model_dump()` →
+`model_validate(dict)` **re-triggers that merge**. So the fixture's intended
+`gemini_api_key=None` was silently overridden by a developer's exported
+`GEMINI_API_KEY`. `_detection_available` is literally `is not None`
+(`teacher.py:634`), so detection ran against a `MagicMock` and its attribute
+reprs were formatted straight into a user-visible card name. Fixed by using
+`model_copy(update=...)`, which does not revalidate against the environment.
+
+The in-suite pass was **borrowed** from `test_cli_doctor.py:18-21`, which does a
+raw, unrestored `del os.environ["GEMINI_API_KEY"]`. That leak source is
+untouched and still exposes every other module — filed as **#121**.
+
+**Three further findings, none executed:** **#121** (the leak source),
+**#122** (production assigns unvalidated metadata into the card name — dormant
+behind the real client's schema validation, so a decision, not a fix), and
+**#124** (`test_upload_does_not_wait_on_metadata_detection` is vacuous: it
+passes when detection never runs at all, proven by mutation; **pre-existing**,
+not caused by #120).
+
+**Worth keeping:** review round 1 caught a real defect I would otherwise have
+shipped — `_key_settings` retained the *identical* `model_dump`/`model_validate`
+shape and, measured rather than inferred, returned the **real environment key**
+instead of the dummy. CI exports no key, so CI was never affected; a developer
+machine was.
+
+**Caveat on the isolation claim:** `pytest-randomly` is **not installed** in
+this venv, so `-p no:randomly` was a no-op. Isolation is verified for
+alone-runs and both `test_cli_doctor` orderings only — **randomised-order
+isolation is unverified**, and I am not claiming it.
