@@ -99,9 +99,36 @@ overwritten**. Evidence: `BUILD/accuracy-runs/golden-reparse-95-2026-08-26/`.
 1. Abandon the rebuild — #38's waiver and #39's deferred sweep then stand
    permanently on instrument-blindness, which is the honest cost.
 2. **Fix the det parser's mark-total escalation first**, as its own issue,
-   with #95 held open behind it. **My recommendation.** Much larger than the
-   issue's stated "Effort: M".
+   with #95 held open behind it. **Still my recommendation**, but see the
+   corrected estimate below — it is a work-stream, not a preliminary.
 3. Rebuild MCQ-only — I advise against it.
+
+**Corrected estimate for route 2 (run 34).** #45's failure-reason census had
+already classified all 229 det failures, and all four blocked papers are in
+it — looking them up cost nothing and nothing was re-derived:
+
+| paper | cause | detail |
+|---|---|---|
+| `0580_s23_ms_22` | `marks_cell_notation_not_parsed` | +3, **fully explained** by 3 defaulted empty cells |
+| `0606_s23_ms_12` | `mark_aggregation_overcount` | +36 |
+| `0625_s20_ms_31` | `genuine_mark_total_mismatch` | −4, 34 empty cells defaulted |
+| `0625_w21_ms_32` | `genuine_mark_total_mismatch` | −7, 23 empty cells defaulted |
+
+So route 2 is **three different bugs, not one**, and only one of the four has
+a mechanically closed explanation. Being careful about the label: for the two
+0625 papers `genuine_mark_total_mismatch` is the census's **residual bucket**
+("ruling out an overcount, column detection and cell-notation parsing"), not
+a positive finding that the paper is inconsistent — #45 records that the
+theory path has no shortfall heuristic, so large theory deficits fall through
+to it. Their cause is **unresolved, not diagnosed**. The named unconfirmed
+mechanism to look at first is empty-cell defaulting interacting with
+`rows.py`'s `flush()`, which only sums a leaf's `AnswerPoints` when that
+leaf's `q_row_had_answer` was set.
+
+**Relevant to B2's priority:** the same census puts
+`paper_profile_misconfiguration` at **40** — that is #93. Landing #93 alone
+converts **17.5% of the entire det failure set** from failing to parsing, and
+moves those 40 schemes from #88's paid-Gemini set to the free det set.
 
 *Correcting myself: run 32's state note gave the #93 ordering as the reason to
 hold #95. That was overstated — exactly one fixture is affected and #93's own
