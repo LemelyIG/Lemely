@@ -306,6 +306,139 @@ class ParseMCQTablesTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# mcq silent-loss instrumentation (#94)
+# ---------------------------------------------------------------------------
+
+
+class MCQSilentLossInstrumentationTests(unittest.TestCase):
+    """#94: a discarded table must say WHY, not just shrink the total.
+
+    The premise #94 was opened on has been corrected by measurement and the
+    correction is encoded here rather than left on the issue. The *fact* of a
+    shortfall was never silent: ``reconcile`` compares the parsed mark total
+    against ``maximum_mark`` and logs ``mark_total_mismatch_escalating``. What
+    was silent is the *mechanism* — that a 29-row table was thrown away because
+    one cell read ``QUESTION DISCOUNTED``. These tests assert the mechanism is
+    reported; they deliberately do NOT re-assert the shortfall, which other
+    machinery already owns.
+    """
+
+    def test_rejected_table_names_the_disqualifying_value(self) -> None:
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [["1", "A"], ["2", "B"], ["3", "QUESTION DISCOUNTED"]]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(rejection["disqualifying_count"], 1)
+        self.assertEqual(rejection["values_in_column"], 3)
+
+    def test_rejection_names_the_densest_column_not_the_rightmost(self) -> None:
+        """A one-cell header must not be reported as the offending column.
+
+        The real answer column is the dense one; naming the rightmost instead
+        would report ``MARKS`` and bury the cell that actually caused the loss.
+        This is the shape the real 0625_s24_ms_21 table has.
+        """
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [
+            ["QUESTION", "ANSWER", "MARKS"],
+            ["1", "A", None],
+            ["2", "B", None],
+            ["3", "QUESTION DISCOUNTED", None],
+        ]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1, "the dense answer column, not the MARKS header")
+        self.assertIn("QUESTION DISCOUNTED", rejection["disqualifying_values"])
+
+    def test_discarded_table_rows_are_counted(self) -> None:
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        good: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        lost: list[list[str | None]] = [["3", "C"], ["4", "D"], ["5", "QUESTION DISCOUNTED"]]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([good, lost], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 2)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 3, "the whole table, not just the bad row")
+        self.assertEqual(diag.questions_parsed, 2)
+        self.assertEqual(diag.rejections[0]["table_index"], 1)
+
+    def test_rows_dropped_inside_a_kept_table_are_counted(self) -> None:
+        """The reconciler cannot see these at all — it only sees the total."""
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        # Column 1 stays clean (A/B/C) so the table is ACCEPTED — the point
+        # is loss inside a table that parsed, not a rejected one.
+        table: list[list[str | None]] = [
+            ["1", "A"],
+            ["1", "B"],  # duplicate id
+            ["Q", "C"],  # q_cell not a digit
+        ]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([table], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(diag.rows_discarded_in_kept_tables, 2)
+
+    def test_diagnostics_are_optional_and_behaviour_is_unchanged_without_them(self) -> None:
+        from lemely.io.det.mcq import parse_mcq_tables
+
+        table: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        self.assertEqual([q.id for q in parse_mcq_tables([table])], ["1", "2"])
+
+
+class MCQSilentLossRealPaperTests(unittest.TestCase):
+    """The confirmed instance from #94, against the real PDF when it is present.
+
+    Skipped rather than failed when the source PDF is absent: it lives in the
+    PaperScraper corpus outside this repo, and a test that fails on a checkout
+    without it would be a broken gate, not a real signal.
+    """
+
+    PDF = Path("/home/sico/PaperScraper/papers/CAIE/igcse/physics-0625/2024/s24/0625_s24_ms_21.pdf")
+
+    def test_0625_s24_ms_21_reports_the_reason_for_its_28_question_loss(self) -> None:
+        if not self.PDF.exists():
+            self.skipTest(f"corpus PDF not present: {self.PDF}")
+        try:
+            import pdfplumber
+        except ImportError:  # pragma: no cover - pdfplumber is a hard dep here
+            self.skipTest("pdfplumber not installed")
+
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        with pdfplumber.open(self.PDF) as pdf:
+            tables: list[list[list[str | None]]] = []
+            for page in pdf.pages[1:]:
+                tables.extend(page.extract_tables())
+
+        diag = MCQParseDiagnostics()
+        questions = parse_mcq_tables(tables, source=self.PDF.name, diagnostics=diag)
+
+        # The measured facts, asserted rather than described: 12 of 40 parse,
+        # and the 28 lost go with ONE discarded table.
+        self.assertEqual(len(questions), 12)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 29, "28 questions plus the header row")
+
+        rejection = diag.rejections[0]
+        self.assertEqual(rejection["column"], 3)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(
+            rejection["disqualifying_count"],
+            1,
+            "a SINGLE anomalous cell costs the entire table — the whole point of #94",
+        )
+
+
+# ---------------------------------------------------------------------------
 # tables.qualifies_as_mark_scheme_table
 # ---------------------------------------------------------------------------
 
