@@ -772,3 +772,44 @@ someday making a redemption without a live reservation possible) — in which ca
 being inert and the marker starts being useful — or whether the branch should instead be **deleted**
 as dead code once someone is confident the mint-time reservation can never be bypassed. Left
 undecided deliberately: either answer is defensible, and picking one was outside this issue's scope.
+
+---
+
+## B9 — The sign-up E2E journeys are written but have never been run
+
+**Raised:** 2026-08-26 (issue #10, Task 23) · **Status: NOT BLOCKING the unit and integration
+evidence below, but the acceptance journeys in `docs/superpowers/specs/2026-08-25-signup-flows-design.md`
+§6 are unproven end to end.**
+
+### What was tried, and the exact failure
+
+`web/e2e/signup.spec.ts` (260 lines: the student, teacher and invite journeys) was written against
+the real `global-setup.ts` / `seed.ts` fixtures. Running it fails before a single test executes:
+
+```
+Error: Could not resolve Supabase local-stack keys via "supabase status -o json".
+Is the local stack up? (Error: Command failed: supabase status -o json)
+    at resolveSupabaseEnv (web/playwright.config.ts:45:11)
+```
+
+`playwright.config.ts` resolves the anon and service-role keys from a running local Supabase stack
+at config-load time. This sandbox has bare Postgres on 127.0.0.1:54322 (started for this work) but
+**not** the Supabase stack: the `supabase` CLI is not installed, and standing the full stack up
+means GoTrue, PostgREST, Storage, Kong and Studio containers in an environment whose Docker daemon
+already died once mid-session. The E2E suite genuinely needs GoTrue, because the flows it exercises
+are real signup and password-grant calls, not mocks.
+
+### What assurance the spec does have
+
+It is **typechecked**. `tsconfig.e2e.json` is in the root project's reference graph, so
+`npm run typecheck` (`tsc -b --force --noEmit`) compiles the spec against the real Playwright types,
+the real seed helpers and the real page fixtures: 0 errors. So it is well-formed and type-correct
+against the actual fixtures, and unproven against a running product. Those are different claims and
+this entry keeps them apart deliberately.
+
+### What would close it
+
+Install the `supabase` CLI, `supabase start`, then `cd web && npx playwright test signup.spec.ts`.
+Treat the first run as a real review: a journey that has never executed usually has at least one
+selector or timing assumption wrong, and the point of running it is to find those, not to confirm
+a green tick.
