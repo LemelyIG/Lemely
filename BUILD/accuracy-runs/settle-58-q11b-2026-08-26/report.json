@@ -1,0 +1,259 @@
+{
+  "label": "settle-58-q11b-2026-08-26",
+  "issue": 58,
+  "acceptance_bullet": 4,
+  "authorised_by": "inbox B6, 2026-08-26T14:12:38+03:00 (~$0.01)",
+  "supersedes": "control-58-2026-08-25 (breadth design, 0/62, Fisher p=1.000)",
+  "case_dir": "0625_s20_qp_31_theory_partial",
+  "leaf": "11b",
+  "leaf_parent_id": null,
+  "ground_truth_marks": 1,
+  "point_order_unperturbed": [
+    "p1",
+    "p2",
+    "p3"
+  ],
+  "point_order_perturbed": [
+    "p3",
+    "p2",
+    "p1"
+  ],
+  "cache_mode": "bypass",
+  "repeats_per_arm": 10,
+  "aborted": null,
+  "marks_unperturbed": [
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1
+  ],
+  "marks_perturbed": [
+    1,
+    2,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    1,
+    2
+  ],
+  "n_ge2_unperturbed": 0,
+  "n_ge2_perturbed": 2,
+  "fisher_exact_two_sided_p": 0.473684,
+  "alpha": 0.05,
+  "spend_usd_before": 2.720069,
+  "spend_usd_after": 2.733677,
+  "spend_usd_delta": 0.013608,
+  "repeat_records": [
+    {
+      "repeat": 1,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 1,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 2,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 2,
+      "arm": "perturbed",
+      "awarded_marks": 2,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1",
+        "p2"
+      ]
+    },
+    {
+      "repeat": 3,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 3,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 4,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 4,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 5,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 5,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 6,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 6,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 7,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 7,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 8,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 8,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 9,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 9,
+      "arm": "perturbed",
+      "awarded_marks": 1,
+      "confidence": "medium",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 10,
+      "arm": "unperturbed",
+      "awarded_marks": 1,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1"
+      ]
+    },
+    {
+      "repeat": 10,
+      "arm": "perturbed",
+      "awarded_marks": 2,
+      "confidence": "high",
+      "marker_source": "ai",
+      "matched_point_ids": [
+        "p1",
+        "p2"
+      ]
+    }
+  ]
+}

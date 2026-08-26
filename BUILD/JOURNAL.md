@@ -2632,3 +2632,44 @@ them whether or not Phase 6 fixes them.
   as its own chore commit, rather than pile it onto a branch that squashes from origin's tip.
 - **Spend unchanged:** no Gemini calls; ledger still 1.488057.
 - **Next:** still the human's three decisions. Nothing else can legitimately start before them.
+
+## run-2026-08-26-b — B6 settled: the q11b reorder violation reproduces, and is still not established
+
+- **Landed the queue first.** PR **#135** (the run-46 close) was open, CLEAN, and green on all five
+  checks; merged to `develop` as `1146b5e`. The PR queue is empty again and the §4 precondition
+  (`origin/develop..origin/main`) reads **0**, measured this run rather than quoted.
+- **B6 ran, as authorised, for $0.013608.** Costed preflight posted to #58 **before** any spend;
+  20 calls, every one `cache_hit=False`, the $0.040 in-process brake never approached. Ledger for
+  this worktree 2.720069 → 2.733677; programme-wide sum (DA11) **3.124540 → 3.138147**.
+- **The result is genuinely two-sided and is recorded that way.** Unperturbed `1×10`, perturbed
+  `1 2 1 1 1 1 1 1 1 2` — so the violation **reproduces** (2/10) against **zero** same-input churn
+  on the same leaf (0/10 here, 0/14 pooling every prior unperturbed marking of it already on disk).
+  The pre-committed Fisher exact gives **p = 0.4737**, so it is **not established** at α = 0.05.
+  Post-hoc pooling reaches 3/11 vs 0/14, p = 0.0717 — reported as secondary, never as the finding.
+  **Not re-run at higher n**: ~n=25/arm would be needed and MISSION §12.9 forbids exactly that move.
+- **The preflight was honest about being 1.6× the authorisation, before the fact rather than after.**
+  B6 said ~$0.01; the projection was $0.0156 and said so in the comment, anchored on the 107 real
+  calls in `control-58-2026-08-25/run.log` rather than on a scaled aggregate — which is precisely
+  the error that made the #37 preflight wrong by 4–5×. Actual came in **under** projection.
+- **Two things verified rather than assumed, either of which would have invalidated the run.**
+  (1) *Which variant.* The report records only `paper_id` and all three `0625_s20_qp_31_theory`
+  fixtures share it (DA6). Identified as `_partial` by outcomes-list position, then independently
+  confirmed by mark values — the variants' q11b score 3 / 1 / 0 and the violated `baseline_marks`
+  is 1. (2) *That "q11b alone" is the same experiment.* `correct_paper` builds `sibling_prior` only
+  when `q.parent_id is not None` (`correction_ai.py:639-645`) and q11b's parent is `None`, so the
+  prompt is byte-identical at one leaf or seven. Had it had a parent, the restriction would have
+  changed the input and the design would have been illegitimate.
+- **Acceptance boxes audited, not swept along.** Bullet 4 ticked as B6 directed; bullets 2 and 5
+  ticked on live evidence. **Bullets 1 and 3 left unticked deliberately** — bullet 1 is a property
+  a live run falsifies, and bullet 3 has **no live evidence at all**: the live bypass run predates
+  #134's whitespace fixtures, so live it reads 0 held / 71 skipped, and #134's "7 held" is a
+  zero-spend *offline* run. Closing that gap is ~14 calls / ~$0.01 and is **not authorised**.
+- **Two zero-spend rulings discharged.** **B4** → **#136** (det mark-total escalation: three
+  distinct bugs, the two 0625 deficits recorded as UNRESOLVED-not-diagnosed, and the falsified
+  `rows.py` `flush()`/`q_row_had_answer` lead written down so it is not re-derived); #95 blocked on
+  it. **B13** → **#137** (`GoldenCase` must hold more than one render of the same paper); #59
+  blocked on it and its `Effort: S` recorded void.
+- **Still owed by me, none blocked:** B12 (#105 wire `mark_point_verdicts`), B15 (#112 three
+  sub-defects, mark-changing, joint sweep with #110), B16 (#114 annotate `cumulative_usd` as a
+  contaminated upper bound). **Still the human's:** #88 item 2 (preflight falsified 1.83×, sweep
+  stopped), B1/#41 (stopped on a falsified premise), and the four open H issues.
