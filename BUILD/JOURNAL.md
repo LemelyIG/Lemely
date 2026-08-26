@@ -2673,3 +2673,34 @@ them whether or not Phase 6 fixes them.
   sub-defects, mark-changing, joint sweep with #110), B16 (#114 annotate `cumulative_usd` as a
   contaminated upper bound). **Still the human's:** #88 item 2 (preflight falsified 1.83×, sweep
   stopped), B1/#41 (stopped on a falsified premise), and the four open H issues.
+
+## run-2026-08-26-c — B16: the spend ledger is an upper bound, and says so at source
+
+- **#138 landed.** All five CI checks green, and the supervisor sweep passed over its **exact sha**
+  (`13802c3`), so §9.3's pytest condition is satisfied by evidence rather than by assertion. Merged
+  as `8bcf0f7`; queue empty again; no new inbox directive.
+- **B16 done, zero spend.** `cumulative_usd` is now documented at source
+  (`lemely/io/cost_ledger.py`) as an **UPPER BOUND on money spent, not money spent**, with the
+  mechanism re-verified rather than carried forward: bare `load_settings()` in some tests resolves
+  `paths.output_dir` to the real repo, and `GeminiClient` builds its ledger path from exactly that
+  (`gemini.py:162`). **DA17** amends DA11 — "authoritative for money spent" narrows to
+  "authoritative as a conservative upper bound" — and keeps the total, with no re-baseline and no
+  rebuild from per-call logs, as B16 required.
+- **The ground for keeping a contaminated number is direction, not convenience.** Contamination is
+  **one-directional**: a test can add cost, never remove it. So a contaminated total can only
+  *overstate* spend and every ceiling check against it stays conservative, whereas re-baselining
+  would swap a known-conservative figure for a reconstructed one that would itself need auditing.
+- **One observation, recorded as an observation.** The 20:05Z supervisor sweep (21 min, full
+  `pytest`) did **not** move this worktree's ledger — `2.7336773500000575`, `updated_at`
+  `19:33:25Z`, the B6 run's own figure, unchanged either side. So the contamination is
+  **intermittent, not every-sweep**. That is one uninstrumented sweep; it does **not** close #114
+  and is **not** evidence the writer is gone, and DA17 says so in those words.
+- **The gap is named rather than implied.** This annotation does not stop the writes. #114's scope
+  item 2 — the autouse guard that would fail any test resolving `output_dir` inside the repo — is
+  unstarted, and #114 is CLOSED. An annotation that read as a resolution would leave the next run
+  treating the ledger as exact, which is the failure this entry exists to prevent.
+- **Docstring-only diff**, so there is nothing to regress and no regression test ships with it;
+  `tests/test_cost_ledger.py` 12/12 green (with `--no-cov`, since one module cannot clear the 70%
+  project floor).
+- **Still owed by me:** B12 (#105), B15 (#112). **Still the human's:** #88 item 2, B1/#41, the two
+  questions raised on #58 in run 47, and the four open H issues.

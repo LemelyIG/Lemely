@@ -11649,3 +11649,62 @@ predates #134's whitespace fixtures, so live it reads 0 held / 71 skipped, and
 ~$0.01 and is **not authorised**.
 
 Artifacts: `BUILD/accuracy-runs/settle-58-q11b-2026-08-26/`.
+
+---
+
+## DA17 — `cumulative_usd` is a conservative UPPER BOUND, not money spent (B16, amends DA11)
+
+**Date:** 2026-08-26 (run 48) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B16** — *"KEEP THE TOTAL, ANNOTATE AS AN UPPER BOUND. The
+contamination overstates spend, so ceilings stay conservative. Do NOT
+re-baseline and do NOT rebuild from per-call logs. Record that `cumulative_usd`
+is a known-contaminated upper bound rather than money spent, and keep the
+re-sum-every-run rule."* · **Spend: $0.00.**
+
+### What is amended
+
+**DA11 said the ledger files are authoritative for money spent. That is narrowed
+here to: authoritative as a conservative UPPER BOUND on money spent.** Everything
+else in DA11 stands unchanged — the files remain the record of record, the header's
+`spend_usd` remains the programme-wide **sum** across worktree ledgers, and neither
+a `report.json` field nor a log sum substitutes for either. **The re-sum-every-run
+rule stays.**
+
+### Why an upper bound and not an exact figure
+
+Some tests call bare `load_settings()`, so `paths.output_dir` resolves to the real
+repo, and `GeminiClient` builds its ledger path from exactly that
+(`lemely/io/gemini.py:162`, verified in source this run). A test run can therefore
+bank a synthetic cost into the authoritative ledger. Measured once rather than
+inferred: **$0.0077620** landed at `2026-08-26T03:05:45Z` during a run that made
+**zero** Gemini calls (#114).
+
+### The three refusals B16 attached, recorded so they are not re-litigated
+
+1. **No back-out.** The $0.0077620 stays in the total.
+2. **No re-baseline.**
+3. **No rebuild from per-call logs.**
+
+The ground is direction, not convenience: contamination is **one-directional** — a
+test can add cost, never remove it — so a contaminated total can only *overstate*
+spend, and every ceiling check against it stays conservative. Re-baselining would
+trade a known-conservative number for a reconstructed one, and the reconstruction
+would itself need auditing.
+
+### One observation, offered as an observation
+
+The supervisor sweep of **2026-08-26T20:05Z** (21 minutes, full `pytest`) did
+**not** move this worktree's ledger: it read `2.7336773500000575` with
+`updated_at` `2026-08-26T19:33:25Z` — the B6 run's own figure — both before and
+after. So the contamination is **intermittent, not every-sweep**. Stated as a
+single clean observation and nothing more: it is one sweep, and which tests ran
+and what they did was not instrumented. It does not close #114 and is not evidence
+the writer is gone.
+
+### What this deliberately does NOT do
+
+It does not stop the writes. **Isolating the writer — #114's scope item 2, the
+autouse guard that would fail any test resolving `output_dir` inside the repo — is
+unstarted work, and #114 is CLOSED.** B16 said annotate, not fix. Naming that gap
+here matters more than the annotation itself: an annotation that reads as a
+resolution would leave the next run believing the ledger is safe to treat as exact.

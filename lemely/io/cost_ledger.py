@@ -9,6 +9,27 @@ resolve as last-writer-wins (a lost increment under-counts spend, never
 over-counts). Each :meth:`CostLedger.add` performs a read-modify-write; there is
 no OS-level lock. Future: add ``fcntl.flock`` around the read-modify-write for
 POSIX multi-writer scenarios.
+
+``cumulative_usd`` is an UPPER BOUND on money spent, not money spent
+--------------------------------------------------------------------
+
+Read it as a ceiling-check input, never as a spend figure. Some tests call bare
+``load_settings()``, which resolves ``paths.output_dir`` to the real repo, and
+:class:`lemely.io.gemini.GeminiClient` builds its ledger path from exactly that
+(``gemini.py:162``) — so a test run can bank a synthetic cost into the real
+ledger. Measured once, not inferred: **$0.0077620** landed at
+``2026-08-26T03:05:45Z`` during a run that made zero Gemini calls (issue #114).
+
+The contaminated total is deliberately **kept, not backed out**, and is
+deliberately **not** rebuilt from per-call logs. Contamination is
+one-directional — a test can only add cost, never remove it — so every ceiling
+check computed against this number stays conservative, and re-baselining would
+trade a known-conservative figure for a reconstructed one. Recorded as
+``BUILD/DECISIONS.md`` DA17, which narrows DA11 accordingly.
+
+What this annotation does **not** do is stop the writes. Isolating the writer
+(#114 scope item 2) is a separate, unstarted piece of work; nothing here makes
+the ledger safe to treat as exact.
 """
 
 from __future__ import annotations
