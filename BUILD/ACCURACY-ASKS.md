@@ -130,6 +130,18 @@ leaf's `q_row_had_answer` was set.
 converts **17.5% of the entire det failure set** from failing to parsing, and
 moves those 40 schemes from #88's paid-Gemini set to the free det set.
 
+**Run 35 sharpened this further, and killed my own lead.** I tested the
+`rows.py` `flush()`/`q_row_had_answer` mechanism I named above and it is
+**falsified**: both deficit papers have **zero** leaves where `q.marks`
+disagrees with their answer points, so no marks are lost in propagation.
+Their ids are clean and their tariffs plausible, so the missing 4 and 7 marks
+are **content never captured** — a table-selection question, not a marks bug.
+The same inspection turned up a defect nobody had named: **duplicate
+top-level question ids** (`0606` emits `9` twice; `0580`'s sequence restarts
+at `1,2,8`), which breaks `(paper_id, question_id)` leaf identity independently
+of mark totals. Opened as **#110**, not executed. Evidence:
+`BUILD/accuracy-runs/det-mismatch-diagnosis-2026-08-26/`.
+
 *Correcting myself: run 32's state note gave the #93 ordering as the reason to
 hold #95. That was overstated — exactly one fixture is affected and #93's own
 sweep found the change causally inert. It is a footnote next to the two
