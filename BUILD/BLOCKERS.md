@@ -2168,3 +2168,63 @@ a computation behind it at all.
 - **Free when the sweep runs:** count the `id_positional_fallback` WARNING lines
   to get the fire rate nobody currently has. Capture it in the same run rather
   than paying for a second sweep.
+
+---
+
+## L — GitHub Actions stopped provisioning for this repo at ~13:03Z on 2026-08-26; two PRs cannot land
+
+**Raised:** 2026-08-26 · **Status:** OPEN — external, not ours. **No spend involved.**
+
+Two PRs are open, both correct, both unmergeable because CI will not run:
+
+- **PR #132** (`chore/accuracy-run-40-close`) — the run-40/41 state close.
+- **PR #133** (`chore/accuracy-88-item4-token-ceiling`) — #88 item 4 (DA13, the ceiling
+  raise) and the re-costed item-2 preflight artifact.
+
+### The evidence, taken from the API rather than from `gh pr checks`
+
+`gh pr checks` reports *"no checks reported"* for both branches, which by itself is
+ambiguous — it reads the same on a brand-new PR as on a dead queue. Two harder facts
+settle it, and they use E5's rule that only a non-zero **`steps`/jobs** count proves a
+runner was provisioned:
+
+1. Run **32971934818** (#132, `pull_request`, created **13:03:04Z**) has been `queued`
+   for **2h47m** and `GET /actions/runs/32971934818/jobs` returns an **empty job list** —
+   not jobs that failed in 2–4s, *no jobs created at all*.
+2. **PR #133 was opened at ~15:40Z and produced no workflow run whatsoever.** The newest
+   run in `GET /actions/runs` for the entire repository is still 32971934818 from
+   13:03:04Z. It is not that #133's run failed; it does not exist.
+
+`.github/workflows/ci.yml` triggers on `pull_request` with **no `paths` filter**, so a
+missing run cannot be explained by the diff touching only `BUILD/`.
+
+### This is a stall, not the old billing block, and not flakiness
+
+Runners were working **today**: 32968460680, 32968362231, 32968330389 (12:23–12:25Z) and
+32964126855 (11:35Z) all completed `success` with real jobs. The queue went dead somewhere
+after 13:03Z.
+
+It is also distinct from the one genuine flake seen earlier on this same PR: #132's
+`test (3.14)` job failed in 15s with
+`failed to bind host port for 0.0.0.0:54322 ... address already in use` — a service-container
+port collision on the runner, where postgres never started. That was correctly answered with
+`gh run rerun --failed`, and **it is that rerun which is now stuck in the queue.**
+
+### The rule that is NOT being invoked, stated so the next run does not reach for it
+
+The standing "ignore CI" waiver of 2026-08-23 **is void and stays void**. By its own terms
+it lapsed *"the moment Actions can provision a runner"*, and it did — today's four green
+runs are the proof. A new outage does not revive a lapsed waiver.
+
+Merging either PR on local gates plus the supervisor sweep would therefore be
+**unauthorised**, and re-deriving the waiver from the fact that the block looks similar is
+exactly the move the inbox's #27 rebuke forbids. Both PRs wait. **Neither is merged.**
+
+### What the next run should do
+
+Re-verify from the API before anything else — `gh api 'repos/LemelyIG/Lemely/actions/runs?per_page=5'`
+and then the `jobs` endpoint of the newest run. **Only a non-zero job/`steps` count means it
+is fixed**; a newer run id proves only that the queue accepted a trigger (falsified on
+2026-08-23). If green, merge #132 then #133 — they conflict on `BUILD/ACCURACY-STATE.md`
+and the resolution is **merge, not rebase**, because plain rebase strips signatures in this
+repo. If still stalled, go quiescent per E5: no restating commit, report in prose, stop.
