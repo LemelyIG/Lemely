@@ -2096,6 +2096,23 @@ right outcome is a published table with 9 empty cells and an explicit det-only
 statement, never a quiet redefinition of the strata to the cells that are full.
 That is the narrowed-denominator failure mode exactly.
 
+### UPDATE 2026-08-26 (run 47) — #59's blocker now has an issue: #137
+
+Nothing above is retracted. Adding what changed: inbox ruling **B13** authorised
+the multi-render `GoldenCase` data-model change as its own work, and it is now
+**#137**, with #59 blocked on it and moved back to Backlog. #59's stated
+`Effort: S` is void, as B13 says in terms.
+
+The blocking fact re-verified in source rather than carried forward: `GoldenCase`
+holds exactly one scan slot (`lemely/accuracy/harness.py:72`, populated from a
+hard-coded `scan.pdf` at `:122` and `:143`). Minting a second `paper_id` as a
+workaround is rejected on #137 — DA6 keys a leaf on `(paper_id, question_id)`, so
+it would present the same leaves twice as independent and inflate `n`; the same
+trap #134 declined for the whitespace fixture (DA14).
+
+**Still true and NOT resolved by #137:** the scan-realism arm of #59 has no corpus
+and remains unmeasured, and #47's empty gemini strata are untouched by any of this.
+
 ---
 
 ## K — `id_match` is a hard-coded literal; the "exact 71/71" artifacts prove nothing (#37)
@@ -2250,3 +2267,11 @@ put two PRs into `develop` with no CI behind them, and the record would have sai
 they were green. The lapsed 2026-08-23 waiver was not revived, and the diagnosis
 that made waiting safe was the API's **job/`steps` count**, not `gh pr checks`,
 which read "no checks reported" for a dead queue and a healthy new PR alike.
+
+---
+
+## #95 — harness: regenerate golden fixtures through the det parser so scheme-parsing is measurable
+
+**Raised:** 2026-08-26 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on #136. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
