@@ -638,7 +638,19 @@ class AgreementResult(WilsonResult):
     Kept, not deleted, when B12 moved the headline to mark points. B12 predicts
     the per-point figure reads **lower**; that prediction is only checkable if
     both numbers travel together. A single number cannot demonstrate its own drop.
+
+    **Read it with ``totals_lower``/``totals_upper``, never alone.** At
+    ``totals_n == 0`` this is ``0.0`` — the module-wide convention
+    (:func:`_wilson_interval` does the same) — which reads as "0% agreement"
+    rather than "no data". The interval is what disambiguates the two: no data
+    gives ``[0.0, 1.0]``, genuine total disagreement does not.
     """
+
+    totals_lower: float
+    """Secondary figure: lower Wilson bound on the totals-equality rate."""
+
+    totals_upper: float
+    """Secondary figure: upper Wilson bound on the totals-equality rate."""
 
 
 def agreement_wilson(
@@ -734,6 +746,10 @@ def agreement_wilson(
 
     leaves_with_shared_points = {p[:2] for p in shared_points}
     interval = _wilson_interval(successes=successes, n=n, z=z)
+    # The totals figure gets its own interval from the SAME helper, not a bare
+    # rate: at totals_n == 0 a lone `0.0` reads as "total disagreement" when it
+    # means "no data", and only the [0.0, 1.0] interval tells the two apart.
+    totals_interval = _wilson_interval(successes=totals_successes, n=totals_n, z=z)
     return {
         **interval,
         "a_only": len(set(a_leaves) - set(b_leaves)),
@@ -744,7 +760,9 @@ def agreement_wilson(
         "points_b_only": len(set(b_points) - set(a_points)),
         "totals_n": totals_n,
         "totals_successes": totals_successes,
-        "totals_point": round(totals_successes / totals_n, 10) if totals_n else 0.0,
+        "totals_point": totals_interval["point"],
+        "totals_lower": totals_interval["lower"],
+        "totals_upper": totals_interval["upper"],
     }
 
 

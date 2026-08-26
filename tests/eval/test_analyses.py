@@ -508,6 +508,8 @@ class TestAgreementWilson:
             "totals_n",
             "totals_successes",
             "totals_point",
+            "totals_lower",
+            "totals_upper",
         }
         assert all(isinstance(v, int | float) for v in result.values()), (
             "every field must be an aggregate scalar; a per-leaf collection here "
@@ -1406,6 +1408,37 @@ class TestAgreementIsPerMarkPoint:
         assert result["b_only"] == 1, "leaf 9"
         assert result["points_a_only"] == 0, "point exclusions are scoped to SHARED leaves"
         assert result["points_b_only"] == 0
+
+    def test_empty_totals_denominator_is_distinguishable_from_total_disagreement(
+        self,
+    ) -> None:
+        """``totals_point == 0.0`` must not be readable as "0% agreement".
+
+        At ``totals_n == 0`` the rate is ``0.0`` by the module-wide convention,
+        which looks identical to genuine total disagreement. The interval is
+        what tells them apart: no data spans ``[0.0, 1.0]``, real disagreement
+        does not. Without it the secondary figure could publish a fabricated
+        zero.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        b = [self._rec(question_id="9", awarded_marks=1, verdicts={"p1": True})]
+
+        no_data = agreement_wilson(a, b, rulings_settled=True)
+        assert no_data["totals_n"] == 0
+        assert no_data["totals_point"] == 0.0
+        assert (no_data["totals_lower"], no_data["totals_upper"]) == (0.0, 1.0)
+
+        disagree_a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        disagree_b = [self._rec(question_id="1", awarded_marks=0, verdicts={"p1": False})]
+        real = agreement_wilson(disagree_a, disagree_b, rulings_settled=True)
+        assert real["totals_n"] == 1
+        assert real["totals_point"] == 0.0
+        assert real["totals_upper"] < 1.0, (
+            "genuine 0/1 disagreement must NOT span the full interval, or it is "
+            "indistinguishable from having measured nothing at all"
+        )
 
     def test_per_point_reads_lower_than_totals_on_the_same_data(self) -> None:
         """B12's prediction, asserted rather than trusted."""
