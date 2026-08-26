@@ -255,11 +255,17 @@ branch, so weigh it accordingly.
    the marks never reach a student. The cost is that #88's paid denominator
    stays 18 papers larger than it needs to be.
 
-**Related trap, not a decision:** prevalence for this defect measured over the
-parsed corpus is **zero by construction** — an affected scheme overcounts and
-is escalated, so it cannot be in `outputs/schemes/`. Anyone costing #88's
-Gemini path from the parsed corpus will read a clean bill of health that is an
-artefact of the selection.
+**Related trap, not a decision:** the same scan over the 250 successfully-parsed
+schemes returns **0 true instances**, and that is a **selection effect, not
+rarity**. An affected scheme overcounts, and the parsed corpus reconciles at
+tolerance 0, so an affected scheme reaches it only if another defect deficits
+by exactly the compensating amount. Stated precisely rather than overstated:
+that is strong selection *against*, not strict impossibility — an
+exactly-cancelling pair would survive, and this scan cannot rule that out
+(it would be invisible to the escalation gate too, which sees only the net).
+The warning is unchanged either way: anyone costing #88's Gemini path from
+`outputs/schemes/` will read a clean bill of health that is an artefact of the
+selection.
 
 ## B14 — still owed on the H issues
 
