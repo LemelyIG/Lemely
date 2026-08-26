@@ -2173,7 +2173,8 @@ a computation behind it at all.
 
 ## L — GitHub Actions stopped provisioning for this repo at ~13:03Z on 2026-08-26; two PRs cannot land
 
-**Raised:** 2026-08-26 · **Status:** OPEN — external, not ours. **No spend involved.**
+**Raised:** 2026-08-26 · **Status:** OPEN → **RESOLVED 2026-08-26** — external,
+not ours. **No spend involved.** Resolution note at the end of this section.
 
 Two PRs are open, both correct, both unmergeable because CI will not run:
 
@@ -2228,3 +2229,24 @@ is fixed**; a newer run id proves only that the queue accepted a trigger (falsif
 2026-08-23). If green, merge #132 then #133 — they conflict on `BUILD/ACCURACY-STATE.md`
 and the resolution is **merge, not rebase**, because plain rebase strips signatures in this
 repo. If still stalled, go quiescent per E5: no restating commit, report in prose, stop.
+
+### RESOLVED 2026-08-26 (run 43) — the queue drained on its own; nothing was waived
+
+The stall cleared without intervention. Run **32971934818** — the one that sat
+`queued` for 2h47m with an empty job list — **completed `success` on all five
+jobs**, and a fresh run (**32987346999**) was created and executed for PR #133.
+So it was a queueing/provisioning outage on GitHub's side, not a billing block
+and not anything in this repo.
+
+**PR #132 merged to `develop` at 2026-08-26T16:17:31Z**, on five genuinely green
+checks, verified with `gh pr view` rather than taken from the merge command's
+output. PR #133 then went `DIRTY` exactly as this section predicted — the two
+touch `BUILD/ACCURACY-STATE.md` — and was resolved by **merge, not rebase**,
+preserving signatures.
+
+**Worth keeping, because it is the whole point of the entry:** waiting cost one
+run and lost nothing. Merging on local gates plus the supervisor sweep would have
+put two PRs into `develop` with no CI behind them, and the record would have said
+they were green. The lapsed 2026-08-23 waiver was not revived, and the diagnosis
+that made waiting safe was the API's **job/`steps` count**, not `gh pr checks`,
+which read "no checks reported" for a dead queue and a healthy new PR alike.

@@ -11433,3 +11433,59 @@ authorised spend in the programme. That reading is accepted, not softened:
 4–5× because an aggregate was read as a per-pass rate, and that sweep tripped
 its own in-process brake mid-run. Every figure above is measured from files on
 disk, and the script that produced them is committed beside the result.
+
+### DA13a — DA13's estimate was falsified by measurement; the 5M ceiling is undersized (#88 item 2)
+
+**Date:** 2026-08-26 (run 43) · **Spend: $0.420312**, ledger 2.2997574 → 2.720069.
+
+DA13 above is left standing as written, because it is the record of what was
+believed and *why* when the ceiling was raised. This amendment says what
+measurement then did to it. **Read them together; DA13's numbers are superseded.**
+
+The item-2 sweep was started and **aborted by the orchestrator at 6 of 190
+schemes** when the measured rate falsified the preflight. Evidence:
+`BUILD/accuracy-runs/sweep88-2026-08-26/aborted-sweep.json`.
+
+| | DA13 preflight | measured |
+|---|---|---|
+| per scheme | $0.03821 | **$0.07005** |
+| 190 schemes | $7.26 | **$13.31** (1.83×) |
+| tokens for 190 | 3.60M | **7.25M** |
+
+**Consequence for item 4, stated plainly:** `per_run_token_ceiling = 5000000`
+was sized on the 3.60M figure. The real requirement is **7.25M**, so the ceiling
+**would trip at roughly scheme 131 of 190**. Item 4's stated purpose — run the
+parse as ONE job with no batching — is therefore **not achieved** by the value
+DA13 set. The ceiling has been left at 5,000,000 rather than quietly raised
+again: raising it a second time is part of the decision now in front of the
+human, not a bookkeeping fix to make my own earlier entry look right.
+
+### Why the estimate failed, and why more sampling would not have saved it
+
+1. **Input 2.07× under** — modelled `pages × 258 + 1500` = 4,170/call; actual
+   **8,630**. The PDF is uploaded through the Files API and is not billed at the
+   assumed per-page rate.
+2. **Output 1.35× under, and blind by construction** — predicted 14,790, actual
+   **19,980**, of which **7,100 (36%) is thinking tokens**. The proxy was
+   det-produced `MarkScheme` JSON, and **a deterministic parser does no
+   thinking**, so the proxy could not represent that cost *at any sample size*.
+   This is the important one: it was not an unlucky sample, it was an instrument
+   that could not see a third of the bill. Any future estimate of a Gemini path
+   built from det output inherits this blindness.
+3. **1.33 calls per scheme**, not 1.00 — retries/fallback modelled as free.
+
+### A factual correction that must not propagate: thoughts are already in `output_tokens`
+
+Pricing `input + output` alone reproduces the ledger **exactly** ($0.420312).
+Adding `thoughts_tokens` on top overshoots to $0.562302. So `output_tokens`
+**already includes** thinking, the ledger is trustworthy as recorded, and anyone
+re-deriving spend must not add thoughts separately. This also means
+`per_run_token_ceiling`, which sums input+output, already counts thinking.
+
+### The control that worked, recorded because the failure mode is the norm here
+
+The first scheme's ledger delta was checked against the preflight instead of
+assumed, which surfaced the 1.74× at **n=1** and confirmed 1.83× at n=6. The #37
+preflight was wrong by 4–5× and was only discovered when that sweep tripped its
+own in-process brake mid-run. **Cost of catching it this way: $0.42 against a
+$13.31 job.** The 6 parsed schemes are kept.
