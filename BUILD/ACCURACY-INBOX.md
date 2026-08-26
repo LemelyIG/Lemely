@@ -167,3 +167,43 @@ Also: PR #90 is green on all 5 CI jobs but DIRTY. The only conflicting file is B
   - **Item 8 — done, all three parts.** RESOLVED blocks appended in-section for #36 (option A; bullet 7 deferred-unmet) and #40 (bullet 4 retired-unmet), and a status-line correction for #28 (which already had a RESOLVED note but still read `Status: OPEN`); each `Status:` now reads `OPEN → RESOLVED 2026-08-25`, preserving the original word rather than deleting it. The twice-appended #40 stub is de-duplicated (that deletion is the one you explicitly authorised). `scripts/accuracy_board.py block` no longer re-appends: `_append_blocker` matches on issue NUMBER (titles get edited), returns False and prints instead of writing. Three regression tests added and **proven to fail on the unfixed code** before passing on the fixed one.
   - **Item 3 — DONE this run (29), and independently re-measured rather than transcribed.** The ratified figures were reproduced from scratch: `/tmp/acc57-full/out` still holds all 250 parsed schemes, so `census_leaves.py` was FIXED (its leaf filter tested `getattr(q,"sub_questions",None)`; `Question`'s child list is `parts`, `loose_schemas.py:1008`, so the filter was a no-op) and re-run over the same corpus. It prints **12,358 flat = 2,894 parents + 9,464 true leaves, parents-with-own-marks 0, UNBANDED TRUE LEAVES 0, DA1 strata populated 9** — matching your ruling exactly, band counts unchanged. The fixed script now prints the flat and leaf totals side by side and excludes the `0/unknown` catch-all from the strata count, so neither the 12,358 nor the discredited "populated: 12" can be produced again. **Corrected wherever cited:** the census `manifest.json` (with a `CORRECTION_2026-08-25` block naming the cause and the 30.6% direction-of-error), three citations in `BUILD/BLOCKERS.md`, and a new **DA12** in `BUILD/DECISIONS.md`. **Deliberately NOT corrected:** the two dated `BUILD/JOURNAL.md` entries of 2026-08-24 quoting 12,358, and the original `census-leaves.txt`, both of which are append-only records of what was believed on the day — rewriting them would falsify the audit trail, so they are superseded by DA12 and the corrected output sits beside them as `census-leaves-corrected.txt`. Say the word if you would rather they were edited in place.
   - **NOT DONE, and named rather than quietly dropped: item 6 (whitespace fixtures).** It is zero-spend but it is not zero-risk — adding golden fixtures changes the corpus every published accuracy figure is computed over, which is MISSION 12.2/12.5 territory and the same ground on which A6(b) was opened as #95 and marked DO-NOT-EXECUTE. #49 is reopened and the split is NOT frozen. I did not want to enlarge the measurement corpus on my own reading of a one-line instruction. **Question for you:** may the whitespace fixtures be added as ordinary golden cases (accepting that they join the accuracy denominator), or should they be a separate metamorphic-only fixture set that `load_golden_cases` does not serve? I recommend the second and will implement it on your word.
+
+- [ ] 2026-08-26T14:12:37+03:00 — Filed by the human via interactive interview, 2026-08-26. Answers asks B1-B17 in BUILD/ACCURACY-ASKS.md. Choices marked AGAINST-REC went against your stated recommendation deliberately -- do not re-argue them.
+
+SECURITY / key rotation: DO NOT ROTATE. The cleartext GEMINI_API_KEY in the run-38 session log is accepted as local-only exposure. Standing rule that follows: the value must never reach a committed file, a CI log, or any public artefact -- this repo is PUBLIC. Never echo the key value into a transcript again.
+
+B1 (#41) -- NO UNCONDITIONAL DEFAULT for the silent case. Do NOT adopt blanket strict M-then-A, and do NOT substitute math_mark_type as the primary source. Require justification from the paper's own principles PLUS the scheme's dep/ft/ecf annotations; where neither speaks, leave the A-mark undetermined rather than defaulting. This is more work than either alternative and may leave cases unresolved -- accepted. #41 stays OPEN and unmerged until implemented; the VERSION bump must not land as a no-op.
+
+B2 (#93) -- WAIVER GRANTED. Land #93 on the same instrument-blindness basis #38 got under A6(a): the harness never invokes the det parser and the golden set has zero 0625 p2 cases, so the sweep is null by construction. Record the waiver and its basis explicitly.
+
+B7 -- FOLD INTO #93. Fix the 0625 paper-3 THEORY_EXTENDED -> THEORY_CORE constant in the same diff. Same file, same bug class, same waived sweep.
+
+B4 (#95) -- ROUTE 2: fix the det mark-total escalation FIRST as its own issue, with #95 held open behind it. Accepted as a work-stream, not a preliminary: three distinct bugs, and the two 0625 deficits are UNRESOLVED, not diagnosed. The rows.py flush()/q_row_had_answer lead is already falsified -- do not re-derive it.
+
+B3 (#37) -- LEAVE 0.99 UNTOUCHED, limitation recorded: id_positional_fallback fired ZERO times across 39 leaves with id_match_rate 1.0 in both arms, so the corpus cannot re-derive the target and 0.99 is inherited, not measured. No follow-up issue. Land the branch.
+
+B8 -- REGENERATE AND COMMIT IMMEDIATELY AFTER #93 LANDS, recording the parser SHA. Not at 250 now.
+
+- [ ] 2026-08-26T14:12:38+03:00 — Continued from 1/2. Same interview, 2026-08-26.
+
+B5 -- ORDINARY GOLDEN CASES. AGAINST-REC. The whitespace fixtures join the normal corpus, not a metamorphic-only set. CONSEQUENCE ACCEPTED: they enter the accuracy denominator, so every published figure computed over the golden corpus must be RESTATED against the new membership. Record it in DECISIONS.md and flag it on #49, since the split is not frozen.
+
+B6 (#58) -- AUTHORISED, ~$0.01: re-mark q11b ALONE, perturbed and unperturbed, ~10x each. This supersedes the earlier control-arm design. Bullet 4 ticks on the result either way.
+
+B9 (#98) -- MARK BAND ONLY, ratified as implemented. The 2026-08-25T14:41:54 record governs over DA2 / 2026-08-19T01:05.
+
+B10 (#98) -- DEVIATION RATIFIED, AND AMEND DA2'S TEXT: the rank hashes full leaf identity (paper_id, question_id) per DA6, not question_id alone. Correct the written decision so the literal formula is not found and reused later.
+
+B12 (#105) -- PER MARK POINT, per spec section 6, is the published H7 figure. Wire mark_point_verdicts, which is currently declared and never read. Expect LOWER agreement than totals-equality: that is the measurement working, not a regression.
+
+B13 (#59) -- AUTHORISED as its own work: the multi-render GoldenCase data-model change gets its own issue and its own effort estimate. #59's stated "Effort: S" is void. #59 runs after it.
+
+B15 (#112) -- FIX ALL THREE SUB-DEFECTS, including marker-not-at-cell-start; take the cell-splitting decision. AGAINST-REC (you recommended 1+2 only and flagged it as the cheaper branch). Mark-changing: needs its own before/after sweep, run jointly with #110.
+
+B16 (#114) -- KEEP THE TOTAL, ANNOTATE AS AN UPPER BOUND. The contamination overstates spend, so ceilings stay conservative. Do NOT re-baseline and do NOT rebuild from per-call logs. Record that cumulative_usd is a known-contaminated upper bound rather than money spent, and keep the re-sum-every-run rule.
+
+B17 -- OPTION 3: give accuracy_board.py a `done` path that closes a non-H issue not on the board, keeping the H-guard by checking the issue's H-number/label directly instead of using board membership as a proxy. Then close #114, #120, #121, #122 and #124 through it. This does NOT fix auto-close (PRs merge to develop; GitHub only auto-closes on main) -- manual `done` is the route.
+
+B14 / H issues -- still owed by me, not you: #51 labeller B identity and onboarding, #52's three seed rulings, #49 split sign-off after #57. Do not work around them.
+
+SEQUENCING: #93 (with B7 folded in) lands first, then regenerate+commit the parsed corpus, then #88 items 1-2 and 4, then #57's costed preflight.
