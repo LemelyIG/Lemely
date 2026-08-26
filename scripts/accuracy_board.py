@@ -644,9 +644,51 @@ def cmd_review(number: int, pr_url: str) -> int:
     return 0
 
 
+def _fetch_issue_off_board(number: int) -> tuple[str, str]:
+    """Fetch (title, state) for an issue straight from GitHub, bypassing the board.
+
+    Board membership used to gate ``done`` entirely (``_require_issue`` raised
+    before the H-guard ever ran), which meant "not on the board" — a fact about
+    project hygiene, not about whether an issue is a human task — blocked every
+    off-board close. This fetches just enough (title for the H-guard, state for
+    idempotency) so `done` can act on an issue with no project item at all.
+    """
+    raw = _run_gh(
+        ["issue", "view", str(number), "--repo", OWNER_REPO, "--json", "number,title,state"]
+    )
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise BoardError(f"gh returned non-JSON for issue #{number}: {raw[:200]!r}") from exc
+    return str(payload["title"]), str(payload["state"])
+
+
 def cmd_done(number: int) -> int:
     issues = _fetch_issues()
-    issue = _require_issue(issues, number)
+    issue = issues.get(number)
+    if issue is None:
+        # Off-board: fetch title/state directly so the H-guard still runs
+        # against the real title, rather than refusing outright. There is no
+        # board item, so there is no Status field to set to Done.
+        title, state = _fetch_issue_off_board(number)
+        off_board_issue = Issue(
+            number=number,
+            title=title,
+            state=state,
+            parent=None,
+            status=None,
+            size=None,
+            item_id="",
+        )
+        if _h_guard(off_board_issue, "close"):
+            return 2
+        if state == "CLOSED":
+            print(f"#{number} is already closed (off-board: no project item to check)")
+            return 0
+        _run_gh(["issue", "close", str(number), "--repo", OWNER_REPO])
+        print(f"#{number} closed (off-board: no project item, so no Status was set)")
+        return 0
+
     if _h_guard(issue, "close"):
         return 2
     _set_status(issue.item_id, "Done")

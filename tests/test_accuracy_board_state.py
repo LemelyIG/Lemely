@@ -17,6 +17,7 @@ test rather than another repair.
 from __future__ import annotations
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 
@@ -130,6 +131,123 @@ def test_spend_usd_increment_still_works(state_file):
 
     spend = next(line for line in path.read_text().split("\n") if line.startswith("spend_usd:"))
     assert spend.split(": ", 1)[1].startswith("1.4")
+
+
+class TestDoneForOffBoardIssues:
+    """B17 option 3: ``done`` must close a non-H issue that has no board item.
+
+    Board membership used to be a proxy for the H-guard (``_require_issue``
+    raised before the guard could even run), which meant an issue simply not
+    being on the board — not a human-task property — was what blocked `done`.
+    This closes #114, #120, #121, #122, #124, none of which are on the board.
+
+    The H-guard itself must still work identically off-board: it is checked
+    directly against the fetched title, never against board membership.
+    """
+
+    def _on_board_issue(self, board, number: int, title: str, state: str = "OPEN"):
+        return board.Issue(
+            number=number,
+            title=title,
+            state=state,
+            parent=23,
+            status="Ready",
+            size=None,
+            item_id="item-xyz",
+        )
+
+    def _gh_stub(self, monkeypatch, board, *, view_title: str, view_state: str = "OPEN"):
+        """Patch ``_run_gh`` to answer ``issue view`` and record every call."""
+        calls: list[list[str]] = []
+
+        def fake_run_gh(args, stdin_text=None):
+            calls.append(args)
+            if args[:2] == ["issue", "view"]:
+                payload = {"number": int(args[2]), "title": view_title, "state": view_state}
+                return json.dumps(payload)
+            if args[:2] == ["issue", "close"]:
+                return ""
+            raise AssertionError(f"unexpected gh invocation in this test: {args}")
+
+        monkeypatch.setattr(board, "_run_gh", fake_run_gh)
+        return calls
+
+    def _forbid_set_status(self, monkeypatch, board):
+        def fail(*_a, **_kw):
+            raise AssertionError("_set_status must not be called: there is no board item")
+
+        monkeypatch.setattr(board, "_set_status", fail)
+
+    def test_off_board_non_h_issue_closes_and_skips_set_status(self, monkeypatch):
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(board=board, monkeypatch=monkeypatch, view_title="M1.6 — some fix")
+
+        assert board.cmd_done(114) == 0
+
+        close_calls = [c for c in calls if c[:2] == ["issue", "close"]]
+        assert len(close_calls) == 1
+        assert close_calls[0][2] == "114"
+
+    def test_off_board_h_issue_is_refused_exit_2_no_close(self, monkeypatch):
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(
+            board=board, monkeypatch=monkeypatch, view_title="H4 — human approval needed"
+        )
+
+        assert board.cmd_done(4999) == 2
+
+        close_calls = [c for c in calls if c[:2] == ["issue", "close"]]
+        assert close_calls == [], "H-guard must fire before any close is attempted"
+
+    def test_on_board_non_h_issue_is_unchanged(self, monkeypatch):
+        board = _load_board()
+        issue = self._on_board_issue(board, 200, "M1.2 — positional fallback deletion")
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {200: issue})
+
+        set_status_calls: list[tuple[str, str]] = []
+        monkeypatch.setattr(
+            board, "_set_status", lambda item_id, status: set_status_calls.append((item_id, status))
+        )
+        calls = self._gh_stub(board=board, monkeypatch=monkeypatch, view_title=issue.title)
+
+        assert board.cmd_done(200) == 0
+
+        assert set_status_calls == [("item-xyz", "Done")]
+        close_calls = [c for c in calls if c[:2] == ["issue", "close"]]
+        assert len(close_calls) == 1
+        assert close_calls[0][2] == "200"
+
+    def test_on_board_h_issue_is_still_refused_exit_2(self, monkeypatch):
+        board = _load_board()
+        issue = self._on_board_issue(board, 49, "H4 — human approval")
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {49: issue})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(board=board, monkeypatch=monkeypatch, view_title=issue.title)
+
+        assert board.cmd_done(49) == 2
+
+        close_calls = [c for c in calls if c[:2] == ["issue", "close"]]
+        assert close_calls == [], "H-guard must fire before any close is attempted"
+
+    def test_nonexistent_issue_fails_clearly(self, monkeypatch):
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+
+        def fake_run_gh(args, stdin_text=None):
+            if args[:2] == ["issue", "view"]:
+                raise board.BoardError(
+                    "gh issue view failed (exit 1): GraphQL: Could not resolve to an Issue"
+                )
+            raise AssertionError(f"unexpected gh invocation: {args}")
+
+        monkeypatch.setattr(board, "_run_gh", fake_run_gh)
+
+        with pytest.raises(board.BoardError, match="Could not resolve"):
+            board.cmd_done(999999)
 
 
 class TestAppendBlockerIsIdempotent:
