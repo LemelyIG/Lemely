@@ -11489,3 +11489,84 @@ assumed, which surfaced the 1.74× at **n=1** and confirmed 1.83× at n=6. The #
 preflight was wrong by 4–5× and was only discovered when that sweep tripped its
 own in-process brake mid-run. **Cost of catching it this way: $0.42 against a
 $13.31 job.** The 6 parsed schemes are kept.
+
+---
+
+## DA14 — the whitespace golden fixtures (B5 / #88 item 6), and why the consequence B5 accepted did not arrive
+
+**Date:** 2026-08-26 (run 44) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B5** — *"ORDINARY GOLDEN CASES. AGAINST-REC. The whitespace
+fixtures join the normal corpus, not a metamorphic-only set. CONSEQUENCE
+ACCEPTED: they enter the accuracy denominator, so every published figure
+computed over the golden corpus must be RESTATED against the new membership.
+Record it in DECISIONS.md and flag it on #49, since the split is not frozen."*
+· **Spend: $0.00.**
+
+### The problem it fixes
+
+`normalise_answer_whitespace` reported **0 held / 0 violated / 71 skipped**. Every
+one of the 71 golden answers was already whitespace-normal, so the transform was
+a strict no-op corpus-wide and **no amount of spend could buy evidence for the
+property**. It was a test that could never fail.
+
+### What shipped
+
+A fourth fixture variant, `tests/golden/0580_s23_qp_22_theory_whitespace/`,
+loaded as an ordinary golden case exactly as B5 required — not a
+metamorphic-only side set. `_whitespace` was added to
+`_FIXTURE_VARIANT_SUFFIXES` (`lemely/accuracy/harness.py`). The property now
+reports **7 held / 71 skipped** where it reported 0 held.
+
+**Marks are inherited, never invented.** Each answer is its `_correct` sibling's
+answer with whitespace injected, carrying the sibling's `awarded_marks`
+unchanged. Assigning a mark is examiner judgment (MISSION §12.7) and is not
+something this work was entitled to do; a test asserts mark-for-mark equality
+with the sibling, and another asserts the answers differ from it **only** by
+whitespace.
+
+### The part that must not be glossed: B5's accepted consequence did not occur
+
+B5 accepted that the fixtures "enter the accuracy denominator" and that **every
+published figure must be restated**. **They did not, and no figure needs
+restating.** Saying so plainly matters more than appearing to have honoured the
+instruction:
+
+- DA6 counts distinct leaves by **`(paper_id, question_id)`**.
+- A *variant* shares its sibling's `paper_id`, exactly as `_correct`/`_partial`/
+  `_wrong` already do.
+- So the corpus went from **71 rows → 78 rows** while distinct leaves stayed at
+  **31**.
+
+Wilson intervals, n-floors and every power figure are computed on `n`, not on
+row count, so all of them are **unchanged**. This was chosen deliberately over
+minting a new `paper_id`, which *would* have added 7 correlated duplicate leaves
+— inflating `n` with the same content counted twice and understating variance.
+That is the narrowed/inflated-denominator failure mode, and it was available and
+declined.
+
+The restatement B5 pre-authorised is therefore **not spent**. If a future fixture
+adds a genuinely new paper, the consequence lands then and this entry is not
+licence to skip it.
+
+### A limit discovered by the renderer, worth recording rather than re-finding
+
+The first attempt injected tabs and newlines. `synth.py`'s render-fidelity guard
+**refused them**: `no vendored font has a glyph for '\t' (U+0009)`. That guard is
+M0.0/#56's work behaving correctly, and it means **a golden fixture that must
+render to `scan.pdf` structurally cannot carry a tab or a newline**.
+
+So the property's coverage is **space runs and leading/trailing strip only**.
+Tab and newline normalisation remain **untested and untestable through a rendered
+fixture** — not overlooked, and not fixable by adding more fixtures of this kind.
+Closing that gap needs either a vendored font with those glyphs or a fixture that
+never renders, and neither is decided here.
+
+### Corpus constants that moved, for anyone citing them
+
+`tests/eval/test_analyses.py` pinned `len(records) == 71` in two places; both now
+read **78**, with `wilson(...)["n"] == 31` **untouched** in both. The two are now
+a stronger demonstration of the DA6 rows-vs-leaves distinction than before: 78
+rows collapsing to 31 leaves. **Do not cite 71 as the row count, or 28 as the
+leaf count.**
+
+Flagged on **#49** as B5 required, since the split is not frozen.
