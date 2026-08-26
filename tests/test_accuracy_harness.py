@@ -72,6 +72,108 @@ class LoadGoldenCasesTests(unittest.TestCase):
             cases = load_golden_cases(Path(tmp))
         self.assertIsNotNone(cases[0].scan_path)
 
+    # -- #137: more than one render of the SAME paper -----------------
+
+    def test_extra_renders_do_not_add_cases(self):
+        """The property the whole design rests on.
+
+        Every interval and power figure in this programme is computed on
+        distinct leaves keyed ``(paper_id, question_id)`` (DA6). A render that
+        produced its own case would inflate ``n`` with a duplicate of a leaf
+        that already exists — the trap #134 declined for the whitespace
+        fixture. One directory, one case, however many renders.
+        """
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "scan.pdf").write_bytes(b"%PDF-1.4")
+            (case_dir / "scan.handwritten.pdf").write_bytes(b"%PDF-1.4")
+            (case_dir / "scan.rescanned.pdf").write_bytes(b"%PDF-1.4")
+            cases = load_golden_cases(Path(tmp))
+
+        self.assertEqual(len(cases), 1, "three renders, still one case")
+        self.assertEqual(len(cases[0].ground_truth), 1, "and still one leaf")
+
+    def test_renders_are_discovered_and_named(self):
+        from lemely.accuracy.harness import DEFAULT_RENDER, load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "scan.pdf").write_bytes(b"%PDF-1.4")
+            (case_dir / "scan.handwritten.pdf").write_bytes(b"%PDF-1.4")
+            cases = load_golden_cases(Path(tmp))
+
+        case = cases[0]
+        self.assertEqual(case.render_names, [DEFAULT_RENDER, "handwritten"])
+        self.assertEqual(case.render("handwritten"), case_dir / "scan.handwritten.pdf")
+        self.assertEqual(case.render(), case.scan_path)
+
+    def test_scan_path_and_default_render_never_disagree(self):
+        """Two names for one path must not become two sources of truth."""
+        from lemely.accuracy.harness import DEFAULT_RENDER, load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "scan.pdf").write_bytes(b"%PDF-1.4")
+            cases = load_golden_cases(Path(tmp))
+
+        self.assertEqual(cases[0].renders[DEFAULT_RENDER], cases[0].scan_path)
+
+    def test_a_case_with_no_scan_has_no_renders(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp))
+            cases = load_golden_cases(Path(tmp))
+
+        self.assertIsNone(cases[0].scan_path)
+        self.assertEqual(cases[0].renders, {})
+        self.assertEqual(cases[0].render_names, [])
+        self.assertIsNone(cases[0].render("handwritten"))
+
+    def test_an_alternate_render_without_a_default_is_still_found(self):
+        """A fixture may have only the non-default render.
+
+        ``scan_path`` stays ``None`` — nothing pretends the default exists —
+        but the render is discoverable, so #59 can pair renders across a
+        corpus where not every case carries both.
+        """
+        from lemely.accuracy.harness import DEFAULT_RENDER, load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "scan.handwritten.pdf").write_bytes(b"%PDF-1.4")
+            cases = load_golden_cases(Path(tmp))
+
+        self.assertIsNone(cases[0].scan_path)
+        self.assertNotIn(DEFAULT_RENDER, cases[0].renders)
+        self.assertEqual(cases[0].render_names, ["handwritten"])
+
+    def test_renders_are_orthogonal_to_fixture_variant(self):
+        """Same paper + different ANSWERS is a variant; + different IMAGE is a render.
+
+        Conflating them is how a render would end up inflating the leaf count,
+        so this asserts both axes hold at once: two variant directories, one of
+        them carrying an extra render, give two cases sharing one ``paper_id``.
+        """
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            correct = self._make_case_dir(root, name="0625_x_theory_correct")
+            wrong = self._make_case_dir(root, name="0625_x_theory_wrong")
+            (correct / "scan.pdf").write_bytes(b"%PDF-1.4")
+            (correct / "scan.handwritten.pdf").write_bytes(b"%PDF-1.4")
+            (wrong / "scan.pdf").write_bytes(b"%PDF-1.4")
+            cases = load_golden_cases(root)
+
+        self.assertEqual(len(cases), 2, "variants are cases; renders are not")
+        self.assertEqual({c.paper_id for c in cases}, {"0625_x_theory"})
+        by_variant = {c.fixture_variant: c for c in cases}
+        self.assertEqual(by_variant["correct"].render_names, ["default", "handwritten"])
+        self.assertEqual(by_variant["wrong"].render_names, ["default"])
+
     def test_skips_dir_without_required_files(self):
         from lemely.accuracy.harness import load_golden_cases
 
