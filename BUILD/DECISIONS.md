@@ -11327,3 +11327,109 @@ catch-all from the strata count); the census `manifest.json`; three citations in
 believed on the day; rewriting it would falsify the audit trail. They are
 superseded by this entry, and the original buggy census output is preserved
 verbatim at `census-leaves.txt` beside the corrected one for the same reason.
+
+---
+
+## DA13 — `per_run_token_ceiling` raised 2M → 5M, and the re-cost that sized it (#88 items 4 and 2)
+
+**Date:** 2026-08-26 · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-25T17:36:27+03:00, #88 item 4 — *"raise `per_run_token_ceiling`
+(`lemely.toml:19`) deliberately to cover the largest preflight scenario and run
+the parse as ONE job. Batching is NOT required. Record the raise and its reason
+in DECISIONS.md."* · **Spend: $0.00.** No Gemini call was made to produce any
+number below.
+
+### This entry is the only durable record of the raise
+
+`lemely.toml` is **gitignored** (`.gitignore:47`) and has never been tracked.
+The raise therefore does **not** survive deletion of this worktree, is invisible
+to CI, and is invisible to every other worktree — the same hazard class as
+DA11's per-worktree spend ledger. If the ceiling appears to be 2,000,000
+somewhere, that is not a regression to investigate: it is a different
+`lemely.toml`. The value now in this worktree is:
+
+```toml
+per_run_token_ceiling = 5000000   # was 2000000
+```
+
+### The number it was sized against, re-measured rather than scaled
+
+The 2026-08-24 preflight on #88 sized the job over the **229**-scheme det
+failure set. #93 landed and moved 39 of those (0625 paper 2) to the free det
+path, leaving **190**. The standing instruction was explicit that this must not
+be scaled linearly, because the 39 removed are short MCQ papers, so dropping
+them **raises** the per-paper average for what remains.
+
+**That warning is now measured, not assumed.** Script and artifact:
+`BUILD/accuracy-runs/preflight-88-2026-08-26/` (`recost_88.py`, `recost.json`).
+
+| | 2026-08-24 basis | re-measured 2026-08-26 |
+|---|---|---|
+| schemes in the paid set | 229 | **190** (−17.0%) |
+| total pages | 2,084 | **1,967** (−5.6%) |
+| **mean pages per scheme** | 9.1 | **10.35** (+13.7%) |
+
+The count fell 17% while the pages fell only 5.6%. A linear 190/229 scale would
+have understated the job by roughly that gap. Verified while measuring: the 190
+is an exact **subset** of the old 229, and exactly 39 were removed — the two
+censuses describe the same population, so the comparison is like-for-like.
+
+### Two output models, and why the higher one governs
+
+Token model unchanged from 2026-08-24 so the estimates stay comparable:
+`input = pages × 258 + 1500` per call; rates $0.30/1M in, $2.50/1M out.
+
+The output side is a **proxy** — det-produced `MarkScheme` JSON standing in for
+the JSON Gemini must emit — sized over the 210 non-MCQ schemes in the committed
+`corpus/`. MCQ schemes are excluded because they are tiny and are not the shape
+of the failing population.
+
+| scenario | input | output | total | USD |
+|---|---|---|---|---|
+| per-scheme median | 0.79M | 1.87M | 2.67M | $4.92 |
+| per-scheme mean | 0.79M | 2.19M | 2.98M | $5.70 |
+| per-**page** median | 0.79M | 2.63M | 3.42M | $6.82 |
+| per-**page** mean | 0.79M | 2.81M | **3.60M** | **$7.26** |
+
+**The per-page rows govern, and the reason is the same bias again.** The
+per-scheme model applies a flat per-scheme output to a set whose papers are
+**+23.4% longer** than the proxy population they were measured on (10.35 pages
+vs 8.39). Holding output constant per scheme while the schemes get longer is
+precisely the error the linear-scaling warning describes, one level down. The
+per-scheme rows are kept in the table because they reproduce the 2026-08-24
+figures almost exactly ($4.92 vs $4.88, $5.70 vs $5.66), which is what confirms
+the two runs share a model — they are the comparability check, not the estimate.
+
+### Why 5,000,000
+
+Largest measured scenario is **3.60M** tokens. 5M is **~39% headroom** over it.
+The headroom is not padding for its own sake: the output side is a det-JSON
+proxy, and Gemini emitting more verbosely than the det parser is the obvious way
+this estimate is wrong in the expensive direction. 5M also keeps the ceiling a
+genuine runaway guard — it trips at ~1.4× the largest projected job, so a
+loop-gone-wrong still hits it — rather than being set so high it stops meaning
+anything.
+
+### What this control is and is not, stated plainly
+
+The inbox item that authorised this raise noted, correctly, that combined with
+item 7 it loosens the second of two preflight brakes ahead of the largest
+authorised spend in the programme. That reading is accepted, not softened:
+
+- `_check_cost_ceiling` (`lemely/io/gemini.py:289`) runs **before** a call is
+  issued, so it can never stop a call already in flight. It was never a hard
+  stop.
+- `per_run_token_ceiling` counts input+output **process-wide** and is
+  deliberately *not* reset between sweeps (`start_new_run`, `gemini.py:182`), so
+  it budgets a whole run.
+- **`total_usd_ceiling` ($25.00) is untouched, and MISSION §10's $20.00
+  stop-and-ask is untouched.** Money remains bounded by those.
+- With batching removed as a control, the **preflight estimate above is the
+  primary remaining control on this job**. That is the trade the directive made
+  knowingly, and the estimate is therefore recorded here with its method,
+  its proxy, and its known direction of error rather than as a bare number.
+
+**Precedent that shaped how this was costed:** the #37 preflight was wrong by
+4–5× because an aggregate was read as a per-pass rate, and that sweep tripped
+its own in-process brake mid-run. Every figure above is measured from files on
+disk, and the script that produced them is committed beside the result.
