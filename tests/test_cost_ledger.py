@@ -9,6 +9,7 @@ from pathlib import Path
 import structlog
 
 from lemely.io.cost_ledger import CostLedger
+from tests.conftest import RepoLedgerWriteAttempted
 
 
 class CostLedgerTests(unittest.TestCase):
@@ -110,13 +111,43 @@ class RepoLedgerWriteGuardTests(unittest.TestCase):
         self.assertFalse(target.exists())
         ledger = CostLedger(target)
         try:
-            with self.assertRaises(RuntimeError):
+            with self.assertRaises(RepoLedgerWriteAttempted):
                 ledger.add(1.0, thresholds=[])
         finally:
             # Guard must fire before any write — assert no file was created,
             # then clean up defensively in case the guard failed to fire.
             if target.exists():
                 target.unlink()
+        self.assertFalse(target.exists())
+
+    def test_guard_survives_a_broad_except_exception_handler(self) -> None:
+        """The guard must not be swallowable by application error handling.
+
+        This is the load-bearing property, not a style choice. While #114 was
+        being fixed, an earlier revision raised ``RuntimeError`` and
+        ``correct_paper``'s broad ``except Exception`` caught it: the real
+        ledger was protected, but
+        ``test_mark_submission_low_confidence_non_mcq_queues_review`` went on
+        passing while silently exercising the error-fallback path instead of
+        the ``confidence=0.5`` path it documents. A blocked write that nobody
+        can see is a test-integrity bug wearing the fix's clothes, so the
+        exception deliberately derives from ``BaseException``.
+        """
+        repo_root = Path(__file__).resolve().parent.parent
+        target = repo_root / "outputs" / "gemini_spend_TEST_GUARD_UNMASKABLE.json"
+        ledger = CostLedger(target)
+        swallowed = False
+        try:
+            try:
+                ledger.add(1.0, thresholds=[])
+            except Exception:  # deliberately mimics correct_paper's broad handler
+                swallowed = True
+        except RepoLedgerWriteAttempted:
+            pass
+        finally:
+            if target.exists():  # pragma: no cover - guard failed if reached
+                target.unlink()
+        self.assertFalse(swallowed, "a broad `except Exception` swallowed the ledger guard")
         self.assertFalse(target.exists())
 
     def test_tmp_dir_path_still_writes_and_reads_normally(self) -> None:

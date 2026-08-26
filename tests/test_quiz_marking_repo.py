@@ -286,7 +286,11 @@ def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
     mock_genai.models.generate_content.side_effect = responses
     mock_genai.files.upload.return_value = MagicMock()
     settings = load_settings(toml_path=None, cwd=tmp_path)
-    settings = settings.model_copy(update={"paths": PathsSettings(cache_dir=tmp_path / ".cache")})
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
+        }
+    )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 
@@ -297,7 +301,11 @@ def _never_called_gemini_client(tmp_path: Path) -> GeminiClient:
         "Gemini must not be called for an all-MCQ quiz"
     )
     settings = load_settings(toml_path=None, cwd=tmp_path)
-    settings = settings.model_copy(update={"paths": PathsSettings(cache_dir=tmp_path / ".cache")})
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
+        }
+    )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 

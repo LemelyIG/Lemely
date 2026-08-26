@@ -79,6 +79,16 @@ def _forbid_live_gemini_calls() -> Iterator[None]:
         gemini_module.GeminiClient._client = property(original)  # type: ignore[method-assign]
 
 
+class RepoLedgerWriteAttempted(BaseException):
+    """Raised when a test tries to write the repo's real spend ledger.
+
+    Derives from :class:`BaseException`, not :class:`Exception`, so that broad
+    ``except Exception`` handlers in production code cannot swallow it and turn
+    a blocked write into a silently-passing test. See
+    :func:`_forbid_repo_ledger_writes` for the incident that forced this.
+    """
+
+
 @pytest.fixture(scope="session", autouse=True)
 def _forbid_repo_ledger_writes() -> Iterator[None]:
     """Make it impossible for a test to write the real ``outputs/gemini_spend.json``.
@@ -122,6 +132,22 @@ def _forbid_repo_ledger_writes() -> Iterator[None]:
     the repo) or false-negative (missing a real repo-internal path expressed
     through a symlink). Resolving both sides first makes the containment check
     exact.
+
+    Finally, the guard raises :class:`RepoLedgerWriteAttempted`, which derives
+    from :class:`BaseException` rather than :class:`Exception`. That is not
+    stylistic — it is the whole difference between a guard and a decoration.
+    An earlier revision raised ``RuntimeError`` and was caught in the wild:
+    ``correct_paper``'s broad ``except Exception`` handler
+    (``lemely/io/correction_ai.py``) swallowed it, logged ``ai_marking_failed``,
+    and fell through to ``_build_missing_corrected``. The real ledger was
+    protected, but ``test_quiz_marking_repo.py``'s low-confidence test stayed
+    **green while silently exercising the error-fallback path instead of the
+    ``confidence=0.5`` path it documents** — the guard had converted a visible
+    data-corruption bug into an invisible test-integrity one. Deriving from
+    ``BaseException`` puts the guard outside every ``except Exception`` in
+    production code, so a masked write becomes a hard, immediate test failure
+    that names its own cause. This mirrors how ``KeyboardInterrupt`` and
+    pytest's own ``Failed`` avoid being eaten by application error handling.
     """
     import lemely.io.cost_ledger as cost_ledger_module
 
@@ -133,7 +159,7 @@ def _forbid_repo_ledger_writes() -> Iterator[None]:
     ) -> None:
         resolved = self._path.resolve()
         if resolved.is_relative_to(repo_root):
-            raise RuntimeError(
+            raise RepoLedgerWriteAttempted(
                 f"A test tried to write the real spend ledger at {resolved}. "
                 "Automated tests must never touch the repo's real "
                 "outputs/gemini_spend.json — pass output_dir=Path(tmp) / "
