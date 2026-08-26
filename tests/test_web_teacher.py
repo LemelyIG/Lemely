@@ -76,11 +76,33 @@ _TEACHER_AUTH = AuthContext(user_id="teacher-1", role="teacher")
 
 @pytest.fixture
 def settings(tmp_path: Path) -> Settings:
-    """A Settings instance whose output_dir points at an isolated tmp directory."""
+    """A Settings instance whose output_dir points at an isolated tmp directory.
+
+    ``gemini_api_key`` is forced to ``None`` rather than left to whatever
+    ``load_settings()`` happened to read from ``os.environ``: most of this
+    module's tests (via the ``client`` fixture) rely on "no key configured"
+    to keep metadata detection off, and a developer's own exported
+    ``GEMINI_API_KEY`` (CLAUDE.md has them export one) — or another test
+    leaking it into the process env — must not silently flip that branch on.
+    Tests that need a key ask for one explicitly via :func:`_key_settings`.
+
+    Built with :meth:`~pydantic.BaseModel.model_copy`, not
+    ``model_dump()``/``model_validate()``: ``Settings`` is a
+    ``pydantic-settings`` ``BaseSettings`` whose ``env_settings`` source
+    outranks explicit init data (see ``settings_customise_sources`` in
+    ``lemely/runtime/config.py`` — env beats init by design), so
+    round-tripping through ``model_validate`` re-reads ``GEMINI_API_KEY``
+    from the environment and silently discards an explicit
+    ``gemini_api_key=None`` override. ``model_copy`` just copies fields; it
+    does not revalidate against the environment.
+    """
     base = load_settings()
-    data = base.model_dump()
-    data["paths"]["output_dir"] = tmp_path / "outputs"
-    return Settings.model_validate(data)
+    return base.model_copy(
+        update={
+            "paths": base.paths.model_copy(update={"output_dir": tmp_path / "outputs"}),
+            "gemini_api_key": None,
+        }
+    )
 
 
 @pytest.fixture
@@ -381,12 +403,19 @@ def _seed_history_record(
 
 
 def _key_settings(settings: Settings) -> Settings:
-    """Return a copy of ``settings`` carrying a dummy API key."""
+    """Return a copy of ``settings`` carrying a dummy API key.
+
+    Uses :meth:`~pydantic.BaseModel.model_copy` for the same reason the
+    ``settings`` fixture above does: ``model_dump()``/``model_validate()``
+    round-trips a ``BaseSettings`` back through ``env_settings``, which
+    outranks the explicit data, so a developer's exported ``GEMINI_API_KEY``
+    silently replaced this dummy and the tests ran against a real credential
+    locally while CI ran them against ``"test-key"``. ``model_copy`` sets the
+    field and nothing else.
+    """
     from pydantic import SecretStr
 
-    data = settings.model_dump()
-    data["gemini_api_key"] = SecretStr("test-key")
-    return Settings.model_validate(data)
+    return settings.model_copy(update={"gemini_api_key": SecretStr("test-key")})
 
 
 def test_upload_filename_cannot_escape_sandbox(client: TestClient, settings: Settings) -> None:
