@@ -9,6 +9,7 @@ import { Button, buttonVariants } from "@/components/ui/button"
 import { SkeletonLine } from "@/components/ui/skeleton"
 import { verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
+import { postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
 
 /*
  * G-07 · Email verification, pending and confirm — the Study Notebook.
@@ -74,23 +75,18 @@ import { AuthFrame } from "./Login"
  *
  * ── Binding requirement 4: confirm routes to the role home ──────────────────
  *
- * See `postVerifyPath`'s own docstring for exactly what "the role home" can
- * and cannot mean against this contract.
+ * See `postVerifyPath`'s own docstring (`./verifyEmailLogic.ts`) for exactly
+ * what "the role home" can and cannot mean against this contract.
  *
- * ── Why `postVerifyPath` and `resendButtonLabel` are not exported ──────────
+ * ── Where the pure logic lives ──────────────────────────────────────────────
  *
- * Both are genuinely pure and were written, and are documented, as if they
- * would be unit-pinned the way `studentOnboardingRedirect`
- * (`portals/student/index.tsx`) is. They are kept module-private instead:
- * `oxlint`'s `react/only-export-components` (`.oxlintrc.json`) warns on any
- * named export sitting alongside a component export in one file, and this
- * file's only two authorised paths (this one, and an optional
- * `tests/unit/verifyEmail.test.ts`) do not include a third, non-component
- * module to move them into, which is the fix the warning itself suggests.
- * "No new lint warnings" is one of this task's binding gates, so the
- * functions stay here, unexported, exercised only through `VerifyEmail`
- * itself — real coverage lives in the Task 23 Playwright journey rather than
- * in a unit test this constraint set makes impossible to add cleanly.
+ * `postVerifyPath` and `resendButtonLabel` are in `./verifyEmailLogic.ts`,
+ * not here — the same split `onboardingData.ts` uses for the S-01/S-02
+ * wizard (pure logic in its own module, tested directly by
+ * `verifyEmail.test.ts`; component behaviour is Playwright's job, Task 23).
+ * It is also the house fix for `oxlint`'s `react/only-export-components`
+ * (`.oxlintrc.json`), which would otherwise warn on this file: a component
+ * module may not also export plain functions without one.
  */
 
 /**
@@ -103,41 +99,6 @@ import { AuthFrame } from "./Login"
  * again before the server would plausibly accept it.
  */
 const RESEND_COOLDOWN_SECONDS = 30
-
-/**
- * Where a confirmed `/verify-email/:token` sends the reader (binding
- * requirement 4: "confirms and routes to the role home").
- *
- * `VerifyEmailResponse` (`authTypes.ts`) is `{ status: "verified" }` and
- * nothing else. The redeem route is public (spec §4.3's API table), so it
- * verifies whichever account the token names — it is not scoped to the
- * caller's own bearer token — and its response carries no role to route on.
- * The only signal this screen has for "the role home" is therefore the
- * browser's own live session, which is a sound read of the path spec §5.1
- * describes (the same person, on the same device they signed up on,
- * following a link in the same browser) but not a guarantee for every path a
- * verification link can be opened from. With no role on the wire to trust
- * instead, routing off the live session is the honest best available answer;
- * a reader with no session at all is sent to sign in rather than guessed at.
- */
-function postVerifyPath(session: Pick<Session, "role"> | null): string {
-  if (!session) return "/login"
-  return portalPathForRole(session.role)
-}
-
-/**
- * The resend button's label, pinned as a pure function because the priority
- * between "counting down" and "in flight" is exactly the kind of ordering
- * that silently inverts in a refactor and only shows up as a flash of wrong
- * text on screen. Cooldown wins: once a send has been accepted, the count is
- * the fact worth showing even while the tail of that same request is still
- * settling `isPending` back to false.
- */
-function resendButtonLabel(state: { cooldownSeconds: number; isPending: boolean }): string {
-  if (state.cooldownSeconds > 0) return `Resend link in ${state.cooldownSeconds}s`
-  if (state.isPending) return "Sending…"
-  return "Resend verification link"
-}
 
 /**
  * The §G-07 developer affordance, worded on the same "Developer only" pattern
