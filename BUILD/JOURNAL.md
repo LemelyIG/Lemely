@@ -2673,3 +2673,74 @@ them whether or not Phase 6 fixes them.
   sub-defects, mark-changing, joint sweep with #110), B16 (#114 annotate `cumulative_usd` as a
   contaminated upper bound). **Still the human's:** #88 item 2 (preflight falsified 1.83×, sweep
   stopped), B1/#41 (stopped on a falsified premise), and the four open H issues.
+
+## run-2026-08-26-c — B16: the spend ledger is an upper bound, and says so at source
+
+- **#138 landed.** All five CI checks green, and the supervisor sweep passed over its **exact sha**
+  (`13802c3`), so §9.3's pytest condition is satisfied by evidence rather than by assertion. Merged
+  as `8bcf0f7`; queue empty again; no new inbox directive.
+- **B16 done, zero spend.** `cumulative_usd` is now documented at source
+  (`lemely/io/cost_ledger.py`) as an **UPPER BOUND on money spent, not money spent**, with the
+  mechanism re-verified rather than carried forward: bare `load_settings()` in some tests resolves
+  `paths.output_dir` to the real repo, and `GeminiClient` builds its ledger path from exactly that
+  (`gemini.py:162`). **DA17** amends DA11 — "authoritative for money spent" narrows to
+  "authoritative as a conservative upper bound" — and keeps the total, with no re-baseline and no
+  rebuild from per-call logs, as B16 required.
+- **The ground for keeping a contaminated number is direction, not convenience.** Contamination is
+  **one-directional**: a test can add cost, never remove it. So a contaminated total can only
+  *overstate* spend and every ceiling check against it stays conservative, whereas re-baselining
+  would swap a known-conservative figure for a reconstructed one that would itself need auditing.
+- **One observation, recorded as an observation.** The 20:05Z supervisor sweep (21 min, full
+  `pytest`) did **not** move this worktree's ledger — `2.7336773500000575`, `updated_at`
+  `19:33:25Z`, the B6 run's own figure, unchanged either side. So the contamination is
+  **intermittent, not every-sweep**. That is one uninstrumented sweep; it does **not** close #114
+  and is **not** evidence the writer is gone, and DA17 says so in those words.
+- **The gap is named rather than implied.** This annotation does not stop the writes. #114's scope
+  item 2 — the autouse guard that would fail any test resolving `output_dir` inside the repo — is
+  unstarted, and #114 is CLOSED. An annotation that read as a resolution would leave the next run
+  treating the ledger as exact, which is the failure this entry exists to prevent.
+- **Docstring-only diff**, so there is nothing to regress and no regression test ships with it;
+  `tests/test_cost_ledger.py` 12/12 green (with `--no-cov`, since one module cannot clear the 70%
+  project floor).
+- **Still owed by me:** B12 (#105), B15 (#112). **Still the human's:** #88 item 2, B1/#41, the two
+  questions raised on #58 in run 47, and the four open H issues.
+
+## run-2026-08-26-d — agreement moves to the mark point; a fabricated zero caught in self-review
+
+- **#141 merged** (`0bf1672`) on all five green checks plus a supervisor sweep over its exact
+  tip `2565436`. **#140 closed** through `accuracy_board.py done`'s off-board path (B17's route) and
+  verified CLOSED, since PRs merge to `develop` and GitHub only auto-closes on `main`.
+- **B12 implemented, zero spend.** `mark_point_verdicts` was declared and **never read**, so
+  agreement was equality of `awarded_marks` totals and two labellers awarding 2/3 by crediting
+  **different** mark points counted as agreeing. The headline is now per mark point, keyed
+  `(paper_id, question_id, mark_point_id)` — DA6's key plus one component, for the reason DA6
+  exists. **DA18** records the unit, the two-stage funnel and why the totals figure was kept.
+- **The design decision most worth attacking, so it is stated plainly:**
+  `shared_leaves_without_shared_points`. A leaf both labellers marked can contribute **zero**
+  points — no verdicts, or disjoint ids — and under a per-point denominator those vanish with no
+  trace of why `n` shrank. That is the narrowed-denominator failure mode in a new costume, so it
+  is counted and returned rather than described.
+- **I caught a defect in my own diff before it landed, and fixed it rather than shipping it.**
+  `totals_point` was a bare rate: at `totals_n == 0` it read `0.0`, which is indistinguishable
+  from genuine total disagreement, and unlike the headline the secondary had **no interval** to
+  say which. It now comes from the same `_wilson_interval` helper, so no data spans `[0.0, 1.0]`
+  and real 0/1 disagreement does not. The regression test asserts that **distinction**, not the
+  zero. A secondary figure that can publish a fabricated zero is worse than no secondary figure.
+- **Tests: six new, all proven to fail on the pre-change code**, including the case B12 exists to
+  catch and one built so it **cannot pass by coincidence** on totals-equality code. The eight
+  existing agreement tests were **updated to assert the `totals_*` secondary, not deleted** —
+  every property they guard (DA6 leaf identity, last-record-wins, shared-leaves-only,
+  no-mutation) is still guarded, because both figures now derive from one shared collapse helper.
+- **A correction to my own first edit, recorded because it nearly shipped:** the mechanical
+  rename of `result["n"]` was scoped between two class markers and the new class had been
+  appended at end of file, so it silently rewrote **15 assertions in six unrelated test classes**.
+  Caught by running the file, reverted precisely, and the run ends green.
+- **B15 (#112/#110) NOT started, deliberately, and the question is posted rather than assumed.**
+  B15 requires a before/after sweep run jointly across the two. The golden harness reads
+  **pre-parsed** `mark_scheme.json` and never invokes the det parser, so that sweep is null by
+  construction — the same ground #38 (A6(a)) and #93 (B2) were waived on, which B15 was not
+  shown. Unlike those, this one **is** measurable deterministically at **$0.00** over the 289
+  schemes committed under `corpus/`. Both questions are on #112 and #110. Starting the
+  implementation now would produce another complete-but-unmergeable branch, which is exactly what
+  the 2026-08-24 gate-9 ruling was written to retire.
+- **Spend unchanged: $0.00 this run**, ledger still 3.138147 programme-wide.
