@@ -534,15 +534,46 @@ def _distinct_marking_leaves(records: list[MarkingLeafRecord]) -> dict[tuple[str
     for the per-mark-point shape spec §6 anticipates, and must not be
     justified by a construction that does not exist.)
     """
+    return {k: r["awarded_marks"] for k, r in _leaf_representatives(records).items()}
+
+
+def _leaf_representatives(
+    records: list[MarkingLeafRecord],
+) -> dict[tuple[str, str], MarkingLeafRecord]:
+    """Collapse raw marking records to one representative record per leaf.
+
+    The selection rule is :func:`_distinct_marking_leaves`' — last record wins,
+    question-level preferred among the latest — factored out so the totals
+    figure and the per-mark-point figure are computed from the *same* chosen
+    record. Two selection rules would let the two figures disagree about which
+    record a leaf's label is, which is worse than either rule being wrong.
+    """
     by_leaf: dict[tuple[str, str], list[MarkingLeafRecord]] = {}
     for r in records:
         by_leaf.setdefault((r["paper_id"], r["question_id"]), []).append(r)
-    result: dict[tuple[str, str], int] = {}
+    result: dict[tuple[str, str], MarkingLeafRecord] = {}
     for leaf_key, group in by_leaf.items():
         question_level = [r for r in group if r.get("mark_point_id") is None]
-        representative = question_level[-1] if question_level else group[-1]
-        result[leaf_key] = representative["awarded_marks"]
+        result[leaf_key] = question_level[-1] if question_level else group[-1]
     return result
+
+
+def _distinct_marking_points(
+    records: list[MarkingLeafRecord],
+) -> dict[tuple[str, str, str], bool]:
+    """Expand each leaf's representative record into per-mark-point verdicts.
+
+    **Point identity is ``(paper_id, question_id, mark_point_id)``** — DA6's
+    leaf key with one component added, for the same reason DA6 exists. Keying
+    on ``mark_point_id`` alone would merge ``p1`` from every leaf in the corpus
+    into a single point, shrinking the denominator *and* discarding every
+    disagreement but one: the D18 narrowed-denominator shape one level down.
+    """
+    return {
+        (paper_id, question_id, point_id): verdict
+        for (paper_id, question_id), rep in _leaf_representatives(records).items()
+        for point_id, verdict in rep["mark_point_verdicts"].items()
+    }
 
 
 class AgreementResult(WilsonResult):
@@ -566,6 +597,61 @@ class AgreementResult(WilsonResult):
     b_only: int
     """Distinct leaves B marked that A did not — missing data, not disagreement."""
 
+    shared_leaves: int
+    """Distinct leaves both labellers marked — the leaf-stage denominator.
+
+    Reported because ``n`` counts mark points (B12/#140), so without it the
+    funnel cannot be read: ``n=40`` over 5 shared leaves and ``n=40`` over 40
+    are different measurements.
+    """
+
+    shared_leaves_without_shared_points: int
+    """Shared leaves contributing **zero** shared mark points.
+
+    A leaf both labellers marked can still contribute nothing — neither
+    recorded verdicts, or they recorded disjoint point ids. Under a per-point
+    denominator such leaves vanish without trace, which is the
+    narrowed-denominator failure mode in a new costume; counting them is what
+    makes the shrinkage visible.
+    """
+
+    points_a_only: int
+    """Mark points A recorded that B did not, **within shared leaves only**.
+
+    Scoped to shared leaves deliberately: points belonging to leaves the other
+    labeller never sampled are already accounted for by ``a_only``/``b_only``,
+    and counting them here as well would double-count the same exclusion.
+    """
+
+    points_b_only: int
+    """Mark points B recorded that A did not, within shared leaves only."""
+
+    totals_n: int
+    """Secondary figure: shared leaves scored by ``awarded_marks`` equality."""
+
+    totals_successes: int
+    """Secondary figure: shared leaves whose ``awarded_marks`` totals match."""
+
+    totals_point: float
+    """Secondary figure: the totals-equality agreement rate.
+
+    Kept, not deleted, when B12 moved the headline to mark points. B12 predicts
+    the per-point figure reads **lower**; that prediction is only checkable if
+    both numbers travel together. A single number cannot demonstrate its own drop.
+
+    **Read it with ``totals_lower``/``totals_upper``, never alone.** At
+    ``totals_n == 0`` this is ``0.0`` — the module-wide convention
+    (:func:`_wilson_interval` does the same) — which reads as "0% agreement"
+    rather than "no data". The interval is what disambiguates the two: no data
+    gives ``[0.0, 1.0]``, genuine total disagreement does not.
+    """
+
+    totals_lower: float
+    """Secondary figure: lower Wilson bound on the totals-equality rate."""
+
+    totals_upper: float
+    """Secondary figure: upper Wilson bound on the totals-equality rate."""
+
 
 def agreement_wilson(
     a_records: list[MarkingLeafRecord],
@@ -583,11 +669,27 @@ def agreement_wilson(
     no per-leaf field that could be mistaken for a corrected A-label, only
     the aggregate ``(n, successes, point, lower, upper)`` summary.
 
-    **Denominator, named explicitly**: distinct leaves — keyed
-    ``(paper_id, question_id)`` per DA6 (spec §9 gate 7,
-    ``_distinct_marking_leaves``) — present in **both** ``a_records`` and
-    ``b_records``. A leaf A marked but B did not sample (or vice versa) is
-    excluded from ``n`` — it is missing data, not a disagreement.
+    **The headline figure is PER MARK POINT** (B12, #140), not equality of
+    ``awarded_marks`` totals. Spec §6 defines the pass-2 output per mark point,
+    and two labellers can award the same total by crediting *different* points —
+    totals equality scores that as agreement, which overstates it. Expect the
+    per-point number to read **lower**; that is the measurement working, not a
+    regression, and the totals figure is kept beside it (``totals_n``,
+    ``totals_successes``, ``totals_point``) precisely so the drop is visible.
+
+    **Denominator, named explicitly**: distinct **mark points** — keyed
+    ``(paper_id, question_id, mark_point_id)``, DA6's leaf key with one
+    component added (``_distinct_marking_points``) — recorded by **both**
+    labellers on a leaf **both** marked. Two exclusion stages, both returned
+    rather than described (spec §9 gate 7):
+
+    - **Leaf stage**: a leaf only one labeller marked is missing data, not a
+      disagreement — ``a_only`` / ``b_only``, still counted in *leaves*.
+    - **Point stage**, scoped to shared leaves so nothing is double-counted: a
+      point only one labeller recorded — ``points_a_only`` / ``points_b_only``;
+      and shared leaves contributing **zero** shared points —
+      ``shared_leaves_without_shared_points``, which is the one a per-point
+      denominator would otherwise swallow without trace.
 
     Those exclusions are **returned, not just described** — see
     :class:`AgreementResult`. Gate 7 is not satisfied by a docstring.
@@ -625,13 +727,42 @@ def agreement_wilson(
     a_leaves = _distinct_marking_leaves(a_records)
     b_leaves = _distinct_marking_leaves(b_records)
     shared_leaves = set(a_leaves) & set(b_leaves)
-    n = len(shared_leaves)
-    successes = sum(1 for leaf in shared_leaves if a_leaves[leaf] == b_leaves[leaf])
+
+    # Secondary: the totals-equality figure the headline used to be.
+    totals_n = len(shared_leaves)
+    totals_successes = sum(1 for leaf in shared_leaves if a_leaves[leaf] == b_leaves[leaf])
+
+    # Headline: per mark point, scoped to leaves BOTH labellers marked so a
+    # leaf-level exclusion is never re-counted as a point-level one.
+    a_points = {
+        k: v for k, v in _distinct_marking_points(a_records).items() if k[:2] in shared_leaves
+    }
+    b_points = {
+        k: v for k, v in _distinct_marking_points(b_records).items() if k[:2] in shared_leaves
+    }
+    shared_points = set(a_points) & set(b_points)
+    n = len(shared_points)
+    successes = sum(1 for p in shared_points if a_points[p] == b_points[p])
+
+    leaves_with_shared_points = {p[:2] for p in shared_points}
     interval = _wilson_interval(successes=successes, n=n, z=z)
+    # The totals figure gets its own interval from the SAME helper, not a bare
+    # rate: at totals_n == 0 a lone `0.0` reads as "total disagreement" when it
+    # means "no data", and only the [0.0, 1.0] interval tells the two apart.
+    totals_interval = _wilson_interval(successes=totals_successes, n=totals_n, z=z)
     return {
         **interval,
         "a_only": len(set(a_leaves) - set(b_leaves)),
         "b_only": len(set(b_leaves) - set(a_leaves)),
+        "shared_leaves": len(shared_leaves),
+        "shared_leaves_without_shared_points": len(shared_leaves - leaves_with_shared_points),
+        "points_a_only": len(set(a_points) - set(b_points)),
+        "points_b_only": len(set(b_points) - set(a_points)),
+        "totals_n": totals_n,
+        "totals_successes": totals_successes,
+        "totals_point": totals_interval["point"],
+        "totals_lower": totals_interval["lower"],
+        "totals_upper": totals_interval["upper"],
     }
 
 
