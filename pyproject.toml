@@ -315,6 +315,11 @@ disallow_any_explicit = false
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --cov=lemely --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
+# An exception raised on a background thread (the marking and grading pools in
+# lemely/web/routers/{quiz,teacher}.py never call Future.result()) otherwise
+# surfaces only as a warning and leaves the suite green. #114's ledger guard
+# relies on being loud, so a swallowed thread exception must fail the run.
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 
 [tool.coverage.run]
 source = ["lemely"]

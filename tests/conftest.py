@@ -144,10 +144,34 @@ def _forbid_repo_ledger_writes() -> Iterator[None]:
     **green while silently exercising the error-fallback path instead of the
     ``confidence=0.5`` path it documents** — the guard had converted a visible
     data-corruption bug into an invisible test-integrity one. Deriving from
-    ``BaseException`` puts the guard outside every ``except Exception`` in
-    production code, so a masked write becomes a hard, immediate test failure
+    ``BaseException`` puts the guard outside every ``except Exception`` *on the
+    same call stack*, so a masked write becomes a hard, immediate test failure
     that names its own cause. This mirrors how ``KeyboardInterrupt`` and
     pytest's own ``Failed`` avoid being eaten by application error handling.
+
+    Two limits of this guard, stated here rather than left to be rediscovered:
+
+    1. **It does not cross a thread boundary by itself.** Two ledger-writing
+       paths run off-thread — ``_trigger_marking_in_background``
+       (``lemely/web/routers/quiz.py``) and ``_grading_pool``
+       (``lemely/web/routers/teacher.py``), neither of which calls
+       ``Future.result()``. An exception raised there surfaces only as
+       ``PytestUnhandledThreadExceptionWarning``. That warning is promoted to
+       an error in ``pyproject.toml``'s ``filterwarnings`` precisely so this
+       guard stays loud across those two paths; without that promotion the
+       write would be blocked but invisible. No test reaches a real
+       ``CostLedger`` through either path today (both override the marking
+       service), but the promotion is what keeps that true by accident-proof
+       means rather than by luck.
+    2. **It guards the ledger only, not ``output_dir`` generally.** The same
+       ``paths.output_dir`` also feeds ``HistoryStore``, ``outputs/uploads/``
+       and ``outputs/schemes/``, none of which are guarded, and ``outputs/``
+       is gitignored (``.gitignore:46``) so repo-internal writes there are
+       invisible to a dirty-tree check — which is exactly why this bug
+       survived so long. Measured: the web/CLI fixtures that reach those
+       consumers all set ``output_dir`` into ``tmp_path`` explicitly, and a
+       before/after ``find outputs`` over the relevant modules shows no
+       change, so the narrowing is safe today. It is not a general guarantee.
     """
     import lemely.io.cost_ledger as cost_ledger_module
 

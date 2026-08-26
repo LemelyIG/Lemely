@@ -137,18 +137,24 @@ class RepoLedgerWriteGuardTests(unittest.TestCase):
         target = repo_root / "outputs" / "gemini_spend_TEST_GUARD_UNMASKABLE.json"
         ledger = CostLedger(target)
         swallowed = False
+        leaked = False
         try:
-            try:
-                ledger.add(1.0, thresholds=[])
-            except Exception:  # deliberately mimics correct_paper's broad handler
-                swallowed = True
-        except RepoLedgerWriteAttempted:
-            pass
+            # The guard must escape the inner `except Exception` and be caught
+            # by assertRaises. If it does not fire at all, `add` succeeds and
+            # assertRaises fails the test — which is the mutation an earlier
+            # revision of this test missed, because it deleted the leaked file
+            # before asserting on it.
+            with self.assertRaises(RepoLedgerWriteAttempted):
+                try:
+                    ledger.add(1.0, thresholds=[])
+                except Exception:  # deliberately mimics correct_paper's handler
+                    swallowed = True
         finally:
-            if target.exists():  # pragma: no cover - guard failed if reached
+            leaked = target.exists()
+            if leaked:
                 target.unlink()
         self.assertFalse(swallowed, "a broad `except Exception` swallowed the ledger guard")
-        self.assertFalse(target.exists())
+        self.assertFalse(leaked, "the guard did not fire — a real file was written into the repo")
 
     def test_tmp_dir_path_still_writes_and_reads_normally(self) -> None:
         # Same code path as the rest of this test class's ledger exercises,
