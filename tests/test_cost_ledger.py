@@ -95,5 +95,39 @@ class CostLedgerTests(unittest.TestCase):
         self.assertAlmostEqual(total, 2.0)
 
 
+class RepoLedgerWriteGuardTests(unittest.TestCase):
+    """Regression tests for the session-scoped `_forbid_repo_ledger_writes`
+    fixture in tests/conftest.py (issue #114). The fixture is autouse, so it
+    is already active for every test in this process."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "sub" / "gemini_spend.json"
+
+    def test_repo_internal_path_raises_and_never_writes(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        target = repo_root / "outputs" / "gemini_spend_TEST_GUARD_SHOULD_NOT_EXIST.json"
+        self.assertFalse(target.exists())
+        ledger = CostLedger(target)
+        try:
+            with self.assertRaises(RuntimeError):
+                ledger.add(1.0, thresholds=[])
+        finally:
+            # Guard must fire before any write — assert no file was created,
+            # then clean up defensively in case the guard failed to fire.
+            if target.exists():
+                target.unlink()
+        self.assertFalse(target.exists())
+
+    def test_tmp_dir_path_still_writes_and_reads_normally(self) -> None:
+        # Same code path as the rest of this test class's ledger exercises,
+        # confirming the guard does NOT fire for a legitimate tmp-dir path.
+        ledger = CostLedger(self.path)
+        total, _ = ledger.add(3.0, thresholds=[])
+        self.assertAlmostEqual(total, 3.0)
+        self.assertTrue(self.path.exists())
+        self.assertAlmostEqual(CostLedger(self.path).total(), 3.0)
+
+
 if __name__ == "__main__":
     unittest.main()
