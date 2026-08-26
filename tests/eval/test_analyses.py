@@ -416,7 +416,7 @@ class TestAgreementWilson:
             self._leaf_record(question_id="3", awarded_marks=1),  # disagree
             self._leaf_record(question_id="4", awarded_marks=3),  # agree
         ]
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
         expected = _wilson_interval(successes=3, n=4)
         assert result["n"] == expected["n"]
         assert result["successes"] == expected["successes"]
@@ -450,7 +450,7 @@ class TestAgreementWilson:
             self._leaf_record(question_id="2", awarded_marks=1),
         ]
         # 4 raw records for A but only 2 distinct leaves (question_id 1, 2).
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
         assert result["n"] == 2
         assert result["successes"] == 2
 
@@ -470,13 +470,28 @@ class TestAgreementWilson:
         a_before = copy.deepcopy(a_records)
         a_ids_before = [id(r) for r in a_records]
 
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
 
         assert a_records == a_before
         assert [id(r) for r in a_records] == a_ids_before
         # The result carries no field that could be mistaken for a corrected
-        # A-label -- it is a plain Wilson-shaped summary, nothing per-leaf.
-        assert set(result.keys()) == {"n", "successes", "point", "lower", "upper"}
+        # A-label. This asserts the PROPERTY -- every value is an aggregate
+        # scalar -- rather than a frozen key list, so adding another aggregate
+        # (as #105 did with the a_only/b_only exclusion funnel) does not force
+        # a test edit, while smuggling in per-leaf data still fails here.
+        assert set(result.keys()) == {
+            "n",
+            "successes",
+            "point",
+            "lower",
+            "upper",
+            "a_only",
+            "b_only",
+        }
+        assert all(isinstance(v, int | float) for v in result.values()), (
+            "every field must be an aggregate scalar; a per-leaf collection here "
+            "would be one refactor away from being read as a corrected A-label"
+        )
 
     def test_only_leaves_present_in_both_a_and_b_count(self) -> None:
         from lemely.eval.analyses import agreement_wilson
@@ -491,7 +506,7 @@ class TestAgreementWilson:
             self._leaf_record(question_id="2", awarded_marks=1),
             # question_id 3 was not in B's sample -- excluded, not a disagreement
         ]
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
         assert result["n"] == 2
         assert result["successes"] == 2
 
@@ -513,7 +528,7 @@ class TestAgreementWilson:
             self._leaf_record(paper_id="paper-1", question_id="1a", awarded_marks=2),  # agree
             self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=0),  # disagree
         ]
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
         assert result["n"] == 2, "one leaf per paper, not one leaf across papers"
         assert result["successes"] == 1, "the paper-2 disagreement must not be swallowed"
 
@@ -533,9 +548,88 @@ class TestAgreementWilson:
         b_records = [
             self._leaf_record(question_id="1", awarded_marks=0),
         ]
-        result = agreement_wilson(a_records, b_records)
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
         assert result["n"] == 1
         assert result["successes"] == 1, "A's correction stands, not A's first attempt"
+
+
+class TestAgreementCarriesItsExclusionFunnel:
+    """MISSION §9 gate 7: a reported rate names its denominator AND its exclusions.
+
+    Naming them in a docstring does not satisfy the gate — a docstring does
+    not travel with the published figure. A reader handed ``n=28, point=0.86``
+    cannot otherwise tell whether 2 leaves were excluded or 200, which is the
+    difference between a sound 10% sample and a silently narrowed one.
+    """
+
+    def _rec(self, paper_id: str, question_id: str, awarded_marks: int) -> dict[str, object]:
+        return {
+            "paper_id": paper_id,
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": None,
+            "mark_point_verdicts": {},
+        }
+
+    def test_leaves_only_one_labeller_marked_are_counted_and_reported(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._rec("p1", "1", 2),  # shared, agree
+            self._rec("p1", "2", 1),  # A only
+            self._rec("p1", "3", 1),  # A only
+        ]
+        b_records = [
+            self._rec("p1", "1", 2),  # shared, agree
+            self._rec("p1", "9", 1),  # B only
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+
+        assert result["n"] == 1, "denominator is the shared leaves"
+        assert result["a_only"] == 2
+        assert result["b_only"] == 1
+
+    def test_a_fully_overlapping_sample_reports_zero_exclusions(self) -> None:
+        """The funnel must not be decorative — it reads zero when nothing is excluded."""
+        from lemely.eval.analyses import agreement_wilson
+
+        records = [self._rec("p1", "1", 2), self._rec("p1", "2", 1)]
+        result = agreement_wilson(records, list(records), rulings_settled=True)
+
+        assert result["n"] == 2
+        assert result["a_only"] == 0
+        assert result["b_only"] == 0
+
+
+class TestAgreementRefusesUnsettledRulings:
+    """DA3/DA5 stop being prose that a future run can walk past.
+
+    DA3 requires the ``pending_ruling`` tail at zero before the split freeze,
+    which is irreversible; DA5 requires #52's sweep before #51's sample.
+    Until #105 nothing consulted ``count_pending()`` at all — the same shape
+    as #49, which reached CLOSED with an unmet acceptance box because nothing
+    mechanical was checking.
+    """
+
+    def test_agreement_refuses_when_rulings_are_not_settled(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        with pytest.raises(ValueError, match="rulings are not settled"):
+            agreement_wilson([], [], rulings_settled=False)
+
+    def test_the_precondition_cannot_be_forgotten(self) -> None:
+        """No default: omitting it is a TypeError, not a silent pass.
+
+        A defaulted flag would be skippable by accident, which is the whole
+        failure mode this guards.
+        """
+        import inspect as _inspect
+
+        from lemely.eval.analyses import agreement_wilson
+
+        parameter = _inspect.signature(agreement_wilson).parameters["rulings_settled"]
+        assert parameter.default is _inspect.Parameter.empty
+        assert parameter.kind is _inspect.Parameter.KEYWORD_ONLY
 
 
 class TestRiskCoverage:
