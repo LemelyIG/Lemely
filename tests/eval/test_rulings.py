@@ -361,3 +361,92 @@ class TestPendingTailCannotBeFaked:
 
         assert count_pending(eval_root=tmp_path) == 0
         assert list_orphan_resolutions(eval_root=tmp_path) == []
+
+
+class TestAssertRulingsSettled:
+    """DA3/DA5 enforcement — the guard that had no caller until #105.
+
+    DA3 requires the pending tail at zero before the split freeze, and the
+    freeze cannot be undone. Before this, ``count_pending()`` existed and
+    nothing called it: the decision lived in ``BUILD/DECISIONS.md`` where a
+    future run could walk straight past it, which is exactly how #49 reached
+    CLOSED with an unmet acceptance box.
+    """
+
+    def test_a_settled_log_returns_true_so_it_can_be_passed_straight_through(
+        self, tmp_path: Path
+    ) -> None:
+        from lemely.labelling.rulings import assert_rulings_settled
+
+        assert assert_rulings_settled(eval_root=tmp_path) is True
+
+    def test_an_unresolved_pending_ruling_blocks(self, tmp_path: Path) -> None:
+        from lemely.labelling.rulings import (
+            RulingsNotSettledError,
+            append_pending_ruling,
+            assert_rulings_settled,
+        )
+
+        append_pending_ruling(
+            paper_id="0625_s24_ms_21",
+            question_id="1a",
+            question="Does ECF apply across parts here?",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+            pending_id="q-1",
+        )
+
+        with pytest.raises(RulingsNotSettledError, match="1 unresolved pending ruling"):
+            assert_rulings_settled(eval_root=tmp_path)
+
+    def test_an_orphan_resolution_blocks_even_with_no_pending_tail(self, tmp_path: Path) -> None:
+        """The orphan must not be netted off into a green reading.
+
+        A resolution naming a ``pending_id`` never parked answers nothing; it
+        means the log is corrupt or a resolution was written against the wrong
+        id. Pending count here is zero, so a naive check passes — this is the
+        case that makes the second condition load-bearing rather than
+        decorative.
+        """
+        from lemely.labelling.rulings import (
+            RulingsNotSettledError,
+            assert_rulings_settled,
+            count_pending,
+            resolve_pending_ruling,
+        )
+
+        resolve_pending_ruling(
+            pending_id="never-parked",
+            resolving_ruling_id="ruling-1",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+        )
+
+        assert count_pending(eval_root=tmp_path) == 0, "precondition: tail looks clean"
+        with pytest.raises(RulingsNotSettledError, match="1 orphan resolution"):
+            assert_rulings_settled(eval_root=tmp_path)
+
+    def test_resolving_the_question_unblocks_it(self, tmp_path: Path) -> None:
+        """The guard must not be a one-way door — the good path still opens."""
+        from lemely.labelling.rulings import (
+            append_pending_ruling,
+            assert_rulings_settled,
+            resolve_pending_ruling,
+        )
+
+        append_pending_ruling(
+            paper_id="0625_s24_ms_21",
+            question_id="1a",
+            question="Does ECF apply across parts here?",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+            pending_id="q-1",
+        )
+        resolve_pending_ruling(
+            pending_id="q-1",
+            resolving_ruling_id="ruling-1",
+            labeller_id="labeller-a",
+            eval_root=tmp_path,
+        )
+
+        assert assert_rulings_settled(eval_root=tmp_path) is True

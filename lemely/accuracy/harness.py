@@ -36,19 +36,25 @@ class GoldenAnswer(BaseModel):
 
 #: Golden-fixture directory-name suffixes denoting which DA6 variant a case
 #: is (spec §3.3's ``fixture_variant``, BUILD/DECISIONS.md DA6).
-_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong")
+#:
+#: ``_whitespace`` was added for B5 (#88 item 6). It is a variant rather than a
+#: new paper on purpose: DA6 counts distinct leaves by ``(paper_id,
+#: question_id)``, so a variant sharing its sibling's ``paper_id`` gives the
+#: whitespace metamorphic property something to fire on **without** adding a
+#: distinct leaf to the accuracy denominator. See BUILD/DECISIONS.md DA14.
+_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong", "_whitespace")
 
 
 def _split_fixture_variant(dir_name: str) -> tuple[str, str | None]:
     """Split a golden-case directory name into ``(paper_id, fixture_variant)``.
 
-    Strips a trailing ``_correct``/``_partial``/``_wrong`` suffix, if present,
-    from *dir_name* — this is what makes three sibling directories (e.g.
-    ``0625_s20_qp_31_theory_correct/_partial/_wrong``) collapse to the same
-    ``paper_id`` for distinct-leaf purposes (DA6), while ``fixture_variant``
-    keeps the specific variant for record-keeping. Directories without one of
-    these suffixes (e.g. the MCQ-only fixture) are returned unchanged with
-    ``fixture_variant=None``.
+    Strips a trailing ``_correct``/``_partial``/``_wrong``/``_whitespace``
+    suffix, if present, from *dir_name* — this is what makes sibling
+    directories (e.g. ``0625_s20_qp_31_theory_correct/_partial/_wrong``)
+    collapse to the same ``paper_id`` for distinct-leaf purposes (DA6), while
+    ``fixture_variant`` keeps the specific variant for record-keeping.
+    Directories without one of these suffixes (e.g. the MCQ-only fixture) are
+    returned unchanged with ``fixture_variant=None``.
     """
     for suffix in _FIXTURE_VARIANT_SUFFIXES:
         if dir_name.endswith(suffix):
@@ -64,7 +70,7 @@ class GoldenCase:
     mark_scheme: MarkScheme
     ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
     scan_path: Path | None = None  # present only when extraction test is possible
-    fixture_variant: str | None = None  # "correct" | "partial" | "wrong" | None
+    fixture_variant: str | None = None  # "correct"|"partial"|"wrong"|"whitespace"|None
     #: True when this fixture is a deliberate excerpt — it declares a full
     #: paper's ``maximum_mark`` while carrying only a subset of leaves (spec
     #: §2.3(d); M0.8/#32). Sourced from an explicit ``case.json`` sidecar
@@ -83,10 +89,11 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
       answers.json      — ground truth per leaf question
       scan.pdf          — optional; enables extraction tests
 
-    A directory name's trailing ``_correct``/``_partial``/``_wrong`` suffix
-    (if any) is split off: it becomes ``fixture_variant`` and is stripped
-    from ``paper_id``, so the three DA6 variants of the same underlying paper
-    share one ``paper_id`` (spec §3.3; BUILD/DECISIONS.md DA6).
+    A directory name's trailing ``_correct``/``_partial``/``_wrong``/
+    ``_whitespace`` suffix (if any) is split off: it becomes
+    ``fixture_variant`` and is stripped from ``paper_id``, so the DA6 variants
+    of the same underlying paper share one ``paper_id`` (spec §3.3;
+    BUILD/DECISIONS.md DA6, and DA14 for ``_whitespace``).
 
     An optional ``case.json`` sidecar (``{"is_excerpt": true}``) marks a
     fixture as a deliberate excerpt (spec §2.3(d); M0.8/#32). It is a plain

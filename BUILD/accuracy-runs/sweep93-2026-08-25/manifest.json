@@ -1,0 +1,50 @@
+{
+  "label": "sweep93-2026-08-25",
+  "issue": 93,
+  "purpose": "gate-9 before/after for #93, taken at the parser level because the accuracy harness cannot see this change",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "why_not_the_harness_sweep": [
+    "The accuracy harness never invokes the deterministic mark-scheme parser. harness.py:103-109 reads the pre-parsed mark_scheme.json and calls MarkScheme.model_validate_json; `lemely.io.det` is imported nowhere under lemely/accuracy/ or lemely/eval/. SubjectProfile.paper_type() is therefore unreachable from a sweep.",
+    "The det question-paper extractor is equally unreachable: DeterministicQuestionPaperExtractor is used only by lemely/io/question_papers.py:ingest_question_papers_dir, which is called only from the question-bank ingest CLI (lemely/app/cli.py:919), not by the harness.",
+    "Independently sufficient: the golden set contains ZERO 0625 paper-2 cases. Its 11 cases are 0580 qp_22, 0606 qp_12, 0625 qp_12 (paper 1), 0625 qp_31 and 0625 qp_32 (paper 3). Even if the parser were invoked there is no fixture whose paper_type this change alters into a different parse path.",
+    "This is the same structural ground on which the #38 gate-9 sweep was waived (A6 ruling (a), BLOCKERS.md section H): null by construction, so spending on it would buy a guaranteed-zero delta."
+  ],
+  "method": {
+    "corpus": "every mark-scheme PDF available locally: PaperScraper CAIE IGCSE + Lemely/Sources",
+    "schemes_considered": 489,
+    "unreadable": 2,
+    "design": "cover-page text extracted ONCE per PDF, then old and new resolution computed from identical inputs, so the only variable is the lookup order plus the 0625 p2 constant",
+    "old_resolution": "paper_type_by_number consulted FIRST and returned immediately (with 0625 paper 2 = THEORY_CORE, the pre-fix constant); cover text only on a map miss",
+    "new_resolution": "SubjectProfile.paper_type() as shipped: cover text first, number map as fallback, THEORY_EXTENDED as last resort"
+  },
+  "result": {
+    "unchanged": 406,
+    "changed": 81,
+    "transitions": [
+      {
+        "subject": "0625",
+        "paper": 2,
+        "old": "theory_core",
+        "new": "mcq",
+        "schemes": 41,
+        "significance": "THE FIX. scheme_format moves POINT_BASED -> MCQ, so the parse path genuinely changes. Before the fix these papers did not parse at all: 0625_s23_ms_22.pdf raised ParseError (parsed 12, expected 40) and now yields a clean 40-question MCQ scheme reconciling 40/40."
+      },
+      {
+        "subject": "0625",
+        "paper": 3,
+        "old": "theory_extended",
+        "new": "theory_core",
+        "schemes": 40,
+        "significance": "A SECOND REAL BUG, fixed as a side effect of the ordering change and NOT of the constant. The 0625 paper-3 map entry says Extended; the cover of 0625_m19_ms_32.pdf reads 'Paper 3 Core Theory'. CAUSALLY INERT for parsing: scheme_format is POINT_BASED on both sides, so the parse path is identical and only the metadata label changes. The wrong constant is deliberately left in place and annotated rather than silently corrected alongside."
+      }
+    ],
+    "no_other_subject_or_paper_changed": true,
+    "regression_probe": "The specific hazard of letting cover text win is a theory paper whose cover mentions 'multiple choice' incidentally being flipped to MCQ, which would change scheme_format and break its parse. Across all 489 schemes this did not occur once: every observed transition is one of the two above, and no paper moved INTO mcq except 0625 paper 2."
+  },
+  "limits": [
+    "This measures paper_type resolution, which is where the change lives. It is NOT an awarded-marks before/after, because no instrument in this repo can produce one for this change (see why_not_the_harness_sweep).",
+    "It is a census of the local corpus, not a sample, so there is no sampling error — but it is only as complete as the 489 schemes present locally.",
+    "Two PDFs were unreadable and are excluded; they are counted and reported rather than dropped silently."
+  ]
+}

@@ -299,3 +299,48 @@ def list_orphan_resolutions(eval_root: Path = DEFAULT_EVAL_ROOT) -> list[dict[st
 def count_pending(eval_root: Path = DEFAULT_EVAL_ROOT) -> int:
     """Count unresolved ``pending_ruling`` records — DA3 requires this at zero before the freeze."""
     return len(list_pending(eval_root))
+
+
+class RulingsNotSettledError(RuntimeError):
+    """Raised when the ruling log is not in a state that permits measurement."""
+
+
+def assert_rulings_settled(eval_root: Path = DEFAULT_EVAL_ROOT) -> bool:
+    """Refuse to proceed unless the ruling log is settled (DA3, DA5).
+
+    Returns ``True`` so the result can be handed straight to
+    :func:`lemely.eval.analyses.agreement_wilson`'s required
+    ``rulings_settled`` argument::
+
+        agreement_wilson(a, b, rulings_settled=assert_rulings_settled(eval_root))
+
+    It never returns ``False`` — an unsettled log raises. A boolean that could
+    be false would invite ``if settled: ... else: carry on anyway``, which is
+    the failure this exists to prevent.
+
+    Two conditions, both from DA3:
+
+    - **No unresolved pending rulings.** DA3 requires the tail at zero before
+      the split freeze. The freeze is irreversible, so a gate that reports
+      green on an unmet condition here cannot be walked back.
+    - **No orphan resolutions.** A resolution naming a ``pending_id`` that was
+      never parked before it answers nothing; it means the log is corrupt or a
+      resolution was written against the wrong id. Those are deliberately not
+      netted off against the pending count, so they must be surfaced rather
+      than left to make the first condition look satisfied.
+
+    This exists because DA3 and DA5 were, until now, prose in
+    ``BUILD/DECISIONS.md`` with **no caller anywhere** — the same shape as
+    #49, which reached CLOSED with an unmet acceptance box because nothing
+    mechanical was checking.
+    """
+    pending = list_pending(eval_root)
+    orphans = list_orphan_resolutions(eval_root)
+    if pending or orphans:
+        raise RulingsNotSettledError(
+            f"rulings not settled: {len(pending)} unresolved pending ruling(s) and "
+            f"{len(orphans)} orphan resolution(s). DA3 requires the pending tail at "
+            "zero before the split freeze; orphan resolutions mean the log is wrong "
+            "and must be investigated, not netted off."
+        )
+    return True

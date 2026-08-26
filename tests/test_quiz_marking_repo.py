@@ -44,7 +44,7 @@ from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import ClassEnrollment, User
-from lemely.db.models.attempts import Attempt
+from lemely.db.models.attempts import Attempt, QuestionResult
 from lemely.db.models.enums import (
     AttemptOrigin,
     DifficultySource,
@@ -286,7 +286,11 @@ def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
     mock_genai.models.generate_content.side_effect = responses
     mock_genai.files.upload.return_value = MagicMock()
     settings = load_settings(toml_path=None, cwd=tmp_path)
-    settings = settings.model_copy(update={"paths": PathsSettings(cache_dir=tmp_path / ".cache")})
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
+        }
+    )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 
@@ -297,7 +301,11 @@ def _never_called_gemini_client(tmp_path: Path) -> GeminiClient:
         "Gemini must not be called for an all-MCQ quiz"
     )
     settings = load_settings(toml_path=None, cwd=tmp_path)
-    settings = settings.model_copy(update={"paths": PathsSettings(cache_dir=tmp_path / ".cache")})
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
+        }
+    )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 
@@ -717,6 +725,22 @@ def test_mark_submission_low_confidence_non_mcq_queues_review(
         ).all()
         assert len(items) == 1
         assert items[0].reason.value == "low_confidence"
+
+        # Pin WHICH path produced that item (#114). `_build_missing_corrected`,
+        # the fallback correct_paper falls back to when AI marking raises,
+        # independently produces exactly one low_confidence item — so the two
+        # assertions above pass identically whether the AI marker ran or blew
+        # up. That vacuity is what let a swallowed ledger-guard exception sit
+        # unnoticed for a whole commit cycle. `awarded_marks == 1` can only
+        # come from the stubbed marker's `awarded=1`; the fallback awards 0.
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == result.attempt_id)
+        ).all()
+        assert len(results) == 1
+        assert results[0].awarded_marks == 1, (
+            "expected the stubbed AI marker's awarded=1; a 0 means correct_paper "
+            "fell back to _build_missing_corrected and this test is vacuous"
+        )
 
 
 # ---------------------------------------------------------------------------

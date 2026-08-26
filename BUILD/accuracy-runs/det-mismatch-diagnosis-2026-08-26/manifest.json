@@ -1,0 +1,127 @@
+{
+  "label": "det-mismatch-diagnosis-2026-08-26",
+  "issue": 95,
+  "relates_to": [
+    "B4 in BUILD/ACCURACY-ASKS.md",
+    "#45's genuine_mark_total_mismatch bucket (70 of 229)"
+  ],
+  "kind": "read-only diagnosis of why 4 golden source schemes fail mark-total reconciliation",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "method": "Parsed each PDF with DetParserSettings(escalate_on_mark_mismatch=False) so the question tree survives for inspection. ONLY the escalation was disabled. Nothing was written; no fixture, corpus file or committed scheme was touched.",
+  "HYPOTHESIS_FALSIFIED": {
+    "hypothesis": "#45's manifest floated that empty-cell defaulting interacts with lemely/io/det/rows.py flush(), which assigns stack[-1].marks only when q_row_had_answer is set -- so a leaf could carry answer_points whose marks never reach computed_total. Run 34 named this as the thing to check first.",
+    "test": "For every leaf, compare q.marks against sum of its non-alternative answer_points' marks.",
+    "result": "FALSIFIED for both deficit papers. 0625_s20_ms_31: 41 leaves, ZERO gap leaves. 0625_w21_ms_32: 43 leaves, ZERO gap leaves. Every leaf's q.marks exactly matches its answer points, so no marks are lost in propagation.",
+    "consequence": "The deficits are NOT a marks-propagation defect. Recording the negative result explicitly so the next run does not re-test it."
+  },
+  "papers": {
+    "0625_s20_ms_31": {
+      "computed": 76,
+      "declared": 80,
+      "delta": -4,
+      "leaves": 41,
+      "gap_leaves": 0,
+      "top_level_ids": "1..12, clean, no duplicates",
+      "leaf_mark_distribution": {
+        "1": 19,
+        "2": 12,
+        "3": 7,
+        "4": 3
+      },
+      "reading": "Ids clean, distribution plausible for 0625 P3, leaves internally consistent. The 4 missing marks are CONTENT NOT CAPTURED, not marks mis-propagated. Where to look next: table selection (14 tables selected) and whether a question or part was skipped entirely."
+    },
+    "0625_w21_ms_32": {
+      "computed": 73,
+      "declared": 80,
+      "delta": -7,
+      "leaves": 43,
+      "gap_leaves": 0,
+      "top_level_ids": "1..12, clean, no duplicates",
+      "leaf_mark_distribution": {
+        "1": 22,
+        "2": 13,
+        "3": 7,
+        "4": 1
+      },
+      "reading": "Same shape as above. 7 marks of content not captured. 21 tables selected."
+    },
+    "0606_s23_ms_12": {
+      "computed": 116,
+      "declared": 80,
+      "delta": 36,
+      "leaves": 26,
+      "top_level_ids": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "9",
+        "9",
+        "10"
+      ],
+      "OBSERVED_DEFECT_1": "Top-level id '9' appears TWICE -- a duplicated top-level question.",
+      "leaf_mark_distribution": {
+        "1": 5,
+        "2": 4,
+        "3": 6,
+        "4": 4,
+        "5": 1,
+        "6": 2,
+        "8": 1,
+        "10": 1,
+        "16": 1,
+        "18": 1
+      },
+      "OBSERVED_DEFECT_2": "Leaves worth 16 and 18 marks on an 80-mark Additional Mathematics paper. Stated as suspicion rather than proof: single questions of that tariff are implausible for 0606 P1, and the shape is CONSISTENT WITH total/summary rows being ingested as question leaves. 16+18=34 against a +36 overcount, which is suggestive but not a demonstration. WHAT WOULD CONFIRM IT: open those two leaves' text and check whether they are summary rows rather than questions.",
+      "also": "One leaf ('8c') carries q.marks=4 with zero answer points -- a mark minted from the marks column with no backing content."
+    },
+    "0580_s23_ms_22": {
+      "computed": 73,
+      "declared": 70,
+      "delta": 3,
+      "leaves": 37,
+      "gap_leaves": 0,
+      "top_level_ids": [
+        "1",
+        "2",
+        "3",
+        "4",
+        "5",
+        "6",
+        "7",
+        "8",
+        "1",
+        "2",
+        "8",
+        "9",
+        "10",
+        "11",
+        "12",
+        "13",
+        "14",
+        "15",
+        "16",
+        "17",
+        "18",
+        "19",
+        "20",
+        "21",
+        "22",
+        "23"
+      ],
+      "OBSERVED_DEFECT": "The id sequence RESTARTS: '1', '2' and '8' each appear twice. Directly observed, not inferred.",
+      "relation_to_45": "#45 classified this paper as marks_cell_notation_not_parsed (3 empty cells defaulted, fully explaining the +3). That remains consistent -- but the duplicate top-level ids are a SEPARATE structural defect that #45's bucket does not describe, and it happens to net to the same +3."
+    }
+  },
+  "what_this_changes_for_B4": [
+    "The 'genuine_mark_total_mismatch' label on the two 0625 papers is now better characterised: leaves are internally consistent and ids are clean, so the deficit is un-captured content rather than a marks bug. That is a table-selection / question-extraction question.",
+    "Two papers show DUPLICATE TOP-LEVEL QUESTION IDS (0606 '9' twice; 0580 restarts at '1','2','8'). Duplicate ids are a structural parser defect independent of the mark totals, and would corrupt any leaf-keyed join even on papers that DO reconcile. Worth its own issue regardless of how B4 is decided.",
+    "Route 2 remains three different bugs. This diagnosis does not shrink it; it sharpens what each one is."
+  ],
+  "not_re_run": "The #95 feasibility probe and #45's census were NOT re-run -- both are on disk at BUILD/accuracy-runs/golden-reparse-95-2026-08-26/ and BUILD/accuracy-runs/census-2026-08-24-b/."
+}
