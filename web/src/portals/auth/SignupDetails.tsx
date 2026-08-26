@@ -363,7 +363,7 @@ export function SignupDetails({ role }: SignupDetailsProps) {
               type="button"
               disabled={busy}
               onClick={() => setShowPassword((previous) => !previous)}
-              className="inline-flex shrink-0 items-center gap-1 text-body-sm text-ink-muted transition-colors duration-[var(--dur-instant)] ease-out-soft hover:text-ink disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex shrink-0 items-center gap-1 rounded-sm text-body-sm text-ink-muted transition-[color,transform] duration-[var(--dur-fast)] ease-out-soft hover:text-ink active:scale-[0.98] disabled:cursor-not-allowed disabled:opacity-50 disabled:active:scale-100"
             >
               {showPassword ? (
                 <EyeSlash aria-hidden weight="regular" size={16} />
