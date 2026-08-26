@@ -267,6 +267,29 @@ The warning is unchanged either way: anyone costing #88's Gemini path from
 `outputs/schemes/` will read a clean bill of health that is an artefact of the
 selection.
 
+## B16 — #114: does the banked $0.0077620 stay in the ledger?
+
+Found in run 36 by **verifying rather than asserting** a `ledger unmoved` line I
+had just written. It had moved: **+$0.0077620** at `2026-08-26T03:05:45Z`,
+inside the supervisor's pytest window, on a run that made **zero Gemini calls**.
+Ruled out the live billed test and the ledger/client tests; the unproven lead is
+four tests calling bare `load_settings()`. Full evidence on #114.
+
+**Your call, because it changes an authoritative spend figure and I have not
+touched it:** does the $0.0077620 stay in the ledger, or get backed out? It
+matters more than the amount — under DA11 the ledger *is* the record of money
+spent, so if the writer turns out to be a test recording a fabricated cost, the
+authoritative record is carrying test data.
+
+**Separately, and not a decision — a practice change I have already applied.**
+Re-summing all four worktree ledgers gives **2.6925847** against a header of
+**2.659533**: a **$0.0330517** drift, of which only $0.0077620 is run 36's. The
+header had been carried forward arithmetically run to run instead of re-summed
+from the files DA11 calls authoritative, so each run reproduced the previous
+run's error. `spend_usd` is now the freshly summed **2.692585**, and the rule
+going forward is **re-sum every run, never carry the header forward**. Say if
+you would rather it were recorded some other way.
+
 ## B14 — still owed on the H issues
 
 Not decisions I can make or work around (MISSION §3.5):
