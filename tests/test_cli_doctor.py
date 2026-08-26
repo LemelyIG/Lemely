@@ -16,6 +16,17 @@ from lemely.app.cli import cli
 class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
+        snapshot = {
+            k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k == "GEMINI_API_KEY"
+        }
+
+        def restore() -> None:
+            for k in list(os.environ):
+                if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
+                    del os.environ[k]
+            os.environ.update(snapshot)
+
+        self.addCleanup(restore)
         for k in list(os.environ):
             if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
                 del os.environ[k]
@@ -97,6 +108,33 @@ class DoctorTests(unittest.TestCase):
         reach = next(c for c in payload["checks"] if c["name"] == "gemini_reachable")
         self.assertFalse(reach["ok"])
         self.assertIn("not reachable", str(reach["detail"]))
+
+
+class DoctorTestsEnvLeakTests(unittest.TestCase):
+    """Regression test for #121: DoctorTests.setUp must not leak env deletions."""
+
+    def test_doctor_tests_setup_does_not_leak_env_deletions(self) -> None:
+        original_gemini_key = os.environ.get("GEMINI_API_KEY")
+        os.environ["LEMELY_LEAK_CANARY"] = "1"
+        try:
+            suite = unittest.TestLoader().loadTestsFromTestCase(DoctorTests)
+            with open(os.devnull, "w") as devnull:
+                result = unittest.TextTestRunner(stream=devnull).run(suite)
+            self.assertTrue(result.wasSuccessful(), msg=str(result.errors + result.failures))
+
+            self.assertIn(
+                "LEMELY_LEAK_CANARY",
+                os.environ,
+                msg="DoctorTests.setUp leaked an env deletion past the class",
+            )
+            if original_gemini_key is not None:
+                self.assertEqual(
+                    os.environ.get("GEMINI_API_KEY"),
+                    original_gemini_key,
+                    msg="DoctorTests.setUp failed to restore GEMINI_API_KEY",
+                )
+        finally:
+            os.environ.pop("LEMELY_LEAK_CANARY", None)
 
 
 class VersionTests(unittest.TestCase):
