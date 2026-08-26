@@ -382,7 +382,15 @@ class TestWilsonIntervalExtraction:
 
 
 class TestAgreementWilson:
-    """Synthetic-only tests for the labeller-A/labeller-B agreement computation (#98, DA2/#51)."""
+    """Synthetic-only tests for the labeller-A/labeller-B agreement computation (#98, DA2/#51).
+
+    **These assert the TOTALS-equality figure, which B12/#140 demoted from
+    headline to named secondary.** They are updated rather than deleted because
+    every property they guard -- DA6 leaf identity, last-record-wins,
+    shared-leaves-only, no-mutation -- is computed by machinery both figures
+    share (``_leaf_representatives``), so they still guard it. The per-point
+    headline has its own class below.
+    """
 
     def _leaf_record(
         self,
@@ -417,12 +425,18 @@ class TestAgreementWilson:
             self._leaf_record(question_id="4", awarded_marks=3),  # agree
         ]
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        # These records carry no mark-point verdicts, so the PER-POINT headline
+        # is empty and the leaf-level content lives in the totals figure. The
+        # property this test guards -- that the interval arithmetic is
+        # _wilson_interval's and not a second implementation -- is asserted on
+        # the headline, over records that do carry verdicts, in
+        # TestAgreementIsPerMarkPoint.
         expected = _wilson_interval(successes=3, n=4)
-        assert result["n"] == expected["n"]
-        assert result["successes"] == expected["successes"]
-        assert result["point"] == expected["point"]
-        assert result["lower"] == expected["lower"]
-        assert result["upper"] == expected["upper"]
+        assert result["totals_n"] == expected["n"]
+        assert result["totals_successes"] == expected["successes"]
+        assert result["totals_point"] == expected["point"]
+        assert result["n"] == 0, "no verdicts recorded, so no mark points to score"
+        assert result["shared_leaves_without_shared_points"] == 4
 
     def test_denominator_is_distinct_leaves_not_raw_records(self) -> None:
         """Duplicate per-leaf (mark-point-level) records must collapse to
@@ -451,8 +465,8 @@ class TestAgreementWilson:
         ]
         # 4 raw records for A but only 2 distinct leaves (question_id 1, 2).
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
-        assert result["n"] == 2
-        assert result["successes"] == 2
+        assert result["totals_n"] == 2
+        assert result["totals_successes"] == 2
 
     def test_never_mutates_reorders_or_supersedes_as_records(self) -> None:
         from lemely.eval.analyses import agreement_wilson
@@ -487,6 +501,15 @@ class TestAgreementWilson:
             "upper",
             "a_only",
             "b_only",
+            "shared_leaves",
+            "shared_leaves_without_shared_points",
+            "points_a_only",
+            "points_b_only",
+            "totals_n",
+            "totals_successes",
+            "totals_point",
+            "totals_lower",
+            "totals_upper",
         }
         assert all(isinstance(v, int | float) for v in result.values()), (
             "every field must be an aggregate scalar; a per-leaf collection here "
@@ -507,8 +530,8 @@ class TestAgreementWilson:
             # question_id 3 was not in B's sample -- excluded, not a disagreement
         ]
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
-        assert result["n"] == 2
-        assert result["successes"] == 2
+        assert result["totals_n"] == 2
+        assert result["totals_successes"] == 2
 
     def test_same_question_id_in_two_papers_is_two_leaves_not_one(self) -> None:
         """Leaf identity is ``(paper_id, question_id)`` (DA6), never the bare id.
@@ -529,8 +552,8 @@ class TestAgreementWilson:
             self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=0),  # disagree
         ]
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
-        assert result["n"] == 2, "one leaf per paper, not one leaf across papers"
-        assert result["successes"] == 1, "the paper-2 disagreement must not be swallowed"
+        assert result["totals_n"] == 2, "one leaf per paper, not one leaf across papers"
+        assert result["totals_successes"] == 1, "the paper-2 disagreement must not be swallowed"
 
     def test_a_corrected_resubmission_supersedes_the_earlier_record(self) -> None:
         """The label log is append-only, so the LAST record for a leaf wins.
@@ -549,8 +572,8 @@ class TestAgreementWilson:
             self._leaf_record(question_id="1", awarded_marks=0),
         ]
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
-        assert result["n"] == 1
-        assert result["successes"] == 1, "A's correction stands, not A's first attempt"
+        assert result["totals_n"] == 1
+        assert result["totals_successes"] == 1, "A's correction stands, not A's first attempt"
 
 
 class TestAgreementCarriesItsExclusionFunnel:
@@ -585,7 +608,7 @@ class TestAgreementCarriesItsExclusionFunnel:
         ]
         result = agreement_wilson(a_records, b_records, rulings_settled=True)
 
-        assert result["n"] == 1, "denominator is the shared leaves"
+        assert result["totals_n"] == 1, "denominator is the shared leaves"
         assert result["a_only"] == 2
         assert result["b_only"] == 1
 
@@ -596,7 +619,7 @@ class TestAgreementCarriesItsExclusionFunnel:
         records = [self._rec("p1", "1", 2), self._rec("p1", "2", 1)]
         result = agreement_wilson(records, list(records), rulings_settled=True)
 
-        assert result["n"] == 2
+        assert result["totals_n"] == 2
         assert result["a_only"] == 0
         assert result["b_only"] == 0
 
@@ -1234,3 +1257,205 @@ class TestPaperGradeConfidence:
         # full honest finding and the missing prerequisite (a baseline
         # re-run that captures per-answer extraction confidence).
         assert bands != {"HIGH"}, f"band distribution: {result}"
+
+
+class TestAgreementIsPerMarkPoint:
+    """B12 / #140: the published H7 figure is per mark point, not totals equality.
+
+    Spec §6 defines the pass-2 output per mark point. Two labellers can award
+    the same total by matching *different* mark points, so totals equality
+    overstates agreement — it counts that case as agreement. B12 ruled the
+    per-point figure the headline and predicted it would read LOWER, which is
+    the measurement working rather than a regression.
+    """
+
+    def _rec(
+        self,
+        *,
+        question_id: str,
+        awarded_marks: int,
+        verdicts: dict[str, bool],
+        paper_id: str = "p1",
+        mark_point_id: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "paper_id": paper_id,
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": mark_point_id,
+            "mark_point_verdicts": verdicts,
+        }
+
+    def test_same_total_via_different_points_agrees_on_totals_and_disagrees_per_point(
+        self,
+    ) -> None:
+        """The case B12 exists to catch, and the reason the headline moved.
+
+        Both labellers award 1 of 2. A credits ``p1``; B credits ``p2``. Totals
+        equality calls this perfect agreement; per mark point it is two
+        disagreements out of two.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True, "p2": False})]
+        b = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": False, "p2": True})]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 2, "denominator is mark points, not leaves"
+        assert result["successes"] == 0, "matching totals via different points is NOT agreement"
+        assert result["totals_n"] == 1
+        assert result["totals_successes"] == 1, (
+            "the totals figure is kept precisely so the per-point drop is visible; "
+            "a single number cannot demonstrate its own drop"
+        )
+
+    def test_mark_point_identity_includes_paper_and_question(self) -> None:
+        """``p1`` in one leaf is not ``p1`` in another — DA6's key, extended.
+
+        Keyed on ``mark_point_id`` alone this collapses to one point, dropping
+        the denominator from 2 to 1 and swallowing the real disagreement: the
+        D18 narrowed-denominator shape one level down.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(paper_id="p1", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(paper_id="p2", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+        ]
+        b = [
+            self._rec(paper_id="p1", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+            # Same TOTAL, opposite verdict on the shared point: this is the
+            # disagreement the totals figure cannot see, so the assertion below
+            # fails on totals-equality code rather than passing by coincidence.
+            self._rec(paper_id="p2", question_id="1a", awarded_marks=1, verdicts={"p1": False}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 2, "one point per (paper, question, point id)"
+        assert result["successes"] == 1, "the paper-2 disagreement must not be swallowed"
+        assert result["totals_successes"] == 2, "totals equality sees no disagreement at all"
+
+    def test_points_only_one_labeller_recorded_are_excluded_and_counted(self) -> None:
+        """Missing data, not disagreement — and reported rather than described."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(
+                question_id="1",
+                awarded_marks=2,
+                verdicts={"p1": True, "p2": True, "p3": False},
+            )
+        ]
+        b = [self._rec(question_id="1", awarded_marks=2, verdicts={"p1": True, "p4": True})]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 1, "only p1 is shared"
+        assert result["successes"] == 1
+        assert result["points_a_only"] == 2, "p2 and p3"
+        assert result["points_b_only"] == 1, "p4"
+
+    def test_shared_leaves_contributing_no_shared_points_are_reported_not_dropped(self) -> None:
+        """A leaf both labellers marked can still contribute zero points.
+
+        Under a per-point denominator such leaves vanish silently, which is the
+        narrowed-denominator failure mode in a new costume. The funnel has to
+        show them, or ``n`` shrinks with no trace of why.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={}),
+            self._rec(question_id="3", awarded_marks=1, verdicts={"pX": True}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={}),
+            self._rec(question_id="3", awarded_marks=1, verdicts={"pY": True}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["shared_leaves"] == 3
+        assert result["n"] == 1, "only leaf 1 contributes a shared point"
+        assert result["shared_leaves_without_shared_points"] == 2, (
+            "leaf 2 (no verdicts at all) and leaf 3 (disjoint point ids)"
+        )
+
+    def test_leaf_level_exclusions_keep_their_leaf_meaning(self) -> None:
+        """``a_only``/``b_only`` still count LEAVES, not points.
+
+        Silently re-pointing an existing field's unit is a moved target even
+        before publication, so the point-level exclusions got their own names.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": True}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="9", awarded_marks=1, verdicts={"p1": True}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["a_only"] == 1, "leaf 2, counted once as a leaf — not twice as its points"
+        assert result["b_only"] == 1, "leaf 9"
+        assert result["points_a_only"] == 0, "point exclusions are scoped to SHARED leaves"
+        assert result["points_b_only"] == 0
+
+    def test_empty_totals_denominator_is_distinguishable_from_total_disagreement(
+        self,
+    ) -> None:
+        """``totals_point == 0.0`` must not be readable as "0% agreement".
+
+        At ``totals_n == 0`` the rate is ``0.0`` by the module-wide convention,
+        which looks identical to genuine total disagreement. The interval is
+        what tells them apart: no data spans ``[0.0, 1.0]``, real disagreement
+        does not. Without it the secondary figure could publish a fabricated
+        zero.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        b = [self._rec(question_id="9", awarded_marks=1, verdicts={"p1": True})]
+
+        no_data = agreement_wilson(a, b, rulings_settled=True)
+        assert no_data["totals_n"] == 0
+        assert no_data["totals_point"] == 0.0
+        assert (no_data["totals_lower"], no_data["totals_upper"]) == (0.0, 1.0)
+
+        disagree_a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        disagree_b = [self._rec(question_id="1", awarded_marks=0, verdicts={"p1": False})]
+        real = agreement_wilson(disagree_a, disagree_b, rulings_settled=True)
+        assert real["totals_n"] == 1
+        assert real["totals_point"] == 0.0
+        assert real["totals_upper"] < 1.0, (
+            "genuine 0/1 disagreement must NOT span the full interval, or it is "
+            "indistinguishable from having measured nothing at all"
+        )
+
+    def test_per_point_reads_lower_than_totals_on_the_same_data(self) -> None:
+        """B12's prediction, asserted rather than trusted."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": False, "p2": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["totals_point"] == 1.0, "both totals match"
+        assert result["point"] < result["totals_point"], (
+            "per-point must be able to read lower than totals on the same data"
+        )
