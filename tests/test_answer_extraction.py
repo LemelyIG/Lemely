@@ -105,7 +105,14 @@ def _client_with_response(tmp: str, body: dict) -> GeminiClient:
     mock_genai.files.upload.return_value = MagicMock()
     with _IsolatedEnv():
         settings = load_settings(toml_path=None, cwd=Path(tmp))
-    settings = settings.model_copy(update={"paths": PathsSettings(cache_dir=Path(tmp) / ".cache")})
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(
+                cache_dir=Path(tmp) / ".cache",
+                output_dir=Path(tmp) / "outputs",
+            )
+        }
+    )
     return GeminiClient(settings, _genai_client=mock_genai)
 
 

@@ -90,7 +90,14 @@ def _client_with_seq(tmp: str, responses: list[MagicMock]) -> GeminiClient:
     mock_genai.files.upload.return_value = MagicMock()
     with _IsolatedEnv():
         s = load_settings(toml_path=None, cwd=Path(tmp))
-    s = s.model_copy(update={"paths": PathsSettings(cache_dir=Path(tmp) / ".cache")})
+    s = s.model_copy(
+        update={
+            "paths": PathsSettings(
+                cache_dir=Path(tmp) / ".cache",
+                output_dir=Path(tmp) / "outputs",
+            )
+        }
+    )
     return GeminiClient(s, _genai_client=mock_genai)
 
 
@@ -1106,7 +1113,10 @@ class ThinkingRetryTests(unittest.TestCase):
                 s = load_settings(toml_path=None, cwd=Path(tmp))
             s = s.model_copy(
                 update={
-                    "paths": PathsSettings(cache_dir=Path(tmp) / ".cache"),
+                    "paths": PathsSettings(
+                        cache_dir=Path(tmp) / ".cache",
+                        output_dir=Path(tmp) / "outputs",
+                    ),
                     "gemini": s.gemini.model_copy(
                         update={
                             "escalation_model": "gemini-2.5-pro",
