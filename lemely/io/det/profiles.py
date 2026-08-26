@@ -108,6 +108,17 @@ _PHYSICS_PROFILE = SubjectProfile(
         # a scheme whose cover text is missing or unreadable no longer
         # defaults to the wrong tier.
         #
+        # "Only the metadata label" is inert for PARSING, not everywhere, and
+        # the difference is worth naming rather than leaving a reader to infer
+        # it: the label is interpolated verbatim into the Gemini extractor
+        # user prompt at lemely/io/prompts/answer_extraction.py:131, so a
+        # changed label would change the prompt string. It is unexercised
+        # today — a census over all 39 distinct local 0625 p3 mark schemes
+        # resolved 39/39 from cover text, i.e. ZERO take the fallback — so no
+        # extractor prompt actually moves. Note the prompt hash key
+        # (build_question_manifest_hash_key) does not include paper_type, so
+        # the coupling runs through the prompt body, not the cache key.
+        #
         # What must NOT happen is someone "tidying" this line while also
         # reverting the lookup order, which would silently reinstate the
         # wrong answer.

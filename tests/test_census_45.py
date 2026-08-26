@@ -131,13 +131,39 @@ class ClassifyProfileMisconfigurationTests(unittest.TestCase):
         evidence = mod.classify_profile_misconfiguration(99, "Paper 99 Multiple Choice", profile)
         self.assertIsNone(evidence)
 
-    def test_0625_p3_core_extended_is_not_flagged_no_path_change(self) -> None:
-        # profiles.py maps p3 to THEORY_EXTENDED but the cover text reads
-        # "Paper 3 Core Theory" -> implies THEORY_CORE. Both mapped and implied
-        # are non-MCQ, so classify_one would take the SAME (_classify_theory)
-        # branch either way -- the discrepancy is causally inert and must NOT
-        # be counted as paper_profile_misconfiguration (round-2 review MUST-FIX).
-        profile = get_profile("0625")
+    #: A profile whose paper 3 is mapped THEORY_EXTENDED against a cover that
+    #: says Core — i.e. 0625 exactly as it was before B7 corrected it. Needed
+    #: for the same reason as ``MISCONFIGURED`` above: B7 fixed the real entry,
+    #: so this test's premise no longer exists on the real profile.
+    CORE_EXTENDED_MISMATCH = SubjectProfile(
+        code="9996",
+        name="CoreExtendedMismatch",
+        paper_type_by_number={3: PaperType.THEORY_EXTENDED},
+    )
+
+    def test_core_extended_mismatch_is_not_flagged_no_path_change(self) -> None:
+        """A non-MCQ/non-MCQ mismatch is inert and must NOT be flagged.
+
+        This is the ONLY coverage of ``_changes_parse_path``'s suppression
+        branch, and B7 nearly deleted it by accident. The test used to run
+        against the real ``0625``, whose paper 3 was mapped THEORY_EXTENDED
+        against a cover reading "Paper 3 Core Theory". B7 corrected that
+        constant, which made ``mapped == implied`` — so
+        ``classify_profile_misconfiguration`` returns at its *earlier* guard
+        and ``_changes_parse_path`` is never reached. The test still passed
+        while asserting nothing about the gate it is named for.
+
+        Re-pointed at a synthetic profile rather than deleted, exactly as the
+        paper-2 test was: mapped THEORY_EXTENDED vs implied THEORY_CORE keeps
+        execution reaching ``_changes_parse_path``, which must suppress it
+        because both sides are non-MCQ and ``classify_one`` would take the same
+        ``_classify_theory`` branch either way (round-2 review MUST-FIX).
+
+        Without this, someone simplifying ``_changes_parse_path`` to
+        ``mapped != implied`` would keep the suite green while every benign
+        Core/Extended discrepancy inflated the
+        ``paper_profile_misconfiguration`` bucket.
+        """
         cover_text = (
             "UNIVERSITY OF CAMBRIDGE INTERNATIONAL EXAMINATIONS\n"
             "Cambridge IGCSE\n"
@@ -146,8 +172,19 @@ class ClassifyProfileMisconfigurationTests(unittest.TestCase):
             "Paper 3 Core Theory\n"
             "Maximum Mark: 80\n"
         )
-        evidence = mod.classify_profile_misconfiguration(3, cover_text, profile)
+        evidence = mod.classify_profile_misconfiguration(3, cover_text, self.CORE_EXTENDED_MISMATCH)
         self.assertIsNone(evidence)
+
+    def test_0625_p3_is_no_longer_misconfigured(self) -> None:
+        """B7's fix, asserted from the census's own point of view.
+
+        Fails if the paper-3 constant is ever reverted to THEORY_EXTENDED.
+        Complements the test above rather than replacing it: this one pins the
+        constant, that one pins the gate.
+        """
+        profile = get_profile("0625")
+        cover_text = "Paper 3 Core Theory\nMaximum Mark: 80\n"
+        self.assertIsNone(mod.classify_profile_misconfiguration(3, cover_text, profile))
 
     def test_mcq_vs_theory_core_still_flagged_after_counterfactual_gate(self) -> None:
         # Regression guard: the counterfactual gate must not over-correct away a
