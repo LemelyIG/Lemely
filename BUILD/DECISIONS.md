@@ -11708,3 +11708,86 @@ autouse guard that would fail any test resolving `output_dir` inside the repo �
 unstarted work, and #114 is CLOSED.** B16 said annotate, not fix. Naming that gap
 here matters more than the annotation itself: an annotation that reads as a
 resolution would leave the next run believing the ledger is safe to treat as exact.
+
+---
+
+## DA18 — labeller agreement is measured PER MARK POINT (B12, #140)
+
+**Date:** 2026-08-26 (run 49) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B12** — *"PER MARK POINT, per spec §6, is the published H7 figure.
+Wire `mark_point_verdicts`, which is currently declared and never read. Expect
+LOWER agreement than totals-equality: that is the measurement working, not a
+regression."* · **Spend: $0.00.** Landed as PR #141; answers §3 of #105, which
+recorded the gap and refused to resolve it because the choice was a measurement
+decision, not a coding one.
+
+### The decision
+
+**H7's published agreement figure is the proportion of MARK POINTS on which
+labellers A and B agree**, not the proportion of leaves whose `awarded_marks`
+totals match. `MarkingLeafRecord.mark_point_verdicts` was declared and never
+read; agreement was totals equality, so **two labellers awarding 2/3 by
+crediting different mark points counted as agreeing**.
+
+### The unit, and why it is keyed the way it is
+
+Point identity is **`(paper_id, question_id, mark_point_id)`** — DA6's leaf key
+with one component added, for the reason DA6 exists. Keying on `mark_point_id`
+alone would merge `p1` from every leaf in the corpus into a single point,
+shrinking the denominator *and* discarding every disagreement but one: the D18
+narrowed-denominator shape, one level down.
+
+The denominator is points **both** labellers recorded on a leaf **both** marked.
+
+### Two exclusion stages, both returned rather than described
+
+Spec §9 gate 7 is not satisfied by a docstring, so the funnel travels with the
+figure:
+
+| field | unit | meaning |
+|---|---|---|
+| `a_only` / `b_only` | **leaves** | a leaf only one labeller marked — missing data |
+| `points_a_only` / `points_b_only` | **points** | a point only one recorded, **within shared leaves** |
+| `shared_leaves_without_shared_points` | leaves | shared leaves contributing **zero** points |
+| `shared_leaves` | leaves | the leaf-stage denominator |
+
+Three of those are decisions, not bookkeeping:
+
+1. **`a_only`/`b_only` keep their LEAF meaning.** Silently re-pointing an
+   existing field's unit is a moved target even before publication, so the
+   point-level exclusions got their own names.
+2. **Point exclusions are scoped to shared leaves**, so a leaf-stage exclusion
+   is never counted a second time at the point stage.
+3. **`shared_leaves_without_shared_points` is reported.** A leaf both labellers
+   marked can still contribute nothing — no verdicts, or disjoint point ids.
+   Under a per-point denominator those vanish without trace, which is the
+   narrowed-denominator failure mode in a new costume.
+
+### The totals figure is KEPT, not deleted
+
+B12 predicts the per-point number reads **lower**. That prediction is only
+checkable if both numbers travel together — a single number cannot demonstrate
+its own drop — so `totals_n` / `totals_successes` / `totals_point` /
+`totals_lower` / `totals_upper` ship beside the headline as a named secondary.
+
+**A defect in the first version of this, caught in self-review before it
+landed:** `totals_point` was a bare rate, so at `totals_n == 0` it read `0.0` —
+indistinguishable from genuine total disagreement, and unlike the headline it had
+no interval to say which. It now comes from the same `_wilson_interval` helper,
+so no data spans `[0.0, 1.0]` and real 0/1 disagreement does not. A secondary
+figure that can publish a fabricated zero is worse than no secondary figure.
+
+### Unchanged, deliberately
+
+**DA2** — on disagreement A's label stands; the result stays aggregate-scalar
+only, and the test asserting that property was updated to encode the new key set
+rather than deleted. The required `rulings_settled` keyword with no default
+(#105) and `wilson()`'s published behaviour are both untouched.
+
+### Why now, rather than after H7
+
+**No agreement figure has ever been published** — #47 has not run and #51 is
+open — so nothing here moves an existing denominator. After H7 publishes,
+changing the unit would be a moved-target problem. That is the same argument
+#105 made for its own two items, and it is the whole reason this lands against a
+measurement with no data yet.
