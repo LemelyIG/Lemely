@@ -2744,3 +2744,44 @@ them whether or not Phase 6 fixes them.
   implementation now would produce another complete-but-unmergeable branch, which is exactly what
   the 2026-08-24 gate-9 ruling was written to retire.
 - **Spend unchanged: $0.00 this run**, ledger still 3.138147 programme-wide.
+
+## run-2026-08-27-a — two issues shipped after their premises were checked, not assumed
+
+- **Three PRs landed: #142 (#94), #143 (#137)**, each on five green checks plus a supervisor
+  sweep over its exact tip. Both issues verified CLOSED afterwards through
+  `accuracy_board.py done` — PRs merge to `develop`, and GitHub only auto-closes on `main`.
+- **The run started with the queue empty and the board Ready empty**, i.e. everything on the
+  mission's own list was human-gated. Rather than stop there, I looked for work no one had
+  blocked and found two: **#94** (instrumentation, explicitly not mark-changing) and **#137**
+  (authorised by B13 in terms). Neither needed a sweep, a ruling or a dollar.
+- **#94's premise was falsified before a line was written, and the issue says so.** It claimed
+  the parser drops questions silently; re-parsing `0625_s24_ms_21` today raises
+  `ParseError: parsed 12, expected 40 (discrepancy 28)` — `reconcile` has been comparing against
+  `maximum_mark` all along, and the premise most likely died when **#93** landed and the paper
+  began being typed MCQ. What **is** silent is the *mechanism*. Acceptance bullet 3 is recorded
+  **restated, not ticked as written**.
+- **And the prevalence cuts against the issue's framing: 1 paper in 80.** 479 schemes opened,
+  0 unreadable, 80 MCQ-typed, exactly one with a discarded table, one disqualifying value corpus
+  wide (`QUESTION DISCOUNTED`). **The eventual repair is a one-paper repair on today's corpus** —
+  put in the commit, the PR, the issue and DA19, because it is the fact most likely to be
+  quietly dropped in favour of the more exciting one.
+- **#137's load-bearing property is that renders never add cases.** A render producing its own
+  case would inflate `n` with a duplicate of a leaf that already exists — the DA14 trap in a new
+  costume. Verified against the real corpus rather than asserted: 12 cases, 31 distinct leaves,
+  78 rows, unchanged. The rejected alternative (minting a second `paper_id`) is recorded in the
+  docstring at the point someone would be tempted to do it. **DA20.**
+- **A process slip, reported rather than buried.** #94's commits initially landed on **local
+  `develop`**: `accuracy_board.py start` printed the branch name and I never checked it out.
+  Caught at push time, moved onto the feature branch, `develop` reset hard to `origin/develop`.
+  Nothing reached `develop` remotely and no pushed history was rewritten. It is in PR #142's body
+  too, not only here.
+- **Two test-honesty notes I would rather state than let pass.** #137's
+  `test_extra_renders_do_not_add_cases` would also have passed before the change — it is a
+  regression guard, not a change-detector, and the PR says so instead of counting six
+  failing-before tests. And #94's real-PDF test **skips** when the PaperScraper file is absent;
+  I verified it passing rather than skipping here, because a silently-skipping test is worse than
+  no test.
+- **#59 was NOT moved to Ready** even though its data-model blocker is now gone. Two blockers
+  remain and neither is mine: the handwritten renders are verbatim CAIE content needing a
+  MISSION §12.7 decision, and the measurement is unauthorised live spend. Posted on the issue.
+- **Spend: $0.00 this run.** Ledger unmoved at 3.138147 programme-wide.
