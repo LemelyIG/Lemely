@@ -329,3 +329,42 @@ Not decisions I can make or work around (MISSION §3.5):
   rulings are examiner judgment and I will not draft them.
 - **#49** — split membership stays **NOT frozen** until #57 delivers and you
   sign off.
+
+## B17 — issues opened off-board cannot be commented through the sanctioned path
+
+New in run 37, zero spend. `scripts/accuracy_board.py` gates **every**
+subcommand — including `comment` — on board membership: `cmd_comment` calls
+`_require_issue`, which raises for any issue not on the project board. **#114
+is not on the board** (`projectItems` is empty), so `start` and `comment` both
+refuse it.
+
+MISSION §3.4 says to route every issue comment through the board script and
+**never** call `gh issue comment` directly. I did not bypass it, so #114 got
+neither a plan comment nor a finish comment, and §13's Definition of Done
+cannot be met for it through any permitted route. The same is very likely true
+of **#93, #94, #95, #110 and #112**, which were opened the same way.
+
+The membership check is doing the wrong job here: the guard §3.3/§3.4 exists
+for is the **H-issue** guard, and membership is a poor proxy for it — an
+off-board issue is not an H issue, it is just untracked.
+
+1. Add the six off-board issues to the board (and whatever opens issues does so
+   from then on). Keeps one rule, no code change.
+2. **Decouple `cmd_comment` from `_require_issue`**, keeping the H-issue guard
+   on it — comments are not board mutations. **My recommendation**; flagging
+   that it is also the branch that makes my own work easier, so weigh it.
+
+## B18 — three `test_web_teacher.py` tests are red in isolation (not a decision, a finding)
+
+`test_card_name_falls_back_to_the_uploaded_filename`,
+`test_failed_grade_is_terminal_and_carries_the_reason` and
+`test_paper_detail_reports_live_pipeline_instead_of_409` **fail when that
+module is run alone** and pass in the full suite — the card name comes back as
+`Paper <MagicMock name='mock.generate_structured().paper_number' …>`, i.e. a
+mock leaking in from ambient state.
+
+**Not attributable to #114**: reproduced identically on a clean `develop`
+worktree with `develop`'s own `conftest.py`. It is the same *family* as #114
+(a test depending on ambient state) and the supervisor's full-suite PASS hides
+it, which is why nobody has seen it. Wants its own issue; I did not open one
+because the board script could not comment on it either (B17).
