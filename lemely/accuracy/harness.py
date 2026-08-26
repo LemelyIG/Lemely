@@ -36,7 +36,13 @@ class GoldenAnswer(BaseModel):
 
 #: Golden-fixture directory-name suffixes denoting which DA6 variant a case
 #: is (spec §3.3's ``fixture_variant``, BUILD/DECISIONS.md DA6).
-_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong")
+#:
+#: ``_whitespace`` was added for B5 (#88 item 6). It is a variant rather than a
+#: new paper on purpose: DA6 counts distinct leaves by ``(paper_id,
+#: question_id)``, so a variant sharing its sibling's ``paper_id`` gives the
+#: whitespace metamorphic property something to fire on **without** adding a
+#: distinct leaf to the accuracy denominator. See BUILD/DECISIONS.md DA14.
+_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong", "_whitespace")
 
 
 def _split_fixture_variant(dir_name: str) -> tuple[str, str | None]:

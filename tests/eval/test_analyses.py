@@ -919,13 +919,24 @@ class TestDistinctLeafDA6:
 
 class TestDistinctLeavesOverRealGoldenCorpus:
     def test_wilson_n_is_31_distinct_leaves(self) -> None:
-        """Verified against the corpus (BUILD/DECISIONS.md DA6): 11 golden case
-        dirs hold 71 answer rows (M0.8/#32 added the 11th, ``_theory_nested``,
+        """Verified against the corpus (BUILD/DECISIONS.md DA6): 12 golden case
+        dirs hold 78 answer rows (M0.8/#32 added ``_theory_nested``,
         contributing 3 leaves — 1a_i, 1a_ii, 1b — with no fixture-variant
-        suffix to collapse); stripping the _correct/_partial/_wrong
-        fixture-variant suffix collapses them to 7+6+8+7+3 = 31 distinct
-        (paper, question) leaves. This supersedes the pre-#32 baseline of 68
-        rows / 28 leaves — do not cite 28 as the current distinct-leaf count."""
+        suffix to collapse; B5/#88 item 6 added ``_whitespace``, a 4th variant
+        of ``0580_s23_qp_22_theory`` carrying 7 more rows); stripping the
+        _correct/_partial/_wrong/_whitespace fixture-variant suffix collapses
+        them to 7+6+8+7+3 = 31 distinct (paper, question) leaves.
+
+        **The row count moved and ``n`` did not, which is the point.** B5
+        accepted that new fixtures "enter the accuracy denominator", and this
+        test is where that claim is checked rather than assumed: the whitespace
+        variant shares its sibling's ``paper_id``, so it adds rows without
+        adding a distinct leaf. Wilson intervals and every power figure are
+        computed on ``n``, so they are unaffected. See BUILD/DECISIONS.md DA14.
+
+        This supersedes the pre-#32 baseline of 68 rows / 28 leaves and the
+        pre-B5 count of 71 rows — do not cite 28 as the current distinct-leaf
+        count, and do not cite 71 as the current row count."""
         from lemely.accuracy.harness import load_golden_cases
 
         golden_dir = Path(__file__).resolve().parents[1] / "golden"
@@ -942,7 +953,7 @@ class TestDistinctLeavesOverRealGoldenCorpus:
             for case in cases
             for qid in case.ground_truth
         ]
-        assert len(records) == 71
+        assert len(records) == 78
         result = wilson(records)
         assert result["n"] == 31
 
@@ -957,12 +968,14 @@ class TestDistinctLeavesOverRealGoldenCorpus:
         BOTH analyses.
 
         Built over the real tests/golden corpus: the ``correct``/``partial``
-        variants of each multi-variant paper are marked ``correct``, the
+        variants of each multi-variant paper are marked ``correct`` (as is
+        B5's ``whitespace`` variant), the
         ``wrong`` variant of the SAME leaves is marked ``excluded`` (as if
         that one variant's extraction failed). Every leaf has at least one
         scored record, so wilson's n must be 31 (M0.8/#32 raised this from
         the pre-#32 baseline of 28 — see the docstring on the sibling test
-        above), and the funnel's scored count must equal it exactly."""
+        above; B5/#88 item 6 then added rows without moving n), and the
+        funnel's scored count must equal it exactly."""
         from lemely.accuracy.harness import load_golden_cases
 
         golden_dir = Path(__file__).resolve().parents[1] / "golden"
@@ -979,7 +992,7 @@ class TestDistinctLeavesOverRealGoldenCorpus:
             for case in cases
             for qid in case.ground_truth
         ]
-        assert len(records) == 71
+        assert len(records) == 78
 
         wilson_result = wilson(records)
         funnel_result = exclusion_funnel(records)
