@@ -156,14 +156,35 @@ class TestDoneForOffBoardIssues:
             item_id="item-xyz",
         )
 
-    def _gh_stub(self, monkeypatch, board, *, view_title: str, view_state: str = "OPEN"):
-        """Patch ``_run_gh`` to answer ``issue view`` and record every call."""
+    def _gh_stub(
+        self,
+        monkeypatch,
+        board,
+        *,
+        view_title: str,
+        view_state: str = "OPEN",
+        labels: list[str] | None = None,
+        raw_override: str | None = None,
+    ):
+        """Patch ``_run_gh`` to answer ``issue view`` and record every call.
+
+        ``raw_override`` returns a literal payload string instead of a
+        well-formed one, so the fail-closed paths can be driven with the
+        degraded responses they exist for.
+        """
         calls: list[list[str]] = []
 
         def fake_run_gh(args, stdin_text=None):
             calls.append(args)
             if args[:2] == ["issue", "view"]:
-                payload = {"number": int(args[2]), "title": view_title, "state": view_state}
+                if raw_override is not None:
+                    return raw_override
+                payload = {
+                    "number": int(args[2]),
+                    "title": view_title,
+                    "state": view_state,
+                    "labels": [{"name": n} for n in (labels or [])],
+                }
                 return json.dumps(payload)
             if args[:2] == ["issue", "close"]:
                 return ""
@@ -248,6 +269,68 @@ class TestDoneForOffBoardIssues:
 
         with pytest.raises(board.BoardError, match="Could not resolve"):
             board.cmd_done(999999)
+
+    def test_off_board_owner_human_label_is_refused_exit_2_no_close(self, monkeypatch):
+        """The label half of B17's ruling: not every human task carries an H-number.
+
+        ``owner:human`` marks issues that are human-only without an H-numbered
+        title (#47 is one, though it is on-board today). Off-board this guard
+        stands alone — board membership used to be an incidental second net —
+        so a title-only check would close such an issue.
+        """
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(
+            monkeypatch,
+            board,
+            view_title="M2.4 — Label ~300 distinct leaf questions",
+            labels=["owner:human"],
+        )
+
+        assert board.cmd_done(4747) == 2
+        assert [c for c in calls if c[:2] == ["issue", "close"]] == []
+
+    def test_off_board_unrelated_labels_do_not_block_a_close(self, monkeypatch):
+        """Guard against an over-broad fix: only ``owner:human`` refuses."""
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(
+            monkeypatch, board, view_title="tests: something", labels=["bug", "accuracy"]
+        )
+
+        assert board.cmd_done(4748) == 0
+        assert [c for c in calls if c[:2] == ["issue", "close"]] != []
+
+    @pytest.mark.parametrize(
+        ("raw", "match"),
+        [
+            ('{"number": 4749, "title": null, "state": "OPEN"}', "no usable title"),
+            ('{"number": 4749, "title": "   ", "state": "OPEN"}', "no usable title"),
+            ('{"number": 4749, "state": "OPEN"}', "no usable title"),
+            ('{"number": 4749, "title": "x", "state": "weird"}', "unrecognised state"),
+            ('{"number": 1, "title": "x", "state": "OPEN"}', "when asked for"),
+            ("[]", "non-object payload"),
+        ],
+    )
+    def test_degraded_gh_payloads_fail_closed_and_never_close(self, monkeypatch, raw, match):
+        """A degraded fetch must raise, NEVER fall through to a close.
+
+        This is the failure shape the guard exists to prevent: ``str(None)``
+        and ``str("")`` produce titles that match no H-pattern, so coercing
+        instead of validating would let a broken response close a human task.
+        Each payload below was verified to close the issue before the
+        validation landed.
+        """
+        board = _load_board()
+        monkeypatch.setattr(board, "_fetch_issues", lambda: {})
+        self._forbid_set_status(monkeypatch, board)
+        calls = self._gh_stub(monkeypatch, board, view_title="unused", raw_override=raw)
+
+        with pytest.raises(board.BoardError, match=match):
+            board.cmd_done(4749)
+        assert [c for c in calls if c[:2] == ["issue", "close"]] == []
 
 
 class TestAppendBlockerIsIdempotent:

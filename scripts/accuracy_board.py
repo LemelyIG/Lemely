@@ -16,6 +16,17 @@ with exit code 2, and so do ``start`` and ``review`` (an agent has no business
 progressing a human task either). ``block`` and ``comment`` stay available so
 the orchestrator can surface information on them.
 
+``done`` also acts on issues with **no board item** (ask B17): board membership
+is a fact about project hygiene, not about whether an issue is a human task, and
+using it as a proxy left every run-generated issue impossible to close by any
+sanctioned route. Off-board, no Status is set — there is no item to set one on —
+and the human-task guard is enforced directly on the issue's own title *and* its
+``owner:human`` label, since off-board that guard stands alone.
+
+Known gap, recorded rather than implied: ``comment`` still requires a board item,
+so a finish comment on an off-board issue remains impossible here. B17's ruling
+covered ``done`` only.
+
 Alongside the board, ``state get``/``state set``/``state show`` are the only
 sanctioned interface to BUILD/ACCURACY-STATE.md's machine-readable header (the
 resume-pointer keys the supervisor reads that GitHub cannot hold). The file is
@@ -99,6 +110,10 @@ CAVEATS: dict[int, str] = {
 STATUS_ORDER = ("Backlog", "Ready", "In progress", "In review", "Done")
 
 _H_TITLE = re.compile(r"^H\d+\b")
+
+#: Label marking an issue as human-only. A second, independent marker of the
+#: same invariant as the H-number: MISSION 3.5 tasks an agent must never close.
+_HUMAN_LABEL = "owner:human"
 _M_LEAF = re.compile(r"^M(\d+)\.(\d+)([ab]?)")
 
 ITEMS_QUERY = """
@@ -644,23 +659,56 @@ def cmd_review(number: int, pr_url: str) -> int:
     return 0
 
 
-def _fetch_issue_off_board(number: int) -> tuple[str, str]:
-    """Fetch (title, state) for an issue straight from GitHub, bypassing the board.
+def _fetch_issue_off_board(number: int) -> tuple[str, str, list[str]]:
+    """Fetch (title, state, labels) for an issue straight from GitHub.
 
     Board membership used to gate ``done`` entirely (``_require_issue`` raised
     before the H-guard ever ran), which meant "not on the board" — a fact about
     project hygiene, not about whether an issue is a human task — blocked every
-    off-board close. This fetches just enough (title for the H-guard, state for
-    idempotency) so `done` can act on an issue with no project item at all.
+    off-board close. This fetches just enough that ``done`` can judge an issue
+    with no project item at all: title and labels for the human-task guards,
+    state for idempotency.
+
+    **Every field is validated rather than coerced, and the failure mode is
+    fail-CLOSED.** ``str(payload["title"])`` would turn a null or missing title
+    into the literal ``"None"`` or ``""`` — neither of which matches
+    ``_H_TITLE`` — so a degraded response would sail past the H-guard and close
+    the issue. A guard whose fetch failure defaults to "not a human task" is
+    worse than no guard, because it fails silently and only on the bad path.
     """
     raw = _run_gh(
-        ["issue", "view", str(number), "--repo", OWNER_REPO, "--json", "number,title,state"]
+        [
+            "issue",
+            "view",
+            str(number),
+            "--repo",
+            OWNER_REPO,
+            "--json",
+            "number,title,state,labels",
+        ]
     )
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError as exc:
         raise BoardError(f"gh returned non-JSON for issue #{number}: {raw[:200]!r}") from exc
-    return str(payload["title"]), str(payload["state"])
+    if not isinstance(payload, dict):
+        raise BoardError(f"gh returned a non-object payload for issue #{number}: {payload!r}")
+
+    title = payload.get("title")
+    state = payload.get("state")
+    if not isinstance(title, str) or not title.strip():
+        raise BoardError(f"gh returned no usable title for issue #{number}: {payload!r}")
+    if state not in {"OPEN", "CLOSED"}:
+        raise BoardError(f"gh returned an unrecognised state for issue #{number}: {state!r}")
+    # Fetched, so assert it: a mismatch means we are about to act on the wrong issue.
+    if payload.get("number") != number:
+        raise BoardError(f"gh returned issue #{payload.get('number')} when asked for #{number}")
+
+    raw_labels = payload.get("labels") or []
+    labels = [
+        name for entry in raw_labels if isinstance(entry, dict) and (name := entry.get("name"))
+    ]
+    return title, state, labels
 
 
 def cmd_done(number: int) -> int:
@@ -670,7 +718,7 @@ def cmd_done(number: int) -> int:
         # Off-board: fetch title/state directly so the H-guard still runs
         # against the real title, rather than refusing outright. There is no
         # board item, so there is no Status field to set to Done.
-        title, state = _fetch_issue_off_board(number)
+        title, state, labels = _fetch_issue_off_board(number)
         off_board_issue = Issue(
             number=number,
             title=title,
@@ -681,6 +729,19 @@ def cmd_done(number: int) -> int:
             item_id="",
         )
         if _h_guard(off_board_issue, "close"):
+            return 2
+        # The H-number is not the only marker of a human task, and off-board
+        # this guard stands alone — board membership used to be an incidental
+        # second net. B17's ruling named "H-number/label" for exactly this
+        # reason: `owner:human` marks issues that are human-only without
+        # carrying an H-numbered title, so a title-only check would close one.
+        if _HUMAN_LABEL in labels:
+            print(
+                f"refusing to close #{number} ({title.split('—')[0].strip()}): "
+                f"it carries the {_HUMAN_LABEL!r} label. That marks a human task "
+                "as surely as an H-number does — block and wait for the human.",
+                file=sys.stderr,
+            )
             return 2
         if state == "CLOSED":
             print(f"#{number} is already closed (off-board: no project item to check)")
