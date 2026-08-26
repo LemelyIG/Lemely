@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useState, type FormEvent, type ReactNode } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
@@ -158,19 +158,33 @@ function PreviewErrorStep({
 }) {
   const copy = previewErrorCopy(error)
   return (
-    <ErrorState
-      heading={copy.heading}
-      body={
-        error instanceof ApiError && error.status === 404
-          ? "We couldn't find an invite for that code. Check it and try again."
-          : "We couldn't look up that invite just now. Check your connection and try again."
-      }
-      action={{
-        label: copy.actionLabel,
-        onClick: copy.retryable ? onRetry : onDifferentCode,
-      }}
-      className="px-0 py-2"
-    />
+    <>
+      {/*
+       * `ErrorState`'s own `heading` renders as a styled `<div>`, not an
+       * `<h1>` (`state-views.tsx`) - correct for its usual job of sitting
+       * inside a page that already has one (a portal's nav shell, a section
+       * header). This screen has no such shell: when this branch is what's
+       * on screen, `ErrorState`'s panel *is* the entire page. An `sr-only`
+       * `<h1>` gives a screen-reader user the page-level landmark
+       * QUALITY-BAR's "one h1 per page" rule asks for without touching that
+       * component's established visual contract, which every other caller
+       * still relies on.
+       */}
+      <h1 className="sr-only">{copy.heading}</h1>
+      <ErrorState
+        heading={copy.heading}
+        body={
+          error instanceof ApiError && error.status === 404
+            ? "We couldn't find an invite for that code. Check it and try again."
+            : "We couldn't look up that invite just now. Check your connection and try again."
+        }
+        action={{
+          label: copy.actionLabel,
+          onClick: copy.retryable ? onRetry : onDifferentCode,
+        }}
+        className="px-0 py-2"
+      />
+    </>
   )
 }
 
