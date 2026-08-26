@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V5 */
 import { useState, type FormEvent } from "react"
 import { Link, useParams } from "react-router-dom"
 import { ArrowLeft } from "@phosphor-icons/react"
@@ -8,6 +8,12 @@ import { Input } from "@/components/ui/input"
 import { resetFailureMessage } from "@/lib/authOutcome"
 import { cn } from "@/lib/utils"
 import { AuthFrame } from "./Login"
+import {
+  PASSWORD_RESET_SUCCESS_BODY,
+  passwordResetDevPanel,
+  passwordResetSentBody,
+  showResetSuccess,
+} from "./passwordResetLogic"
 
 /*
  * G-06 · Password reset (Task 17, spec §4.3/§4.4, decisions D7.6/D7.7).
@@ -107,58 +113,26 @@ import { AuthFrame } from "./Login"
  * keyed on nothing would carry a SUCCEEDED flag from one token onto a
  * DIFFERENT token viewed in the same tab (reachable via the browser's
  * back/forward history across two `/reset/:token` visits). `showResetSuccess`
- * below closes that instead of local state: it is true only when the last
- * successful call's own token matches the token currently in the URL, so
- * switching the URL without a fresh submission cannot show success for a
- * token nothing was actually confirmed for.
- */
-
-/**
- * The confirmation copy for `/reset` once a request has been submitted.
+ * (`passwordResetLogic.ts`) closes that instead of local state: it is true
+ * only when the last successful call's own token matches the token currently
+ * in the URL, so switching the URL without a fresh submission cannot show
+ * success for a token nothing was actually confirmed for.
  *
- * Exported and pure so Requirement 1 (spec's anti-enumeration wording rule)
- * is enforced by a test rather than by a future editor's care: the function
- * takes only the email the visitor typed, so there is no parameter through
- * which "does this account exist" could ever reach the string it returns.
- * See `web/tests/unit/passwordReset.test.ts`.
- */
-export function passwordResetSentBody(email: string): string {
-  return (
-    `If an account exists for ${email}, we've started a password reset for it. ` +
-    "Look for an email with a link to set a new password. The link stays active for about an hour."
-  )
-}
-
-/**
- * Gate for the developer-only reset-link panel on `/reset`.
+ * ── The `passwordResetLogic.ts` split ────────────────────────────────────────
  *
- * Mirrors §G-05's `devCode` handling exactly (D3.16, applied to email by
- * D7.6): the panel exists only when `devLink` is non-null, i.e. only when
- * the configured `EmailProvider` did not deliver out of band. A real
- * provider, once one is ever configured, makes the backend return `null`
- * unconditionally and this panel stops existing on its own — no client-side
- * environment flag to keep in sync.
+ * The three binding-requirement decisions above (`passwordResetSentBody`,
+ * `passwordResetDevPanel`, `PASSWORD_RESET_SUCCESS_BODY`) and the token guard
+ * (`showResetSuccess`) are pure and live in `./passwordResetLogic.ts`, not
+ * here — the same split `onboardingData.ts` and `verifyEmailLogic.ts` use,
+ * for the same two reasons: `vitest.config.ts` runs the unit suite in a Node
+ * environment with no DOM, so pure logic needs a plain `.ts` module to be
+ * importable by `passwordReset.test.ts` at all; and this project's
+ * `react/only-export-components` oxlint rule (`.oxlintrc.json`) warns on any
+ * `.tsx` file that exports both a component and a plain function/constant,
+ * which a second, non-component module is the rule's own suggested fix for.
+ * Read `passwordResetLogic.ts`'s docstrings for the full reasoning behind
+ * each of the four; this file's own docstring stays focused on the screen.
  */
-export function passwordResetDevPanel(devLink: string | null): { visible: boolean; link: string | null } {
-  return devLink === null ? { visible: false, link: null } : { visible: true, link: devLink }
-}
-
-/**
- * Whether `/reset/:token` should show its success view.
- *
- * `isSuccess` alone is not enough — see the module docstring's last section.
- * True only when the mutation's own last-called token (`succeededToken`,
- * read from `confirmPasswordReset.variables?.token`) matches the token
- * currently in the URL, so a stale success from a DIFFERENT reset link
- * cannot bleed onto this one without a real submission against it.
- */
-export function showResetSuccess(
-  isSuccess: boolean,
-  succeededToken: string | undefined,
-  currentToken: string,
-): boolean {
-  return isSuccess && currentToken !== "" && succeededToken === currentToken
-}
 
 /**
  * The "go back to signing in" link shared by every state in this file.
@@ -348,18 +322,11 @@ export function PasswordResetConfirm() {
         <div className="flex w-full max-w-100 flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
           <div className="flex flex-col gap-1.5">
             <h1 className="text-display-lg text-ink">Password changed</h1>
-            {/*
-             * Requirement 2. `AuthService.reset_password` revokes every
-             * device session unconditionally (lemely/auth/service.py, step
-             * 3), because the reason for a reset may be a compromise. This
-             * is the one sentence in the whole flow that exists specifically
-             * to say that plainly rather than let it be discovered later as
-             * an unexplained sign-out on someone's phone.
-             */}
-            <p className="text-body-md text-ink-muted">
-              Your new password is saved. For safety, every device that was signed in to your
-              account has now been signed out, so sign in again wherever you use Lemely.
-            </p>
+            {/* Requirement 2 — see PASSWORD_RESET_SUCCESS_BODY's own
+                docstring in passwordResetLogic.ts for why this is stated
+                plainly rather than left to be discovered later as an
+                unexplained sign-out on someone's phone. */}
+            <p className="text-body-md text-ink-muted">{PASSWORD_RESET_SUCCESS_BODY}</p>
           </div>
           <Link to="/login" className={buttonVariants({ variant: "accent", size: "lg" })}>
             Sign in

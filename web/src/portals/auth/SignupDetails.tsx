@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Eye, EyeSlash } from "@phosphor-icons/react"
@@ -370,7 +370,23 @@ export function SignupDetails({ role }: SignupDetailsProps) {
               ) : (
                 <Eye aria-hidden weight="regular" size={16} />
               )}
-              {showPassword ? "Hide password" : "Show password"}
+              {/*
+               * Visually hidden below `sm`, not removed: `sr-only` clips
+               * rather than `display: none`-ing, so the accessible name is
+               * "Show password"/"Hide password" at every width, and only the
+               * 320-375px row's visual budget changes. At 320px this row
+               * holds four meter segments, a strength word up to nine
+               * characters ("Too short") and this button in ~224px of card
+               * content width (`AuthFrame`'s own `px-4` plus the card's own
+               * `p-8`, arithmetic checked against both, not eyeballed) — the
+               * full "Show password" label left the bar cluster a few px
+               * wide, which is legible but tighter than the rest of this
+               * screen; the icon alone carries the control at that width, the
+               * same way `SignupRoleSelect.tsx`'s CaretRight is icon-only.
+               */}
+              <span className="sr-only sm:not-sr-only">
+                {showPassword ? "Hide password" : "Show password"}
+              </span>
             </button>
           </div>
         </div>
