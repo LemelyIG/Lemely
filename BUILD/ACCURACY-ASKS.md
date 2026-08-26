@@ -1,167 +1,200 @@
 # ACCURACY-ASKS.md — the open human decisions, in one place
 
-**Status 2026-08-25: the programme is fully blocked on this list.** Seventeen
-consecutive runs have found no decision-free work left. Every open issue is
-triaged at source; none has zero comments. Nothing here is a request to do more
-investigation — each row is a decision only the human can make.
+**Status 2026-08-26 (run 33): the programme is again fully blocked on this
+list.** The previous A1–A13 list was answered in full on 2026-08-25 and every
+one of those answers has been acted on. What follows is what has accumulated
+since, plus the items that came back with new evidence.
+
+Nothing here is a request for more investigation — each row is a decision only
+you can make. Where I have a recommendation I give it, and where a
+recommendation of mine would be self-serving (cheaper, or avoids a
+measurement) I say so.
 
 **How to answer.** Reply on the accuracy control topic
 (`lemely-acc-ctl-bqlsqcY9FfbfQd` on `http://home-server:7532`), or append to
 `BUILD/ACCURACY-INBOX.md`, naming the ask number and your choice — e.g.
-`A1: retire`. Partial answers are useful: **A1 alone lands a finished, CI-green
-PR.** Answering A8 then A5 unblocks the largest downstream chain.
+`B5: metamorphic-only`. Partial answers are useful.
 
-Recommendations are the orchestrator's reading, offered so a decision is cheap.
-They are not defaults — nothing here is acted on without an answer. Where a
-recommendation would make a gated metric easier to hit, that is flagged, because
-that is exactly the case where an agent's recommendation should not be trusted.
-
-Source: each row was verified at its issue by the run that raised it; the
-GitHub state below was re-verified 2026-08-25. Cost figures are corrected-basis
-(ledger × the pre-M0.2 understatement factor) per MISSION §10 and §12.4.
-
-Ledger: **$1.488057** of the $25.00 ceiling. Stop-and-ask sits at $20.00.
+**If you answer only one: B1.** It is the only item holding a finished branch,
+and it is a real marking-principles call rather than a process question.
+**If you answer three: B1, B2, B4** — B2 alone unblocks the longest chain
+(#88 → #57 → the parsed corpus).
 
 ---
 
-## A1 — #58 bullet 4: measure it (~$0.144) or retire it? **← unblocks a merge today**
+## B1 — #41: which rule governs the A-mark "silent" case?
 
-**Blocked:** PR #90 (`feature/accuracy-58-...` → `develop`). **OPEN, MERGEABLE,
-`mergeStateStatus=CLEAN`, all five CI checks SUCCESS** (test 3.12/3.13/3.14,
-pre-commit, web). This is the only thing between it and merge.
+**Branch `feature/accuracy-41-…` @ `09314c7` is implemented, pushed, unmerged.**
 
-**Question:** bullet 4 asks for a measured figure that costs ~$0.144 corrected.
-Either authorise that spend, or formally retire the bullet the way #40's bullet 4
-was retired on 2026-08-24 — recorded as **retired-unmet**, never as met.
+Your A13 ruling said to drive the A-mark dependency from each paper's own
+printed Generic Marking Principles, with strict M-then-A as the **fallback
+only, never the primary rule**. Implemented — and then measured: **0 of 36**
+parsed principle strings across the golden corpus mention M/A dependency at
+all. CAIE Generic Marking Principles govern awarding *fairly and
+consistently*; mark-code semantics are simply not written there.
 
-**Recommendation:** retire, with the same explicit note #40 got. #58 is
-label-free metamorphic tests; the bullet's figure is not load-bearing for any
-other item. *Flagged: this is the cheaper branch, and it is the branch that
-avoids a measurement. Authorising the $0.144 is entirely reasonable and well
-inside headroom.*
+So the prompt's "if, and only if, these principles are silent" escape clause
+fires for **100% of papers**, the blanket rule stays operative, and on the
+A-mark axis the diff does exactly what `VERSION = "4"` did.
 
-## A2 — #88 q2: `profiles.py:50`
+Your ruling covers two cases; the corpus lives entirely in a third:
 
-A paper-profile fix that **changes awarded marks** (gate-9 mark-changing under
-the 2026-08-24 DOES-not-MILESTONE test), so it needs its own before/after sweep.
-Left untouched pending your call. Same shape as the `mcq.py` finding in A4.
+| case | A13 says | reality |
+|---|---|---|
+| principles parsed **and** speak to M/A | drive from them | **never happens** — 0/36 |
+| principles **not** parsed | strict M-then-A | 5 fixtures |
+| principles parsed but **silent** on M/A | *not addressed* | **100% of GMP papers** |
 
-**Recommendation:** none offered — this is a marks-changing production change.
+Any default for case 3 moves **41 A-marks**, so it is examiner judgment.
 
-## A3 — #88 q1/q3: fall under H4 (#49)
+1. Strict M-then-A for the silent case — honest, but then drop the pretence
+   that it is principle-driven.
+2. No unconditional default; require justification from the principles plus
+   the scheme's own `dep`/`ft`/`ecf` annotations.
+3. **Drive from `math_mark_type`** — the paper's own printed *mark codes*,
+   where dependency actually is (57 `M` / 41 `A` / 39 `B` over 161 answer
+   points, 7 of 11 fixtures). **My recommendation**, but it substitutes a
+   different source than your ruling named.
 
-Both reduce to frozen-split questions that #49 owns. #49 is an H issue: never
-closed, resolved or worked around (MISSION §3.5). Needs you directly.
+**Do not close #41** — its sweep pre-authorisation is scoped to the issue's
+open lifetime. The branch is held unmerged deliberately: the `VERSION` bump
+invalidates the cached corpus only on merge, so landing a no-op now would
+spend it and need a second bump after the real fix.
 
-## A4 — #45: the three-option design question
+## B2 — #93: the gate-9 sweep waiver
 
-The failure-reason census taxonomy. Options: (1) ship as-is; (2) ship now and
-open instrumentation as its own issue; (3) instrument the parser first.
+Branch pushed, no PR, conditions 1 and 3 satisfied, sweep **null by
+construction twice over** (the harness never invokes the det parser; the
+golden set has zero 0625 paper-2 cases). The ask is the same
+instrument-blindness waiver #38 got under A6(a).
 
-Evidence gathered since: `0625_s24_ms_21` loses **28 questions to a single cell**
-— CAIE withdrew question 14, so `find_mcq_answer_col` (`lemely/io/det/mcq.py:23`)
-requires *all* cells be A–D, returns `None`, and `parse_mcq_tables` skips the
-whole table. Blast radius measured honestly: **1 of 479 schemes**, not the 3 a
-grep suggests. The cause is invisible to aggregate arithmetic but unambiguous on
-direct observation, and no current bucket names it — evidence that (3) pays.
+**This is the longest chain in the queue.** #88 items 1–2 and 4, the #57
+costed preflight, and the parsed-corpus regeneration are all sequenced behind
+it by your own instruction.
 
-The branch is reviewed-clean (two `accuracy-review` rounds, second returned
-`merge`, zero findings), 38/38 tests green, `lemely/` diff **empty**. It is not
-PR'd because the design question *is* the remaining work.
+## B3 — #37 bullet 3: the CI target cannot be re-derived
 
-**Recommendation:** (2) — ship now, instrument as its own issue.
+The sweep ran, aborted on its own brake, and established that
+`id_positional_fallback` fired **zero** times across 39 leaves with
+`id_match_rate` 1.0 in **both** arms. A corpus that scores 1.0 either way
+cannot re-derive a CI target — deriving 0.99 from it would be **picking** a
+number, not measuring one.
 
-## A5 — #37: gate-9 authorisation, or a waiver on non-blindness grounds
+1. Leave 0.99 untouched with a recorded limitation (my lean).
+2. Open a follow-up for a corpus that can actually exercise id drift.
 
-**The instrument-blindness escape hatch is closed for #37.** Unlike #38, the
-chain is live: `measure_accuracy(extract+mark)` → `grading.extract_answers` →
-`GeminiAnswerExtractor.__call__` → `normalize_extracted_answers`, which has
-exactly **one** production caller. A sweep here would be informative.
+## B4 — #95: authorised, but not executable as written
 
-Also established, and it matters beyond #37: **`id_match` is a hard-coded
-literal.** It is assigned by hand at `harness.py:402` (`"exact"`), `:788` and
-`:817` (`"unmatched"`); `"fuzzy"` is never emitted. Worse, the positional
-fallback (`answer_extraction.py:68-77`) **overwrites `question_id` with a genuine
-manifest id**, so a guessed answer is stamped `"exact"` — the reassignment is
-laundered. **Therefore `tests/golden/results/2026-08-22-f7be062.json` and
-`-79f5fa8.json` (`records=71, id_match={'exact':71}`) are NOT evidence the
-fallback never fired** — they are equally consistent with 0 and with all 71.
-Do not cite either as a clean bill of health.
+Measured this run at **$0.00**, against a throwaway directory — **nothing was
+overwritten**. Evidence: `BUILD/accuracy-runs/golden-reparse-95-2026-08-26/`.
 
-Bullet 3 is confirmed correct at source and the same-commit rule should **not**
-be relaxed. Free when the sweep runs: count `id_positional_fallback` WARNING
-lines to get the fire rate nobody has — in the *same* run, not a second sweep.
+- **4 of the 5 source mark schemes do not det-parse** (all fail
+  `mark_total_mismatch_escalating`). Regenerating would **destroy 10 of 11
+  fixtures — the whole theory corpus** — leaving one MCQ paper.
+- **Every fixture is a declared excerpt** (`case.json` holds exactly
+  `is_excerpt`, and `answers.json` matches 1:1). The one paper that parsed is
+  an **8-question excerpt of a 40-question paper**; regeneration would leave
+  the scheme describing 40 questions while the answers and scan describe 8.
 
-## A6 — #38 (a)/(b)/(c): the provably-blind gate 9
+1. Abandon the rebuild — #38's waiver and #39's deferred sweep then stand
+   permanently on instrument-blindness, which is the honest cost.
+2. **Fix the det parser's mark-total escalation first**, as its own issue,
+   with #95 held open behind it. **My recommendation.** Much larger than the
+   issue's stated "Effort: M".
+3. Rebuild MCQ-only — I advise against it.
 
-Gate 9's sweep for #38 is **null by construction**: the harness loads
-pre-parsed `mark_scheme.json`, so the change cannot move the measured number.
-Ruling needed on which of (a)/(b)/(c) applies before any re-run.
+*Correcting myself: run 32's state note gave the #93 ordering as the reason to
+hold #95. That was overstated — exactly one fixture is affected and #93's own
+sweep found the change causally inert. It is a footnote next to the two
+blockers above.*
 
-**Recommendation:** waive the sweep on instrument-blindness grounds — buying a
-guaranteed-zero delta at full cost is not a measurement. *Flagged: this is a
-recommendation to skip a gate. It rests on a structural claim you can check.*
+## B5 — 17:36 item 6: where do the whitespace fixtures live?
 
-## A7 — #38 bullet 2 needs re-stating
+Zero spend, but not zero risk: adding golden cases changes the corpus every
+published figure is computed over (MISSION §12.2/§12.5), and #49 is reopened
+so the split is **not** frozen.
 
-As written it is **harmful on 56% of affected papers**. Needs a new formulation
-from you.
+1. Ordinary golden cases, accepting that they join the accuracy denominator.
+2. **A metamorphic-only fixture set that `load_golden_cases` does not serve.**
+   My recommendation; I will implement on your word.
 
-## A8 — #39 bullet 4 is not implementable as written **← answer before A9**
+## B6 — #58: the q11b settling experiment (~$0.01)
 
-It depends on `is_excerpt`, which exists only at `harness.py:75` — a harness
-attribute, not a property of the parsed scheme.
+The authorised control arm came back **0/62**, so "it is just gemini churn" is
+dead — but 1/31 against 0/62 is Fisher **p = 1.000**, underpowered in *both*
+directions. The experiment that would settle it is re-marking q11b **alone**,
+perturbed and unperturbed, ~10× each. That is a **different design** from the
+one you authorised, so it is proposed and not run. Bullet 4 stays unticked
+either way until it resolves.
 
-## A9 — #39: do NOT authorise gate-9 before A8 is settled
+## B7 — the 0625 paper-3 constant
 
-Not a new ask — a **hard ordering constraint**, posted on #39. The defect is
-already baked into the fixtures:
-`tests/golden/0625_s20_qp_31_theory_correct/mark_scheme.json` carries linearised
-newlines on 11 of 19 answer points, including the verified `11b/p2
-(64 × 240)/960 = 16` case. So a **post-load** normaliser would fire and a sweep
-would measure it; a **parser-side** fix — the only technically correct one — is
-invisible, because the fixtures keep their already-linearised text either way.
+`profiles.py` maps 0625 paper 3 to `THEORY_EXTENDED`; CAIE 0625 Paper 3 is
+Theory (**Core**), and #93's sweep found 40 schemes flip. It is **causally
+inert** today (`scheme_format` `point_based` both sides, metadata label only),
+so it was left wrong-but-annotated rather than silently fixed. Own issue, or
+fold into #93?
 
-**Authorising the sweep before the design lands buys a guaranteed-zero delta at
-full cost** if the fix goes parser-side. A8 and A9 are not independent.
+## B8 — the parsed corpus: commit when?
 
-## A10 — #39 bullet 5 re-stating; bullet 9 must NOT be loosened
+Your 2026-08-25 directive authorised committing the 250 parsed schemes. They
+**do not exist** — that run wrote to a throwaway root. Regeneration is free
+(~40 min, det-only). My recommendation stands: **regenerate and commit
+immediately after #93 lands**, recording the parser SHA, because a corpus
+generated today would permanently enshrine schemes that the very next merge
+fixes. Say the word if you want it at 250 now anyway.
 
-Bullets 5 and 9 are **not jointly satisfiable** as written. Bullet 5 needs
-re-stating; bullet 9 is the honest constraint and should hold.
+## B9 — #98: the #51 stratification axis
 
-## A11 — #39 bullet 6 is zero, not six
+Two of your own records disagree. DA2 / the 2026-08-19T01:05 item says the
+sample is drawn **per full 3-axis DA1 stratum** (syllabus × parse path ×
+tariff band); the 2026-08-25T14:41:54 item says **mark band only**. I
+implemented mark-band-only (the later, more specific record) with the axis as
+a one-line parameter. It is a **pre-committed rule** — cheap now, expensive
+after it ships.
 
-Measured: **zero PUA codepoints in 22,825**, against a bullet asserting six. The
-bullet is factually wrong and needs re-stating or retiring.
+## B10 — #98: ratify the deviation from DA2's hash formula
 
-## A12 — #59: three prerequisites, none established
+DA2 writes the rank as `sha256(relabel_salt || question_id)`. That assumes
+`question_id` identifies a leaf; it does not — leaf identity is
+`(paper_id, question_id)` (DA6), and `1a` recurs in every paper, so under the
+literal formula every paper's `1a` shares one rank and enters the sample **as
+a block**. I hash the full leaf identity instead. Nothing has been sampled
+under either formula, so no committed membership changes — but it is your
+decision that I altered, and I want it ratified rather than assumed.
 
-Do real scans exist; is fetching them authorised; and where does the pairing
-model live? #59 is not startable until all three are answered.
+## B11 — #98: the cleartext-salt claim (informational)
 
----
+The module claimed the committed salt makes membership "unpredictable in
+advance". It does not — it is cleartext. I corrected it to what the salt
+actually buys: the ranking is fixed **in public before any leaf exists**, so
+no analyst can mint a salt at analysis time that selects a flattering sample.
+Flagging only because a false claim inside a pre-commitment matters more than
+a wrong one. No action needed unless you disagree.
 
-## Also standing
+## B12 — #105: which measure is the headline H7 figure?
 
-- **#41 bullet 2 is a MISSION §12.7 human call** (judgment on CAIE marking
-  principles). Not startable without you.
-- **#28 is CLOSED with every acceptance box unticked; the 2×2 still does not
-  exist.** The forcing mechanism it was blocked on *did* land in PR #87
-  (`harness.py:705-710` makes `arm` override `scan_path`; `cli.py:1013-1025`
-  exposes `--arm`). Open question, recommended (a), **not acted on**: does a
-  spend authorisation granted while an issue was OPEN survive it being CLOSED?
-- **#27's A/A floor is ratified and published.** Do not re-run it, and do not
-  re-run at higher n to chase significance (MISSION §12.9).
-- **DA9a: do not arm the ratchet against 29.03%.** That is the *bottom* of the
-  measured range (mean 32.58%, range 29.03–41.94% over 10 live repeats), so
-  arming against it gates on a figure unchanged code exceeds 7 times in 10.
-  Restate it distribution-aware first (#36).
+`mark_point_verdicts` is declared and never read. Agreement is currently
+equality of `awarded_marks` totals, while **spec §6 defines pass-2 output per
+mark point**. These are different measurements — two labellers can award 2/3
+by matching *different* mark points and count as agreeing. Which is the
+published H7 number?
 
-## Answered and not to be re-litigated
+## B13 — #59: authorise the `GoldenCase` two-render data-model change?
 
-Gate-9 scope is **per-item only for mark-changing items** (2026-08-24). Apply
-the test to what the code *does*, not which milestone it sits in. #28's ablation
-spend is authorised with the $20.00 stop-and-ask as its only ceiling. #36 takes
-option A. #57 is unblocked via option A — MCQ schemes parse deterministically at
-zero cost, do those first.
+Decisions 1 and 2 landed. The measurement itself is blocked: `GoldenCase`
+holds exactly one scan slot (`harness.py:66`, `:115` hard-codes `"scan.pdf"`),
+so "same paper, two renders" is not expressible. That is a data-model change
+and #59's stated "Effort: S" is wrong. Authorise it as its own work, or park
+#59?
+
+## B14 — still owed on the H issues
+
+Not decisions I can make or work around (MISSION §3.5):
+
+- **#51** — labeller B's identity and onboarding.
+- **#52** — the three seed rulings themselves (ECF, `oe` alternatives, list
+  rule over-tariff). The machinery is built and the log ships empty; the
+  rulings are examiner judgment and I will not draft them.
+- **#49** — split membership stays **NOT frozen** until #57 delivers and you
+  sign off.

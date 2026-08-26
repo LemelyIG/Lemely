@@ -1,0 +1,124 @@
+{
+  "label": "golden-reparse-95-2026-08-26",
+  "issue": 95,
+  "kind": "zero-cost feasibility probe of #95's acceptance bullet 1",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "ledger_unchanged": "cumulative_usd 2.2803523500000105 before and after (this worktree's ledger; the DA11 state header is the cross-worktree sum)",
+  "command": ".venv/bin/lemely parse-mark-schemes /tmp/g95a/src --output-root /tmp/g95a/out --on-error continue",
+  "parser": "det only (no --use-gemini)",
+  "nothing_was_overwritten": "Parsed to a throwaway directory. NO golden fixture was modified. This answers 'can #95 be executed' WITHOUT performing the irreversible operation it describes.",
+  "verdict": "#95 IS AUTHORISED BUT NOT EXECUTABLE AS WRITTEN. Two independent blockers, both measured at $0.00.",
+  "blocker_1_most_source_schemes_do_not_det_parse": {
+    "sources_attempted": 5,
+    "parsed_ok": [
+      "0625_m20_ms_12"
+    ],
+    "failed": [
+      "0580_s23_ms_22",
+      "0606_s23_ms_12",
+      "0625_s20_ms_31",
+      "0625_w21_ms_32"
+    ],
+    "failure_event": "mark_total_mismatch_escalating (computed leaf total != declared maximum_mark)",
+    "discrepancies": {
+      "0580_s23_ms_22": "73 vs 70",
+      "0606_s23_ms_12": "116 vs 80",
+      "0625_s20_ms_31": "76 vs 80",
+      "0625_w21_ms_32": "73 vs 80"
+    },
+    "consequence": "Regenerating through the det parser would DESTROY 10 of the 11 golden fixtures -- the entire theory corpus -- leaving only the single MCQ fixture. That is not 'making scheme-parsing measurable'; it is deleting the measurement corpus.",
+    "not_a_new_defect": "Consistent with the known corpus-wide det failure rate (229 of 479, 52.2%, census-2026-08-24-a). 1 of 5 here is a small sample of the same phenomenon."
+  },
+  "blocker_2_every_fixture_is_a_declared_excerpt": {
+    "evidence": "case.json carries exactly one key -- is_excerpt -- for every fixture, and answers.json matches the excerpt 1:1.",
+    "worked_example_0625_m20_ms_12": {
+      "committed_fixture": {
+        "questions": 8,
+        "maximum_mark": 8,
+        "answers_entries": 8
+      },
+      "reparsed_full_paper": {
+        "questions": 40,
+        "maximum_mark": 40
+      },
+      "mcq_answers_identical_where_they_overlap": 8,
+      "reading": "The parse is CORRECT -- all 8 committed answers match the reparsed paper exactly. The fixture is a deliberate 8-question EXCERPT of a 40-question paper."
+    },
+    "consequence": "Regeneration replaces each excerpt with the full paper while answers.json and scan.pdf still describe only the excerpted questions, producing a fixture whose ground truth no longer corresponds to its scheme. Any denominator computed on it changes by up to 5x on this paper alone.",
+    "relation_to_A8": "A8 retired #39 bullet 4 on the ground that is_excerpt 'exists only at harness.py:75 as a harness attribute and is not a property of the parsed scheme'. That ground STANDS: is_excerpt is a property of the FIXTURE (case.json), not of the parsed scheme. The retirement is undisturbed; the excerpt fact is load-bearing for #95 specifically."
+  },
+  "what_would_have_to_change_before_95_can_run": [
+    "A decision on the 4 non-parsing papers: fix the det parser's mark-total escalation first (much larger work), accept a corpus reduced to MCQ only, or abandon the rebuild.",
+    "A decision on excerpts: regenerating the scheme alone is incoherent, so answers.json and scan.pdf would have to be regenerated in step -- a far larger and even more irreversible operation than the issue describes.",
+    "CORRECTION to run 32's state note, which overstated the #93 interaction: exactly ONE fixture (0625_w21_qp_32_theory_nested) records paper_type theory_extended where post-#93 parsing gives theory_core; the other three 0625 paper-3 fixtures already record theory_core. #93's own sweep found that change causally inert. The #93 ordering is a minor detail next to blockers 1 and 2."
+  ],
+  "golden_fixture_inventory": {
+    "0580_s23_qp_22_theory_correct": {
+      "scheme_questions": 7,
+      "maximum_mark": 70,
+      "answers_entries": 7,
+      "is_excerpt": true
+    },
+    "0580_s23_qp_22_theory_partial": {
+      "scheme_questions": 7,
+      "maximum_mark": 70,
+      "answers_entries": 7,
+      "is_excerpt": true
+    },
+    "0580_s23_qp_22_theory_wrong": {
+      "scheme_questions": 7,
+      "maximum_mark": 70,
+      "answers_entries": 7,
+      "is_excerpt": true
+    },
+    "0606_s23_qp_12_theory_correct": {
+      "scheme_questions": 6,
+      "maximum_mark": 80,
+      "answers_entries": 6,
+      "is_excerpt": true
+    },
+    "0606_s23_qp_12_theory_partial": {
+      "scheme_questions": 6,
+      "maximum_mark": 80,
+      "answers_entries": 6,
+      "is_excerpt": true
+    },
+    "0606_s23_qp_12_theory_wrong": {
+      "scheme_questions": 6,
+      "maximum_mark": 80,
+      "answers_entries": 6,
+      "is_excerpt": true
+    },
+    "0625_m20_qp_12_mcq": {
+      "scheme_questions": 8,
+      "maximum_mark": 8,
+      "answers_entries": 8,
+      "is_excerpt": false
+    },
+    "0625_s20_qp_31_theory_correct": {
+      "scheme_questions": 7,
+      "maximum_mark": 19,
+      "answers_entries": 7,
+      "is_excerpt": false
+    },
+    "0625_s20_qp_31_theory_partial": {
+      "scheme_questions": 7,
+      "maximum_mark": 19,
+      "answers_entries": 7,
+      "is_excerpt": false
+    },
+    "0625_s20_qp_31_theory_wrong": {
+      "scheme_questions": 7,
+      "maximum_mark": 19,
+      "answers_entries": 7,
+      "is_excerpt": false
+    },
+    "0625_w21_qp_32_theory_nested": {
+      "scheme_questions": 1,
+      "maximum_mark": 5,
+      "answers_entries": 3,
+      "is_excerpt": false
+    }
+  }
+}
