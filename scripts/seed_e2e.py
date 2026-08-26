@@ -943,6 +943,7 @@ def build_result_payload(
     generated_at: datetime,
     teacher: dict[str, Any],
     school_admin: dict[str, Any],
+    school_with_seats: dict[str, Any],
     class_row: dict[str, Any],
     students: dict[str, dict[str, Any]],
     parent: dict[str, Any],
@@ -964,13 +965,18 @@ def build_result_payload(
     on top of those (P4.8 chunk C); ``practice`` is additive on top of all of
     it (P4.9 chunk C); ``studyPlan`` is additive on top of that (P4.10 chunk C);
     ``engagement`` is additive on top of all of it (P5.11) — every key present
-    before it is unchanged.
+    before it is unchanged. ``schoolWithSeats`` is additive on top of THAT
+    (issue #10, Task 23 e2e) — the pre-existing ``schoolAdmin`` above has no
+    ``SchoolMembership`` (spec §1.1's own finding), so it cannot mint a seat
+    invite; this is a second, real school_admin who administers a real school
+    with a real quota, via `_provision_school_with_admin`.
     """
     return {
         "runTag": run_tag,
         "generatedAt": generated_at.isoformat(),
         "teacher": teacher,
         "schoolAdmin": school_admin,
+        "schoolWithSeats": school_with_seats,
         "class": class_row,
         "students": students,
         "parent": parent,
@@ -1009,6 +1015,84 @@ def _signup_account(role_label: str, role: Role, run_tag: str) -> dict[str, Any]
         "password": password,
         "displayName": f"Seed {role_label.replace('-', ' ').title()}",
         "accessToken": result.access_token,
+    }
+
+
+# Seat quota for `_provision_school_with_admin` below. Five, not one: the
+# invite-redemption e2e journey (Task 23, `web/e2e/signup.spec.ts`) mints one
+# seat invite and redeems it, and a quota of exactly one would make that same
+# run's *second* pass (Playwright's own retry-on-failure) mint against an
+# already-exhausted school — a flake this seed can cheaply not cause.
+SCHOOL_WITH_SEATS_QUOTA = 5
+
+
+def _provision_school_with_admin(run_tag: str) -> dict[str, Any]:
+    """Create a real ``School`` with quota and a `school_admin` who administers it.
+
+    Distinct from the bare ``school_admin`` account `seed()` already signs up
+    (``_signup_account("admin", Role.school_admin, run_tag)``): that account
+    predates issue #10 and carries no ``SchoolMembership`` at all — spec §1.1's
+    own finding was that *no* production or seed path had ever constructed one.
+    `web/e2e/signup.spec.ts`'s Invite journey needs a school_admin who can
+    actually mint a seat invite (``InviteService.mint_seat_invite`` is
+    ownership-scoped in the *service*, D7.1/D7.3, so an admin with no
+    membership 403s), which is exactly what
+    :class:`~lemely.db.school_provisioning_repo.SchoolProvisioningService`
+    (D7.8) exists to produce — reusing it here rather than inserting the
+    `School`/`SchoolMembership` rows by hand keeps this seed exercising the
+    same service the platform-admin Schools screen does, not a second,
+    hand-rolled path to the same tables.
+
+    Calling `SchoolProvisioningService` directly, with no platform_admin
+    caller in sight, mirrors exactly how `_signup_account` above already calls
+    `AuthService.signup` directly for `school_admin`/`teacher` — neither
+    service enforces the caller's role itself (that check lives at the router,
+    D1.10's "ownership is checked in the service, never the router" applied to
+    *role* gates too), so a seed script bypassing the HTTP layer entirely is
+    the documented, expected way to construct fixture state this way.
+
+    Returns a dict with the school's id/name/quota plus the admin account
+    (mirroring `_signup_account`'s own shape) — NOT via that helper, because
+    `SchoolProvisioningService.create_school_admin` both creates the account
+    and writes the membership in one unit of work (D7.8's own binding rule),
+    so calling `_signup_account` first and then binding it to a school would
+    either duplicate that unit of work or leave a moment where the account
+    exists with no membership.
+    """
+    provisioning = deps.get_school_provisioning_service()
+    auth_service = deps.get_auth_service()
+
+    school_name = f"P23 Seed School {run_tag}"
+    _log(f"Creating school with a seat quota of {SCHOOL_WITH_SEATS_QUOTA}: {school_name}")
+    school = provisioning.create_school(school_name, SCHOOL_WITH_SEATS_QUOTA)
+
+    email = build_email("school-owner", run_tag)
+    password = build_password(run_tag)
+    display_name = "Seed School Owner"
+    _log(f"Creating school_admin {email} for school {school.school_id}")
+    provisioning.create_school_admin(school.school_id, email, password, display_name)
+
+    # `create_school_admin` returns the account and membership ids, not a
+    # session — the real flow's admin never needs one for the account they
+    # just created (they hand the temporary password to someone else, per
+    # D7.8/Task 12's own "no email provider delivers" reasoning). This script
+    # is standing in for that recipient logging in for the first time, which
+    # is also the most direct way to prove the account and password this
+    # function just minted actually work together, rather than trusting the
+    # write.
+    login_result: AuthResult = auth_service.login(email, password)
+
+    return {
+        "schoolId": str(school.school_id),
+        "name": school.name,
+        "seatQuota": school.seat_quota,
+        "admin": {
+            "userId": str(login_result.user_id),
+            "email": email,
+            "password": password,
+            "displayName": display_name,
+            "accessToken": login_result.access_token,
+        },
     }
 
 
@@ -1059,6 +1143,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     teacher = _signup_account("teacher", Role.teacher, run_tag)
     school_admin = _signup_account("admin", Role.school_admin, run_tag)
+    school_with_seats = _provision_school_with_admin(run_tag)
 
     declining = _signup_account("declining", Role.student, run_tag)
     inactive = _signup_account("inactive", Role.student, run_tag)
@@ -1818,6 +1903,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         generated_at=now,
         teacher=teacher,
         school_admin=school_admin,
+        school_with_seats=school_with_seats,
         class_row=class_dict,
         students=students,
         parent=parent,

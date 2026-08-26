@@ -36,6 +36,18 @@ export interface SeedContract {
   generatedAt: string
   teacher: SeedAccount
   schoolAdmin: SeedAccount
+  /**
+   * A SECOND school_admin, distinct from `schoolAdmin` above (issue #10,
+   * Task 23). `schoolAdmin` predates issue #10 and carries no
+   * `SchoolMembership` at all — design spec §1.1's own finding was that no
+   * production or seed path had ever constructed one — so it cannot mint a
+   * seat invite (`InviteService.mint_seat_invite` is ownership-scoped in the
+   * service, D7.1/D7.3, and 403s an admin with no membership). `admin` here
+   * really administers `schoolId`, with `seatQuota` free seats, via
+   * `lemely.db.school_provisioning_repo.SchoolProvisioningService` (D7.8) —
+   * see `_provision_school_with_admin` in `scripts/seed_e2e.py`.
+   */
+  schoolWithSeats: { schoolId: string; name: string; seatQuota: number; admin: SeedAccount }
   class: { classId: string; name: string; joinCode: string }
   students: {
     declining: SeedStudent
