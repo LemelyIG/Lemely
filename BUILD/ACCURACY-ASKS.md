@@ -45,14 +45,30 @@ census:
 
 | | one-off | recurring, every full rebuild |
 |---|---|---|
-| cost (per-scheme median → per-PAGE mean) | $5.41 – $6.52 | **$10.33 – $13.79** |
-| *today, for comparison* | — | $4.92 – $7.26 |
+| **cost (MEASURED, per-page → per-scheme)** | **$11.92 – $14.71** | **$25.23 – $28.02** |
+| *first published on #151, understated 1.83×–2.7×* | *$5.41 – $6.52* | *$10.33 – $13.79* |
 
-**And it does not fit the ceiling.** Ledger **$3.138148**; the **committed** hard
-ceiling is **$8.00** (`config.py:111`). The $25.00 in `lemely.toml` is
-**gitignored and worktree-local** — DA13's hazard class, invisible to CI. Against
-$8.00 the **one-off alone** lands at **$8.55–$9.66: a breach**, and the recurring
-rebuild breaches on its own every time. MISSION §12.4 makes that a stop-and-ask.
+**Corrected 2026-08-27 (DA26).** The figures #151 opened with reused the token
+model from `preflight-88-2026-08-26`, and presented reproducing it "to the cent"
+as validation. #88's item-2 sweep had **already falsified that model at 1.83×**
+the same day, on this exact task — measured at n=1, confirmed at n=6, aborted at
+6 of 190. The corrected figures scale the **measured** $0.07005/scheme.
+
+**And it fits no ceiling the programme records.** Ledger **$3.146479**; the
+**committed** hard ceiling is **$8.00** (`config.py:111`). The $25.00 in
+`lemely.toml` is **gitignored and worktree-local** — DA13's hazard class,
+invisible to CI.
+
+| | one-off | recurring |
+|---|---|---|
+| ledger after | $15.07 – $17.86 | $28.38 – $31.17 |
+| vs committed **$8.00** | **BREACH** | **BREACH** |
+| vs local $25.00 | fits | **BREACH** |
+| tokens vs 5M `per_run_token_ceiling` | **6.49M — TRIPS** | **13.74M — TRIPS** |
+
+MISSION §12.4 makes that a stop-and-ask. Two of those are qualitative changes
+from what #151 first told you: the recurring rebuild now breaches even the local
+$25.00, and both plans trip the token ceiling #88 already flagged as undersized.
 
 Beyond money: #112/#110/#136/#39 become dead work; **#53 (M3, parse-path parity)
 is voided**; MISSION §2 and §14 both rest on the det path being measurable, and

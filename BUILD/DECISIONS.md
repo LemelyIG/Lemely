@@ -12148,3 +12148,63 @@ with every call `cache_hit=False`. Bullet 3 ticked on live evidence, replacing
 the transform and are labelled `determined_offline` in the artifact, so the run
 cannot be misread as 78 live outcomes. Programme ledger 3.138148 → **3.146479**,
 re-summed across all four worktrees rather than carried forward.
+
+---
+
+## DA26 — reproducing a falsified artifact is not validating a model (#151, amends DA23)
+
+**Date:** 2026-08-27 · **Issue:** #151 · **Spend:** $0.00
+
+DA23 costed ruling C6 and opened #151 so the human could take the fork on real
+numbers. **Those numbers were understated by 1.83×–2.7×**, and the reason is
+worth more than the correction.
+
+The C6 preflight reused the token model from
+`preflight-88-2026-08-26/recost_88.py` and **presented that reuse as its
+strength** — it reproduced #88's four published scenarios *to the cent*, and
+DA23 recorded that as "the model is validated against the prior artifact rather
+than re-derived".
+
+**The reproduction was real and the inference was false.** On 2026-08-26 — the
+same day, in this repository, against this exact task — #88's item-2 sweep ran
+that model against reality, measured it at n=1, confirmed it at n=6, and
+**aborted at 6 of 190 because it was 1.83× under**. Reproducing a falsified
+model to the cent reproduces a known-wrong number.
+
+**The rule: agreement with a prior artifact is not evidence. Agreement with a
+measurement is.** Before carrying a cost model across, check whether the
+population it was measured on has since been *measured again* — not merely
+whether the arithmetic still matches. A model and its own output will always
+agree.
+
+Why all three of #88's causes transfer to C6 unchanged — C6 routes the *same*
+task (Gemini parsing mark schemes from PDF) through the *same* pipeline:
+
+1. **Input 2.07× under** — `pages * 258 + 1500` gives 4,170/call against an
+   actual 8,630; the PDF goes up through the Files API, not billed per page.
+2. **Output 1.35× under, structurally** — ~36% of output is thinking tokens,
+   and the proxy was det-produced `MarkScheme` JSON. A det parser does no
+   thinking, so **the proxy could not represent that cost at any sample size**.
+3. **1.33 Gemini calls per scheme**, not 1.00 — retries modelled as free.
+
+**C6 re-costed on the measured $0.07005/scheme:**
+
+| | DA23 published | measured | ledger after |
+|---|---|---|---|
+| one-off (210 schemes, 1,762pp) | $5.41–$6.52 | **$11.92–$14.71** | $15.07–$17.86 |
+| recurring (400 schemes, 3,729pp) | $10.33–$13.79 | **$25.23–$28.02** | $28.38–$31.17 |
+
+Two changes are qualitative, not just larger: **the recurring rebuild now
+breaches even the gitignored local $25.00 ceiling** (it fitted before), and
+**both plans trip the 5M `per_run_token_ceiling`** at 6.49M and 13.74M — the
+same ceiling #88 already recorded as undersized on this same falsified estimate.
+
+**What DA23 got right and is not withdrawn:** the structural finding was
+*counted*, not modelled — MCQ schemes carry zero `answer_points`, so C6 retires
+210/289 schemes and 10,314/10,314 answer points, reconciling exactly with #41's
+independent census. The four non-monetary costs stand. The fork stands, and no
+recommendation is offered between (a) and (b) now any more than then.
+
+Also carried forward from #88 so it does not propagate: **`output_tokens`
+already includes `thoughts_tokens`** — pricing input+output alone reproduces
+the ledger to the cent; adding thoughts on top overshoots.

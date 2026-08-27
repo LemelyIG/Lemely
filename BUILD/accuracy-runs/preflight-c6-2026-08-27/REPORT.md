@@ -1,5 +1,26 @@
 # Costed preflight — ruling C6, "deterministic parsing for MCQ ONLY"
 
+> **SUPERSEDED IN PART, 2026-08-27 — every dollar figure below is understated by
+> 1.83x-2.7x.** This report's token model was `preflight-88-2026-08-26/recost_88.py`'s,
+> and section 2 presented reproducing that model "to the cent" as validation. It was
+> not: #88's item-2 sweep had **already falsified that model at 1.83x** on 2026-08-26,
+> measured at n=1 and confirmed at n=6, on this exact task. See `recost_measured.py` /
+> `recost_measured.json` for the figures scaled from the MEASURED $0.07005/scheme.
+>
+> | | published here | measured |
+> |---|---|---|
+> | one-off | $5.41-$6.52 | **$11.92-$14.71** |
+> | recurring | $10.33-$13.79 | **$25.23-$28.02** |
+>
+> Two qualitative changes: the recurring rebuild now breaches even the **local $25.00**
+> ceiling, and both plans **trip the 5M `per_run_token_ceiling`** (6.49M / 13.74M).
+>
+> **Section 1's structural finding is unaffected** — it was measured by counting the
+> committed corpus, not modelled: MCQ schemes carry zero `answer_points`, so C6 retires
+> 210/289 schemes and 10,314/10,314 answer points. Sections 4 and 5 stand.
+>
+> The original text is kept below rather than edited, so the error stays legible.
+
 **Zero spend.** Every figure below is measured from committed files and the
 local source PDFs. Ledger unmoved at **$3.138148** (re-summed across all four
 worktree ledgers, never carried forward from the header).
