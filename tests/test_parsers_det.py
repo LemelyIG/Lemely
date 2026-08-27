@@ -10,6 +10,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from lemely.core.loose_schemas import (
+    AnswerPoint,
     MarkSchemeMetadata,
     MathMarkType,
     MCQAnswer,
@@ -1319,3 +1320,62 @@ class ChainedParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarksDefaultedProvenance(unittest.TestCase):
+    """#38 (M1.3): `make_point` mints a 1-mark point when the marks cell is
+    unparseable. Until now the parser never recorded that it had guessed, so a
+    minted mark was indistinguishable from one read off the page.
+
+    These pin the provenance flag only. They deliberately do NOT assert any
+    change to `marks` — the value is unchanged by design; what is new is that
+    the guess is countable.
+    """
+
+    def test_parsed_marks_cell_is_not_defaulted(self) -> None:
+        """A readable marks cell yields marks_defaulted=False."""
+        rows: list[list[str | None]] = [["1(a)", "the answer", "2"]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 2)
+        self.assertFalse(point.marks_defaulted)
+
+    def test_unparseable_marks_cell_is_flagged_defaulted(self) -> None:
+        """An empty marks cell mints 1 mark AND records that it did."""
+        rows: list[list[str | None]] = [["1(a)", "the answer", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 1, "value is unchanged — still the minted default")
+        self.assertTrue(point.marks_defaulted, "but it is now recorded as minted")
+
+    def test_leaked_multi_mark_code_is_flagged_defaulted(self) -> None:
+        """The DA21 mechanism (B) case, and the reason this flag earns its keep.
+
+        When the marks column merges into the answer cell the code arrives as
+        trailing text, so `parse_marks_cell` sees nothing and the point defaults
+        to 1. For a multi-mark code that silently loses `value - 1` marks. The
+        default is right *by luck* for B1/M1/A1/C1, which is why it went
+        unnoticed — the flag is what makes the lossy cases countable.
+        """
+        rows: list[list[str | None]] = [["5(a)", "centre of mass is where lines cross B3", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 1, "B3 silently became 1 — DA21 mechanism (B)")
+        self.assertTrue(point.marks_defaulted)
+
+    def test_single_mark_code_is_right_by_luck_but_still_flagged(self) -> None:
+        """B1 leaking into the text lands on the correct value anyway.
+
+        This is the case that makes the bug invisible: the minted 1 happens to
+        be right. Provenance must still fire, or the flag would only mark the
+        cases someone already noticed.
+        """
+        rows: list[list[str | None]] = [["5(b)", "marked on line of symmetry B1", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 1, "correct value, but arrived at by guessing")
+        self.assertTrue(point.marks_defaulted)
+
+    def test_defaulted_flag_defaults_false_on_the_schema(self) -> None:
+        """A point built without the flag is not silently marked as a guess."""
+        self.assertFalse(AnswerPoint(id="p1", point="x", marks=1).marks_defaulted)
