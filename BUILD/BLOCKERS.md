@@ -783,9 +783,44 @@ undecided deliberately: either answer is defensible, and picking one was outside
 
 ## B9 — The sign-up E2E journeys are written but have never been run
 
-**Raised:** 2026-08-26 (issue #10, Task 23) · **Status: NOT BLOCKING the unit and integration
-evidence below, but the acceptance journeys in `docs/superpowers/specs/2026-08-25-signup-flows-design.md`
-§6 are unproven end to end.**
+**Raised:** 2026-08-26 (issue #10, Task 23) · **Status: RESOLVED the same day. All three journeys
+pass against a real local Supabase stack (`3 passed`, exit 0).**
+
+### What running them cost, and what it bought
+
+The CLI was installed to `~/.local/bin/supabase` (the path `playwright.config.ts` already prepends)
+and `supabase start` brought up GoTrue on 54321 and Postgres on 54322; the database was migrated to
+`0023_invites` and `seed_reference_data()` run. The hosted Supabase connector was evaluated first
+and rejected: it exposes only publishable/anon keys by design, and every journey begins at signup,
+where `admin_create_user` needs the service-role key. Both hosted projects are also paused, and
+these journeys write real user rows — not something to point at a real project to find out.
+
+**Two real product bugs, both of which had passed every gate in this repository:**
+
+1. **`LoginRoute` raced signup's own redirect.** `/signup/student` and `/signup/teacher` were
+   wrapped, so the session the form had just minted was read by the guard on the same commit and
+   `navigate("/verify-email")` lost. A new student landed on `/student/onboard` and **G-07 was
+   unreachable by signing up at all.** A unit test asserted the wrapper *should* be there, so the
+   bug was pinned in place by its own coverage.
+2. **Completing onboarding bounced back into onboarding.** `useCompleteOnboarding` only
+   `invalidateQueries`'d, which is non-blocking; `handleFinish` navigated before the refetch landed,
+   so the D7.9 gate read a stale `onboardingCompletedAt: null` and returned the student to the
+   wizard. **A student could never leave onboarding.** Introduced by the gate added in this issue.
+
+Both share one shape: every component is correct in isolation, and the defect exists only where two
+correct things meet under real timing. Unit tests cannot see that by construction.
+
+**Three faults in the journeys themselves**, none fixed by loosening an assertion: a seat baseline
+measured after the mint (D7.3 reserves at mint, so redemption cannot move the count); a join-code
+locator that forbade the whitespace the accessible-name algorithm inserts; and a landing CTA locator
+ambiguous across two same-labelled buttons, which Playwright's strict mode correctly refused rather
+than guessing at.
+
+**One setup gap:** `scripts/seed_e2e.py` assumes `subjects` is already populated, which is only true
+if `lemely/db/seed.py`'s reference-data step has run. On a fresh database it fails with
+`Unknown subject code: '0625'`, which does not point at the cause. Worth a guard in the seeder.
+
+### The original entry, kept because the reasoning still applies
 
 ### What was tried, and the exact failure
 
