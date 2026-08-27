@@ -419,8 +419,8 @@ describe("resolveTrail — D1.5's back affordance", () => {
  * the wrong subtree passes typecheck, lint and every design gate silently,
  * and the only thing that catches it is a test that says out loud which
  * routes are public and which are not — reading the route table itself,
- * not trusting a comment about it. Five of the nine below are wrapped in
- * `LoginRoute`; four are deliberately not, and the "not wrapped" pair is the
+ * not trusting a comment about it. Three of the nine below are wrapped in
+ * `LoginRoute`; six are deliberately not, and the "not wrapped" set is the
  * exception most likely to look like an oversight to a future reader and get
  * "fixed" into a bug, which is exactly why both directions are asserted for
  * every one of the nine rather than only the positive case.
@@ -438,12 +438,29 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
     "/join/:code",
   ]
 
-  const WRAPPED = ["/signup", "/signup/student", "/signup/teacher", "/reset", "/reset/:token"]
+  const WRAPPED = ["/signup", "/reset", "/reset/:token"]
 
-  // The two G-07 routes and the two G-08 routes. Named as its own constant,
-  // not just "the rest of NEW_PATHS", so a reviewer can see the exact set the
-  // exception applies to without cross-referencing WRAPPED.
-  const UNWRAPPED = ["/verify-email", "/verify-email/:token", "/join", "/join/:code"]
+  // The two G-03 routes, the two G-07 routes and the two G-08 routes. Named as
+  // its own constant, not just "the rest of NEW_PATHS", so a reviewer can see
+  // the exact set the exception applies to without cross-referencing WRAPPED.
+  //
+  // The two G-03 entries were in WRAPPED until the E2E journeys ran for the
+  // first time and caught what that cost. A successful signup mints a session,
+  // and `LoginRoute` reads it on the same commit the form's own
+  // `navigate("/verify-email")` runs — the guard wins, so a new student landed
+  // on `/student/onboard` and G-07 was unreachable by signing up at all. Every
+  // unit gate passed the whole time, including the assertion right here that
+  // said these two SHOULD be wrapped: the route table was well-formed and the
+  // screen's navigate call was correct in isolation. Only mounting both against
+  // a real session shows it.
+  const UNWRAPPED = [
+    "/signup/student",
+    "/signup/teacher",
+    "/verify-email",
+    "/verify-email/:token",
+    "/join",
+    "/join/:code",
+  ]
 
   /**
    * Walk a route element tree looking for a component by display name.

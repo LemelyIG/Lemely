@@ -317,6 +317,28 @@ export const appRoutes: RouteObject[] = [
       </LoginRoute>
     ),
   },
+  /*
+   * G-03's two variants are deliberately NOT wrapped in `LoginRoute`, and this
+   * is the third exception in this file rather than an oversight.
+   *
+   * A successful signup mints a session — `AuthContext`'s `signup` sets it in
+   * `onSuccess` — and the screen then routes to `/verify-email` itself, because
+   * it is the only place that knows whether an invite code still has to be
+   * redeemed first. Wrapping the route puts a guard in the tree that reads the
+   * very session the form just created, and `LoginRoute` wins that race: it
+   * renders `<Navigate to={portalPathForRole(...)}>` on the same commit, so the
+   * screen's own `navigate("/verify-email")` is overridden before it is seen.
+   *
+   * The symptom was a new student landing on `/student/onboard` and G-07 being
+   * unreachable on the happy path — a screen this product ships and, until the
+   * E2E journeys ran for the first time, nobody could reach by signing up. Every
+   * unit gate passed throughout: the route table is well-formed, the screen's
+   * navigate call is correct in isolation, and the defect only exists once both
+   * are mounted together with a real session.
+   *
+   * `/signup` above keeps its wrapper: role selection mints nothing, so bouncing
+   * an already-signed-in visitor off it is right and cannot race anything.
+   */
   // G-03, student variant. Two static paths rather than one route with a
   // `:role` segment (design spec §4.4's own choice) — see `SignupDetails.tsx`'s
   // module docstring for why that makes this the single source of truth for
@@ -330,11 +352,9 @@ export const appRoutes: RouteObject[] = [
         "Create a Lemely student account, upload a past paper, and see exactly what to study next.",
     } satisfies PageMeta,
     element: (
-      <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <SignupDetails role="student" />
-        </Suspense>
-      </LoginRoute>
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <SignupDetails role="student" />
+      </Suspense>
     ),
   },
   // G-03, teacher variant (D7.1, D7.2). The same `SignupDetails`, the other
@@ -348,11 +368,9 @@ export const appRoutes: RouteObject[] = [
         "Create a Lemely teacher account and mark past papers faster, with partial credit worked out for you.",
     } satisfies PageMeta,
     element: (
-      <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
-          <SignupDetails role="teacher" />
-        </Suspense>
-      </LoginRoute>
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <SignupDetails role="teacher" />
+      </Suspense>
     ),
   },
   /*
