@@ -194,10 +194,19 @@ def build_questions(
     ) -> AnswerPoint:
         nonlocal point_idx
         point_idx += 1
+        # #38 (M1.3): when `marks_int is None` the marks cell was absent or
+        # unparseable and this 1-mark value is MINTED, not read. Record that.
+        #
+        # The default is right by luck for every single-mark code (B1/M1/A1/C1),
+        # which is exactly why it went unnoticed for so long — see DA21, where
+        # this same line silently cost `0625_s20_ms_31` 4 marks and
+        # `0625_w21_ms_32` 4 more by turning `B4`/`B2`/`B3` into 1. Provenance
+        # does not change the value; it makes the guess countable.
         return AnswerPoint(
             id=f"p{point_idx}",
             point=text,
             marks=marks_int if marks_int is not None else 1,
+            marks_defaulted=marks_int is None,
             math_mark_type=math_type,
             is_alternative=is_alt,
         )
