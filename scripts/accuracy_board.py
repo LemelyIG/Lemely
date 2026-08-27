@@ -810,13 +810,44 @@ def cmd_block(number: int, on: str) -> int:
 
 
 def cmd_comment(number: int) -> int:
-    issues = _fetch_issues()
-    issue = _require_issue(issues, number)
+    """Post a comment, whether or not the issue has a project item.
+
+    ``comment`` used to go through ``_require_issue``, so board membership —
+    a fact about project hygiene, not about whether an issue is a human task —
+    refused the very path MISSION §3.4 makes mandatory. Run 55 alone had to
+    post four rulings (#112, #136, #127, #151) via raw ``gh`` because of it,
+    and #114 is what opened ask B17. B17 ruled that membership must stop
+    standing in for the H-guard; that landed on ``done`` and not here.
+
+    **No H-guard is applied on this path, deliberately.** MISSION §3.5 requires
+    posting a comment on an H issue to state what is needed, so refusing one
+    would break the protocol the guard exists to serve. Commenting mutates no
+    board field and closes nothing; the guard belongs on ``start``/``review``/
+    ``done``/``block``, where it already sits. ``tests/
+    test_accuracy_board_offboard.py`` pins the asymmetry so a later pass
+    "for consistency" cannot copy the guard onto this path.
+
+    Off-board, ``_fetch_issue_off_board`` is reused rather than a second,
+    looser fetch: it is the one that fails CLOSED and asserts the returned
+    issue is the one asked for, so a degraded response cannot land the body on
+    the wrong issue.
+    """
     if sys.stdin.isatty():
         raise BoardError("comment expects the body on stdin (pipe it in)")
     body = sys.stdin.read().strip()
     if not body:
         raise BoardError("empty comment body on stdin; nothing posted")
+
+    issues = _fetch_issues()
+    issue = issues.get(number)
+    if issue is None:
+        # Raises if the issue does not exist, or if gh answers about another
+        # one. Title/labels are unused here — only the identity check matters.
+        _fetch_issue_off_board(number)
+        _post_comment(number, body)
+        print(f"comment posted on #{number} (off-board: no project item)")
+        return 0
+
     _post_comment(issue.number, body)
     print(f"comment posted on #{number}")
     return 0
