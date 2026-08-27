@@ -140,7 +140,19 @@ class GeminiSettings(BaseModel):
 class AccuracyEvalSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mark_accuracy_target: float = Field(default=0.95, ge=0.0, le=1.0)
+
+    # #37 (M1.2), ruling B3 (2026-08-26): 0.99 is INHERITED, NOT MEASURED, and is
+    # deliberately left untouched. The gate-9 sweep that was meant to re-derive it
+    # could not: `id_positional_fallback` fired ZERO times across the 39 leaves it
+    # covered, and `id_match_rate` came back 1.0 in BOTH arms. A corpus that scores
+    # 1.0 either way says nothing about what genuine id agreement looks like when
+    # extraction drifts, so re-deriving 0.99 from it would be PICKING a number, not
+    # measuring one. Recorded as a limitation rather than dressed up as a
+    # measurement. Do not cite tests/golden/results/2026-08-22-f7be062.json or
+    # -79f5fa8.json as evidence the fallback never fired — they predate #37 and are
+    # equally consistent with 0 fires and with all 71.
     id_match_rate_target: float = Field(default=0.99, ge=0.0, le=1.0)
+
     flag_precision_target: float = Field(default=0.99, ge=0.0, le=1.0)
     flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
 
