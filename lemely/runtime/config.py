@@ -161,8 +161,24 @@ class AccuracyEvalSettings(BaseModel):
     review_rate_signal_target: float = Field(default=0.08, ge=0.0, le=1.0)
     review_rate_total_target: float = Field(default=0.10, ge=0.0, le=1.0)
     review_rate_p95_target: float = Field(default=0.15, ge=0.0, le=1.0)
-    # Unarmed at M0: a breach is recorded but does not fail the gate. Armed at
-    # M1 acceptance (spec §7: M0.9 -> M1.1/#36).
+    # Unarmed: a breach is recorded but does not fail the gate.
+    #
+    # This used to read "Armed at M1 acceptance (spec §7: M0.9 -> M1.1/#36)".
+    # #36 is CLOSED, and it is "M1.1 - The confidence unit", different work
+    # entirely - so that comment told every reader the arming trigger had
+    # already passed and arming was simply not done. It has not passed.
+    #
+    # DA9a blocks arming, and #161 tracks the work that must come first:
+    # review_rate_last_merged is 0.2903, and the effective ceiling is
+    # min(review_rate_total_target, review_rate_last_merged). But 29.03% is
+    # the BOTTOM of a measured range, not a central estimate - the A/A churn
+    # floor over 10 live repeats had a MEAN of 32.58% (range 29.03-41.94%).
+    # Arming against it gates on a figure unchanged code exceeds 7 times in
+    # 10, which is a coin flip blocking merges, not a ratchet.
+    #
+    # Do NOT flip this to True to "finish" the gate. Restate the review rate
+    # distribution-aware first (#161), re-derive the ceiling from that, and
+    # record which statistic it is.
     review_rate_ratchet_armed: bool = Field(default=False)
     # The last-merged review_rate_total the ratchet compares against — the
     # ceiling is min(review_rate_total_target, review_rate_last_merged), so
