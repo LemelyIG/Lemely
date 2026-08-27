@@ -2785,3 +2785,56 @@ them whether or not Phase 6 fixes them.
   remain and neither is mine: the handwritten renders are verbatim CAIE content needing a
   MISSION §12.7 decision, and the measurement is unauthorised live spend. Posted on the issue.
 - **Spend: $0.00 this run.** Ledger unmoved at 3.138147 programme-wide.
+
+## run-2026-08-27-d — the queue was genuinely blocked, so the asks were answered; then one answer was measured
+
+**Spend: $0.00.** Ledger unmoved at **3.138148**, re-summed across all four worktree
+ledgers per B16 rather than carried forward from the header (the header's 3.138147 differs
+by 1e-6 float rounding, not drift).
+
+- **The "everything is blocked" claim was verified, not trusted.** The standing lesson is
+  that a 'done' note is not evidence, and it applies to a *blocked* note too. Checked
+  independently: `develop` @ `ec875a1` is **0 commits behind `main`** (§4 precondition
+  holds); the board reports **Ready = 0** in every milestone and `next` returns "nothing
+  ready"; and each of #38, #39, #41, #58, #59, #95, #110, #112, #127, #136 carries a posted,
+  unanswered human question. The claim held. There was nothing to execute.
+- **So the asks were put to the human directly, and seven rulings came back** — C1–C7,
+  recorded in `BUILD/ACCURACY-ASKS.md` and posted to all ten affected issues. **DA22**
+  (the C1/C3 sweep waiver and its deterministic substitute), **DA23** (C6), **DA24** (C7).
+- **PR #150 merged** (`3a5b378`) once all five checks went green. Bookkeeping only, and no
+  further close PR was opened for it — that regress ends there, as its own body said.
+- **#136 and #112 had NO labels at all**, so they were invisible to every `owner:`-based
+  query the programme uses to find outstanding work — the exact bug that hid #127 until run
+  54. Both now `accuracy` / `owner:agent` / `blocked`, and both now return from
+  `gh issue list --label owner:agent`. Found by listing issues rather than by trusting the
+  board, which does not carry them either.
+- **The run's real finding: C6 was ruled, and then the ruling was measured.** The human's
+  answer to #41 was *"deterministic parsing for MCQ ONLY"*, programme-wide, confirmed on a
+  second ask. **MCQ schemes carry zero `answer_points`** — MCQ answers live in the separate
+  `mcq_answer` field — so C6 retires not *most* of the det marking path but **all** of it:
+  **210 of 289 schemes (72.7%) and 10,314 of 10,314 answer points (100%)**. The figure
+  reconciles exactly with #41's own independent census, which is why I trust it.
+- **And it does not fit the ceiling.** Recurring cost per full corpus rebuild goes
+  **$5–$7 → $10–$14**, permanently. Against the **committed** `total_usd_ceiling` of
+  **$8.00** (`config.py:111`) the **one-off alone** breaches at $8.55–$9.66 from a ledger of
+  $3.138148. The $25.00 in `lemely.toml` is **gitignored and worktree-local** — DA13's
+  hazard class, invisible to CI — and I am not treating it as the programme's ceiling.
+  MISSION §12.4 makes this a stop-and-ask.
+- **The fork went back rather than the code going forward, as #151**, with #41, #39 and #110
+  moved to Backlog and blocked on it. The alternative was to spend a run fixing #136 — the
+  sequencing the human chose in the same interview, *before* C6 was clarified — on a code
+  path about to be retired. **I did not offer a recommendation between "proceed" and
+  "narrow it"**: that is an architecture and product call, and choosing it would have been
+  me picking the shape of the programme rather than reporting on it.
+- **The cost model was validated against the prior artifact rather than re-derived.**
+  Re-running #88's failing set through the new script reproduces its four published
+  scenarios to the cent ($4.92 / $5.70 / $6.82 / $7.26), so the C6 numbers and the #88
+  numbers are the same model, not two.
+- **B17 bit again and is recorded as C10.** `accuracy_board.py` gates *every* subcommand,
+  `comment` included, on board membership, so four rulings — **#112, #136, #127, #151** —
+  had to be posted via raw `gh issue comment`. B17 ruled option 3 and it is still not
+  implemented. Naming it rather than quietly working around it a fourth time.
+- **Nothing authorised was spent.** C4's ~$0.01 for #58 and C7's #59 measurement are both
+  authorised and both left unstarted — they keep, and neither was worth interleaving with an
+  unresolved architectural fork. C7's renders in particular are the one action here a revert
+  cannot undo, so they get their own considered step rather than a rider on a bookkeeping run.

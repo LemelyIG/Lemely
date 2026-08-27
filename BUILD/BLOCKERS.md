@@ -2275,3 +2275,27 @@ which read "no checks reported" for a dead queue and a healthy new PR alike.
 **Raised:** 2026-08-26 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
 
 Blocked on #136. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## #41 — M1.6 — Inject the CAIE Generic Marking Principles into the marker prompt
+
+**Raised:** 2026-08-27 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on #151. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## #39 — M1.4 — Fidelity gate: filtered under-sum, excerpt-scoped paper check, and glyph detectors
+
+**Raised:** 2026-08-27 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on #151. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
+
+---
+
+## #110 — det: the parser emits duplicate top-level question ids, breaking (paper_id, question_id) leaf identity
+
+**Raised:** 2026-08-27 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on #151. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.
