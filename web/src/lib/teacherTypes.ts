@@ -395,6 +395,30 @@ export interface EnrollStudentRequest {
   studentId: string
 }
 
+// ── Class invite codes (D7.3, spec §1.2 / BUILD/BLOCKERS.md B8) ────────────
+
+/**
+ * A freshly minted, single-use class invite code (mirrors `InviteCodeDTO`,
+ * `lemely/web/schemas_invites.py` — not `schemas_teacher.py`, an exception
+ * to this file's header rule, because `POST /school/classes/{classId}/
+ * invite-code` is where a class's self-enrolment capability is handed out a
+ * second way, alongside `ClassDetail.joinCode` above). `POST
+ * /school/classes/{classId}/invite-code` takes no body (`classId` is a path
+ * segment and the caller's identity comes off the bearer token), so unlike
+ * the seat invite's `MintSeatInviteRequest` (`adminTypes.ts`) there is no
+ * matching request interface here. `schoolId` is always `null` for a class
+ * invite in practice; kept in the interface anyway because this is the same
+ * wire shape `mint_seat_invite_code` returns and the two response DTOs are
+ * deliberately one Python class (`InviteCodeDTO`) so they cannot drift apart
+ * on the backend, a guarantee a narrower frontend type would quietly lose.
+ */
+export interface ClassInviteCode {
+  code: string
+  role: "student" | "teacher"
+  schoolId: string | null
+  classId: string | null
+}
+
 // ── Class analytics (T-04) ──────────────────────────────────────────────────
 
 /**

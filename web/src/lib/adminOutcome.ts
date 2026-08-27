@@ -117,6 +117,27 @@ export function seatInviteFailureMessage(err: unknown): string {
 }
 
 /**
+ * Minting a seat invite code failed (D7.3, spec §1.2, BUILD/BLOCKERS.md B8).
+ *
+ * The 409 is the identical underlying fact `seatInviteFailureMessage` reports
+ * above: `InviteQuotaExceededError`, raised by `InviteService.
+ * mint_seat_invite` the instant it would reserve a seat past the school's
+ * quota, mirroring `SeatService.invite_student`'s own check exactly. Worded
+ * differently on purpose rather than reusing that sentence verbatim, because
+ * this route was never given an address to send anything to, so "the invite
+ * wasn't sent" would describe an action that never happened here. K-02's
+ * spec calls out this exact state by name ("Quota reached: explain and give
+ * a route to request more"), and the explanation is the one
+ * `seatInviteFailureMessage` already gives, unchanged.
+ */
+export function seatInviteCodeFailureMessage(err: unknown): string {
+  if (statusOf(err) === 409) {
+    return "This school is using every seat it has, so a code couldn't be minted."
+  }
+  return adminMutationFailureMessage(err)
+}
+
+/**
  * Removing a teacher failed.
  *
  * The 409 covers both of the backend's refusals — classes that would be

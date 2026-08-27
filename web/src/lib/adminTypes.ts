@@ -208,3 +208,42 @@ export interface CreateSchoolAdminResponse {
   email: string
   temporaryPassword: string | null
 }
+
+// ── Seat invite codes (D7.3, spec §1.2 / BUILD/BLOCKERS.md B8) ─────────────
+//
+// Mirror `lemely/web/schemas_invites.py`'s `MintSeatInviteRequestDTO` and
+// `InviteCodeDTO`, not `schemas_admin.py` like every interface above this
+// comment. `POST /api/school/seats/invite-code` is a `school_admin` route
+// defined in `lemely/web/routers/school.py`, so by this file's own "scoped
+// by role" rule (see the header) it belongs beside `InviteStudentRequest`/
+// `InviteStudentResponse` in `schoolTypes.ts`, not here. It lives here
+// instead because closing BLOCKERS.md B8 is scoped to `adminTypes.ts` and
+// `teacherTypes.ts` plus the two mint screens and their hooks, not a third
+// file — the same kind of task-scope constraint `useInvitesApi.ts`'s own
+// docstring names for why its pure helpers live beside the hooks rather than
+// in a fourth `*Outcome.ts` file. Named for what they mirror rather than for
+// this file's own DTO family, so a reader diffing this against
+// `schemas_invites.py` is not misled about which Python class is which.
+
+/** Body for `POST /api/school/seats/invite-code` (mirrors
+ * `MintSeatInviteRequestDTO`). `schoolId` is a body field rather than a path
+ * segment because an admin may administer more than one school, matching
+ * `InviteStudentRequest` (`schoolTypes.ts`) exactly. */
+export interface MintSeatInviteRequest {
+  schoolId: string
+}
+
+/** A freshly minted, redeemable invite code (mirrors `InviteCodeDTO`).
+ *
+ * Shared field-for-field with `ClassInviteCode` (`teacherTypes.ts`) —
+ * both mint routes return this exact shape so the two cannot drift apart on
+ * the backend (see `InviteCodeDTO`'s own docstring); `classId` is always
+ * `null` for a seat invite in practice, kept in the interface rather than
+ * dropped so this still matches the wire shape rather than a narrowed guess
+ * at it. Carries no `expiresAt`: neither mint route sets one today. */
+export interface SeatInviteCode {
+  code: string
+  role: "student" | "teacher"
+  schoolId: string | null
+  classId: string | null
+}

@@ -2,11 +2,12 @@
 import { useState } from "react"
 import { Link, NavLink, Outlet, useOutletContext, useParams } from "react-router-dom"
 import { ErrorState } from "@/components/ui/state-views"
+import { Button } from "@/components/ui/button"
 import { cn, relativeTime } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
-import { useClassDetail } from "@/lib/hooks/useTeacherApi"
+import { useClassDetail, useMintClassInviteCode } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
-import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
+import { classInviteCodeFailureMessage, teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import type { ClassDetail as ClassDetailData } from "@/lib/teacherTypes"
 import { BackArrow } from "@/components/ui/inline-arrow"
 
@@ -32,6 +33,21 @@ import { BackArrow } from "@/components/ui/inline-arrow"
  * shown when present — a class with no `schoolId` has no seat pool to
  * enroll-by-id from, so the join code is that class's *only* working invite
  * path, not just a convenience.
+ *
+ * One-time invite (D7.3, spec §1.2, closes BUILD/BLOCKERS.md B8):
+ * `MintClassInvite` below mints a *second*, deliberately different kind of
+ * code through `POST /school/classes/{classId}/invite-code`, and the two
+ * must never blur into each other on screen. `classDetail.joinCode` is
+ * permanent — it works for anyone who ever sees it, for as long as the
+ * class exists — while a code minted here is single-use and tracked by who
+ * redeemed it (`invites.redeemed_by`/`redeemed_at`). Before this task the
+ * mint route existed, tested, and reachable only by direct API call — B8's
+ * exact finding — so this screen had no way to produce the artifact spec
+ * §6 promises ("a school admin can mint a seat invite code"; the teacher/
+ * class-invite half of that same capability). Rendered beside the permanent
+ * code rather than replacing it: neither supersedes the other (D7.3, "both
+ * invite models coexist"), so hiding either would be a real capability loss,
+ * not just a layout choice.
  */
 
 export interface ClassDetailContext {
@@ -73,6 +89,47 @@ export function JoinCodeChip({ code }: { code: string }) {
       {code}
       <span className="text-body-sm text-ink-faint">{copied ? "Copied" : "Copy"}</span>
     </button>
+  )
+}
+
+/**
+ * The single-use sibling of the permanent join code above (D7.3, spec §1.2,
+ * closes BUILD/BLOCKERS.md B8). Not exported: nothing outside this header
+ * reuses it, unlike `JoinCodeChip` itself, which this component composes
+ * rather than duplicates.
+ *
+ * Owns exactly one mutation and the one bit of state react-query already
+ * tracks for it (`mint.data`, whether a code has been generated this visit)
+ * — no local `useState`, because there is nothing here `useMutation` does
+ * not already hold. Every mint produces a genuinely new, independent code
+ * (the backend has no dedup and no reuse-the-last-one concept), which is
+ * also why "Generate another" calls the same mutation again rather than
+ * resetting it first: a teacher minting one code per student they want to
+ * invite this way needs the button to keep working, not to clear itself.
+ */
+function MintClassInvite({ classId }: { classId: string }) {
+  const mint = useMintClassInviteCode(classId)
+
+  return (
+    <div className="flex flex-col items-end gap-1 max-w-[220px]">
+      <span className="text-eyebrow text-ink-faint">One-time invite</span>
+      {mint.data ? <JoinCodeChip code={mint.data.code} /> : null}
+      <Button
+        type="button"
+        size="sm"
+        variant="secondary"
+        loading={mint.isPending}
+        onClick={() => mint.mutate()}
+      >
+        {mint.data ? "Generate another code" : "Generate an invite code"}
+      </Button>
+      <p className="text-body-sm text-ink-faint text-end">Works once, then it's spent.</p>
+      {mint.isError ? (
+        <p role="alert" className="text-body-sm text-err text-end">
+          {classInviteCodeFailureMessage(mint.error)}
+        </p>
+      ) : null}
+    </div>
   )
 }
 
@@ -135,14 +192,20 @@ export function ClassDetailLayout() {
             </h1>
           </div>
           <div className="flex-1" />
-          {classDetail.joinCode ? (
-            <div className="flex flex-col items-end gap-1">
-              <span className="text-eyebrow text-ink-faint">
-                Invite code
-              </span>
-              <JoinCodeChip code={classDetail.joinCode} />
-            </div>
-          ) : null}
+          {/* Two ways to invite, deliberately not blurred into one (see the
+              module docstring's "One-time invite" note). Grouped in a shared
+              wrapper so they read as a pair rather than as one code that
+              happens to have a stray second control beside it. */}
+          <div className="flex flex-wrap items-start gap-4">
+            {classDetail.joinCode ? (
+              <div className="flex flex-col items-end gap-1 max-w-[220px]">
+                <span className="text-eyebrow text-ink-faint">Class code</span>
+                <JoinCodeChip code={classDetail.joinCode} />
+                <p className="text-body-sm text-ink-faint text-end">Reusable, by anyone.</p>
+              </div>
+            ) : null}
+            <MintClassInvite classId={classId!} />
+          </div>
         </div>
         <div className="flex items-center gap-3 flex-wrap text-body-sm text-ink-muted mt-1">
           <span>{classDetail.topWeakness ? `Top weakness: ${classDetail.topWeakness}` : "Not enough data for a top weakness yet"}</span>
