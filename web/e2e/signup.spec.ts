@@ -158,7 +158,10 @@ test.describe("teacher sign-up: role select to a class join code", () => {
     // "the artifact a teacher came for". The button's own accessible name is
     // the code followed by "Copy", so this asserts a real code rendered
     // rather than an empty chip.
-    const joinCodeButton = page.getByRole("button", { name: /^[A-Z0-9]+Copy$/ })
+    // `JoinCodeChip` renders the code and the word "Copy" as two sibling nodes,
+    // so the computed accessible name joins them with whitespace ("ABC123 Copy").
+    // The first draft of this locator forbade that space and matched nothing.
+    const joinCodeButton = page.getByRole("button", { name: /^[A-Z0-9]+\s*Copy$/ })
     await expect(joinCodeButton).toBeVisible()
     const joinCodeText = (await joinCodeButton.textContent()) ?? ""
     expect(joinCodeText.replace("Copy", "").trim().length).toBeGreaterThan(0)
@@ -186,17 +189,19 @@ test.describe("invite redemption: a minted seat code, redeemed signed out", () =
     // that is API-only rather than UI-driven, and it is deliberate, not a
     // shortcut around a control that exists.
     const apiContext = await playwright.request.newContext()
-    const mintResponse = await apiContext.post(`${BACKEND_URL}/api/school/seats/invite-code`, {
-      headers: { Authorization: `Bearer ${admin.accessToken}` },
-      data: { schoolId },
-    })
-    expect(mintResponse.status(), await mintResponse.text()).toBe(200)
-    const minted = (await mintResponse.json()) as { code: string; role: string }
-    expect(minted.role).toBe("student")
-    const code = minted.code
-
-    // Seat usage before redemption, from the admin's own view (K-02) — the
-    // baseline the post-redemption check below compares against.
+    // Seat usage BEFORE the mint, not before the redemption. D7.3 reserves the
+    // seat at mint time on purpose, so that is when the school's quota moves.
+    // `InviteService.mint_seat_invite`'s docstring is explicit that the
+    // reservation "is the whole point": a seat assigned only at redemption
+    // could race away between G-08's preview and the visitor typing the code,
+    // and `_used_seats` counts a reserved seat exactly like a directly-created
+    // one.
+    //
+    // The first draft of this journey baselined AFTER the mint and asserted
+    // seatsUsed rose across the redemption alone. It cannot: redemption assigns
+    // a seat the mint already counted, so that assertion failed against correct
+    // behaviour. The delta below spans mint-plus-redeem, which is the real
+    // quota story for one invited student.
     const overviewBefore = await apiContext.get(`${BACKEND_URL}/api/school/overview`, {
       headers: { Authorization: `Bearer ${admin.accessToken}` },
     })
@@ -206,6 +211,15 @@ test.describe("invite redemption: a minted seat code, redeemed signed out", () =
     }
     const before = schoolsBefore.schools.find((s) => s.schoolId === schoolId)
     if (!before) throw new Error(`seeded school ${schoolId} missing from the admin's own overview`)
+
+    const mintResponse = await apiContext.post(`${BACKEND_URL}/api/school/seats/invite-code`, {
+      headers: { Authorization: `Bearer ${admin.accessToken}` },
+      data: { schoolId },
+    })
+    expect(mintResponse.status(), await mintResponse.text()).toBe(200)
+    const minted = (await mintResponse.json()) as { code: string; role: string }
+    expect(minted.role).toBe("student")
+    const code = minted.code
 
     // ── Preview, signed out ─────────────────────────────────────────────────
     await page.goto(`/join/${code}`)
