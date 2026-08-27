@@ -43,7 +43,13 @@ test.describe("student sign-up: landing to dashboard", () => {
 
     // /landing -> /signup (the hero CTA, Landing.tsx's own `landingHero.primaryCta`).
     await page.goto("/landing")
-    await page.getByRole("button", { name: "Mark a paper" }).click()
+    // `.first()` because the landing page carries the hero CTA and the closing
+    // CTA, both labelled "Mark a paper" and both routed to /signup by Task 19 —
+    // `landingHero.primaryCta` and `landingClose.cta` share the label
+    // deliberately. Without .first() Playwright's strict mode refuses the
+    // ambiguity rather than silently picking one, which is the correct
+    // behaviour and why this names the hero explicitly.
+    await page.getByRole("button", { name: "Mark a paper" }).first().click()
     await expect(page).toHaveURL(/\/signup$/)
 
     // G-02 -> G-03 student variant. The link's accessible name is the whole
