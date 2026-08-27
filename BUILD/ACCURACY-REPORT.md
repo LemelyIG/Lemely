@@ -228,12 +228,23 @@ and it reconciles exactly with #41's independent 10,314-point census.
 restricting deterministic parsing to MCQ would retire **210 of 289 schemes
 (72.7%)** and **10,314 of 10,314 answer points (100%)** from the det path.
 
-Cost of that routing, scaled from the **measured** $0.07005/scheme (#88, n=1
-measured / n=6 confirmed — **not** from the model that measurement falsified at
-1.83×, see DA26): one-off **$11.92–$14.71**, recurring **$25.23–$28.02** per
-full corpus rebuild. Both breach the committed $8.00 ceiling; the recurring
-figure breaches even the local $25.00, and both trip the 5M
-`per_run_token_ceiling` (6.49M / 13.74M).
+**That routing is NOT happening — ruling C11 (2026-08-27) superseded C6**
+(DA27). det parses all mark schemes and marks MCQ; Gemini does all extraction
+and marks non-MCQ, which is the architecture already in place. The costs once
+published here — one-off $11.92–$14.71, recurring $25.23–$28.02 — **priced a
+migration that never occurs**. Struck rather than deleted, so the correction
+stays legible.
+
+**The composition figures above stand on their own**, independent of any ruling:
+they are a **count over the committed corpus**, not a projection. They are
+published because they made the C6 reading's blast radius visible, and because
+the det/Gemini split they describe is **DA1's stratum axis** — which survives
+C11 and which #57's split depends on.
+
+**The gap this table does not show:** 289 schemes parse, but **190 of 479 fail
+the det parser outright** and have no parsed output at all. Closing that is #88,
+costed at a **measured $13.31** against the **$8.00** committed ceiling (C12)
+and a **$3.146479** ledger — so it does not fit, and it is open as ask **C15**.
 
 ---
 
@@ -247,7 +258,8 @@ reproduced the previous run's arithmetic error every run).
 |---|---|
 | **Cumulative, programme-wide** | **$3.146479** |
 | **Committed hard ceiling** | **$8.00** — `lemely/runtime/config.py:111` |
-| Local override | $25.00 in `lemely.toml` — **GITIGNORED and worktree-local** |
+| Headroom | **$4.853521** |
+| ~~Local override~~ | ~~$25.00 in `lemely.toml`~~ — **REMOVED 2026-08-27 by ruling C12 (DA28)** |
 
 **The ceiling published here used to read $25.00, and that was wrong.** The
 $25.00 lives in `lemely.toml`, which is gitignored: it does not survive worktree
