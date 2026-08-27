@@ -2896,3 +2896,39 @@ re-summed across all four worktrees rather than carried forward.
   toward an implied completion: #47's ~300 labels are human-owned, and #49/#51/#52/#55 are H
   issues §3.5 forbids closing or working around. Everything agent-ownable that was not blocked has
   now been done; the rest sits behind **#151 (ask C8)**.
+
+## run-2026-08-27-f addendum — two §13 components were reachable after all
+
+**Zero spend.** Written after claiming the mission was unreachable and then checking that
+claim properly.
+
+- **I had written off §13 wholesale. That was lazy.** Two of its six components were
+  agent-ownable and undone: **the develop→main PR** (§12.3 permits *opening* it; only
+  merging is human-only) and **"the H issues that remain open are cleanly documented as
+  awaiting their human"**. Both are now met. #49, #51, #52 and #55 each carry a current,
+  specific "what is needed" record, and **PR #159** is open with an honest
+  component-by-component scorecard in its body and an explicit statement that it is not a
+  claim the programme is finished.
+- **#57's dependency list was wrong, and I had repeated it.** The board, the resume pointer
+  and my own reporting all carried *"#57 blocked on #49"*. Read against the acceptance
+  criteria, **bullet 1 — propose the stratified split — is agent work and needs no #49**;
+  #49 gates only the approval bullet. Both listed predecessors, **#44 and #31, are CLOSED**.
+  I had trusted a status line, which is the exact failure the programme's own standing
+  lesson names.
+- **It is blocked anyway, by a cause nobody had written down.** DA1 stratifies on syllabus
+  code × **parse path (det/Gemini)** × tariff band. The **Gemini strata are empty** because
+  #88's sweep aborted at 6 of 190 — and **#151/C6 would collapse the axis entirely**, since
+  MCQ schemes carry zero `answer_points` and every answer point would land on the Gemini
+  path. Proposing a split now would stratify on an axis with one level of 6 members, or on
+  one that is about to become a constant. DA1 was fixed in a human interview and must not
+  be re-derived around a degenerate axis by an agent.
+- **So the blocking chain is #88 → #151 → #57 → #49 → #47 → #51 → #55**, and it is now
+  written on each of those issues rather than inferred. The practical consequence is
+  unchanged and worth stating without softening: **§13 cannot be completed by an agent**,
+  because ~300 human labels sit in the middle of that chain — but the *reason* is now a
+  named, checkable dependency instead of a shrug.
+- **The lesson, and it is the same one twice in one run:** a dependency recorded on a board
+  is a claim, not evidence. DA25 and DA26 were both cases of trusting a derived number over
+  an available measurement; this was trusting a derived *status* over the acceptance
+  criteria sitting in the issue body. Verify against the source, including when the source
+  is the issue itself.
