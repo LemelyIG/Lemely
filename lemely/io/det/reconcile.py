@@ -58,9 +58,24 @@ def check(
         mark_reconcile_tolerance: Allowed absolute deviation between the parsed
             leaf-mark total and ``metadata.maximum_mark``.  Defaults to 0 (strict).
         escalate_on_defaulted_marks: Whether to raise ``ParseError`` when any
-            leaf question has marks that were derived from the 1-mark default
-            (i.e. the marks cell was unparseable).  Not yet implemented — kept
-            as a hook for a future improvement.
+            leaf question has marks derived from the 1-mark default (i.e. the
+            marks cell was unparseable).
+
+            **STILL NOT ARMED, and #38 (M1.3) deliberately did not arm it.**
+            The hook was written on the assumption that defaulting is rare and
+            therefore a good escalation signal. Measurement falsifies that: over
+            a 60-PDF random sample (54 parsed), **44.4% of papers carry at least
+            one defaulted point and 21.6% of all answer points are defaulted**
+            (`marks_defaulted`, added by #38). Arming this as written would
+            route nearly half the det-parsed corpus to the paid Gemini path.
+
+            The cause is DA21 mechanism (B): where the marks column merges into
+            the answer cell, the code arrives as trailing text and every point
+            defaults. The default is right *by luck* for B1/M1/A1/C1, so most of
+            those 21.6% are correct — which is exactly why "defaulted" is not by
+            itself evidence of an error, and why a bare count is the wrong
+            trigger. Whether to arm it, and on what predicate, is a cost and
+            coverage decision escalated on #38 rather than chosen here.
         source: Human-readable label for log messages (e.g. the PDF filename).
     """
     maximum_mark = metadata.maximum_mark

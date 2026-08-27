@@ -191,6 +191,15 @@ class AnswerPoint(BaseModel):
         ge=0,
         description="Marks awarded for this point. Zero for tickbox distractors.",
     )
+    marks_defaulted: bool = Field(
+        False,
+        description="True when `marks` was NOT read from the source — the marks cell "
+        "was absent or unparseable and the 1-mark default was minted instead (#38, "
+        "M1.3). Provenance only: it never changes the value, it records that the "
+        "value is a guess. Recorded on EVERY minted point in EVERY bucket (A7); the "
+        "over-sum deletion is a separate, narrower rule and must not be read as "
+        "dropping provenance.",
+    )
     math_mark_type: MathMarkType | None = Field(
         None,
         description="Mathematics mark code (Part 3B). Null for non-maths questions.",
