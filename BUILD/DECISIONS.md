@@ -11891,3 +11891,82 @@ state its denominator explicitly: renders are not leaves. #59 also remains block
 on two things this does not touch — the handwritten renders are verbatim CAIE
 content and cannot be committed without a MISSION §12.7 decision, and the
 measurement is unauthorised live spend.
+
+---
+
+## DA21 — the two 0625 deficits are parser defects, and both mechanisms are named (#136)
+
+**Date:** 2026-08-27 · **Issue:** #136 · **PR:** #145 · **Spend:** $0.00 (det-only,
+read-only)
+
+B4 recorded the two 0625 mark-total deficits as **UNRESOLVED, not diagnosed**, and
+named the `rows.py` `flush()`/`q_row_had_answer` lead as already falsified so it
+would not be re-derived. It was not re-derived. Two *different* bugs, both in
+`rows.py` row consumption, account for both deficits with nothing left over.
+
+**(A) `lemely/io/det/rows.py:311`** — `if not answer_cell or not stack: continue`.
+The guard fires *before* the marks column is consulted, so a continuation row
+carrying real marks but an empty answer cell is dropped with its mark. `w21` `6(a)`
+is the case: four `B1` rows (three with empty answer cells, because pdfplumber puts
+the whole matching table into the first cell) become **one** point worth **1**.
+
+**(B) `lemely/io/det/rows.py:200`** — `marks=marks_int if marks_int is not None
+else 1`. Where the 3-column geometry merges the marks column into the answer cell,
+the code arrives as trailing text and `parse_marks_cell` sees an empty cell, so the
+default applies.
+
+**Why (B) survived this long, which is the part worth keeping:** the default is
+**right by luck for `B1`/`M1`/`A1`/`C1`**. Every single-mark code lands on the
+correct value, so the bug is invisible on the overwhelming majority of rows. It is
+wrong only for multi-mark codes, losing `value − 1` each time, silently.
+
+| paper | (A) guard | (B) default-to-1 | total | actual deficit |
+|---|---|---|---|---|
+| `0625_s20_ms_31` | 0 | `B4`→1 (−3), `B2`→1 (−1) | **−4** | −4 **EXACT** |
+| `0625_w21_ms_32` | 3 × `B1` (−3) | `B3`→1 (−2), `B3`→1 (−2) | **−7** | −7 **EXACT** |
+
+`BUILD/accuracy-runs/det-deficit-diagnosis-2026-08-27/probe.py` prints this
+attribution and labels it `EXACT`/`UNEXPLAINED`, so it fails loudly if it ever
+stops closing.
+
+### What this retires
+
+**The `genuine_mark_total_mismatch` reading, for these two papers only.** The full
+deficit is attributable to parser bugs, so both are **parser defects, not
+inconsistent papers**, and `escalate_on_mark_mismatch` was right to block them —
+these are **true positives**. This says nothing about the other members of #45's
+residual bucket, and does not generalise to them.
+
+### Hypotheses falsified on the way (do not re-spend a run on these)
+
+1. **Table selection** — the stated next-place-to-look after run 35, and it is
+   wrong. Every dropped table is non-mark-scheme. The `property | object` table on
+   `w21` p10 looks like a counter-example and is not: pdfplumber extracts that
+   content **twice**, once nested inside the real `6(a)` row and once standalone;
+   the standalone copy is the one dropped, so nothing is lost.
+2. **Mark-cell notation** — `unparsed={}` on both. `w21` genuinely mixes code and
+   bare-integer notations, which looks like a mechanism and is not one. The cell
+   never reaches the parser; it is not unparseable.
+3. **Propagation into leaves** — zero zero-mark leaves, zero leaves without answer
+   points, zero leaf/point mismatches.
+4. **Parent-carried marks** — checked because it would have manufactured a fake
+   deficit: 0 of 24 parents on each paper carry their own marks, so summing leaves
+   is faithful and the deficit is real loss rather than a summing artefact.
+
+### What is NOT established
+
+**Prevalence is UNMEASURED.** Both mechanisms are named on n=2 papers. Sizing them
+across the 289-scheme committed corpus means **re-parsing PDFs, not reading the
+committed JSON** — the committed corpus is the *post-loss* artefact and
+structurally cannot show what never became an answer point. Deliberately left to
+the fix half rather than estimated.
+
+Both mechanisms are **one-directional**: they can only lose marks, never invent
+them. So det mark totals are a *lower* bound wherever they fire, and a
+single-direction error is far easier to mistake for a property of the papers than
+a noisy one.
+
+**#136's fix half stays unstarted.** It is mark-changing and waits on the B15 /
+#112 + #110 sweep question posted 2026-08-27. Starting it before that answer would
+produce another complete-but-unmergeable branch — the exact failure the 2026-08-24
+gate-9 ruling retired.
