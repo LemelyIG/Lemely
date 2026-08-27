@@ -1,0 +1,116 @@
+{
+  "ruling": "C6 \u2014 deterministic parsing for MCQ ONLY",
+  "parser_sha": "8758dbaa67c5a5cd6e274f58e230077e466a3b7d",
+  "source_pdfs": 479,
+  "det_parsed_today": 289,
+  "mcq_kept_by_det": 79,
+  "nonmcq_moved_to_gemini": 210,
+  "already_failing": 190,
+  "paid_set_under_c6": 400,
+  "proxy_n": 210,
+  "one_off_incremental": {
+    "n": 210,
+    "pages_total": 1762,
+    "pages_mean": 8.39047619047619,
+    "scenarios": [
+      {
+        "label": "per-scheme median",
+        "input_tokens": 769596,
+        "output_tokens": 2069970.0,
+        "total_tokens": 2839566.0,
+        "usd": 5.4058038
+      },
+      {
+        "label": "per-scheme mean",
+        "input_tokens": 769596,
+        "output_tokens": 2415541.0,
+        "total_tokens": 3185137.0,
+        "usd": 6.269731300000001
+      },
+      {
+        "label": "per-PAGE median",
+        "input_tokens": 769596,
+        "output_tokens": 2358068.867857143,
+        "total_tokens": 3127664.867857143,
+        "usd": 6.126050969642858
+      },
+      {
+        "label": "per-PAGE mean",
+        "input_tokens": 769596,
+        "output_tokens": 2517309.204110404,
+        "total_tokens": 3286905.204110404,
+        "usd": 6.5241518102760105
+      }
+    ]
+  },
+  "recurring_full_rebuild": {
+    "n": 400,
+    "pages_total": 3729,
+    "pages_mean": 9.3225,
+    "scenarios": [
+      {
+        "label": "per-scheme median",
+        "input_tokens": 1562082,
+        "output_tokens": 3942800.0,
+        "total_tokens": 5504882.0,
+        "usd": 10.325624600000001
+      },
+      {
+        "label": "per-scheme mean",
+        "input_tokens": 1562082,
+        "output_tokens": 4601030.476190477,
+        "total_tokens": 6163112.476190477,
+        "usd": 11.971200790476193
+      },
+      {
+        "label": "per-PAGE median",
+        "input_tokens": 1562082,
+        "output_tokens": 4990487.405357142,
+        "total_tokens": 6552569.405357142,
+        "usd": 12.944843113392857
+      },
+      {
+        "label": "per-PAGE mean",
+        "input_tokens": 1562082,
+        "output_tokens": 5327494.904726275,
+        "total_tokens": 6889576.904726275,
+        "usd": 13.78736186181569
+      }
+    ]
+  },
+  "today_for_comparison": {
+    "n": 190,
+    "pages_total": 1967,
+    "pages_mean": 10.352631578947369,
+    "scenarios": [
+      {
+        "label": "per-scheme median",
+        "input_tokens": 792486,
+        "output_tokens": 1872830.0,
+        "total_tokens": 2665316.0,
+        "usd": 4.9198208
+      },
+      {
+        "label": "per-scheme mean",
+        "input_tokens": 792486,
+        "output_tokens": 2185489.476190476,
+        "total_tokens": 2977975.476190476,
+        "usd": 5.701469490476191
+      },
+      {
+        "label": "per-PAGE median",
+        "input_tokens": 792486,
+        "output_tokens": 2632418.5374999996,
+        "total_tokens": 3424904.5374999996,
+        "usd": 6.81879214375
+      },
+      {
+        "label": "per-PAGE mean",
+        "input_tokens": 792486,
+        "output_tokens": 2810185.700615871,
+        "total_tokens": 3602671.700615871,
+        "usd": 7.263210051539678
+      }
+    ]
+  }
+}

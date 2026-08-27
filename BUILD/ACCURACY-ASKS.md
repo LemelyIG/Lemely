@@ -1,9 +1,13 @@
 # ACCURACY-ASKS.md — the open human decisions, in one place
 
-**Status 2026-08-26 (run 33): the programme is again fully blocked on this
-list.** The previous A1–A13 list was answered in full on 2026-08-25 and every
-one of those answers has been acted on. What follows is what has accumulated
-since, plus the items that came back with new evidence.
+**Status 2026-08-27 (run 55): the previous B1–B18 list is DISCHARGED and has
+been replaced.** Every B row was either answered in the 2026-08-26 interview and
+acted on, or is carried forward below under its own C number. Seven new
+decisions (**C1–C7**) were taken in an interactive interview on 2026-08-27 and
+are recorded here as the standing rulings, not as open questions.
+
+**What is actually open is short: C8, plus the four H issues.** Everything else
+in the programme is sequenced behind C8.
 
 Nothing here is a request for more investigation — each row is a decision only
 you can make. Where I have a recommendation I give it, and where a
@@ -13,428 +17,102 @@ measurement) I say so.
 **How to answer.** Reply on the accuracy control topic
 (`lemely-acc-ctl-bqlsqcY9FfbfQd` on `http://home-server:7532`), or append to
 `BUILD/ACCURACY-INBOX.md`, naming the ask number and your choice — e.g.
-`B5: metamorphic-only`. Partial answers are useful.
+`C8: (b)`. Partial answers are useful.
 
-**If you answer only one: B1.** It is the only item holding a finished branch,
-and it is a real marking-principles call rather than a process question.
-**If you answer three: B1, B2, B4** — B2 alone unblocks the longest chain
-(#88 → #57 → the parsed corpus).
+**If you answer only one: C8.** It is the only thing gating the queue, and every
+other agent-ownable item is behind it.
 
 ---
 
-## B1 — #41: which rule governs the A-mark "silent" case?
+# OPEN
 
-**Branch `feature/accuracy-41-…` @ `09314c7` is implemented, pushed, unmerged.**
+## C8 — #151: C6 retires 100% of the det marking path. Which fork?
 
-Your A13 ruling said to drive the A-mark dependency from each paper's own
-printed Generic Marking Principles, with strict M-then-A as the **fallback
-only, never the primary rule**. Implemented — and then measured: **0 of 36**
-parsed principle strings across the golden corpus mention M/A dependency at
-all. CAIE Generic Marking Principles govern awarding *fairly and
-consistently*; mark-code semantics are simply not written there.
+**This is the whole queue.** #112, #110, #136, #39, #38, #95, #127 and #41 are
+all held behind it.
 
-So the prompt's "if, and only if, these principles are silent" escape clause
-fires for **100% of papers**, the blanket rule stays operative, and on the
-A-mark axis the diff does exactly what `VERSION = "4"` did.
+Ruling **C6** (below) was *"deterministic parsing for MCQ ONLY"*, confirmed on a
+second ask. It was taken before the blast radius was measured. Measured
+afterwards, and reconciling exactly with #41's own independent 10,314-point
+census:
 
-Your ruling covers two cases; the corpus lives entirely in a third:
+**MCQ schemes carry zero `answer_points`** — MCQ answers live in the separate
+`mcq_answer` field. So C6 does not retire *most* of the det marking path:
 
-| case | A13 says | reality |
+- **210 of 289** committed schemes (72.7%) move to paid Gemini
+- **10,314 of 10,314** answer points (100%) move with them
+- the paid set goes **190 → 400** of 479 source mark schemes
+
+| | one-off | recurring, every full rebuild |
 |---|---|---|
-| principles parsed **and** speak to M/A | drive from them | **never happens** — 0/36 |
-| principles **not** parsed | strict M-then-A | 5 fixtures |
-| principles parsed but **silent** on M/A | *not addressed* | **100% of GMP papers** |
+| cost (per-scheme median → per-PAGE mean) | $5.41 – $6.52 | **$10.33 – $13.79** |
+| *today, for comparison* | — | $4.92 – $7.26 |
 
-Any default for case 3 moves **41 A-marks**, so it is examiner judgment.
+**And it does not fit the ceiling.** Ledger **$3.138148**; the **committed** hard
+ceiling is **$8.00** (`config.py:111`). The $25.00 in `lemely.toml` is
+**gitignored and worktree-local** — DA13's hazard class, invisible to CI. Against
+$8.00 the **one-off alone** lands at **$8.55–$9.66: a breach**, and the recurring
+rebuild breaches on its own every time. MISSION §12.4 makes that a stop-and-ask.
 
-1. Strict M-then-A for the silent case — honest, but then drop the pretence
-   that it is principle-driven.
-2. No unconditional default; require justification from the principles plus
-   the scheme's own `dep`/`ft`/`ecf` annotations.
-3. **Drive from `math_mark_type`** — the paper's own printed *mark codes*,
-   where dependency actually is (57 `M` / 41 `A` / 39 `B` over 161 answer
-   points, 7 of 11 fixtures). **My recommendation**, but it substitutes a
-   different source than your ruling named.
+Beyond money: #112/#110/#136/#39 become dead work; **#53 (M3, parse-path parity)
+is voided**; MISSION §2 and §14 both rest on the det path being measurable, and
+this removes it rather than fixing it; #38's escalation gate loses its subject.
 
-**Do not close #41** — its sweep pre-authorisation is scoped to the issue's
-open lifetime. The branch is held unmerged deliberately: the `VERSION` bump
-invalidates the cached corpus only on merge, so landing a no-op now would
-spend it and need a second bump after the real fix.
+1. **Proceed as ruled** — det → MCQ only. Needs a ceiling decision first, then
+   close #112, #110, #136, #39 as retired-by-C6.
+2. **Narrow C6 to the question #41 asked** — A-mark dependency left undetermined
+   on det, per B1's own *"may leave cases unresolved — accepted"*. det path and
+   all four fixes stay live. **No new spend.**
+3. **The middle reading** — det parses everything (so the four fixes stay
+   valuable), but det-parsed marks are trusted end-to-end for MCQ only, with
+   non-MCQ marking escalated. Still needs its own routing issue and preflight.
 
-## B2 — #93: the gate-9 sweep waiver
+**No recommendation between 1 and 2** — that is an architecture and product
+call, not a measurement one, and I would be choosing the shape of the programme
+rather than reporting on it. What the measurement establishes is only that the
+choice is not the marginal one it looked like when taken.
 
-Branch pushed, no PR, conditions 1 and 3 satisfied, sweep **null by
-construction twice over** (the harness never invokes the det parser; the
-golden set has zero 0625 paper-2 cases). The ask is the same
-instrument-blindness waiver #38 got under A6(a).
+Full preflight: `BUILD/accuracy-runs/preflight-c6-2026-08-27/`.
 
-**This is the longest chain in the queue.** #88 items 1–2 and 4, the #57
-costed preflight, and the parsed-corpus regeneration are all sequenced behind
-it by your own instruction.
+## C9 — B14, still owed on the H issues
 
-## B3 — #37 bullet 3: the CI target cannot be re-derived
+Unchanged, and not decisions I can make or work around (MISSION §3.5 — never
+close one, never mark one done, never work around one):
 
-The sweep ran, aborted on its own brake, and established that
-`id_positional_fallback` fired **zero** times across 39 leaves with
-`id_match_rate` 1.0 in **both** arms. A corpus that scores 1.0 either way
-cannot re-derive a CI target — deriving 0.99 from it would be **picking** a
-number, not measuring one.
+- **#49 (H4)** — split membership stays **NOT frozen** until #57 delivers and you
+  sign off. #57 is blocked on it.
+- **#51 (H7)** — labeller B's identity and onboarding.
+- **#52 (H8)** — the three seed rulings themselves (ECF, `oe` alternatives, list
+  rule over-tariff). The machinery is built and the log ships empty; the rulings
+  are examiner judgment and I will not draft them.
+- **#55 (H9)** — authorisation for the single run of the frozen test split.
 
-1. Leave 0.99 untouched with a recorded limitation (my lean).
-2. Open a follow-up for a corpus that can actually exercise id drift.
+## C10 — B17 is still unfixed, and it bit again this run
 
-## B4 — #95: authorised, but not executable as written
+`scripts/accuracy_board.py` gates **every** subcommand — including `comment` —
+on board membership, so it refuses any issue not on the project board. B17 ruled
+**option 3** (a direct H-number/label check instead of board membership as a
+proxy), and that is **not implemented**. This run had to post four rulings via
+raw `gh issue comment` — **#112, #136, #127 and #151** — because the sanctioned
+path structurally refuses them.
 
-Measured this run at **$0.00**, against a throwaway directory — **nothing was
-overwritten**. Evidence: `BUILD/accuracy-runs/golden-reparse-95-2026-08-26/`.
+Recording it as an ask only because it keeps costing runs; the fix itself is
+agent-ownable and needs no decision from you beyond "yes, do it".
 
-- **4 of the 5 source mark schemes do not det-parse** (all fail
-  `mark_total_mismatch_escalating`). Regenerating would **destroy 10 of 11
-  fixtures — the whole theory corpus** — leaving one MCQ paper.
-- **Every fixture is a declared excerpt** (`case.json` holds exactly
-  `is_excerpt`, and `answers.json` matches 1:1). The one paper that parsed is
-  an **8-question excerpt of a 40-question paper**; regeneration would leave
-  the scheme describing 40 questions while the answers and scan describe 8.
+---
 
-1. Abandon the rebuild — #38's waiver and #39's deferred sweep then stand
-   permanently on instrument-blindness, which is the honest cost.
-2. **Fix the det parser's mark-total escalation first**, as its own issue,
-   with #95 held open behind it. **Still my recommendation**, but see the
-   corrected estimate below — it is a work-stream, not a preliminary.
-3. Rebuild MCQ-only — I advise against it.
+# ANSWERED 2026-08-27 (run 55) — standing rulings, do not re-argue
 
-**Corrected estimate for route 2 (run 34).** #45's failure-reason census had
-already classified all 229 det failures, and all four blocked papers are in
-it — looking them up cost nothing and nothing was re-derived:
-
-| paper | cause | detail |
+| # | Issue | Ruling |
 |---|---|---|
-| `0580_s23_ms_22` | `marks_cell_notation_not_parsed` | +3, **fully explained** by 3 defaulted empty cells |
-| `0606_s23_ms_12` | `mark_aggregation_overcount` | +36 |
-| `0625_s20_ms_31` | `genuine_mark_total_mismatch` | −4, 34 empty cells defaulted |
-| `0625_w21_ms_32` | `genuine_mark_total_mismatch` | −7, 23 empty cells defaulted |
-
-So route 2 is **three different bugs, not one**, and only one of the four has
-a mechanically closed explanation. Being careful about the label: for the two
-0625 papers `genuine_mark_total_mismatch` is the census's **residual bucket**
-("ruling out an overcount, column detection and cell-notation parsing"), not
-a positive finding that the paper is inconsistent — #45 records that the
-theory path has no shortfall heuristic, so large theory deficits fall through
-to it. Their cause is **unresolved, not diagnosed**. The named unconfirmed
-mechanism to look at first is empty-cell defaulting interacting with
-`rows.py`'s `flush()`, which only sums a leaf's `AnswerPoints` when that
-leaf's `q_row_had_answer` was set.
-
-**Relevant to B2's priority:** the same census puts
-`paper_profile_misconfiguration` at **40** — that is #93. Landing #93 alone
-converts **17.5% of the entire det failure set** from failing to parsing, and
-moves those 40 schemes from #88's paid-Gemini set to the free det set.
-
-**Run 35 sharpened this further, and killed my own lead.** I tested the
-`rows.py` `flush()`/`q_row_had_answer` mechanism I named above and it is
-**falsified**: both deficit papers have **zero** leaves where `q.marks`
-disagrees with their answer points, so no marks are lost in propagation.
-Their ids are clean and their tariffs plausible, so the missing 4 and 7 marks
-are **content never captured** — a table-selection question, not a marks bug.
-The same inspection turned up a defect nobody had named: **duplicate
-top-level question ids** (`0606` emits `9` twice; `0580`'s sequence restarts
-at `1,2,8`), which breaks `(paper_id, question_id)` leaf identity independently
-of mark totals. Opened as **#110**, not executed. Evidence:
-`BUILD/accuracy-runs/det-mismatch-diagnosis-2026-08-26/`.
-
-*Correcting myself: run 32's state note gave the #93 ordering as the reason to
-hold #95. That was overstated — exactly one fixture is affected and #93's own
-sweep found the change causally inert. It is a footnote next to the two
-blockers above.*
-
-## B5 — 17:36 item 6: where do the whitespace fixtures live?
-
-Zero spend, but not zero risk: adding golden cases changes the corpus every
-published figure is computed over (MISSION §12.2/§12.5), and #49 is reopened
-so the split is **not** frozen.
-
-1. Ordinary golden cases, accepting that they join the accuracy denominator.
-2. **A metamorphic-only fixture set that `load_golden_cases` does not serve.**
-   My recommendation; I will implement on your word.
-
-## B6 — #58: the q11b settling experiment (~$0.01)
-
-The authorised control arm came back **0/62**, so "it is just gemini churn" is
-dead — but 1/31 against 0/62 is Fisher **p = 1.000**, underpowered in *both*
-directions. The experiment that would settle it is re-marking q11b **alone**,
-perturbed and unperturbed, ~10× each. That is a **different design** from the
-one you authorised, so it is proposed and not run. Bullet 4 stays unticked
-either way until it resolves.
-
-## B7 — the 0625 paper-3 constant
-
-`profiles.py` maps 0625 paper 3 to `THEORY_EXTENDED`; CAIE 0625 Paper 3 is
-Theory (**Core**), and #93's sweep found 40 schemes flip. It is **causally
-inert** today (`scheme_format` `point_based` both sides, metadata label only),
-so it was left wrong-but-annotated rather than silently fixed. Own issue, or
-fold into #93?
-
-## B8 — the parsed corpus: commit when?
-
-Your 2026-08-25 directive authorised committing the 250 parsed schemes. They
-**do not exist** — that run wrote to a throwaway root. Regeneration is free
-(~40 min, det-only). My recommendation stands: **regenerate and commit
-immediately after #93 lands**, recording the parser SHA, because a corpus
-generated today would permanently enshrine schemes that the very next merge
-fixes. Say the word if you want it at 250 now anyway.
-
-## B9 — #98: the #51 stratification axis
-
-Two of your own records disagree. DA2 / the 2026-08-19T01:05 item says the
-sample is drawn **per full 3-axis DA1 stratum** (syllabus × parse path ×
-tariff band); the 2026-08-25T14:41:54 item says **mark band only**. I
-implemented mark-band-only (the later, more specific record) with the axis as
-a one-line parameter. It is a **pre-committed rule** — cheap now, expensive
-after it ships.
-
-## B10 — #98: ratify the deviation from DA2's hash formula
-
-DA2 writes the rank as `sha256(relabel_salt || question_id)`. That assumes
-`question_id` identifies a leaf; it does not — leaf identity is
-`(paper_id, question_id)` (DA6), and `1a` recurs in every paper, so under the
-literal formula every paper's `1a` shares one rank and enters the sample **as
-a block**. I hash the full leaf identity instead. Nothing has been sampled
-under either formula, so no committed membership changes — but it is your
-decision that I altered, and I want it ratified rather than assumed.
-
-## B11 — #98: the cleartext-salt claim (informational)
-
-The module claimed the committed salt makes membership "unpredictable in
-advance". It does not — it is cleartext. I corrected it to what the salt
-actually buys: the ranking is fixed **in public before any leaf exists**, so
-no analyst can mint a salt at analysis time that selects a flattering sample.
-Flagging only because a false claim inside a pre-commitment matters more than
-a wrong one. No action needed unless you disagree.
-
-## B12 — #105: which measure is the headline H7 figure?
-
-`mark_point_verdicts` is declared and never read. Agreement is currently
-equality of `awarded_marks` totals, while **spec §6 defines pass-2 output per
-mark point**. These are different measurements — two labellers can award 2/3
-by matching *different* mark points and count as agreeing. Which is the
-published H7 number?
-
-## B13 — #59: authorise the `GoldenCase` two-render data-model change?
-
-Decisions 1 and 2 landed. The measurement itself is blocked: `GoldenCase`
-holds exactly one scan slot (`harness.py:66`, `:115` hard-codes `"scan.pdf"`),
-so "same paper, two renders" is not expressible. That is a data-model change
-and #59's stated "Effort: S" is wrong. Authorise it as its own work, or park
-#59?
-
-## B15 — #112: fix the alternative-marker defect, or leave it?
-
-New this run (36), zero spend, evidence at
-`BUILD/accuracy-runs/alt-marker-diagnosis-2026-08-26/`. The det
-alternative-branch detector matches `OR`/`EITHER` only as the whole cell or
-followed by a **space**; pdfplumber returns marker and working in one cell
-separated by a **newline**, so every marker is missed and mutually exclusive
-solution routes are **summed**. `Alternative`, the word CAIE 0606 prints, is
-not in the vocabulary at all.
-
-**Measured over #45's `mark_aggregation_overcount` bucket (46 parsed):** 18
-papers affected, 59 missed markers, **77–246 marks** of a 673-mark bucket
-overcount (11.4%–36.6%). **17 of 18 affected papers are 0606.**
-
-**My recommendation is to fix sub-defects 1 and 2 only** (whitespace-tolerant
-match, plus the `Alternative` keyword) and scope sub-defect 3 — marker not at
-cell start — separately. Flagging that this recommendation is the *cheaper*
-branch, so weigh it accordingly.
-
-**It is mark-changing** and needs its own before/after sweep, and it overlaps
-#110 on `0606_s23_ms_12`. Three options:
-
-1. Fix 1+2 now, sweep once jointly with #110.
-2. Fix all three, accepting a cell-splitting decision.
-3. Leave it — the escalation gate already routes these papers to Gemini, so
-   the marks never reach a student. The cost is that #88's paid denominator
-   stays 18 papers larger than it needs to be.
-
-**Related trap, not a decision:** the same scan over the 250 successfully-parsed
-schemes returns **0 true instances**, and that is a **selection effect, not
-rarity**. An affected scheme overcounts, and the parsed corpus reconciles at
-tolerance 0, so an affected scheme reaches it only if another defect deficits
-by exactly the compensating amount. Stated precisely rather than overstated:
-that is strong selection *against*, not strict impossibility — an
-exactly-cancelling pair would survive, and this scan cannot rule that out
-(it would be invisible to the escalation gate too, which sees only the net).
-The warning is unchanged either way: anyone costing #88's Gemini path from
-`outputs/schemes/` will read a clean bill of health that is an artefact of the
-selection.
-
-## B16 — #114: the spend ledger is contaminated with test data
-
-**Updated after the diagnosis was proven — the question below changed shape.**
-
-**PROVEN, not a lead.** `tests/test_correction_ai.py:93` and
-`tests/test_answer_extraction.py:108` override `cache_dir` only;
-`PathsSettings.output_dir` (`config.py:55`) defaults to the relative path
-`outputs`, resolving to the repo root under pytest, and `gemini.py:162` builds
-the ledger from exactly that. `test_gemini_client.py:114-125` sets both paths
-and says why — two modules got the protection, two did not.
-
-**The clients are `MagicMock`, so no API call is made and no money is spent.**
-Mock-derived costs are written into the real ledger, one batch per pytest run.
-Replicated across two consecutive sweeps, with deltas in an exact 4.0 ratio
-($0.0077620 then $0.0019405) — a fixed unit written N times, which is not what
-token-billed spend looks like.
-
-**So under DA11 `cumulative_usd` is not money spent**, and the contaminated
-portion **cannot be reconstructed** — the file keeps one running total with no
-history. Every ceiling check and preflight headroom figure in the programme
-rests on it.
-
-**The decision I need is no longer "back out $0.0077620".** It is: **what basis
-should the ledger have going forward, given the historical total is
-uncorrectable?** I have not touched it. Fixing the test isolation is
-straightforward and I can do it on your word; choosing the basis is yours.
-
-### Superseded framing (kept, not deleted)
-
-
-
-Found in run 36 by **verifying rather than asserting** a `ledger unmoved` line I
-had just written. It had moved: **+$0.0077620** at `2026-08-26T03:05:45Z`,
-inside the supervisor's pytest window, on a run that made **zero Gemini calls**.
-Ruled out the live billed test and the ledger/client tests; the unproven lead is
-four tests calling bare `load_settings()`. Full evidence on #114.
-
-**Your call, because it changes an authoritative spend figure and I have not
-touched it:** does the $0.0077620 stay in the ledger, or get backed out? It
-matters more than the amount — under DA11 the ledger *is* the record of money
-spent, so if the writer turns out to be a test recording a fabricated cost, the
-authoritative record is carrying test data.
-
-**Separately, and not a decision — a practice change I have already applied.**
-Re-summing all four worktree ledgers gives **2.6925847** against a header of
-**2.659533**: a **$0.0330517** drift, of which only $0.0077620 is run 36's. The
-header had been carried forward arithmetically run to run instead of re-summed
-from the files DA11 calls authoritative, so each run reproduced the previous
-run's error. `spend_usd` is now the freshly summed **2.692585**, and the rule
-going forward is **re-sum every run, never carry the header forward**. Say if
-you would rather it were recorded some other way.
-
-## B14 — still owed on the H issues
-
-Not decisions I can make or work around (MISSION §3.5):
-
-- **#51** — labeller B's identity and onboarding.
-- **#52** — the three seed rulings themselves (ECF, `oe` alternatives, list
-  rule over-tariff). The machinery is built and the log ships empty; the
-  rulings are examiner judgment and I will not draft them.
-- **#49** — split membership stays **NOT frozen** until #57 delivers and you
-  sign off.
-
-## B17 — issues opened off-board cannot be commented through the sanctioned path
-
-New in run 37, zero spend. `scripts/accuracy_board.py` gates **every**
-subcommand — including `comment` — on board membership: `cmd_comment` calls
-`_require_issue`, which raises for any issue not on the project board. **#114
-is not on the board** (`projectItems` is empty), so `start` and `comment` both
-refuse it.
-
-MISSION §3.4 says to route every issue comment through the board script and
-**never** call `gh issue comment` directly. I did not bypass it, so #114 got
-neither a plan comment nor a finish comment, and §13's Definition of Done
-cannot be met for it through any permitted route. The same is very likely true
-of **#93, #94, #95, #110 and #112**, which were opened the same way.
-
-The membership check is doing the wrong job here: the guard §3.3/§3.4 exists
-for is the **H-issue** guard, and membership is a poor proxy for it — an
-off-board issue is not an H issue, it is just untracked.
-
-1. Add the off-board issues to the board (and whatever opens issues does so
-   from then on). Keeps one rule, no code change.
-2. **Decouple `cmd_comment` from `_require_issue`**, keeping the H-issue guard
-   on it — comments are not board mutations. **My recommendation**; flagging
-   that it is also the branch that makes my own work easier, so weigh it.
-
-### Update, run 38 — this is worse than filed, and it now blocks landing
-
-B17 was filed as a *commenting* problem. It is not: `_require_issue` gates
-`start`, `comment` **and `done`**. Run 38 hit the third one.
-
-**#120's code is merged** (PR #123 → `d25a106`, all five CI jobs green) **and
-issue #120 is still OPEN**, because `accuracy_board.py done 120` exits **1**
-with *"not on the project board"* — not the H-guard's exit 2. So **MISSION §13's
-Definition of Done is unreachable by any sanctioned route** for every
-run-generated issue. Currently that is **#114, #120, #121, #122, #124**.
-
-I did **not** close it with a bare `gh issue close`. B17 is an open ask, and
-re-deriving a gate away while waiting for you is precisely the run-27 mistake.
-So the debt is recorded rather than paid.
-
-**A second, independent cause found while there:** the PR body said
-`Closes #120` and GitHub did **not** auto-close it, because GitHub only
-auto-closes linked issues when a PR merges into the repository's **default**
-branch (`main`). Every accuracy PR merges into `develop`. So even a board-tracked
-issue would not self-close — option 1 alone does not fix this half.
-
-Adding a third option, since the two above now look insufficient:
-
-3. Give `accuracy_board.py` a `done` path that closes a non-H issue **not**
-   on the board, keeping the H-guard by checking the issue's H-number/label
-   directly rather than using board membership as a proxy for it. Membership
-   was always the wrong proxy: an off-board issue is not an H issue, it is
-   just untracked.
-
-## B18 — three `test_web_teacher.py` tests are red in isolation (not a decision, a finding)
-
-`test_card_name_falls_back_to_the_uploaded_filename`,
-`test_failed_grade_is_terminal_and_carries_the_reason` and
-`test_paper_detail_reports_live_pipeline_instead_of_409` **fail when that
-module is run alone** and pass in the full suite — the card name comes back as
-`Paper <MagicMock name='mock.generate_structured().paper_number' …>`, i.e. a
-mock leaking in from ambient state.
-
-**Not attributable to #114**: reproduced identically on a clean `develop`
-worktree with `develop`'s own `conftest.py`. It is the same *family* as #114
-(a test depending on ambient state) and the supervisor's full-suite PASS hides
-it, which is why nobody has seen it. Wants its own issue; I did not open one
-because the board script could not comment on it either (B17).
-
-### RESOLVED, run 38 — opened as #120, fixed, merged as `d25a106`
-
-**No decision was needed and none was taken** — you had already recorded this
-as a finding, so it was worked as independent unblocked work under MISSION §12.
-
-**The cause was not what this ask guessed.** I wrote above that "some other
-module's patching makes the call fail or return falsy". That is wrong, and the
-real mechanism matters more:
-
-`Settings` is a `pydantic-settings` `BaseSettings` whose
-`settings_customise_sources` (`lemely/runtime/config.py:392-398`) ranks
-`env_settings` **above** explicit init data — and `model_dump()` →
-`model_validate(dict)` **re-triggers that merge**. So the fixture's intended
-`gemini_api_key=None` was silently overridden by a developer's exported
-`GEMINI_API_KEY`. `_detection_available` is literally `is not None`
-(`teacher.py:634`), so detection ran against a `MagicMock` and its attribute
-reprs were formatted straight into a user-visible card name. Fixed by using
-`model_copy(update=...)`, which does not revalidate against the environment.
-
-The in-suite pass was **borrowed** from `test_cli_doctor.py:18-21`, which does a
-raw, unrestored `del os.environ["GEMINI_API_KEY"]`. That leak source is
-untouched and still exposes every other module — filed as **#121**.
-
-**Three further findings, none executed:** **#121** (the leak source),
-**#122** (production assigns unvalidated metadata into the card name — dormant
-behind the real client's schema validation, so a decision, not a fix), and
-**#124** (`test_upload_does_not_wait_on_metadata_detection` is vacuous: it
-passes when detection never runs at all, proven by mutation; **pre-existing**,
-not caused by #120).
-
-**Worth keeping:** review round 1 caught a real defect I would otherwise have
-shipped — `_key_settings` retained the *identical* `model_dump`/`model_validate`
-shape and, measured rather than inferred, returned the **real environment key**
-instead of the dummy. CI exports no key, so CI was never affected; a developer
-machine was.
-
-**Caveat on the isolation claim:** `pytest-randomly` is **not installed** in
-this venv, so `-p no:randomly` was a no-op. Isolation is verified for
-alone-runs and both `test_cli_doctor` orderings only — **randomised-order
-isolation is unverified**, and I am not claiming it.
+| **C1** | #112, #110, #136-fix | Marking sweep **WAIVED** on the instrument-blindness ground #38 got under A6(a) and #93 under B2 — `load_golden_cases` (`harness.py:130`) never invokes the det parser, so both arms are identical inputs. In its place: a **zero-spend deterministic before/after re-parse** of the 289 schemes under `corpus/` (`parser_sha 8758dba`), checked against #112's pre-stated prediction of strict deflation (77–246 marks). B15 is **not** reopened. |
+| **C2** | #38 b2+3 | **Defer behind #136's fix, then re-measure.** The 44.4%-of-papers / 21.6%-of-points defaulted rate is contaminated by DA21 mechanism (B). Bullets stay **open and unticked** — nothing closed on a falsified premise. |
+| **C3** | #39 | **Same waiver as C1**, with a zero-spend deterministic before/after over `corpus/` standing in — measuring how many schemes the gate **reroutes**, not what Gemini then marks. Caveat attached by the human: #39 is **cost-changing**, so the reroute count is itself the number to watch. Bullet 9's zero-false-positive requirement **holds**. |
+| **C4** | #58 | **~14 calls / ~$0.01 AUTHORISED** to close bullet 3 on live evidence (the offline "7 held" must not stand in for it). **No new issue** for q11b — it stays recorded on #58 as reproduced-but-not-significant (Fisher p = 0.4737). §12.9 still forbids re-running at higher n. |
+| **C5** | #127 | **Fold into #95.** One corpus-membership restatement instead of two. Chain: #151 → #136 fix → #95 → this. |
+| **C6** | #41 → programme-wide | **Deterministic parsing for MCQ ONLY.** Asked twice; the broad reading was confirmed against an option stating it "largely moots #112, #110, #136 and #39". **Now costed and forked as C8 / #151** — it is not executable as ruled without a ceiling decision. |
+| **C7** | #59 | **Both blockers authorised** — commit the handwritten CAIE renders (MISSION §12.7 granted, scoped to #59) and run the measurement (costed preflight first, per #28). The public-repo irreversibility point was flagged once and the ruling reaffirmed with it in view. |
+
+**Carried forward from the B list, still binding:** B3 (0.99 is INHERITED-NOT-MEASURED, no follow-up issue), B5 (whitespace fixtures are ordinary golden cases; their consequence — restating every figure against the new membership — is **unspent, not skipped**), B12 (per-mark-point is the published H7 figure; `mark_point_verdicts` still declared and never read), B15 (fix all three sub-defects — the *what*; only its sweep clause was superseded by C1), B16 (`cumulative_usd` is a known-contaminated **upper bound**; re-sum every run, never carry the header forward).
+
+**Sequencing as it now stands:** **#151 (C8)** → #136 fix → then #95 → #127, and #38's re-measurement; #112 + #110 jointly; #39. #58's ~$0.01 and #59 are authorised and independent, awaiting their preflights. #57 stays blocked on #49.

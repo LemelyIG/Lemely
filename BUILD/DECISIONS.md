@@ -11970,3 +11970,137 @@ a noisy one.
 #112 + #110 sweep question posted 2026-08-27. Starting it before that answer would
 produce another complete-but-unmergeable branch — the exact failure the 2026-08-24
 gate-9 ruling retired.
+
+---
+
+## DA22 — the det-parser sweep waiver, and what stands in its place (C1, C3)
+
+**Date:** 2026-08-27 · **Issues:** #112, #110, #136, #39 · **Spend:** $0.00
+
+B15 required #112's before/after marking sweep, *"run jointly with #110"*. That
+requirement was posted back on 2026-08-26 with a structural problem B15 had not
+been shown, and rulings **C1** and **C3** resolve it.
+
+**The waiver.** A before/after *marking* sweep over the golden corpus is **blind
+by construction** to any det-parser change: `load_golden_cases`
+(`harness.py:130`) reads an already-parsed `mark_scheme.json` and round-trips it
+through `MarkScheme.model_validate_json`; the det parser is never invoked. Both
+arms are therefore identical inputs and any delta is churn. This is the same
+ground on which **#38's sweep was waived under A6(a)** and **#93's under B2**.
+C1 waives it for **#112, #110 and #136's fix half**; C3 waives it for **#39**.
+Recorded as a **waiver**, explicitly — not as a step that was skipped.
+
+**What stands in its place, and why it is not nothing.** A **deterministic
+before/after re-parse of the 289 schemes committed under `corpus/`**
+(`parser_sha 8758dba`): zero Gemini calls, zero spend, and it measures the
+artefact the fix actually changes. For #112/#110 that is `is_alternative` flags
+set and `computed_total` shifts on the 18 affected papers, checked against
+#112's **pre-stated** prediction of strict deflation (77–246 marks) — a
+confirmatory measurement with a direction committed in advance, not a fishing
+expedition. For #39 it is the count of schemes the gate **reroutes** det→Gemini.
+
+**Two conditions attached, and neither is decorative:**
+
+1. **#39 is cost-changing**, unlike #112 and #110. Its gate sends schemes to the
+   paid path, so **the reroute count is itself the number to watch** and must be
+   costed against the ceiling *before* the gate is armed.
+2. **Bullet 9's zero-false-positive requirement holds** and must not be
+   loosened. Per DA21 mechanism (B), the 21.6% `marks_defaulted` leak means a
+   paper can be under-sum from a parser defect rather than a fidelity defect.
+
+**B15 is not reopened.** FIX ALL THREE SUB-DEFECTS stands; only its sweep clause
+is superseded.
+
+---
+
+## DA23 — "det parses MCQ only" is 100% of the det marking path, not most of it (C6, #151)
+
+**Date:** 2026-08-27 · **Issue:** #151 (opened by this decision) · **Spend:** $0.00
+
+Ruling **C6** — *"deterministic parsing for MCQ ONLY"* — was given in answer to
+#41's scoped A-mark question, is programme-wide, and was confirmed on a second
+ask against an option stating it "largely moots #112, #110, #136 and #39". **It
+was taken before the blast radius was measured.** This records what the
+measurement then found, because the gap between the two is the decision.
+
+**MCQ schemes carry zero `answer_points`.** MCQ answers live in the separate
+`mcq_answer` field. Measured over `corpus/mark-schemes/*.json` at
+`parser_sha 8758dba`, reconciling exactly with #41's own independent
+10,314-point census:
+
+| paper_type | schemes | answer points |
+|---|---|---|
+| theory_extended | 87 | 4,692 (45.5%) |
+| **mcq — det keeps** | **79** | **0 (0.0%)** |
+| theory_core | 73 | 3,649 (35.4%) |
+| practical | 26 | 1,031 (10.0%) |
+| alternative_practical | 24 | 942 (9.1%) |
+
+So C6 retires **210 of 289 schemes (72.7%)** and **10,314 of 10,314 answer
+points (100%)** to the paid path. The paid set goes **190 → 400** of 479 source
+mark schemes.
+
+**Cost, on the #88 token model unchanged so the two are comparable** — and the
+model is **validated against that artifact**: re-running #88's failing set
+through this script reproduces its four scenarios to the cent.
+
+| | one-off | recurring, every full rebuild |
+|---|---|---|
+| per-scheme median → per-PAGE mean | $5.41 – $6.52 | **$10.33 – $13.79** |
+| *today (#88 item 2)* | — | $4.92 – $7.26 |
+
+**And it breaches the ceiling.** Ledger **$3.138148** (re-summed per B16, never
+carried forward). The **committed** `total_usd_ceiling` is **$8.00**
+(`config.py:111`); the $25.00 in `lemely.toml` is **gitignored and
+worktree-local**, DA13's hazard class, invisible to CI. Against $8.00 the
+one-off alone lands at **$8.55–$9.66** and the recurring rebuild breaches on its
+own, every run. **MISSION §12.4 makes that a stop-and-ask**, so C6 is not
+executable as ruled without a deliberate ceiling decision.
+
+**Four costs that do not appear in a dollar figure:** #112/#110/#136/#39 become
+dead work; **#53 (M3, parse-path parity) is voided** — there is no parity to
+measure once a path is gone; MISSION §2 and §14 both rest on the det path being
+measurable, and this removes the path rather than fixing it, making the failure
+mode unobservable; #38's `escalate_on_defaulted_marks` loses its subject.
+
+**Decision recorded: the fork went back to the human as #151** (options (a)
+proceed / (b) narrow to #41's actual question / (c) det parses all, marks MCQ
+only), with **#41, #39 and #110 moved to Backlog and blocked on it**, rather than
+executing a ruling whose stated basis the measurement had just changed. No
+recommendation was offered between (a) and (b): that is an architecture call,
+not a measurement one.
+
+Preflight artifacts: `BUILD/accuracy-runs/preflight-c6-2026-08-27/`.
+
+---
+
+## DA24 — real CAIE renders may enter public history, for #59 only (C7)
+
+**Date:** 2026-08-27 · **Issue:** #59 · **Spend:** $0.00 this run
+
+**MISSION §12.7 permission GRANTED, scoped to #59's open lifetime:** the
+handwritten renders behind the synthetic-to-real transfer measurement may be
+committed, and the live measurement is authorised subject to a costed preflight
+posted before any spend (#28's general rule).
+
+Recorded with the caveat intact rather than as a clean grant: `LemelyIG/Lemely`
+is a **PUBLIC** repository, the renders are verbatim CAIE question-paper
+content, and a commit to git history is not cleanly reversible — undoing it
+means a history rewrite, which §12.2 puts back in human hands anyway. This is
+the specific thing the parsed-mark-scheme authorisation said it was **not**
+blanket permission for. **The point was put to the human before the ruling and
+the ruling was reaffirmed with it in view.**
+
+**Not executed this run**, deliberately: committing verbatim real-paper content
+to public history is the one action in this queue a revert cannot undo, and it
+should be a considered step of its own rather than a rider on a bookkeeping run.
+
+Three limits carry forward and must appear in whatever reports the result: scan
+realism is **unmeasured** with no corpus for it; the corpus is **one-sided by
+construction** (every answer correct), so it can only catch the marker being too
+**harsh**; and **renders are not leaves** — `n` stays distinct
+`(paper_id, question_id)` under DA6, and whatever iterates renders must state
+its denominator explicitly.
+
+**The ceiling note applies here too:** size the preflight against the committed
+**$8.00**, not the gitignored local $25.00.
