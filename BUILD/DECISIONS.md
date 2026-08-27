@@ -12104,3 +12104,47 @@ its denominator explicitly.
 
 **The ceiling note applies here too:** size the preflight against the committed
 **$8.00**, not the gitignored local $25.00.
+
+---
+
+## DA25 — a preflight that called the human's own figures inconsistent, and was itself wrong (#58 bullet 3)
+
+**Date:** 2026-08-27 · **Issue:** #58 · **Spend:** $0.008332
+
+Ask **C4** authorised *"~14 calls / ~$0.01"* to close #58's bullet 3 on live
+evidence. The costed preflight posted to #58 before spending declared those two
+figures **"inconsistent with each other by roughly 13×"** and announced which
+one it intended to break.
+
+**The preflight was wrong.** It read *"calls"* as `correct_paper` invocations;
+the authorisation meant **Gemini API calls**. The run made exactly **14** of
+them (7 leaves × 2 arms) for **$0.008332** — both of C4's figures correct,
+together, and within rounding of each other.
+
+The mechanism of the error is worth keeping, because it is reusable: the
+preflight derived $0.009979/call by dividing `metamorphic-58-2026-08-25`'s
+$0.279402 by its **28 `correct_paper` invocations**. That is a **per-paper**
+rate measured over papers larger than the 7-leaf case this run marks, and it
+was then applied as if it were per-call. **Actual spend was 42% of the
+preflight's own "central" estimate.**
+
+**Recorded as a decision because of what it says about preflight practice, not
+because of the eight-tenths of a cent.** A preflight's job is to make spend
+legible before it happens; this one instead published a false claim that a
+human authorisation was internally incoherent by an order of magnitude. The
+rule that follows: **state the unit**. "Calls" is ambiguous between API calls
+and pipeline invocations, and a rate carried across from another run must name
+the population it was measured on and whether the target population matches it.
+
+**What survived the correction:** the plan chosen (mark only the 1 case that can
+exercise the property, 2 `correct_paper` invocations) was still right. Plan B's
+11 extra baseline calls would have bought nothing — whether a leaf skips is a
+pure string comparison decided at $0.00 — so the decision was sound even though
+the arithmetic framing it was not.
+
+**Result, for the record:** 7 held / 0 violated / 0 skipped, `cache_mode=bypass`
+with every call `cache_hit=False`. Bullet 3 ticked on live evidence, replacing
+#134's zero-spend offline "7 held". The other 71 golden leaves are no-ops under
+the transform and are labelled `determined_offline` in the artifact, so the run
+cannot be misread as 78 live outcomes. Programme ledger 3.138148 → **3.146479**,
+re-summed across all four worktrees rather than carried forward.
