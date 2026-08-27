@@ -16,13 +16,25 @@
 
 Make Lemely's extraction and marking accuracy **measurable and attributable**, then
 improve it. Today the system cannot say whether a wrong mark came from the extractor or
-the marker, and human reviewers see 19.1% of questions against a 10% budget. The one
+the marker, and human reviewers see far more questions than the 10% budget allows — a
+measured mean of **32.58%** over 10 live repeats, range 29.03–41.94% (the older 19.1%
+figure is RETRACTED, DA-M0.9). The one
 product outcome that defines success:
 
 > **A wrong mark can be attributed to extractor or marker with published statistical
-> backing, and the review rate falls from 19.1% toward the 10% budget while the wrong-mark
-> catch rate at least doubles (from 3/11 toward ≥6/11) — the review rate must fall, never
+> backing, and the review rate falls toward the 10% budget while the wrong-mark catch
+> rate at least doubles (from 3/11 toward ≥6/11) — the review rate must fall, never
 > rise.**
+
+**No start point is written here, deliberately (ruling C16).** This sentence used to say
+*"falls from 19.1%"*. **19.1% was RETRACTED by DA-M0.9 and must not be cited** — the
+measured rate over 10 live repeats is a *distribution*, mean **32.58%**, range
+**29.03–41.94%**. The current measured value lives in `BUILD/ACCURACY-REPORT.md` and is
+re-derived when re-measured; baking one draw into the mission is what let a retracted
+figure sit in the programme's own definition of success for weeks.
+
+**The 10% budget is unchanged and is the target.** Note without softening it: the gap is
+therefore ~23pp against the measured mean, not the ~9pp that 19.1% implied.
 
 This is a measurement programme first and an engineering programme second. Milestones:
 M0 builds the instrument, M1 lands provably-broken fixes, M2 builds real ground truth.
@@ -52,9 +64,48 @@ books fixture corruption as extraction error. The corollary for you: M0 items ar
 only place to start, and "run a quick baseline to see where we are" is a forbidden move
 until M0.0, M0.1, M0.2 and M0.8 are merged.
 
-The 28-leaf synthetic corpus is not powered to demonstrate improvement. M1's gate is
+The synthetic corpus — **31 distinct leaves over 78 rows** (DA6 collapses fixture
+variants of the same leaf; the older "28-leaf" figure is superseded) — is not powered to
+demonstrate improvement. M1's gate is
 **non-regression** (signed over/under split, α=0.05); McNemar is reported, never cited
 as proof of improvement. Improvement claims wait for M2's ~300 labelled real leaves.
+
+---
+
+## 2b. The division of labour — LOCKED (ruling C11, DA27)
+
+**Human ruling, 2026-08-27.** This is the architecture, and it is not an agent's to
+re-derive:
+
+> *"det parses any & all mark-schemes, as well as MCQ correction. Gemini handles ALL
+> question paper extraction & the marking of non-MCQ papers."*
+
+| stage | path | verified at |
+|---|---|---|
+| mark-scheme **parsing** | **det**, for every scheme | `lemely/io/det/parser.py` — 289 of 479 succeed |
+| question-paper **extraction** | **Gemini**, always | `lemely/io/answer_extraction.py` — no det path exists |
+| **marking**, MCQ | **det** | `harness.py:498`, `marker_source`: `"mcq"` → `det` |
+| **marking**, non-MCQ | **Gemini** | same mapping: `"theory"` → `gemini` |
+
+**Two consequences that govern where effort belongs:**
+
+1. **MCQ schemes carry ZERO `answer_points`** (counted over the committed corpus, and
+   reconciling with #41's independent 10,314-point census). So **Gemini marks 10,314 of
+   10,314 answer points**. Marking-accuracy work belongs on the Gemini path.
+2. **det parsing feeds everything.** A parser defect corrupts the input to both marking
+   paths silently, which is why #112, #110, #136 and #39 are live work regardless of
+   where the marks are awarded.
+
+**The gap between the ruling and reality:** *"any & all"* is true of what det **can**
+parse — **190 of 479 source schemes fail outright** and have no parsed output. Closing
+that is #88, which is a stop-and-ask (ask C15) because its measured $13.31 does not fit
+the $8.00 ceiling.
+
+**History, kept so it is not repeated.** An earlier ruling (C6) was read as *restricting
+the det parser to MCQ only*. That reading was costed in detail — one-off $11.92–$14.71,
+recurring $25.23–$28.02, retiring 210 of 289 schemes — before being put back to the human
+and **superseded**. See DA27's lesson: an enormous blast radius is itself evidence of a
+misreading.
 
 ---
 
@@ -492,9 +543,14 @@ Accuracy-specific (these are the point of the programme):
    never raw records; below the n-floor prints as underpowered, not as a number.
 8. **Review-rate ratchet not breached**: CI fails when
    `review_rate > min(10%, last_merged_review_rate)`; `review_rate_signal ≤ 8%`,
-   per-paper p95 ≤ 15%. M0 records 19.1% as the starting value, non-blocking, so M1.1
-   is not blocked from merging. Any change that could raise review volume is measured
-   against the ratchet **before** merge, not after.
+   per-paper p95 ≤ 15%. **The gate is wired (`ci.yml`) but UNARMED**
+   (`review_rate_ratchet_armed=false`), so a breach is recorded and non-blocking. It
+   stays unarmed until ruling **C13** is executed (#161): publish an **upper interval
+   bound** of the measured distribution and arm against that. **Never arm against
+   29.03%** — that is the bottom of the range, and unchanged code exceeds it 7 times in
+   10 (DA9a). The "19.1% starting value" this clause used to name is **retracted**. Any
+   change that could raise review volume is still measured against the ratchet
+   **before** merge, not after.
 9. **M1 milestone gates** on every M1 item: non-regression on the signed over/under
    split (α=0.05) is the blocking condition; McNemar reported, not gated; flag recall
    not below the M0 baseline.
@@ -534,23 +590,62 @@ CI be the thing that waits.
 
 ## 10. Budget Protocol
 
-`lemely.toml` (currently uncommitted changes in the main tree): model
-`gemini-2.5-flash`, `per_run_token_ceiling` 2,000,000, `total_usd_ceiling` $25.00.
+**Rewritten 2026-08-27 under ruling C18.** Nearly every figure in the previous version
+was stale: it named a 2M token ceiling, a $25.00 dollar ceiling, a ledger that "lies
+until M0.2 lands" (M0.2/#26 landed weeks ago), and notify thresholds of $12.50/$20.00
+that were 156% and 250% of the real ceiling.
 
+Model `gemini-2.5-flash` · **$0.30/1M input, $2.50/1M output**.
+
+| | value | authority |
+|---|---|---|
+| `total_usd_ceiling` | **$8.00** | `lemely/runtime/config.py:111` — **COMMITTED**, ruling C12 / DA28 |
+| `per_run_token_ceiling` | 5,000,000 | `lemely.toml`, DA13 — **gitignored**, and **undersized**: #88 measured 7.25M |
+| notify at 50% / 80% | **$4.00 / $6.40** | ruling C18 |
+
+- **The COMMITTED ceiling is the only one that counts.** A value in `lemely.toml` is
+  **gitignored**: it does not survive worktree deletion and **CI cannot see it**. A
+  $25.00 override lived there and was shadowing the real $8.00 — and
+  `BUILD/ACCURACY-REPORT.md` was publishing it as real headroom. **Never re-add a
+  gitignored ceiling; raise the committed default instead** (C12/DA28).
 - **Both ceilings are pre-flight checks, not hard stops.** `_check_cost_ceiling` runs
-  before a call is issued, so a single request can overshoot. Never treat the ceiling
-  as a guarantee.
-- **The ledger currently lies.** Until M0.2 lands the corrected GA pricing
-  ($0.30/1M input, $2.50/1M output for gemini-2.5-flash) and counts
-  `thoughts_token_count`, the ledger understates real spend by 2–4x and never counts
-  thinking tokens. Before M0.2, mentally multiply ledger figures accordingly and stay
-  conservative.
-- **Every sweep is costed before it runs.** Produce a dry-run estimate (papers × calls ×
-  expected tokens × corrected rates) and record it in the run's issue comment. If the
-  estimate plus spend-to-date exceeds 80% of the ceiling, stop and ask (§12).
-- Budget envelope from the spec: M0 ≈ $3, M1 ≈ $4, headroom ≈ $8 at corrected rates.
-- **Notify on the accuracy topic at 50% ($12.50) and 80% ($20.00) of
-  `total_usd_ceiling`**, once each.
+  before a call is issued, so a single request can overshoot. Never treat a ceiling as a
+  guarantee; set an in-process brake in the run itself.
+- **`cumulative_usd` is a conservative UPPER BOUND, not money spent** (DA17, amending
+  DA11). Some tests resolve `paths.output_dir` into the repo and write mock-derived costs
+  into the authoritative ledger (#114). The contamination is **one-directional**, so
+  ceiling checks stay conservative, and the contaminated portion **cannot be
+  reconstructed** — the file keeps one running total with no history.
+- **`output_tokens` ALREADY INCLUDES `thoughts_tokens`** (#88). Pricing input + output
+  alone reproduces the ledger to the cent; adding thoughts on top overshoots. The
+  previous version of this section told you to count them separately — **do not**.
+- **RE-SUM the ledger every run from all worktree ledger files. Never carry the header
+  forward.** Carrying it forward reproduced the previous run's arithmetic error every run
+  until it was caught (B16).
+
+### 10a. Preflight rules — earned the hard way, both on 2026-08-27
+
+Every sweep is costed before it runs, recorded in the run's issue comment. Beyond that:
+
+- **STATE THE UNIT.** "Calls" is ambiguous between **Gemini API calls** and pipeline
+  invocations (`correct_paper`). A preflight once declared a human authorisation
+  *"inconsistent by ~13×"* purely from reading one as the other; the authorisation was
+  right and the preflight was wrong (**DA25**).
+- **Name the population any carried-over rate was measured on**, and check the target
+  population matches. That same preflight applied a **per-paper** rate, measured on large
+  papers, as if it were per-call.
+- **Agreement with a prior artifact is NOT validation. Agreement with a measurement is.**
+  A cost model was published as "validated" because it reproduced a prior preflight *to
+  the cent* — while a measurement falsifying that model at **1.83×** sat in the same
+  repository, filed the same day, against the same task. **A model and its own output
+  always agree** (**DA26**).
+- **Check the first call's actual ledger delta against the projection before continuing.**
+  This is the control that caught #88 at **$0.42 instead of $13.31**.
+- **STOP AND ASK if a sweep projects materially above its estimate.** Not "adjust and
+  continue" — the estimate being wrong is itself the finding.
+- **When a ruling's blast radius looks enormous, that is evidence it may have been
+  MISREAD. Ask again BEFORE costing, not after** (**DA27**): a rigorous costing of C6
+  priced a migration that was never going to happen.
 
 ---
 
@@ -613,12 +708,34 @@ demonstrably met; regression test in the diff failing-before/passing-after; all 
 green; PR merged to `develop`; board item Done; finish comment with evidence posted;
 no §8 row violated by what the commit contains or omits.
 
-**For the programme:** every OPEN sub-issue of #24, #35 and #43 that is not H-prefixed
-is closed via merged PR; the honest baseline, A/A floor, ablation 2×2, exclusion funnel
-and review-rate ratchet are published and enforced in CI; ~300 labelled real leaves
-exist with a published self-agreement figure; the review-rate is at or below the ratchet
-with recall not below baseline; a develop→main PR is open for human approval; the H
-issues that remain open are cleanly documented as awaiting their human.
+**For the programme** (restated 2026-08-27 under ruling C19 — no requirement is dropped
+or weakened; three were inaccurate and are corrected, and one is added):
+
+1. Every OPEN sub-issue of #24, #35 and #43 that is **not H-prefixed** is closed via
+   merged PR.
+2. The honest baseline, A/A floor, exclusion funnel and review-rate ratchet are
+   **published** in `BUILD/ACCURACY-REPORT.md` **and enforced in CI**. The ratchet is
+   armed against the **upper interval bound** ruling C13 selects — never 29.03%, never
+   the retracted 19.1%.
+3. **The ablation 2×2 is published, or its absence is.** It does **not** exist today and
+   is **not** to be run now: #28 is **CLOSED with every acceptance box unticked** — the
+   honest record — and the 2×2 **waits for #57's corpus expansion**. Its 2026-08-24 spend
+   authorisation **lapsed when the issue closed**, and *a spend authorisation does not
+   survive its issue being closed*. Until it exists, the report publishes the
+   `NOT_APPLICABLE` verdict and why.
+4. **~300 labelled real leaves exist with a published INTER-RATER agreement figure** —
+   labeller B is named (C14/DA30), so this is inter-rater, **not self-agreement**, and
+   per B12 it is agreement **per mark point**, not totals-equality. #47's protocol must
+   be built for **two seats from the outset**.
+5. **Both paths are measured in their own terms** (C11/§2b): det **parse coverage**
+   — currently 289 of 479, so **190 unparsed** — and **Gemini marking accuracy**, which
+   covers 10,314 of 10,314 answer points. A headline that improves while either goes
+   unmeasured does not count as done.
+6. The review-rate is at or below the ratchet with recall not below baseline.
+7. A **develop→main PR is open for human approval**. Opening it is permitted; **merging
+   is human-only** (§12.3).
+8. The H issues that remain open are **cleanly documented as awaiting their human** —
+   each carrying a current statement of what is needed, not a stale one.
 
 ---
 
@@ -629,10 +746,22 @@ issues that remain open are cleanly documented as awaiting their human.
 - **Do not batch prompt `VERSION` bumps with anything else.** One bump per change, ever;
   each invalidates the cached corpus.
 - **Do not let the review queue grow.** Every trigger-adding or recall-raising change is
-  checked against the ratchet before merge. 19.1% is the ceiling that only ratchets down.
-- **Do not measure only the Gemini parse path.** The det path is the majority path
-  (0% `calculated_answer`/`drawing_criteria` today); a programme where every number
-  improves but the det path never moves has failed.
+  checked against the ratchet before merge. **The ceiling only ever ratchets down** — and
+  it is the statistic ruling C13 selects (an upper interval bound of the measured
+  distribution), never the retracted 19.1% and never the 29.03% bottom-of-range.
+- **Do not leave det PARSE defects unmeasured.** det is the majority *parse* path — it
+  parses every mark scheme and succeeds on 289 of 479 — so a parser defect silently
+  corrupts the input to everything downstream. #112, #110, #136 and #39 exist for exactly
+  this. A programme where every headline improves while the parser's known defects go
+  unfixed has failed.
+- **Do not treat det as the marking path.** Under the C11 division of labour (§3b), det
+  marks **MCQ only**, and MCQ schemes carry **zero `answer_points`** — so **Gemini marks
+  10,314 of 10,314 answer points**. Marking accuracy work belongs on the Gemini path;
+  reading the parse-path anti-goal above as licence to tune det marking would put effort
+  where none of the marks are.
+- **Do not let the det MCQ path go unmeasured either.** It is small in answer points and
+  is still a whole product surface. Measure it in its own terms rather than pooling it
+  into a figure the Gemini path dominates.
 - **Do not reopen closed issues** (#34, #42, #48, #50, #60) or re-do their work.
 
 Start every run with: read `BUILD/ACCURACY-INBOX.md` → check the §4 precondition →
