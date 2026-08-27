@@ -2838,3 +2838,61 @@ by 1e-6 float rounding, not drift).
   authorised and both left unstarted — they keep, and neither was worth interleaving with an
   unresolved architectural fork. C7's renders in particular are the one action here a revert
   cannot undo, so they get their own considered step rather than a rider on a bookkeeping run.
+
+## run-2026-08-27-f — four merges, and two of my own preflights falsified
+
+**Spend: $0.008332**, all of it #58's authorised bullet-3 run. Ledger 3.138148 → **3.146479**,
+re-summed across all four worktrees rather than carried forward.
+
+- **#153 — B17 was half-implemented and nobody had noticed.** B17 ruled that board membership
+  must stop standing in for the H-guard; that landed on `done` and never on `comment`, so the
+  path MISSION §3.4 makes *mandatory* refused every off-board issue. Run 55 alone worked around
+  it four times. Fixed, with the asymmetry pinned by test: **`done` refuses a human task,
+  `comment` must allow one** (§3.5 requires commenting on H issues), so a later "make this
+  consistent" pass cannot break the protocol. Verified live twice — including by posting the
+  #151 correction through the path the fix repaired.
+- **#58 bullet 3 — MET LIVE.** 7 held / 0 violated / 0 skipped, `cache_mode=bypass`, all 14
+  Gemini calls `cache_hit=False`, **$0.008332**. Replaces #134's zero-spend offline "7 held".
+  Reported as **7 live outcomes, not 78**: the other 71 leaves are no-ops determined by string
+  comparison at $0.00 and are labelled `determined_offline` in the artifact, so the run cannot
+  later be misread as the very offline/live conflation the bullet existed to fix.
+- **DA25 — I called the human's own authorisation incoherent, and I was the one who was wrong.**
+  My preflight declared C4's *"~14 calls / ~$0.01"* inconsistent by ~13× and announced which
+  figure I would break. "Calls" meant **Gemini calls**; the run made **exactly 14** and cost
+  within rounding of $0.01. I had divided the 2026-08-25 run's spend by its `correct_paper`
+  invocations — a **per-paper** rate measured on larger papers — and applied it as per-call.
+  Actual came in at **42% of my own central estimate**. The rule: **state the unit**, and name
+  the population a carried-over rate was measured on.
+- **DA26 — the worse one, because I had published it as a strength.** #151's C6 costs reused
+  `preflight-88`'s token model, and DA23 recorded that reuse as validation: *"it reproduces #88's
+  four published scenarios to the cent."* **#88's item-2 sweep had already falsified that model
+  at 1.83× — the same day, this repository, this exact task**, measured at n=1, confirmed at n=6,
+  aborted at 6 of 190. I checked a model against a *number* when a *measurement falsifying that
+  number* was on file. **A model and its own output always agree.**
+- **C6 re-costed on the measured $0.07005/scheme, and it crosses thresholds it previously fitted
+  inside:** one-off $5.41–6.52 → **$11.92–14.71**; recurring $10.33–13.79 → **$25.23–28.02**. The
+  recurring rebuild now **breaches even the gitignored local $25.00**, and **both plans trip the
+  5M `per_run_token_ceiling`** (6.49M / 13.74M) — the ceiling #88 had already flagged as undersized
+  on this same estimate. **DA23's structural finding is NOT withdrawn**: it was *counted*, not
+  modelled — MCQ schemes carry zero `answer_points`, so C6 retires 210/289 schemes and
+  10,314/10,314 answer points.
+- **#59 blocker 1 discharged; blocker 2 authorised and deliberately not run.** 54 render pages
+  committed under C7, digests re-verified against #102 and 0 text chars confirmed on the committed
+  bytes. Placed in `tests/fixtures/`, **not** `tests/golden/` — promoting them would change corpus
+  membership (the B5 consequence) and #49 is reopened, so C7's grant to publish pixels was not
+  quietly widened into a membership decision.
+- **And a scope finding that shrinks #59 permanently: n = 3 is unachievable.** `0625_w24_ms_42` is
+  parsed; `0625_s25_ms_42` exists but is unparsed (one of #88's det-failures); **`0625_w25_ms_42`
+  does not exist locally at all.** So n = 1 today, n = 2 at best, never 3. The $4.00 cap was not
+  the constraint — the synthetic counterpart arm does not exist for any Paper 42, and at n = 1 the
+  figure cannot carry the claim the issue was written for.
+- **A privacy escalation I raised and then had to withdraw.** I described #59's renders as carrying
+  "a real student's handwritten exam answers" and asked the human to reconfirm on that basis. The
+  issue's own limit 6 already said otherwise — *one person (the teacher) solved every question
+  themselves and marked their own work; there is no student attempt and no second author*. I had
+  conflated them with `tests/fixtures/real-papers/`. The correction is on #59 rather than left to
+  rot, because the false framing is on the record.
+- **MISSION §13 is not reachable by an agent and this run says so plainly** rather than working
+  toward an implied completion: #47's ~300 labels are human-owned, and #49/#51/#52/#55 are H
+  issues §3.5 forbids closing or working around. Everything agent-ownable that was not blocked has
+  now been done; the rest sits behind **#151 (ask C8)**.
