@@ -716,9 +716,15 @@ that is the actual distinction that matters.
 
 ## B8 — The invite-code *mint* endpoints have no frontend wiring at all
 
-**Raised:** 2026-08-26 (Task 23, discovered while writing the E2E invite journey) · **Status: NOT
-BLOCKING for this issue's own acceptance of the redemption side, but affects one of the design
-doc's own acceptance criteria — recorded for follow-up, not fixed here.**
+**Raised:** 2026-08-26 (Task 23, discovered while writing the E2E invite journey) · **Status:
+RESOLVED the same day.** Both mint actions are now wired: a school admin mints a seat code from
+`Seats.tsx` (quota-aware) and a teacher mints a single-use class code from `ClassDetail.tsx`,
+which already displayed that class's permanent join code — the two are documented against each
+other rather than blurred, since a reusable code and a single-use one are different promises to
+whoever receives them. Both render through the existing `JoinCodeChip`. The finding below is kept
+in full because the *mechanism* is the lesson: a plan can wire one half of a feature and leave the
+other half an API-only capability, which is the same defect §1.2 records against
+`POST /api/student/classes/join`.
 
 ### What was found, verified by a repo-wide grep, not assumed
 
