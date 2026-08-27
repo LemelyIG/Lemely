@@ -1,0 +1,42 @@
+parsed schemes loaded : 250
+unloadable JSON       : 0
+root questions        : 4339
+ALL questions (flat)  : 12358   <- NOT the leaf corpus
+  of which PARENTS    : 2894   (carry no tariff; marks live in children)
+  parents w/ own marks: 0
+LEAF questions        : 9464   <- the honest denominator
+UNBANDED true leaves  : 0
+
+leaves by syllabus:
+  0580: 5737
+  0606: 392
+  0625: 3335
+
+leaves by syllabus x paper:
+  0580p1: 1118
+  0580p2: 965
+  0580p3: 1994
+  0580p4: 1660
+  0606p1: 113
+  0606p2: 279
+  0625p1: 1600
+  0625p3: 214
+  0625p4: 361
+  0625p5: 591
+  0625p6: 569
+
+leaves by tariff band:
+  1: 4559
+  2: 2742
+  3+: 2163
+
+DA1 strata populated  : 9 (of 3 syll x 2 path x 3 band = 18)   -- the 0/unknown catch-all is NOT a band and is excluded
+  0580 x det x 1: 1992
+  0580 x det x 2: 2110
+  0580 x det x 3+: 1635
+  0606 x det x 1: 46
+  0606 x det x 2: 107
+  0606 x det x 3+: 239
+  0625 x det x 1: 2521
+  0625 x det x 2: 525
+  0625 x det x 3+: 289

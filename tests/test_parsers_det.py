@@ -306,6 +306,139 @@ class ParseMCQTablesTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
+# mcq silent-loss instrumentation (#94)
+# ---------------------------------------------------------------------------
+
+
+class MCQSilentLossInstrumentationTests(unittest.TestCase):
+    """#94: a discarded table must say WHY, not just shrink the total.
+
+    The premise #94 was opened on has been corrected by measurement and the
+    correction is encoded here rather than left on the issue. The *fact* of a
+    shortfall was never silent: ``reconcile`` compares the parsed mark total
+    against ``maximum_mark`` and logs ``mark_total_mismatch_escalating``. What
+    was silent is the *mechanism* — that a 29-row table was thrown away because
+    one cell read ``QUESTION DISCOUNTED``. These tests assert the mechanism is
+    reported; they deliberately do NOT re-assert the shortfall, which other
+    machinery already owns.
+    """
+
+    def test_rejected_table_names_the_disqualifying_value(self) -> None:
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [["1", "A"], ["2", "B"], ["3", "QUESTION DISCOUNTED"]]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(rejection["disqualifying_count"], 1)
+        self.assertEqual(rejection["values_in_column"], 3)
+
+    def test_rejection_names_the_densest_column_not_the_rightmost(self) -> None:
+        """A one-cell header must not be reported as the offending column.
+
+        The real answer column is the dense one; naming the rightmost instead
+        would report ``MARKS`` and bury the cell that actually caused the loss.
+        This is the shape the real 0625_s24_ms_21 table has.
+        """
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [
+            ["QUESTION", "ANSWER", "MARKS"],
+            ["1", "A", None],
+            ["2", "B", None],
+            ["3", "QUESTION DISCOUNTED", None],
+        ]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1, "the dense answer column, not the MARKS header")
+        self.assertIn("QUESTION DISCOUNTED", rejection["disqualifying_values"])
+
+    def test_discarded_table_rows_are_counted(self) -> None:
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        good: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        lost: list[list[str | None]] = [["3", "C"], ["4", "D"], ["5", "QUESTION DISCOUNTED"]]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([good, lost], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 2)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 3, "the whole table, not just the bad row")
+        self.assertEqual(diag.questions_parsed, 2)
+        self.assertEqual(diag.rejections[0]["table_index"], 1)
+
+    def test_rows_dropped_inside_a_kept_table_are_counted(self) -> None:
+        """The reconciler cannot see these at all — it only sees the total."""
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        # Column 1 stays clean (A/B/C) so the table is ACCEPTED — the point
+        # is loss inside a table that parsed, not a rejected one.
+        table: list[list[str | None]] = [
+            ["1", "A"],
+            ["1", "B"],  # duplicate id
+            ["Q", "C"],  # q_cell not a digit
+        ]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([table], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(diag.rows_discarded_in_kept_tables, 2)
+
+    def test_diagnostics_are_optional_and_behaviour_is_unchanged_without_them(self) -> None:
+        from lemely.io.det.mcq import parse_mcq_tables
+
+        table: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        self.assertEqual([q.id for q in parse_mcq_tables([table])], ["1", "2"])
+
+
+class MCQSilentLossRealPaperTests(unittest.TestCase):
+    """The confirmed instance from #94, against the real PDF when it is present.
+
+    Skipped rather than failed when the source PDF is absent: it lives in the
+    PaperScraper corpus outside this repo, and a test that fails on a checkout
+    without it would be a broken gate, not a real signal.
+    """
+
+    PDF = Path("/home/sico/PaperScraper/papers/CAIE/igcse/physics-0625/2024/s24/0625_s24_ms_21.pdf")
+
+    def test_0625_s24_ms_21_reports_the_reason_for_its_28_question_loss(self) -> None:
+        if not self.PDF.exists():
+            self.skipTest(f"corpus PDF not present: {self.PDF}")
+        try:
+            import pdfplumber
+        except ImportError:  # pragma: no cover - pdfplumber is a hard dep here
+            self.skipTest("pdfplumber not installed")
+
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        with pdfplumber.open(self.PDF) as pdf:
+            tables: list[list[list[str | None]]] = []
+            for page in pdf.pages[1:]:
+                tables.extend(page.extract_tables())
+
+        diag = MCQParseDiagnostics()
+        questions = parse_mcq_tables(tables, source=self.PDF.name, diagnostics=diag)
+
+        # The measured facts, asserted rather than described: 12 of 40 parse,
+        # and the 28 lost go with ONE discarded table.
+        self.assertEqual(len(questions), 12)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 29, "28 questions plus the header row")
+
+        rejection = diag.rejections[0]
+        self.assertEqual(rejection["column"], 3)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(
+            rejection["disqualifying_count"],
+            1,
+            "a SINGLE anomalous cell costs the entire table — the whole point of #94",
+        )
+
+
+# ---------------------------------------------------------------------------
 # tables.qualifies_as_mark_scheme_table
 # ---------------------------------------------------------------------------
 
@@ -907,6 +1040,70 @@ class ProfileTests(unittest.TestCase):
     def test_paper_type_default_is_extended(self) -> None:
         profile = get_profile("9999")
         self.assertEqual(profile.paper_type(2, ""), PaperType.THEORY_EXTENDED)
+
+    def test_0625_paper_2_is_mcq(self) -> None:
+        """0625 Paper 2 is "Multiple Choice (Extended)", not Theory (Core).
+
+        ``profiles.py`` mapped ``2: THEORY_CORE`` from the day the file was
+        created (810ac08) and never changed. Confirmed against the real
+        0625_s23_ms_22.pdf, whose cover page reads "Paper 2 Multiple Choice
+        (Extended) May/June 2023".
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(2), PaperType.MCQ)
+
+    def test_cover_text_wins_over_a_contradicting_number_map(self) -> None:
+        """The actual defect: the number map used to short-circuit the cover.
+
+        A wrong constant silently overrode correct evidence sitting right there
+        in the document, and the next wrong constant would have done the same.
+        Paper 4 is mapped THEORY_EXTENDED; a cover that says otherwise wins.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(4, "Paper 4 Multiple Choice (Extended)"),
+            PaperType.MCQ,
+        )
+        self.assertEqual(
+            profile.paper_type(1, "Paper 1 Theory (Core)"),
+            PaperType.THEORY_CORE,
+        )
+
+    def test_number_map_still_used_when_the_cover_says_nothing(self) -> None:
+        """No cover evidence must fall back to the table, not to the default."""
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(5), PaperType.PRACTICAL)
+        self.assertEqual(profile.paper_type(5, ""), PaperType.PRACTICAL)
+
+    def test_0625_paper_3_falls_back_to_core_theory_not_extended(self) -> None:
+        """B7: the 0625 paper-3 constant is THEORY_CORE, not THEORY_EXTENDED.
+
+        CAIE 0625 Paper 3 is Theory (Core); the table said Extended from the
+        file's creation until 2026-08-26. This pins the **fallback**, which is
+        the only thing the constant still governs — when a real cover page is
+        present it says "Paper 3 Core Theory" and outranks the table anyway,
+        which is why correcting the constant is causally inert for parsing
+        (``scheme_format`` is POINT_BASED either way). The case that changes
+        is a scheme whose cover text is missing or unreadable: it used to
+        default to the wrong tier.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(3), PaperType.THEORY_CORE)
+        self.assertEqual(profile.paper_type(3, ""), PaperType.THEORY_CORE)
+        # Paper 4 genuinely is Extended — guard against an over-broad fix.
+        self.assertEqual(profile.paper_type(4), PaperType.THEORY_EXTENDED)
+
+    def test_unrecognised_cover_text_falls_back_to_the_number_map(self) -> None:
+        """Cover text only wins where it carries an actual paper-type keyword.
+
+        Otherwise a cover page whose wording we do not model would silently
+        demote every paper to the THEORY_EXTENDED default.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(5, "Cambridge IGCSE — May/June 2023 — 45 minutes"),
+            PaperType.PRACTICAL,
+        )
 
     def test_register_profile_roundtrip(self) -> None:
         register_profile(

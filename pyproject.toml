@@ -22,6 +22,11 @@ dependencies = [
   "Pillow>=12,<13",
   "jinja2>=3.1,<4",
   "pdfplumber>=0.11,<1",
+  # Imported directly by scripts/rasterise_handwritten_fixtures.py (#59). It was
+  # already present transitively via pdfplumber; declared explicitly so a future
+  # pdfplumber release that drops or swaps its renderer cannot silently break
+  # the fixture flattening.
+  "pypdfium2>=4,<6",
   "numpy>=2,<3",
   "fonttools>=4.63,<5",
 ]
@@ -242,6 +247,7 @@ module = [
   "lemely.eval.manifest",
   "lemely.eval.records",
   "lemely.labelling.records",
+  "lemely.labelling.rulings",
   "lemely.core.schemas",
   "lemely.core.loose_schemas",
   "lemely.core.question_papers",
@@ -309,6 +315,11 @@ disallow_any_explicit = false
 [tool.pytest.ini_options]
 addopts = "-ra -q --strict-markers --cov=lemely --cov-report=term-missing --cov-fail-under=70"
 testpaths = ["tests"]
+# An exception raised on a background thread (the marking and grading pools in
+# lemely/web/routers/{quiz,teacher}.py never call Future.result()) otherwise
+# surfaces only as a warning and leaves the suite green. #114's ledger guard
+# relies on being loud, so a swallowed thread exception must fail the run.
+filterwarnings = ["error::pytest.PytestUnhandledThreadExceptionWarning"]
 
 [tool.coverage.run]
 source = ["lemely"]

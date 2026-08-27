@@ -1317,8 +1317,15 @@ claims above are now falsified by measurement and must not be cited:
   (52.2% of 479)** at **$0.00**. Evidence:
   `BUILD/accuracy-runs/census-2026-08-24-a/`.
 - *"71 golden leaves available vs a ~300 target"* — the det path alone yields
-  **12,358 leaf questions**, roughly **41× the ~300 target**. Leaf volume was
+  **9,464 leaf questions**, roughly **32× the ~300 target**. Leaf volume was
   never the binding constraint.
+  *(Corrected 2026-08-25, ratified by the human as #88 item 3: this line read
+  **12,358** and **41×**. 12,358 was every question at every depth — 2,894
+  parents + 9,464 true leaves — because `census_leaves.py` filtered on a
+  `sub_questions` field that `Question` does not have. The conclusion is
+  unchanged and the error ran toward overstatement; see
+  `BUILD/accuracy-runs/census-2026-08-24-a/manifest.json` →
+  `leaves.CORRECTION_2026-08-25`.)*
 
 **#57 stays blocked**, but on the real constraint, which is **stratum
 coverage**: 9 of DA1's 18 strata are populated (all det-path); the 9
@@ -1420,8 +1427,10 @@ infrastructure. **No spend has occurred.**
 
 The zero-cost half of #88 is **complete**: the deterministic parser ran over
 all 479 restored mark schemes and produced **250 parsed (52.2%)**, **229
-failures**, and **12,358 leaf questions** — at $0.00. The costed preflight is
-posted on #88 as the authorisation required.
+failures**, and **9,464 leaf questions** (12,358 questions at every depth, of
+which 2,894 are parents) — at $0.00. The costed preflight is posted on #88 as
+the authorisation required. *(Leaf figure corrected 2026-08-25 per #88 item 3;
+it read 12,358.)*
 
 **Where the evidence lives (added 2026-08-24).** The census originally existed
 only in `/tmp/acc57-full`, which is not durable. It has been re-verified — every
@@ -2050,9 +2059,12 @@ Dependencies checked: #46 **CLOSED**, #31 **CLOSED**, #50 **CLOSED**, #57
 Owner is **human** (6–8 h), so a green dependency list makes this
 *human*-startable, never agent-startable.
 
-Volume is fine — 12,358 leaf questions from 250 det-parsed schemes, 9,464 of
-them tariff-banded, against a ~300 target (31× headroom). The old
-"Available: 71" framing is dead.
+Volume is fine — **9,464 leaf questions** from 250 det-parsed schemes, **all
+9,464 tariff-banded**, against a ~300 target (31× headroom). The old
+"Available: 71" framing is dead. *(Corrected 2026-08-25 per #88 item 3: this
+read "12,358 leaf questions … 9,464 of them tariff-banded", which framed the
+2,894 parents as unbanded leaves. There are zero unbanded true leaves; the
+headroom multiple is unchanged because it was always computed off 9,464.)*
 
 But acceptance bullet 3 (*"stratified across both parse paths — det and
 gemini"*) is **currently unsatisfiable**. From
@@ -2083,6 +2095,23 @@ cannot itself represent" means *publish the empty cells honestly* — **not**
 right outcome is a published table with 9 empty cells and an explicit det-only
 statement, never a quiet redefinition of the strata to the cells that are full.
 That is the narrowed-denominator failure mode exactly.
+
+### UPDATE 2026-08-26 (run 47) — #59's blocker now has an issue: #137
+
+Nothing above is retracted. Adding what changed: inbox ruling **B13** authorised
+the multi-render `GoldenCase` data-model change as its own work, and it is now
+**#137**, with #59 blocked on it and moved back to Backlog. #59's stated
+`Effort: S` is void, as B13 says in terms.
+
+The blocking fact re-verified in source rather than carried forward: `GoldenCase`
+holds exactly one scan slot (`lemely/accuracy/harness.py:72`, populated from a
+hard-coded `scan.pdf` at `:122` and `:143`). Minting a second `paper_id` as a
+workaround is rejected on #137 — DA6 keys a leaf on `(paper_id, question_id)`, so
+it would present the same leaves twice as independent and inflate `n`; the same
+trap #134 declined for the whitespace fixture (DA14).
+
+**Still true and NOT resolved by #137:** the scan-realism arm of #59 has no corpus
+and remains unmeasured, and #47's empty gemini strata are untouched by any of this.
 
 ---
 
@@ -2156,3 +2185,93 @@ a computation behind it at all.
 - **Free when the sweep runs:** count the `id_positional_fallback` WARNING lines
   to get the fire rate nobody currently has. Capture it in the same run rather
   than paying for a second sweep.
+
+---
+
+## L — GitHub Actions stopped provisioning for this repo at ~13:03Z on 2026-08-26; two PRs cannot land
+
+**Raised:** 2026-08-26 · **Status:** OPEN → **RESOLVED 2026-08-26** — external,
+not ours. **No spend involved.** Resolution note at the end of this section.
+
+Two PRs are open, both correct, both unmergeable because CI will not run:
+
+- **PR #132** (`chore/accuracy-run-40-close`) — the run-40/41 state close.
+- **PR #133** (`chore/accuracy-88-item4-token-ceiling`) — #88 item 4 (DA13, the ceiling
+  raise) and the re-costed item-2 preflight artifact.
+
+### The evidence, taken from the API rather than from `gh pr checks`
+
+`gh pr checks` reports *"no checks reported"* for both branches, which by itself is
+ambiguous — it reads the same on a brand-new PR as on a dead queue. Two harder facts
+settle it, and they use E5's rule that only a non-zero **`steps`/jobs** count proves a
+runner was provisioned:
+
+1. Run **32971934818** (#132, `pull_request`, created **13:03:04Z**) has been `queued`
+   for **2h47m** and `GET /actions/runs/32971934818/jobs` returns an **empty job list** —
+   not jobs that failed in 2–4s, *no jobs created at all*.
+2. **PR #133 was opened at ~15:40Z and produced no workflow run whatsoever.** The newest
+   run in `GET /actions/runs` for the entire repository is still 32971934818 from
+   13:03:04Z. It is not that #133's run failed; it does not exist.
+
+`.github/workflows/ci.yml` triggers on `pull_request` with **no `paths` filter**, so a
+missing run cannot be explained by the diff touching only `BUILD/`.
+
+### This is a stall, not the old billing block, and not flakiness
+
+Runners were working **today**: 32968460680, 32968362231, 32968330389 (12:23–12:25Z) and
+32964126855 (11:35Z) all completed `success` with real jobs. The queue went dead somewhere
+after 13:03Z.
+
+It is also distinct from the one genuine flake seen earlier on this same PR: #132's
+`test (3.14)` job failed in 15s with
+`failed to bind host port for 0.0.0.0:54322 ... address already in use` — a service-container
+port collision on the runner, where postgres never started. That was correctly answered with
+`gh run rerun --failed`, and **it is that rerun which is now stuck in the queue.**
+
+### The rule that is NOT being invoked, stated so the next run does not reach for it
+
+The standing "ignore CI" waiver of 2026-08-23 **is void and stays void**. By its own terms
+it lapsed *"the moment Actions can provision a runner"*, and it did — today's four green
+runs are the proof. A new outage does not revive a lapsed waiver.
+
+Merging either PR on local gates plus the supervisor sweep would therefore be
+**unauthorised**, and re-deriving the waiver from the fact that the block looks similar is
+exactly the move the inbox's #27 rebuke forbids. Both PRs wait. **Neither is merged.**
+
+### What the next run should do
+
+Re-verify from the API before anything else — `gh api 'repos/LemelyIG/Lemely/actions/runs?per_page=5'`
+and then the `jobs` endpoint of the newest run. **Only a non-zero job/`steps` count means it
+is fixed**; a newer run id proves only that the queue accepted a trigger (falsified on
+2026-08-23). If green, merge #132 then #133 — they conflict on `BUILD/ACCURACY-STATE.md`
+and the resolution is **merge, not rebase**, because plain rebase strips signatures in this
+repo. If still stalled, go quiescent per E5: no restating commit, report in prose, stop.
+
+### RESOLVED 2026-08-26 (run 43) — the queue drained on its own; nothing was waived
+
+The stall cleared without intervention. Run **32971934818** — the one that sat
+`queued` for 2h47m with an empty job list — **completed `success` on all five
+jobs**, and a fresh run (**32987346999**) was created and executed for PR #133.
+So it was a queueing/provisioning outage on GitHub's side, not a billing block
+and not anything in this repo.
+
+**PR #132 merged to `develop` at 2026-08-26T16:17:31Z**, on five genuinely green
+checks, verified with `gh pr view` rather than taken from the merge command's
+output. PR #133 then went `DIRTY` exactly as this section predicted — the two
+touch `BUILD/ACCURACY-STATE.md` — and was resolved by **merge, not rebase**,
+preserving signatures.
+
+**Worth keeping, because it is the whole point of the entry:** waiting cost one
+run and lost nothing. Merging on local gates plus the supervisor sweep would have
+put two PRs into `develop` with no CI behind them, and the record would have said
+they were green. The lapsed 2026-08-23 waiver was not revived, and the diagnosis
+that made waiting safe was the API's **job/`steps` count**, not `gh pr checks`,
+which read "no checks reported" for a dead queue and a healthy new PR alike.
+
+---
+
+## #95 — harness: regenerate golden fixtures through the det parser so scheme-parsing is measurable
+
+**Raised:** 2026-08-26 · **Status:** OPEN · **Source:** `scripts/accuracy_board.py block`
+
+Blocked on #136. Board Status set back to Backlog. Resolve the blocker, append a RESOLVED line here, and move the item back to Ready.

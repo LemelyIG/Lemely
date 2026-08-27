@@ -16,6 +16,17 @@ from lemely.app.cli import cli
 class DoctorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.runner = CliRunner()
+        snapshot = {
+            k: v for k, v in os.environ.items() if k.startswith("LEMELY_") or k == "GEMINI_API_KEY"
+        }
+
+        def restore() -> None:
+            for k in list(os.environ):
+                if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
+                    del os.environ[k]
+            os.environ.update(snapshot)
+
+        self.addCleanup(restore)
         for k in list(os.environ):
             if k.startswith("LEMELY_") or k == "GEMINI_API_KEY":
                 del os.environ[k]
@@ -97,6 +108,58 @@ class DoctorTests(unittest.TestCase):
         reach = next(c for c in payload["checks"] if c["name"] == "gemini_reachable")
         self.assertFalse(reach["ok"])
         self.assertIn("not reachable", str(reach["detail"]))
+
+
+class DoctorTestsEnvLeakTests(unittest.TestCase):
+    """Regression test for #121: DoctorTests.setUp must not leak env deletions."""
+
+    def test_doctor_tests_setup_does_not_leak_env_deletions(self) -> None:
+        """Both var shapes ``setUp`` deletes must survive it.
+
+        Each is asserted against a **synthetic sentinel this test plants
+        itself**, never against whatever ambient value happens to be present.
+        That is deliberate, and it is the difference between an oracle and a
+        coin flip: an earlier version checked ``GEMINI_API_KEY`` only
+        ``if original_gemini_key is not None``, which a partial-restore
+        regression could silently switch off. ``DoctorTests``' own earlier
+        tests run first in the same session, so a ``restore()`` that dropped
+        ``GEMINI_API_KEY`` specifically would delete the ambient key *before*
+        this test captured it — leaving ``original_gemini_key`` already
+        ``None``, skipping the assertion, and passing. The bug would have
+        disabled the check meant to catch it. Planting the value removes the
+        run-order dependency, and makes the check work identically in CI
+        (which exports no key) and locally (which does).
+        """
+        originals = {k: os.environ.get(k) for k in ("LEMELY_LEAK_CANARY", "GEMINI_API_KEY")}
+        os.environ["LEMELY_LEAK_CANARY"] = "canary-value"
+        os.environ["GEMINI_API_KEY"] = "leak-sentinel-not-a-real-key"
+        try:
+            suite = unittest.TestLoader().loadTestsFromTestCase(DoctorTests)
+            with open(os.devnull, "w") as devnull:
+                result = unittest.TextTestRunner(stream=devnull).run(suite)
+            self.assertTrue(result.wasSuccessful(), msg=str(result.errors + result.failures))
+
+            # Unconditional: value, not just presence, so a restore that puts
+            # the key back with the wrong value is caught too.
+            self.assertEqual(
+                os.environ.get("LEMELY_LEAK_CANARY"),
+                "canary-value",
+                msg="DoctorTests.setUp leaked a LEMELY_* deletion past the class",
+            )
+            self.assertEqual(
+                os.environ.get("GEMINI_API_KEY"),
+                "leak-sentinel-not-a-real-key",
+                msg="DoctorTests.setUp failed to restore GEMINI_API_KEY",
+            )
+        finally:
+            # Restore BOTH, not just the canary: on failure the leak is by
+            # definition still live, and leaving GEMINI_API_KEY deleted would
+            # reproduce #120's contamination for the rest of the session.
+            for key, value in originals.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
 
 
 class VersionTests(unittest.TestCase):

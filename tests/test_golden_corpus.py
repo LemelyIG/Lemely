@@ -25,6 +25,10 @@ _EXPECTED_MAXIMUM_MARK = {
     "0580_s23_qp_22_theory_correct": 70,
     "0580_s23_qp_22_theory_partial": 70,
     "0580_s23_qp_22_theory_wrong": 70,
+    # B5 / #88 item 6. Its mark_scheme.json is byte-identical to the _correct
+    # sibling's, so 70 is inherited here rather than independently asserted —
+    # the variant perturbs answer whitespace only, never the scheme.
+    "0580_s23_qp_22_theory_whitespace": 70,
     "0606_s23_qp_12_theory_correct": 80,
     "0606_s23_qp_12_theory_partial": 80,
     "0606_s23_qp_12_theory_wrong": 80,

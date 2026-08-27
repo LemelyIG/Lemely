@@ -2632,3 +2632,156 @@ them whether or not Phase 6 fixes them.
   as its own chore commit, rather than pile it onto a branch that squashes from origin's tip.
 - **Spend unchanged:** no Gemini calls; ledger still 1.488057.
 - **Next:** still the human's three decisions. Nothing else can legitimately start before them.
+
+## run-2026-08-26-b — B6 settled: the q11b reorder violation reproduces, and is still not established
+
+- **Landed the queue first.** PR **#135** (the run-46 close) was open, CLEAN, and green on all five
+  checks; merged to `develop` as `1146b5e`. The PR queue is empty again and the §4 precondition
+  (`origin/develop..origin/main`) reads **0**, measured this run rather than quoted.
+- **B6 ran, as authorised, for $0.013608.** Costed preflight posted to #58 **before** any spend;
+  20 calls, every one `cache_hit=False`, the $0.040 in-process brake never approached. Ledger for
+  this worktree 2.720069 → 2.733677; programme-wide sum (DA11) **3.124540 → 3.138147**.
+- **The result is genuinely two-sided and is recorded that way.** Unperturbed `1×10`, perturbed
+  `1 2 1 1 1 1 1 1 1 2` — so the violation **reproduces** (2/10) against **zero** same-input churn
+  on the same leaf (0/10 here, 0/14 pooling every prior unperturbed marking of it already on disk).
+  The pre-committed Fisher exact gives **p = 0.4737**, so it is **not established** at α = 0.05.
+  Post-hoc pooling reaches 3/11 vs 0/14, p = 0.0717 — reported as secondary, never as the finding.
+  **Not re-run at higher n**: ~n=25/arm would be needed and MISSION §12.9 forbids exactly that move.
+- **The preflight was honest about being 1.6× the authorisation, before the fact rather than after.**
+  B6 said ~$0.01; the projection was $0.0156 and said so in the comment, anchored on the 107 real
+  calls in `control-58-2026-08-25/run.log` rather than on a scaled aggregate — which is precisely
+  the error that made the #37 preflight wrong by 4–5×. Actual came in **under** projection.
+- **Two things verified rather than assumed, either of which would have invalidated the run.**
+  (1) *Which variant.* The report records only `paper_id` and all three `0625_s20_qp_31_theory`
+  fixtures share it (DA6). Identified as `_partial` by outcomes-list position, then independently
+  confirmed by mark values — the variants' q11b score 3 / 1 / 0 and the violated `baseline_marks`
+  is 1. (2) *That "q11b alone" is the same experiment.* `correct_paper` builds `sibling_prior` only
+  when `q.parent_id is not None` (`correction_ai.py:639-645`) and q11b's parent is `None`, so the
+  prompt is byte-identical at one leaf or seven. Had it had a parent, the restriction would have
+  changed the input and the design would have been illegitimate.
+- **Acceptance boxes audited, not swept along.** Bullet 4 ticked as B6 directed; bullets 2 and 5
+  ticked on live evidence. **Bullets 1 and 3 left unticked deliberately** — bullet 1 is a property
+  a live run falsifies, and bullet 3 has **no live evidence at all**: the live bypass run predates
+  #134's whitespace fixtures, so live it reads 0 held / 71 skipped, and #134's "7 held" is a
+  zero-spend *offline* run. Closing that gap is ~14 calls / ~$0.01 and is **not authorised**.
+- **Two zero-spend rulings discharged.** **B4** → **#136** (det mark-total escalation: three
+  distinct bugs, the two 0625 deficits recorded as UNRESOLVED-not-diagnosed, and the falsified
+  `rows.py` `flush()`/`q_row_had_answer` lead written down so it is not re-derived); #95 blocked on
+  it. **B13** → **#137** (`GoldenCase` must hold more than one render of the same paper); #59
+  blocked on it and its `Effort: S` recorded void.
+- **Still owed by me, none blocked:** B12 (#105 wire `mark_point_verdicts`), B15 (#112 three
+  sub-defects, mark-changing, joint sweep with #110), B16 (#114 annotate `cumulative_usd` as a
+  contaminated upper bound). **Still the human's:** #88 item 2 (preflight falsified 1.83×, sweep
+  stopped), B1/#41 (stopped on a falsified premise), and the four open H issues.
+
+## run-2026-08-26-c — B16: the spend ledger is an upper bound, and says so at source
+
+- **#138 landed.** All five CI checks green, and the supervisor sweep passed over its **exact sha**
+  (`13802c3`), so §9.3's pytest condition is satisfied by evidence rather than by assertion. Merged
+  as `8bcf0f7`; queue empty again; no new inbox directive.
+- **B16 done, zero spend.** `cumulative_usd` is now documented at source
+  (`lemely/io/cost_ledger.py`) as an **UPPER BOUND on money spent, not money spent**, with the
+  mechanism re-verified rather than carried forward: bare `load_settings()` in some tests resolves
+  `paths.output_dir` to the real repo, and `GeminiClient` builds its ledger path from exactly that
+  (`gemini.py:162`). **DA17** amends DA11 — "authoritative for money spent" narrows to
+  "authoritative as a conservative upper bound" — and keeps the total, with no re-baseline and no
+  rebuild from per-call logs, as B16 required.
+- **The ground for keeping a contaminated number is direction, not convenience.** Contamination is
+  **one-directional**: a test can add cost, never remove it. So a contaminated total can only
+  *overstate* spend and every ceiling check against it stays conservative, whereas re-baselining
+  would swap a known-conservative figure for a reconstructed one that would itself need auditing.
+- **One observation, recorded as an observation.** The 20:05Z supervisor sweep (21 min, full
+  `pytest`) did **not** move this worktree's ledger — `2.7336773500000575`, `updated_at`
+  `19:33:25Z`, the B6 run's own figure, unchanged either side. So the contamination is
+  **intermittent, not every-sweep**. That is one uninstrumented sweep; it does **not** close #114
+  and is **not** evidence the writer is gone, and DA17 says so in those words.
+- **The gap is named rather than implied.** This annotation does not stop the writes. #114's scope
+  item 2 — the autouse guard that would fail any test resolving `output_dir` inside the repo — is
+  unstarted, and #114 is CLOSED. An annotation that read as a resolution would leave the next run
+  treating the ledger as exact, which is the failure this entry exists to prevent.
+- **Docstring-only diff**, so there is nothing to regress and no regression test ships with it;
+  `tests/test_cost_ledger.py` 12/12 green (with `--no-cov`, since one module cannot clear the 70%
+  project floor).
+- **Still owed by me:** B12 (#105), B15 (#112). **Still the human's:** #88 item 2, B1/#41, the two
+  questions raised on #58 in run 47, and the four open H issues.
+
+## run-2026-08-26-d — agreement moves to the mark point; a fabricated zero caught in self-review
+
+- **#141 merged** (`0bf1672`) on all five green checks plus a supervisor sweep over its exact
+  tip `2565436`. **#140 closed** through `accuracy_board.py done`'s off-board path (B17's route) and
+  verified CLOSED, since PRs merge to `develop` and GitHub only auto-closes on `main`.
+- **B12 implemented, zero spend.** `mark_point_verdicts` was declared and **never read**, so
+  agreement was equality of `awarded_marks` totals and two labellers awarding 2/3 by crediting
+  **different** mark points counted as agreeing. The headline is now per mark point, keyed
+  `(paper_id, question_id, mark_point_id)` — DA6's key plus one component, for the reason DA6
+  exists. **DA18** records the unit, the two-stage funnel and why the totals figure was kept.
+- **The design decision most worth attacking, so it is stated plainly:**
+  `shared_leaves_without_shared_points`. A leaf both labellers marked can contribute **zero**
+  points — no verdicts, or disjoint ids — and under a per-point denominator those vanish with no
+  trace of why `n` shrank. That is the narrowed-denominator failure mode in a new costume, so it
+  is counted and returned rather than described.
+- **I caught a defect in my own diff before it landed, and fixed it rather than shipping it.**
+  `totals_point` was a bare rate: at `totals_n == 0` it read `0.0`, which is indistinguishable
+  from genuine total disagreement, and unlike the headline the secondary had **no interval** to
+  say which. It now comes from the same `_wilson_interval` helper, so no data spans `[0.0, 1.0]`
+  and real 0/1 disagreement does not. The regression test asserts that **distinction**, not the
+  zero. A secondary figure that can publish a fabricated zero is worse than no secondary figure.
+- **Tests: six new, all proven to fail on the pre-change code**, including the case B12 exists to
+  catch and one built so it **cannot pass by coincidence** on totals-equality code. The eight
+  existing agreement tests were **updated to assert the `totals_*` secondary, not deleted** —
+  every property they guard (DA6 leaf identity, last-record-wins, shared-leaves-only,
+  no-mutation) is still guarded, because both figures now derive from one shared collapse helper.
+- **A correction to my own first edit, recorded because it nearly shipped:** the mechanical
+  rename of `result["n"]` was scoped between two class markers and the new class had been
+  appended at end of file, so it silently rewrote **15 assertions in six unrelated test classes**.
+  Caught by running the file, reverted precisely, and the run ends green.
+- **B15 (#112/#110) NOT started, deliberately, and the question is posted rather than assumed.**
+  B15 requires a before/after sweep run jointly across the two. The golden harness reads
+  **pre-parsed** `mark_scheme.json` and never invokes the det parser, so that sweep is null by
+  construction — the same ground #38 (A6(a)) and #93 (B2) were waived on, which B15 was not
+  shown. Unlike those, this one **is** measurable deterministically at **$0.00** over the 289
+  schemes committed under `corpus/`. Both questions are on #112 and #110. Starting the
+  implementation now would produce another complete-but-unmergeable branch, which is exactly what
+  the 2026-08-24 gate-9 ruling was written to retire.
+- **Spend unchanged: $0.00 this run**, ledger still 3.138147 programme-wide.
+
+## run-2026-08-27-a — two issues shipped after their premises were checked, not assumed
+
+- **Three PRs landed: #142 (#94), #143 (#137)**, each on five green checks plus a supervisor
+  sweep over its exact tip. Both issues verified CLOSED afterwards through
+  `accuracy_board.py done` — PRs merge to `develop`, and GitHub only auto-closes on `main`.
+- **The run started with the queue empty and the board Ready empty**, i.e. everything on the
+  mission's own list was human-gated. Rather than stop there, I looked for work no one had
+  blocked and found two: **#94** (instrumentation, explicitly not mark-changing) and **#137**
+  (authorised by B13 in terms). Neither needed a sweep, a ruling or a dollar.
+- **#94's premise was falsified before a line was written, and the issue says so.** It claimed
+  the parser drops questions silently; re-parsing `0625_s24_ms_21` today raises
+  `ParseError: parsed 12, expected 40 (discrepancy 28)` — `reconcile` has been comparing against
+  `maximum_mark` all along, and the premise most likely died when **#93** landed and the paper
+  began being typed MCQ. What **is** silent is the *mechanism*. Acceptance bullet 3 is recorded
+  **restated, not ticked as written**.
+- **And the prevalence cuts against the issue's framing: 1 paper in 80.** 479 schemes opened,
+  0 unreadable, 80 MCQ-typed, exactly one with a discarded table, one disqualifying value corpus
+  wide (`QUESTION DISCOUNTED`). **The eventual repair is a one-paper repair on today's corpus** —
+  put in the commit, the PR, the issue and DA19, because it is the fact most likely to be
+  quietly dropped in favour of the more exciting one.
+- **#137's load-bearing property is that renders never add cases.** A render producing its own
+  case would inflate `n` with a duplicate of a leaf that already exists — the DA14 trap in a new
+  costume. Verified against the real corpus rather than asserted: 12 cases, 31 distinct leaves,
+  78 rows, unchanged. The rejected alternative (minting a second `paper_id`) is recorded in the
+  docstring at the point someone would be tempted to do it. **DA20.**
+- **A process slip, reported rather than buried.** #94's commits initially landed on **local
+  `develop`**: `accuracy_board.py start` printed the branch name and I never checked it out.
+  Caught at push time, moved onto the feature branch, `develop` reset hard to `origin/develop`.
+  Nothing reached `develop` remotely and no pushed history was rewritten. It is in PR #142's body
+  too, not only here.
+- **Two test-honesty notes I would rather state than let pass.** #137's
+  `test_extra_renders_do_not_add_cases` would also have passed before the change — it is a
+  regression guard, not a change-detector, and the PR says so instead of counting six
+  failing-before tests. And #94's real-PDF test **skips** when the PaperScraper file is absent;
+  I verified it passing rather than skipping here, because a silently-skipping test is worse than
+  no test.
+- **#59 was NOT moved to Ready** even though its data-model blocker is now gone. Two blockers
+  remain and neither is mine: the handwritten renders are verbatim CAIE content needing a
+  MISSION §12.7 decision, and the measurement is unauthorised live spend. Posted on the issue.
+- **Spend: $0.00 this run.** Ledger unmoved at 3.138147 programme-wide.

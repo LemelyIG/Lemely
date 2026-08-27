@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
@@ -36,19 +36,25 @@ class GoldenAnswer(BaseModel):
 
 #: Golden-fixture directory-name suffixes denoting which DA6 variant a case
 #: is (spec §3.3's ``fixture_variant``, BUILD/DECISIONS.md DA6).
-_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong")
+#:
+#: ``_whitespace`` was added for B5 (#88 item 6). It is a variant rather than a
+#: new paper on purpose: DA6 counts distinct leaves by ``(paper_id,
+#: question_id)``, so a variant sharing its sibling's ``paper_id`` gives the
+#: whitespace metamorphic property something to fire on **without** adding a
+#: distinct leaf to the accuracy denominator. See BUILD/DECISIONS.md DA14.
+_FIXTURE_VARIANT_SUFFIXES = ("_correct", "_partial", "_wrong", "_whitespace")
 
 
 def _split_fixture_variant(dir_name: str) -> tuple[str, str | None]:
     """Split a golden-case directory name into ``(paper_id, fixture_variant)``.
 
-    Strips a trailing ``_correct``/``_partial``/``_wrong`` suffix, if present,
-    from *dir_name* — this is what makes three sibling directories (e.g.
-    ``0625_s20_qp_31_theory_correct/_partial/_wrong``) collapse to the same
-    ``paper_id`` for distinct-leaf purposes (DA6), while ``fixture_variant``
-    keeps the specific variant for record-keeping. Directories without one of
-    these suffixes (e.g. the MCQ-only fixture) are returned unchanged with
-    ``fixture_variant=None``.
+    Strips a trailing ``_correct``/``_partial``/``_wrong``/``_whitespace``
+    suffix, if present, from *dir_name* — this is what makes sibling
+    directories (e.g. ``0625_s20_qp_31_theory_correct/_partial/_wrong``)
+    collapse to the same ``paper_id`` for distinct-leaf purposes (DA6), while
+    ``fixture_variant`` keeps the specific variant for record-keeping.
+    Directories without one of these suffixes (e.g. the MCQ-only fixture) are
+    returned unchanged with ``fixture_variant=None``.
     """
     for suffix in _FIXTURE_VARIANT_SUFFIXES:
         if dir_name.endswith(suffix):
@@ -56,15 +62,40 @@ def _split_fixture_variant(dir_name: str) -> tuple[str, str | None]:
     return dir_name, None
 
 
+#: Name of the render served by ``scan.pdf`` — the one every fixture has and
+#: the one ``scan_path`` points at.
+DEFAULT_RENDER = "default"
+
+
 @dataclass
 class GoldenCase:
-    """One paper-worth of ground truth data."""
+    """One paper-worth of ground truth data.
+
+    **Two orthogonal axes, and conflating them would corrupt every
+    denominator** (#137):
+
+    - ``fixture_variant`` — *same paper, different answers* (``_correct`` /
+      ``_partial`` / ``_wrong`` / ``_whitespace``). Variants are separate
+      directories and separate ``GoldenCase`` objects that share one
+      ``paper_id``, per DA6/DA14.
+    - ``renders`` — *same paper, same answers, different image*. A render is
+      **not** a new case, a new leaf or a new row: it is another picture of
+      the same thing. #59 needs to compare a machine-rendered fixture against
+      a real handwritten render of the same paper, and before this the model
+      could not express it — ``GoldenCase`` held exactly one scan slot.
+
+    The rejected alternative is recorded because it is the tempting one:
+    minting a second ``paper_id`` for the other render. DA6 keys a distinct
+    leaf on ``(paper_id, question_id)``, so that would present the same leaves
+    twice as if independent, inflating ``n`` and understating variance — the
+    trap #134 declined for the whitespace fixture (DA14).
+    """
 
     paper_id: str
     mark_scheme: MarkScheme
     ground_truth: dict[str, GoldenAnswer]  # question_id -> GoldenAnswer
     scan_path: Path | None = None  # present only when extraction test is possible
-    fixture_variant: str | None = None  # "correct" | "partial" | "wrong" | None
+    fixture_variant: str | None = None  # "correct"|"partial"|"wrong"|"whitespace"|None
     #: True when this fixture is a deliberate excerpt — it declares a full
     #: paper's ``maximum_mark`` while carrying only a subset of leaves (spec
     #: §2.3(d); M0.8/#32). Sourced from an explicit ``case.json`` sidecar
@@ -73,6 +104,27 @@ class GoldenCase:
     #: ``mark_scheme.json``'s ``MarkSchemeMetadata`` — that model is the
     #: production Gemini-parser schema and would silently drop an unknown key.
     is_excerpt: bool = False
+    #: Every available render of this paper, keyed by render name. Contains
+    #: :data:`DEFAULT_RENDER` whenever ``scan_path`` is set, so ``scan_path``
+    #: and ``renders[DEFAULT_RENDER]`` never disagree; empty when the fixture
+    #: has no scan at all. Populated from ``scan.<name>.pdf`` siblings by
+    #: :func:`load_golden_cases`.
+    renders: dict[str, Path] = field(default_factory=dict)
+
+    @property
+    def render_names(self) -> list[str]:
+        """Available render names, ``DEFAULT_RENDER`` first when present."""
+        others = sorted(n for n in self.renders if n != DEFAULT_RENDER)
+        return ([DEFAULT_RENDER] if DEFAULT_RENDER in self.renders else []) + others
+
+    def render(self, name: str = DEFAULT_RENDER) -> Path | None:
+        """Path of render *name*, or ``None`` when this case has no such render.
+
+        Returns ``None`` rather than raising so a caller iterating renders
+        across a mixed corpus reads the same way as one reading ``scan_path``:
+        absence is the normal case, not an error.
+        """
+        return self.renders.get(name)
 
 
 def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
@@ -82,11 +134,13 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
       mark_scheme.json  — already-parsed JSON mark scheme
       answers.json      — ground truth per leaf question
       scan.pdf          — optional; enables extraction tests
+      scan.<render>.pdf — optional; additional renders of the SAME paper (#137)
 
-    A directory name's trailing ``_correct``/``_partial``/``_wrong`` suffix
-    (if any) is split off: it becomes ``fixture_variant`` and is stripped
-    from ``paper_id``, so the three DA6 variants of the same underlying paper
-    share one ``paper_id`` (spec §3.3; BUILD/DECISIONS.md DA6).
+    A directory name's trailing ``_correct``/``_partial``/``_wrong``/
+    ``_whitespace`` suffix (if any) is split off: it becomes
+    ``fixture_variant`` and is stripped from ``paper_id``, so the DA6 variants
+    of the same underlying paper share one ``paper_id`` (spec §3.3;
+    BUILD/DECISIONS.md DA6, and DA14 for ``_whitespace``).
 
     An optional ``case.json`` sidecar (``{"is_excerpt": true}``) marks a
     fixture as a deliberate excerpt (spec §2.3(d); M0.8/#32). It is a plain
@@ -95,6 +149,15 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     ``MarkSchemeMetadata`` is the production Gemini-parser schema and would
     silently drop an unrecognised key. A missing sidecar (or a missing
     ``is_excerpt`` key within it) defaults to ``False``.
+
+    **Extra renders never add cases.** ``scan.<render>.pdf`` siblings are
+    collected onto the one ``GoldenCase`` for that directory (see
+    :attr:`GoldenCase.renders`); the number of cases returned depends only on
+    the number of directories. This is load-bearing rather than incidental —
+    every interval and power figure in this programme is computed on distinct
+    leaves keyed ``(paper_id, question_id)`` (DA6), so a render that produced
+    its own case would inflate ``n`` with a duplicate of a leaf that already
+    exists.
     """
     cases: list[GoldenCase] = []
     for case_dir in sorted(golden_dir.iterdir()):
@@ -113,6 +176,16 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
             continue
         scan_path = case_dir / "scan.pdf"
+        # Renders are siblings of scan.pdf, named scan.<render>.pdf (#137).
+        # Discovered rather than declared, so adding one is a file drop and
+        # cannot silently change any existing case's identity.
+        renders: dict[str, Path] = {}
+        if scan_path.exists():
+            renders[DEFAULT_RENDER] = scan_path
+        for alt in sorted(case_dir.glob("scan.*.pdf")):
+            render_name = alt.name[len("scan.") : -len(".pdf")]
+            if render_name and render_name != DEFAULT_RENDER:
+                renders[render_name] = alt
         paper_id, fixture_variant = _split_fixture_variant(case_dir.name)
         is_excerpt = False
         case_marker_path = case_dir / "case.json"
@@ -136,6 +209,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                 scan_path=scan_path if scan_path.exists() else None,
                 fixture_variant=fixture_variant,
                 is_excerpt=is_excerpt,
+                renders=renders,
             )
         )
     return cases
