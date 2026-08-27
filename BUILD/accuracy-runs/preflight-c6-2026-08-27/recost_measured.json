@@ -1,0 +1,48 @@
+{
+  "supersedes": "cost_c6.json \u2014 built on the model #88 falsified at 1.83x",
+  "basis": "MEASURED $0.07005/scheme, #88 sweep 2026-08-26 (n=1 measured, n=6 confirmed)",
+  "measured_usd_per_page": 0.006766395526182003,
+  "measured_tokens_per_page": 3685.8159633960345,
+  "ledger": 3.146479,
+  "ceiling_committed_usd": 8.0,
+  "ceiling_local_gitignored_usd": 25.0,
+  "per_run_token_ceiling": 5000000,
+  "rows": {
+    "one_off_incremental": {
+      "label": "ONE-OFF: the 210 non-MCQ schemes C6 moves",
+      "n": 210,
+      "pages": 1762,
+      "usd_by_page": 11.92,
+      "usd_by_scheme": 14.71,
+      "tokens": 6494408,
+      "falsified_estimate_usd": [
+        5.41,
+        6.52
+      ],
+      "understatement_factor": 1.83,
+      "ledger_after_low": 15.07,
+      "ledger_after_high": 17.86,
+      "breaches_committed_8": true,
+      "breaches_local_25": false,
+      "trips_token_ceiling_5M": true
+    },
+    "recurring_full_rebuild": {
+      "label": "RECURRING: every future full corpus rebuild",
+      "n": 400,
+      "pages": 3729,
+      "usd_by_page": 25.23,
+      "usd_by_scheme": 28.02,
+      "tokens": 13744408,
+      "falsified_estimate_usd": [
+        10.33,
+        13.79
+      ],
+      "understatement_factor": 1.83,
+      "ledger_after_low": 28.38,
+      "ledger_after_high": 31.17,
+      "breaches_committed_8": true,
+      "breaches_local_25": true,
+      "trips_token_ceiling_5M": true
+    }
+  }
+}
