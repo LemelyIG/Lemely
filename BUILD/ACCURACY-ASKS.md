@@ -1,13 +1,18 @@
 # ACCURACY-ASKS.md — the open human decisions, in one place
 
-**Status 2026-08-27 (run 55): the previous B1–B18 list is DISCHARGED and has
-been replaced.** Every B row was either answered in the 2026-08-26 interview and
-acted on, or is carried forward below under its own C number. Seven new
-decisions (**C1–C7**) were taken in an interactive interview on 2026-08-27 and
-are recorded here as the standing rulings, not as open questions.
+**Status 2026-08-27 (run 57): C8 and C10 are CLOSED and the queue is
+UNBLOCKED.** The B1–B18 list was discharged at run 55; C1–C7 were taken the same
+day; **C11–C14 were taken in a second interview on 2026-08-27** and are recorded
+below as standing rulings, not open questions.
 
-**What is actually open is short: C8, plus the four H issues.** Everything else
-in the programme is sequenced behind C8.
+**C11 unblocked everything.** Ruling C6 (*"deterministic parsing for MCQ ONLY"*)
+was **superseded**: det parses all mark schemes and marks MCQ; Gemini does all
+extraction and marks non-MCQ — which is the architecture already in place. So
+#112, #110, #136, #39, #41, #95, #127 and #38 are **live work again**, not dead,
+and the $11.92–$28.02 migration costed on #151 **never arises**.
+
+**What is actually open now: C9 (the four H issues), and #88.** Everything else
+is agent work with a path.
 
 Nothing here is a request for more investigation — each row is a decision only
 you can make. Where I have a recommendation I give it, and where a
@@ -17,78 +22,48 @@ measurement) I say so.
 **How to answer.** Reply on the accuracy control topic
 (`lemely-acc-ctl-bqlsqcY9FfbfQd` on `http://home-server:7532`), or append to
 `BUILD/ACCURACY-INBOX.md`, naming the ask number and your choice — e.g.
-`C8: (b)`. Partial answers are useful.
+`C15: (1)`. Partial answers are useful.
 
-**If you answer only one: C8.** It is the only thing gating the queue, and every
-other agent-ownable item is behind it.
+**If you answer only one: C15.** It is the only thing gating a measurement the
+programme needs, and #57 → #47 → #51 → #55 all sit behind it.
 
 ---
 
 # OPEN
 
-## C8 — #151: C6 retires 100% of the det marking path. Which fork?
+## C15 — #88: the corpus parse sweep costs $13.31 and the ceiling is now $8.00
 
-**This is the whole queue.** #112, #110, #136, #39, #38, #95, #127 and #41 are
-all held behind it.
+**Carried over unresolved, and C12 has made it harder rather than easier.**
 
-Ruling **C6** (below) was *"deterministic parsing for MCQ ONLY"*, confirmed on a
-second ask. It was taken before the blast radius was measured. Measured
-afterwards, and reconciling exactly with #41's own independent 10,314-point
-census:
+#88's item-2 sweep — Gemini-parsing the **190 mark schemes the det parser fails
+outright** — was authorised at a costed $7.26, then **measured at n=1, confirmed
+at n=6, and aborted at 6 of 190** because the real figure is **$13.31** (1.83×).
+Three causes, all structural: input 2.07× under (PDF via Files API, not billed
+per page), output 1.35× under (~36% thinking tokens, which a det-JSON proxy
+**cannot represent at any sample size**), and 1.33 calls per scheme, not 1.00.
 
-**MCQ schemes carry zero `answer_points`** — MCQ answers live in the separate
-`mcq_answer` field. So C6 does not retire *most* of the det marking path:
+**Ruling C12 made the committed $8.00 authoritative**, so from a ledger of
+**$3.146479** the headroom is **$4.853521** — and $13.31 does not fit. It fitted
+under the gitignored $25.00 that C12 removed.
 
-- **210 of 289** committed schemes (72.7%) move to paid Gemini
-- **10,314 of 10,314** answer points (100%) move with them
-- the paid set goes **190 → 400** of 479 source mark schemes
+**Why it matters, and it now matters more than before.** Ruling C11 says *"det
+parses any & all mark-schemes"*. That is true of what det **can** parse — but
+**190 of 479 source schemes have no parsed output at all**. This sweep is what
+would make C11 literally true. It also populates DA1's **empty Gemini-path
+strata**, which is what #57's split needs, which is what #47's labelling needs.
 
-| | one-off | recurring, every full rebuild |
-|---|---|---|
-| **cost (MEASURED, per-page → per-scheme)** | **$11.92 – $14.71** | **$25.23 – $28.02** |
-| *first published on #151, understated 1.83×–2.7×* | *$5.41 – $6.52* | *$10.33 – $13.79* |
+1. **Raise the committed ceiling and proceed at $13.31.** Ledger → ~$16.5. Needs
+   a committed figure from you (C12 says raise the default, never re-add a
+   gitignored override), and `per_run_token_ceiling` raised 5M → ~9M, since #88
+   measured 7.25M against a 5M ceiling that would trip at roughly scheme 131.
+2. **Proceed over a reduced set.** Note this changes DA1 stratum coverage, which
+   is the entire justification for the spend — **not a free trim**.
+3. **Do not proceed.** The nine Gemini-path strata stay empty, #57 keeps its
+   parse-path axis unpopulated, and C11's *"any & all"* stays aspirational.
 
-**Corrected 2026-08-27 (DA26).** The figures #151 opened with reused the token
-model from `preflight-88-2026-08-26`, and presented reproducing it "to the cent"
-as validation. #88's item-2 sweep had **already falsified that model at 1.83×**
-the same day, on this exact task — measured at n=1, confirmed at n=6, aborted at
-6 of 190. The corrected figures scale the **measured** $0.07005/scheme.
-
-**And it fits no ceiling the programme records.** Ledger **$3.146479**; the
-**committed** hard ceiling is **$8.00** (`config.py:111`). The $25.00 in
-`lemely.toml` is **gitignored and worktree-local** — DA13's hazard class,
-invisible to CI.
-
-| | one-off | recurring |
-|---|---|---|
-| ledger after | $15.07 – $17.86 | $28.38 – $31.17 |
-| vs committed **$8.00** | **BREACH** | **BREACH** |
-| vs local $25.00 | fits | **BREACH** |
-| tokens vs 5M `per_run_token_ceiling` | **6.49M — TRIPS** | **13.74M — TRIPS** |
-
-MISSION §12.4 makes that a stop-and-ask. Two of those are qualitative changes
-from what #151 first told you: the recurring rebuild now breaches even the local
-$25.00, and both plans trip the token ceiling #88 already flagged as undersized.
-
-Beyond money: #112/#110/#136/#39 become dead work; **#53 (M3, parse-path parity)
-is voided**; MISSION §2 and §14 both rest on the det path being measurable, and
-this removes it rather than fixing it; #38's escalation gate loses its subject.
-
-1. **Proceed as ruled** — det → MCQ only. Needs a ceiling decision first, then
-   close #112, #110, #136, #39 as retired-by-C6.
-2. **Narrow C6 to the question #41 asked** — A-mark dependency left undetermined
-   on det, per B1's own *"may leave cases unresolved — accepted"*. det path and
-   all four fixes stay live. **No new spend.**
-3. **The middle reading** — det parses everything (so the four fixes stay
-   valuable), but det-parsed marks are trusted end-to-end for MCQ only, with
-   non-MCQ marking escalated. Still needs its own routing issue and preflight.
-
-**No recommendation between 1 and 2** — that is an architecture and product
-call, not a measurement one, and I would be choosing the shape of the programme
-rather than reporting on it. What the measurement establishes is only that the
-choice is not the marginal one it looked like when taken.
-
-Full preflight: `BUILD/accuracy-runs/preflight-c6-2026-08-27/`.
+**No recommendation.** Option 1 spends your money on my say-so; option 3 is the
+one that costs me nothing, which is exactly why I should not push it. **The 6
+schemes already parsed cost $0.42 and are kept whichever way you go.**
 
 ## C9 — B14, still owed on the H issues
 
@@ -96,24 +71,32 @@ Unchanged, and not decisions I can make or work around (MISSION §3.5 — never
 close one, never mark one done, never work around one):
 
 - **#49 (H4)** — split membership stays **NOT frozen** until #57 delivers and you
-  sign off. #57 is blocked on it.
-- **#51 (H7)** — labeller B's identity and onboarding.
+  sign off. **Correction:** #57's bullet 1 (propose the split) is agent work and
+  does **not** need #49 — it is blocked on **#88 / C15**, whose sweep would
+  populate DA1's empty Gemini-path strata. C11 removed the other blocker
+  (#151 would have collapsed the parse-path stratum axis; it no longer can).
+- **#51 (H7)** — **identity ANSWERED (C14): labeller B is Abdallah ElGammal,
+  co-founder.** So H7 is genuine **inter-rater** agreement, not self-agreement,
+  and may be published as such. **Onboarding is still owed**, and #47's
+  labelling protocol must be designed for **two seats from the outset** —
+  retrofitting later may mean re-labelling, not just labelling more.
 - **#52 (H8)** — the three seed rulings themselves (ECF, `oe` alternatives, list
   rule over-tariff). The machinery is built and the log ships empty; the rulings
   are examiner judgment and I will not draft them.
 - **#55 (H9)** — authorisation for the single run of the frozen test split.
 
-## C10 — B17 is still unfixed, and it bit again this run
+---
 
-`scripts/accuracy_board.py` gates **every** subcommand — including `comment` —
-on board membership, so it refuses any issue not on the project board. B17 ruled
-**option 3** (a direct H-number/label check instead of board membership as a
-proxy), and that is **not implemented**. This run had to post four rulings via
-raw `gh issue comment` — **#112, #136, #127 and #151** — because the sanctioned
-path structurally refuses them.
+# ANSWERED 2026-08-27 (run 57) — standing rulings, do not re-argue
 
-Recording it as an ask only because it keeps costing runs; the fix itself is
-agent-ownable and needs no decision from you beyond "yes, do it".
+| # | Subject | Ruling |
+|---|---|---|
+| **C11** | #151 / C6 | **C6 SUPERSEDED.** *"det parses any & all mark-schemes, as well as MCQ correction. Gemini handles ALL question paper extraction & the marking of non-MCQ papers."* Verified at source, then **confirmed rather than assumed**, as the architecture already in place. **Nothing migrates**; the $11.92–$28.02 never arises; #112/#110/#136/#39/#41/#95/#127/#38 are live work again; **#53 (M3) is not voided**; DA1's parse-path axis survives. #151 CLOSED. **DA27.** |
+| **C12** | the ceiling | **The COMMITTED $8.00 is authoritative** (`config.py:111`). The gitignored $25.00 has been **removed** from `lemely.toml` with a comment saying why — it did not survive worktree deletion, CI could not see it, and the report was publishing it as real headroom. Headroom is now **$4.853521**. Raise the committed default; never re-add a gitignored override. **DA28.** |
+| **C13** | #161 / ratchet | **Publish an UPPER interval bound of the measured distribution and arm against that.** Not the mean (≈half of no-op diffs would fail) and never 29.03% (the bottom of the range; unchanged code exceeds it 7 times in 10). Do not re-run the A/A floor for a tighter number (§12.9); do not loosen the 0.10 target (§14). **DA29.** |
+| **C14** | #51 / H7 | **Labeller B is Abdallah ElGammal, co-founder.** Named by explicit choice after being offered a role-only record. H7 is therefore **inter-rater**, not self-agreement. #47 must be designed for two seats from the outset. **DA30.** |
+
+**RESOLVED without a ruling:** **C10** (B17's `comment` half) — implemented and merged as **#153**; `accuracy_board.py comment` now works off-board, and the `done`-refuses / `comment`-allows asymmetry is pinned by test.
 
 ---
 
@@ -131,4 +114,10 @@ agent-ownable and needs no decision from you beyond "yes, do it".
 
 **Carried forward from the B list, still binding:** B3 (0.99 is INHERITED-NOT-MEASURED, no follow-up issue), B5 (whitespace fixtures are ordinary golden cases; their consequence — restating every figure against the new membership — is **unspent, not skipped**), B12 (per-mark-point is the published H7 figure; `mark_point_verdicts` still declared and never read), B15 (fix all three sub-defects — the *what*; only its sweep clause was superseded by C1), B16 (`cumulative_usd` is a known-contaminated **upper bound**; re-sum every run, never carry the header forward).
 
-**Sequencing as it now stands:** **#151 (C8)** → #136 fix → then #95 → #127, and #38's re-measurement; #112 + #110 jointly; #39. #58's ~$0.01 and #59 are authorised and independent, awaiting their preflights. #57 stays blocked on #49.
+**Sequencing as it now stands (rewritten after C11):** **#88 (C15)** is the only
+gate on the measurement chain — #88 → #57 → #49 → #47 → #51 → #55. Everything
+else is agent work with a path: **#136's fix** → #95 → #127, and #38's
+re-measurement; **#112 + #110 jointly** under C1's waiver; **#39** under C3's;
+**#41** under B1. **#161** is now actionable under C13. #59's measurement is
+authorised with a $4.00 cap but is n≤2 and needs its synthetic counterpart arm
+built first.

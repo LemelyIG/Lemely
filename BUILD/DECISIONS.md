@@ -12208,3 +12208,142 @@ recommendation is offered between (a) and (b) now any more than then.
 Also carried forward from #88 so it does not propagate: **`output_tokens`
 already includes `thoughts_tokens`** — pricing input+output alone reproduces
 the ledger to the cent; adding thoughts on top overshoots.
+
+---
+
+## DA27 — C6 is superseded: det parses everything, marks MCQ (C11, closes #151)
+
+**Date:** 2026-08-27 · **Issue:** #151 (closed by this) · **Spend:** $0.00
+
+Ruling **C6** was *"deterministic parsing for MCQ ONLY"*, and DA23 costed it as
+retiring 100% of the det marking path. Asked again as **C8**, the human answered
+with a fourth option rather than any of the three offered:
+
+> *"det parses any & all mark-schemes, as well as MCQ correction. Gemini handles
+> ALL question paper extraction & the marking of non-MCQ papers."*
+
+**That describes the architecture already in place.** Verified at source before
+the conclusion was drawn, and then **confirmed by the human rather than
+assumed** — the claim "your ruling changes nothing" is too convenient for an
+agent to make unilaterally:
+
+| clause | evidence |
+|---|---|
+| det parses any & all mark schemes | `lemely/io/det/parser.py` attempts every scheme; 289 succeed |
+| det does MCQ correction | `harness.py:498` and the `marker_source` mapping: `"mcq"` → `det` |
+| Gemini does ALL question-paper extraction | `lemely/io/answer_extraction.py` — **zero** deterministic references |
+| Gemini marks non-MCQ | same mapping: `"theory"` → `gemini` |
+
+**So C6 as DA23 read it is withdrawn.** Consequences, all of them reversals of
+DA23:
+
+- **Nothing migrates.** The one-off $11.92–$14.71 and recurring $25.23–$28.02
+  never arise.
+- **#112, #110, #136 and #39 are live work**, not dead. They fix the det parser,
+  which stays comprehensive and central.
+- **#53 (M3, parse-path parity) is NOT voided** — both paths still exist.
+- **DA1's parse-path stratum axis survives**, so #57's split is not built on a
+  degenerate axis. The correction posted to #57 stands on #88 alone.
+- **#38's escalation gate keeps its subject** — it escalates *scheme parsing*
+  det→Gemini, and det still parses everything.
+
+**What survives from DA23, because it was counted rather than modelled:** MCQ
+schemes carry **zero `answer_points`**. That is exactly why the C6 reading would
+have retired 100% rather than most of the path, and it is why asking again
+mattered. It stays published.
+
+**The one place the ruling is not yet true:** *"any & all"* holds for what det
+**can** parse — **190 of 479 source schemes still fail outright**. Closing that
+is #88, which remains a stop-and-ask.
+
+**Lesson worth keeping:** DA23's cost work was not wasted, but it costed a
+migration that was never going to happen. Two of my readings of one ruling were
+wrong before the third was confirmed. **When a ruling's blast radius looks
+enormous, that is itself evidence the ruling may have been misread** — ask again
+before costing, not after.
+
+---
+
+## DA28 — the committed $8.00 is the authoritative ceiling (C12, amends DA13)
+
+**Date:** 2026-08-27 · **Spend:** $0.00
+
+The programme recorded **two** ceilings that disagreed by 3×:
+`total_usd_ceiling = 8.00` committed at `lemely/runtime/config.py:111`, and
+`25.00` in `lemely.toml` — which is **gitignored**.
+
+**Ruling C12: the committed $8.00 is authoritative.** The local override has
+been **removed** from `lemely.toml`, with a comment at the site saying why and
+telling the next reader to raise the committed default rather than re-add it.
+
+The gitignored value did not survive worktree deletion and **CI could not see
+it**, so it was shadowing the only ceiling the programme durably records — and
+`BUILD/ACCURACY-REPORT.md` was **publishing it as real headroom**. That is
+DA13's hazard class doing exactly what DA13 warned it would.
+
+**Effective state, verified by loading settings rather than asserting:**
+ceiling **$8.00**, ledger **$3.146479**, headroom **$4.853521**.
+
+**Consequences accepted in the ruling:** #88's $13.31 sweep stays unaffordable
+without an explicit, committed raise. Every preflight headroom figure must be
+sized against $8.00. `per_run_token_ceiling = 5_000_000` remains in
+`lemely.toml` under DA13 and is **untouched here** — but #88 measured the real
+requirement at **7.25M**, so it is still undersized and that remains recorded.
+
+**This removal is local-only** (the file is gitignored), so this decision entry
+is the durable record — the same role DA13 plays for the token ceiling.
+
+---
+
+## DA29 — the ratchet publishes an upper interval bound (C13, unblocks #161)
+
+**Date:** 2026-08-27 · **Issue:** #161 · **Spend:** $0.00
+
+MISSION §13 requires the review-rate ratchet *"enforced in CI"*. The gate is
+wired (`ci.yml:83`) but non-blocking, and **DA9a blocks arming**: the committed
+constant **29.03%** is the **bottom** of a measured range, not a central
+estimate — the A/A floor over 10 live repeats had a **mean of 32.58%**, range
+**29.03–41.94%**. Arming against it gates the build on a figure unchanged code
+exceeds **7 times in 10**.
+
+**Ruling C13: restate the review rate as an UPPER interval bound of the measured
+distribution, and arm against that.** A no-op diff then passes; only a genuine
+regression beyond observed noise fails.
+
+**Why this and not the mean:** arming on 32.58% would fail roughly half of
+no-op diffs. A gate that fails unchanged code is not a ratchet — it trains
+people to ignore it, which is worse than no gate.
+
+**What must NOT happen**, recorded because each is individually tempting:
+
+- **Do not arm against 29.03%.** DA9a is binding.
+- **Do not re-run the A/A floor at higher n to get a tighter number.** MISSION
+  §12.9 forbids chasing significance, and the ~13pp width is a real property of
+  the system, not sampling noise to be averaged away.
+- **Do not loosen `review_rate_total_target` (0.10)** to make arming
+  comfortable. MISSION §14: the ceiling only ever ratchets down. Moving the
+  target to fit the measurement is the goalpost-moving failure mode.
+
+---
+
+## DA30 — labeller B is named (C14, #51)
+
+**Date:** 2026-08-27 · **Issue:** #51 (H7) · **Spend:** $0.00
+
+**Labeller B is Abdallah ElGammal, co-founder.** Given by the human on
+2026-08-27 after being offered the option to record a role only and keep the
+name out of a public repository; naming was their explicit choice.
+
+**So H7 is genuine inter-rater agreement, not self-agreement**, and may be
+published as such. That is a materially stronger figure than the self-agreement
+H7 originally measured before being renamed.
+
+**Acted on now rather than at #47 time, deliberately:** #47's labelling protocol
+must be designed for **two seats from the outset**. Retrofitting a second
+labeller after a single-seat protocol has run may require **re-labelling**
+rather than merely labelling more, because pass-2 blindness and the hash-chain
+ordering assume the number of labellers up front.
+
+**Still blocked and not by this:** #51 is downstream of #47, which is behind
+#57, which is behind #88. Naming labeller B removes a decision, not a
+dependency. Onboarding is still owed.
