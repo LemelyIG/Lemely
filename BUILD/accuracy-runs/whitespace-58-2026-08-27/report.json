@@ -1,0 +1,659 @@
+{
+  "label": "whitespace-58-2026-08-27",
+  "issue": 58,
+  "acceptance_bullet": 3,
+  "authorisation": "ask C4, 2026-08-27; plan A of the preflight posted to #58",
+  "cache_mode": "bypass",
+  "plan": "A \u2014 only the case(s) that can exercise the property",
+  "cases_total": 12,
+  "cases_marked_live": 1,
+  "cases_skipped_offline": 11,
+  "leaves_skipped_offline": 71,
+  "correct_paper_invocations": 2,
+  "brake_usd": 0.05,
+  "spend_usd_before": 2.733677,
+  "spend_usd_after": 2.742009,
+  "spend_usd_delta": 0.008332,
+  "report_live": {
+    "counts": {
+      "held": 7,
+      "violated": 0,
+      "skipped": 0
+    },
+    "outcomes": [
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "1",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "2",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "4",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12a",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "12b",
+        "status": "held",
+        "baseline_marks": 1,
+        "perturbed_marks": 1,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "14",
+        "status": "held",
+        "baseline_marks": 2,
+        "perturbed_marks": 2,
+        "skip_reason": null
+      },
+      {
+        "property": "normalise_answer_whitespace",
+        "paper_id": "0580_s23_qp_22_theory",
+        "question_id": "19",
+        "status": "held",
+        "baseline_marks": 3,
+        "perturbed_marks": 3,
+        "skip_reason": null
+      }
+    ]
+  },
+  "outcomes_determined_offline": [
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "4",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "14",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "19",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "4",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "14",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "19",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "4",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "14",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0580_s23_qp_22_theory",
+      "question_id": "19",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "1",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "2",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "3",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "4",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "5",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "6",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "7",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_m20_qp_12_mcq",
+      "question_id": "8",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_w21_qp_32_theory_nested",
+      "question_id": "1a_i",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_w21_qp_32_theory_nested",
+      "question_id": "1a_ii",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    },
+    {
+      "property_name": "normalise_answer_whitespace",
+      "paper_id": "0625_w21_qp_32_theory_nested",
+      "question_id": "1b",
+      "status": "skipped",
+      "skip_reason": "answer has no collapsible whitespace, so the transform is a no-op \u2014 determined offline by string comparison, never marked",
+      "determined_offline": "true"
+    }
+  ]
+}
