@@ -35,7 +35,7 @@ The Wilson interval is quoted only on 9/31, which is a clean binomial.
 
 **Scope — what this run does not show.** Single-arm, so no A/B effect of any
 kind. n=31 leaves against the n=219 paired-McNemar improvement floor (DA7).
-Split is `dev (pre-M0.7a)`; membership is not frozen (#57 waits on #44).
+Split is `dev (pre-M0.7a)`; membership is **not frozen**. #57 is blocked — not on #44, which is CLOSED, but on #88's empty Gemini strata and on #151, which may collapse DA1's parse-path stratum axis entirely.
 
 Run `aa-floor-2026-08-23-a` · sha `b364bf76` · `gemini-2.5-flash` ·
 `cache_mode=bypass`, `cache_hit_detected=false` on all 10 repeats across ~740
@@ -80,7 +80,7 @@ denominator shell game D18 existed to create.
 came up on the 3 luckiest of 10 identical repeats. It is a best case, not a
 central estimate. Arming `min(10%, last_merged_review_rate)` against it would
 gate the build on a number that unchanged code exceeds 7 times in 10. See
-**DA9a**; the constant is #36's to fix, not a measurement issue's.
+**DA9a**; the constant is #161's to fix, not a measurement issue's (this line used to cite #36, which is CLOSED and is M1.1, the confidence unit).
 
 Both limbs are breached in every repeat (ceiling `min(10%, 29.03%)` = 10%
 against ~32.6%; p95 target 15% against ~82%). The breach is not in doubt and
@@ -88,6 +88,53 @@ stays **recorded-not-blocking** while the ratchet is unarmed at M0.
 
 **The 19.1% figure** quoted in older material is stale and was retracted by
 `DA-M0.9`. Do not cite it.
+
+---
+
+## The oracle-transcription ablation (M0.4 / #28) — the 2×2 DOES NOT EXIST
+
+**Published because it was attempted and did not produce a result.** A section
+missing from this file would read as "not tried"; the honest record is that it
+was tried, one arm is empty by construction, and the human then ruled it waits.
+
+**The 2×2 verdict is `NOT_APPLICABLE`.** The `oracle+mark` arm produced **zero
+records**, so `mcnemar()` and `ablation_2x2()` return `b = c = n_pairs = 0` and
+an all-zero table. Those are **degenerate outputs reflecting missing data, not a
+paired comparison**. No paired McNemar, no cross-arm Wilson comparison and no
+minimum-detectable-effect figure are reportable from this run, and none should
+be quoted from it.
+
+**Ruling, 2026-08-25:** #28 stays **CLOSED with every acceptance box unticked**,
+is **not** reopened, and the 2×2 **waits for #57's corpus expansion to ~300
+leaves**. The 2026-08-24 spend authorisation **lapsed when the issue closed** —
+and that generalises: *a spend authorisation does not survive its issue being
+closed*. PR #87's arm mechanism made the 2×2 *possible*, never *authorised*.
+
+### What the run DID measure — the `extract+mark` arm alone
+
+| figure | value | n |
+|---|---|---|
+| Leaf accuracy, all | **77.4%**, Wilson [60.2%, 88.6%] | 24 / 31 |
+| Leaf accuracy, `det` | **100%**, Wilson [67.6%, 100%] | 8 / 8 |
+| Leaf accuracy, `gemini` | **69.6%**, Wilson [49.1%, 84.4%] | 16 / 23 |
+| `review_rate_total`, all | **29.03%** | 31 |
+| `review_rate_total`, `det` | **0.00%** | 8 |
+| `review_rate_total`, `gemini` | **39.13%** | 23 |
+| Per-paper p95 | 66.7% | 5 papers — **UNDERPOWERED** |
+| Coherence trigger rate | 6.45% | 31 |
+| Exclusion funnel | `total` 31, `scored` 31, **`excluded` 0** | correct 24, under 6, unmatched 1 |
+
+**`det` at 8/8 is not evidence that det marks perfectly.** n=8 gives a Wilson
+lower bound of **67.6%** — the interval is consistent with the det path being
+worse than the gemini path. Quote the interval, never the point.
+
+**The per-paper p95 rests on 5 papers.** It is printed because omitting it would
+be selective, not because it resolves anything.
+
+Run `ablation-2026-08-24-a` · sha `1435cebf` · split `dev` (**not frozen**) ·
+evidence in `BUILD/accuracy-runs/ablation-2026-08-24-a/` · analyses computed by
+`lemely.eval.analyses` over the committed records with **no Gemini calls and no
+reruns**.
 
 ---
 
@@ -104,13 +151,119 @@ gap in coverage, not evidence that it works.
 
 ---
 
+## Det-path defect rates (M1 / #38, #136) — measured 2026-08-27
+
+Published because they change how every det-path figure above should be read.
+
+| figure | value | n |
+|---|---|---|
+| Papers with ≥1 **defaulted** mark | **44.4%** | 24 / 54 parsed, from a 60-PDF random sample |
+| Papers where *every* point is defaulted | 9.3% | 5 / 54 |
+| **All answer points defaulted** | **21.6%** | 596 / 2,754 |
+
+A *defaulted* mark is one the parser minted rather than read: `rows.py:200`
+falls back to `marks=1` when `parse_marks_cell` finds nothing. Countable only
+because #38 shipped the `marks_defaulted` flag first.
+
+**Most of that 21.6% is correct — by luck.** The default of 1 is right for
+`B1`/`M1`/`A1`/`C1` and wrong for every multi-mark code. So **"defaulted" is not
+by itself evidence of a wrong mark**, and a bare defaulted-count is the wrong
+escalation trigger: arming it as written would route ~44% of the det corpus to
+the paid path on a signal that is mostly right.
+
+**Cause, named at source with the arithmetic closing exactly (DA21):**
+`rows.py:311` drops a continuation row carrying marks but no answer text;
+`rows.py:200` defaults where the marks column merged into the answer cell.
+
+**Consequence for reading the ablation above:** the det arm's 8/8 sits on a path
+where a fifth of all answer points carry a minted mark. A paper can be
+**under-sum because of the parser**, not because of a marking defect.
+
+---
+
+## Metamorphic properties (M1.8 / #58) — live, cache bypassed
+
+Label-free properties that must hold regardless of ground truth.
+
+| property | result | n |
+|---|---|---|
+| Renaming mark-point ids | **57 held / 0 violated / 14 skipped** | live, `bypass` |
+| Normalising answer whitespace | **7 held / 0 violated / 0 skipped** | live, `bypass`, 2026-08-27 |
+| Reordering mark points | **30 held / 1 VIOLATED / 40 skipped** | live, `bypass` |
+
+**The reorder property is violated and is NOT ticked.** `0625_s20_qp_31` q11b
+awards 1 → 2 on reorder. It **reproduces**: 2/10 fresh perturbed repeats against
+**0/14** unperturbed markings of the same leaf.
+
+**And it is not established.** Pre-committed Fisher exact, two-sided:
+**p = 0.4737** at n=10/arm. The post-hoc pooled p = 0.0717 is secondary and is
+never the finding. **It has not been re-run at higher n, and must not be** —
+MISSION §12.9 forbids chasing significance.
+
+So the honest statement is: *a property a live run falsifies is not ticked, and
+a violation this corpus cannot establish is not a claim.* Both halves hold.
+
+**The whitespace figure is 7 live outcomes, not 78.** Only 1 of 12 golden cases
+carries collapsible whitespace; the other 71 leaves are no-ops under the
+transform, determined offline by string comparison with **no marking call**, and
+flagged `determined_offline` in the artifact.
+
+---
+
+## Parse-path composition (#151 / ruling C6) — counted 2026-08-27
+
+Not a model. Counted over the 289 committed schemes at `parser_sha 8758dba`,
+and it reconciles exactly with #41's independent 10,314-point census.
+
+| paper_type | schemes | answer points |
+|---|---|---|
+| theory_extended | 87 | 4,692 (45.5%) |
+| **mcq** | **79** | **0 (0.0%)** |
+| theory_core | 73 | 3,649 (35.4%) |
+| practical | 26 | 1,031 (10.0%) |
+| alternative_practical | 24 | 942 (9.1%) |
+
+**MCQ schemes carry zero `answer_points`** — MCQ answers live in the separate
+`mcq_answer` field. Published because it is load-bearing for an open decision:
+restricting deterministic parsing to MCQ would retire **210 of 289 schemes
+(72.7%)** and **10,314 of 10,314 answer points (100%)** from the det path.
+
+Cost of that routing, scaled from the **measured** $0.07005/scheme (#88, n=1
+measured / n=6 confirmed — **not** from the model that measurement falsified at
+1.83×, see DA26): one-off **$11.92–$14.71**, recurring **$25.23–$28.02** per
+full corpus rebuild. Both breach the committed $8.00 ceiling; the recurring
+figure breaches even the local $25.00, and both trip the 5M
+`per_run_token_ceiling` (6.49M / 13.74M).
+
+---
+
 ## Spend
+
+Re-summed across all four worktree ledgers at 2026-08-27, **never carried
+forward from a header** (that rule exists because carrying it forward had
+reproduced the previous run's arithmetic error every run).
 
 | | |
 |---|---|
-| This run | $0.958711 |
-| Cumulative | **$1.425511** |
-| Ceiling | $25.00 (notify at 50% / 80%) |
+| **Cumulative, programme-wide** | **$3.146479** |
+| **Committed hard ceiling** | **$8.00** — `lemely/runtime/config.py:111` |
+| Local override | $25.00 in `lemely.toml` — **GITIGNORED and worktree-local** |
+
+**The ceiling published here used to read $25.00, and that was wrong.** The
+$25.00 lives in `lemely.toml`, which is gitignored: it does not survive worktree
+deletion and **CI cannot see it**. The only durable ceiling is the committed
+**$8.00** default, and every headroom figure must be sized against that. This is
+DA13's hazard class, and publishing the local value made this file assert
+headroom the programme does not durably have.
+
+**`cumulative_usd` is a conservative UPPER BOUND on money spent, not money
+spent** (DA17, amending DA11). Some tests resolve `paths.output_dir` to the real
+repo and write mock-derived costs into the authoritative ledger (#114). The
+contamination is **one-directional**, so every ceiling check stays conservative;
+the contaminated portion cannot be reconstructed, because the file keeps one
+running total with no history.
 
 Pre-M0.2 ledger figures understate real spend by 2–4×; figures from #26 onward
-use corrected GA pricing and count `thoughts_token_count` (0 on every call here).
+use corrected GA pricing. **`output_tokens` already includes `thoughts_tokens`**
+— pricing input + output alone reproduces the ledger to the cent, and adding
+thoughts on top overshoots. Anyone re-deriving spend must not add them.
