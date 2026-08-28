@@ -13076,3 +13076,65 @@ so they remain reported by the (still unarmed) duplicate-id detector.
 
 **Cumulative across DA39 and DA41: leaves lost 57 → 36 → 25; schemes 34 → 21 →
 15.**
+
+---
+
+## DA42 — #95's parser blocker is cleared; its excerpt blocker is not, and `is_excerpt` is wrong on 5 of 11 fixtures (#95)
+
+**Zero spend, det-only, nothing regenerated.** Re-runs the 2026-08-26 feasibility
+probe now that #136, #110 and #112 have landed.
+
+**Blocker 1 is cleared.** That probe found 4 of 5 source schemes failing to
+det-parse, so regenerating would have destroyed 10 of 11 fixtures. All five now
+parse to their printed maximum exactly and are duplicate-free.
+
+**Blocker 2 stands, unchanged by three parser fixes, and is now quantified:**
+
+| fixture family | `is_excerpt` | questions | max | full-paper leaves | full max | blow-up |
+|---|---|---|---|---|---|---|
+| `0580_s23_qp_22_theory_*` (×4) | true | 7 | 70 | 35 | 70 | **5.0×** |
+| `0606_s23_qp_12_theory_*` (×3) | true | 6 | 80 | 25 | 80 | **4.2×** |
+| `0625_s20_qp_31_theory_*` (×3) | **false** | 7 | **19** | 41 | **80** | **5.9×** |
+| `0625_m20_qp_12_mcq` | **false** | 8 | **8** | 40 | 40 | **5.0×** |
+| `0625_w21_qp_32_theory_nested` | **false** | 1 | **5** | 43 | **80** | **43×** |
+
+**Every denominator would grow by 4.2×–43× while `answers.json` stays fixed to
+the excerpt.** That does not make scheme-parsing measurable; it replaces the
+measurement corpus with one whose ground truth does not correspond to it.
+
+**New finding: `is_excerpt` is FALSE on five fixtures that are excerpts.**
+`0625_s20_qp_31_theory_*` declares `maximum_mark: 19` against a real 80 with 7
+questions against 41 leaves; the MCQ carries 8 of 40; the nested fixture carries
+**1 question and max 5** against a 43-leaf, 80-mark paper.
+
+This is adjacent to but **distinct from A8's ground** for retiring #39 bullet 4.
+A8 retired it because `is_excerpt` is a harness attribute rather than a property
+of the parsed scheme — **that ground is undisturbed**. What is new is that the
+flag is also **factually wrong**, so anything that consulted it would be misled
+about which fixtures are partial. Nothing currently does, which is exactly why
+this stayed invisible.
+
+**Verdict: #95 remains NOT EXECUTABLE AS WRITTEN.** Its scope covers regenerating
+the *scheme*, and the scheme is one of three coupled artefacts per fixture.
+Regenerating `answers.json` and `scan.pdf` in step is a far larger and more
+irreversible operation than the issue describes, and is not what A6 authorised —
+**widening the scope to make the work possible is not an agent's call.**
+
+**The options have narrowed to three**, and no recommendation is offered:
+
+1. **Widen #95** to regenerate schemes, answers and scans together.
+2. **Narrow #95** to regenerating the scheme *restricted to the excerpted
+   questions*. This keeps denominators fixed and still routes the scheme through
+   the parser — but it needs a rule for "which parsed questions correspond to
+   this excerpt", and an agent choosing that rule would be **inventing
+   correspondence inside the measurement corpus**.
+3. **Abandon the rebuild** and accept that scheme-parsing stays unmeasurable in
+   the golden harness.
+
+**Option 2 is the cheapest-looking and the one I would be tempted toward, which
+is reason enough not to push it.**
+
+**Separately actionable and cheap:** correcting `is_excerpt` on the five
+mislabelled fixtures is zero-spend and changes no measurement, since nothing
+reads the flag. **Deliberately not done here** — editing fixture metadata under a
+rebuild issue is how scope creep enters an irreversible corpus.
