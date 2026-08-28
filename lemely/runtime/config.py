@@ -265,6 +265,16 @@ class DetParserSettings(BaseModel):
     # When True, raise ParseError if any leaf question still has marks
     # derived from the default (mark-cell not parseable → assumed 1).
     escalate_on_defaulted_marks: bool = True
+    # #110: two leaf questions in one paper sharing an id. Leaf identity is
+    # (paper_id, question_id) per DA6, so duplicates COLLAPSE two questions
+    # into one leaf and silently narrow every downstream denominator.
+    #
+    # Reported, not blocking, and deliberately so: arming routes the paper to
+    # the Gemini fallback, which #166 measured failing on ~50% of the schemes
+    # det cannot parse and 100% of 0606. That trades a silently-wrong paper for
+    # a probably-absent one — a cost and coverage decision, not a tidy-up.
+    # See lemely.io.det.reconcile.check for the measured prevalence.
+    escalate_on_duplicate_leaf_ids: bool = False
 
 
 class DatabaseSettings(BaseModel):

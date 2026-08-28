@@ -97,6 +97,44 @@ def decompose_compound_q(q_cell: str) -> list[str] | None:
     return parts
 
 
+# #112 — CAIE's alternative-branch markers, as they actually reach the parser.
+#
+# The detector this replaces fired only when the answer cell EQUALLED "OR"/
+# "EITHER", or STARTED with the marker plus a SPACE. pdfplumber returns the
+# marker and the following working in ONE cell separated by a NEWLINE, so
+# neither branch matched and mutually exclusive routes were summed.
+#
+# The rule is "a line consisting solely of a marker", and the line-alone
+# requirement is what makes it safe. CAIE also writes "accept either form" as an
+# INLINE or — `0625_s22_ms_33` carries "4000 / 10 OR 4000 / 9.8" inside ONE mark
+# point. Treating that as a branch marker would split a single point in half and
+# drop half its text, trading an overcount for a silent loss.
+_ALT_MARKER_LINE_RE = re.compile(
+    r"^[ \t]*(OR|EITHER|ALTERNATIVELY|ALTERNATIVE)[ \t]*[:.]?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_on_alternative_marker(text: str) -> tuple[str, str, str] | None:
+    """Split an answer cell on a line that is solely an alternative marker.
+
+    Returns ``(before, after, MARKER)`` or ``None`` when there is no such line.
+
+    ``before`` is kept deliberately: when the marker sits mid-cell — an operator
+    fragment from the previous row precedes it, as in `0606_s23_ms_12` leaf 33b —
+    that text belongs to the PRIMARY branch. Discarding it would trade #112's
+    overcount for an undercount, which is not an improvement.
+
+    ``EITHER`` opens the FIRST route, not the alternative; ``OR`` and
+    ``ALTERNATIVE`` open the second. The caller uses the returned marker to tell
+    them apart.
+    """
+    m = _ALT_MARKER_LINE_RE.search(text)
+    if m is None:
+        return None
+    return text[: m.start()].strip(), text[m.end() :].strip(), m.group(1).upper()
+
+
 def build_questions(
     rows: list[list[str | None]],
     layout: ColumnLayout,
@@ -311,6 +349,30 @@ def build_questions(
         components = decompose_compound_q(q_cell)
 
         if components is not None:
+            # #110 mechanism 1: CAIE reprints the question number at the top of
+            # each continuation page, and the parser opened a FRESH question
+            # each time. `0606_w23_ms_13` opens question `10` four times that
+            # way, and since leaf identity is (paper_id, question_id) per DA6,
+            # the duplicates COLLAPSE two different questions into one leaf.
+            # Measured: 34 of 477 schemes, 57 leaves lost — and 14 of those
+            # schemes reconcile exactly, so the mark-total gate cannot see it.
+            #
+            # Narrow on purpose: only a bare re-declaration of the question that
+            # is CURRENTLY open counts as a continuation. Going back to an
+            # earlier number is the OTHER mechanism (a stray non-question table
+            # whose first column holds small integers) and must not be folded in
+            # silently — that would be inventing question identity rather than
+            # reading it. It stays distinct so the reconcile check can flag it.
+            if len(components) == 1 and labels and components[0] == labels[0]:
+                if answer_cell:
+                    current_points.append(
+                        make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                    )
+                    q_row_had_answer = True
+                    if math_type == MathMarkType.A:
+                        has_a_mark = True
+                continue
+
             flush()
             in_alt_branch = False
 
@@ -377,6 +439,7 @@ def build_questions(
 
         else:
             # Continuation row — add an AnswerPoint to the deepest question.
+            sticky_reset = False
 
             # #136 mechanism (A) / DA21: a row carrying a real mark but no
             # answer text. pdfplumber merges some layouts (matching tables,
@@ -408,10 +471,54 @@ def build_questions(
 
             upper = answer_cell.upper()
 
-            # Standalone OR / EITHER: switch all remaining points to the alt branch.
-            if upper in ("OR", "EITHER"):
-                in_alt_branch = True
-                continue
+            # #112: a marker on a line of its own, which is how pdfplumber
+            # actually delivers it. Handles all three sub-defects at once —
+            # marker followed by a newline, "Alternative" in the vocabulary,
+            # and a marker that is not at the cell start.
+            split = split_on_alternative_marker(answer_cell)
+            if split is not None:
+                before, after, marker = split
+                # EITHER opens the FIRST route; OR / ALTERNATIVE open the
+                # second. The Q-row branch already treated EITHER as
+                # structural-not-alternative; this branch did the opposite, so
+                # an "EITHER ... OR ..." pair scored NEITHER route as primary.
+                if before:
+                    # The cell-splitting decision (B15). A cell like
+                    # "primary working / OR / alternative working" holds ONE
+                    # mark awarded for EITHER route, so BOTH halves carry the
+                    # row's mark and the alternative is excluded from the
+                    # primary sum. That is not minting: it is one mark, two
+                    # ways to earn it.
+                    #
+                    # Measured against the alternative design, where `before`
+                    # was merged text-only into the preceding point: that
+                    # removed more marks and reconciled WORSE (304 schemes
+                    # exact against 329), so the fragment is usually this row's
+                    # own primary form rather than the previous row's spill.
+                    # `mark_is_alternative` must be honoured here too: a BRACKETED row
+                    # (#136 mechanism D) is an alternative route whichever half of a
+                    # split cell the text lands in. Omitting it counted the primary
+                    # half of an already-alternative row and pushed 0606_s23_ms_12
+                    # from an exact 80 to 82.
+                    current_points.append(
+                        make_point(
+                            before, marks_int, math_type, in_alt_branch or mark_is_alternative
+                        )
+                    )
+                    q_row_had_answer = True
+                in_alt_branch = marker != "EITHER"
+                if not after:
+                    continue
+                answer_cell = after
+                upper = answer_cell.upper()
+                # NON-STICKY, chosen by measurement (see the run notes): the
+                # marker governs its OWN point, not everything to the end of the
+                # leaf. #112 names both readings and bounds them at 77 and 246
+                # marks. Sticky removed 245 corpus-wide and cost 26 schemes their
+                # reconciliation; non-sticky removed 58 and cost 8. Over-removal
+                # turns this overcount into an undercount, which is the harder
+                # error to notice, so the conservative reading is preferred.
+                sticky_reset = marker != "EITHER"
 
             is_alt = in_alt_branch
             text = answer_cell
@@ -442,6 +549,10 @@ def build_questions(
             current_points.append(
                 make_point(text, marks_int, math_type, is_alt or mark_is_alternative)
             )
+            if sticky_reset:
+                # Non-sticky reading: the marker governs its OWN point only.
+                in_alt_branch = False
+                sticky_reset = False
             if math_type == MathMarkType.A:
                 has_a_mark = True
 

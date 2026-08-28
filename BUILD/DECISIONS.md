@@ -12825,3 +12825,119 @@ context. What C25 settles is only that H9's single shot does not wait on it.
 **Condition 1 is now partly met by DA35:** #166 is *diagnosed*, not fixed. The
 distinction is C25's to apply — "fixed, or formally re-scoped" is not the same as
 "understood."
+
+---
+
+## DA39 — #110 and #112 fixed jointly, and reconciliation is the wrong criterion for judging them (B15, C1)
+
+**Zero spend.** B15 required #112's three sub-defects fixed together and **run
+jointly with #110**; C1 waived the marking sweep and put a **zero-spend
+deterministic corpus before/after** in its place. Both arms re-parse all 479
+source schemes; the before arm imports a package copy with `rows.py` from
+`origin/develop`.
+
+| | before | after |
+|---|---|---|
+| schemes reconciling exactly | 333 | **331** |
+| corpus parsed marks | 32,913 | **32,849** (−64) |
+| `is_alternative` points | 1,084 | **1,257** |
+| **leaves lost to id collapse** | **57** | **36** |
+| **schemes with duplicate leaf ids** | **34** | **21** |
+
+### #110 — prevalence, two mechanisms, and a deliberate half-fix
+
+**34 of 477 parsed schemes (7.13%) carry duplicate leaf ids; 57 leaves collapse
+out of 17,064. And 14 of the 333 schemes that reconcile exactly are among them**
+— which is the issue's central claim, now measured: `mark_total_mismatch_escalating`
+cannot see this defect.
+
+**Two mechanisms, and only one is unambiguous.** (1) CAIE reprints the question
+number at each continuation page and the parser opened a fresh question —
+`0606_w23_ms_13` opens `10` four times. (2) A stray non-question table whose
+first column holds small integers — `0580_w21_ms_22` emits `2,3,5` between
+questions 20 and 20(b), the same root cause as #136 mechanism (C).
+
+**Mechanism 1 is fixed. Mechanism 2 is deliberately NOT auto-repaired**: going
+back to an earlier number is not a page break, and folding it into the earlier
+question would be **inventing question identity rather than reading it**. It is
+reported instead.
+
+**The detector is unarmed by default, and that is a decision.** Arming routes the
+paper to the Gemini fallback, which **DA35 measured failing on ~50%** of the
+schemes det cannot parse and **100% of 0606** — so arming trades a
+silently-wrong paper for a probably-absent one. Same footing as
+`escalate_on_defaulted_marks`, and the same kind of cost-and-coverage call that
+belongs to the human.
+
+### #112 — one rule covers all three sub-defects
+
+**A line consisting solely of a marker** (`OR`, `EITHER`, `ALTERNATIVE`,
+`ALTERNATIVELY`). **The line-alone requirement is what makes it safe**: CAIE also
+writes "accept either form" as an *inline* or — `0625_s22_ms_33` carries
+`"4000 / 10 OR 4000 / 9.8"` inside ONE point — and treating that as a branch
+marker would split a single point and drop half its text.
+
+**Also fixed, and not in the issue: `EITHER` opened the alternative.** The Q-row
+branch already treated it as structural; the continuation branch switched *into*
+the alternative on it, so an `EITHER … OR …` pair scored **neither** route as
+primary.
+
+### Three readings measured rather than argued
+
+#112 names two of them itself and bounds them at 77 and 246 marks.
+
+| reading | exact | marks removed |
+|---|---|---|
+| sticky — marker to end of leaf (#112's upper bound) | 313 | **245** |
+| `before` half merged as text, no mark | 304 | — |
+| **non-sticky — marker governs its own point (shipped)** | **331** | **64** |
+
+**Sticky reproduces #112's upper bound almost exactly — 245 against 246** — which
+is good evidence the detector finds the same marker set the issue's scan did.
+**Non-sticky is shipped** because over-removal converts an overcount into an
+*undercount*, the harder error to notice, and #112's defect is one-directional
+inflation.
+
+**The cell-splitting decision B15 asked for:** a cell holding
+`primary / OR / alternative` carries **one** mark awarded for **either** route,
+so **both halves take the row's mark** and only the alternative leaves the
+primary sum. The merge-as-text alternative was implemented and measured, and
+reconciled worse (304 against 331).
+
+### A bug in this change, caught by measurement
+
+The split's `before` half initially ignored `mark_is_alternative`, so on a
+**bracketed** row (#136 mechanism D) the primary half of an already-alternative
+route was counted — pushing `0606_s23_ms_12`, which #136 had just brought to an
+exact 80, up to **82**. Fixed and pinned. **Two independent alternative-route
+mechanisms can fire on the same row, and neither may re-admit what the other
+excluded.**
+
+### The pre-stated prediction was MISSED, and the miss is reported
+
+#112 predicted **77–246** marks removed. Measured: **64** — outside the band, low
+side. The gap is the cell split: #112's lower bound reclassified the *whole*
+marker-bearing point, whereas splitting keeps its primary half. **That
+explanation is inferred from the design, not separately measured**, and is
+recorded as inferred.
+
+### Reconciliation is CONFOUNDED here, and must not be used to accept or reject
+
+`exact` fell 333 → 331. **That is not evidence against the fix.** #112's defect
+inflates totals, so a paper reconciling while summing both routes must also have
+been *under*-counting elsewhere; removing the double-count exposes the undercount
+and the paper stops reconciling **while becoming more correct**. This is the
+"exact by cancellation" pattern DA34 recorded, now seen a third time.
+
+The six schemes that left exact were **inspected, not assumed**. All are genuine
+alternatives — `0625_s25_ms_41` prints `F = ∆p/(∆)t AND …` **OR**
+`F = ∆{mv}/(∆)t AND …` for the same `A2`, and the parser was summing both.
+
+**The standing lesson: when a fix removes a one-directional error, the metric
+that error was inflating gets worse before the corpus gets better. Choosing the
+variant that maximises that metric would have shipped the wrong reading.**
+
+### Not claimed
+
+No awarded mark moves yet — the harness reads pre-parsed `mark_scheme.json`, so
+the marking effect appears only when #95 regenerates the fixtures.
