@@ -11,8 +11,14 @@ extraction and marks non-MCQ — which is the architecture already in place. So
 #112, #110, #136, #39, #41, #95, #127 and #38 are **live work again**, not dead,
 and the $11.92–$28.02 migration costed on #151 **never arises**.
 
-**What is actually open now: C9 (the four H issues), and #166.** C20 and C21
-were both executed on 2026-08-27; C15 below records what they measured.
+**Status 2026-08-28 (run 59): #166, #52, #51 and #55 were put to the human in a
+third interview and are answered as C22–C25 below. Nothing in the OPEN section
+is now waiting on a human**, with one qualification: **C23 defers the #52
+ruling behind agent work** (pull the concrete cases), so #52 comes back.
+
+**What is actually open now: nothing that blocks.** #49 stays owed but is not a
+gate on anything currently runnable — C25 ruled it out of #55 explicitly. C20
+and C21 were executed on 2026-08-27; C15 below records what they measured.
 Everything else is agent work with a path.
 
 Nothing here is a request for more investigation — each row is a decision only
@@ -25,14 +31,49 @@ measurement) I say so.
 `BUILD/ACCURACY-INBOX.md`, naming the ask number and your choice — e.g.
 `C9: ...`. Partial answers are useful.
 
-**If you answer only one: #166.** The Gemini parse fallback fails on 50% of the
-schemes det cannot handle, and 100% of 0606. Diagnosing it costs ~$0.15 of the
-$2.01 headroom left. Until it is answered, #57 -> #47 -> #51 -> #55 have no
-populated Gemini-path strata to sit on.
+**#166 is ANSWERED (C22): diagnose one 0606 failure now, ~$0.15, hard stop at
+$0.50.** It was the "answer only one" ask and it is taken.
 
 ---
 
 # OPEN
+
+## C23 — #52's three seed rulings, waiting on agent work, then on you again
+
+**Not a live ask right now.** C23 ruled that the ECF / `oe`-alternatives /
+list-rule-over-tariff rulings cannot be made in the abstract: the human requires
+**3–5 concrete corpus instances per rule**, pulled zero-spend from `corpus/`, and
+presented as cases rather than as recommendations. Until that pull lands, #52
+stays open and the H8 log ships empty. **The mark-impact-only filter was offered
+and declined** — pre-filtering would be the agent making the judgment the ruling
+exists to capture.
+
+## C9 — B14, what remains owed on the H issues
+
+- **#49 (H4)** — split membership stays **NOT frozen**; sign-off still owed after
+  #57 delivers. **C25 ruled it is not a gate on #55.** MISSION §3.5 still
+  applies everywhere else: never close it, never mark it done, never work
+  around it.
+- **#51 (H7)** — identity settled (C14). **Onboarding still owed**, deferred by
+  C24 until the first batch is ready; #47 is designed for two seats meanwhile.
+- **#52 (H8)** — see C23 above.
+- **#55 (H9)** — **conditionally authorised by C25**; fires on three named
+  preconditions with no further interview.
+
+---
+
+# ANSWERED 2026-08-28 (run 59) — standing rulings, do not re-argue
+
+| # | Subject | Ruling |
+|---|---|---|
+| **C22** | #166 / DA31 | **Diagnose one 0606 failure now, with logging — ~$0.15 authorised.** Ceiling NOT raised; C12 stands and the gitignored-override route stays closed. **Stopping rule: up to $0.50 total, then HARD STOP**, spent on ~3 repeats of the *same* scheme — the open question is intermittent vs systematic, which is what the failed-then-succeeded-unchanged probe raised. Breadth across syllabuses was offered and declined. At the cap, report even if inconclusive; a fourth run is a fresh ask. The 12 parsed schemes stay kept-but-not-stratum-coverage. |
+| **C23** | #52 / H8 | **Not ruled — concrete cases first.** 3–5 clear instances per rule from `corpus/`, zero spend, presented as cases not recommendations. #52 returns to the human after. Mark-impact-only filtering **declined**. |
+| **C24** | #51 / H7 | **Design #47 for two seats now; onboard Abdallah later**, when the first batch is ready. The co-author route (B shapes the protocol first) was offered and declined. Onboarding stays **owed** — #51 does not close. |
+| **C25** | #55 / H9 | **Conditionally authorised, in writing.** The single run fires without further interview once **all three** hold: (1) #166 resolved or formally re-scoped; (2) costed preflight passes under #28 before any spend; (3) #47's two-seat protocol delivered. **And, ruled explicitly on a second asking: #49 is NOT a gate on #55.** The omission was put back to the human as a possible oversight and confirmed intentional — H9 may run on the split as it stands. A deliberate departure from the frozen-split framing, recorded as the human's call. #49 is not thereby closed. |
+
+---
+
+# OPEN (as of run 58 — retained for the record)
 
 ## C15 — RESOLVED by C20, and the answer falsified the question (#88 -> #166)
 
@@ -67,10 +108,11 @@ it. **The 12 parsed schemes are kept, and must not be used as stratum coverage.*
 the sole guard** (DA32). The gitignored 5M override was removed, as C12 required
 for the dollar ceiling.
 
-## C9 — B14, still owed on the H issues
+## C9 — B14, as it stood at run 58 (SUPERSEDED by C22–C25 above for #51/#52/#55)
 
-Unchanged, and not decisions I can make or work around (MISSION §3.5 — never
-close one, never mark one done, never work around one):
+Kept verbatim so the run-58 state is readable. **Do not act on this copy** —
+#51 is governed by C24, #52 by C23, #55 by C25. Only the #49 bullet still
+stands as written, and C25 removed it as a gate on #55.
 
 - **#49 (H4)** — split membership stays **NOT frozen** until #57 delivers and you
   sign off. **Correction:** #57's bullet 1 (propose the split) is agent work and

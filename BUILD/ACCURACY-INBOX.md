@@ -230,3 +230,19 @@ B14 / H issues -- still owed by me, not you: #51 labeller B identity and onboard
   - **B13 — opened as #137**, #59 blocked on it and its `Effort: S` recorded void as you ruled. The blocking fact re-verified in source: `GoldenCase` holds exactly one scan slot (`harness.py:72`, hard-coded `scan.pdf` at `:122`/`:143`). Minting a second `paper_id` as a workaround is **rejected on the issue** — DA6 keys a leaf on `(paper_id, question_id)`, so it would present the same leaves twice as independent and inflate `n`; the same trap #134 declined (DA14).
 
 SEQUENCING: #93 (with B7 folded in) lands first, then regenerate+commit the parsed corpus, then #88 items 1-2 and 4, then #57's costed preflight.
+
+- [ ] 2026-08-28T23:34:35+03:00 — Filed by the human via interactive interview, 2026-08-28. Answers the OPEN section of BUILD/ACCURACY-ASKS.md as it stood after run 58: #166 and three of C9's four H issues. #49 was not put to the human this round (it is blocked on #57) but is touched by C25 — read that ruling.
+
+C22 (#166) -- DIAGNOSE ONE 0606 FAILURE NOW, WITH LOGGING. ~$0.15 of the $2.01 headroom is authorised against the committed $8.00 ceiling. The ceiling is NOT raised: C12 stands, and the gitignored-override route stays closed.
+STOPPING RULE: up to $0.50 total, then HARD STOP. That cap exists to buy ~3 repeats of the SAME scheme, because the open question is whether the failure is intermittent or systematic -- the probe that failed then succeeded unchanged is the thing to settle. Spend it on 0606 repeats, not on breadth across syllabuses. At $0.50 stop and report whatever the logs show, including "still inconclusive"; do not come back with a fourth run already made. A further authorisation is a fresh ask.
+The 12 parsed schemes from the C20 sweep remain kept-but-not-stratum-coverage (unchanged from C15).
+
+C23 (#52 / H8) -- NOT YET RULED; THE HUMAN REQUIRES THE CONCRETE CASES FIRST. Agent work owed before the ruling: pull 3-5 clear representative instances each for ECF, `oe` alternatives, and list-rule over-tariff from `corpus/`. Zero spend, deterministic reads only. Present them as cases, not as recommendations -- the ruling is examiner judgment and the agent still does not draft it. #52 stays OPEN and the H8 log stays empty until then. The narrow "only cases that change the mark outcome" pull was offered and DECLINED: pre-filtering by mark-impact would be the agent exercising the judgment the ruling exists to capture.
+
+C24 (#51 / H7) -- DESIGN #47 FOR TWO SEATS NOW, ONBOARD ABDALLAH LATER. #47's labelling protocol is built for two independent seats from the outset (as C14 already required); Abdallah ElGammal is onboarded when the first batch is ready, not before the protocol is designed. The co-author route (B shapes the protocol first) was offered and declined. Onboarding stays OWED -- #51 does not close on this.
+
+C25 (#55 / H9) -- CONDITIONALLY AUTHORISED, IN WRITING. The single run of the frozen test split may fire once, without a further interview, when ALL THREE of these are met:
+  1. #166 is resolved -- fixed, or formally re-scoped so the run is not measuring a known-broken fallback.
+  2. A costed preflight passes under #28 and fits the ceiling BEFORE any spend.
+  3. #47's labelling protocol is delivered, for two seats.
+AND, ruled explicitly after being put to the human a second time: **#49 IS NOT A GATE ON #55.** The human was asked whether omitting #49 sign-off was an oversight and answered that it was intentional -- H9 may run on the split as it stands, with no separate #49 freeze. This is a deliberate departure from the frozen-split framing and is recorded as the human's call, not an agent reading. #49 itself is NOT thereby closed, and MISSION 3.5 still forbids closing it or working around it in any other context; what is ruled here is only that H9's single shot does not wait on it.

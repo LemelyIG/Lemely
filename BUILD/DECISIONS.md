@@ -12677,3 +12677,151 @@ reason those rows reach this code at all.
 their spend against was **190 schemes**; it is now **146**. The Gemini fallback —
 which #166 measures at ~50% success — has **44 fewer schemes to fail on**, and
 that reduction cost nothing.
+
+---
+
+## DA35 — the Gemini parse failure is Pydantic validation, and the reason was logged all along (C22, #166)
+
+**Ruling C22:** diagnose one 0606 failure now with logging, **hard stop at
+$0.50**, spent on ~3 repeats of the *same* scheme rather than breadth, and report
+at the cap even if inconclusive. **Spent $0.376981 across 3 attempts / 6 Gemini
+calls. Stopped inside the cap. No fourth run made.**
+
+**Zero-spend step first, and it mattered.** #136 merged between #166 being opened
+and C22 being ruled. Re-checking all 12 schemes the C20 sweep recorded as Gemini
+failures: **`0606_s23_ms_11`, `0625_m20_ms_32` and `0625_s23_ms_41` now
+det-parse (80/80 each)** and never reach the Gemini path at all. So 0606 is
+**0 of 3**, not 0 of 4 — and `0606_s23_ms_11` was a live candidate for this
+probe, which would have spent the authorisation on a scheme that had already left
+the population.
+
+**The cause.** Every call reached the API and returned 200. **Nothing fails in
+Gemini.** The response fails `MarkScheme` Pydantic validation; the client
+re-prompts once with the schema; that fails too; the batch records
+`status="failed"`.
+
+**"Intermittent or systematic" was the wrong dichotomy.** 3 of 3 attempts failed,
+but **no two failed the same way**:
+
+| attempt | call | validation error |
+|---|---|---|
+| 2 | first | **72 errors** — `questions.2.parts.0.id/marks/type Field required, input_value={}` |
+| 2 | retry | **69 errors** — same shape, empty `{}` objects in `parts` |
+| 3 | first | **1 error** — `Question '11a_ii': sum of primary mark points (3) exceeds total marks (2)` |
+| 3 | retry | **1 error** — `Question '12_cont': sum of primary mark points (3) exceeds total marks (2)` |
+
+**The per-call failure is stochastic; the per-paper outcome is near-certain,
+because a paper fails if *any* of its questions fails.** That one fact explains
+both patterns #166 recorded and could not account for:
+
+- **Size correlation (10.0 pages failing vs 7.3 succeeding):** more questions is
+  more independent chances to trip a validator — `P(ok) = (1 − p)^n`. Long
+  documents are not confusing the model; a paper-level all-or-nothing gate is
+  compounding a per-question rate.
+- **0606 at 0%:** Additional Mathematics prints **alternative solution routes**
+  more than any syllabus here. Gemini emits them as separate *primary* points, so
+  their sum exceeds the tariff and `Question.validate_mark_point_sum`
+  (`loose_schemas.py:910`) raises. **That validator already excludes
+  `is_alternative` — the model is simply not setting the flag.**
+
+**So #166, #112 and #136 mechanism (D) are one underlying defect wearing three
+faces.** CAIE expresses "another way to earn the same marks" in several
+notations — a bracketed `(A1)` cell, a textual `OR`/`Alternative` marker, an
+alternative route in prose — and neither parser reads all of them. Det summed
+bracketed cells (fixed) and misses textual markers (#112, open); Gemini omits the
+flag entirely.
+
+**Two failure classes, and only one is about alternatives.** The structural
+failure — empty `{}` objects inside `parts` — is malformed output, not a semantic
+disagreement, and is **not** explained by alternative routes. **A fix that
+addresses only the mark-point-sum side will move the failure rate without closing
+the gap.**
+
+**The reason was never missing; it was never printed.** `mark_schemes.py:108-116`
+records the exception in `BatchParseItem.message`, and the CLI's summary renderer
+drops it. The full error *with the raw response* is already logged as
+`gemini_validation_failure` — **at DEBUG level**. The C20 sweep ran without
+`--verbose` and captured stdout into a variable it discarded.
+
+**The first $0.145268 of this diagnosis bought a repeat of exactly that**, because
+it drove the same CLI. The answer arrived only once the probe called
+`process_mark_scheme_batch` directly and kept the message. **The rule that
+follows: a diagnostic that costs money reads the fields the code already fills
+before it re-runs the call.**
+
+**Not established, and not to be sized against:** prevalence is **n=1 scheme**;
+the 2-versus-2 split between failure classes is **n=2 attempts each**; and no fix
+is costed, because validating one needs spend and C22 authorised diagnosis only.
+
+**Ledger 5.993470 → 6.370451. Headroom $1.629549.**
+
+---
+
+## DA36 — #52's cases are pulled; the ruling stays with the human (C23)
+
+**Ruling C23:** the ECF / `oe` / list-rule rulings cannot be made in the
+abstract. Pull 3–5 clear representative instances of each from `corpus/`, present
+them **as cases, not recommendations**, and #52 comes back afterwards. **The H8
+log stays empty until then, and #52 stays open.**
+
+**Zero spend**, deterministic reads of the 289 committed schemes.
+
+**The narrow "only cases that change the mark outcome" pull was offered and
+declined, and the reason is worth preserving:** pre-filtering by mark impact
+would be the agent exercising the judgment the ruling exists to capture. So the
+selection rule is **mechanical and stated** — de-duplicate identical answer text,
+then take the first five by scheme stem in sorted order. Nothing was ranked by
+how interesting or how consequential it looked.
+
+**Population, so the sample is not mistaken for it:** ECF **27** instances, `oe`
+**908** (820 distinct), list-rule-over-tariff **135** (51 distinct). `oe` is
+larger than the other two by an order of magnitude.
+
+Two observations are recorded as facts visible in the data, not as arguments:
+schemes print *"any two from"* above **four** bullets (`0625_m21_ms_42 3c`,
+`0625_s23_ms_42 9d`); and `0625_m21_ms_42 6a` stores a 2-mark tariff against a
+**1**-mark answer point where comparable cases store 2.
+
+---
+
+## DA37 — #47 is designed for two seats now; onboarding stays owed (C24)
+
+**Ruling C24:** build #47's labelling protocol for **two independent seats from
+the outset**, and onboard Abdallah ElGammal when the first batch is ready, not
+before. The co-author route — B shapes the protocol first — was offered and
+**declined**.
+
+**#51 does not close on this.** Onboarding remains owed, and MISSION §3.5 still
+forbids closing it or working around it. What C24 settles is only that the
+protocol design does not wait for the onboarding.
+
+Consistent with C14/DA30: H7 is **inter-rater** agreement, not self-agreement, so
+a one-seat protocol would have had to be rebuilt rather than extended.
+
+---
+
+## DA38 — #55's single shot is conditionally authorised, and #49 is explicitly not a gate on it (C25)
+
+**Ruling C25:** the single run of the frozen test split may fire **once, without
+a further interview**, when all three hold:
+
+1. **#166 is resolved** — fixed, or formally re-scoped so the run is not
+   measuring a known-broken fallback.
+2. **A costed preflight passes under #28** and fits the ceiling *before* any
+   spend.
+3. **#47's labelling protocol is delivered, for two seats** (C24).
+
+**And, ruled explicitly on a second asking: #49 is NOT a gate on #55.** The human
+was asked whether omitting the #49 sign-off was an oversight and answered that it
+was intentional — **H9 may run on the split as it stands, with no separate #49
+freeze.**
+
+**This is recorded as a deliberate departure from the frozen-split framing, and
+as the human's call rather than an agent reading**, because it is the kind of
+condition an agent must never relax on its own. **#49 is not thereby closed**;
+MISSION §3.5 continues to forbid closing it or working around it in any other
+context. What C25 settles is only that H9's single shot does not wait on it.
+
+**Condition 1 is now partly met by DA35:** #166 is *diagnosed*, not fixed. The
+distinction is C25's to apply — "fixed, or formally re-scoped" is not the same as
+"understood."

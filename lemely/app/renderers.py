@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 from rich import box
@@ -115,6 +116,25 @@ def render_batch_result(result: BatchParseResult) -> Table:
     t.add_row("Skipped (existing)", str(result.skipped))
     t.add_row("Failed", str(result.failed))
     t.add_row("Transient (retry)", str(result.transient_failed))
+
+    # #166 / DA35: print the REASON, not just the count. `process_mark_scheme_batch`
+    # already records the exception in `BatchParseItem.message`; this renderer used
+    # to drop it, so a batch reported "Failed 1" and said nothing about why. Two
+    # days of sweeps ran that way, and a paid diagnosis went on rediscovering a
+    # string the code had already put in the result object.
+    problems = [
+        item
+        for item in result.items
+        if item.status in {"failed", "transient_failed", "invalid_existing"}
+    ]
+    if problems:
+        t.add_section()
+        for item in problems:
+            reason = item.message or "(no message recorded)"
+            t.add_row(
+                f"[red]{escape(Path(item.source_path).name)}[/]",
+                f"{item.status}: {escape(reason)}",
+            )
     return t
 
 

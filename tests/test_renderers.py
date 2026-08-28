@@ -124,6 +124,54 @@ class RendererTests(unittest.TestCase):
         self.assertEqual(result.failed, 2)
         self.assertIn(" 2 ", out)
 
+    def test_failure_messages_are_printed_not_just_counted(self) -> None:
+        """#166/DA35: the reason was recorded and thrown away at the render layer.
+
+        `process_mark_scheme_batch` already stores the exception in
+        `BatchParseItem.message`. This renderer showed only counts, so two days
+        of sweeps reported "Failed 1" with no reason, and $0.145 of a diagnosis
+        budget went on rediscovering something the code already knew.
+        """
+        result = BatchParseResult(
+            items=[
+                BatchParseItem(source_path="ok.pdf", output_path="ok.json", status="parsed"),
+                BatchParseItem(
+                    source_path="bad.pdf",
+                    output_path=None,
+                    status="failed",
+                    message="Gemini response did not validate against MarkScheme",
+                ),
+                BatchParseItem(
+                    source_path="flaky.pdf",
+                    output_path=None,
+                    status="transient_failed",
+                    message="503 from upstream",
+                ),
+            ],
+        )
+        out = _render_to_str(renderers.render_batch_result(result))
+        self.assertIn("bad.pdf", out)
+        self.assertIn("did not validate", out)
+        self.assertIn("flaky.pdf", out)
+        self.assertIn("503", out)
+
+    def test_a_clean_batch_prints_no_failure_section(self) -> None:
+        result = BatchParseResult(
+            items=[BatchParseItem(source_path="a.pdf", output_path="a.json", status="parsed")],
+        )
+        out = _render_to_str(renderers.render_batch_result(result))
+        # The summary always carries a "Failed" COUNT row; what must be absent
+        # is the per-file detail section.
+        self.assertNotIn("a.pdf", out)
+
+    def test_a_failure_with_no_message_still_names_the_file(self) -> None:
+        # message is optional; a failure that carries none must not disappear.
+        result = BatchParseResult(
+            items=[BatchParseItem(source_path="quiet.pdf", output_path=None, status="failed")],
+        )
+        out = _render_to_str(renderers.render_batch_result(result))
+        self.assertIn("quiet.pdf", out)
+
 
 class ExtractedAnswersRendererTests(unittest.TestCase):
     def test_renders_low_confidence_highlighted(self) -> None:
