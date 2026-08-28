@@ -242,24 +242,68 @@ the det/Gemini split they describe is **DA1's stratum axis** — which survives
 C11 and which #57's split depends on.
 
 **The gap this table does not show:** 289 schemes parse, but **190 of 479 fail
-the det parser outright** and have no parsed output at all. Closing that is #88,
-costed at a **measured $13.31** against the **$8.00** committed ceiling (C12)
-and a **$3.146479** ledger — so it does not fit, and it is open as ask **C15**.
+the det parser outright** and have no parsed output at all. Closing that is #88.
+
+**Measured 2026-08-27 under ruling C20, and the answer is worse than the cost
+question it was asked about.** A budget-bounded sweep (hard cap $3.00, the live
+ledger re-read before every scheme) attempted 24 of them: **12 parsed, 12 failed
+— 50%**, and the failure is **systematic by size**, not random.
+
+| syllabus | parsed / attempted |
+|---|---|
+| 0580 | 9 / 11 (82%) |
+| 0625 | 3 / 9 (33%) |
+| **0606** | **0 / 4 (0%)** |
+
+Failures average **10.0 pages / 11,637 chars** against **7.3 / 8,608** for
+successes. **Not output truncation** — the limit is 65,536 tokens and the largest
+success used 26,571. **Not fully deterministic** — the n=1 probe failed, then
+succeeded unchanged.
+
+**So the Gemini parse path closes roughly half of the 190-scheme gap, not the
+gap.** The sweep is **NOT REPORTABLE** for its stated purpose: four DA1 strata
+(`0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`) got **zero** successes, so the
+stratum coverage the spend was justified by was not delivered. The 12 parsed
+schemes are kept and **must not be presented as coverage**. Cost per *success*
+was **$0.2372**, 3.39× the projection, extrapolating to **$45.08** for all 190.
+
+**This was invisible until now because the 2026-08-26 run aborted at 6 of 190 on
+cost — and all 6 happened to succeed.** An abort is not a pilot. Open as **#166**
+(DA31); the remaining decision is whether to spend ~$0.15 of the $2.01 headroom
+diagnosing it.
 
 ---
 
 ## Spend
 
-Re-summed across all four worktree ledgers at 2026-08-27, **never carried
+Re-summed across all four worktree ledgers at 2026-08-28, **never carried
 forward from a header** (that rule exists because carrying it forward had
 reproduced the previous run's arithmetic error every run).
 
 | | |
 |---|---|
-| **Cumulative, programme-wide** | **$3.146479** |
+| **Cumulative, programme-wide** | **$5.993470** |
 | **Committed hard ceiling** | **$8.00** — `lemely/runtime/config.py:111` |
-| Headroom | **$4.853521** |
+| Headroom | **$2.006530** |
 | ~~Local override~~ | ~~$25.00 in `lemely.toml`~~ — **REMOVED 2026-08-27 by ruling C12 (DA28)** |
+| ~~Token ceiling~~ | ~~5,000,000 `per_run_token_ceiling`~~ — **REMOVED 2026-08-27 by ruling C21 (DA32)**; the dollar ceiling is now the sole guard |
+
+The programme-wide figure is the sum of four files:
+
+| worktree ledger | USD |
+|---|---|
+| `Lemely-worktrees/accuracy` | 5.588999 |
+| `Lemely` | 0.402869 |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+
+**The enforcing guard does not see that sum.** `GeminiClient` builds its ledger
+path from `settings.paths.output_dir` (`gemini.py:162`), so the ceiling check at
+`gemini.py:298` reads only the **local** worktree's file — it would allow $2.411
+here against a programme headroom of $2.007. Recorded in DA32; publish the sum,
+never the local file.
+
+**$2.847 of the total is C20's sweep**, which held its own $3.00 cap exactly.
 
 **The ceiling published here used to read $25.00, and that was wrong.** The
 $25.00 lives in `lemely.toml`, which is gitignored: it does not survive worktree

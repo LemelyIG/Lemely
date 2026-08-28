@@ -1,0 +1,50 @@
+{
+  "label": "sweep88-c20-2026-08-27",
+  "issue": 88,
+  "ruling": "C20 \u2014 budget-bounded, hard cap $3.00",
+  "design": "budget-bounded prefix of a pre-committed stratum-balanced order",
+  "budget_usd": 3.0,
+  "probe_spent_usd": 0.175581,
+  "total_spent_usd": 2.84699,
+  "selected_n": 38,
+  "parsed_ok": 12,
+  "failed": 12,
+  "stopped_for_budget": true,
+  "parsed_stems": [
+    "0580_m21_ms_22",
+    "0580_s21_ms_12",
+    "0580_s21_ms_32",
+    "0580_s22_ms_41",
+    "0580_s23_ms_22",
+    "0580_s23_ms_31",
+    "0580_s24_ms_13",
+    "0580_w19_ms_12",
+    "0580_w19_ms_41",
+    "0625_s19_ms_33",
+    "0625_s24_ms_21",
+    "0625_w20_ms_63"
+  ],
+  "failed_stems": [
+    "0580_s21_ms_23",
+    "0580_s23_ms_41",
+    "0606_m20_ms_12",
+    "0606_m21_ms_22",
+    "0606_s23_ms_11",
+    "0606_w19_ms_22",
+    "0625_m20_ms_32",
+    "0625_s19_ms_53",
+    "0625_s23_ms_41",
+    "0625_s25_ms_42",
+    "0625_w19_ms_52",
+    "0625_w19_ms_61"
+  ],
+  "coverage_by_stratum": {
+    "0580/p1": 3,
+    "0580/p2": 2,
+    "0580/p3": 2,
+    "0580/p4": 2,
+    "0625/p2": 1,
+    "0625/p3": 1,
+    "0625/p6": 1
+  }
+}

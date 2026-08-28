@@ -2932,3 +2932,64 @@ claim properly.
   an available measurement; this was trusting a derived *status* over the acceptance
   criteria sitting in the issue body. Verify against the source, including when the source
   is the issue itself.
+
+---
+
+## run-2026-08-27-g — the budget held, the sweep did not, and the failure was the finding
+
+**Two rulings arrived and both were executed the same run.** C20: *"make the
+sweep cost < $3.00."* C21: *"set the token ceiling to be whatever is most optimal
+(no hard limit)."*
+
+**C21 first, because it changed how C20 could be run safely.**
+`per_run_token_ceiling` went to `None` — the gitignored 5,000,000 override
+removed, matching what C12 did to the dollar ceiling. That ceiling had been sized
+twice and wrong twice, both times from a cost model DA26 records as falsified at
+1.83×. The committed **$8.00 `total_usd_ceiling` is now the sole guard**, and it
+guards the thing that is actually scarce. Recorded as **DA32**.
+
+**Then C20, built so the estimate was allowed to be wrong.** The obvious way to
+hit $3.00 is to size a sample from a rate and hope. That is exactly what failed
+on #88 — a rate estimate stood between the programme and the money, and it was
+out by 1.83×. So `run_sweep_c20.py` re-reads the live ledger before every scheme
+and stops when `spent + reserve` would cross $3.00. The cap is arithmetic, not a
+projection.
+
+**It held. $2.8470 of $3.00, stopped before scheme 24 of 37.** That part of the
+run did exactly what it was asked to.
+
+**And the sweep failed anyway, on a dimension the budget could not see.**
+24 attempted, **12 parsed, 12 failed**. Cost per *success* $0.2372 — **3.39×** the
+$0.07005 projection, extrapolating to **$45.08** for all 190. The estimate was
+wrong a second time, in the same direction, and the cap absorbed it. That is the
+design working.
+
+**The verdict is NOT REPORTABLE, and for the right reason.** The spend was
+justified by populating DA1's empty Gemini-path strata. **Four strata got zero
+successes** — `0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`. There was a real
+temptation here to report 12 successful parses as progress. They are not
+progress toward the stated goal, and calling a sample with empty strata a
+stratified sample is precisely the narrowed-denominator move MISSION §14 names.
+The 12 are kept; they are not coverage.
+
+**What the run actually found, which is larger than the cost question.** The
+Gemini parse path — C11's designated fallback for every scheme det cannot handle
+— **fails on half of them, systematically by size**. 0580 82%, 0625 33%, **0606
+0%**. Failures average 10.0 pages / 11,637 chars against 7.3 / 8,608. Two causes
+ruled out by measurement rather than assumed away: **not truncation** (65,536
+limit, largest success 26,571), and **not fully deterministic** — the n=1 probe
+failed, then succeeded unchanged.
+
+**Why nobody had seen it, and the rule that follows.** The 2026-08-26 run aborted
+at **6 of 190 on cost** — and all 6 happened to succeed. **An abort is not a
+pilot.** A run cut short for an unrelated reason leaves survivors that are not a
+random sample of what it never reached, and reading a success rate off that
+prefix is how a 50% failure rate hid behind a cost overrun for two days.
+
+**Stopped short of diagnosing, deliberately.** Reproducing one 0606 failure with
+logging costs ~$0.15 of the **$2.01** headroom left. Retrying the 12 failures
+would consume the rest and still leave 0606 unproven. Both are spend decisions,
+so both went to the human as **#166** rather than into this run.
+
+**Ledger 3.146479 → 5.993470**, re-summed from the worktree files rather than
+carried forward from the header. Recorded as **DA31**.
