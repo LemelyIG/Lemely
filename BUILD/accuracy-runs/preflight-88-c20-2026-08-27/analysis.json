@@ -1,0 +1,49 @@
+{
+  "verdict": "NOT REPORTABLE for its stated purpose \u2014 stratum coverage NOT achieved",
+  "budget_cap_held": true,
+  "spent_usd": 2.84699,
+  "budget_usd": 3.0,
+  "attempted": 24,
+  "parsed_ok": 12,
+  "failed": 12,
+  "success_rate": 0.5,
+  "usd_per_SUCCESS": 0.2372,
+  "projection_usd_per_scheme": 0.07005,
+  "ratio_vs_projection": 3.39,
+  "extrapolated_190_usd": 45.08,
+  "success_by_syllabus": {
+    "0580": {
+      "ok": 9,
+      "attempted": 11
+    },
+    "0606": {
+      "ok": 0,
+      "attempted": 4
+    },
+    "0625": {
+      "ok": 3,
+      "attempted": 9
+    }
+  },
+  "profile_success": {
+    "n": 12,
+    "pages_mean": 7.3,
+    "text_chars_mean": 8608
+  },
+  "profile_failed": {
+    "n": 12,
+    "pages_mean": 10.0,
+    "text_chars_mean": 11637
+  },
+  "truncation_ruled_out": {
+    "max_output_tokens": 65536,
+    "largest_success_tokens": 26571,
+    "note": "failures are NOT output-truncation at the 65k ceiling"
+  },
+  "strata_with_zero_successes": [
+    "0606/p1",
+    "0606/p2",
+    "0625/p4",
+    "0625/p5"
+  ]
+}

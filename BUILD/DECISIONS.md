@@ -12347,3 +12347,117 @@ ordering assume the number of labellers up front.
 **Still blocked and not by this:** #51 is downstream of #47, which is behind
 #57, which is behind #88. Naming labeller B removes a decision, not a
 dependency. Onboarding is still owed.
+
+---
+
+## DA31 — the budget-bounded sweep held its cap and falsified its own premise (C20, #88, opens #166)
+
+**Ruling C20: "make the sweep cost < $3.00."** Taken on 2026-08-27 against the
+C15 fork, which had offered raise-the-ceiling / reduce-the-set / do-not-proceed.
+C20 is option 2 with the budget, not the sample size, as the binding constraint.
+
+**How it was made binding.** Rather than size a sample from a rate estimate and
+hope, `run_sweep_c20.py` checks the live ledger before every scheme and stops
+when `spent + reserve` would exceed $3.00. The estimate was allowed to be wrong;
+the cap was not. This is the direct lesson of DA26 — a rate model that had
+already been falsified once must not be the thing standing between the programme
+and the money.
+
+It worked. **$2.8470 of $3.00, stopped before scheme 24 of 37.** No overrun.
+
+**And the sweep still failed, for a reason no cost control could have caught.**
+
+| | |
+|---|---|
+| attempted | 24 |
+| parsed OK | **12** |
+| failed | **12 — 50%** |
+| cost per *success* | **$0.2372** vs $0.07005 projected — **3.39×** |
+| extrapolated to 190 | **$45.08** |
+
+**Verdict: NOT REPORTABLE for its stated purpose.** The sweep existed to
+populate DA1's empty Gemini-path strata. **Four strata got zero successes** —
+`0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`. A stratified sample with empty strata
+is not a stratified sample, and spending the remaining headroom would not change
+that: the failures are not random.
+
+**The finding underneath, which is worth more than the cost number.** The Gemini
+parse path — the designated fallback under C11 for every scheme det cannot
+handle — fails on **half** of them, and **systematically by size**:
+
+- **0580 9/11 (82%) · 0625 3/9 (33%) · 0606 0/4 (0%).**
+- Failures are larger: **10.0 pages / 11,637 chars** against **7.3 / 8,608** for
+  successes.
+- **Not truncation** — `_MAX_OUTPUT_TOKENS` is 65,536 and the largest success
+  used 26,571. Ruled out by measurement, not assumed away.
+- **Not fully deterministic** — the n=1 probe (`0580_m21_ms_22`) failed, then
+  succeeded unchanged.
+
+**Why this was invisible until now, and the rule that follows.** The 2026-08-26
+run aborted at **6 of 190 on cost** — and all 6 happened to succeed. A run that
+stops early for a *good* reason still stops early, and its survivors are not a
+random sample of what it did not reach. **An abort is not a pilot.** Do not read
+a success rate off the prefix of a run that was cut short for an unrelated cause.
+
+**Not diagnosed, deliberately.** Reproducing one 0606 failure with logging costs
+~$0.15 of the $2.01 headroom remaining. That is a spend decision, so it went to
+the human as **#166**, not into this run.
+
+**Ledger: 3.146479 → 5.993470. Headroom against the C12/$8.00 ceiling: $2.01.**
+
+**What C11 now means in practice.** C11 says det parses any & all mark-schemes,
+with Gemini as the fallback. This measurement says that fallback closes roughly
+**half** of the 190-scheme gap, not the gap. C11 is not withdrawn — it is a
+division of labour, not a claim about success rates — but any plan that assumed
+the fallback was reliable needs #166 answered first. **The 12 parsed schemes are
+kept; they must not be presented as stratum coverage.**
+
+---
+
+## DA32 — no hard token ceiling; the dollar ceiling is the sole guard (C21, amends DA28)
+
+**Ruling C21: "set the token ceiling to be whatever is most optimal (no hard
+limit)."** `per_run_token_ceiling` is now `None`. The gitignored local override
+of 5,000,000 was removed, matching C12's treatment of the dollar ceiling: a
+gitignored value must never shadow the committed one.
+
+**Why a token ceiling was the wrong instrument.** It was sized twice and wrong
+both times — set from a cost model that DA26 records as falsified at 1.83×, then
+flagged as undersized by #88's own measurement (7.25M against a 5M limit, which
+would have tripped at roughly scheme 131). A ceiling that fires on a proxy for
+cost, rather than on cost, stops runs that were affordable and lets through runs
+that were not.
+
+**The $8.00 `total_usd_ceiling` (DA28/C12) is now the only ceiling**, and it is
+the correct one: it bounds the thing that is actually scarce, it is measured from
+the ledger rather than estimated, and it needs no re-derivation when token
+pricing or the thinking-token share moves. C20's sweep is the existence proof —
+a per-scheme ledger check held $3.00 exactly while the token model it was
+nominally based on was out by 3.39×.
+
+**Residual risk, stated rather than hidden:** with no token ceiling, a single
+runaway call is bounded only by `_MAX_OUTPUT_TOKENS` (65,536) per call and by the
+dollar ceiling in aggregate. That is accepted. The mitigation is the one C20
+demonstrated: **long runs check the ledger between units of work**, so the guard
+binds continuously rather than once at the end.
+
+**One gap found while re-summing, and it matters more now the dollar ceiling is
+the only guard.** `GeminiClient` builds its ledger path from
+`settings.paths.output_dir` (`gemini.py:162`), so the ceiling check at
+`gemini.py:298` fires on **one worktree's** ledger, not the programme's. Re-summed
+2026-08-28:
+
+| worktree ledger | USD |
+|---|---|
+| `Lemely-worktrees/accuracy` | 5.588999 |
+| `Lemely` | 0.402869 |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+| **programme-wide** | **5.993470** |
+
+So the guard would let this worktree spend to **$2.411** while the programme
+figure has **$2.007** left — it under-counts by the $0.404 spent in other trees.
+Not a defect introduced by C21, and not fixed here; recorded so it is not
+discovered the hard way. **The programme-wide sum, not the local file, is the
+figure to publish** — which is why every run re-sums all four rather than
+carrying a header forward.

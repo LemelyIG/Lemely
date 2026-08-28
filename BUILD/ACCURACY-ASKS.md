@@ -1,9 +1,9 @@
 # ACCURACY-ASKS.md — the open human decisions, in one place
 
-**Status 2026-08-27 (run 57): C8 and C10 are CLOSED and the queue is
-UNBLOCKED.** The B1–B18 list was discharged at run 55; C1–C7 were taken the same
-day; **C11–C14 were taken in a second interview on 2026-08-27** and are recorded
-below as standing rulings, not open questions.
+**Status 2026-08-28 (run 58): C15 is CLOSED by ruling C20, C21 is executed,
+and the queue is UNBLOCKED.** The B1–B18 list was discharged at run 55; C1–C7
+were taken the same day; **C11–C14 were taken in a second interview on
+2026-08-27** and are recorded below as standing rulings, not open questions.
 
 **C11 unblocked everything.** Ruling C6 (*"deterministic parsing for MCQ ONLY"*)
 was **superseded**: det parses all mark schemes and marks MCQ; Gemini does all
@@ -11,8 +11,9 @@ extraction and marks non-MCQ — which is the architecture already in place. So
 #112, #110, #136, #39, #41, #95, #127 and #38 are **live work again**, not dead,
 and the $11.92–$28.02 migration costed on #151 **never arises**.
 
-**What is actually open now: C9 (the four H issues), and #88.** Everything else
-is agent work with a path.
+**What is actually open now: C9 (the four H issues), and #166.** C20 and C21
+were both executed on 2026-08-27; C15 below records what they measured.
+Everything else is agent work with a path.
 
 Nothing here is a request for more investigation — each row is a decision only
 you can make. Where I have a recommendation I give it, and where a
@@ -22,48 +23,49 @@ measurement) I say so.
 **How to answer.** Reply on the accuracy control topic
 (`lemely-acc-ctl-bqlsqcY9FfbfQd` on `http://home-server:7532`), or append to
 `BUILD/ACCURACY-INBOX.md`, naming the ask number and your choice — e.g.
-`C15: (1)`. Partial answers are useful.
+`C9: ...`. Partial answers are useful.
 
-**If you answer only one: C15.** It is the only thing gating a measurement the
-programme needs, and #57 → #47 → #51 → #55 all sit behind it.
+**If you answer only one: #166.** The Gemini parse fallback fails on 50% of the
+schemes det cannot handle, and 100% of 0606. Diagnosing it costs ~$0.15 of the
+$2.01 headroom left. Until it is answered, #57 -> #47 -> #51 -> #55 have no
+populated Gemini-path strata to sit on.
 
 ---
 
 # OPEN
 
-## C15 — #88: the corpus parse sweep costs $13.31 and the ceiling is now $8.00
+## C15 — RESOLVED by C20, and the answer falsified the question (#88 -> #166)
 
-**Carried over unresolved, and C12 has made it harder rather than easier.**
+**Ruling C20 was "make the sweep cost < $3.00"** — option 2 of the fork below,
+with the budget rather than the sample size made binding. It was executed on
+2026-08-27. **The cap held: $2.8470 of $3.00, stopped before scheme 24 of 37.**
 
-#88's item-2 sweep — Gemini-parsing the **190 mark schemes the det parser fails
-outright** — was authorised at a costed $7.26, then **measured at n=1, confirmed
-at n=6, and aborted at 6 of 190** because the real figure is **$13.31** (1.83×).
-Three causes, all structural: input 2.07× under (PDF via Files API, not billed
-per page), output 1.35× under (~36% thinking tokens, which a det-JSON proxy
-**cannot represent at any sample size**), and 1.33 calls per scheme, not 1.00.
+**The sweep is NOT REPORTABLE for its purpose.** 24 attempted, **12 parsed, 12
+failed — 50%**. Four DA1 strata got **zero** successes (`0606/p1`, `0606/p2`,
+`0625/p4`, `0625/p5`), so the stratum coverage the spend was justified by was not
+delivered. Cost per *success* was **$0.2372** — **3.39x** the projection, which
+extrapolates to **$45.08** for all 190.
 
-**Ruling C12 made the committed $8.00 authoritative**, so from a ledger of
-**$3.146479** the headroom is **$4.853521** — and $13.31 does not fit. It fitted
-under the gitignored $25.00 that C12 removed.
+**The real finding is not about cost.** The Gemini parse path — C11's designated
+fallback for every scheme det cannot handle — fails on half of them and
+systematically by size (**0580 82% / 0625 33% / 0606 0%**; failures average 10.0
+pages and 11,637 chars against 7.3 and 8,608). Truncation is ruled out by
+measurement (65,536 limit, largest success 26,571), and it is not fully
+deterministic — the probe failed, then succeeded unchanged. **This was invisible
+because the 2026-08-26 run aborted at 6 of 190 on cost, and all 6 happened to
+succeed.**
 
-**Why it matters, and it now matters more than before.** Ruling C11 says *"det
-parses any & all mark-schemes"*. That is true of what det **can** parse — but
-**190 of 479 source schemes have no parsed output at all**. This sweep is what
-would make C11 literally true. It also populates DA1's **empty Gemini-path
-strata**, which is what #57's split needs, which is what #47's labelling needs.
+Recorded as **DA31**. Opened as **#166 (`owner:human`)**, which now carries the
+one remaining decision: diagnosing a single 0606 failure with logging costs
+**~$0.15 of the $2.01 headroom** left against the $8.00 ceiling. I did not spend
+it. **The 12 parsed schemes are kept, and must not be used as stratum coverage.**
 
-1. **Raise the committed ceiling and proceed at $13.31.** Ledger → ~$16.5. Needs
-   a committed figure from you (C12 says raise the default, never re-add a
-   gitignored override), and `per_run_token_ceiling` raised 5M → ~9M, since #88
-   measured 7.25M against a 5M ceiling that would trip at roughly scheme 131.
-2. **Proceed over a reduced set.** Note this changes DA1 stratum coverage, which
-   is the entire justification for the spend — **not a free trim**.
-3. **Do not proceed.** The nine Gemini-path strata stay empty, #57 keeps its
-   parse-path axis unpopulated, and C11's *"any & all"* stays aspirational.
+**Ledger: 3.146479 -> 5.993470. Headroom: $2.01.**
 
-**No recommendation.** Option 1 spends your money on my say-so; option 3 is the
-one that costs me nothing, which is exactly why I should not push it. **The 6
-schemes already parsed cost $0.42 and are kept whichever way you go.**
+**Also ruled and executed: C21 — no hard token ceiling.**
+`per_run_token_ceiling` is `None`; the committed **$8.00 `total_usd_ceiling` is
+the sole guard** (DA32). The gitignored 5M override was removed, as C12 required
+for the dollar ceiling.
 
 ## C9 — B14, still owed on the H issues
 
