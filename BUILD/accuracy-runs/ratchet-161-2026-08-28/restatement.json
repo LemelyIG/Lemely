@@ -1,0 +1,77 @@
+{
+  "issue": 161,
+  "ruling": "C13 - publish an upper interval bound, arm against that",
+  "source_run": "aa-floor-2026-08-23-a",
+  "spend_usd": 0.0,
+  "n_repeats": 10,
+  "n_distinct_leaves": 31,
+  "observed_rates": [
+    0.3548387096774194,
+    0.2903225806451613,
+    0.2903225806451613,
+    0.3225806451612903,
+    0.3225806451612903,
+    0.2903225806451613,
+    0.3548387096774194,
+    0.41935483870967744,
+    0.2903225806451613,
+    0.3225806451612903
+  ],
+  "observed_counts": [
+    11,
+    9,
+    9,
+    10,
+    10,
+    9,
+    11,
+    13,
+    9,
+    10
+  ],
+  "mean": 0.325806,
+  "sd_between_repeats": 0.041506,
+  "min": 0.2903225806451613,
+  "max": 0.41935483870967744,
+  "range_width_pp": 12.9,
+  "pooled": {
+    "successes": 101,
+    "trials": 310,
+    "p_hat": 0.325806
+  },
+  "predictive_upper_bound_95": {
+    "k": 15,
+    "rate": 0.483871,
+    "published_truncated_4dp": 0.4838,
+    "reading": "an unchanged run exceeds this about 5% of the time"
+  },
+  "dispersion_check": {
+    "observed_sd": 0.041506,
+    "binomial_sd_at_p_hat": 0.084177,
+    "under_dispersed": true,
+    "note": "under-dispersed, so the binomial-based bound is WIDER than truth - conservative for a gate, and not to be sold as tight"
+  },
+  "observed_runs_exceeding_bound": 0,
+  "per_paper_p95_distribution": {
+    "values": [
+      0.8333333333333334,
+      0.8333333333333334,
+      0.6666666666666666,
+      0.8333333333333334,
+      0.8333333333333334,
+      0.8333333333333334,
+      0.8571428571428571,
+      0.8571428571428571,
+      0.8333333333333334,
+      0.8333333333333334
+    ],
+    "mean": 0.821429,
+    "max": 0.8571428571428571
+  },
+  "the_29_03_figure": {
+    "value": 0.2903,
+    "what_it_actually_is": "the MINIMUM of the 10 observed rates, not a central estimate",
+    "runs_at_or_below_it": 0,
+    "runs_above_it": 10
+  }
+}
