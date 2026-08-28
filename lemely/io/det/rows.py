@@ -135,6 +135,35 @@ def split_on_alternative_marker(text: str) -> tuple[str, str, str] | None:
     return text[: m.start()].strip(), text[m.end() :].strip(), m.group(1).upper()
 
 
+def _prune_phantom_leaves(questions: list[Question]) -> list[Question]:
+    """Drop TOP-LEVEL leaf questions carrying neither marks nor answer points (#110).
+
+    A data-table line beginning with a number — a stem-and-leaf row, a frequency
+    table, a list of readings — is decomposed as a new **top-level** question.
+    #136 mechanism (C) already stops those rows minting a mark, which leaves
+    them as empty shells: no marks, no points, and an id that collides with the
+    real question of the same number, silently collapsing two leaves into one
+    under DA6's ``(paper_id, question_id)`` identity.
+
+    **This is not deduping and not renumbering**, both of which would invent
+    question identity rather than read it (see the #110 note in the main loop).
+    It removes nodes with no content: a leaf with no marks and no points
+    contributes nothing to any total, cannot be matched against a candidate's
+    answer, and cannot be marked.
+
+    Deliberately narrow in two ways, both learned from a test that caught the
+    wider rule doing harm:
+
+    * **Top level only.** A labelled sub-part like ``1(b)`` is structure the
+      paper printed, and is kept even when empty. Only a bare top-level number
+      can be the data-table artefact this targets.
+    * **Both conditions required.** A question whose tariff was read off the
+      page is real even if its answer text failed to parse; dropping it would
+      silently shrink the paper.
+    """
+    return [q for q in questions if q.parts or (q.marks or 0) or (q.answer_points or [])]
+
+
 def build_questions(
     rows: list[list[str | None]],
     layout: ColumnLayout,
@@ -559,6 +588,8 @@ def build_questions(
     # Final flush and full unwind
     flush()
     unwind_to(0)
+
+    top_level = _prune_phantom_leaves(top_level)
 
     if not top_level:
         raise ParseError("Theory table contained no questions after parsing")

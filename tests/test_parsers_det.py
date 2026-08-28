@@ -1964,3 +1964,68 @@ class DuplicateLeafIdDetectorTests(unittest.TestCase):
         with self.assertRaises(ParseError) as ctx:
             reconcile_check(dup, _metadata(80), escalate_on_duplicate_leaf_ids=True)
         self.assertIn("1", str(ctx.exception))
+
+
+class PhantomLeafTests(unittest.TestCase):
+    """#110 mechanism 2, the part that CAN be repaired without inventing identity.
+
+    A data-table line beginning with a number is decomposed as a new top-level
+    question. #136 mechanism (C) already stops those rows minting a mark, which
+    leaves them as **empty shells**: no marks, no answer points, and an id that
+    collides with the real question of the same number.
+
+    Dropping them is not deduping and not renumbering — it removes a node with
+    no content. Measured: 11 of the 71 leaves involved in duplicate ids are such
+    shells, and in `0580_s23_ms_22` (a golden-corpus scheme) each duplicate pair
+    is exactly one real question plus one shell, so dropping the shells clears
+    the collision entirely.
+    """
+
+    def test_an_empty_phantom_leaf_is_dropped(self) -> None:
+        rows: list[list[str | None]] = [
+            ["8(a)", "the real answer", "2"],
+            # data-table lines: numeric first cell, numeric text, no marks cell
+            ["1", "2", ""],
+            ["3", "4", ""],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["8"])
+
+    def test_dropping_shells_clears_the_duplicate_id_collision(self) -> None:
+        # The 0580_s23_ms_22 shape: real questions 1 and 2, then a data table
+        # whose rows re-open ids 1 and 2 as empty shells.
+        rows: list[list[str | None]] = [
+            ["1", "first answer", "1"],
+            ["2", "second answer", "1"],
+            ["8(a)", "eighth answer", "2"],
+            ["1", "2", ""],
+            ["2", "3", ""],
+        ]
+        ids = [q.id for q in _run_theory(rows)]
+        self.assertEqual(ids, ["1", "2", "8"])
+        self.assertEqual(len(ids), len(set(ids)), "no duplicate top-level ids remain")
+
+    def test_a_question_with_marks_but_no_points_is_KEPT(self) -> None:
+        # Only a node with NEITHER marks NOR points is contentless. A question
+        # whose tariff was read off the page is real even if its answer text
+        # did not parse — dropping it would silently shrink the paper.
+        rows: list[list[str | None]] = [["7", "", "3"]]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["7"])
+        self.assertEqual(questions[0].marks, 3)
+
+    def test_a_parent_whose_subparts_are_real_is_KEPT(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9(a)", "part a", "1"],
+            ["9(b)", "part b", "1"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["9"])
+        self.assertEqual([p.id for p in questions[0].parts or []], ["9a", "9b"])
+
+    def test_dropping_shells_cannot_change_the_mark_total(self) -> None:
+        rows: list[list[str | None]] = [
+            ["1", "real", "5"],
+            ["2", "3", ""],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual(sum(q.marks or 0 for q in questions), 5)
