@@ -3075,3 +3075,81 @@ marking effect appears only when #95 regenerates the fixtures, which this
 unblocks.
 
 Recorded as **DA34**.
+
+---
+
+## run-2026-08-28-c — C22 bought the answer, and the answer was already in the logs
+
+**Four rulings arrived (C22–C25). Three were executed this run; C23's is agent
+work that hands back.**
+
+**C22 — diagnose one 0606 failure, hard stop $0.50. Spent $0.376981 across 3
+attempts and 6 Gemini calls, stopped inside the cap, no fourth run made.**
+
+**The zero-spend step first, and it changed the target.** #136 had merged since
+#166 was opened. Re-checking the twelve schemes the C20 sweep recorded as Gemini
+failures, **three now det-parse** — including `0606_s23_ms_11`, which was a live
+candidate for this probe. Spending the authorisation on it would have diagnosed a
+scheme that had already left the population. **0606 is 0 of 3, not 0 of 4.**
+
+**The cause: nothing is failing in Gemini.** Every call returned 200. The
+response fails `MarkScheme` Pydantic validation, the client re-prompts once, that
+fails too, and the batch records `failed`.
+
+**"Intermittent or systematic" was the wrong question, and the data said so.**
+3 of 3 attempts failed, but **no two failed the same way** — two structural
+(empty `{}` objects in `parts`, 72 and 69 errors) and two business-rule
+(`sum of primary mark points exceeds total marks`, at `11a_ii` then `12_cont`).
+Different mechanism, different question, every time.
+
+**The per-call failure is stochastic; the per-paper outcome is near-certain,
+because a paper fails if any question fails.** That single fact explains both
+patterns #166 had recorded and could not account for. The size correlation is
+`P(ok) = (1 − p)^n` — long documents are not confusing the model, a paper-level
+all-or-nothing gate is compounding a per-question rate. And 0606 fails at 0%
+because Additional Mathematics prints **alternative solution routes**, which
+Gemini emits as separate *primary* points whose sum then exceeds the tariff.
+`validate_mark_point_sum` already excludes `is_alternative`; **the model is not
+setting the flag.**
+
+**So #166, #112 and #136's mechanism (D) are one defect wearing three faces.**
+CAIE says "another way to earn the same marks" in several notations — a bracketed
+`(A1)`, a textual `OR`/`Alternative`, a route in prose — and neither parser reads
+all of them. That convergence was not visible from any one of the three.
+
+**The part worth being uncomfortable about: the reason was never missing.**
+`mark_schemes.py` records it in `BatchParseItem.message`; the CLI summary
+renderer drops it. The full error, *with the raw response*, is already logged as
+`gemini_validation_failure` at DEBUG level. The C20 sweep ran without
+`--verbose` and captured stdout into a variable it threw away.
+
+**So the first $0.145268 of a $0.50 authorisation bought a repeat of that**,
+because my probe drove the same CLI. The answer came only when the second probe
+called `process_mark_scheme_batch` directly and kept the message. **A diagnostic
+that costs money should read the fields the code already fills before it re-runs
+the call.** I did not, and it cost 39% of the budget to learn something the repo
+already knew.
+
+**Held to the cap and to the scope:** prevalence is n=1 scheme, the split between
+the two failure classes is n=2 attempts each, and no fix is costed — validating
+one needs spend and C22 authorised diagnosis only. Recorded as **DA35**.
+
+**C23 — #52's cases pulled, ruling handed back.** Zero spend over the 289
+committed schemes. The narrowing to "only cases that change the mark outcome" was
+offered and **declined**, and the reason is the interesting part: pre-filtering by
+mark impact would have been me making the judgment the ruling exists to capture.
+So the selection is mechanical and stated — de-duplicate, take the first five by
+stem — and nothing is ranked by how consequential it looked. ECF **27**, `oe`
+**908**, list-rule-over-tariff **135**. #52 stays open, the H8 log stays empty.
+**DA36.**
+
+**C24 — #47 built for two seats now, onboarding still owed. DA37.**
+
+**C25 — #55 conditionally authorised, and #49 explicitly not a gate on it.**
+Recorded as the human's deliberate departure from the frozen-split framing, with
+their name on it, because relaxing that condition is precisely what an agent must
+never do unilaterally. #49 is not closed by it. **Condition 1 is only partly met:
+#166 is diagnosed, not fixed, and "fixed or formally re-scoped" is not the same
+as "understood".** That judgment is the human's to apply. **DA38.**
+
+**Ledger 5.993470 → 6.370451. Headroom $1.629549.**

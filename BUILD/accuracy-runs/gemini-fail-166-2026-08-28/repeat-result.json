@@ -1,0 +1,37 @@
+{
+  "issue": 166,
+  "ruling": "C22 \u2014 up to $0.50, ~3 repeats of the SAME scheme, report at the cap",
+  "target": "0606_m21_ms_22",
+  "cap_usd": 0.5,
+  "ledger_at_c22_start": 5.588999,
+  "ledger_now": 5.965980250000056,
+  "spent_usd": 0.376981,
+  "attempts": [
+    {
+      "attempt": 1,
+      "ok": false,
+      "usd": 0.145268,
+      "message": null,
+      "note": "run by reproduce.py; message dropped by the CLI renderer"
+    },
+    {
+      "attempt": 2,
+      "status": "failed",
+      "ok": false,
+      "usd": 0.081104,
+      "message": "Gemini response did not validate against MarkScheme even after schema-correction retry."
+    },
+    {
+      "attempt": 3,
+      "status": "failed",
+      "ok": false,
+      "usd": 0.15061,
+      "message": "Gemini response did not validate against MarkScheme even after schema-correction retry."
+    }
+  ],
+  "outcomes": [
+    "failed",
+    "failed",
+    "failed"
+  ]
+}
