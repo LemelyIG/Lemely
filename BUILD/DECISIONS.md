@@ -12461,3 +12461,150 @@ Not a defect introduced by C21, and not fixed here; recorded so it is not
 discovered the hard way. **The programme-wide sum, not the local file, is the
 figure to publish** — which is why every run re-sums all four rather than
 carrying a header forward.
+
+---
+
+## DA34 — #136: four mark-total defects, named and fixed, and the four blocking schemes now reconcile exactly
+
+**Zero spend.** Det-only, no Gemini call. #95 (regenerate the golden fixtures
+through the det parser) was held behind this: **4 of its 5 source schemes failed
+`mark_total_mismatch_escalating`**, so regenerating would have destroyed 10 of 11
+fixtures.
+
+**All four now parse to their printed maximum exactly.**
+
+| scheme | printed | before | after |
+|---|---|---|---|
+| `0580_s23_ms_22` | 70 | 73 (**+3**) | **70** |
+| `0606_s23_ms_12` | 80 | 116 (**+36**) | **80** |
+| `0625_s20_ms_31` | 80 | 76 (**−4**) | **80** |
+| `0625_w21_ms_32` | 80 | 73 (**−7**) | **80** |
+
+#136 called this "three distinct bugs". It is **four**, and they fall into two
+opposite classes — which matters, because the two classes hide each other: a
+paper losing marks in one place and inventing them in another can reconcile by
+accident.
+
+### The two that LOSE marks (the 0625 deficits, mechanisms A and B)
+
+Both were already diagnosed at source and their arithmetic already closed
+exactly; this is the fix half.
+
+**(A) A continuation row carrying marks but no answer text was discarded whole.**
+The blank-row guard fired *before* the marks column was consulted.
+`0625_w21_ms_32` 6(a) prints four `B1` rows — pdfplumber merges the whole
+matching table into the first cell and leaves three bare `B1`s behind — and the
+parser emitted **1** mark where the paper prints **4**.
+
+The recovered marks are **merged into the preceding point**, not turned into
+points of their own: the text that earns them is in that merged cell, and an
+AnswerPoint with no text cannot be matched against a candidate's answer, so it
+would be unmarkable. Where there is no preceding point the row is still dropped —
+a **stated limit**, and the conservative direction.
+
+**(B) A mark code that leaked into the answer text left the point defaulting to
+1.** In the 3-column geometry some papers use, the marks column merges into the
+answer cell, so the code arrives as trailing text
+(`"…centre of mass is where lines cross B3"`).
+
+**The recovery is deliberately narrower than `parse_marks_cell`**, because it runs
+against free prose rather than a cell already known to be the marks column: the
+letter is **required**, so a bare trailing integer is never recovered. An answer
+ending "the reading is 12" would otherwise become a **12-mark point** — every
+other failure in this area understates, and that one would *invent* marks.
+
+Recovered marks are **not** flagged `marks_defaulted`: that flag means "this 1 was
+minted, not read" (#38/M1.3), and a mark read from the wrong column was still
+read. Flagging it would overstate the defaulted-mark rate #38 is measuring.
+
+### The two that INVENT marks (the 0580 and 0606 overcounts, mechanisms C and D)
+
+**(C) Numeric data-table rows were minting a mark each.** Papers embed
+stem-and-leaf tables, frequency tables and lists of readings inside a question's
+rows; pdfplumber emits each line as a row with numeric text and no marks cell,
+and the default-to-1 minted a mark per line. `0580_s23_ms_22`'s entire **+3** was
+three such rows — `'(1 3) 4 5 5 8'`, `'1 2'`, `'3 4'`.
+
+Narrow on purpose: **both** an unparseable marks cell **and** text with no
+alphabetic content. A numeric answer carrying its own marks cell is untouched.
+Where it fires the mark was **minted, not read**, so declining to guess
+understates rather than invents.
+
+**(D) A parenthesised mark cell is an ALTERNATIVE route, not an additional mark.**
+CAIE brackets marks belonging to a different route to the *same* allocation,
+printed under an "Or"/"Alternative" heading. `parse_marks_cell`'s regex accepted
+`(A1)` as identical to `A1`, so every alternative route was summed alongside the
+primary one — this is #45's `mark_aggregation_overcount` bucket, named.
+
+**The arithmetic closes exactly: `0606_s23_ms_12`'s 23 bracketed rows total 36,
+and the discrepancy was +36. Unbracketed marks total exactly 80, the printed
+maximum.**
+
+Routed through the **same `is_alternative` machinery** that already handles
+standalone `OR`/`EITHER`, so `flush()`'s primary-only sum excludes it — one
+aggregation rule rather than two to keep in step. **The alternative points are
+kept, not deleted**: they are a real route a candidate may have taken. Only a
+**balanced** pair counts; a one-sided paren is an extraction artefact and must not
+silently delete a real mark.
+
+### What is NOT claimed
+
+- **This changes what the det parser produces, and det is the majority parse
+  path.** It does **not** by itself change any awarded mark in the harness:
+  `load_golden_cases` reads pre-parsed `mark_scheme.json` and never invokes the
+  det parser — the same instrument-blindness ground on which #38's sweep was
+  waived under A6(a) and #93's under B2. The effect on marking appears only once
+  #95 regenerates the fixtures.
+- **#110 is untouched and still open.** `0606_s23_ms_12` emits `9` twice and
+  `0580_s23_ms_22`'s sequence restarts at `1,2,8` — mechanism (C) removes the
+  spurious marks those rows minted, but the duplicate *ids* remain and still
+  break `(paper_id, question_id)` leaf identity.
+- **Corpus-wide before/after is measured, not assumed** — see the run artifacts.
+  A scheme that still fails after this work is recorded with its reason rather
+  than folded into a pass.
+
+### Measured corpus-wide, not asserted
+
+Both arms re-parse all **479** source mark-scheme PDFs through the same harness;
+the only difference is the diff under test (the "before" arm imports a package
+copy with `rows.py`/`marks.py` taken from `origin/develop`). Zero spend.
+
+| | before | after |
+|---|---|---|
+| schemes reconciling **exactly** with their printed maximum | **289** | **333** |
+| totals changed at all | — | 130 |
+| still not exact | 190 | **146** (90 over, 54 under, 2 unparsed) |
+| parse errors | 2 | 2 |
+
+**+47 newly exact, −3 regressed. Net +44.** 289 is exactly the size of the
+committed corpus, which confirms "exact" is the same set as "det-parses".
+
+**The three regressions are stated, not folded into the pass** — #136's own
+acceptance requires it:
+
+| scheme | printed | before | after |
+|---|---|---|---|
+| `0625_s22_ms_33` | 80 | 80 | **86** |
+| `0625_w20_ms_31` | 80 | 80 | **82** |
+| `0625_m21_ms_42` | 80 | 80 | **81** |
+
+All three are **mechanism (B) over-reads**: papers where the marks column merges
+into the answer text for the *whole* paper, so recovery fires on nearly every row
+— correctly, and at +0 each for the `B1`/`A1`/`C1` majority — but a handful of
+trailing `A3`/`B2` fragments read higher than the paper intends. They were
+previously exact **by cancellation**, not by correctness: the same papers were
+losing marks elsewhere.
+
+**A fourth false-positive class was caught by this measurement and fixed**, which
+is why the measurement was worth running rather than reasoning about.
+Mechanism (C) first fired on `0625_s20_ms_61` 1(a) — whose genuine answer is
+`"0.025, 0.037, 0.050, 0.063, 0.075"`, numeric with no marks cell — and ate a
+real mark. It is now restricted to rows that do **not** open a labelled sub-part:
+a data-table line is either unlabelled or carries a bare number the compound
+decomposer mistakes for a new top-level question, which is #110's defect and the
+reason those rows reach this code at all.
+
+**What this means for #88/#166.** The det-failure population those issues size
+their spend against was **190 schemes**; it is now **146**. The Gemini fallback —
+which #166 measures at ~50% success — has **44 fewer schemes to fail on**, and
+that reduction cost nothing.

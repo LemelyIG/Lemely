@@ -45,6 +45,20 @@ class ParsedMark:
     math_mark_type: MathMarkType | None
     """The CAIE mark type letter, or None for bare integers."""
 
+    is_alternative: bool = False
+    """True when the cell was PARENTHESISED — "(A1)", "(M1)", "(3)".
+
+    CAIE brackets a mark that belongs to an ALTERNATIVE route to the same
+    allocation, printed under an "Or"/"Alternative" heading. It is not an
+    additional mark and must never be summed alongside the primary route.
+    `0606_s23_ms_12` parsed to 116 against a printed 80: the 23 bracketed rows
+    total exactly 36, which is exactly the discrepancy (#136 mechanism (D)).
+
+    The value is still parsed, and `is_marks_column` still recognises the cell,
+    so column detection is unaffected — the bracket changes AGGREGATION, not
+    parseability.
+    """
+
 
 def parse_marks_cell(cell: str, max_value: int = 40) -> ParsedMark | None:
     """Parse a mark-type notation cell to a :class:`ParsedMark`.
@@ -78,7 +92,14 @@ def parse_marks_cell(cell: str, max_value: int = 40) -> ParsedMark | None:
     if value > max_value:
         return None
     letter = (m.group(1) or "").upper()
-    return ParsedMark(value=value, math_mark_type=_LETTER_MAP.get(letter))
+    return ParsedMark(
+        value=value,
+        math_mark_type=_LETTER_MAP.get(letter),
+        # Only a BALANCED pair marks an alternative. A stray one-sided paren is
+        # an extraction artefact, not CAIE notation, and must not silently
+        # delete a real mark from the total.
+        is_alternative=stripped.startswith("(") and stripped.endswith(")"),
+    )
 
 
 def is_marks_column(column_values: list[str], max_value: int = 40) -> bool:
@@ -94,3 +115,50 @@ def is_marks_column(column_values: list[str], max_value: int = 40) -> bool:
     if not non_empty:
         return False
     return all(parse_marks_cell(v, max_value) is not None for v in non_empty)
+
+
+# A CAIE mark code stranded at the END of the answer text. This is where the
+# code lands when the marks column merges into the answer cell (#136 mechanism
+# (B)) — e.g. "centre of mass is where lines cross B3".
+#
+# Deliberately NARROWER than _MARK_CELL_RE, because this one runs against free
+# prose rather than a cell already known to be the marks column:
+#
+#   - The letter is REQUIRED. A bare trailing integer is not recovered, because
+#     answers legitimately end in numbers ("the reading is 12"), and reading
+#     that as a 12-mark point would INVENT marks. Every other failure mode in
+#     this area understates; that one would overstate.
+#   - A word boundary is required before the letter, so "vitaminB2" is prose.
+#   - The value must be 1-9. Mark codes are single-digit; "B12" is not one.
+_LEAKED_MARK_CODE_RE = re.compile(r"(?<![^\W\d_])([BCAM])([1-9])\s*$")
+
+
+def extract_trailing_mark_code(text: str) -> tuple[str, ParsedMark] | None:
+    """Recover a mark code that leaked into the end of an answer cell.
+
+    Returns ``(text_without_the_code, parsed_mark)``, or ``None`` when there is
+    no leaked code — including when the code is the *entire* cell, since
+    stripping it would leave an AnswerPoint with no text and an AnswerPoint
+    with no text cannot be matched against a candidate's answer.
+
+    Callers must only consult this when the marks *column* yielded nothing; a
+    real marks cell is always authoritative (see ``rows.py``).
+
+    Examples::
+
+        extract_trailing_mark_code("lines cross B3")   -> ("lines cross", ParsedMark(3, B))
+        extract_trailing_mark_code("the reading is 12") -> None   (bare integer)
+        extract_trailing_mark_code("contains vitaminB2") -> None  (no word boundary)
+        extract_trailing_mark_code("B3")                -> None   (nothing left)
+    """
+    stripped = text.strip()
+    m = _LEAKED_MARK_CODE_RE.search(stripped)
+    if not m:
+        return None
+    remainder = stripped[: m.start()].strip()
+    if not remainder:
+        return None
+    return remainder, ParsedMark(
+        value=int(m.group(2)),
+        math_mark_type=_LETTER_MAP[m.group(1).upper()],
+    )

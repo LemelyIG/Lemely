@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from lemely.core.loose_schemas import AnswerPoint, MathMarkType, Question, QuestionType
-from lemely.io.det.marks import parse_marks_cell
+from lemely.io.det.marks import extract_trailing_mark_code, parse_marks_cell
 from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
@@ -239,6 +239,33 @@ def build_questions(
         math_type: MathMarkType | None = (
             parsed_mark.math_mark_type if parsed_mark is not None else None
         )
+        # #136 mechanism (D) / `mark_aggregation_overcount`: a PARENTHESISED
+        # mark cell — "(A1)", "(M1)", "(3)" — is CAIE's notation for an
+        # ALTERNATIVE route to the same allocation, printed under an
+        # "Or"/"Alternative" heading. Summing it alongside the primary route
+        # double-counts: `0606_s23_ms_12` parsed to 116 against a printed 80,
+        # and its 23 bracketed rows total exactly 36.
+        #
+        # Routed through the SAME is_alternative machinery that already handles
+        # standalone "OR"/"EITHER", so flush()'s primary-only sum excludes it
+        # without a second aggregation rule to keep in step with the first.
+        mark_is_alternative = parsed_mark is not None and parsed_mark.is_alternative
+
+        # #136 mechanism (B) / DA21: in the 3-column geometry some papers use,
+        # the marks column merges into the answer cell, so the code arrives as
+        # trailing text ("...where lines cross B3") and the marks cell parses
+        # empty. Left alone, make_point() below mints 1 — right by luck for
+        # every single-mark code, and silently short by `value - 1` for every
+        # multi-mark one.
+        #
+        # Only consulted when the marks COLUMN gave nothing: a real marks cell
+        # is always authoritative. See extract_trailing_mark_code for why a
+        # bare trailing integer is deliberately NOT recovered.
+        if marks_int is None and answer_cell:
+            recovered = extract_trailing_mark_code(answer_cell)
+            if recovered is not None:
+                answer_cell, leaked = recovered
+                marks_int, math_type = leaked.value, leaked.math_mark_type
 
         # --- Skip remaining header rows (inline defence) --------------------
         cells_lower = {(c or "").strip().lower() for c in row}
@@ -254,6 +281,31 @@ def build_questions(
             )
         if _INDICATIVE_CONTENT_RE.search(answer_cell):
             raise ParseError("Indicative-content section detected: fall back to Gemini parser")
+
+        # #136 mechanism (C) / DA21, and the only one of the three that
+        # OVERcounts: papers embed data tables — stem-and-leaf, frequency
+        # tables, lists of readings — inside a question's rows. pdfplumber
+        # emits each line as a row with numeric text and no marks cell, and
+        # make_point() then minted 1 mark per line. `0580_s23_ms_22` parsed to
+        # 73 against a printed 70 entirely this way.
+        #
+        # Narrow on purpose: BOTH an unparseable marks cell AND text with no
+        # alphabetic content. A numeric answer that carries its own marks cell
+        # is untouched. Where it does fire the mark was MINTED, not read, so
+        # declining to guess understates rather than inventing — the safe
+        # direction, and the same one mechanism (A)'s no-preceding-point case
+        # takes.
+        # Narrowed after measuring: firing on a LABELLED sub-part row ate a
+        # real answer. `0625_s20_ms_61` 1(a) answers "0.025, 0.037, 0.050,
+        # 0.063, 0.075" — numeric, no marks cell, and entirely genuine. A row
+        # that opens a labelled part like "1(a)" is an answer row; a data-table
+        # line is either unlabelled or carries a bare number the compound
+        # decomposer mistakes for a new top-level question (which is #110's
+        # defect, and the reason those rows reach here at all).
+        if marks_int is None and answer_cell and not any(ch.isalpha() for ch in answer_cell):
+            q_components = decompose_compound_q(q_cell)
+            if q_components is None or len(q_components) == 1:
+                answer_cell = ""
 
         # --- Determine if this row starts a new question --------------------
         components = decompose_compound_q(q_cell)
@@ -277,12 +329,16 @@ def build_questions(
                 if k < common_len:
                     continue
                 is_leaf = k == len(components) - 1
-                push_question(comp, is_leaf, marks_int, guidance_cell)
+                push_question(
+                    comp, is_leaf, None if mark_is_alternative else marks_int, guidance_cell
+                )
 
             upper = answer_cell.upper()
             if answer_cell and upper not in ("EITHER", "OR"):
                 # Real answer on the Q row — add as a point.
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
@@ -297,9 +353,11 @@ def build_questions(
             flush()
             in_alt_branch = False
             unwind_to(2)
-            push_question(q_cell, True, marks_int, guidance_cell)
+            push_question(q_cell, True, None if mark_is_alternative else marks_int, guidance_cell)
             if answer_cell:
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
@@ -308,15 +366,43 @@ def build_questions(
             flush()
             in_alt_branch = False
             unwind_to(1)
-            push_question(q_cell, True, marks_int, guidance_cell)
+            push_question(q_cell, True, None if mark_is_alternative else marks_int, guidance_cell)
             if answer_cell:
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
 
         else:
             # Continuation row — add an AnswerPoint to the deepest question.
+
+            # #136 mechanism (A) / DA21: a row carrying a real mark but no
+            # answer text. pdfplumber merges some layouts (matching tables,
+            # multi-line lists) wholly into the FIRST cell and leaves the
+            # remaining rows holding nothing but their mark codes —
+            # `0625_w21_ms_32` 6(a) prints 4 marks and parsed as 1 this way.
+            # The blank-row guard below fired before the marks column was
+            # consulted, so those marks were discarded silently.
+            #
+            # The marks are merged into the preceding point rather than
+            # becoming textless points of their own: the text that earns them
+            # is in that merged cell, and an AnswerPoint with no text cannot be
+            # matched against a candidate's answer, so it would be unmarkable.
+            if (
+                not answer_cell
+                and marks_int is not None
+                and not mark_is_alternative
+                and current_points
+            ):
+                last = current_points[-1]
+                current_points[-1] = last.model_copy(
+                    update={"marks": (last.marks or 0) + marks_int}
+                )
+                q_row_had_answer = True
+                continue
+
             if not answer_cell or not stack:
                 continue
 
@@ -353,7 +439,9 @@ def build_questions(
             if not text:
                 continue
 
-            current_points.append(make_point(text, marks_int, math_type, is_alt))
+            current_points.append(
+                make_point(text, marks_int, math_type, is_alt or mark_is_alternative)
+            )
             if math_type == MathMarkType.A:
                 has_a_mark = True
 
