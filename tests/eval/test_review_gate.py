@@ -167,3 +167,67 @@ class TestSignalEqualsTotalInvariant:
         equal = _rate(review_rate_signal=0.03, review_rate_total=0.03, per_paper_p95=0.05)
         result = evaluate_review_rate_gate(equal, last_merged_review_rate=0.10, armed=True)
         assert result["invariant_ok"] is True
+
+
+class TestC13RestatementDidNotLoosenTheGate:
+    """#161 / ruling C13 restated ``review_rate_last_merged`` 0.2903 -> 0.4838.
+
+    The number went UP, which looks like a loosening and must be pinned as not
+    being one. The effective ceiling is ``min(total_target, last_merged)``, and
+    both values sit above ``total_target``, so the ceiling is 0.10 either way.
+    These tests exist so a future reader — or a future edit — cannot quietly
+    turn the restatement into headroom.
+    """
+
+    def test_effective_ceiling_is_identical_before_and_after_the_restatement(self) -> None:
+        rate = _rate(review_rate_signal=0.2903, review_rate_total=0.2903, per_paper_p95=0.8333)
+        before = evaluate_review_rate_gate(rate, last_merged_review_rate=0.2903, armed=False)
+        after = evaluate_review_rate_gate(rate, last_merged_review_rate=0.4838, armed=False)
+        assert before["ratchet_ceiling"] == after["ratchet_ceiling"] == 0.10
+        assert before["ratchet_ok"] is after["ratchet_ok"] is False
+
+    def test_shipped_defaults_still_fail_every_limb_on_the_measured_rate(self) -> None:
+        # The measured dev-split rate (BUILD/review-rate-baseline.json). Arming
+        # today would block every merge, and the restatement did not change
+        # that — three of the four limbs fail on ABSOLUTE targets that
+        # last_merged does not touch.
+        from lemely.runtime.config import AccuracyEvalSettings
+
+        t = AccuracyEvalSettings()
+        measured = _rate(review_rate_signal=0.2903, review_rate_total=0.2903, per_paper_p95=0.8333)
+        result = evaluate_review_rate_gate(
+            measured,
+            last_merged_review_rate=t.review_rate_last_merged,
+            armed=True,
+            signal_target=t.review_rate_signal_target,
+            total_target=t.review_rate_total_target,
+            p95_target=t.review_rate_p95_target,
+        )
+        assert result["signal_ok"] is False
+        assert result["total_ok"] is False
+        assert result["p95_ok"] is False
+        assert result["ratchet_ok"] is False
+        assert result["blocking_failure"] is True
+
+    def test_ratchet_limb_is_pinned_by_total_target_not_by_last_merged(self) -> None:
+        # Whatever last_merged is set to above total_target, the ceiling does
+        # not move. This is why restating the statistic could not unblock
+        # arming, and why the arming blocker is M1 accuracy work instead.
+        rate = _rate(review_rate_signal=0.2903, review_rate_total=0.2903, per_paper_p95=0.05)
+        ceilings = {
+            evaluate_review_rate_gate(rate, last_merged_review_rate=lm, armed=False)[
+                "ratchet_ceiling"
+            ]
+            for lm in (0.2903, 0.4838, 0.99, 1.0)
+        }
+        assert ceilings == {0.10}
+
+    def test_last_merged_below_the_target_still_tightens(self) -> None:
+        # The ratchet must remain functional once the rate actually comes down
+        # — the restatement must not have broken the mechanism it restated.
+        rate = _rate(review_rate_signal=0.07, review_rate_total=0.07, per_paper_p95=0.05)
+        result = evaluate_review_rate_gate(rate, last_merged_review_rate=0.05, armed=True)
+        assert result["ratchet_ceiling"] == 0.05
+        assert result["total_ok"] is True
+        assert result["ratchet_ok"] is False
+        assert result["blocking_failure"] is True

@@ -2993,3 +2993,66 @@ so both went to the human as **#166** rather than into this run.
 
 **Ledger 3.146479 → 5.993470**, re-summed from the worktree files rather than
 carried forward from the header. Recorded as **DA31**.
+
+---
+
+## run-2026-08-28-a — the ratchet was restated, and the restatement falsified the issue that asked for it
+
+**Ruling C13 gave the statistic**: publish an *upper interval bound* of the
+measured distribution and arm against that — never 29.03%, never the mean.
+**Zero spend**, re-derived from the existing 10-repeat A/A floor, because
+MISSION §12.9 forbids re-running to get a tighter number and the ~13pp spread is
+a property of the system rather than noise to average away.
+
+**`review_rate_last_merged`: 0.2903 → 0.4838** — the 95th percentile of the
+beta-binomial predictive for a single new run, Jeffreys prior on the pooled
+101/310 leaf-repeats. Zero of the ten observed repeats exceed it.
+
+**Predictive rather than a CI on the mean, and the distinction is the whole
+point.** The gate judges *one* run. A confidence interval on the mean narrows as
+n grows until it sits inside the spread unchanged code actually produces — which
+is DA9a's single-figure trap wearing a different hat. Choosing the wrong interval
+here would have reproduced the exact failure C13 was ruled to prevent.
+
+**Two things found while deriving it, both worse for the programme than what was
+on record.**
+
+**First, 0.2903 was the minimum, not a middle.** And because it was truncated
+*down* from 0.29032258…, **all 10 of 10** unchanged repeats exceed it — not the
+7 in 10 DA9a estimated. Arming against it would have failed every no-op diff
+without exception. DA9a was right and had understated itself.
+
+**Second, and this is the run's real finding: restating the statistic does not
+unblock arming, and `last_merged` was never the blocker.** #161's body — which I
+wrote — framed it as the thing standing in the way. Running the gate says
+otherwise:
+
+| limb | measured | target | miss |
+|---|---|---|---|
+| signal | 0.2903 | 0.08 | 3.6× |
+| total | 0.2903 | 0.10 | 2.9× |
+| p95 | **0.8333** | 0.15 | **5.6×** |
+| ratchet | ceiling 0.10 | — | pinned by `total_target` |
+
+**All four fail; three fail on absolute targets `last_merged` cannot touch.**
+While the measured rate sits above 10%, `min(total_target, last_merged)` is
+pinned at 0.10 and **no value of `last_merged` moves it**. So the restatement was
+worth doing — the published number is now honest about which statistic it is —
+but it does not bring arming one step closer. **Arming needs the review rate to
+actually come down.** That is M1 accuracy work, and the p95 limb missing by 5.6×
+is the honest measure of how far.
+
+**The number went up, which is what a loosening looks like**, so it is pinned as
+not being one: the effective ceiling is 0.10 before and after, and
+`TestC13RestatementDidNotLoosenTheGate` asserts that plus the ratchet limb's
+immovability at any `last_merged` above the target. Both shortcuts are named and
+foreclosed in `config.py` — do not flip the flag to finish the gate, and do not
+loosen 0.08/0.10/0.15 to make arming comfortable.
+
+**The lesson, and it is the same shape as yesterday's:** I had written #161's
+premise into an issue body and then carried it forward as established. It took
+running the gate — one command — to see that three of four limbs never involved
+the field the issue blamed. **A premise I wrote is not evidence either.**
+
+Recorded as **DA33**. The dangling `#36` citations in `config.py` and
+`ACCURACY-STATE.md` now point at #161 and at the measured reason.
