@@ -12464,6 +12464,75 @@ carrying a header forward.
 
 ---
 
+## DA33 — the review rate is restated distribution-aware, and it does not unblock arming (C13, #161)
+
+**Ruling C13:** *the ratchet publishes an **upper interval bound** of the measured
+distribution and arms against that — not the mean (half of no-op diffs would
+fail), never 29.03%.* Zero spend; re-derived from the existing 10-repeat A/A
+floor (`aa-floor-2026-08-23-a`), because MISSION §12.9 forbids re-running to
+chase a tighter number and the ~13pp spread is a real property of the system,
+not sampling noise.
+
+**`review_rate_last_merged`: 0.2903 → 0.4838.**
+
+**What 0.2903 actually was, and it is worse than DA9a recorded.** It is not a
+central estimate; it is the **minimum** of the ten observed rates — and because
+it was truncated *down* from 0.29032258…, **all 10 of 10** unchanged A/A repeats
+exceed it, not the 7 of 10 DA9a estimated. Arming against it would have failed
+every no-op diff, without exception.
+
+**What 0.4838 is.** The **95th percentile of the beta-binomial predictive
+distribution** for a single new run's flagged-leaf count — Jeffreys prior updated
+on the pooled **101/310** leaf-repeats (10 repeats × 31 distinct leaves,
+identical fingerprint, `cache_mode=bypass`). Read as: *an unchanged run exceeds
+this about 5% of the time.* **Zero of the ten observed repeats exceed it.**
+
+**Predictive, not a confidence interval on the mean — deliberately.** The gate
+judges **one** run. A CI on the mean narrows with n until it sits *inside* the
+spread unchanged code actually produces, which is the DA9a single-figure trap in
+a new costume. The bound must cover a draw, not a mean.
+
+**Stated rather than hidden: this bound is conservative and must not be sold as
+tight.** Per-run counts are **under-dispersed** relative to binomial (observed sd
+**0.0415** against **0.0842** at the same mean), because the same 31 leaves recur
+every repeat and most are deterministic. So the binomial-based bound is *wider*
+than the truth — which errs toward not failing unchanged code, the safe direction
+for a gate, and is the reason a 48% figure does not mean the system churns 48%.
+
+**This is not a loosening, and there is a test that says so.** The effective
+ceiling is `min(review_rate_total_target, review_rate_last_merged)`. It was
+**0.10** before and is **0.10** after — both 0.2903 and 0.4838 sit above the 10%
+target, so neither ever bound. What changed is what the number *means*.
+`TestC13RestatementDidNotLoosenTheGate` pins the identical ceiling, and pins that
+the ratchet limb is unmovable by `last_merged` at any value above the target.
+
+**And now the part C13 could not have known, because it was measured after the
+ruling: the restatement does not unblock arming, and the blocker was never the
+statistic.** Running the gate against the committed dev-split baseline:
+
+| limb | measured | target | miss |
+|---|---|---|---|
+| signal | 0.2903 | 0.08 | **3.6×** |
+| total | 0.2903 | 0.10 | **2.9×** |
+| p95 | **0.8333** | 0.15 | **5.6×** |
+| ratchet ceiling | 0.2903 vs 0.10 | — | pinned by `total_target` |
+
+**All four limbs fail, and three of them fail on absolute targets that
+`last_merged` does not touch.** #161's body framed `last_merged = 0.2903` as the
+thing standing between the programme and an armed ratchet. It is not: while the
+measured rate is above 10%, the ratchet limb is pinned by `review_rate_total_target`
+and **no value of `last_merged` can move it**.
+
+**So arming requires the review rate to actually come down — M1 accuracy work —
+not a better statistic.** The two tempting shortcuts are both named and
+foreclosed: do not flip `review_rate_ratchet_armed` to "finish" the gate, and do
+not loosen the 0.08/0.10/0.15 targets to make arming comfortable. MISSION §14
+names moving the target to fit the measurement as a programme failure, and the
+p95 limb — missing by 5.6× — is the one that shows how far this really is.
+
+**The dangling `#36` references are fixed** (`config.py`, `ACCURACY-STATE.md`);
+both now point at #161 and at the measured reason above rather than at a closed
+issue about the confidence unit.
 ## DA34 — #136: four mark-total defects, named and fixed, and the four blocking schemes now reconcile exactly
 
 **Zero spend.** Det-only, no Gemini call. #95 (regenerate the golden fixtures
