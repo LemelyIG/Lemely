@@ -168,32 +168,63 @@ class AccuracyEvalSettings(BaseModel):
     # entirely - so that comment told every reader the arming trigger had
     # already passed and arming was simply not done. It has not passed.
     #
-    # DA9a blocks arming, and #161 tracks the work that must come first:
-    # review_rate_last_merged is 0.2903, and the effective ceiling is
-    # min(review_rate_total_target, review_rate_last_merged). But 29.03% is
-    # the BOTTOM of a measured range, not a central estimate - the A/A churn
-    # floor over 10 live repeats had a MEAN of 32.58% (range 29.03-41.94%).
-    # Arming against it gates on a figure unchanged code exceeds 7 times in
-    # 10, which is a coin flip blocking merges, not a ratchet.
+    # #161 has now done the distribution-aware restatement ruling C13 asked
+    # for (see review_rate_last_merged below), and it did NOT unblock arming.
+    # The measured blocker is not the ratchet limb at all:
     #
-    # Do NOT flip this to True to "finish" the gate. Restate the review rate
-    # distribution-aware first (#161), re-derive the ceiling from that, and
-    # record which statistic it is.
+    #   signal 0.2903 vs target 0.08   - misses by 3.6x
+    #   total  0.2903 vs target 0.10   - misses by 2.9x
+    #   p95    0.8333 vs target 0.15   - misses by 5.6x
+    #   ratchet ceiling min(0.10, last_merged) = 0.10, so the ratchet limb is
+    #     pinned by total_target and CANNOT be moved by last_merged at all
+    #     while the measured rate is above 10%.
+    #
+    # So all four limbs fail, and three of them fail on absolute targets that
+    # last_merged does not touch. Arming needs the review rate to actually
+    # COME DOWN - M1 accuracy work - not a different statistic.
+    #
+    # Do NOT flip this to True to "finish" the gate, and do NOT loosen
+    # review_rate_signal/total/p95_target to make arming comfortable:
+    # MISSION §14 names moving the target to fit the measurement as a
+    # programme failure, and the ceiling only ever ratchets down.
     review_rate_ratchet_armed: bool = Field(default=False)
-    # The last-merged review_rate_total the ratchet compares against — the
-    # ceiling is min(review_rate_total_target, review_rate_last_merged), so
-    # this can only tighten the effective cap, never loosen it. 0.2903
-    # (~29.03%, 9/31 flagged leaves) is the real dev-split baseline measured
-    # 2026-08-22 over the current 31-distinct-leaf golden corpus, computed
-    # with review_rate()'s corrected trigger-UNION numerator (a leaf counts
-    # as reviewed iff ANY of its raw fixture-variant records carries a
-    # qualifying trigger, not just the single DA6-collapsed representative
-    # row). This supersedes the earlier 0.0323 figure, which undercounted by
-    # reading `triggers` off the collapsed representative only — see
-    # BUILD/DECISIONS.md DA-M0.9 for the full recomputation. Rounded DOWN
-    # (truncated, not rounded-to-nearest) from 0.29032258... so the ratchet
-    # ceiling only ever tightens, never loosens.
-    review_rate_last_merged: float = Field(default=0.2903, ge=0.0, le=1.0)
+    # The ratchet's comparison rate. The effective ceiling is
+    # min(review_rate_total_target, review_rate_last_merged), so this field can
+    # only ever tighten the cap, never loosen it.
+    #
+    # RESTATED 2026-08-28 under ruling C13 (#161, DA33): 0.2903 -> 0.4838.
+    #
+    # 0.2903 was ONE DRAW - and, being truncated down from 0.29032258..., it
+    # was the MINIMUM of the ten. Arming against it fails 10 of 10 unchanged
+    # A/A repeats, not the 7 of 10 DA9a estimated. It was never a central
+    # estimate and could not be used as one.
+    #
+    # 0.4838 is the 95th percentile of the beta-binomial predictive
+    # distribution for a single new run's flagged-leaf count, Jeffreys prior
+    # updated on the pooled 101/310 leaf-repeats of aa-floor-2026-08-23-a
+    # (10 repeats x 31 distinct leaves, identical config, cache_mode=bypass).
+    # Read it as: an unchanged run exceeds this rate about 5% of the time.
+    # Zero of the ten observed repeats exceed it. Derivation and the checks
+    # below: BUILD/accuracy-runs/ratchet-161-2026-08-28/.
+    #
+    # A PREDICTIVE bound, deliberately, not a confidence interval on the mean:
+    # the gate judges ONE run, and a CI on the mean narrows with n until it
+    # sits inside the spread unchanged code actually produces - which is the
+    # DA9a single-figure trap wearing a different hat.
+    #
+    # Conservative, and not to be sold as tight: per-run counts are UNDER-
+    # dispersed relative to binomial (observed sd 0.0415 against 0.0842),
+    # because the same 31 leaves recur every repeat and most are
+    # deterministic. So this bound is wider than the truth - which errs
+    # toward not failing unchanged code, the safe direction for a gate.
+    #
+    # THIS IS NOT A LOOSENING. The effective ceiling is min(0.10, x) and was
+    # 0.10 before this change and is 0.10 after it: 0.2903 and 0.4838 are both
+    # above review_rate_total_target, so neither binds. What changed is what
+    # the number MEANS - a property of a distribution instead of one draw -
+    # and it is now honest about which statistic it is. Tests pin the
+    # unchanged ceiling so this cannot be re-read as headroom.
+    review_rate_last_merged: float = Field(default=0.4838, ge=0.0, le=1.0)
 
 
 class DetParserSettings(BaseModel):
