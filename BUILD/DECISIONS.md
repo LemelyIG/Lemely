@@ -13015,3 +13015,64 @@ takes a prefix, so only the prefix length changes. **But it must be changed
 before #47 completes**, or the choice becomes visible to the sample it selects.
 
 **#51 does not close on this** (C24/DA37): onboarding remains owed.
+
+---
+
+## DA41 — #110's phantom leaves pruned; the golden corpus is duplicate-free and #95 is unblocked cleanly (#110, #95)
+
+**Zero spend, det-only.** Continues #110 after DA39, which fixed mechanism 1
+(page-break reprints) and left mechanism 2 reported-but-unrepaired on the ground
+that folding stray rows into the earlier question would be **inventing question
+identity rather than reading it**.
+
+**This repairs the half of mechanism 2 that needs no such invention.** A
+data-table line beginning with a number becomes a **top-level** question;
+#136 mechanism (C) already stopped those rows minting a mark, leaving them as
+**empty shells** — no marks, no answer points, and an id colliding with the real
+question of the same number. Dropping a node with no marks and no points is
+neither deduping nor renumbering: it removes something that contributes to no
+total, cannot be matched against a candidate's answer, and cannot be marked,
+while corrupting DA6's `(paper_id, question_id)` identity.
+
+**Narrow in two ways, the second learned from a test that caught the wider rule
+doing harm:**
+
+- **Top level only.** A labelled sub-part like `1(b)` is structure the paper
+  printed and is kept even when empty. The first version pruned it.
+- **Both conditions required.** A question whose tariff was read off the page is
+  real even if its answer text failed to parse.
+
+**Measured over all 479 source schemes:**
+
+| | before | after |
+|---|---|---|
+| schemes reconciling exactly | 331 | **331** |
+| corpus parsed marks | 32,849 | **32,849** |
+| total leaves | 17,043 | **16,985** |
+| leaves lost to id collapse | 36 | **25** |
+| schemes with duplicate leaf ids | 21 | **15** |
+
+**Totals and reconciliation are unchanged**, which is the check that matters:
+pruning a zero-mark leaf cannot move a mark, and this confirms it rather than
+assuming it.
+
+**58 phantom leaves were removed, of which only 11 were involved in a
+collision.** The other 47 were not corrupting identity — they were **inflating
+the leaf count, and therefore the denominator of every per-leaf rate the
+programme computes**. That is a quieter defect than the collisions and was not
+what #110 was opened about.
+
+**The golden corpus is now clean.** `0580_s23_ms_22` was the one #95 source
+scheme still carrying duplicates (ids `1` and `2`, each a real question plus one
+phantom): **2 duplicate ids → 0**, 37 leaves → 35, total still **70/70**. All
+five of #95's schemes are duplicate-free, so **the concern raised on #95 —
+that regenerating would bake collapsed leaves into the fixtures — no longer
+applies.**
+
+**What remains, and stays unrepaired: 15 schemes carrying 25 collapsed leaves.**
+Those are the genuinely ambiguous half — rows with real content under a colliding
+id. Deciding what they *are* is not something the parser can read off the page,
+so they remain reported by the (still unarmed) duplicate-id detector.
+
+**Cumulative across DA39 and DA41: leaves lost 57 → 36 → 25; schemes 34 → 21 →
+15.**

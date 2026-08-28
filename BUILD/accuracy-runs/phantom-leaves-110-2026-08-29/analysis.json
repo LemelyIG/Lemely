@@ -1,0 +1,38 @@
+{
+  "issue": 110,
+  "spend_usd": 0.0,
+  "exact_before": 331,
+  "exact_after": 331,
+  "parsed_marks_before": 32849,
+  "parsed_marks_after": 32849,
+  "n_leaves_before": 17043,
+  "n_leaves_after": 16985,
+  "leaves_lost_before": 36,
+  "leaves_lost_after": 25,
+  "schemes_with_dups_before": 21,
+  "schemes_with_dups_after": 15,
+  "golden_0580_s23_ms_22": {
+    "before": {
+      "scheme": "0580_s23_ms_22.pdf",
+      "status": "parsed",
+      "maximum_mark": 70,
+      "parsed_total": 70,
+      "n_leaves": 37,
+      "n_points": 37,
+      "n_alternative_points": 0,
+      "leaves_lost_to_collapse": 2,
+      "dup_leaf_ids": 2
+    },
+    "after": {
+      "scheme": "0580_s23_ms_22.pdf",
+      "status": "parsed",
+      "maximum_mark": 70,
+      "parsed_total": 70,
+      "n_leaves": 35,
+      "n_points": 37,
+      "n_alternative_points": 0,
+      "leaves_lost_to_collapse": 0,
+      "dup_leaf_ids": 0
+    }
+  }
+}

@@ -3335,3 +3335,50 @@ it has to change **before** #47 completes, or the choice becomes visible to the
 sample it selects.
 
 Recorded as **DA40**. #51 does not close: onboarding stays owed.
+
+---
+
+## run-2026-08-29-c — the phantom half of #110, and a denominator nobody was watching
+
+**Zero spend.** I had flagged on #95 that regenerating the golden fixtures would
+bake collapsed leaves into them, and left it as a decision. Before handing that
+over I checked *which* schemes were affected — and the answer made the decision
+unnecessary.
+
+**Four of #95's five source schemes were already clean. Only `0580_s23_ms_22`
+still collided**, on ids `1` and `2`, and each collision was **one real question
+plus one empty shell** — the data-table rows #136 mechanism (C) had already
+stripped of their minted marks.
+
+That is the half of #110's mechanism 2 that needs no invented identity. DA39
+declined to fold stray rows into earlier questions, and rightly; but **dropping a
+node with no marks and no answer points is not folding anything**. It removes
+something that contributes to no total, cannot be matched against an answer, and
+cannot be marked, while quietly corrupting DA6 leaf identity.
+
+**A test caught me making it too wide.** The first rule pruned any empty leaf,
+which took out labelled sub-parts like `1(b)` — structure the paper printed, even
+when it carries nothing. Narrowed to **top-level** leaves only, which is exactly
+the shape a data-table artefact takes and never the shape of a printed sub-part.
+
+**Totals are byte-for-byte unchanged — 32,849 marks, 331 schemes exact.** That is
+the check worth having: pruning a zero-mark leaf *cannot* move a mark, and the
+corpus confirms it rather than my saying so.
+
+**And a second finding fell out that #110 was not opened about.** 58 phantom
+leaves were removed corpus-wide; **only 11 were involved in a collision**. The
+other 47 were never corrupting identity — they were **inflating the leaf count**,
+and with it the denominator of every per-leaf rate the programme computes. A
+defect that adds noise to a denominator is much harder to notice than one that
+collides two ids, because nothing ever disagrees.
+
+**`0580_s23_ms_22` is now 2 duplicate ids → 0, 37 leaves → 35, still 70/70.** All
+five of #95's schemes are duplicate-free, so the decision I was about to hand
+over has dissolved rather than been answered.
+
+**15 schemes with 25 collapsed leaves remain, and stay unrepaired** — rows with
+real content under a colliding id. What those rows *are* is not something the
+parser can read off the page.
+
+Recorded as **DA41**. Cumulative across DA39 and DA41: leaves lost **57 → 36 →
+25**, schemes **34 → 21 → 15**.
