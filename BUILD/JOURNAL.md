@@ -3382,3 +3382,48 @@ parser can read off the page.
 
 Recorded as **DA41**. Cumulative across DA39 and DA41: leaves lost **57 → 36 →
 25**, schemes **34 → 21 → 15**.
+
+---
+
+## run-2026-08-29-d — #95's blocker moved, and the one that remains is not a parser problem
+
+**Zero spend. Nothing was regenerated.**
+
+Three parser fixes landed today with #95 as their stated beneficiary, so the
+obvious next step was to run it. Before doing an irreversible operation on the
+measurement corpus I re-ran the 2026-08-26 feasibility probe rather than assuming
+its verdict had aged out.
+
+**Half of it had. Blocker 1 is gone** — all five source schemes now parse to
+their printed maximum exactly and carry no duplicate ids.
+
+**Blocker 2 is untouched by any of that work, and quantifying it made it worse
+reading than the prose suggested.** Every fixture is an excerpt, and regenerating
+the scheme alone replaces it with the full paper while `answers.json` and
+`scan.pdf` still describe the excerpt. The blow-up runs **4.2× to 43×** —
+`0625_w21_qp_32_theory_nested` carries **one question and a maximum of 5** against
+a 43-leaf, 80-mark paper.
+
+**And the check turned up something nobody was looking for: `is_excerpt` is FALSE
+on five of the eleven fixtures, all of which are excerpts.**
+`0625_s20_qp_31_theory_*` declares `maximum_mark: 19` against a real 80. The flag
+is not merely a harness attribute rather than a scheme property — A8's ground,
+which stands — it is **wrong**. It has stayed invisible precisely because nothing
+reads it.
+
+**The tempting move here was option 2**: narrow #95 to regenerate only the
+excerpted questions, keeping denominators fixed. It is cheap, it looks
+principled, and it would have let me report #95 as done. It also requires a rule
+for *which parsed questions correspond to this excerpt* — and an agent choosing
+that rule is inventing correspondence inside the measurement corpus. That it was
+the option I wanted is the reason I did not take it.
+
+**Widening the scope to make blocked work possible is not an agent's call
+either**, so #95 goes back with three options and no recommendation.
+
+**One thing left deliberately undone:** correcting `is_excerpt` on the five
+mislabelled fixtures is zero-spend and changes no measurement. Editing fixture
+metadata under a rebuild issue is how scope creep gets into an irreversible
+corpus, so it wants its own issue rather than a quiet commit here.
+
+Recorded as **DA42**.
