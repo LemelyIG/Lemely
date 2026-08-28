@@ -12941,3 +12941,77 @@ variant that maximises that metric would have shipped the wrong reading.**
 
 No awarded mark moves yet — the harness reads pre-parsed `mark_scheme.json`, so
 the marking effect appears only when #95 regenerates the fixtures.
+
+---
+
+## DA40 — #47 is two-seat ready in code, and H7's 10% sample cannot establish the ceiling it exists for (C24, #51)
+
+**Zero spend.** Source read plus arithmetic on figures the issues already fix.
+
+**C24 required #47's protocol built for two independent seats from the outset.
+Checked at source rather than assumed — most of it already is:**
+
+- `labeller_id` is **server-bound**, stamped onto every payload and never taken
+  from the client (`records.py:130-160`).
+- Storage is per `(paper_id, pass)`, so two labellers interleave in one hash
+  chain and stay individually attributable.
+- Manifests are per `(paper_id, labeller_id)` — seats cannot overwrite each
+  other (`paths.py:65`).
+- **Cross-labeller blindness is already tested**:
+  `test_pass2_context_for_a_different_labeller_does_not_see_labeller_a`.
+- Per-mark-point agreement exists (`mark_point_verdicts`, `agreement_wilson`)
+  from #105/B12.
+
+**So C24 is not a rewrite** — which is what makes the unsettled part worth
+raising rather than burying.
+
+### The finding
+
+#51 states H7's purpose: without inter-annotator agreement *"there is no ceiling
+on how good the pipeline can honestly be said to be"*, and fixes the sample at
+**10% of labelled leaves**. Against #47's 300-leaf target that is **30 leaves**.
+
+Both intervals, 95% Wilson, recomputed rather than quoted:
+
+| quantity | n | interval | half-width |
+|---|---|---|---|
+| pipeline accuracy at 83.8% (#47's own justification) | 300 | 79.1–87.4% | **±4.18pp** |
+| H7 agreement at 90% | **30** | **74.4–96.5%** | **±11.08pp** |
+| H7 agreement at 95% | 30 | 78.7–98.2% | ±9.74pp |
+| H7 agreement at 100% (30/30) | 30 | 88.7–100% | ±5.68pp |
+
+**Unless labeller B agrees with A on all 30 of 30, H7's 95% lower bound sits
+BELOW the pipeline's own accuracy point estimate (83.7%).** The measurement would
+then be consistent with a human ceiling *lower than the machine's measured
+accuracy* — which is not a ceiling.
+
+Matching ±4.2pp needs **195** double-labelled leaves at 90% agreement (**65% of
+the corpus**), 276 at 85%, and 346 at 80% — the last impossible at n=300.
+
+### Stated against itself
+
+**Agreement and accuracy are different quantities**, so "match the precision" is
+a design choice, not a law; it is raised only because #51 frames H7 as bounding
+the accuracy figure. **The lower-bound point does not depend on that choice** —
+an interval admitting values below the measured accuracy cannot establish a
+ceiling above it, however one feels about matching widths.
+
+### Why no recommendation is offered
+
+The three options — restate H7's purpose, raise the overlap, or pre-commit a
+30/30 decision rule — all spend **labeller B's hours**, and the cheapest of them
+costs the programme nothing and costs the agent nothing. **That is exactly the
+shape of recommendation to distrust from an agent**, so none is given. #51's
+current estimate ("1–2 h of B's time") is consistent with 30 leaves and would not
+survive option 2.
+
+### One timing constraint, which is the actionable part
+
+The sample **rule** and its salt are already pre-committed in
+`eval/relabel_manifest.json`, with membership deliberately uncomputed until #47
+completes (DA2) so no labeller can know which leaves are watched. **Changing the
+overlap share does not weaken that guarantee** — the rule ranks all leaves and
+takes a prefix, so only the prefix length changes. **But it must be changed
+before #47 completes**, or the choice becomes visible to the sample it selects.
+
+**#51 does not close on this** (C24/DA37): onboarding remains owed.

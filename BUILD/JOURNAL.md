@@ -3287,3 +3287,51 @@ keeps its primary half — but that is **inferred from the design, not separatel
 measured**, and is recorded as inferred rather than presented as the answer.
 
 Recorded as **DA39**.
+
+---
+
+## run-2026-08-29-b — the second seat exists in code; its sample does not do its job
+
+**C24 said design #47 for two seats now. Zero spend.** The first half of that was
+quick and pleasant: the machinery is **already** two-seat capable, and I checked
+it at source rather than taking the issue's word — server-bound `labeller_id`,
+per-`(paper_id, labeller_id)` manifests, a shared hash chain that keeps records
+attributable, and a **passing test** that labeller B's pass-2 context cannot see
+labeller A's transcription. C24 is not a rewrite.
+
+Which left the part nobody had checked. **#51 fixes H7's sample at 10% of
+labelled leaves — 30 of #47's 300 — and states H7's purpose as supplying "a
+ceiling on how good the pipeline can honestly be said to be".**
+
+At n=30 the 95% Wilson interval on agreement is **±9.7 to ±13.9pp**, against
+**±4.18pp** for the accuracy it is meant to bound. But the width is not the
+finding. The finding is sharper:
+
+**Unless B agrees with A on all 30 of 30, H7's lower bound sits below the
+pipeline's own accuracy point estimate of 83.7%.** At 95% observed agreement the
+lower bound is 78.7%. A ceiling whose interval admits values *beneath* the thing
+it bounds is not a ceiling.
+
+Matching ±4.2pp would need **195** double-labelled leaves at 90% agreement —
+**65% of the corpus**, against the 10% specified and the "1–2 h of B's time" #51
+estimates.
+
+**I gave no recommendation, and the reason is worth recording rather than
+implied.** All three options spend Abdallah's hours, and the cheapest — accept
+10% and restate H7's purpose downward — costs the programme nothing and costs me
+nothing. That is precisely the shape of recommendation an agent should be
+distrusted on, so I stated the arithmetic and stopped.
+
+**I also stated the case against my own argument**: agreement and accuracy are
+different quantities, so demanding matched precision is a design choice, not a
+law. The lower-bound point survives that objection, which is why it is the one I
+led with.
+
+**The actionable half is a deadline, not a decision.** The relabel sample rule and
+salt are already pre-committed, with membership deliberately uncomputed until #47
+finishes so no labeller knows which leaves are watched. Changing the overlap
+*share* does not weaken that — the rule ranks all leaves and takes a prefix. But
+it has to change **before** #47 completes, or the choice becomes visible to the
+sample it selects.
+
+Recorded as **DA40**. #51 does not close: onboarding stays owed.
