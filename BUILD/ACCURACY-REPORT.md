@@ -241,8 +241,32 @@ published because they made the C6 reading's blast radius visible, and because
 the det/Gemini split they describe is **DA1's stratum axis** — which survives
 C11 and which #57's split depends on.
 
-**The gap this table does not show:** 289 schemes parse, but **190 of 479 fail
-the det parser outright** and have no parsed output at all. Closing that is #88.
+**The gap this table does not show:** 289 schemes parsed, but **190 of 479
+failed the det parser outright** and had no parsed output at all. Closing that is
+#88.
+
+**That gap shrank on 2026-08-28, at zero cost.** #136 named and fixed four
+mark-total defects in the det parser — two that lose marks (a marks-only
+continuation row discarded whole; a mark code leaked into the answer text
+defaulting to 1) and two that invent them (numeric data-table rows minting a
+mark each; **parenthesised mark cells being summed**, when CAIE brackets an
+*alternative* route to the same allocation). Measured over all 479 source
+schemes with both arms re-parsing the PDFs:
+
+| | before | after |
+|---|---|---|
+| reconcile **exactly** with the printed maximum | **289** | **333** |
+| still not exact | **190** | **146** (90 over, 54 under, 2 unparsed) |
+| total overcount across over-counting schemes | 845 marks | **349 marks** |
+
+**+47 newly exact, −3 regressed, net +44** — and the three regressions are named
+in DA34 rather than folded into the pass. They were previously exact **by
+cancellation**, not by correctness, which is the whole reason the two defect
+classes had to be fixed together: opposite-sign errors hide each other.
+
+**No awarded mark has moved yet.** The harness reads pre-parsed
+`mark_scheme.json` and never invokes the det parser, so the marking effect
+appears only when #95 regenerates the fixtures — which this unblocks.
 
 **Measured 2026-08-27 under ruling C20, and the answer is worse than the cost
 question it was asked about.** A budget-bounded sweep (hard cap $3.00, the live
@@ -260,8 +284,8 @@ successes. **Not output truncation** — the limit is 65,536 tokens and the larg
 success used 26,571. **Not fully deterministic** — the n=1 probe failed, then
 succeeded unchanged.
 
-**So the Gemini parse path closes roughly half of the 190-scheme gap, not the
-gap.** The sweep is **NOT REPORTABLE** for its stated purpose: four DA1 strata
+**So the Gemini parse path closes roughly half of the gap, not the gap** — and
+the gap it is measured against is now **146**, not 190, after #136. The sweep is **NOT REPORTABLE** for its stated purpose: four DA1 strata
 (`0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`) got **zero** successes, so the
 stratum coverage the spend was justified by was not delivered. The 12 parsed
 schemes are kept and **must not be presented as coverage**. Cost per *success*
