@@ -3213,3 +3213,77 @@ never do unilaterally. #49 is not closed by it. **Condition 1 is only partly met
 as "understood".** That judgment is the human's to apply. **DA38.**
 
 **Ledger 5.993470 → 6.370451. Headroom $1.629549.**
+
+---
+
+## run-2026-08-29-a — #110 and #112, and the metric that had to get worse
+
+**Zero spend.** B15 required #112's three sub-defects fixed together and run
+jointly with #110; C1 waived the marking sweep and put a deterministic corpus
+before/after in its place.
+
+**#110's central claim is now measured, and it holds.** 34 of 477 parsed schemes
+(7.13%) carry duplicate leaf ids and 57 leaves collapse — **and 14 of the 333
+schemes that reconcile with their printed maximum exactly are among them.** The
+mark-total gate is blind to this by construction, which is precisely why the
+defect survived until #95 tripped over it.
+
+**Two mechanisms, and I fixed only one on purpose.** CAIE reprints the question
+number at each continuation page (`0606_w23_ms_13` opens `10` four times) — that
+is unambiguous and is fixed. The other is a stray non-question table whose first
+column holds small integers (`0580_w21_ms_22` emits `2,3,5` between questions 20
+and 20(b)). Folding those back into the earlier question would be **inventing
+question identity rather than reading it**, so they are reported loudly instead.
+57 → 36 leaves lost, 34 → 21 schemes.
+
+**The detector is unarmed, and that is a decision rather than an omission.**
+Arming routes the paper to the Gemini fallback, which DA35 measured failing on
+half the schemes det cannot parse and all of 0606 — trading a silently-wrong
+paper for a probably-absent one. That is a cost and coverage call, not a tidy-up.
+
+**#112's three sub-defects collapse into one rule:** a line consisting solely of
+a marker. The line-alone requirement is the whole safety argument — CAIE also
+writes "accept either form" as an *inline* or, and `0625_s22_ms_33` carries
+`4000 / 10 OR 4000 / 9.8` inside one point. A looser rule would have split that
+and dropped half its text.
+
+**Three readings were measured rather than argued.** #112 names two of them and
+bounds them at 77 and 246 marks. Sticky (marker to end of leaf) removed **245** —
+which reproduces #112's own upper bound almost exactly and is good evidence my
+detector finds the same markers its scan did. Non-sticky removed **64**.
+
+**Then the uncomfortable part, which is the reason this entry exists.** On the
+reconciliation criterion every variant made things *worse*: 333 exact before,
+313 sticky, 304 for the merge design, 331 non-sticky. There was an obvious move
+available — pick the variant that maximises `exact` — and it would have been
+wrong for a reason worth writing down.
+
+**Reconciliation is confounded for this fix.** #112's defect *inflates* totals,
+so any paper that reconciled while summing both routes must also have been
+*under*-counting elsewhere. Removing the double-count exposes the undercount and
+the paper stops reconciling **while becoming more correct**. Optimising `exact`
+would have selected whichever variant removed the least — i.e. the one that fixed
+the defect least. So I inspected the six schemes that left exact instead of
+scoring them: all six are genuine alternatives — `0625_s25_ms_41` prints
+`F = ∆p/(∆)t AND …` **OR** `F = ∆{mv}/(∆)t AND …` for the same `A2`.
+
+**Non-sticky ships anyway**, but on a different ground: over-removal converts an
+overcount into an *undercount*, which is the harder error to notice, and #112's
+defect is one-directional inflation. Conservative is the right default when the
+scoring metric cannot arbitrate.
+
+**A bug of my own, caught by the measurement and not by the tests.** The split's
+`before` half ignored `mark_is_alternative`, so on a bracketed row (#136
+mechanism D) the primary half of an already-alternative route was counted. That
+pushed `0606_s23_ms_12` — which #136 had brought to an exact 80 the day before —
+up to **82**. Two independent alternative-route mechanisms can fire on the same
+row, and **neither may re-admit what the other excluded**. Fixed, pinned, back
+to 80/80.
+
+**And the pre-stated prediction was missed.** #112 predicted 77–246 marks
+removed; measured **64**, below the band. The explanation is the cell split —
+#112's lower bound reclassified the whole marker-bearing point, and splitting
+keeps its primary half — but that is **inferred from the design, not separately
+measured**, and is recorded as inferred rather than presented as the answer.
+
+Recorded as **DA39**.

@@ -29,6 +29,17 @@ if TYPE_CHECKING:
 log = structlog.get_logger(__name__)
 
 
+def _leaf_ids(questions: list[Question]) -> list[str]:
+    """Every leaf question's id, in document order, WITH duplicates kept."""
+    out: list[str] = []
+    for q in questions:
+        if q.parts:
+            out.extend(_leaf_ids(q.parts))
+        else:
+            out.append(q.id)
+    return out
+
+
 def _leaf_marks(questions: list[Question]) -> int:
     """Recursively sum marks for all leaf questions (those with no sub-parts)."""
     total = 0
@@ -46,6 +57,7 @@ def check(
     escalate_on_mark_mismatch: bool = True,
     mark_reconcile_tolerance: int = 0,
     escalate_on_defaulted_marks: bool = True,
+    escalate_on_duplicate_leaf_ids: bool = False,
     source: str = "",
 ) -> None:
     """Self-check the parsed questions against the paper's stated maximum mark.
@@ -76,8 +88,49 @@ def check(
             itself evidence of an error, and why a bare count is the wrong
             trigger. Whether to arm it, and on what predicate, is a cost and
             coverage decision escalated on #38 rather than chosen here.
+        escalate_on_duplicate_leaf_ids: Whether to raise ``ParseError`` when two
+            leaf questions in the same paper share an id.
+
+            **Defaults to False — reported, not blocking — and that is a
+            deliberate choice, not an oversight.** Leaf identity is
+            ``(paper_id, question_id)`` (DA6), so duplicates COLLAPSE two
+            different questions into one leaf and silently narrow every
+            downstream denominator. That is the D18 shape #105 fixed at the
+            analysis layer, except it originates here, so no amount of correct
+            keying downstream repairs it.
+
+            It is also **orthogonal to the mark total**: measured over 477
+            parsed source schemes, **14 of the 333 that reconcile with their
+            printed maximum exactly still carry duplicates**, so
+            ``escalate_on_mark_mismatch`` cannot see it.
+
+            Arming it routes the paper to the Gemini fallback — which #166
+            measured **failing on roughly half** the schemes det cannot parse,
+            and on 100% of 0606. So arming trades a silently-wrong paper for a
+            probably-absent one: a cost AND coverage decision, on the same
+            footing as ``escalate_on_defaulted_marks`` above, and not one to
+            take as a tidy-up.
         source: Human-readable label for log messages (e.g. the PDF filename).
     """
+    ids = _leaf_ids(questions)
+    duplicates = sorted({i for i in ids if ids.count(i) > 1})
+    if duplicates:
+        dup_ctx = {
+            "source": source or metadata.source_document or "?",
+            "duplicate_ids": duplicates,
+            "leaves": len(ids),
+            "leaves_lost_to_collapse": len(ids) - len(set(ids)),
+        }
+        dup_msg = (
+            f"Duplicate leaf question ids in {dup_ctx['source']}: "
+            f"{', '.join(duplicates)} — {dup_ctx['leaves_lost_to_collapse']} of "
+            f"{len(ids)} leaves collapse under (paper_id, question_id) identity"
+        )
+        if escalate_on_duplicate_leaf_ids:
+            log.warning("duplicate_leaf_ids_escalating", **dup_ctx)
+            raise ParseError(dup_msg)
+        log.warning("duplicate_leaf_ids", **dup_ctx)
+
     maximum_mark = metadata.maximum_mark
     computed = _leaf_marks(questions)
     discrepancy = abs(computed - maximum_mark)

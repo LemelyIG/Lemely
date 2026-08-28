@@ -9,6 +9,8 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from structlog.testing import capture_logs
+
 from lemely.core.loose_schemas import (
     AnswerPoint,
     MarkSchemeMetadata,
@@ -34,7 +36,12 @@ from lemely.io.det.mcq import find_mcq_answer_col, parse_mcq_tables
 from lemely.io.det.metadata import extract_metadata
 from lemely.io.det.profiles import SubjectProfile, get_profile, register_profile
 from lemely.io.det.reconcile import check as reconcile_check
-from lemely.io.det.rows import build_questions, decompose_compound_q, make_id
+from lemely.io.det.rows import (
+    build_questions,
+    decompose_compound_q,
+    make_id,
+    split_on_alternative_marker,
+)
 from lemely.io.det.tables import qualifies_as_mark_scheme_table, select_tables
 from lemely.runtime.config import DetParserSettings
 from lemely.runtime.errors import ParseError
@@ -1698,3 +1705,262 @@ class BracketedMarksAreAlternativeRoutesTests(unittest.TestCase):
             ["", "", "(B2)"],
         ]
         self.assertEqual(_run_theory(rows)[0].marks, 1)
+
+
+class SplitOnAlternativeMarkerTests(unittest.TestCase):
+    """#112 — the alternative-branch detector missed three shapes.
+
+    ``rows.py`` fired only when the answer cell **equalled** ``OR``/``EITHER``
+    or **started** with the marker plus a **space**. pdfplumber returns the
+    marker and the following working in ONE cell separated by a **newline**, so
+    neither branch matched and mutually exclusive routes were summed.
+    """
+
+    def test_marker_alone_on_the_first_line(self) -> None:
+        # Sub-defect 1: marker followed by \n, the shape 0606_s23_ms_12 uses.
+        got = split_on_alternative_marker("Or\n4 2\n1 + - x dx")
+        assert got is not None
+        before, after, marker = got
+        self.assertEqual(before, "")
+        self.assertEqual(after, "4 2\n1 + - x dx")
+        self.assertEqual(marker, "OR")
+
+    def test_alternative_is_in_the_vocabulary(self) -> None:
+        # Sub-defect 2: "Alternative" is the word CAIE 0606 actually prints and
+        # it was not a recognised marker at all.
+        for word in ("Alternative", "ALTERNATIVE", "Alternatively"):
+            got = split_on_alternative_marker(f"{word}\n3y2 - 14y + 11 (=0)")
+            assert got is not None, word
+            self.assertEqual(got[1], "3y2 - 14y + 11 (=0)")
+
+    def test_marker_not_at_cell_start_splits_the_cell(self) -> None:
+        # Sub-defect 3, and the cell-splitting decision B15 asked for. The real
+        # case is 0606_s23_ms_12 leaf 33b, where an operator fragment from the
+        # previous row precedes the marker. Text BEFORE the marker belongs to
+        # the primary branch; text after is the alternative. Keeping both is
+        # what makes this a split rather than a reclassification.
+        got = split_on_alternative_marker("⩽ ⩽\nAlternative\n9x2 - 28x + 3 * 0")
+        assert got is not None
+        before, after, _ = got
+        self.assertEqual(before, "⩽ ⩽")
+        self.assertEqual(after, "9x2 - 28x + 3 * 0")
+
+    def test_an_inline_OR_between_expressions_is_NOT_a_marker(self) -> None:
+        # The false positive that matters. CAIE writes "accept either form" as
+        # an inline OR inside ONE mark point — 0625_s22_ms_33 carries
+        # "4000 / 10 OR 4000 / 9.8". Treating that as a branch marker would
+        # split a single point in half and drop half its text.
+        self.assertIsNone(split_on_alternative_marker("4000 / 10 OR 4000 / 9.8"))
+        self.assertIsNone(split_on_alternative_marker("same as (c)(i) OR 0.4(0) A"))
+
+    def test_a_word_merely_containing_a_marker_is_not_one(self) -> None:
+        self.assertIsNone(split_on_alternative_marker("ORA applies here"))
+        self.assertIsNone(split_on_alternative_marker("Order of magnitude"))
+
+    def test_no_marker_returns_none(self) -> None:
+        self.assertIsNone(split_on_alternative_marker("just an ordinary answer"))
+        self.assertIsNone(split_on_alternative_marker(""))
+
+    def test_trailing_punctuation_on_the_marker_line_is_tolerated(self) -> None:
+        got = split_on_alternative_marker("Alternative:\nsecond method")
+        assert got is not None
+        self.assertEqual(got[1], "second method")
+
+
+class AlternativeRouteBranchingTests(unittest.TestCase):
+    """#112 end to end: mutually exclusive routes must not be summed."""
+
+    def test_newline_marker_puts_the_second_route_in_the_alt_branch(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "2"],
+            [None, "Or\nalternative method", "2"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, True])
+        self.assertEqual(leaf.marks, 2, "the alternative route must not be summed in")
+
+    def test_alternative_keyword_behaves_the_same(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "3"],
+            [None, "Alternative\nsecond route", "3"],
+        ]
+        leaf = _run_theory(rows)[0]
+        self.assertEqual(leaf.marks, 3)
+
+    def test_a_split_cell_keeps_both_halves_each_carrying_the_rows_mark(self) -> None:
+        # The cell-splitting decision (B15). A cell holding
+        # "primary working / OR / alternative working" carries ONE mark awarded
+        # for EITHER route, so both halves take the row's mark and only the
+        # alternative is excluded from the primary sum. Merging `before` as
+        # text-only instead was measured and reconciled WORSE (304 schemes
+        # exact against 329).
+        rows: list[list[str | None]] = [
+            ["9", "opening", "1"],
+            [None, "tail of the primary working\nAlternative\nsecond route", "1"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual(
+            [(p.point, p.marks, p.is_alternative) for p in points],
+            [
+                ("opening", 1, False),
+                ("tail of the primary working", 1, False),
+                ("second route", 1, True),
+            ],
+        )
+        self.assertEqual(leaf.marks, 2, "both primary points count; the alternative does not")
+
+    def test_a_leading_fragment_with_nothing_to_attach_to_takes_the_mark(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "", "0"],
+            [None, "leading working\nOr\nsecond route", "2"],
+        ]
+        points = _run_theory(rows)[0].answer_points or []
+        self.assertEqual(
+            [(p.point, p.marks, p.is_alternative) for p in points],
+            [("leading working", 2, False), ("second route", 2, True)],
+        )
+
+    def test_a_split_cell_on_a_BRACKETED_row_stays_wholly_alternative(self) -> None:
+        # #136 mechanism (D) and #112 can fire on the SAME row. A bracketed
+        # marks cell means the whole row is an alternative route, so neither
+        # half of a split cell may be counted as primary. Missing this pushed
+        # 0606_s23_ms_12 from an exact 80 to 82.
+        rows: list[list[str | None]] = [
+            ["9", "primary route", "2"],
+            [None, "alternative working\nOr\nyet another form", "(2)"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, True, True])
+        self.assertEqual(leaf.marks, 2)
+
+    def test_EITHER_opens_the_PRIMARY_route_not_the_alternative(self) -> None:
+        # The Q-row branch already treats EITHER as structural (see
+        # test_either_on_q_row_is_structural_not_a_point). The continuation
+        # branch did the opposite and switched INTO the alternative on EITHER,
+        # so an "EITHER ... OR ..." pair scored neither route as primary.
+        rows: list[list[str | None]] = [
+            ["9", "opening working", "1"],
+            [None, "Either\nfirst route", "2"],
+            [None, "Or\nsecond route", "2"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, False, True])
+        self.assertEqual(leaf.marks, 3, "opening + the EITHER route; the OR route excluded")
+
+
+class DuplicateTopLevelIdTests(unittest.TestCase):
+    """#110 — the parser emitted duplicate top-level ids, breaking DA6 leaf identity.
+
+    Leaf identity is ``(paper_id, question_id)``, so a duplicate id WITHIN a
+    paper collapses two different questions into one leaf. Measured over 477
+    parsed source schemes: **34 (7.13%) carry duplicates and 57 leaves collapse**
+    — and **14 of those schemes reconcile with their printed maximum exactly**,
+    so `mark_total_mismatch_escalating` cannot catch it.
+
+    Two mechanisms were found. This class covers the unambiguous one: CAIE
+    repeats the question number at the top of each continuation page, and the
+    parser opened a fresh question each time. `0606_w23_ms_13` opens question
+    `10` four times that way.
+    """
+
+    def test_a_repeated_top_level_number_continues_the_open_question(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10", "first page working", "2"],
+            # continuation page: CAIE reprints the number
+            ["10", "second page working", "3"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["10"])
+        self.assertEqual(
+            [p.point for p in questions[0].answer_points or []],
+            ["first page working", "second page working"],
+        )
+        self.assertEqual(questions[0].marks, 5)
+
+    def test_a_genuinely_new_question_still_opens(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10", "answer ten", "2"],
+            ["11", "answer eleven", "3"],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["10", "11"])
+
+    def test_a_reprinted_number_before_its_own_subparts_does_not_duplicate(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10(a)", "part a", "1"],
+            ["10", "continuation working", "1"],
+            ["10(b)", "part b", "1"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["10"])
+        leaf_ids = [p.id for p in questions[0].parts or []]
+        self.assertEqual(len(leaf_ids), len(set(leaf_ids)), f"duplicate leaves: {leaf_ids}")
+
+    def test_going_back_to_an_earlier_number_is_NOT_treated_as_continuation(self) -> None:
+        # The second mechanism — a stray non-question table whose first column
+        # holds small integers, e.g. 0580_w21_ms_22 emitting 2,3,5 between
+        # questions 20 and 20(b). That is NOT a page-break continuation and must
+        # not be silently folded into question 2; it stays a distinct question so
+        # the loud detector can see it.
+        rows: list[list[str | None]] = [
+            ["2", "answer two", "1"],
+            ["20", "answer twenty", "1"],
+            ["2", "stray table row", "1"],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["2", "20", "2"])
+
+
+class DuplicateLeafIdDetectorTests(unittest.TestCase):
+    """#110 bullet 4 — duplicate leaf ids must fail LOUDLY, not flow into a join.
+
+    They are invisible to the mark-total gate: 14 of the 333 schemes that
+    reconcile with their printed maximum exactly still carry duplicates.
+    """
+
+    def test_duplicate_leaf_ids_are_reported(self) -> None:
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        with capture_logs() as logs:
+            reconcile_check(dup, _metadata(80))
+        events = [entry.get("event") for entry in logs]
+        self.assertIn("duplicate_leaf_ids", events)
+        entry = next(e for e in logs if e.get("event") == "duplicate_leaf_ids")
+        self.assertEqual(entry["duplicate_ids"], ["1"])
+        self.assertEqual(entry["leaves_lost_to_collapse"], 1)
+
+    def test_distinct_leaf_ids_are_silent(self) -> None:
+        ok = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="2", marks=40, type=QuestionType.RECALL),
+        ]
+        with capture_logs() as logs:
+            reconcile_check(ok, _metadata(80))
+        self.assertNotIn("duplicate_leaf_ids", [entry.get("event") for entry in logs])
+
+    def test_it_escalates_only_when_armed(self) -> None:
+        # Unarmed by default, deliberately. Escalating routes the paper to the
+        # Gemini fallback, which #166 measured failing on ~50% of the schemes
+        # det cannot parse — so arming is a cost AND coverage decision, not a
+        # tidy-up. Same treatment as escalate_on_defaulted_marks.
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        reconcile_check(dup, _metadata(80))  # must not raise
+        with self.assertRaises(ParseError):
+            reconcile_check(dup, _metadata(80), escalate_on_duplicate_leaf_ids=True)
+
+    def test_duplicates_are_caught_even_when_the_marks_reconcile(self) -> None:
+        # The whole point: this defect is orthogonal to mark totals.
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        with self.assertRaises(ParseError) as ctx:
+            reconcile_check(dup, _metadata(80), escalate_on_duplicate_leaf_ids=True)
+        self.assertIn("1", str(ctx.exception))

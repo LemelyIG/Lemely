@@ -91,6 +91,7 @@ class DeterministicMarkSchemeParser:
             escalate_on_mark_mismatch=cfg.escalate_on_mark_mismatch,
             mark_reconcile_tolerance=cfg.mark_reconcile_tolerance,
             escalate_on_defaulted_marks=cfg.escalate_on_defaulted_marks,
+            escalate_on_duplicate_leaf_ids=cfg.escalate_on_duplicate_leaf_ids,
             source=pdf_path.name,
         )
 
