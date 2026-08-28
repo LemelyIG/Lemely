@@ -1,0 +1,30 @@
+[
+  {
+    "scheme": "0580_s23_ms_22.pdf",
+    "maximum_mark": 70,
+    "parsed_total": 70,
+    "delta": 0,
+    "status": "EXACT"
+  },
+  {
+    "scheme": "0606_s23_ms_12.pdf",
+    "maximum_mark": 80,
+    "parsed_total": 80,
+    "delta": 0,
+    "status": "EXACT"
+  },
+  {
+    "scheme": "0625_s20_ms_31.pdf",
+    "maximum_mark": 80,
+    "parsed_total": 80,
+    "delta": 0,
+    "status": "EXACT"
+  },
+  {
+    "scheme": "0625_w21_ms_32.pdf",
+    "maximum_mark": 80,
+    "parsed_total": 80,
+    "delta": 0,
+    "status": "EXACT"
+  }
+]

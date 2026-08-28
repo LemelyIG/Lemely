@@ -2993,3 +2993,85 @@ so both went to the human as **#166** rather than into this run.
 
 **Ledger 3.146479 → 5.993470**, re-summed from the worktree files rather than
 carried forward from the header. Recorded as **DA31**.
+
+---
+
+## run-2026-08-28-b — #136: four defects, not three, and the measurement caught a fifth
+
+**Zero spend, det-only.** #95 was held behind this: 4 of its 5 source schemes
+failed `mark_total_mismatch_escalating`, so regenerating the golden fixtures
+would have destroyed 10 of 11 of them.
+
+**All four blocking schemes now parse to their printed maximum exactly** — 70/70,
+80/80, 80/80, 80/80, against +3, +36, −4 and −7 before.
+
+**#136 said three bugs. There are four, and they fall into two opposite
+classes** — which matters more than the count, because the classes hide each
+other: a paper losing marks in one place and inventing them in another
+reconciles by accident and looks correct.
+
+**Losing (already diagnosed; this was the fix half):** (A) a continuation row
+with marks but no answer text was discarded whole by a blank-row guard that
+fired before the marks column was read; (B) a mark code that leaked into the
+answer text left the point defaulting to 1 — right by luck for every
+single-mark code, which is exactly why it survived.
+
+**Inventing (diagnosed here):** (C) numeric data-table rows minting a mark each —
+`0580_s23_ms_22`'s whole +3; and (D) **parenthesised mark cells being summed**.
+CAIE brackets a mark belonging to an *alternative route* to the same allocation.
+`parse_marks_cell` accepted `(A1)` as identical to `A1`. `0606_s23_ms_12`'s 23
+bracketed rows total **exactly 36**, and the discrepancy was **+36**; the
+unbracketed marks total **exactly 80**, the printed maximum. That is #45's
+`mark_aggregation_overcount` bucket, named.
+
+(D) is routed through the **same `is_alternative` machinery** that already handles
+`OR`/`EITHER`, so there is one aggregation rule to keep in step rather than two —
+and the alternative points are **kept**, not deleted, because they are a real
+route a candidate may have taken.
+
+**Where each fix was deliberately made narrower than it could have been**, all in
+the same direction — understate rather than invent:
+
+- (B) requires the **letter**. A bare trailing integer is never recovered, or
+  "the reading is 12" becomes a 12-mark point.
+- (A) drops a marks-only row that has no preceding point rather than inventing a
+  textless one, which would be unmarkable.
+- (D) requires a **balanced** paren pair; a one-sided one is an extraction
+  artefact and must not delete a real mark.
+
+**Then the corpus measurement earned its keep.** Both arms re-parse all 479
+source schemes; the "before" arm imports a package copy with `rows.py`/`marks.py`
+from `origin/develop`, so only the diff differs.
+
+**289 → 333 exact. +47 newly exact, −3 regressed, net +44.**
+
+**Mechanism (C) had a false positive I would not have reasoned my way to.** It
+fired on `0625_s20_ms_61` 1(a), whose genuine answer is
+`"0.025, 0.037, 0.050, 0.063, 0.075"` — numeric, no marks cell, entirely real —
+and ate a mark the paper had before. Narrowed to rows that do not open a labelled
+sub-part, and pinned by a test. **The rule was defensible in the abstract and
+wrong on contact with the corpus**; four papers' worth of diagnosis is not a
+sample.
+
+**Three regressions remain and are recorded rather than folded into the pass** —
+`0625_s22_ms_33` 80→86, `0625_w20_ms_31` 80→82, `0625_m21_ms_42` 80→81. All are
+mechanism (B) over-reads on papers whose marks column merges into the answer text
+throughout, where a few trailing `A3`/`B2` fragments read high. **They were
+previously exact by cancellation, not by correctness** — the same papers were
+losing marks elsewhere. #136's acceptance asks for exactly this to be stated.
+
+**Consequence for #88 and #166:** the det-failure population those issues price
+their spend against was **190 schemes**. It is now **146**. The Gemini fallback
+#166 measures at ~50% success has **44 fewer schemes to fail on**, at zero cost.
+
+**#110 is untouched and still open.** `0606_s23_ms_12` still emits `9` twice and
+`0580_s23_ms_22`'s sequence still restarts at `1,2,8`; (C) removes the marks
+those rows minted, not the duplicate ids.
+
+**No awarded mark moves yet.** `load_golden_cases` reads pre-parsed
+`mark_scheme.json` and never invokes the det parser — the same
+instrument-blindness that waived #38's sweep under A6(a) and #93's under B2. The
+marking effect appears only when #95 regenerates the fixtures, which this
+unblocks.
+
+Recorded as **DA34**.
