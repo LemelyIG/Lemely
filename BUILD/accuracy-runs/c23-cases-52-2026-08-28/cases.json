@@ -1,0 +1,142 @@
+{
+  "issue": 52,
+  "ruling": "C23 \u2014 cases, not recommendations",
+  "spend_usd": 0.0,
+  "summary": {
+    "ecf": {
+      "total_instances": 27,
+      "distinct_texts": 27
+    },
+    "oe": {
+      "total_instances": 908,
+      "distinct_texts": 820
+    },
+    "list_rule": {
+      "total_instances": 135,
+      "distinct_texts": 51
+    }
+  },
+  "cases": {
+    "ecf": [
+      {
+        "scheme": "0580_m22_ms_42",
+        "question": "5e_i",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "Strict FT their median reading"
+      },
+      {
+        "scheme": "0580_m22_ms_42",
+        "question": "5e_ii",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "Strict FT their UQ reading"
+      },
+      {
+        "scheme": "0580_m22_ms_42",
+        "question": "5e_iii",
+        "tariff": 2,
+        "point_marks": 2,
+        "text": "Strict FT their reading at 40th\npercentile"
+      },
+      {
+        "scheme": "0580_m22_ms_42",
+        "question": "5e_iv",
+        "tariff": 2,
+        "point_marks": 2,
+        "text": "Strict FT their reading at 400\n\u2013 their reading at 250"
+      },
+      {
+        "scheme": "0580_s19_ms_43",
+        "question": "3c_ii",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "Strict FT their (c)(i)"
+      }
+    ],
+    "oe": [
+      {
+        "scheme": "0580_m19_ms_12",
+        "question": "2",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "[0].03 oe"
+      },
+      {
+        "scheme": "0580_m19_ms_12",
+        "question": "15b",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "4100000 oe"
+      },
+      {
+        "scheme": "0580_m19_ms_12",
+        "question": "25",
+        "tariff": 4,
+        "point_marks": 1,
+        "text": "25 12 75 10\ntheir \u00d7 or their \u00f7 oe\n8 5 24 24"
+      },
+      {
+        "scheme": "0580_m19_ms_12",
+        "question": "25",
+        "tariff": 4,
+        "point_marks": 1,
+        "text": "300\ntheir oe\n40"
+      },
+      {
+        "scheme": "0580_m19_ms_22",
+        "question": "9",
+        "tariff": 2,
+        "point_marks": 2,
+        "text": "1\n[y = ] (x\u22124) oe final answer\n4"
+      }
+    ],
+    "list_rule": [
+      {
+        "scheme": "0625_m21_ms_42",
+        "question": "3c",
+        "tariff": 2,
+        "point_marks": 2,
+        "text": "any two from:\n\u2022 air pollution / harmful gases / acid rain\n\u2022 CO / greenhouse gases / contribution to global warming\n2\n\u2022 not renewable\n\u2022 damage from mining / drilling or any valid environmental consequence of transport of coal",
+        "trigger": "any two",
+        "bullets_listed": 4
+      },
+      {
+        "scheme": "0625_m21_ms_42",
+        "question": "6a",
+        "tariff": 2,
+        "point_marks": 1,
+        "text": "Any two correct rays from\n\u2022 from O through optical centre (and beyond)\n\u2022 from O parallel to principal axis to centre line of lens then through F\n1\n\u2022 from F through O to centreline of lens then parallel to principal axis\n2 M2",
+        "trigger": "Any two",
+        "bullets_listed": 3
+      },
+      {
+        "scheme": "0625_s23_ms_42",
+        "question": "5a_iii",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "any one from:\n\u2022 (thermal) energy is transferred to furniture / walls / objects (in the room)\n\u2022 (thermal) energy is transferred through windows / doors / floor / ceiling / from the room",
+        "trigger": "any one",
+        "bullets_listed": 2
+      },
+      {
+        "scheme": "0625_s23_ms_42",
+        "question": "9d",
+        "tariff": 2,
+        "point_marks": 2,
+        "text": "any two from:\n\u2022 limit time of exposure\n\u2022 store sources in lead boxes\n\u2022 keep distance from sources\n\u2022 avoid contact OR use tongs OR wear gloves",
+        "trigger": "any two",
+        "bullets_listed": 4
+      },
+      {
+        "scheme": "0625_s23_ms_51",
+        "question": "3d",
+        "tariff": 1,
+        "point_marks": 1,
+        "text": "any one from:\n\u2022 view bases of pins\n\u2022 place pins (as) far apart (as possible)\n\u2022 ensure pins are vertical\n\u2022 sharp pencil / thin lines / thin pins",
+        "trigger": "any one",
+        "bullets_listed": 4
+      }
+    ]
+  }
+}
