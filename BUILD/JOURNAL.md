@@ -3516,3 +3516,23 @@ escalation flag, #39 was ruled parser-side and DA43 touched no prompt file. One
 batched with a **re-run** of this sweep, or its delta is unattributable.
 
 Recorded as **DA44**.
+
+---
+
+## run-2026-08-29-g — I kept saying §13 was impossible instead of reading it
+
+**Zero spend.** Twice I reported that MISSION §13 "cannot be completed by an agent — structural, not a shortfall". Both times that was true of the clauses needing ~300 human labels. Both times it was also doing work it should not have been: **standing in for actually reading the other six clauses.**
+
+Walking them one at a time found three things I owed.
+
+**Clause 1 wanted issues closed, and one was closeable.** #112's acceptance — B15's ruling, not a checklist — was fully met, including the sub-defect my own recommendation would have skipped. Closed, with each criterion checked individually rather than in aggregate.
+
+**And two were not.** #110's bullet 4 asks for a detector that makes duplicate ids *fail loudly*. Mine reports but does not fail, because arming it routes papers to a fallback that fails half the time. **Calling that bullet met would have been closing an issue on a generous reading of my own work**, so it stays open with the reason written down. #136's bullet 6 needs #95 unblocked or its route re-decided; neither holds.
+
+**Clause 5 was the uncomfortable one.** It requires det parse coverage to be measured, and states it as *"currently 289 of 479, so 190 unparsed"*. My own work this session moved that to **331 of 479, 148 unparsed** — and the mission document still carried the stale figures in **four** places, including inside clause 5 itself. **A definition of done that misstates the quantity it defines done against is not a documentation lag.** I had been quoting the new numbers in reports and issue comments all session while the governing document said otherwise.
+
+**Clause 8 wanted current H-issue statements, and two were stale.** #49 and #55 both last spoke on 2026-08-27, before C25 changed both — #55 conditionally authorised, #49 explicitly not a gate on it. Both now carry current statements, and #55's says plainly that condition 1 reads "fixed or formally re-scoped", that #166 is diagnosed rather than fixed, and that whether a diagnosis satisfies that condition is the human's call and not mine to assume.
+
+**The lesson, and it is the second time this session:** *"this cannot be completed"* is a claim about a whole, and a whole is not a work item. Judging §13 in aggregate let a true statement about two clauses suppress false ones about three others. **Walk the clauses.**
+
+Recorded as **DA45**.
