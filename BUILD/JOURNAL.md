@@ -3468,3 +3468,51 @@ paper-level Gemini aggregate, because that is bullet 3's own scope and needs
 spend.
 
 Recorded as **DA43**.
+
+---
+
+## run-2026-08-29-f — #41's code half, and a broad `except` that hid my own typo as a marking failure
+
+**Zero spend.** The sweep #41's acceptance requires is **costed and left
+unauthorised**; only the code landed.
+
+**Ruling A13** says the A-mark dependency comes from each paper's **own printed
+Generic Marking Principles**, with strict M-then-A as a fallback. `extract_gmp`
+has always populated `metadata.generic_marking_principles`, and `correct_paper`
+threw it away. It now reaches the marker.
+
+**The injection needed a sentence more than the obvious one.** Printing the
+principles into the prompt is not enough — the system prompt still carried a
+hard-coded *"do not award an A mark if its associated M mark was not earned"*,
+stated unconditionally, and a model reading both would follow the general text.
+So the principles are injected **with an explicit precedence statement**, and the
+hard-coded rule is now labelled FALLBACK ONLY. That is the difference between
+satisfying A13 and appearing to.
+
+**Injected into the user prompt rather than the system prompt**, because the
+cache key is built from the user prompt — so two papers with different printed
+principles cannot share a cached mark. A system-prompt injection would have been
+a silent cache-collision bug.
+
+### The part I want on the record
+
+My first version read `ms.metadata...`; the variable in that scope is `scheme`.
+**The `except Exception` around `ai.mark_question` caught the `AttributeError`,
+logged `ai_marking_failed`, and awarded 0 to every question in the paper.**
+
+No crash. No traceback. A paper that scored zero and a log line blaming the
+model. **A catch that broad turns a programming error into a plausible marking
+outcome**, and it is invisible precisely because "the AI failed to mark this
+question" is something that genuinely happens.
+
+The existing tests caught it in seconds. Had I been running a sweep instead, I
+would have paid for 140 calls and read the result as a marking regression. I have
+not changed the catch — that is its own change with its own review — but it is
+recorded, because anyone editing inside that `try` has the same trap waiting.
+
+**The batching constraint was re-checked, not assumed:** #38 is provenance and an
+escalation flag, #39 was ruled parser-side and DA43 touched no prompt file. One
+`VERSION` bump is correct. If either later needs a prompt change it must be
+batched with a **re-run** of this sweep, or its delta is unattributable.
+
+Recorded as **DA44**.
