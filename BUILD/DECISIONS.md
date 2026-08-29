@@ -13200,3 +13200,61 @@ cost-and-coverage call as `escalate_on_duplicate_leaf_ids` and
 
 **No under-sum check** (it cannot fire) and **no paper-level Gemini aggregate**
 (bullet 3's own scope, with its own design questions and a spend requirement).
+
+---
+
+## DA44 — #41's principles injection, and a broad `except` that turned my own typo into "the model failed" (#41, A13)
+
+**Zero spend.** The code half of #41 is complete; its acceptance sweep is
+**costed and not authorised** (`BUILD/accuracy-runs/preflight-41-2026-08-29/`).
+
+**Ruling A13** is that the A-mark dependency is driven from **each paper's own
+printed Generic Marking Principles**, not a hard-coded rule, with strict
+M-then-A as the **fallback only** where principles cannot be parsed.
+
+`det/gmp.py`'s `extract_gmp` has always populated
+`metadata.generic_marking_principles`, and `correct_paper` discarded it. It is
+now threaded through `mark_question` into the user prompt, with an explicit
+precedence statement — **printing the principles without saying they govern
+would leave the model following the generic text**, which is the failure this
+ruling exists to prevent.
+
+**The system prompt's A-mark rule was rewritten.** It previously read *"A marks
+are accuracy marks: dependent on the preceding M mark … Do not award an A mark
+if its associated M mark was not earned"* — stated unconditionally, which is
+exactly the hard-coded rule A13 rejects. It is now marked **FALLBACK ONLY**.
+
+**Injected into the USER prompt, deliberately.** The principles are per-paper
+rather than per-run, and the cache key is built from the user prompt
+(`gemini.py:339`), so two papers with different printed principles **cannot
+share a cached mark**. A system-prompt injection would have needed a separate
+cache-key change to be safe.
+
+`VERSION` 4 → 5, which invalidates the whole cached golden corpus — required,
+since a cached mark from the old prompt would otherwise be attributed to the new
+one. **The preflight records that this makes every subsequent marking run pay
+full price too, not only the sweep.**
+
+### The part worth recording against myself
+
+My first version read `ms.metadata.generic_marking_principles`; the variable in
+that scope is `scheme`. **The `except Exception` around `ai.mark_question`
+caught the `AttributeError`, logged `ai_marking_failed`, and awarded 0 marks to
+every question in the paper.** No crash, no traceback — just a paper that scored
+zero and a log line blaming the model.
+
+Only the existing tests caught it. **A catch that broad converts a programming
+error into a plausible-looking marking outcome**, and the failure mode is
+invisible precisely because "the AI failed to mark this question" is a thing
+that genuinely happens. Not widened or narrowed here — that is its own change
+with its own review — but recorded, because the next person to edit inside that
+`try` has the same trap waiting.
+
+### The batching constraint, re-checked rather than assumed
+
+#41 requires every M1 marker-prompt change to land in one commit with one
+`VERSION` bump. Re-checked 2026-08-29: **#38** is provenance and an escalation
+flag, **#39** was ruled parser-side by A9 and DA43's work touched only
+`reconcile.py`/`config.py`. Neither is a prompt change, so **one bump is
+correct**. If either later needs one, it must be batched with a **re-run** of
+this sweep or its delta is unattributable.

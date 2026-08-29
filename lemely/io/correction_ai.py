@@ -57,10 +57,18 @@ class AICorrector:
         student_answer: str,
         student_working: str | None = None,
         prior_results: dict[str, int] | None = None,
+        principles: list[str] | None = None,
     ) -> AIMarkResponse:
+        """Mark one question.
+
+        ``principles`` is the paper's own ``metadata.generic_marking_principles``
+        (#41 / ruling A13). They are the authority on the M/A dependency; the
+        system prompt's strict rule is the fallback for papers that do not print
+        them or whose GMP pages could not be parsed.
+        """
         g = self._client._settings.gemini
         user_prompt = build_marker_user_prompt(
-            question, student_answer, student_working, prior_results
+            question, student_answer, student_working, prior_results, principles
         )
 
         result = self._client.generate_structured(
@@ -649,6 +657,10 @@ def correct_paper(
                 student_answer or "",
                 student_working,
                 prior_results=sibling_prior or None,
+                # #41 / A13: the paper's OWN printed principles govern the M/A
+                # dependency. `extract_gmp` has always populated this field and
+                # it was discarded here.
+                principles=scheme.metadata.generic_marking_principles or None,
             )
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))

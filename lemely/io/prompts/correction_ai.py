@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from lemely.core.loose_schemas import Question
 
-VERSION = "4"
+VERSION = "5"
 
 MARKER_SYSTEM_PROMPT = """
 You are an experienced CAIE examiner marking a single exam question for a Cambridge
@@ -22,8 +22,13 @@ Rules:
 - M marks are method marks: award when the student demonstrates a correct method step,
   even if they made an arithmetic slip that leads to a wrong final value. If a WORKING block
   is supplied, look there for evidence of the method step.
-- A marks are accuracy marks: dependent on the preceding M mark and require the correct
-  numerical value. Do not award an A mark if its associated M mark was not earned.
+- A marks are accuracy marks and require the correct numerical value. **Whether an A mark
+  depends on its preceding M mark is decided by THIS PAPER'S OWN printed Generic Marking
+  Principles**, which are supplied in the user prompt when the paper prints them and they
+  could be parsed. Those principles take precedence over anything in this section.
+- **FALLBACK ONLY — where no Generic Marking Principles are supplied:** apply strict
+  dependency, i.e. do not award an A mark if its associated M mark was not earned. This is
+  the published CAIE default and is the fallback, never the primary rule.
 - B marks are independent: award when the specific fact or value is correct, regardless of
   other marks.
 - If WORKING is supplied and the student's final ANSWER is wrong but the working shows
@@ -96,8 +101,22 @@ def build_marker_user_prompt(
     student_answer: str,
     student_working: str | None = None,
     prior_results: dict[str, int] | None = None,
+    principles: list[str] | None = None,
 ) -> str:
-    """Build the per-question marking prompt embedding the mark scheme subtree + student response."""
+    """Build the per-question marking prompt embedding the mark scheme subtree + student response.
+
+    ``principles`` is the paper's own ``metadata.generic_marking_principles``,
+    already extracted by :func:`lemely.io.det.gmp.extract_gmp` and, until #41,
+    discarded. Ruling A13 makes them the **authority** on the A-mark dependency
+    rather than the hard-coded rule in the system prompt, so they are injected
+    with an explicit precedence statement — printing them without saying they
+    govern would leave the model following the generic text.
+
+    Injected into the USER prompt, not the system prompt, for two reasons: the
+    principles are per-paper rather than per-run, and the cache key is built
+    from the user prompt (``gemini.py:339``), so two papers with different
+    printed principles cannot share a cached mark.
+    """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
     parts = [
@@ -108,6 +127,15 @@ def build_marker_user_prompt(
     if student_working and student_working.strip():
         parts.append(
             f"WORKING (verbatim from scan, may be partial or messy):\n{student_working.strip()}\n"
+        )
+    if principles:
+        principle_lines = "\n".join(f"  - {p}" for p in principles)
+        parts.append(
+            "THIS PAPER'S PRINTED GENERIC MARKING PRINCIPLES (verbatim from the mark scheme):\n"
+            f"{principle_lines}\n"
+            "These are the paper's own published rules and TAKE PRECEDENCE over the general "
+            "guidance in the system prompt wherever the two differ — including the M/A "
+            "dependency rule.\n"
         )
     if prior_results:
         prior_lines = "\n".join(
