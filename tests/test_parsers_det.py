@@ -2029,3 +2029,66 @@ class PhantomLeafTests(unittest.TestCase):
         ]
         questions = _run_theory(rows)
         self.assertEqual(sum(q.marks or 0 for q in questions), 5)
+
+
+class PrimaryMarkPointSumIsActuallyCheckedTests(unittest.TestCase):
+    """#39 bullet 1 — the invariant is written correctly and does not RUN on det output.
+
+    ``Question.validate_mark_point_sum`` is a ``model_validator(mode="after")``,
+    so it fires on ``model_validate`` — and ``rows.py`` assigns ``marks`` and
+    ``answer_points`` **after** construction. Pydantic's
+    ``revalidate_instances`` defaults to ``never``, so wrapping the mutated
+    Question in a ``MarkScheme`` does not re-check it either.
+
+    Measured: **4 questions across the 479 source schemes** carry a primary
+    point sum exceeding their tariff and reach output unflagged. Small in count;
+    the point is that the invariant #39 asks for exists and is silent.
+
+    Reported, not blocking — arming routes the paper to the Gemini fallback,
+    which DA35 measured failing on ~50% of det-failures. Same footing as
+    ``escalate_on_duplicate_leaf_ids`` and ``escalate_on_defaulted_marks``.
+    """
+
+    def _q(self, marks: int, point_marks: list[int], alt: list[bool] | None = None):
+        alt = alt or [False] * len(point_marks)
+        q = Question(id="1", marks=marks, type=QuestionType.RECALL)
+        q.answer_points = [
+            AnswerPoint(id=f"p{i}", point=f"pt{i}", marks=m, is_alternative=a)
+            for i, (m, a) in enumerate(zip(point_marks, alt, strict=True))
+        ]
+        return q
+
+    def test_a_primary_sum_over_the_tariff_is_reported(self) -> None:
+        with capture_logs() as logs:
+            reconcile_check([self._q(1, [1, 1])], _metadata(1))
+        entry = next(e for e in logs if e.get("event") == "primary_point_sum_exceeds_marks")
+        self.assertEqual(entry["questions"], ["1"])
+
+    def test_ALTERNATIVE_points_are_excluded_from_the_check(self) -> None:
+        # The whole reason #39 insists on the FILTERED sum: alternative points
+        # are supposed to exceed the tariff, and a raw-sum gate would produce
+        # false positives on a well-formed corpus.
+        with capture_logs() as logs:
+            reconcile_check([self._q(1, [1, 1], alt=[False, True])], _metadata(1))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_an_exact_sum_is_silent(self) -> None:
+        with capture_logs() as logs:
+            reconcile_check([self._q(2, [1, 1])], _metadata(2))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_an_UNDER_sum_is_not_reported_by_this_check(self) -> None:
+        # #39 bullet 2 asks for the under-sum direction. Measured over 13,690
+        # det questions carrying points, it fires ZERO times — det derives the
+        # tariff from the filtered sum, so under-summing is impossible by
+        # construction. The direction only has meaning on the Gemini path,
+        # which is bullet 3's missing paper-level aggregate.
+        with capture_logs() as logs:
+            reconcile_check([self._q(5, [1, 1])], _metadata(5))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_it_escalates_only_when_armed(self) -> None:
+        q = self._q(1, [1, 1])
+        reconcile_check([q], _metadata(1))  # must not raise
+        with self.assertRaises(ParseError):
+            reconcile_check([q], _metadata(1), escalate_on_primary_sum_breach=True)

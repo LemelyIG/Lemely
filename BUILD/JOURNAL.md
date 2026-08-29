@@ -3427,3 +3427,44 @@ metadata under a rebuild issue is how scope creep gets into an irreversible
 corpus, so it wants its own issue rather than a quiet commit here.
 
 Recorded as **DA42**.
+
+---
+
+## run-2026-08-29-e — two of #39's three bullets collapsed into one, by measuring first
+
+**Zero spend.** #39's remaining parser-side bullets looked like three pieces of
+work. Measuring before writing any of them turned them into one and a half.
+
+**Bullet 1 asks for the invariant to be written as the filtered sum. It already
+is** — `Question.validate_mark_point_sum` excludes `is_alternative` and
+`is_optional`, exactly as the bullet demands. So the bullet is met in form.
+
+**And the validator never runs on det output.** It is a
+`model_validator(mode="after")`, `rows.py` assigns `marks` and `answer_points`
+*after* construction, and pydantic's `revalidate_instances` defaults to `never`
+— so wrapping the mutated Question in a `MarkScheme` does not re-check it either.
+I verified both directions rather than reasoning about pydantic's defaults:
+`model_validate` on a breaching payload raises; construct-then-assign does not.
+**4 questions in 479 schemes reach output in breach and nothing says so.**
+
+**Bullet 2 asks for the under-sum direction. It would fire zero times in 13,690
+questions** — because `rows.py` *derives* the tariff from the filtered sum, so
+under-summing is impossible by construction on this path. Writing that check
+would have shipped a gate that cannot fire, and I would have had no way to notice
+from the code alone.
+
+That is the mirror of `escalate_on_defaulted_marks`, where a plausible gate
+turned out to fire on 44.4% of papers. **Both failure modes cost a run; the
+measurement costs minutes.**
+
+**So bullets 2 and 3 are the same bullet.** The under-sum direction only means
+anything where the tariff is *not* derived from the points — the Gemini path,
+which is precisely the missing paper-level aggregate bullet 3 already names.
+Folding one into the other is a simplification #39 can adopt, not a scope cut.
+
+**What shipped: a reporter, unarmed**, consistent with the duplicate-id detector.
+What did not ship: the under-sum check, because it cannot fire, and the
+paper-level Gemini aggregate, because that is bullet 3's own scope and needs
+spend.
+
+Recorded as **DA43**.

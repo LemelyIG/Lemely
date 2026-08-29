@@ -13138,3 +13138,65 @@ is reason enough not to push it.**
 mislabelled fixtures is zero-spend and changes no measurement, since nothing
 reads the flag. **Deliberately not done here** — editing fixture metadata under a
 rebuild issue is how scope creep enters an irreversible corpus.
+
+---
+
+## DA43 — #39's invariant is correct and never runs; its under-sum bullet cannot fire (#39 bullets 1–3)
+
+**Zero spend, det-only.** Measured over all 479 source schemes — 13,690 leaf
+questions carrying answer points — with the same type exemptions
+`Question.validate_mark_point_sum` itself applies. **Measured before
+implementing**, which is the order `escalate_on_defaulted_marks` got wrong in the
+other direction.
+
+### Bullet 1 — met in form, unenforced in fact
+
+The invariant is already written as the **filtered** sum, excluding
+`is_alternative` and `is_optional`. What it lacks is enforcement: it is a
+`model_validator(mode="after")`, so it fires on `model_validate`, and `rows.py`
+assigns `marks` and `answer_points` **after** construction. Pydantic's
+`revalidate_instances` defaults to `never`, so wrapping the mutated Question in a
+`MarkScheme` does not re-check it either. Verified both directions —
+`model_validate` on a breaching payload **raises**; constructing then assigning
+**does not**.
+
+**4 questions across the 479 schemes reach output in breach, unflagged** (e.g.
+`0606_s19_ms_13` `11i`, tariff 1 against a primary sum of 3). Small in count; the
+point is that the invariant exists, is correct, and is silent.
+
+### Bullet 2 — would fire ZERO times, and not by luck
+
+| | |
+|---|---|
+| leaf questions with answer points | **13,690** |
+| primary sum equals tariff | 13,668 |
+| **primary sum under tariff** | **0** |
+| primary sum over tariff | 4 |
+| questions with no answer points | 135 |
+
+`rows.py` derives `q.marks` from the filtered primary sum whenever the question
+row carried answer text, so **under-summing is impossible by construction on the
+det path**. Implementing the check would ship a gate that cannot fire.
+
+### Bullet 3 — bullets 2 and 3 are the same bullet
+
+The under-sum direction only has meaning where the tariff is **not** derived from
+the points — the **Gemini** path, which is exactly the missing paper-level
+aggregate bullet 3 names. **Bullet 2 should be folded into bullet 3 rather than
+implemented separately.**
+
+From DA35: Gemini's observed validation failures are the **over** direction,
+already caught by the shared validator — which *does* run there, because that
+path goes through `model_validate`. The under direction on the Gemini path is
+**unmeasured**, because output failing validation never lands.
+
+### What was implemented, and what deliberately was not
+
+A reporter in `reconcile.check`, **unarmed by default**
+(`escalate_on_primary_sum_breach`). Arming routes the paper to the Gemini
+fallback, which DA35 measured failing on ~50% of det-failures — the same
+cost-and-coverage call as `escalate_on_duplicate_leaf_ids` and
+`escalate_on_defaulted_marks`.
+
+**No under-sum check** (it cannot fire) and **no paper-level Gemini aggregate**
+(bullet 3's own scope, with its own design questions and a spend requirement).
