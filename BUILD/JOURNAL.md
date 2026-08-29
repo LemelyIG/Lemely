@@ -3613,3 +3613,56 @@ session, so the Gemini-path remainder is **148 rather than 190** — though
 which is #95, which is itself blocked (DA42).
 
 Recorded as **DA47**.
+
+---
+
+## run-2026-08-29-j — the workflow said the gate does not run in CI; it has been running all along
+
+**Zero spend.** The clause walk had left one half of §13 clause 2 unexamined:
+*"published **and enforced in CI**"*. I had checked "published" and stopped.
+
+`.github/workflows/ci.yml` says, above the review-rate gate step, that it *"has
+not been executed in CI and must not be claimed as CI-verified"* — written while
+GitHub Actions was org-wide billing-blocked.
+
+**Billing was restored, the step started running, and nobody updated the
+comment.** Run 33235411251 carries the gate's own output in its log. It executes
+on every test job, and has done for every PR I merged today.
+
+**So I had been reading a claim about the system's state that stopped being true
+without anyone touching it — and repeating it.** Twice I told the human clause 2
+was partial; the reason I gave was closer to "the gate is not wired" than to the
+truth, which is that it runs and deliberately does not block.
+
+**Those are different things and the old comment collapsed them.** The gate exits
+0 on a breach while the ratchet is unarmed, so CI *observes and records*. Clause 2
+is still partial — enforcement is not observation — but for a reason worth
+stating precisely, because "not verified in CI" invites someone to go and wire up
+something that already exists.
+
+**This is the third stale claim of exactly this shape today**: MISSION's
+`289 of 479` after the parser improved, the report's `29.03%` after DA33 retired
+it, and now a workflow comment asserting a step does not run after it started
+running. Each was accurate when written and rotted in place.
+
+The cheap defence, and the one the corrected comment uses: **a claim about the
+state of the system should name the evidence that would falsify it.** The new
+text names a run id. Anyone can check it in ten seconds, and if it stops being
+true they will find out.
+
+**And at first I could not land it.** The push was rejected — *"refusing to allow
+an OAuth App to create or update workflow `.github/workflows/ci.yml` without
+`workflow` scope"*.
+
+I did not work around it. Putting the corrected text somewhere else would have
+left the false claim exactly where readers meet it, which is the entire problem —
+and a scope check is a permission boundary, not an obstacle to be routed around.
+So the finding landed, the fix did not, and DA48 carried the exact wording for
+whoever held the scope.
+
+**The human granted the scope and the correction is applied.** Worth noting which
+half was the deliverable: the *finding* was the thing that needed writing down
+carefully, and it was complete and useful while the one-paragraph edit sat
+undone.
+
+Recorded as **DA48**.
