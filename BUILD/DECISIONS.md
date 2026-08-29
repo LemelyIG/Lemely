@@ -13619,3 +13619,157 @@ tweak**, and wants its own issue.
   failing on ~50% of what det cannot parse.
 - **Every corpus-wide figure published before today is as-of the 479-scheme
   population** and must carry that label rather than be silently reused.
+
+---
+
+## DA51 — the programme is retired under C26, and the report it retires with had a stale MET in it
+
+**Human ruling C26, 2026-08-29:** *"retire the mission, close the issues and move
+tasks to done in the Lemely Progress project, and merge whatever is done and can
+be merged then create a final report."* Recorded as the last ruling of the
+programme. This entry records what retirement actually did, and the one defect
+found while doing it.
+
+### The programme is retired NOT DONE, and the two are recorded separately
+
+C26 is a decision to **stop**, not a finding that the work finished. §13's
+Definition of Done is **not met**, and retirement does not make it met:
+
+| clause | at retirement |
+|---|---|
+| 1 — every non-H sub-issue closed via merged PR | **NOT MET** — 8 open (#38, #39, #41, #58; #47, #57, #59, #88), plus 6 off-epic defect issues |
+| 2 — ratchet published **and enforced** in CI | **PARTIAL** — published; the gate runs on every test job (DA48) but `review_rate_ratchet_armed=False`, so it observes and does not block |
+| 3 — the 2×2 published, or its absence | **MET** — `NOT_APPLICABLE` published with its reason |
+| 4 — ~300 labelled leaves + inter-rater figure | **NOT MET** — **zero labels exist**; `eval/labels/` holds only `.gitkeep` |
+| 5 — both paths measured in their own terms | **BOTH HALVES SHORT** — see below |
+| 6 — review rate at or below the ratchet | **NOT MET** — 32.58% mean against a 10% budget |
+| 7 — develop→main PR open for human approval | **MET** — #159 open, left open per §12.3 |
+| 8 — open H issues cleanly documented | **MET when closed** — each carried a current statement |
+
+**M0 came closest, and "all 12 sub-issues closed" is NOT the same as "acceptance
+met".** #24's acceptance box 3 names the three cells of the oracle-transcription
+2×2 — extraction-attributable, marking-attributable, masked — and **the 2×2 does
+not exist**. #28 was closed with all four acceptance boxes unticked (the honest
+record, and clause 3 publishes `NOT_APPLICABLE` for exactly this reason); the
+oracle+mark arm produced zero records, so `mcnemar()` and `ablation_2x2()` return
+`b = c = n_pairs = 0`. **The one question the programme was built to answer — is a
+wrong mark the extractor's fault or the marker's? — has no measurement behind it.**
+
+I first wrote this entry saying M0 "completed in full", counting closed sub-issues
+and calling that acceptance. It is the generous self-assessment §14 warns about,
+caught in adversarial review of my own retirement text, and corrected here rather
+than quietly. The instrument was largely built; the attribution it existed to
+produce was not.
+
+### The defect: ACCURACY-REPORT.md still said clause 5 was MET
+
+DA50 restated det parse coverage from **331 of 479 (69.1%)** to **393 of 1,130
+(34.8%)** and ruled that *every corpus-wide figure published before that day is
+as-of the 479-scheme population*. PR #189 landed DA50 into `DECISIONS.md`,
+`JOURNAL.md` and the state header — and **did not touch `ACCURACY-REPORT.md`**,
+which is the file that publishes the figures. So the report went on saying *"the
+det half is parse coverage, now 331 of 479"* and *"Clause 5 status: det parse
+coverage **MET**"* for the whole of the day DA50 falsified it.
+
+**This is the fourth instance of the DA45/DA46/DA48 pattern** — a claim accurate
+when written that rotted in place because the restatement landed somewhere else —
+and the first found in the published report rather than in a mission file, an
+issue body or a code comment. Corrected in this commit; the correction names the
+population and the evidence path so the next reader can falsify it.
+
+**The generalisation worth keeping:** a restatement is not finished when the
+decision record carries it. It is finished when **every artifact that published
+the superseded figure** carries it. DA50's own commit is the counter-example, and
+it was written by the same run that formulated the rule.
+
+### The catch rate did not stall — it FELL, and I nearly published "unmeasured"
+
+Drafting this entry I wrote that the wrong-mark catch rate was *"never
+re-measured"*, on the strength of `ACCURACY-REPORT.md` containing no catch-rate
+figure. **It was measured.** The honest post-D18 run `run-ef443fc2931e` reports
+`flag_recall` **14.29%, n=71 rows**, against the **27.3% (3/11)** the mission's
+*"≥6/11"* target was set from. The goal was ≥54.5%. **It went down, not up.**
+
+"Unmeasured" would have been the softer and wrong claim, and I would have reached
+it by searching one file and treating its silence as evidence of absence.
+
+**And the reason it was not in that file is itself the finding.** When D18 was
+fixed, `mark_accuracy` moved **up** (83.8% → 90.1%) and was promptly relabelled
+*historical, superseded* wherever it appeared. `flag_recall` (27.3% → **14.29%**)
+and `flag_precision_high` (91.7% → **89.8%**) moved **down in the very same run**
+and kept their better-looking legacy numbers in `DELIVERY.md`, `CHANGELOG.md` and
+`docs/ACCURACY-STRATEGIES.md`. **Only the metric that moved in the flattering
+direction received the restatement.**
+
+That is selective disclosure, and it is the same family of defect as D18 — the
+failure the restatement work existed to fix. It was caught during #29 and all
+three metrics now carry the qualifier. Recorded again here because at retirement
+it nearly produced a *second* generous claim, in the closing report, by a
+different route: not by choosing the flattering number, but by failing to look
+for the unflattering one and calling that absence "unmeasured".
+
+### And a second stale figure in the same file, two sections down
+
+The **Spend** table read **$5.993470** cumulative with the accuracy worktree
+ledger at **5.588999**. That was a true re-sum taken earlier on 2026-08-28 —
+before that ledger's final write at **2026-08-28T20:43:20Z**. Read at retirement,
+the four files sum to **$6.370451**, headroom **$1.629549**.
+
+Nothing turned on it: the $8.00 ceiling was never within reach on either figure,
+and no run was authorised against the stale number. It is recorded because of
+*where* it sits. The paragraph directly above that table says the sum is
+*"never carried forward from a header — that rule exists because carrying it
+forward had reproduced the previous run's arithmetic error every run."* **The
+rule was written, published, and then not applied to the table it governs.**
+
+Two stale figures in the programme's own published-figures file, found only
+because retirement forced a read of every line of it. **A document that states a
+discipline does not thereby practise it**, and neither of these was caught by a
+gate, a test or CI — they were caught by someone reading the file for another
+purpose. That is the honest reach of this programme's controls: they bind code,
+and they do not bind prose.
+
+### What retirement did NOT do, deliberately
+
+- **Did not merge PR #159 (develop → main).** §12.3 reserves that for the human,
+  and the human, asked directly, chose to keep it that way. It is open, green, and
+  105 commits ahead.
+- **Did not close #10–#22.** They are separate product work and were never part of
+  this mission; retiring the accuracy programme is not licence to clear the board
+  of everything else.
+- **Did not merge any unmerged branch.** Checked rather than assumed: every
+  substantive artifact on the surviving branches is already in `develop`
+  (`TestC13RestatementDidNotLoosenTheGate`, DA33/DA35–DA38, C22–C25, and every
+  `BUILD/accuracy-runs/` directory). The two branches carrying genuinely unlanded
+  work are orchestration tooling for a programme that no longer runs, and one of
+  them adds *"allow merging without CI under an explicit, recorded waiver"* — a
+  gate-weakening change that will not be landed unreviewed as a retirement tidy-up.
+- **Did not mark unfinished issues "completed".** **All 24 closed as `not
+  planned`; none as completed.** The board's Done column now means *"no longer
+  being worked"*, and the final report says so rather than letting a green column
+  imply a finished programme.
+
+  **#136 was going to be the single exception and did not survive review.** Five
+  of its six acceptance bullets are met and I verified them at source —
+  `det-fix-136-2026-08-28/blocking.json` shows all four blocking schemes at
+  `delta 0, status EXACT`, and both regression-test classes exist. **Bullet 6 does
+  not hold**: it asks for *"#95 unblocked, or #95's route re-decided by the
+  human"*, and `golden-reparse-95-2026-08-29/FINDINGS.md` ends with #95 **not
+  executable as written** — the excerpt blocker stands and its three options carry
+  an explicit *"no recommendation"*. I had checked the bullets I could see and
+  taken the last on trust.
+
+  **Zero of twenty-four is the honest yield**, and arriving at "one" was the same
+  move this very entry criticises #28 for, committed while writing the criticism.
+  The temptation to round up by reading acceptance generously is what DA45, DA46,
+  DA48 and DA50 were each about, and it survived all four.
+
+### The board was wrong about the H issues, and GitHub was right
+
+`#49`, `#51`, `#52` and `#55` read **Done** on the project board while their
+issues were **OPEN** and their human input had never arrived. `accuracy_board.py
+done` refuses H-numbered and `owner:human` issues (exit 2), so the board status
+was set by some path that did not go through the guard. **The issue state was the
+truth and the board was the stale copy** — which is the same failure mode as the
+stale figures above, in a different tracker. Closing them under C26 resolved the
+divergence by making both say closed-unanswered.

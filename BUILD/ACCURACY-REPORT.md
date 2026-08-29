@@ -8,6 +8,31 @@ file has not been published, and a figure here without an n is a bug.
 A/A churn floor below. A delta smaller than the floor is noise. Say "within
 noise", not "a small improvement".
 
+> ## ⛔ PROGRAMME RETIRED 2026-08-29 (ruling C26, DA51) — and a population warning
+>
+> These figures are **final**; nothing here will be re-measured. Read them with
+> `BUILD/ACCURACY-FINAL-REPORT.md`, which says what they add up to and what they
+> do not.
+>
+> **EVERY mark-scheme figure below that cites a denominator of 479, 289 or 190 is
+> AS-OF THE 479-SCHEME POPULATION** — question papers 2019–2025 only. On
+> 2026-08-29 the corpus expanded to **1,130 canonical schemes (2010–2025)** and
+> corpus-wide det parse coverage is **393 of 1,130 = 34.8%**, not the 69.1% those
+> sections imply (DA50). The 2019–2025 sub-population still measures 331 of 477,
+> so those analyses are **not wrong — they are narrower than they read**. Each is
+> a true statement about the easy decade.
+>
+> They are deliberately **not rewritten**. Re-deriving them over 1,130 schemes was
+> never done, and back-filling a denominator without re-running the analysis would
+> manufacture figures rather than restate them. The scope note is the honest fix;
+> a recomputed table would not be.
+>
+> **This banner exists because its absence was a live defect.** DA50 landed in
+> `DECISIONS.md`, `JOURNAL.md` and the state header on 2026-08-29 and never
+> reached this file, so the clause-5 section went on publishing *"det parse
+> coverage MET, now 331 of 479"* after that had been falsified. Fourth instance of
+> the DA45/DA46/DA48 stale-claim pattern; first one found in the report itself.
+
 ---
 
 ## The A/A churn floor (M0.3 / #27) — published 2026-08-23
@@ -69,8 +94,29 @@ denominator shell game D18 existed to create.
 ## Marking accuracy BY PATH (§13 clause 5) — computed 2026-08-29, zero spend
 
 §13 clause 5 requires **both paths measured in their own terms**. The det half is
-**parse coverage**, now 331 of 479. This is the other half, computed from
+**parse coverage**; this section is the other half, computed from
 `aa-floor-2026-08-23-a`'s records, which already carry `parse_path`.
+
+**Corrected 2026-08-29 (DA50, retirement walk).** This paragraph read *"now 331
+of 479"* and the clause-5 verdict below read *"det parse coverage MET"*. Both
+were written against the **479-scheme** population and were **not restated when
+the corpus expanded to 1,130 schemes the same day** — #189 landed DA50 in
+`DECISIONS.md`, `JOURNAL.md` and the state header but **did not touch this
+file**. Corpus-wide det parse coverage is **393 of 1,130 = 34.8%**, not 69.1%:
+
+| population | schemes | exact | rate |
+|---|---|---|---|
+| 2019–2025 | 477 | 331 | 69.4% |
+| 2010–2018 | 299 | 62 | 20.7% |
+| **all (canonical)** | **1,130** | **393** | **34.8%** |
+
+The 2019–2025 row **reproduces the earlier 331 exactly**, which is what makes the
+two populations comparable rather than merely different. Nothing regressed — the
+earlier figure was measured on the easy decade. Evidence:
+`BUILD/accuracy-runs/corpus-expanded-2026-08-29/RESULT.md`.
+
+This was the **fourth** instance of the DA45/DA46/DA48 pattern — a claim accurate
+when written that rotted in place — and the first found in this file.
 
 | path | leaves | correct (mean of 10 repeats) | accuracy | 95% Wilson at the honest n |
 |---|---|---|---|---|
@@ -95,10 +141,14 @@ leaves under an identical fingerprint, so they are not independent observations.
 Pooling reports ±6.0pp (gemini) and ±2.3pp (det) instead of ±17.6 and ±16.2. The
 naive figures are recorded in the artifact **to be refused, not used**.
 
-**Clause 5 status: det parse coverage MET; Gemini marking accuracy MEASURED BUT
-NOT TO SCOPE.** The clause asks for a figure covering 10,314 answer points; this
-covers 23 leaves of one golden corpus. Closing that needs #47's labelled corpus,
-not more analysis of this one.
+**Clause 5 status at retirement: BOTH HALVES SHORT.** det parse coverage is
+**measured** — 393 of 1,130, 34.8% — but the clause asks for the det path to be
+measured in its own terms, and a coverage figure that fell by half the moment the
+population stopped being the easy decade is a measurement of the corpus as much as
+of the parser. Gemini marking accuracy is **MEASURED BUT NOT TO SCOPE**: the
+clause asks for a figure covering 10,314 answer points; this covers 23 leaves of
+one golden corpus. Closing that needed #47's labelled corpus, which does not
+exist — `eval/labels/` holds only `.gitkeep`.
 
 Artifacts: `BUILD/accuracy-runs/path-accuracy-2026-08-29/`.
 
@@ -124,11 +174,24 @@ targets `review_rate_last_merged` cannot touch. While the measured rate is above
 the 10% target the ratchet limb is pinned by `review_rate_total_target`, and **no
 value of the constant moves it**. Arming needs the review rate to come down.
 
-**The committed 29.03% is the bottom of the observed range** — the value that
-came up on the 3 luckiest of 10 identical repeats. It is a best case, not a
-central estimate. Arming `min(10%, last_merged_review_rate)` against it would
-gate the build on a number that unchanged code exceeds 7 times in 10. See
-**DA9a**; the constant is #161's to fix, not a measurement issue's (this line used to cite #36, which is CLOSED and is M1.1, the confidence unit).
+**29.03% is the bottom of the observed range** — the value that came up on the
+**4** luckiest of 10 identical repeats (02, 03, 06, 09, all at 9/31). It is a best
+case, not a central estimate. Arming `min(10%, last_merged_review_rate)` against it
+would gate the build on a number **all 10 of 10** unchanged repeats exceed as
+stored (the constant was truncated down from 0.29032258…; 6 of 10 exceed the exact
+value). See **DA33**.
+
+> **Corrected at retirement (DA51).** This paragraph read *"the 3 luckiest"* and
+> *"unchanged code exceeds 7 times in 10"*. Recounted directly from
+> `analysis-aa-churn-floor.json`, the per-repeat flagged counts are
+> `[11, 9, 9, 10, 10, 9, 11, 13, 9, 10]` — **four** at the minimum, not three; and
+> **10 of 10** exceed the stored constant, not 7. The 7-in-10 figure was DA9a's
+> *estimate*, superseded by DA33's measurement and never restated here.
+>
+> **The committed constant is no longer 29.03% either.** Under ruling C13 (#161,
+> DA33) `review_rate_last_merged` is **0.4838**, the 95th percentile of the
+> beta-binomial predictive for one new run. That restatement did **not** unblock
+> arming, which was its finding.
 
 Both limbs are breached in every repeat (ceiling `min(10%, 29.03%)` = 10%
 against ~32.6%; p95 target 15% against ~82%). The breach is not in doubt and
@@ -222,6 +285,13 @@ still *read*, not minted.
 A *defaulted* mark is one the parser minted rather than read: `rows.py:200`
 falls back to `marks=1` when `parse_marks_cell` finds nothing. Countable only
 because #38 shipped the `marks_defaulted` flag first.
+
+> **Rates superseded (DA46, PR #184).** The `44.4%` of papers / `21.6%` of points
+> in this section are the **pre-#136 figures from a 60-PDF sample (54 parsed)**,
+> measured while the mark-total defects were still inflating the defaulted count.
+> The clean rates over **397 det-parsed papers** are **34.26% of papers** and
+> **8.94% of answer points**. The argument below is unchanged and is if anything
+> stronger at the lower rate; only the magnitudes move.
 
 **Most of that 21.6% is correct — by luck.** The default of 1 is right for
 `B1`/`M1`/`A1`/`C1` and wrong for every multi-mark code. So **"defaulted" is not
@@ -378,26 +448,36 @@ diagnosing it.
 
 ## Spend
 
-Re-summed across all four worktree ledgers at 2026-08-28, **never carried
-forward from a header** (that rule exists because carrying it forward had
-reproduced the previous run's arithmetic error every run).
+**FINAL — re-summed across all four worktree ledgers at retirement, 2026-08-29**,
+by reading each file rather than carrying a figure forward from a header (that
+rule exists because carrying it forward had reproduced the previous run's
+arithmetic error every run — and the table this replaces is why it matters).
 
 | | |
 |---|---|
-| **Cumulative, programme-wide** | **$5.993470** |
+| **Cumulative, programme-wide** | **$6.370451** |
 | **Committed hard ceiling** | **$8.00** — `lemely/runtime/config.py:111` |
-| Headroom | **$2.006530** |
+| Headroom, never spent | **$1.629549** |
 | ~~Local override~~ | ~~$25.00 in `lemely.toml`~~ — **REMOVED 2026-08-27 by ruling C12 (DA28)** |
 | ~~Token ceiling~~ | ~~5,000,000 `per_run_token_ceiling`~~ — **REMOVED 2026-08-27 by ruling C21 (DA32)**; the dollar ceiling is now the sole guard |
 
-The programme-wide figure is the sum of four files:
+The programme-wide figure is the sum of four files, each read at close:
 
-| worktree ledger | USD |
-|---|---|
-| `Lemely-worktrees/accuracy` | 5.588999 |
-| `Lemely` | 0.402869 |
-| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
-| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+| worktree ledger | USD | last written |
+|---|---|---|
+| `Lemely-worktrees/accuracy` | 5.965980 | 2026-08-28T20:43:20Z |
+| `Lemely` | 0.402869 | 2026-08-17T19:03:37Z |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 | 2026-08-18T11:30:55Z |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 | 2026-08-14T21:56:57Z |
+
+> **This table was stale when the retirement walk found it.** It read **$5.993470**
+> cumulative with the accuracy ledger at **5.588999** — a re-sum taken earlier on
+> 2026-08-28, before that ledger's final write at 20:43:20Z the same day. The
+> ceiling was never at risk either way, and no decision turned on the difference.
+> Recorded because it is the **second** stale figure this file was found publishing
+> at retirement (the first being clause 5's det coverage, DA51), and because the
+> paragraph immediately above it is a rule against exactly this. A rule written
+> into a document does not enforce itself.
 
 **The enforcing guard does not see that sum.** `GeminiClient` builds its ledger
 path from `settings.paths.output_dir` (`gemini.py:162`), so the ceiling check at
