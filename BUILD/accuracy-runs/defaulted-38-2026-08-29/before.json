@@ -1,0 +1,2000 @@
+{
+  "summary": {
+    "arm": "before",
+    "spend_usd": 0.0,
+    "papers_with_points": 397,
+    "papers_with_any_defaulted": 177,
+    "papers_all_defaulted": 25,
+    "answer_points": 22345,
+    "points_defaulted": 4928,
+    "pct_papers_any_defaulted": 0.4458,
+    "pct_points_defaulted": 0.2205
+  },
+  "per_scheme": [
+    {
+      "scheme": "0580_m19_ms_12.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m19_ms_22.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m19_ms_32.pdf",
+      "points": 51,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m19_ms_42.pdf",
+      "points": 66,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_11.pdf",
+      "points": 43,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_12.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_13.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_21.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_22.pdf",
+      "points": 37,
+      "defaulted": 37
+    },
+    {
+      "scheme": "0580_s19_ms_23.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_31.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_32.pdf",
+      "points": 66,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_33.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_41.pdf",
+      "points": 55,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_42.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s19_ms_43.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_11.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_12.pdf",
+      "points": 38,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0580_w19_ms_13.pdf",
+      "points": 45,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0580_w19_ms_21.pdf",
+      "points": 32,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_22.pdf",
+      "points": 40,
+      "defaulted": 29
+    },
+    {
+      "scheme": "0580_w19_ms_23.pdf",
+      "points": 38,
+      "defaulted": 27
+    },
+    {
+      "scheme": "0580_w19_ms_31.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_32.pdf",
+      "points": 62,
+      "defaulted": 6
+    },
+    {
+      "scheme": "0580_w19_ms_33.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_41.pdf",
+      "points": 55,
+      "defaulted": 9
+    },
+    {
+      "scheme": "0580_w19_ms_42.pdf",
+      "points": 54,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w19_ms_43.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m20_ms_12.pdf",
+      "points": 33,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m20_ms_22.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m20_ms_32.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m20_ms_42.pdf",
+      "points": 55,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_11.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_12.pdf",
+      "points": 40,
+      "defaulted": 22
+    },
+    {
+      "scheme": "0580_s20_ms_13.pdf",
+      "points": 32,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_21.pdf",
+      "points": 38,
+      "defaulted": 5
+    },
+    {
+      "scheme": "0580_s20_ms_22.pdf",
+      "points": 35,
+      "defaulted": 19
+    },
+    {
+      "scheme": "0580_s20_ms_23.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_31.pdf",
+      "points": 62,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_32.pdf",
+      "points": 50,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_33.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_41.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_42.pdf",
+      "points": 53,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s20_ms_43.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_11.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_12.pdf",
+      "points": 39,
+      "defaulted": 5
+    },
+    {
+      "scheme": "0580_w20_ms_13.pdf",
+      "points": 33,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_21.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_22.pdf",
+      "points": 31,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_23.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_31.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_32.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_33.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_41.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_42.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w20_ms_43.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m21_ms_12.pdf",
+      "points": 37,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0580_m21_ms_22.pdf",
+      "points": 37,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0580_m21_ms_32.pdf",
+      "points": 57,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m21_ms_42.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_11.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_12.pdf",
+      "points": 37,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0580_s21_ms_13.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_21.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_22.pdf",
+      "points": 34,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_23.pdf",
+      "points": 42,
+      "defaulted": 8
+    },
+    {
+      "scheme": "0580_s21_ms_31.pdf",
+      "points": 53,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_32.pdf",
+      "points": 48,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_33.pdf",
+      "points": 52,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_41.pdf",
+      "points": 54,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_42.pdf",
+      "points": 57,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s21_ms_43.pdf",
+      "points": 63,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_11.pdf",
+      "points": 31,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_12.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_13.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_21.pdf",
+      "points": 31,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_22.pdf",
+      "points": 38,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0580_w21_ms_23.pdf",
+      "points": 37,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0580_w21_ms_31.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_32.pdf",
+      "points": 54,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_33.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_41.pdf",
+      "points": 43,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_42.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w21_ms_43.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m22_ms_12.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m22_ms_22.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m22_ms_32.pdf",
+      "points": 54,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_m22_ms_42.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_11.pdf",
+      "points": 34,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_12.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_13.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_21.pdf",
+      "points": 33,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_22.pdf",
+      "points": 34,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_23.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_31.pdf",
+      "points": 63,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_32.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_33.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_41.pdf",
+      "points": 64,
+      "defaulted": 50
+    },
+    {
+      "scheme": "0580_s22_ms_42.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s22_ms_43.pdf",
+      "points": 55,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_11.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_12.pdf",
+      "points": 33,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_13.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_21.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_22.pdf",
+      "points": 40,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0580_s23_ms_23.pdf",
+      "points": 31,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_31.pdf",
+      "points": 62,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0580_s23_ms_32.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_33.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s23_ms_41.pdf",
+      "points": 56,
+      "defaulted": 56
+    },
+    {
+      "scheme": "0580_s23_ms_42.pdf",
+      "points": 58,
+      "defaulted": 58
+    },
+    {
+      "scheme": "0580_s23_ms_43.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_11.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_12.pdf",
+      "points": 41,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0580_w23_ms_13.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_21.pdf",
+      "points": 32,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_22.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_23.pdf",
+      "points": 33,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_31.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_32.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_33.pdf",
+      "points": 62,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_41.pdf",
+      "points": 59,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_42.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w23_ms_43.pdf",
+      "points": 57,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_11.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_12.pdf",
+      "points": 35,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_13.pdf",
+      "points": 34,
+      "defaulted": 34
+    },
+    {
+      "scheme": "0580_s24_ms_21.pdf",
+      "points": 32,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_22.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_23.pdf",
+      "points": 34,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_31.pdf",
+      "points": 54,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_32.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_33.pdf",
+      "points": 57,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_41.pdf",
+      "points": 56,
+      "defaulted": 56
+    },
+    {
+      "scheme": "0580_s24_ms_42.pdf",
+      "points": 62,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s24_ms_43.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_11.pdf",
+      "points": 36,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_12.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_13.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_21.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_22.pdf",
+      "points": 32,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_23.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_31.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_32.pdf",
+      "points": 57,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_33.pdf",
+      "points": 65,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0580_w24_ms_41.pdf",
+      "points": 52,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_42.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_w24_ms_43.pdf",
+      "points": 60,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_11.pdf",
+      "points": 53,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_12.pdf",
+      "points": 49,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_13.pdf",
+      "points": 50,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_21.pdf",
+      "points": 48,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_22.pdf",
+      "points": 46,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_23.pdf",
+      "points": 46,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0580_s25_ms_31.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_32.pdf",
+      "points": 43,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_33.pdf",
+      "points": 48,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_41.pdf",
+      "points": 38,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0580_s25_ms_42.pdf",
+      "points": 46,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0580_s25_ms_43.pdf",
+      "points": 43,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_m19_ms_12.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_m19_ms_22.pdf",
+      "points": 72,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_s19_ms_11.pdf",
+      "points": 98,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s19_ms_13.pdf",
+      "points": 64,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s19_ms_21.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s19_ms_22.pdf",
+      "points": 76,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_s19_ms_23.pdf",
+      "points": 67,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w19_ms_11.pdf",
+      "points": 88,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w19_ms_12.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w19_ms_13.pdf",
+      "points": 63,
+      "defaulted": 60
+    },
+    {
+      "scheme": "0606_w19_ms_21.pdf",
+      "points": 73,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w19_ms_22.pdf",
+      "points": 103,
+      "defaulted": 103
+    },
+    {
+      "scheme": "0606_w19_ms_23.pdf",
+      "points": 78,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_m20_ms_12.pdf",
+      "points": 80,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_m20_ms_22.pdf",
+      "points": 89,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_s20_ms_11.pdf",
+      "points": 66,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s20_ms_12.pdf",
+      "points": 72,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s20_ms_13.pdf",
+      "points": 68,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s20_ms_21.pdf",
+      "points": 68,
+      "defaulted": 68
+    },
+    {
+      "scheme": "0606_s20_ms_22.pdf",
+      "points": 73,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s20_ms_23.pdf",
+      "points": 69,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w20_ms_11.pdf",
+      "points": 64,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0606_w20_ms_12.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w20_ms_13.pdf",
+      "points": 77,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w20_ms_21.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w20_ms_22.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w20_ms_23.pdf",
+      "points": 78,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_m21_ms_12.pdf",
+      "points": 64,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_m21_ms_22.pdf",
+      "points": 75,
+      "defaulted": 9
+    },
+    {
+      "scheme": "0606_s21_ms_11.pdf",
+      "points": 65,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s21_ms_12.pdf",
+      "points": 81,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s21_ms_13.pdf",
+      "points": 77,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s21_ms_21.pdf",
+      "points": 95,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s21_ms_22.pdf",
+      "points": 69,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s21_ms_23.pdf",
+      "points": 78,
+      "defaulted": 78
+    },
+    {
+      "scheme": "0606_w21_ms_11.pdf",
+      "points": 72,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w21_ms_12.pdf",
+      "points": 86,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w21_ms_13.pdf",
+      "points": 87,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w21_ms_21.pdf",
+      "points": 82,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_w21_ms_22.pdf",
+      "points": 81,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_w21_ms_23.pdf",
+      "points": 69,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0606_m22_ms_12.pdf",
+      "points": 78,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_m22_ms_22.pdf",
+      "points": 92,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_s22_ms_11.pdf",
+      "points": 75,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s22_ms_12.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s22_ms_13.pdf",
+      "points": 69,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s22_ms_21.pdf",
+      "points": 69,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s22_ms_22.pdf",
+      "points": 94,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_s22_ms_23.pdf",
+      "points": 80,
+      "defaulted": 80
+    },
+    {
+      "scheme": "0606_s23_ms_11.pdf",
+      "points": 58,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s23_ms_12.pdf",
+      "points": 82,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s23_ms_13.pdf",
+      "points": 58,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_s23_ms_21.pdf",
+      "points": 82,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_s23_ms_22.pdf",
+      "points": 54,
+      "defaulted": 54
+    },
+    {
+      "scheme": "0606_s23_ms_23.pdf",
+      "points": 63,
+      "defaulted": 63
+    },
+    {
+      "scheme": "0606_w23_ms_12.pdf",
+      "points": 69,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_w23_ms_13.pdf",
+      "points": 94,
+      "defaulted": 94
+    },
+    {
+      "scheme": "0606_w23_ms_21.pdf",
+      "points": 85,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0606_w23_ms_22.pdf",
+      "points": 76,
+      "defaulted": 76
+    },
+    {
+      "scheme": "0606_w23_ms_23.pdf",
+      "points": 85,
+      "defaulted": 85
+    },
+    {
+      "scheme": "0606_s24_ms_11.pdf",
+      "points": 68,
+      "defaulted": 68
+    },
+    {
+      "scheme": "0606_s24_ms_12.pdf",
+      "points": 90,
+      "defaulted": 9
+    },
+    {
+      "scheme": "0606_s24_ms_13.pdf",
+      "points": 63,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0606_s24_ms_21.pdf",
+      "points": 72,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0606_s24_ms_22.pdf",
+      "points": 48,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s24_ms_23.pdf",
+      "points": 56,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w24_ms_11.pdf",
+      "points": 76,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0606_w24_ms_12.pdf",
+      "points": 82,
+      "defaulted": 5
+    },
+    {
+      "scheme": "0606_w24_ms_13.pdf",
+      "points": 55,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_w24_ms_21.pdf",
+      "points": 74,
+      "defaulted": 74
+    },
+    {
+      "scheme": "0606_w24_ms_22.pdf",
+      "points": 74,
+      "defaulted": 73
+    },
+    {
+      "scheme": "0606_w24_ms_23.pdf",
+      "points": 67,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0606_s25_ms_11.pdf",
+      "points": 110,
+      "defaulted": 15
+    },
+    {
+      "scheme": "0606_s25_ms_12.pdf",
+      "points": 72,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0606_s25_ms_13.pdf",
+      "points": 66,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s25_ms_21.pdf",
+      "points": 61,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0606_s25_ms_22.pdf",
+      "points": 81,
+      "defaulted": 5
+    },
+    {
+      "scheme": "0606_s25_ms_23.pdf",
+      "points": 70,
+      "defaulted": 2
+    },
+    {
+      "scheme": "0625_m19_ms_32.pdf",
+      "points": 63,
+      "defaulted": 27
+    },
+    {
+      "scheme": "0625_m19_ms_42.pdf",
+      "points": 83,
+      "defaulted": 33
+    },
+    {
+      "scheme": "0625_m19_ms_52.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_m19_ms_62.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s19_ms_31.pdf",
+      "points": 76,
+      "defaulted": 51
+    },
+    {
+      "scheme": "0625_s19_ms_32.pdf",
+      "points": 71,
+      "defaulted": 34
+    },
+    {
+      "scheme": "0625_s19_ms_33.pdf",
+      "points": 75,
+      "defaulted": 43
+    },
+    {
+      "scheme": "0625_s19_ms_41.pdf",
+      "points": 85,
+      "defaulted": 79
+    },
+    {
+      "scheme": "0625_s19_ms_42.pdf",
+      "points": 81,
+      "defaulted": 41
+    },
+    {
+      "scheme": "0625_s19_ms_43.pdf",
+      "points": 82,
+      "defaulted": 50
+    },
+    {
+      "scheme": "0625_s19_ms_51.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s19_ms_52.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s19_ms_53.pdf",
+      "points": 40,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s19_ms_61.pdf",
+      "points": 40,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s19_ms_62.pdf",
+      "points": 36,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0625_s19_ms_63.pdf",
+      "points": 40,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w19_ms_31.pdf",
+      "points": 77,
+      "defaulted": 33
+    },
+    {
+      "scheme": "0625_w19_ms_32.pdf",
+      "points": 41,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w19_ms_33.pdf",
+      "points": 43,
+      "defaulted": 43
+    },
+    {
+      "scheme": "0625_w19_ms_41.pdf",
+      "points": 41,
+      "defaulted": 41
+    },
+    {
+      "scheme": "0625_w19_ms_42.pdf",
+      "points": 75,
+      "defaulted": 75
+    },
+    {
+      "scheme": "0625_w19_ms_43.pdf",
+      "points": 76,
+      "defaulted": 60
+    },
+    {
+      "scheme": "0625_w19_ms_51.pdf",
+      "points": 40,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w19_ms_52.pdf",
+      "points": 43,
+      "defaulted": 3
+    },
+    {
+      "scheme": "0625_w19_ms_53.pdf",
+      "points": 39,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w19_ms_61.pdf",
+      "points": 40,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w19_ms_62.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w19_ms_63.pdf",
+      "points": 39,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_m20_ms_32.pdf",
+      "points": 68,
+      "defaulted": 36
+    },
+    {
+      "scheme": "0625_m20_ms_42.pdf",
+      "points": 80,
+      "defaulted": 45
+    },
+    {
+      "scheme": "0625_m20_ms_52.pdf",
+      "points": 40,
+      "defaulted": 29
+    },
+    {
+      "scheme": "0625_m20_ms_62.pdf",
+      "points": 41,
+      "defaulted": 28
+    },
+    {
+      "scheme": "0625_s20_ms_31.pdf",
+      "points": 76,
+      "defaulted": 34
+    },
+    {
+      "scheme": "0625_s20_ms_32.pdf",
+      "points": 72,
+      "defaulted": 26
+    },
+    {
+      "scheme": "0625_s20_ms_41.pdf",
+      "points": 78,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0625_s20_ms_42.pdf",
+      "points": 79,
+      "defaulted": 37
+    },
+    {
+      "scheme": "0625_s20_ms_43.pdf",
+      "points": 76,
+      "defaulted": 46
+    },
+    {
+      "scheme": "0625_s20_ms_51.pdf",
+      "points": 39,
+      "defaulted": 23
+    },
+    {
+      "scheme": "0625_s20_ms_52.pdf",
+      "points": 39,
+      "defaulted": 25
+    },
+    {
+      "scheme": "0625_s20_ms_53.pdf",
+      "points": 40,
+      "defaulted": 22
+    },
+    {
+      "scheme": "0625_s20_ms_61.pdf",
+      "points": 39,
+      "defaulted": 19
+    },
+    {
+      "scheme": "0625_s20_ms_62.pdf",
+      "points": 39,
+      "defaulted": 24
+    },
+    {
+      "scheme": "0625_s20_ms_63.pdf",
+      "points": 40,
+      "defaulted": 24
+    },
+    {
+      "scheme": "0625_w20_ms_31.pdf",
+      "points": 75,
+      "defaulted": 37
+    },
+    {
+      "scheme": "0625_w20_ms_32.pdf",
+      "points": 73,
+      "defaulted": 46
+    },
+    {
+      "scheme": "0625_w20_ms_33.pdf",
+      "points": 71,
+      "defaulted": 51
+    },
+    {
+      "scheme": "0625_w20_ms_41.pdf",
+      "points": 63,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w20_ms_42.pdf",
+      "points": 98,
+      "defaulted": 82
+    },
+    {
+      "scheme": "0625_w20_ms_43.pdf",
+      "points": 73,
+      "defaulted": 42
+    },
+    {
+      "scheme": "0625_w20_ms_51.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w20_ms_52.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w20_ms_53.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w20_ms_61.pdf",
+      "points": 39,
+      "defaulted": 28
+    },
+    {
+      "scheme": "0625_w20_ms_62.pdf",
+      "points": 39,
+      "defaulted": 28
+    },
+    {
+      "scheme": "0625_w20_ms_63.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_m21_ms_32.pdf",
+      "points": 76,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0625_m21_ms_42.pdf",
+      "points": 79,
+      "defaulted": 39
+    },
+    {
+      "scheme": "0625_m21_ms_52.pdf",
+      "points": 40,
+      "defaulted": 30
+    },
+    {
+      "scheme": "0625_m21_ms_62.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s21_ms_31.pdf",
+      "points": 72,
+      "defaulted": 31
+    },
+    {
+      "scheme": "0625_s21_ms_32.pdf",
+      "points": 72,
+      "defaulted": 20
+    },
+    {
+      "scheme": "0625_s21_ms_33.pdf",
+      "points": 77,
+      "defaulted": 24
+    },
+    {
+      "scheme": "0625_s21_ms_41.pdf",
+      "points": 83,
+      "defaulted": 50
+    },
+    {
+      "scheme": "0625_s21_ms_42.pdf",
+      "points": 94,
+      "defaulted": 4
+    },
+    {
+      "scheme": "0625_s21_ms_43.pdf",
+      "points": 76,
+      "defaulted": 39
+    },
+    {
+      "scheme": "0625_s21_ms_51.pdf",
+      "points": 40,
+      "defaulted": 27
+    },
+    {
+      "scheme": "0625_s21_ms_52.pdf",
+      "points": 41,
+      "defaulted": 30
+    },
+    {
+      "scheme": "0625_s21_ms_53.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s21_ms_61.pdf",
+      "points": 40,
+      "defaulted": 29
+    },
+    {
+      "scheme": "0625_s21_ms_62.pdf",
+      "points": 40,
+      "defaulted": 31
+    },
+    {
+      "scheme": "0625_s21_ms_63.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w21_ms_31.pdf",
+      "points": 65,
+      "defaulted": 34
+    },
+    {
+      "scheme": "0625_w21_ms_32.pdf",
+      "points": 70,
+      "defaulted": 23
+    },
+    {
+      "scheme": "0625_w21_ms_33.pdf",
+      "points": 76,
+      "defaulted": 41
+    },
+    {
+      "scheme": "0625_w21_ms_41.pdf",
+      "points": 77,
+      "defaulted": 69
+    },
+    {
+      "scheme": "0625_w21_ms_42.pdf",
+      "points": 77,
+      "defaulted": 43
+    },
+    {
+      "scheme": "0625_w21_ms_43.pdf",
+      "points": 90,
+      "defaulted": 90
+    },
+    {
+      "scheme": "0625_w21_ms_51.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w21_ms_52.pdf",
+      "points": 44,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w21_ms_53.pdf",
+      "points": 41,
+      "defaulted": 27
+    },
+    {
+      "scheme": "0625_w21_ms_61.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w21_ms_62.pdf",
+      "points": 55,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w21_ms_63.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_m22_ms_32.pdf",
+      "points": 70,
+      "defaulted": 36
+    },
+    {
+      "scheme": "0625_m22_ms_42.pdf",
+      "points": 73,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0625_m22_ms_52.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_m22_ms_62.pdf",
+      "points": 37,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s22_ms_31.pdf",
+      "points": 72,
+      "defaulted": 34
+    },
+    {
+      "scheme": "0625_s22_ms_32.pdf",
+      "points": 75,
+      "defaulted": 36
+    },
+    {
+      "scheme": "0625_s22_ms_33.pdf",
+      "points": 78,
+      "defaulted": 35
+    },
+    {
+      "scheme": "0625_s22_ms_41.pdf",
+      "points": 75,
+      "defaulted": 32
+    },
+    {
+      "scheme": "0625_s22_ms_42.pdf",
+      "points": 80,
+      "defaulted": 37
+    },
+    {
+      "scheme": "0625_s22_ms_43.pdf",
+      "points": 73,
+      "defaulted": 42
+    },
+    {
+      "scheme": "0625_s22_ms_51.pdf",
+      "points": 40,
+      "defaulted": 20
+    },
+    {
+      "scheme": "0625_s22_ms_52.pdf",
+      "points": 38,
+      "defaulted": 28
+    },
+    {
+      "scheme": "0625_s22_ms_53.pdf",
+      "points": 40,
+      "defaulted": 29
+    },
+    {
+      "scheme": "0625_s22_ms_61.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s22_ms_62.pdf",
+      "points": 38,
+      "defaulted": 28
+    },
+    {
+      "scheme": "0625_s22_ms_63.pdf",
+      "points": 40,
+      "defaulted": 31
+    },
+    {
+      "scheme": "0625_s23_ms_31.pdf",
+      "points": 69,
+      "defaulted": 25
+    },
+    {
+      "scheme": "0625_s23_ms_32.pdf",
+      "points": 72,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0625_s23_ms_33.pdf",
+      "points": 70,
+      "defaulted": 65
+    },
+    {
+      "scheme": "0625_s23_ms_41.pdf",
+      "points": 76,
+      "defaulted": 30
+    },
+    {
+      "scheme": "0625_s23_ms_42.pdf",
+      "points": 79,
+      "defaulted": 23
+    },
+    {
+      "scheme": "0625_s23_ms_43.pdf",
+      "points": 72,
+      "defaulted": 67
+    },
+    {
+      "scheme": "0625_s23_ms_51.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s23_ms_52.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s23_ms_53.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s23_ms_61.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s23_ms_62.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s23_ms_63.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_31.pdf",
+      "points": 69,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_32.pdf",
+      "points": 71,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_33.pdf",
+      "points": 72,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_41.pdf",
+      "points": 73,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_42.pdf",
+      "points": 75,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_43.pdf",
+      "points": 81,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w23_ms_51.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w23_ms_52.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_53.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w23_ms_61.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w23_ms_62.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w23_ms_63.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s24_ms_31.pdf",
+      "points": 69,
+      "defaulted": 51
+    },
+    {
+      "scheme": "0625_s24_ms_32.pdf",
+      "points": 76,
+      "defaulted": 52
+    },
+    {
+      "scheme": "0625_s24_ms_33.pdf",
+      "points": 72,
+      "defaulted": 49
+    },
+    {
+      "scheme": "0625_s24_ms_41.pdf",
+      "points": 73,
+      "defaulted": 38
+    },
+    {
+      "scheme": "0625_s24_ms_42.pdf",
+      "points": 74,
+      "defaulted": 44
+    },
+    {
+      "scheme": "0625_s24_ms_43.pdf",
+      "points": 68,
+      "defaulted": 44
+    },
+    {
+      "scheme": "0625_s24_ms_51.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s24_ms_52.pdf",
+      "points": 40,
+      "defaulted": 22
+    },
+    {
+      "scheme": "0625_s24_ms_53.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s24_ms_61.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s24_ms_62.pdf",
+      "points": 40,
+      "defaulted": 26
+    },
+    {
+      "scheme": "0625_s24_ms_63.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_31.pdf",
+      "points": 68,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_32.pdf",
+      "points": 73,
+      "defaulted": 73
+    },
+    {
+      "scheme": "0625_w24_ms_33.pdf",
+      "points": 44,
+      "defaulted": 44
+    },
+    {
+      "scheme": "0625_w24_ms_41.pdf",
+      "points": 76,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_42.pdf",
+      "points": 74,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_43.pdf",
+      "points": 80,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_51.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w24_ms_52.pdf",
+      "points": 35,
+      "defaulted": 35
+    },
+    {
+      "scheme": "0625_w24_ms_53.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w24_ms_61.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_w24_ms_62.pdf",
+      "points": 39,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_w24_ms_63.pdf",
+      "points": 41,
+      "defaulted": 1
+    },
+    {
+      "scheme": "0625_s25_ms_31.pdf",
+      "points": 72,
+      "defaulted": 72
+    },
+    {
+      "scheme": "0625_s25_ms_32.pdf",
+      "points": 77,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_33.pdf",
+      "points": 77,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_41.pdf",
+      "points": 80,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_42.pdf",
+      "points": 75,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_43.pdf",
+      "points": 74,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_51.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_52.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_53.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_61.pdf",
+      "points": 38,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_62.pdf",
+      "points": 40,
+      "defaulted": 0
+    },
+    {
+      "scheme": "0625_s25_ms_63.pdf",
+      "points": 40,
+      "defaulted": 0
+    }
+  ]
+}

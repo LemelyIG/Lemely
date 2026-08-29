@@ -13290,3 +13290,72 @@ Both now carry current statements. **#55's records that condition 1 says "fixed 
 ### The standing lesson
 
 **"This cannot be completed" is a claim about a whole, and a whole is not a work item.** Judging §13 in aggregate let a true statement about clauses 4 and 6 suppress false ones about clauses 1, 5 and 8. **Walk the clauses.**
+
+---
+
+## DA46 — the clean defaulted-mark rate, and the trigger C2 asked for (#38 bullets 2–3, C2)
+
+**Zero spend, det-only.** C2 (2026-08-27) deferred #38's bullets 2 and 3 behind
+#136's fix and required the trigger to be decided **against a clean rate**,
+because the published figure was contaminated by DA21 mechanism (B). #136 landed
+(DA34), so the deferral is discharged and this is that rate.
+
+Both arms over the **same 397 papers**; the before arm imports a package copy
+with `rows.py`/`marks.py` from the commit before #136.
+
+| | contaminated | **clean** |
+|---|---|---|
+| papers carrying ≥1 defaulted point | 177 (**44.58%**) | **136 (34.26%)** |
+| papers where **every** point is defaulted | **25** | **3** |
+| answer points | 22,345 | 22,372 |
+| points defaulted | 4,928 (**22.05%**) | **2,000 (8.94%)** |
+
+**The before arm reproduces the published figures** — 44.58% against the report's
+44.4%, 22.05% against 21.6%, the gap being that the published values came from a
+60-PDF sample and these are all 397 papers. That is what makes the after arm
+comparable rather than merely different.
+
+**C2's premise was right and the contamination was most of the signal:
+mechanism (B) accounted for 2,928 of 4,928 defaulted points — 59%.** Where the
+marks column merged into the answer cell, the code arrived as trailing text,
+`parse_marks_cell` saw nothing, and every such point defaulted. Those codes are
+now recovered and are **not** flagged, because a mark read from the wrong column
+was still *read*, not minted.
+
+**The sharpest movement is papers where every point defaulted: 25 → 3.** Those
+were papers whose entire marks column merged into the answer text — the whole
+paper minted, the flag correctly saying so, and the cause the parser rather than
+the paper.
+
+### Deciding the trigger, which is what C2 actually asked for
+
+**A bare defaulted-count is still the wrong trigger at the clean rate.** 34.26%
+would route a third of the det corpus to the Gemini fallback, which DA35 measured
+failing on ~50% of the schemes det cannot parse. The original objection survives
+decontamination: most defaults are still **correct by luck**, since 1 is right
+for every `B1`/`M1`/`A1`/`C1`.
+
+**What the clean rate makes affordable for the first time:** a trigger on *"every
+point in the paper is defaulted"* — now **3 of 397 (0.76%)**, down from 25. A
+paper where **no** mark was read is suspect in a way one minted mark is not, and
+3 papers is a cost the contaminated figure could not have justified.
+
+**Proposed, not armed.** It routes papers to the same fallback as
+`escalate_on_duplicate_leaf_ids` (#110) and `escalate_on_primary_sum_breach`
+(#39). **All three are one cost-and-coverage decision and it belongs to the
+human**, which is also why bullets 2 and 3 are not ticked: this supplies the
+clean rate C2 required *before* the decision, not the decision.
+
+### Two report sections were stale and are corrected
+
+Found while checking §13 clause 2's "published" requirement — a clause-walk
+by-product (DA45):
+
+- **The ratchet row still published 29.03%** as the committed constant. DA33
+  restated it to **0.4838** on 2026-08-28. Corrected, with why the restatement
+  did not unblock arming.
+- **The det-defect section published the contaminated 44.4% / 21.6%.** Corrected
+  to the clean rate above.
+
+**A report that publishes a superseded constant is not a lag; it is the programme
+citing a number its own decision record has replaced.**

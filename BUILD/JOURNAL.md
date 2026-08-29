@@ -3536,3 +3536,42 @@ Walking them one at a time found three things I owed.
 **The lesson, and it is the second time this session:** *"this cannot be completed"* is a claim about a whole, and a whole is not a work item. Judging §13 in aggregate let a true statement about two clauses suppress false ones about three others. **Walk the clauses.**
 
 Recorded as **DA45**.
+
+---
+
+## run-2026-08-29-h — the deferral C2 set came due, and two published figures were superseded
+
+**Zero spend.** Continuing the clause walk rather than stopping at it.
+
+**C2 deferred #38's bullets 2 and 3 behind #136's fix**, on the ground that the
+published 44.4% / 21.6% defaulted-mark rate was contaminated by mechanism (B) and
+the trigger had to be decided against a clean rate. **#136 landed this session,
+so the deferral came due** — and it is det-only, so it costs nothing.
+
+**C2's premise was right, and by more than I expected. Mechanism (B) was 59% of
+the signal** — 2,928 of 4,928 defaulted points. The clean rate is **34.26% of
+papers and 8.94% of points**, against 44.58% and 22.05% contaminated.
+
+**The number that moved most is the one nobody quoted: papers where *every* point
+defaulted, 25 → 3.** Those were papers whose entire marks column had merged into
+the answer text. The flag was telling the truth; the cause was the parser.
+
+**And that is what decides the trigger.** A bare defaulted-count is still wrong at
+34% — most defaults remain correct by luck, and routing a third of the corpus to
+a fallback that fails half the time is not an improvement. But *"every point in
+this paper was minted"* is now **3 papers of 397**, which the contaminated figure
+could never have justified. **Proposed, not armed** — it feeds the same fallback
+as the #110 and #39 detectors, so it is one decision, and it is the human's.
+
+**Then the by-product.** Checking §13 clause 2's "published" requirement meant
+opening the report, and two sections were **superseded rather than merely old**:
+the ratchet row still published **29.03%** as the committed constant, which DA33
+replaced with 0.4838 the day before; and the det-defect section still published
+the contaminated rate this run had just replaced.
+
+**A report citing a constant its own decision record has retired is not a
+documentation lag.** It is the same failure as clause 5's stale 289/190, found
+the same way — by reading the clause instead of asserting a verdict about the
+section.
+
+Recorded as **DA46**.

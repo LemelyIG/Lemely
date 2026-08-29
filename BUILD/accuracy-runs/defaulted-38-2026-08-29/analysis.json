@@ -1,0 +1,27 @@
+{
+  "issue": 38,
+  "ruling": "C2 \u2014 re-measure on the fixed parser",
+  "spend_usd": 0.0,
+  "before": {
+    "arm": "before",
+    "spend_usd": 0.0,
+    "papers_with_points": 397,
+    "papers_with_any_defaulted": 177,
+    "papers_all_defaulted": 25,
+    "answer_points": 22345,
+    "points_defaulted": 4928,
+    "pct_papers_any_defaulted": 0.4458,
+    "pct_points_defaulted": 0.2205
+  },
+  "after": {
+    "arm": "after",
+    "spend_usd": 0.0,
+    "papers_with_points": 397,
+    "papers_with_any_defaulted": 136,
+    "papers_all_defaulted": 3,
+    "answer_points": 22372,
+    "points_defaulted": 2000,
+    "pct_papers_any_defaulted": 0.3426,
+    "pct_points_defaulted": 0.0894
+  }
+}
