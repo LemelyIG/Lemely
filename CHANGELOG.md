@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- **The extraction & marking accuracy programme is retired** (2026-08-29, human
+  ruling C26). It was **retired, not completed**: its own Definition of Done
+  (`BUILD/ACCURACY-MISSION.md` §13) is not met, and none of the three components of its
+  stated objective landed — a wrong mark still cannot be attributed to extractor or
+  marker, the review rate did not fall (32.58% measured against a 10% budget), and
+  the wrong-mark catch rate was never re-measured. All 24 open accuracy issues are
+  closed — **only one of them as completed** (#136, the det mark-total fix, whose six acceptance bullets all landed); the other 23 as **not planned**, meaning retired unfinished. **The closing account is
+  [`BUILD/ACCURACY-FINAL-REPORT.md`](BUILD/ACCURACY-FINAL-REPORT.md)** — read it
+  before relying on any accuracy figure in this repo.
+- The measurement instrument the programme built **does** ship and is on `develop`:
+  `lemely/eval` (record model, run manifest, pure analyses), the cache-bypass seam,
+  the published A/A churn floor, honest denominators, paired statistics, the frozen
+  split, and the review-rate CI gate (wired and running, deliberately **unarmed**).
+- `BUILD/ACCURACY-REPORT.md` corrected at retirement: det parse coverage restated
+  to **393 of 1,130 (34.8%)** over the expanded 2010–2025 corpus — the previously
+  published *"331 of 479"* was as-of the 2019–2025 population — and the spend table
+  re-summed to **$6.370451**. Both figures were stale when found.
+
 ## [1.0.0] — 2026-08-12
 
 The first complete product. Lemely went from a CLI around a marking core to a

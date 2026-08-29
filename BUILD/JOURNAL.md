@@ -3763,3 +3763,69 @@ quality — and for 2010–2016 the only route is the Gemini path that DA35 meas
 failing half the time.
 
 Recorded as **DA50**.
+
+## run-2026-08-29-m — the programme is retired, and its own report was lying about clause 5
+
+**Zero Gemini spend.** The human's instruction was four things: retire the
+mission, close the issues, clear the board, merge what can be merged, write a
+final report. All four are done. Ruling **C26**, decision record **DA51**.
+
+**The programme is retired NOT DONE, and I have been careful to keep those two
+apart everywhere a reader might meet them.** Twenty-three of the twenty-four
+issues closed as **not planned**. Exactly one closed as completed — #136, the det
+mark-total fix, whose six bullets all landed and whose arithmetic closes exactly.
+One in twenty-four is the honest yield, and I would rather publish that number
+than a kinder one. The board's Done column now means
+*"no longer being worked"*, and I said so on the board rather than letting a green
+column do the arguing.
+
+**I wrote "M0 finished" and had to take it back.** All 12 sub-issues of #24 are
+closed and I counted that as acceptance. It is not. Box 3 of #24 names the three
+cells of the oracle-transcription 2×2 — extraction-attributable,
+marking-attributable, masked — and **the 2×2 does not exist**: #28 closed with all
+four boxes unticked, the oracle+mark arm produced zero records, `ablation_2x2()`
+returns `b = c = n_pairs = 0`. So **the question the whole programme was built to
+answer — extractor's fault or marker's? — has no measurement behind it.** I found
+this by having the evidence adversarially reviewed, including the parts I had
+already written into the retirement banner and the decision record. Counting
+closed sub-issues and calling it done is precisely the move §14 names as failure,
+and I made it while writing the document that retires the programme for making
+moves like that.
+
+**Zero of the ~300 labels ever existed.** I checked rather than trusting the state
+header: `eval/labels/` contains one file and it is `.gitkeep`. The two-pass blind
+labeller was built (#46), the relabel-sample rule and salt were pre-committed, the
+two-seat protocol was designed — and no human ever sat down and labelled anything.
+The whole of M2's ground truth is machinery around an empty directory. That is the
+single largest gap in the programme and it is not a technical one.
+
+**Then the thing I did not expect to find.** I went to read
+`BUILD/ACCURACY-REPORT.md` for the final report's figures and it still said *"the
+det half is parse coverage, now 331 of 479"* and *"Clause 5 status: det parse
+coverage **MET**"*. DA50 had falsified both **that same morning** — 393 of 1,130,
+34.8% — and PR #189 landed DA50 into `DECISIONS.md`, `JOURNAL.md` and the state
+header while never touching the file that actually publishes the figures.
+
+**Fourth time today, and the first one in the report itself.** DA45 caught it in
+the MISSION, DA46 in a published figure, DA48 in a CI comment. I wrote DA50's rule
+— *every corpus-wide figure published before today is as-of the 479-scheme
+population* — and DA50's own commit is a counter-example to it. The rule was
+right and incompletely applied by the run that formulated it.
+
+**So the generalisation is narrower and more useful than the one I had.** A
+restatement is not finished when the decision record carries it; it is finished
+when every artifact that published the superseded figure carries it. The decision
+log is where a correction is *reasoned*, not where it *lands*.
+
+**What I refused to do.** Not merging #159 to main — I asked, and the human kept
+§12.3 as it was. Not closing #10–#22, which were never this mission's. Not
+merging the leftover branches: I checked their content against `develop` instead
+of assuming, found every substantive artifact already there, and left the two that
+carry real unlanded work alone — they are orchestration tooling for a programme
+that no longer runs, and one of them adds *"allow merging without CI under an
+explicit, recorded waiver"*, which is not something to slip in as tidy-up.
+
+**One last stale copy, in a different tracker.** #49, #51, #52 and #55 read
+**Done** on the project board while the issues were OPEN and the human input they
+waited for had never arrived. The board was wrong and GitHub was right. Same
+failure mode as the figures, different system.

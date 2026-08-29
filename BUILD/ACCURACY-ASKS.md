@@ -1,5 +1,27 @@
 # ACCURACY-ASKS.md — the open human decisions, in one place
 
+> ## ⛔ CLOSED 2026-08-29 by ruling C26 — nothing here is a live ask
+>
+> **The accuracy programme is retired.** Every ask below is **discharged by
+> retirement, not by being answered.** The distinction matters and is the whole
+> point of this note: C9's four owed items (#49 split sign-off, #51 second-labeller
+> onboarding, #52's CAIE adjudications, #55's authorised single run) were **never
+> supplied by the human**, and their issues were closed as *not planned* rather than
+> as satisfied. C23's concrete-cases pull landed and #52 was put back to the human;
+> the ruling never came. C25's three preconditions for H9 were never all met.
+>
+> **Do not read the table below as a list of settled questions that unblocked the
+> work.** C22–C25 were genuinely ruled on 2026-08-28 and stand as history. C9's
+> items were not, and retirement closed them unanswered.
+>
+> | ruling | subject | disposition at retirement |
+> |---|---|---|
+> | **C26** | the programme | **Retire it.** Close every open issue, clear the board, merge what is landable, publish a closing account. Given 2026-08-29 in an interactive session. |
+>
+> C26 is the last ruling. Final account: `BUILD/ACCURACY-FINAL-REPORT.md`.
+
+---
+
 **Status 2026-08-28 (run 58): C15 is CLOSED by ruling C20, C21 is executed,
 and the queue is UNBLOCKED.** The B1–B18 list was discharged at run 55; C1–C7
 were taken the same day; **C11–C14 were taken in a second interview on

@@ -246,3 +246,17 @@ C25 (#55 / H9) -- CONDITIONALLY AUTHORISED, IN WRITING. The single run of the fr
   2. A costed preflight passes under #28 and fits the ceiling BEFORE any spend.
   3. #47's labelling protocol is delivered, for two seats.
 AND, ruled explicitly after being put to the human a second time: **#49 IS NOT A GATE ON #55.** The human was asked whether omitting #49 sign-off was an oversight and answered that it was intentional -- H9 may run on the split as it stands, with no separate #49 freeze. This is a deliberate departure from the frozen-split framing and is recorded as the human's call, not an agent reading. #49 itself is NOT thereby closed, and MISSION 3.5 still forbids closing it or working around it in any other context; what is ruled here is only that H9's single shot does not wait on it.
+
+- [x] 2026-08-29 — Retire the mission, close the issues and move tasks to Done in the
+  "Lemely Progress" project, merge whatever is done and can be merged, and write a
+  final report.
+  - Acted on in full. Recorded as ruling **C26**. Directive arrived in an interactive
+    session rather than through the ntfy control topic, so it is logged here as
+    already-checked with its channel named — the audit trail should not imply it came
+    through the listener. `ACCURACY-MISSION.md` carries a retirement banner and is no
+    longer a standing directive; all 24 open accuracy issues were closed and their
+    board items set to Done; the four off-board issues (#127, #136, #161, #166) were
+    added to the board first so it could be cleared completely. Nothing unmerged
+    carried unlanded programme work — verified, not assumed. PR #159 (develop → main)
+    was left OPEN at the human's explicit instruction. Final account in
+    `BUILD/ACCURACY-FINAL-REPORT.md`.

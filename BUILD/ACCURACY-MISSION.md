@@ -1,5 +1,48 @@
 # ACCURACY-MISSION.md — Extraction & Marking Accuracy Programme
 
+> # ⛔ RETIRED 2026-08-29 — THIS IS NO LONGER A STANDING DIRECTIVE
+>
+> **Human ruling C26, 2026-08-29: the accuracy programme is retired.** Every open
+> issue was closed, the board was cleared, and the work stopped where it stood.
+>
+> **If you are an orchestrator or supervisor that just read this file: STOP. Do not
+> query the board, do not pick an issue, do not start a run.** There is no queue.
+> The `next` command has nothing to return, and an empty queue here is the intended
+> end state, not a fault to route around.
+>
+> **The programme did not meet its own Definition of Done (§13), and it was retired
+> anyway — deliberately, by the human, with the gap documented rather than closed.**
+> M1 and M2 did not finish: 8 non-H sub-issues remained open, the review-rate ratchet
+> was never armed, and **zero of the ~300 human labels were ever produced**
+> (`eval/labels/` holds only `.gitkeep`).
+>
+> **M0 came closest and still did not meet its own acceptance.** All 12 sub-issues of
+> #24 are closed, and that is not the same thing: #24's acceptance box 3 names the
+> three cells of the oracle-transcription 2×2 — extraction-attributable,
+> marking-attributable, masked — and **the 2×2 does not exist**. #28 was closed with
+> all four of its acceptance boxes unticked, which was the honest record rather than
+> an oversight. So **the one question this programme was built to answer — is a wrong
+> mark the extractor's fault or the marker's? — has no measurement behind it.**
+>
+> Nothing here should be read as the programme having succeeded.
+>
+> **What survives, and where to look:**
+> - `BUILD/ACCURACY-FINAL-REPORT.md` — the closing account: what was built, what was
+>   measured, what was learnt, and what remains. **Read that, not this.**
+> - `BUILD/ACCURACY-REPORT.md` — the published figures, each with its n and its
+>   population.
+> - `BUILD/DECISIONS.md` — DA1–DA50 and rulings C1–C26, the reasoning record.
+>
+> **The text below is preserved unedited as the historical directive.** It is a
+> record of what was intended, not an instruction to anyone. Its imperatives —
+> including §12's stop list and §13's Definition of Done — are **spent**, with one
+> exception that outlives the programme: **§14's anti-goals still bind.** Do not
+> arm a gate by moving its target, do not narrow a denominator to make a figure
+> look better, and do not report a diagnostic change as an improvement. Those were
+> earned the hard way here and they are not retired with the mission.
+
+---
+
 > **Read this entire file before doing anything.** This is the standing directive for the
 > unattended implementation of the accuracy programme specified in
 > `docs/superpowers/specs/2026-08-17-accuracy-programme-design.md` (committed on `main`
