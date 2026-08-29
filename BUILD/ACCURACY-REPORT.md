@@ -66,6 +66,42 @@ denominator shell game D18 existed to create.
 
 ---
 
+## Marking accuracy BY PATH (§13 clause 5) — computed 2026-08-29, zero spend
+
+§13 clause 5 requires **both paths measured in their own terms**. The det half is
+**parse coverage**, now 331 of 479. This is the other half, computed from
+`aa-floor-2026-08-23-a`'s records, which already carry `parse_path`.
+
+| path | leaves | correct (mean of 10 repeats) | accuracy | 95% Wilson at the honest n |
+|---|---|---|---|---|
+| **det** | 8 | 8.0 / 8 | **100%** | **67.6% – 100%** (±16.2pp) |
+| **gemini** | 23 | 15.5 / 23 | **69.6%** | **49.1% – 84.4%** (±17.6pp) |
+
+**Method validated before use:** the leaf collapse reproduces the published
+`wilson_mark_accuracy_per_repeat` successes **exactly on all 10 repeats**, and
+the script asserts it.
+
+**The headline blends a 100% path with a 70% path — and the weighting is
+backwards relative to what matters.** MCQ schemes carry **zero** `answer_points`
+(DA23); the Gemini path carries **10,314 of 10,314**. So the path responsible for
+every answer point in the corpus measures **69.6%**, while the headline is pulled
+upward by a path carrying none of them.
+
+**det's 100% is not evidence the det path is perfect** — 8 MCQ leaves from one
+paper, whose own Wilson lower bound is **67.6%**.
+
+**Pooling the 10 repeats would fake the precision.** They re-mark the *same* 31
+leaves under an identical fingerprint, so they are not independent observations.
+Pooling reports ±6.0pp (gemini) and ±2.3pp (det) instead of ±17.6 and ±16.2. The
+naive figures are recorded in the artifact **to be refused, not used**.
+
+**Clause 5 status: det parse coverage MET; Gemini marking accuracy MEASURED BUT
+NOT TO SCOPE.** The clause asks for a figure covering 10,314 answer points; this
+covers 23 leaves of one golden corpus. Closing that needs #47's labelled corpus,
+not more analysis of this one.
+
+Artifacts: `BUILD/accuracy-runs/path-accuracy-2026-08-29/`.
+
 ## Review rate (M0.9 / #33) — re-measured live 2026-08-23
 
 | figure | value | n |

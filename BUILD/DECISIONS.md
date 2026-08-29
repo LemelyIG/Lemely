@@ -13486,3 +13486,64 @@ the `Review-rate gate` step states that the step **does run** (naming run
 `33235411251`), that it **does not block** while `review_rate_ratchet_armed` is
 false, that clause 2 therefore stays **partial because observation is not
 enforcement** — and that **the gate is wired, so nobody needs to build it**.
+
+---
+
+## DA49 — Gemini marking accuracy is 69.6%, and the headline blends it with a path carrying no answer points (§13 clause 5)
+
+**Zero spend.** Computed from `aa-floor-2026-08-23-a`'s per-repeat records, which
+already carry `parse_path`. No new run — the data has been on disk since
+2026-08-23.
+
+Clause 5 requires **both paths measured in their own terms**. The det half —
+parse coverage, **331 of 479** — was measured this session. This is the other
+half, and it had been computable all along.
+
+### Method validated before use
+
+The leaf collapse (a leaf counts correct iff **every** fixture-variant row is
+correct) **reproduces the published `wilson_mark_accuracy_per_repeat` successes
+exactly on all 10 repeats**. The script asserts this and refuses to run if it
+ever stops holding. Only then is the same collapse split by path. `parse_path`
+tracks the marking path exactly as C11 describes — `det` is the MCQ paper alone.
+
+### The result
+
+| path | leaves | correct (mean of 10) | accuracy | 95% Wilson at the honest n |
+|---|---|---|---|---|
+| **det** | 8 | 8.0 / 8 | **100%** | **67.6% – 100%** (±16.2pp) |
+| **gemini** | 23 | 15.5 / 23 | **69.6%** | **49.1% – 84.4%** (±17.6pp) |
+
+### The finding that matters
+
+**The published ~77.4% headline is a mixture of a 100% path and a 70% path, and
+the mixture weight is backwards relative to what the programme measures.**
+
+Per C11/DA23, MCQ schemes carry **zero** `answer_points`; the Gemini path carries
+**10,314 of 10,314**. So the path responsible for **every answer point in the
+corpus** measures **69.6%**, and the headline is pulled upward by a path that
+carries none of them. The weighting is an artefact of the fixture set — 8 MCQ
+leaves against 23 theory leaves — not of the production corpus.
+
+**This is the §14 anti-goal in a form nobody had named:** a headline that improves
+while the path doing the work is not separately reported. Clause 5 exists to
+prevent exactly this, and until now only its det half had been honoured.
+
+### Two things refused rather than reported
+
+**det's 100% is not evidence the det marking path is perfect.** 8 MCQ leaves from
+one paper, Wilson lower bound **67.6%** — an interval nearly as wide at n=8 as
+gemini's at n=23.
+
+**Pooling the 10 repeats would fake the precision.** They re-mark the *same* 31
+leaves under an identical fingerprint, so they are not independent observations.
+Pooling reports ±6.0pp and ±2.3pp instead of ±17.6 and ±16.2. Both are in the
+artifact, and **the naive figures are recorded to be refused, not used.**
+
+### Clause 5 status
+
+**det parse coverage MET; Gemini marking accuracy MEASURED BUT NOT TO SCOPE.**
+The clause asks for a figure covering 10,314 answer points; this covers 23 leaves
+of one golden corpus at ±17.6pp. Closing that needs #47's labelled corpus, not
+more analysis of this one — the same shape as clause 3's `NOT_APPLICABLE`, which
+the mission accepts as published-in-the-negative.
