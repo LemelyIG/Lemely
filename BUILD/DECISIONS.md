@@ -13744,16 +13744,25 @@ and they do not bind prose.
   work are orchestration tooling for a programme that no longer runs, and one of
   them adds *"allow merging without CI under an explicit, recorded waiver"* — a
   gate-weakening change that will not be landed unreviewed as a retirement tidy-up.
-- **Did not mark unfinished issues "completed".** **23 of 24 closed as `not
-  planned`; exactly one as completed** — #136, the det mark-total fix, whose six
-  acceptance bullets all landed across two merged PRs with the arithmetic closing
-  exactly. Every other issue, including all four H issues whose human input never
-  arrived, is recorded as retired-unfinished. The board's Done column now means
-  *"no longer being worked"*, and the final report says so rather than letting a
-  green column imply a finished programme. **One in twenty-four is the honest
-  yield of the closing sweep**, and the temptation to round it up by reading
-  acceptance generously is the exact failure this programme spent DA45, DA46,
-  DA48 and DA50 learning to resist.
+- **Did not mark unfinished issues "completed".** **All 24 closed as `not
+  planned`; none as completed.** The board's Done column now means *"no longer
+  being worked"*, and the final report says so rather than letting a green column
+  imply a finished programme.
+
+  **#136 was going to be the single exception and did not survive review.** Five
+  of its six acceptance bullets are met and I verified them at source —
+  `det-fix-136-2026-08-28/blocking.json` shows all four blocking schemes at
+  `delta 0, status EXACT`, and both regression-test classes exist. **Bullet 6 does
+  not hold**: it asks for *"#95 unblocked, or #95's route re-decided by the
+  human"*, and `golden-reparse-95-2026-08-29/FINDINGS.md` ends with #95 **not
+  executable as written** — the excerpt blocker stands and its three options carry
+  an explicit *"no recommendation"*. I had checked the bullets I could see and
+  taken the last on trust.
+
+  **Zero of twenty-four is the honest yield**, and arriving at "one" was the same
+  move this very entry criticises #28 for, committed while writing the criticism.
+  The temptation to round up by reading acceptance generously is what DA45, DA46,
+  DA48 and DA50 were each about, and it survived all four.
 
 ### The board was wrong about the H issues, and GitHub was right
 

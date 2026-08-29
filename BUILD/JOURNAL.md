@@ -3771,11 +3771,19 @@ mission, close the issues, clear the board, merge what can be merged, write a
 final report. All four are done. Ruling **C26**, decision record **DA51**.
 
 **The programme is retired NOT DONE, and I have been careful to keep those two
-apart everywhere a reader might meet them.** Twenty-three of the twenty-four
-issues closed as **not planned**. Exactly one closed as completed — #136, the det
-mark-total fix, whose six bullets all landed and whose arithmetic closes exactly.
-One in twenty-four is the honest yield, and I would rather publish that number
-than a kinder one. The board's Done column now means
+apart everywhere a reader might meet them.** All twenty-four issues closed as
+**not planned**. None as completed.
+
+**I had it at one, and the adversarial pass took it off me.** #136 looked done:
+four mark-total defects fixed, all four blocking schemes reconciling at delta 0,
+regression tests named, the three regressions listed individually instead of
+folded into a pass. I checked `blocking.json` and the test classes myself. What I
+did not check was bullet 6 — *"#95 unblocked, or #95's route re-decided by the
+human"* — and `golden-reparse-95-2026-08-29/FINDINGS.md` ends with #95 **not
+executable as written**, three options, explicit *"no recommendation"*. Neither
+disjunct happened. **Zero of twenty-four.** I verified the bullets I could see and
+took the last one on trust, which is precisely what I spent this run criticising
+#28 for. The board's Done column now means
 *"no longer being worked"*, and I said so on the board rather than letting a green
 column do the arguing.
 

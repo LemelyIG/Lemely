@@ -174,11 +174,24 @@ targets `review_rate_last_merged` cannot touch. While the measured rate is above
 the 10% target the ratchet limb is pinned by `review_rate_total_target`, and **no
 value of the constant moves it**. Arming needs the review rate to come down.
 
-**The committed 29.03% is the bottom of the observed range** — the value that
-came up on the 3 luckiest of 10 identical repeats. It is a best case, not a
-central estimate. Arming `min(10%, last_merged_review_rate)` against it would
-gate the build on a number that unchanged code exceeds 7 times in 10. See
-**DA9a**; the constant is #161's to fix, not a measurement issue's (this line used to cite #36, which is CLOSED and is M1.1, the confidence unit).
+**29.03% is the bottom of the observed range** — the value that came up on the
+**4** luckiest of 10 identical repeats (02, 03, 06, 09, all at 9/31). It is a best
+case, not a central estimate. Arming `min(10%, last_merged_review_rate)` against it
+would gate the build on a number **all 10 of 10** unchanged repeats exceed as
+stored (the constant was truncated down from 0.29032258…; 6 of 10 exceed the exact
+value). See **DA33**.
+
+> **Corrected at retirement (DA51).** This paragraph read *"the 3 luckiest"* and
+> *"unchanged code exceeds 7 times in 10"*. Recounted directly from
+> `analysis-aa-churn-floor.json`, the per-repeat flagged counts are
+> `[11, 9, 9, 10, 10, 9, 11, 13, 9, 10]` — **four** at the minimum, not three; and
+> **10 of 10** exceed the stored constant, not 7. The 7-in-10 figure was DA9a's
+> *estimate*, superseded by DA33's measurement and never restated here.
+>
+> **The committed constant is no longer 29.03% either.** Under ruling C13 (#161,
+> DA33) `review_rate_last_merged` is **0.4838**, the 95th percentile of the
+> beta-binomial predictive for one new run. That restatement did **not** unblock
+> arming, which was its finding.
 
 Both limbs are breached in every repeat (ceiling `min(10%, 29.03%)` = 10%
 against ~32.6%; p95 target 15% against ~82%). The breach is not in doubt and
@@ -272,6 +285,13 @@ still *read*, not minted.
 A *defaulted* mark is one the parser minted rather than read: `rows.py:200`
 falls back to `marks=1` when `parse_marks_cell` finds nothing. Countable only
 because #38 shipped the `marks_defaulted` flag first.
+
+> **Rates superseded (DA46, PR #184).** The `44.4%` of papers / `21.6%` of points
+> in this section are the **pre-#136 figures from a 60-PDF sample (54 parsed)**,
+> measured while the mark-total defects were still inflating the defaulted count.
+> The clean rates over **397 det-parsed papers** are **34.26% of papers** and
+> **8.94% of answer points**. The argument below is unchanged and is if anything
+> stronger at the lower rate; only the magnitudes move.
 
 **Most of that 21.6% is correct — by luck.** The default of 1 is right for
 `B1`/`M1`/`A1`/`C1` and wrong for every multi-mark code. So **"defaulted" is not

@@ -27,14 +27,17 @@ It set out to achieve one thing:
 | the objective | outcome |
 |---|---|
 | Attribute a wrong mark to extractor or marker | **No measurement exists.** The oracle-transcription 2×2 that would attribute it was never run; `ablation_2x2()` returns `b = c = n_pairs = 0` and the published verdict is `NOT_APPLICABLE`. |
-| Review rate falls toward 10% | **It did not fall.** Measured mean **32.58%** over 10 live repeats (range 29.03–41.94%), ~3.3× the budget. |
+| Review rate falls toward 10% | **It was never brought near the budget** — mean **32.58%** over 10 live repeats (range 29.03–41.94%), ~3.3× the 10% target. *No before/after trajectory exists*: the 19.1% start point was retracted by DA-M0.9 and ruling C16 deliberately left the mission without one, so "fell" and "rose" are both unsayable. |
 | Wrong-mark catch rate doubles, 3/11 → ≥6/11 | **It fell.** `flag_recall` on the honest post-D18 run (`run-ef443fc2931e`) is **14.29%, n=71 rows** — against the 27.3% (3/11) the target was set from. The goal was ≥54.5%. |
 
-**Two of the three moved the wrong way, and the third cannot be answered at all.**
-The review rate is above the budget; the catch rate is *below* the figure the
-target was set from. Both directions are real, and neither is a regression caused
-by this work — they are what the numbers look like once the denominators are
-honest. The old 27.3% and the old 19.1% were measured before D18 was fixed.
+**One moved the wrong way, one never approached its target, and the third cannot
+be answered at all.** The catch rate is *below* the figure the target was set
+from. The review rate sits ~3.3× over budget with **no trajectory available in
+either direction** — ruling C16 deliberately removed the mission's start point
+after DA-M0.9 retracted 19.1%, so "it fell" and "it rose" are both unsayable and
+this report says neither. Neither number is a regression caused by this work: they
+are what the figures look like once the denominators are honest, and the old 27.3%
+and 19.1% were both measured before D18 was fixed.
 
 > **The pattern is worth naming, because it recurs in everything below.** When
 > `mark_accuracy` was restated post-D18 it moved *up* (83.8% → 90.1%) and was
@@ -47,10 +50,11 @@ honest. The old 27.3% and the old 19.1% were measured before D18 was fixed.
 > fixed.
 
 **What the programme did achieve is real, and it is not the objective:** it built
-the instrument that makes those three statements sayable with numbers attached.
-Before it, the honest answer to all three was *"we don't know"*. It is now *"it
-rose, it fell, and the third has no measurement — here are the n's"*. That is
-progress of a specific and limited kind, and it is the kind this report claims.
+the instrument that makes those three statements sayable with numbers attached at
+all. Before it, the honest answer to each was *"we don't know"*. It is now *"3.3×
+over budget with no baseline to compare against, down from 27.3% to 14.29%, and
+the third has no measurement — here are the n's"*. That is progress of a specific
+and limited kind, and it is the only kind this report claims.
 
 ---
 
@@ -62,13 +66,20 @@ progress of a specific and limited kind, and it is the kind this report claims.
 | 2 | Baseline, A/A floor, funnel and ratchet published **and enforced in CI** | **PARTIAL** — all published; the gate runs on every test job, but `review_rate_ratchet_armed=False` (`config.py:190`), so it exits 0 on a breach. Observation, not enforcement. |
 | 3 | The ablation 2×2 published, **or its absence** | **MET** — by publishing its absence. `NOT_APPLICABLE` with the reason. |
 | 4 | ~300 labelled real leaves + published inter-rater agreement | **NOT MET** — **zero labels exist.** `eval/labels/` holds one file and it is `.gitkeep`. |
-| 5 | Both paths measured in their own terms | **BOTH HALVES SHORT** — det parse coverage measured (393/1,130 = 34.8%); Gemini marking accuracy measured on 23 leaves against a clause asking for 10,314 answer points |
-| 6 | Review rate at or below the ratchet, recall not below baseline | **NOT MET** — 32.58% against a 10% budget |
+| 5 | Both paths measured in their own terms | **PARTIAL** — both halves exist as measurements; **neither is at the scope the clause names.** det coverage 393/1,130 = 34.8% (and the clause's own figure was superseded); Gemini marking accuracy on 23 leaves against a clause asking for 10,314 answer points |
+| 6 | Review rate at or below the ratchet, recall not below baseline | **NOT MET** — both limbs fail: 32.58% against a 10% budget, and recall fell |
 | 7 | develop→main PR open for human approval | **MET** — #159 open, green, 106+ commits ahead of `main`. Left open: merging to `main` is human-only (§12.3). |
 | 8 | Open H issues cleanly documented as awaiting their human | **MET** — each carried a current statement when closed |
 
-**One clause met on substance, one met by publishing an absence, one met by leaving
-a PR open, five short.**
+**Three MET (3, 7, 8), two PARTIAL (2, 5), three NOT MET (1, 4, 6)** — and the
+three METs are worth reading before they are counted as achievement. **Clause 3 is
+met by publishing an absence. Clause 7 by correctly declining to merge. Clause 8 by
+keeping four human-blocked issues honestly annotated.**
+
+> **Not one of the eight is met by the programme having produced the outcome it set
+> out to produce.** Three of them are met by being honest about not having produced
+> it. That is a real property of this programme and worth more than it sounds — but
+> it is not the same as working.
 
 ### M0 came closest, and "all sub-issues closed" was not acceptance
 
@@ -186,26 +197,82 @@ down. It never did.**
 
 ### det parse coverage — the figure that halved
 
-| population | schemes | exact | rate |
-|---|---|---|---|
-| 2019–2025 | 477 | 331 | 69.4% |
-| 2010–2018 | 299 | 62 | 20.7% |
-| **all canonical (2010–2025)** | **1,130** | **393** | **34.8%** |
+| population | **source** schemes | parsed | exact | exact / source |
+|---|---|---|---|---|
+| 2019–2025 | 479 | 477 | 331 | **69.1%** |
+| 2010–2018 | 651 | 299 | 62 | **9.5%** |
+| **all canonical (2010–2025)** | **1,130** | **776** | **393** | **34.8%** |
 
 The 2019–2025 row **reproduces the earlier 331 exactly**, which is what makes the
 two populations comparable rather than merely different. **Nothing regressed. The
 earlier figure was measured on the easy decade.**
+
+> **This table is republished on one basis, because the original mixed two.** As
+> first published (DA50, and `corpus-expanded-2026-08-29/RESULT.md`) the two era
+> rows used **parsed** schemes as their denominator — 477 and 299 — while the "all"
+> row used **source** schemes, 1,130. Under one column header. That made the
+> old-decade rate read **20.7%** (62/299) when the honest source-basis figure is
+> **9.5%** (62/651), and it flattered the era that was already the problem.
+>
+> **The finding gets stronger, not weaker, once the basis is consistent: 589 of the
+> 651 pre-2019 schemes have no reconciling parse at all.** Recounted directly from
+> `coverage.json`'s per-scheme array: source 479 / 651 / 1,130, parsed 477 / 299 /
+> 776. Found by adversarial review during retirement, not by a gate.
+
+### Two more measurements worth keeping
+
+| figure | value | population |
+|---|---|---|
+| **det defaulted-mark rate**, clean (post-#136) | **34.26%** of papers carry ≥1 defaulted mark | 397 det-parsed papers, both arms over the same set |
+| **Gemini mark-scheme fallback** success rate | **12 parsed of 24 attempted (50%)**, $0.2372 per success | C20 budget-bounded sweep, hard cap $3.00 |
+| **Metamorphic properties** (label-free, no ground truth needed) | id-renaming **57 held / 0 violated**; whitespace **7 / 0**; mark-point reordering **1 violation, unresolved** | golden corpus, live, `cache_mode=bypass` |
+
+The metamorphic result is the programme's one genuinely label-free instrument — it
+tests the marker against *itself* under transformations that must not change the
+answer, so it needs no ground truth. **It is the only M1 measurement that would
+still have worked in a world where the ~300 labels never arrived, which is the
+world that happened.**
+
+The one violation is honest about its own limits and is why #58 closed unfinished.
+`0625_s20_qp_31_theory_partial` q11b went 1 mark → 2 under `reorder_mark_points`.
+The settling run re-marked that single leaf 10× per arm: **2/10 perturbed produced
+≥2 marks, 0/10 unperturbed did, Fisher exact two-sided p = 0.47.** That is
+**underpowered, not exonerating** — it establishes neither that the property fails
+nor that it holds, and it was left unticked rather than rounded to either.
 
 ### Cost
 
 | | |
 |---|---|
 | Cumulative, four worktree ledgers, re-read at close | **$6.370451** |
-| Committed ceiling | **$8.00** |
+| Committed ceiling | **$8.00** — `config.py:111` |
 | Headroom never spent | **$1.629549** |
 
 The ceiling was never breached, and no run was ever authorised without a costed
-preflight.
+preflight. C20's #88 sweep — $2.847 of the total, the single largest — held its own
+$3.00 cap exactly.
+
+**Three caveats, all of them conservative, all recorded in the programme's own
+record rather than discovered at retirement:**
+
+1. **`cumulative_usd` is an upper bound on money spent, not money spent** (DA17).
+   Some tests resolved `paths.output_dir` to the real repo and banked mock-derived
+   costs into the authoritative ledger before #114 was found. The contamination is
+   **one-directional** — a test can only add — so every ceiling check computed
+   against it stays conservative. It was deliberately **kept, not backed out**: the
+   file holds one running total with no history, so re-baselining would trade a
+   known-conservative figure for a reconstructed one.
+2. **The enforcing guard never sees this sum** (DA32). `GeminiClient` builds its
+   ledger path from `settings.paths.output_dir` (`gemini.py:162`), so the ceiling
+   check reads **only the local worktree's file**. The programme-wide figure is
+   published and summed by hand; nothing enforces it.
+3. **$0.00064 of the total is pre-programme spend** — the
+   `research-accuracy-tuning` ledger was last written 2026-08-14, before this
+   programme began, and is counted in rather than netted out.
+
+The $25.00 override that once sat in `lemely.toml` was removed under ruling C12
+(DA28): it was gitignored, invisible to CI, and did not survive worktree deletion,
+so **the only durable ceiling is the committed $8.00**.
 
 ---
 
@@ -242,13 +309,34 @@ the denominator and not the numerator. Same shape as DA39. **A programme that on
 accepts numbers that improve will select for dishonest denominators** — which is
 what D18 was.
 
-**5. Claims rot in place, and the controls do not catch it.** Five instances in the
-programme's final days: the MISSION's stale coverage figure (DA45), a superseded
-published figure (DA46), a CI comment asserting the gate did not run when it did
-(DA48), and — found only by reading every line of the report to retire it — the
-report still publishing *"clause 5 MET, 331 of 479"* the day DA50 falsified it, plus
-a stale spend table sitting directly beneath a written rule against stale spend
-tables (DA51). Each was accurate when written.
+**5. Claims rot in place, the controls do not catch it, and there are more than you
+think.** The programme's final days turned up the MISSION's stale coverage figure
+(DA45), a superseded published figure (DA46), and a CI comment asserting the gate
+did not run when it did (DA48). Retiring it turned up more, all in
+`ACCURACY-REPORT.md`, the one file whose job is publishing figures:
+
+| stale claim | corrected to |
+|---|---|
+| *"clause 5 MET, det parse coverage now 331 of 479"* | 393 of 1,130 = **34.8%** (DA50 falsified it the same morning) |
+| Spend table `$5.993470` | **$6.370451**, re-read at close — sitting directly beneath a written rule against carrying a spend figure forward |
+| *"the 3 luckiest of 10 repeats"* | **four** repeats at the minimum — counts are `[11,9,9,10,10,9,11,13,9,10]` |
+| *"unchanged code exceeds it 7 times in 10"* | **10 of 10** exceed the stored constant; 7-in-10 was DA9a's estimate, superseded by DA33 |
+| The committed constant *29.03%* | **0.4838** under ruling C13 |
+| Defaulted-mark rates *44.4% / 21.6%* (60-PDF sample) | **34.26% / 8.94%** over 397 papers (DA46) |
+| The det coverage table's era rows | denominators were **mixed** — parsed for the eras, source for the total; republished on one basis |
+
+Each was accurate when written. **None was caught by a gate, a test, or CI** —
+every one was found by a person reading prose for another reason, and only because
+retirement forced a read of every line.
+
+> **The rule:** a restatement is finished when **every artifact that published the
+> superseded figure** carries it — not when the decision record does. DA50's own
+> commit is the counter-example: it landed in `DECISIONS.md`, `JOURNAL.md` and the
+> state header and never touched the file that publishes figures.
+>
+> **And the part that should temper this whole report:** the list above is what one
+> pass found. It is not a proof that the file is now clean. **These controls bind
+> code and do not bind prose**, and this programme published its claims in prose.
 
 > **The rule that came out of it:** a restatement is finished when **every artifact
 > that published the superseded figure** carries it — not when the decision record
@@ -271,18 +359,31 @@ tables (DA51). Each was accurate when written.
 | **The review-rate ratchet, unarmed.** | The review rate to fall from 32.58% toward 10% — i.e. real M1 accuracy work. **Not** a flag flip, and **not** a looser target. |
 | **Three unarmed detectors** — #38's all-defaulted variant (3 papers), #110 (15 schemes), #39 (4 questions). | All three route to the same Gemini fallback that DA35 measured failing ~50%. One decision, not three. |
 | **The pre-2017 parsing strategy.** | A second parsing strategy for the pre-2017 layout — a real piece of work, correctly refused as a tweak. |
-| **#166**: the Gemini mark-scheme fallback — the route for every scheme det cannot handle — fails **12 of 24 attempted (50%)**, systematically by size (failed schemes average 10.0 pages / 11,637 chars vs 7.3 / 8,608 for successes), at **$0.2372 per success**, 3.39× the projection, because failures still cost money and return nothing. By syllabus: 0580 9/11, 0625 3/9, **0606 0 of 3** — and that last denominator is 3, not a rate. | **Diagnosed, never fixed.** DA35 traced it to Pydantic validation, with the reason logged all along. |
+| **#166**: the Gemini mark-scheme fallback — the route for every scheme det cannot handle — fails **12 of 24 attempted (50%)**, systematically by size (failed schemes average 10.0 pages / 11,637 chars vs 7.3 / 8,608 for successes), at **$0.2372 per success**, 3.39× the projection, because failures still cost money and return nothing. By syllabus **as the sweep measured it**: 0580 9/11, 0625 3/9, **0606 0/4** — summing to the 12 of 24. (After #136 landed, three of those schemes began to det-parse and left the fallback population, so 0606 is **0 of 3** on the current population, DA35. Both are true of different sets; quoting one row from each makes the column sum to 23.) | **Diagnosed, never fixed.** DA35 traced it to Pydantic validation, with the reason logged in the response all along. |
 
 ---
 
 ## What retirement did, and deliberately did not do
 
 **Did:**
-- Closed all **24** open accuracy issues — **1 as completed, 23 as _not planned_.**
-  The single completed one is **#136**, the det mark-total fix: all six acceptance
-  bullets, two merged PRs, the arithmetic closing exactly. *Not planned* here means
-  **retired unfinished**, not delivered. Each issue carries a closing comment naming
-  what landed, what did not, and the evidence for both.
+- Closed all **24** open accuracy issues — **none as completed, all 24 as _not
+  planned_.** *Not planned* here means **retired unfinished**, not delivered. Each
+  issue carries a closing comment naming what landed, what did not, and the
+  evidence for both.
+
+  > **#136 was going to be the one exception, and it did not survive review.** Its
+  > first five acceptance bullets are genuinely met — four mark-total defects fixed,
+  > all four blocking schemes reconciling exactly at delta 0, regression tests
+  > named, the three regressions listed individually rather than folded into a pass.
+  > I checked `blocking.json` and the test classes myself and they hold. **Bullet 6
+  > does not**: it asks for *"#95 unblocked, or #95's route re-decided by the
+  > human"*, and `golden-reparse-95-2026-08-29/FINDINGS.md` ends with #95 **not
+  > executable as written** — its excerpt blocker stands, and the three options it
+  > lays out carry an explicit *"no recommendation"*. Neither disjunct happened.
+  >
+  > **So the closing sweep's honest yield is zero of twenty-four**, and I reached
+  > "one" by verifying the bullets I could see and taking the last one on trust —
+  > the same move, in miniature, that this report criticises #28 for.
 - Added the four off-board issues (#127, #136, #161, #166) to the project **first**,
   so the board could be cleared completely rather than mostly.
 - Moved every board item to **Done**, where Done now means *"no longer being
@@ -320,7 +421,7 @@ tracker. Closing them under C26 made both say the same thing: closed, unanswered
 
 ## The closing ledger — every issue and its disposition
 
-`completed` means the acceptance criteria are met by merged work. `not planned` means **retired unfinished**. One issue of twenty-four earned the first label.
+`completed` would mean the acceptance criteria are met by merged work. **No issue earned it.** All twenty-four are `not planned` — retired unfinished.
 
 
 ### Epics
