@@ -253,10 +253,19 @@ mark each; **parenthesised mark cells being summed**, when CAIE brackets an
 *alternative* route to the same allocation). Measured over all 479 source
 schemes with both arms re-parsing the PDFs:
 
-| | before | after |
+| | before | now |
 |---|---|---|
-| reconcile **exactly** with the printed maximum | **289** | **333** |
-| still not exact | **190** | **146** (90 over, 54 under, 2 unparsed) |
+| reconcile **exactly** with the printed maximum | **289** | **331** |
+| still not exact | **190** | **148** |
+| corpus-wide overcount | 845 marks | **349** |
+| leaves lost to duplicate-id collapse | 57 | **25** |
+| schemes carrying duplicate leaf ids | 34 | **15** |
+| phantom (contentless) leaves inflating the denominator | 58 | **0** |
+
+*(The intermediate figures were 333 exact / 146 not-exact after #136 alone; #112
+then removed double-counted alternative routes from 2 papers that had been
+reconciling by cancellation — see DA39, where reconciliation is recorded as a
+**confounded** criterion for that fix.)*
 | total overcount across over-counting schemes | 845 marks | **349 marks** |
 
 **+47 newly exact, −3 regressed, net +44** — and the three regressions are named
@@ -285,7 +294,10 @@ success used 26,571. **Not fully deterministic** — the n=1 probe failed, then
 succeeded unchanged.
 
 **So the Gemini parse path closes roughly half of the gap, not the gap** — and
-the gap it is measured against is now **146**, not 190, after #136. The sweep is **NOT REPORTABLE** for its stated purpose: four DA1 strata
+the gap it is measured against is now **148**, not 190. It fell to 146 after
+#136 and rose by 2 when #112 removed double-counted alternative routes from
+papers that had been reconciling *by cancellation* — a rise that is the fix
+working, not regressing (DA39). The sweep is **NOT REPORTABLE** for its stated purpose: four DA1 strata
 (`0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`) got **zero** successes, so the
 stratum coverage the spend was justified by was not delivered. The 12 parsed
 schemes are kept and **must not be presented as coverage**. Cost per *success*
