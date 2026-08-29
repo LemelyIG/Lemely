@@ -13258,3 +13258,35 @@ flag, **#39** was ruled parser-side by A9 and DA43's work touched only
 `reconcile.py`/`config.py`. Neither is a prompt change, so **one bump is
 correct**. If either later needs one, it must be batched with a **re-run** of
 this sweep or its delta is unattributable.
+
+---
+
+## DA45 — §13 re-walked clause by clause; three items were agent work I had written off (§13, C19)
+
+**Zero spend.** I had twice asserted §13 was "structurally impossible for an agent". That is true of the clauses needing human labels — and it was **being used to skip clauses that were not**. Re-walking the eight clauses individually, rather than judging §13 in aggregate, found three pieces of work I owed.
+
+This is the second time in this session that writing §13 off wholesale was wrong. The first was caught the same way.
+
+### Clause 1 — one issue was closeable and I had not closed it
+
+**#112 is CLOSED.** Every criterion B15 set is met and was checked individually: all three sub-defects fixed (including the one my own recommendation would have skipped — AGAINST-REC honoured), the cell-splitting decision taken **and measured against its alternative**, run jointly with #110, and the before/after run under C1's waiver.
+
+**#110 stays OPEN, and the reason is bullet 4.** Bullets 1–3 are met. Bullet 4 asks for a detector that makes duplicate ids **fail loudly**; the detector reports but does **not fail**, because arming it routes papers to a fallback DA35 measured failing ~50% of the time. **Reading "fail loudly" as satisfied by a warning would be closing an issue on a generous reading of my own work.**
+
+**#136 stays OPEN** on bullet 6 — "#95 unblocked, **or** #95's route re-decided by the human". #95 is not unblocked (DA42) and the route is not re-decided. Neither disjunct holds.
+
+### Clause 5 — the MISSION was misstating its own measured figure
+
+Clause 5 requires det **parse coverage** to be measured and read *"currently 289 of 479, so 190 unparsed"*. DA34/DA39/DA41 moved that to **331 of 479, so 148 unparsed**, at zero cost — and the mission document still carried the old numbers in **four** places (§2b's table, §1's gap paragraph, clause 5 itself, and §14's anti-goal).
+
+**A definition-of-done that misstates the quantity it is defining done against is not a small documentation lag.** Corrected in all four, each carrying the prior value and what moved it.
+
+### Clause 8 — two H issues carried stale statements
+
+Clause 8 requires each open H issue to carry *"a current statement of what is needed, **not a stale one**"*. #51 and #52 were updated this session; **#49 and #55 both last spoke on 2026-08-27 — before C25**, which changed both materially: #55 became conditionally authorised on three conditions, and #49 was ruled explicitly **not a gate** on it.
+
+Both now carry current statements. **#55's records that condition 1 says "fixed or formally re-scoped", that #166 is diagnosed rather than fixed, and that deciding whether a diagnosis satisfies that condition is the human's — not an agent's to assume.**
+
+### The standing lesson
+
+**"This cannot be completed" is a claim about a whole, and a whole is not a work item.** Judging §13 in aggregate let a true statement about clauses 4 and 6 suppress false ones about clauses 1, 5 and 8. **Walk the clauses.**

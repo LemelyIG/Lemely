@@ -82,7 +82,7 @@ re-derive:
 
 | stage | path | verified at |
 |---|---|---|
-| mark-scheme **parsing** | **det**, for every scheme | `lemely/io/det/parser.py` — 289 of 479 succeed |
+| mark-scheme **parsing** | **det**, for every scheme | `lemely/io/det/parser.py` — **331 of 479** succeed (was 289 before DA34/DA39/DA41) |
 | question-paper **extraction** | **Gemini**, always | `lemely/io/answer_extraction.py` — no det path exists |
 | **marking**, MCQ | **det** | `harness.py:498`, `marker_source`: `"mcq"` → `det` |
 | **marking**, non-MCQ | **Gemini** | same mapping: `"theory"` → `gemini` |
@@ -97,7 +97,8 @@ re-derive:
    where the marks are awarded.
 
 **The gap between the ruling and reality:** *"any & all"* is true of what det **can**
-parse — **190 of 479 source schemes fail outright** and have no parsed output. Closing
+parse — **148 of 479 source schemes fail outright** and have no parsed output (it was
+190; DA34/DA39/DA41 closed 42 of them at zero cost). Closing
 that is #88, which is a stop-and-ask (ask C15) because its measured $13.31 does not fit
 the $8.00 ceiling.
 
@@ -728,7 +729,8 @@ or weakened; three were inaccurate and are corrected, and one is added):
    per B12 it is agreement **per mark point**, not totals-equality. #47's protocol must
    be built for **two seats from the outset**.
 5. **Both paths are measured in their own terms** (C11/§2b): det **parse coverage**
-   — currently 289 of 479, so **190 unparsed** — and **Gemini marking accuracy**, which
+   — currently **331 of 479, so 148 unparsed** (289/190 when C19 restated this clause;
+   DA34/DA39/DA41 closed 42 at zero cost) — and **Gemini marking accuracy**, which
    covers 10,314 of 10,314 answer points. A headline that improves while either goes
    unmeasured does not count as done.
 6. The review-rate is at or below the ratchet with recall not below baseline.
@@ -750,7 +752,7 @@ or weakened; three were inaccurate and are corrected, and one is added):
   it is the statistic ruling C13 selects (an upper interval bound of the measured
   distribution), never the retracted 19.1% and never the 29.03% bottom-of-range.
 - **Do not leave det PARSE defects unmeasured.** det is the majority *parse* path — it
-  parses every mark scheme and succeeds on 289 of 479 — so a parser defect silently
+  parses every mark scheme and succeeds on 331 of 479 — so a parser defect silently
   corrupts the input to everything downstream. #112, #110, #136 and #39 exist for exactly
   this. A programme where every headline improves while the parser's known defects go
   unfixed has failed.
