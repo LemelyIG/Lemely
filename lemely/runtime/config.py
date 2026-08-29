@@ -275,6 +275,17 @@ class DetParserSettings(BaseModel):
     # a probably-absent one — a cost and coverage decision, not a tidy-up.
     # See lemely.io.det.reconcile.check for the measured prevalence.
     escalate_on_duplicate_leaf_ids: bool = False
+    # #39 bullet 1: a leaf question whose FILTERED primary point sum exceeds its
+    # tariff. The invariant is already written, and correctly, on
+    # Question.validate_mark_point_sum — but it never RUNS on det output,
+    # because rows.py assigns marks/answer_points after construction and
+    # pydantic's revalidate_instances defaults to "never". 4 questions across
+    # the 479 source schemes reach output in breach.
+    #
+    # Reported, not blocking, for the same reason as the duplicate-id detector
+    # above: arming routes the paper to the Gemini fallback, which #166/DA35
+    # measured failing on ~50% of det-failures.
+    escalate_on_primary_sum_breach: bool = False
 
 
 class DatabaseSettings(BaseModel):
