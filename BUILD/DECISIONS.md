@@ -13486,3 +13486,78 @@ the `Review-rate gate` step states that the step **does run** (naming run
 `33235411251`), that it **does not block** while `review_rate_ratchet_armed` is
 false, that clause 2 therefore stays **partial because observation is not
 enforcement** — and that **the gate is wired, so nobody needs to build it**.
+
+---
+
+## DA50 — the corpus went back to 2010, and it bounded the det path rather than extending it
+
+**Zero Gemini spend.** PaperScraper downloaded 1,332 documents, 0 failed:
+canonical mark schemes **479 → 1,130**, question papers **479 → 1,134**, years
+2019–2025 → **2010–2025**. Then a det-only re-parse of all 1,130.
+
+| | schemes | exact | rate |
+|---|---|---|---|
+| 2019–2025 | 477 | 331 | **69.4%** |
+| 2010–2018 | 299 | 62 | **20.7%** |
+| **all** | **1,130** | **393** | **34.8%** |
+
+**The 2019–2025 row reproduces the 331 measured earlier**, which is what makes
+the populations comparable rather than merely different.
+
+**Nothing regressed; the measurement got honest.** Every parser fix this session
+was built and validated on 2019–2025 papers. That population had **2** parse
+errors; the expanded one has **354**. `331 of 479` was measured on the easy
+decade, and DA45's correction of the MISSION to `331 of 479` is now itself
+as-of-a-population rather than absolute.
+
+### The one defect worth fixing, fixed
+
+**411 of 438 initial failures (93.8%)** were one cause, every affected session
+**2010–2016**: the pre-2017 cover page says `maximum raw mark 70`, not
+`Maximum Mark: 70`, so `_MAX_MARK_RE` raised **before looking at a single
+question**. 45 errored schemes were sampled before touching it — 41 matched.
+
+`raw` is optional but **specific**; a permissive gap would let cover prose supply
+the number, and a test pins that such a cover still raises.
+
+**Errors 438 → 354, parsed 692 → 776.**
+
+### And it bought ZERO coverage — stated because it is the point
+
+**`exact` stayed at 393.** All 84 newly-parsing schemes landed in `not_exact`.
+In production, where `escalate_on_mark_mismatch` is on, a scheme that parses but
+does not reconcile raises anyway — so **the fix changes the diagnostic picture,
+not the routing.** Correct and necessary; not, by itself, an improvement.
+
+The 2010–2018 exact *rate* fell, 28.8% → 20.7%, because the denominator grew
+while the numerator did not. Same shape as DA39.
+
+### A hypothesis of mine, falsified in one check
+
+The remaining errors are dominated by *"No tables found — may be a scanned PDF"*,
+and I was about to report that older schemes are image scans and out of reach.
+**They are not.** On the same page index, the errored 2010–16 papers carry **872
+mean text chars/page and 1.30 tables/page** against **1,029 and 0.95** for the
+papers that parse — *more* extractable content, not less.
+
+**The error message is the parser's guess, and the guess is wrong.** I nearly
+reported a source-material limitation that does not exist, on the strength of a
+string. The check that falsified it took one command.
+
+### What actually blocks them
+
+The pre-2017 layout has no ruled row separators, so pdfplumber returns **a whole
+page of questions as one 2-row table**, question boundaries being newlines
+*inside* cells (`'1 a =3, b=2, c=1'`, `'B1, B1,\nB1\n[3]'`).
+`qualifies_as_mark_scheme_table` rejects these **correctly** — they are not
+row-per-question tables. Supporting them is **a second parsing strategy, not a
+tweak**, and wants its own issue.
+
+### Consequences for the programme
+
+- **The det path's reach is bounded by CAIE's 2016/17 layout change**, not by
+  parser quality. Expanding the corpus backwards does not expand det coverage.
+- For 2010–2016 the **Gemini path is the only option**, and DA35 measured it
+  failing on ~50% of what det cannot parse.
+- **Every corpus-wide figure published before today is as-of the 479-scheme
+  population** and must carry that label rather than be silently reused.

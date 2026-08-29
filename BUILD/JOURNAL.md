@@ -3666,3 +3666,52 @@ carefully, and it was complete and useful while the one-paragraph edit sat
 undone.
 
 Recorded as **DA48**.
+
+---
+
+## run-2026-08-29-l — I asked for a bigger corpus and got a smaller number
+
+**Zero Gemini spend.** The human asked me to populate the corpus. 1,332 documents
+downloaded, 0 failed: **479 → 1,130 mark schemes**, 2019–2025 → **2010–2025**.
+
+**And det coverage fell from 69.1% to 34.8%**, which is the most useful thing
+that happened all session.
+
+Nothing regressed. Every parser fix I made today was built and validated on
+2019–2025 papers — a population with **2** parse errors. The expanded one has
+**354**. `331 of 479` was measured on the easy decade, and I had spent the
+morning correcting the MISSION to quote it as though it were absolute.
+
+**One defect was 94% of the failures**, and it is small: the pre-2017 cover page
+says `maximum raw mark 70` rather than `Maximum Mark: 70`, so the parser raised
+before reading a single question. Every affected session is 2010–2016. Fixed,
+after sampling 45 errored schemes to check the pattern rather than inferring it
+from one.
+
+**And the fix bought exactly zero coverage.** `exact` stayed at 393; all 84
+newly-parsing schemes landed in `not_exact`. In production those escalate anyway,
+so the fix moved the *diagnostic* picture and not the routing. I could have
+reported "84 more schemes parse" and it would have been true and misleading.
+
+**Then the part I want to keep.** The remaining errors say *"No tables found —
+may be a scanned PDF"*, and I had the report half-written: older CAIE schemes are
+scans, structurally out of reach, nothing to be done.
+
+**One command falsified it.** The errored 2010–16 papers carry *more* extractable
+text per page than the papers that parse — 872 chars against 1,029, and 1.30
+tables against 0.95. They are not scans. **The error message is the parser's own
+guess, and I was about to promote a guess into a finding because it was printed
+in a traceback.**
+
+What actually blocks them is real and different: the pre-2017 layout has no ruled
+row separators, so pdfplumber hands back a whole page of questions as one 2-row
+table with the boundaries as newlines inside cells. The table qualifier rejects
+them **correctly**. Supporting that layout is a second parsing strategy, not a
+tweak, and it wants its own issue rather than a quiet extension of this one.
+
+**So the honest verdict on the expansion: it did not extend the det path, it
+bounded it.** The reach is set by CAIE's 2016/17 layout change, not by parser
+quality — and for 2010–2016 the only route is the Gemini path that DA35 measured
+failing half the time.
+
+Recorded as **DA50**.

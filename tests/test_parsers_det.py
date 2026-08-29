@@ -2092,3 +2092,51 @@ class PrimaryMarkPointSumIsActuallyCheckedTests(unittest.TestCase):
         reconcile_check([q], _metadata(1))  # must not raise
         with self.assertRaises(ParseError):
             reconcile_check([q], _metadata(1), escalate_on_primary_sum_breach=True)
+
+
+_LEGACY_COVER = """CAMBRIDGE INTERNATIONAL EXAMINATIONS
+International General Certificate of Secondary Education
+MARK SCHEME for the May/June 2013 series
+0580 MATHEMATICS
+0580/21 Paper 2 (Extended), maximum raw mark 70
+This mark scheme is published as an aid to teachers and candidates.
+"""
+
+
+class LegacyCoverPageMaximumMarkTests(unittest.TestCase):
+    """The pre-2017 cover page says "maximum raw mark N", not "Maximum Mark: N".
+
+    Measured over the corpus expanded to 2010-2025: **411 of 438 parse failures
+    (93.8%)** were this one pattern, and **every affected session is 2010-2016**.
+    CAIE changed the cover page at the 2016/17 boundary and `_MAX_MARK_RE` only
+    ever knew the newer wording, so the parser raised before it looked at a
+    single question.
+    """
+
+    def _pdf_with_cover(self, cover_text: str) -> MagicMock:
+        return _fake_pdf([_fake_page(text=cover_text)])
+
+    def test_legacy_maximum_raw_mark_is_read(self) -> None:
+        md = extract_metadata(self._pdf_with_cover(_LEGACY_COVER), Path("0580_s13_ms_21.pdf"))
+        self.assertEqual(md.maximum_mark, 70)
+
+    def test_modern_wording_still_works(self) -> None:
+        md = extract_metadata(self._pdf_with_cover(_THEORY_COVER), Path("0625_s19_ms_42.pdf"))
+        self.assertGreater(md.maximum_mark, 0)
+
+    def test_a_cover_with_no_maximum_at_all_still_raises(self) -> None:
+        # The guard must keep guarding — widening the pattern must not turn a
+        # genuinely unreadable cover into a silent zero.
+        bare = "CAMBRIDGE INTERNATIONAL EXAMINATIONS\n0580 MATHEMATICS\n"
+        with self.assertRaises(ParseError):
+            extract_metadata(self._pdf_with_cover(bare), Path("0580_s13_ms_21.pdf"))
+
+    def test_the_word_between_maximum_and_mark_is_bounded(self) -> None:
+        # "raw" specifically, not "any words at all" — a permissive gap would
+        # let unrelated prose supply the number.
+        prose = (
+            "CAMBRIDGE INTERNATIONAL EXAMINATIONS\n0580 MATHEMATICS\n"
+            "the maximum number of candidates per mark is 99\n"
+        )
+        with self.assertRaises(ParseError):
+            extract_metadata(self._pdf_with_cover(prose), Path("0580_s13_ms_21.pdf"))
