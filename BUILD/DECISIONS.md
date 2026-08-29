@@ -13359,3 +13359,62 @@ by-product (DA45):
 
 **A report that publishes a superseded constant is not a lag; it is the programme
 citing a number its own decision record has replaced.**
+
+---
+
+## DA47 — DA1's parse-path axis is a CONSTANT over the corpus, not a set of empty strata (#57, #88, #166)
+
+**Zero spend.** Read from `corpus/manifest.json` and the 289 committed schemes.
+
+DA1 stratifies on **syllabus code × parse path (det/Gemini) × tariff band**. The
+manifest records:
+
+```
+gemini_used: False
+cost_usd:    0.0
+totals:      {source_pdfs: 479, parsed: 289, failed: 190}
+```
+
+**Every committed scheme is det-parsed. There are zero Gemini-parsed schemes in
+the population #57 partitions.** The axis does not have sparse strata — it has
+**one level**, and a stratified split cannot stratify on a constant. #57's bullet
+1 cannot be executed as DA1 specifies.
+
+### This corrects a looser statement of mine
+
+A previous run recorded on #57 that *"the Gemini strata are empty because #88's
+sweep aborted at 6 of 190"*. **Not quite right, and the difference matters.** The
+aborted sweep's 6 and C20's 12 were parsed into **staging directories**, never
+into `corpus/`, so they are not in the partitioned population at all.
+**`cost_usd: 0.0` proves the corpus was never Gemini-parsed** — a stronger and
+more useful statement than "the sweep did not finish".
+
+The habit that produced the looser version is worth naming: I described the
+*history of a run* when the question was about the *contents of a population*.
+Those are different objects, and only one of them was in the manifest.
+
+### Why populating it is not simply a matter of finishing #88
+
+#88 is blocked by **#166**: the fallback fails on ~50% of the schemes det cannot
+parse and 100% of 0606 (DA35). A completed sweep would deliver a **lopsided,
+partly-unfillable** stratum rather than a balanced one.
+
+The population did shrink helpfully — det coverage went **289 → 331 of 479** at
+zero cost this session, so the Gemini-path remainder is **148, not 190**. But
+`corpus/` still holds the 289 parsed at `parser_sha 8758dba`, so realising that
+gain needs a regeneration.
+
+### Three routes, none of them an agent's to choose
+
+1. **Populate the axis** — regenerate `corpus/` at the current revision and
+   Gemini-parse the remainder. Needs #166 first, or it buys a stratum ~50%
+   missing by construction.
+2. **Change DA1** to stratify on the two axes that *do* vary — syllabus × tariff
+   band — recording parse path as a constant with its reason.
+3. **Wait**, and accept that #57 → #47 → #51 → #55 stay blocked.
+
+**No recommendation, and the reason is specific rather than reflexive:** option 2
+is the only one that lets this issue proceed today, and it works by **changing
+the measurement design to fit what the data currently supports**. DA1 was fixed
+in a human interview precisely so an agent could not re-derive it around an
+inconvenient measurement.

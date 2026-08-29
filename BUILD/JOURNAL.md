@@ -3575,3 +3575,41 @@ the same way — by reading the clause instead of asserting a verdict about the
 section.
 
 Recorded as **DA46**.
+
+---
+
+## run-2026-08-29-i — the split axis is not sparse, it is constant, and I had said the softer thing
+
+**Zero spend.** #57's bullet 1 — *propose a stratified split* — is agent work I
+had identified earlier in the programme and never executed. The clause walk
+brought it back, so I went to do it.
+
+**It cannot be done as DA1 specifies, and the manifest says so in one line.**
+DA1 stratifies on syllabus × **parse path** × tariff band, and
+`corpus/manifest.json` records `gemini_used: False`, `cost_usd: 0.0`. Every one
+of the 289 committed schemes is det-parsed. **The axis has one level.** You
+cannot stratify on a constant.
+
+**What bothers me is that I had already written the softer version.** A previous
+run's comment on #57 said the Gemini strata were *"empty because #88's sweep
+aborted at 6 of 190"* — which describes the **history of a run** when the
+question was about the **contents of a population**. The sweep's 6 and C20's 12
+went to staging directories and were never in `corpus/` at all, so they could not
+have populated the axis even if the sweep had finished. `cost_usd: 0.0` was
+sitting in the manifest the whole time and is both stronger and simpler.
+
+**Two different objects, and I checked the one I had recently been working on
+rather than the one the question was about.**
+
+**And the route that would unblock it is the one I must not take.** Stratifying
+on the two axes that *do* vary would let #57 proceed today — by changing the
+measurement design to fit what the data currently supports. DA1 was fixed in a
+human interview for exactly that reason. So: three routes, no recommendation, and
+the reason for withholding it stated rather than implied.
+
+One thing did improve the picture: det coverage went **289 → 331 of 479** this
+session, so the Gemini-path remainder is **148 rather than 190** — though
+`corpus/` still holds the older parse, so realising that needs a regeneration,
+which is #95, which is itself blocked (DA42).
+
+Recorded as **DA47**.
