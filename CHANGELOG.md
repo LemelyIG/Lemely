@@ -14,7 +14,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   (`BUILD/ACCURACY-MISSION.md` §13) is not met, and none of the three components of its
   stated objective landed — a wrong mark still cannot be attributed to extractor or
   marker, the review rate did not fall (32.58% measured against a 10% budget), and
-  the wrong-mark catch rate was never re-measured. All 24 open accuracy issues are
+  and the wrong-mark catch rate FELL rather than doubled (`flag_recall` 14.29%, n=71,
+  on the honest post-D18 run, against the 27.3% the "≥6/11" target was set from). All 24 open accuracy issues are
   closed — **only one of them as completed** (#136, the det mark-total fix, whose six acceptance bullets all landed); the other 23 as **not planned**, meaning retired unfinished. **The closing account is
   [`BUILD/ACCURACY-FINAL-REPORT.md`](BUILD/ACCURACY-FINAL-REPORT.md)** — read it
   before relying on any accuracy figure in this repo.

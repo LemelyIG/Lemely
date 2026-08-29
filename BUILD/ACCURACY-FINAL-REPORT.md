@@ -28,13 +28,29 @@ It set out to achieve one thing:
 |---|---|
 | Attribute a wrong mark to extractor or marker | **No measurement exists.** The oracle-transcription 2×2 that would attribute it was never run; `ablation_2x2()` returns `b = c = n_pairs = 0` and the published verdict is `NOT_APPLICABLE`. |
 | Review rate falls toward 10% | **It did not fall.** Measured mean **32.58%** over 10 live repeats (range 29.03–41.94%), ~3.3× the budget. |
-| Wrong-mark catch rate doubles, 3/11 → ≥6/11 | **Never re-measured.** No catch-rate or flag-recall figure appears anywhere in `ACCURACY-REPORT.md`. |
+| Wrong-mark catch rate doubles, 3/11 → ≥6/11 | **It fell.** `flag_recall` on the honest post-D18 run (`run-ef443fc2931e`) is **14.29%, n=71 rows** — against the 27.3% (3/11) the target was set from. The goal was ≥54.5%. |
 
-**What it did achieve is real and is not the objective:** it built the instrument
-that made these three statements sayable with numbers attached. Before this
-programme the honest answer to all three was *"we don't know"*. It is now
-*"no, no, and we still don't know — here is the n"*. That is progress of a
-specific and limited kind, and it is the kind this report claims.
+**Two of the three moved the wrong way, and the third cannot be answered at all.**
+The review rate is above the budget; the catch rate is *below* the figure the
+target was set from. Both directions are real, and neither is a regression caused
+by this work — they are what the numbers look like once the denominators are
+honest. The old 27.3% and the old 19.1% were measured before D18 was fixed.
+
+> **The pattern is worth naming, because it recurs in everything below.** When
+> `mark_accuracy` was restated post-D18 it moved *up* (83.8% → 90.1%) and was
+> promptly relabelled "historical, superseded". `flag_recall` and
+> `flag_precision_high` moved *down* in the very same run and kept their
+> better-looking legacy numbers in `DELIVERY.md`, `CHANGELOG.md` and
+> `docs/ACCURACY-STRATEGIES.md`. **Only the flattering restatement got
+> published.** That is selective disclosure and the same family of defect as D18
+> itself — caught and corrected during #29, and recorded rather than quietly
+> fixed.
+
+**What the programme did achieve is real, and it is not the objective:** it built
+the instrument that makes those three statements sayable with numbers attached.
+Before it, the honest answer to all three was *"we don't know"*. It is now *"it
+rose, it fell, and the third has no measurement — here are the n's"*. That is
+progress of a specific and limited kind, and it is the kind this report claims.
 
 ---
 
@@ -48,7 +64,7 @@ specific and limited kind, and it is the kind this report claims.
 | 4 | ~300 labelled real leaves + published inter-rater agreement | **NOT MET** — **zero labels exist.** `eval/labels/` holds one file and it is `.gitkeep`. |
 | 5 | Both paths measured in their own terms | **BOTH HALVES SHORT** — det parse coverage measured (393/1,130 = 34.8%); Gemini marking accuracy measured on 23 leaves against a clause asking for 10,314 answer points |
 | 6 | Review rate at or below the ratchet, recall not below baseline | **NOT MET** — 32.58% against a 10% budget |
-| 7 | develop→main PR open for human approval | **MET** — #159 open, green, 105 commits. Left open: merging to `main` is human-only (§12.3). |
+| 7 | develop→main PR open for human approval | **MET** — #159 open, green, 106+ commits ahead of `main`. Left open: merging to `main` is human-only (§12.3). |
 | 8 | Open H issues cleanly documented as awaiting their human | **MET** — each carried a current statement when closed |
 
 **One clause met on substance, one met by publishing an absence, one met by leaving
@@ -278,7 +294,7 @@ tables (DA51). Each was accurate when written.
 
 **Deliberately did not:**
 - **Merge PR #159 (develop → main).** §12.3 reserves merging to `main` for the
-  human; asked directly, the human kept it that way. It is open, green, 105 commits
+  human; asked directly, the human kept it that way. It is open, green, and 106+ commits
   ahead.
 - **Close #10–#22.** Separate product work — sign-up flows, payments, hosting,
   CI/CD. Retiring this programme is not licence to clear someone else's board.
@@ -299,6 +315,62 @@ done` refuses H-numbered and `owner:human` issues, so the board status was set b
 some path that bypassed that guard. **The issue state was the truth; the board was
 the stale copy** — the same failure mode as the stale figures, in a different
 tracker. Closing them under C26 made both say the same thing: closed, unanswered.
+
+---
+
+## The closing ledger — every issue and its disposition
+
+`completed` means the acceptance criteria are met by merged work. `not planned` means **retired unfinished**. One issue of twenty-four earned the first label.
+
+
+### Epics
+
+| issue | disposition | the honest remainder |
+|---|---|---|
+| [#23](https://github.com/LemelyIG/Lemely/issues/23) Extraction & Marking Accuracy Programme | not planned | All 6 sub-issues of #23 (#24, #35, #43, #53, #54, #55) are OPEN; none closed. §13 clause 1 NOT MET: 8 non-H sub-issues of #24/#35/#43 remain open … |
+| [#24](https://github.com/LemelyIG/Lemely/issues/24) Instrument | not planned | Box 3 NOT MET. That box names exactly the three cells of the M0.4 2x2 — extraction-attributable, marking-attributable, masked — and the 2x2 does not … |
+| [#35](https://github.com/LemelyIG/Lemely/issues/35) Provably-Broken Fixes | not planned | 4 of 9 sub-issues remain open: #38, #39, #41, #58. Four of the six acceptance bullets are unmet. McNemar was never reported against the M0 baseline — … |
+| [#43](https://github.com/LemelyIG/Lemely/issues/43) Ground Truth | not planned | The deliverable. Zero ground truth exists: eval/labels/ contains only a zero-byte .gitkeep and eval/rulings.jsonl is 0 lines — 0 of ~300 labelled … |
+| [#53](https://github.com/LemelyIG/Lemely/issues/53) Parse-Path Parity and Mark-Scheme Fidelity | not planned | The single acceptance criterion is unmet: no M3 spec was ever written. docs/superpowers/specs/ holds five files and none of them is an M3 re-plan; … |
+| [#54](https://github.com/LemelyIG/Lemely/issues/54) Judgment and Vision | not planned | Both acceptance boxes. No M4 spec was written; the precondition (M0 and M2 producing numbers) never arrived, because M2 produced 0 of ~300 labels. … |
+
+### M1 — provably-broken fixes
+
+| issue | disposition | the honest remainder |
+|---|---|---|
+| [#38](https://github.com/LemelyIG/Lemely/issues/38) Defaulted-mark provenance and a real … | not planned | Three of four bullets. Bullet 2 (delete the minted point on over-sum papers, the 78-paper bucket) was never implemented — no deletion code exists … |
+| [#39](https://github.com/LemelyIG/Lemely/issues/39) Fidelity gate: filtered under-sum, excerpt-scoped paper … | not planned | Six bullets, three of them retired unmet by explicit prior ruling rather than met. Bullet 2 (under-sum) was deliberately not implemented because it … |
+| [#41](https://github.com/LemelyIG/Lemely/issues/41) Inject the CAIE Generic Marking Principles into the … | not planned | Bullet 4 never ran, and bullet 2 is met in prompt text but not in effect. The sweep was never authorised or executed: outputs/gemini_spend.json shows … |
+| [#58](https://github.com/LemelyIG/Lemely/issues/58) Label-free metamorphic tests for the marker | not planned | Bullet 1 — reordering mark points does not change awarded_marks — is FALSE on live evidence and was deliberately left unticked. … |
+
+### M2 — ground truth
+
+| issue | disposition | the honest remainder |
+|---|---|---|
+| [#47](https://github.com/LemelyIG/Lemely/issues/47) Label ~300 distinct leaf questions across both passes | not planned | The labelling itself. ZERO of ~300 leaves are labelled: eval/labels/ contains only .gitkeep, in this worktree and in every other worktree checked … |
+| [#57](https://github.com/LemelyIG/Lemely/issues/57) Freeze the split membership over the restored corpus | not planned | All three acceptance bullets. Bullet 1 (stratified split proposed) is blocked: DA1 fixes the strata as syllabus code × parse path (det/Gemini) × … |
+| [#59](https://github.com/LemelyIG/Lemely/issues/59) Measure the synthetic-to-real transfer gap | not planned | The measurement. All four acceptance bullets are unticked: no extraction arm ran, no paired delta or interval was published, nothing qualifies any … |
+| [#88](https://github.com/LemelyIG/Lemely/issues/88) Parse the restored corpus into structured mark schemes … | not planned | The issue's purpose — populating DA1's Gemini-path strata — was never achieved, and the last comment here says the 12 Gemini-parsed schemes must not … |
+
+### Defects found mid-programme
+
+| issue | disposition | the honest remainder |
+|---|---|---|
+| [#95](https://github.com/LemelyIG/Lemely/issues/95) harness: regenerate golden fixtures through the det … | not planned | The rebuild. Every scope bullet is unticked; no fixture delta was published, no invalidation statement written, no baseline re-established. Blocker 1 … |
+| [#110](https://github.com/LemelyIG/Lemely/issues/110) det: the parser emits duplicate top-level question ids, … | not planned | Bullet 4 - the detector that FAILS LOUDLY - is only half done and was never ticked. The detector exists and reports ids plus collapse count … |
+| [#127](https://github.com/LemelyIG/Lemely/issues/127) golden: 0625_w21_qp_32_theory_nested fixture says … | not planned | The fixture itself is unchanged. On develop, tests/golden/0625_w21_qp_32_theory_nested/mark_scheme.json still reads "paper_type": "theory_extended" / … |
+| [#136](https://github.com/LemelyIG/Lemely/issues/136) det: fix the mark-total escalation that blocks the golden … | **completed** | Nothing in the acceptance remains, but two honest limits belong on the record. First, no awarded mark ever moved. The issue's own scope note required … |
+| [#161](https://github.com/LemelyIG/Lemely/issues/161) eval: the review-rate ratchet cannot be armed, and … | not planned | Step 3 - arming - is NOT done, and the issue's own premise was falsified in the process. review_rate_ratchet_armed is still Field(default=False) at … |
+| [#166](https://github.com/LemelyIG/Lemely/issues/166) 0% on 0606, systematically by size | not planned | No fix. The 50% failure rate is exactly where it was: nothing was changed in the Gemini mark-scheme path, and the prompt already instructs … |
+
+### H — awaiting a human who never came
+
+| issue | disposition | the honest remainder |
+|---|---|---|
+| [#49](https://github.com/LemelyIG/Lemely/issues/49) Approve the frozen train/dev/test split membership | not planned | The box the issue says it closes on. No split manifest exists anywhere in the tree (eval/ holds only README.md, labels/.gitkeep, … |
+| [#51](https://github.com/LemelyIG/Lemely/issues/51) Second-labeller agreement on a 10% sample (was: … | not planned | Every acceptance box. Zero leaves have been double-labelled because zero leaves have been labelled at all: eval/labels/ contains exactly one tracked … |
+| [#52](https://github.com/LemelyIG/Lemely/issues/52) Adjudicate CAIE judgment questions raised during labelling | not planned | Every acceptance box, and the human input at the centre of the issue. eval/rulings.jsonl is tracked and is 0 bytes — zero rulings, zero pending … |
+| [#55](https://github.com/LemelyIG/Lemely/issues/55) Authorise the single run of the frozen test split | not planned | The run. reports/accuracy/test-touch-ledger.jsonl (the module's DEFAULT_LEDGER_PATH) does not exist and nothing under reports/ is committed for it, … |
 
 ---
 

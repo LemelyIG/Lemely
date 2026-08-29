@@ -3817,6 +3817,22 @@ restatement is not finished when the decision record carries it; it is finished
 when every artifact that published the superseded figure carries it. The decision
 log is where a correction is *reasoned*, not where it *lands*.
 
+**Then I made the mistake a third time, in the other direction.** I wrote in the
+final report that the wrong-mark catch rate was *"never re-measured"* — because
+`ACCURACY-REPORT.md` has no catch-rate figure in it, and I read that silence as
+absence. **It was measured.** `flag_recall` is **14.29%, n=71** on the honest
+post-D18 run, against the **27.3% (3/11)** the *"≥6/11"* target was set from. The
+catch rate **fell**. "Unmeasured" was the softer claim and it was wrong, and I
+got there by searching one file and stopping.
+
+**Why it wasn't in that file is the better finding anyway.** When D18 was fixed,
+`mark_accuracy` moved *up* and was relabelled "historical, superseded" everywhere.
+`flag_recall` and `flag_precision_high` moved *down* in the same run and kept
+their prettier legacy numbers in three other files. **Only the flattering
+restatement got published.** #29 caught it and fixed all three. I met the residue
+of it today from the far side: the unflattering number was hard to find because it
+had once been the one nobody propagated.
+
 **What I refused to do.** Not merging #159 to main — I asked, and the human kept
 §12.3 as it was. Not closing #10–#22, which were never this mission's. Not
 merging the leftover branches: I checked their content against `develop` instead

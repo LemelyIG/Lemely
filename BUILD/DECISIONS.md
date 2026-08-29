@@ -13682,6 +13682,32 @@ decision record carries it. It is finished when **every artifact that published
 the superseded figure** carries it. DA50's own commit is the counter-example, and
 it was written by the same run that formulated the rule.
 
+### The catch rate did not stall — it FELL, and I nearly published "unmeasured"
+
+Drafting this entry I wrote that the wrong-mark catch rate was *"never
+re-measured"*, on the strength of `ACCURACY-REPORT.md` containing no catch-rate
+figure. **It was measured.** The honest post-D18 run `run-ef443fc2931e` reports
+`flag_recall` **14.29%, n=71 rows**, against the **27.3% (3/11)** the mission's
+*"≥6/11"* target was set from. The goal was ≥54.5%. **It went down, not up.**
+
+"Unmeasured" would have been the softer and wrong claim, and I would have reached
+it by searching one file and treating its silence as evidence of absence.
+
+**And the reason it was not in that file is itself the finding.** When D18 was
+fixed, `mark_accuracy` moved **up** (83.8% → 90.1%) and was promptly relabelled
+*historical, superseded* wherever it appeared. `flag_recall` (27.3% → **14.29%**)
+and `flag_precision_high` (91.7% → **89.8%**) moved **down in the very same run**
+and kept their better-looking legacy numbers in `DELIVERY.md`, `CHANGELOG.md` and
+`docs/ACCURACY-STRATEGIES.md`. **Only the metric that moved in the flattering
+direction received the restatement.**
+
+That is selective disclosure, and it is the same family of defect as D18 — the
+failure the restatement work existed to fix. It was caught during #29 and all
+three metrics now carry the qualifier. Recorded again here because at retirement
+it nearly produced a *second* generous claim, in the closing report, by a
+different route: not by choosing the flattering number, but by failing to look
+for the unflattering one and calling that absence "unmeasured".
+
 ### And a second stale figure in the same file, two sections down
 
 The **Spend** table read **$5.993470** cumulative with the accuracy worktree
