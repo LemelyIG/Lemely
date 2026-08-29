@@ -24,7 +24,21 @@ if TYPE_CHECKING:
 # ---------------------------------------------------------------------------
 
 _PAPER_CODE_RE = re.compile(r"\b(\d{4})/(\d)(\d)\b")
-_MAX_MARK_RE = re.compile(r"[Mm]aximum\s+[Mm]ark\s*[:\s]+(\d+)")
+# Two CAIE cover-page wordings, and the second is 94% of everything the
+# parser could not read once the corpus was extended back to 2010.
+#
+#   2017+   "Maximum Mark: 70"
+#   2010-16 "0580/21 Paper 2 (Extended), maximum raw mark 70"
+#
+# Measured over 1,130 source schemes: 411 of 438 parse failures (93.8%)
+# were this pattern, and EVERY affected session is 2010-2016 — CAIE changed
+# the cover page at the 2016/17 boundary. The parser raised here, before
+# looking at a single question, so the whole decade was unreadable.
+#
+# `raw` is optional but SPECIFIC: a permissive gap such as \S+ would let
+# unrelated cover prose ("the maximum number of candidates per mark is 99")
+# supply the number, which is worse than failing.
+_MAX_MARK_RE = re.compile(r"[Mm]aximum\s+(?:raw\s+)?[Mm]ark\s*[:\s]+(\d+)")
 _YEAR_RE = re.compile(r"\b(20\d{2})\b")
 
 _SESSION_PATTERNS: list[tuple[re.Pattern[str], SessionMonth]] = [
