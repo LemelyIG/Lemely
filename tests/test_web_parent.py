@@ -25,6 +25,7 @@ history side. Proves:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -232,11 +233,37 @@ def _record(
     )
 
 
+# The two default fixture timestamps below are relative to "now", not fixed
+# dates, and that is load-bearing rather than stylistic.
+#
+# They used to be hardcoded at 2026-08-04 / 2026-08-05. `lemely/core/at_risk.py`'s
+# rule 3 fires the `inactive` flag at `_INACTIVITY_DAYS = 14` days since the most
+# recent `recorded_at`, and `routers/parent.py` appends " At least one at-risk
+# signal is active." to `statusLine` whenever any flag fires. So on 2026-08-19 —
+# fourteen days after that fixed date, with nobody touching the code — every test
+# in this file asserting `statusLine` by exact equality began to fail, and stayed
+# failing further every day.
+#
+# Anchoring to `now` expresses what these fixtures are actually for: a student who
+# has been active recently. Tests that need a genuinely inactive student still say
+# so explicitly by passing their own `recorded_at` (see the 2020-03 dates in the
+# at-risk flag test below, which assert the inactivity rule DOES fire) — those are
+# deliberate and are left exactly as they were.
+_RECENT_PAPER_AT = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+"""Two days ago: recent enough that rule 3 never fires."""
+
+_RECENT_QUIZ_AT = (datetime.now(UTC) - timedelta(days=1)).isoformat()
+"""One day ago. Deliberately NEWER than the paper, preserving the ordering the
+old fixed dates had (08-04 paper, 08-05 quiz): the quiz-origin tests here exist
+to prove a newer quiz does not move a grade-bearing status line or trend, which
+needs the quiz to actually be the more recent record."""
+
+
 def _paper(**kwargs: object) -> PaperRecord:
     defaults: dict[str, object] = {
         "percentage": 80.0,
         "grade": "B",
-        "recorded_at": "2026-08-04T10:00:00+00:00",
+        "recorded_at": _RECENT_PAPER_AT,
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
@@ -250,7 +277,7 @@ def _quiz(**kwargs: object) -> PaperRecord:
         "paper_number": 1,
         "paper_variant": 1,
         "maximum": 10,
-        "recorded_at": "2026-08-05T10:00:00+00:00",
+        "recorded_at": _RECENT_QUIZ_AT,
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
