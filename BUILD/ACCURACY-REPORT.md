@@ -74,7 +74,19 @@ denominator shell game D18 existed to create.
 | Per-repeat range | **29.03% – 41.94%** | 10 repeats |
 | `review_rate_signal` | identical to `total` (no `random_audit` fired) | — |
 | Per-paper p95, mean | 82.1% (range 66.7% – 85.7%) | 10 repeats |
-| Committed constant | 29.03% | `config.py:168`, `review-rate-baseline.json` |
+| Committed constant, **restated 2026-08-28 under C13** | **0.4838** | `config.py`, DA33 |
+| ~~Previous constant~~ | ~~29.03%~~ | the **minimum** of the ten — **all 10 of 10** unchanged repeats exceeded it |
+
+**0.4838 is the 95th percentile of the beta-binomial predictive distribution for a
+single new run** (Jeffreys prior on the pooled 101/310 leaf-repeats). Predictive,
+not a confidence interval on the mean: the gate judges *one* run, and a CI on the
+mean narrows with n until it sits inside the spread unchanged code produces.
+
+**The restatement did NOT unblock arming, and DA33 measured why.** All four gate
+limbs fail — signal 3.6×, total 2.9×, p95 **5.6×** — and three fail on absolute
+targets `review_rate_last_merged` cannot touch. While the measured rate is above
+the 10% target the ratchet limb is pinned by `review_rate_total_target`, and **no
+value of the constant moves it**. Arming needs the review rate to come down.
 
 **The committed 29.03% is the bottom of the observed range** — the value that
 came up on the 3 luckiest of 10 identical repeats. It is a best case, not a
@@ -155,11 +167,21 @@ gap in coverage, not evidence that it works.
 
 Published because they change how every det-path figure above should be read.
 
-| figure | value | n |
+**Re-measured 2026-08-29 on the FIXED parser, as ruling C2 required.** The
+2026-08-27 figures were contaminated by DA21 mechanism (B); #136 fixed it, so
+these are the clean rate. Both arms over the same 397 papers.
+
+| figure | contaminated | **clean** |
 |---|---|---|
-| Papers with ≥1 **defaulted** mark | **44.4%** | 24 / 54 parsed, from a 60-PDF random sample |
-| Papers where *every* point is defaulted | 9.3% | 5 / 54 |
-| **All answer points defaulted** | **21.6%** | 596 / 2,754 |
+| Papers with ≥1 **defaulted** mark | 44.58% | **34.26%** (136 / 397) |
+| Papers where *every* point is defaulted | 25 papers | **3 papers (0.76%)** |
+| **All answer points defaulted** | 22.05% | **8.94%** (2,000 / 22,372) |
+
+**Mechanism (B) was 59% of the signal** — 2,928 of 4,928 defaulted points. Where
+the marks column merged into the answer cell the code arrived as trailing text,
+`parse_marks_cell` saw nothing, and every such point defaulted. Those codes are
+now recovered and are not flagged, because a mark read from the wrong column was
+still *read*, not minted.
 
 A *defaulted* mark is one the parser minted rather than read: `rows.py:200`
 falls back to `marks=1` when `parse_marks_cell` finds nothing. Countable only
@@ -168,8 +190,16 @@ because #38 shipped the `marks_defaulted` flag first.
 **Most of that 21.6% is correct — by luck.** The default of 1 is right for
 `B1`/`M1`/`A1`/`C1` and wrong for every multi-mark code. So **"defaulted" is not
 by itself evidence of a wrong mark**, and a bare defaulted-count is the wrong
-escalation trigger: arming it as written would route ~44% of the det corpus to
-the paid path on a signal that is mostly right.
+escalation trigger: arming it as written would route **34%** of the det corpus to
+the paid path on a signal that is mostly right — and that path is itself measured
+failing on ~50% of the schemes det cannot parse (#166 / DA35).
+
+**What the clean rate makes affordable for the first time:** a trigger on *"every
+point in the paper is defaulted"* is now **3 papers of 397**, down from 25. A
+paper where **no** mark was read is suspect in a way one minted mark is not.
+**Proposed, not armed** — it routes papers to the same fallback as the #110 and
+#39 detectors, so all three are one cost-and-coverage decision, and it is the
+human's.
 
 **Cause, named at source with the arithmetic closing exactly (DA21):**
 `rows.py:311` drops a continuation row carrying marks but no answer text;
