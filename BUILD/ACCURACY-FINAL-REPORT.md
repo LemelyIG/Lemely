@@ -304,10 +304,12 @@ traceback was about to be promoted to a finding.** One command falsified it. (DA
 
 **4. Making a measurement honest usually makes the number worse, and that is the
 measurement working.** det coverage 69.1% → 34.8% when the population stopped being
-the easy decade. The 2010–2018 exact *rate* fell 28.8% → 20.7% because a fix grew
-the denominator and not the numerator. Same shape as DA39. **A programme that only
-accepts numbers that improve will select for dishonest denominators** — which is
-what D18 was.
+the easy decade. The 2010–2018 exact *rate* fell 28.8% → 20.7% (both on the
+**parsed** basis) because a fix grew the denominator and not the numerator — and on
+the consistent **source** basis that rate is **9.5%**, lower still. Same shape as
+DA39. **A programme that only accepts numbers that improve will select for
+dishonest denominators** — which is what D18 was, and the mixed-denominator table
+above is how it comes back.
 
 **5. Claims rot in place, the controls do not catch it, and there are more than you
 think.** The programme's final days turned up the MISSION's stale coverage figure
@@ -337,16 +339,6 @@ retirement forced a read of every line.
 > **And the part that should temper this whole report:** the list above is what one
 > pass found. It is not a proof that the file is now clean. **These controls bind
 > code and do not bind prose**, and this programme published its claims in prose.
-
-> **The rule that came out of it:** a restatement is finished when **every artifact
-> that published the superseded figure** carries it — not when the decision record
-> does. DA50's own commit is the counter-example: it landed in `DECISIONS.md`,
-> `JOURNAL.md` and the state header, and never touched the file that publishes the
-> figures.
->
-> **And the harder half:** none of the five was caught by a gate, a test, or CI.
-> They were caught by a person reading prose for another reason. **This programme's
-> controls bind code and do not bind prose**, and it published its claims in prose.
 
 ---
 
