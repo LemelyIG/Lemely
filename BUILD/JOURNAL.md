@@ -3666,3 +3666,54 @@ carefully, and it was complete and useful while the one-paragraph edit sat
 undone.
 
 Recorded as **DA48**.
+
+---
+
+## run-2026-08-29-k — the headline was a blend, and the honest half of it was 69.6%
+
+**Zero spend, and the data had been on disk since 2026-08-23.**
+
+Clause 5 asks for **both paths measured in their own terms**. I had measured the
+det half (parse coverage, 331 of 479) and written the Gemini half off as needing
+a marking run. **It did not.** `aa-floor-2026-08-23-a`'s per-repeat records carry
+`parse_path`, so the split was one script away the whole time.
+
+**I validated the method before trusting it**, which matters more than usual here
+because the split is the finding: my leaf collapse reproduces the published
+per-repeat successes **exactly on all ten repeats**, and the script asserts it
+and refuses to run otherwise. Only then did I split by path.
+
+**det 8/8 = 100%. gemini 15.5/23 = 69.6%.**
+
+**So the ~77.4% headline is a mixture — and the weight is backwards.** MCQ
+schemes carry **zero** answer points; the Gemini path carries **10,314 of
+10,314**. The path doing every piece of marking that matters measures **69.6%**,
+and the published figure is pulled upward by a path carrying none of it. The
+weighting is an artefact of the fixture set, 8 MCQ leaves against 23 theory
+leaves, not of the production corpus.
+
+**That is §14's anti-goal in a form nobody had named** — a headline improving
+while the path doing the work goes unreported. Clause 5 exists to prevent it, and
+only its det half had been honoured.
+
+**Two numbers I computed and then refused.** det's 100% has a Wilson lower bound
+of **67.6%** at n=8 — nearly as wide as gemini's at n=23 — so it is not evidence
+the det path is perfect. And pooling the 10 repeats would have reported ±6.0pp
+instead of ±17.6pp, because they re-mark the *same* 31 leaves under an identical
+fingerprint and are not independent observations. Both naive figures are in the
+artifact, recorded **to be refused, not used**, because the tempting version of
+this analysis is the one that pools.
+
+**Clause 5 is now half-met honestly rather than half-met by omission:** det
+coverage MET, Gemini accuracy MEASURED BUT NOT TO SCOPE — 23 leaves against a
+clause asking for 10,314 answer points. Closing that needs #47, not more analysis
+of this corpus.
+
+Recorded as **DA49**.
+
+**One thing I got wrong this run and am not burying:** I merged #186 while its CI
+was still in progress. My waiter had watched the *previous* run and exited when a
+later push started a new one, and I read its exit as green. The changes were
+documentation and a workflow comment, and develop's CI was re-checked
+afterwards — but the rule is green-before-merge, and I broke it. The waiter
+pattern needs to pin the run id it is watching, not the PR.
