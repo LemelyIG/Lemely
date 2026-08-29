@@ -13418,3 +13418,71 @@ is the only one that lets this issue proceed today, and it works by **changing
 the measurement design to fit what the data currently supports**. DA1 was fixed
 in a human interview precisely so an agent could not re-derive it around an
 inconvenient measurement.
+
+---
+
+## DA48 — the CI comment denied that the ratchet gate runs in CI; it does (§13 clause 2, #33, #161)
+
+**Zero spend.** Found while checking §13 clause 2's *"published **and enforced in
+CI**"* requirement — the second half, which the clause walk (DA45) had left
+unexamined.
+
+`.github/workflows/ci.yml` carried, above the gate step:
+
+> *"Written and reviewable only — GitHub Actions is org-wide billing-blocked at
+> the time this step was added, so **it has not been executed in CI and must not
+> be claimed as CI-verified**."*
+
+**That is no longer true, and it is checkable.** Run **33235411251** — a
+completed CI run on this repository — carries the gate's own output in its log.
+The step executes on every `test` job.
+
+**What happened is ordinary and worth naming:** billing was restored, the step
+began running, and **the comment was never updated**. So it went on telling every
+reader — including me, twice — that clause 2's enforcement half was not
+happening.
+
+### The distinction the corrected comment now draws
+
+- **The gate RUNS.** Verified against a named run, not inferred from the workflow
+  file.
+- **The gate does NOT BLOCK.** It exits 0 on a breach while
+  `review_rate_ratchet_armed=false`, so CI **observes and records** rather than
+  failing.
+
+**Those are different claims, and the old comment collapsed them into "not
+CI-verified".** Clause 2 asks for enforcement; what exists is execution without
+blocking, and the honest statement of clause 2's status is *partial for that
+reason* — not because the gate is absent.
+
+**Arming is not a flag flip**, per DA33: all four limbs fail (signal 3.6×, total
+2.9×, p95 5.6×), three of them on absolute targets no constant can move.
+
+### The pattern this makes three of
+
+A stale claim in a file nobody re-reads, which then misinforms every later
+reader: MISSION's `289 of 479` after the parser improved (DA45), the report's
+`29.03%` after DA33 retired it (DA46), and now a workflow comment asserting a
+step does not run after it started running.
+
+**Each was written accurately and became false without anyone touching it.** The
+common defence is cheap: a claim about *the state of the system* should name the
+evidence that would falsify it — here, a run id.
+
+### The correction itself is BLOCKED, and by a permission rather than a decision
+
+Editing `.github/workflows/ci.yml` was written, tested and then **rejected on
+push**:
+
+> `refusing to allow an OAuth App to create or update workflow .github/workflows/ci.yml without workflow scope`
+
+**The finding stands and is recorded here; the one-comment fix needs a human
+push or a token with `workflow` scope.** Not worked around — routing the text
+somewhere else to dodge the scope check would leave the false claim exactly where
+readers meet it, which is the whole problem.
+
+**The corrected text, for whoever applies it**, replaces the "has not been
+executed in CI" paragraph above the `Review-rate gate` step with: the step **does
+run** (verified against run `33235411251`, whose log carries the gate's output);
+it **does not block**, exiting 0 on a breach while `review_rate_ratchet_armed` is
+false; and arming is not a flag flip per DA33.
