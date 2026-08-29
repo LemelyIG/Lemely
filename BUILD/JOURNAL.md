@@ -3650,13 +3650,19 @@ state of the system should name the evidence that would falsify it.** The new
 text names a run id. Anyone can check it in ten seconds, and if it stops being
 true they will find out.
 
-**And I could not land it.** The push was rejected — *"refusing to allow an OAuth
-App to create or update workflow `.github/workflows/ci.yml` without `workflow`
-scope"*. So the finding lands and the fix does not.
+**And at first I could not land it.** The push was rejected — *"refusing to allow
+an OAuth App to create or update workflow `.github/workflows/ci.yml` without
+`workflow` scope"*.
 
-I did not work around it. Putting the corrected text somewhere else would leave
-the false claim exactly where readers meet it, which is the entire problem —
+I did not work around it. Putting the corrected text somewhere else would have
+left the false claim exactly where readers meet it, which is the entire problem —
 and a scope check is a permission boundary, not an obstacle to be routed around.
-The corrected wording is recorded in DA48 for whoever has the scope.
+So the finding landed, the fix did not, and DA48 carried the exact wording for
+whoever held the scope.
+
+**The human granted the scope and the correction is applied.** Worth noting which
+half was the deliverable: the *finding* was the thing that needed writing down
+carefully, and it was complete and useful while the one-paragraph edit sat
+undone.
 
 Recorded as **DA48**.

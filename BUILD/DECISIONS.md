@@ -13469,20 +13469,20 @@ step does not run after it started running.
 common defence is cheap: a claim about *the state of the system* should name the
 evidence that would falsify it — here, a run id.
 
-### The correction itself is BLOCKED, and by a permission rather than a decision
+### The correction was briefly blocked by a permission, and is now applied
 
-Editing `.github/workflows/ci.yml` was written, tested and then **rejected on
-push**:
+Editing `.github/workflows/ci.yml` was written, tested and **rejected on push**:
 
 > `refusing to allow an OAuth App to create or update workflow .github/workflows/ci.yml without workflow scope`
 
-**The finding stands and is recorded here; the one-comment fix needs a human
-push or a token with `workflow` scope.** Not worked around — routing the text
-somewhere else to dodge the scope check would leave the false claim exactly where
-readers meet it, which is the whole problem.
+**It was not worked around.** Routing the corrected text somewhere else to dodge
+the scope check would have left the false claim exactly where readers meet it —
+the whole problem — and a scope check is a **permission boundary**, not an
+obstacle. So the finding was recorded here and the fix left undone, with its
+exact wording, for whoever held the scope.
 
-**The corrected text, for whoever applies it**, replaces the "has not been
-executed in CI" paragraph above the `Review-rate gate` step with: the step **does
-run** (verified against run `33235411251`, whose log carries the gate's output);
-it **does not block**, exiting 0 on a breach while `review_rate_ratchet_armed` is
-false; and arming is not a flag flip per DA33.
+**The human granted `workflow` scope and it is now applied.** The comment above
+the `Review-rate gate` step states that the step **does run** (naming run
+`33235411251`), that it **does not block** while `review_rate_ratchet_armed` is
+false, that clause 2 therefore stays **partial because observation is not
+enforcement** — and that **the gate is wired, so nobody needs to build it**.
