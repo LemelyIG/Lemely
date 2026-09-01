@@ -156,18 +156,26 @@ jobs:
           service: lemely-backend-${{ needs.resolve-env.outputs.environment }}
           region: us-central1
           image: ${{ env.IMAGE }}
-          # --memory=1Gi, not 512Mi: the first live run died with SIGBUS
-          # ("Uncaught signal: 7, pid=1") 55s into startup, before uvicorn ever
-          # bound. Cloud Run's first-generation container filesystem is held in
-          # memory and counts against this limit, and this image is ~450 MB
-          # (python:3.13-slim plus a [web,db] venv whose pymupdf/numpy/pillow/
-          # cryptography wheels alone are ~150 MB). Paging the interpreter and
-          # its extension modules in from that memory-backed filesystem, on top
-          # of ~110 MB of process RSS, exhausted 512Mi — and a page-in that
-          # cannot be backed raises SIGBUS rather than the OOM kill people
-          # expect. --execution-environment=gen2 swaps gVisor for a real kernel
-          # with a genuine filesystem, so image pages stop competing with the
-          # heap; it is also what Cloud Run recommends for images this size.
+          # gen2 is the load-bearing flag here; 1Gi is only insurance.
+          #
+          # The first run of this pipeline died 55s into startup, before uvicorn
+          # bound, with "Uncaught signal: 7, pid=1, tid=1" — SIGBUS. That message
+          # is gVisor's sentry, so it was gen1. The commit that fixed it changed
+          # memory AND execution environment together, but the Cloud Run memory
+          # metric then settled the attribution: the healthy revision runs at
+          # 8.8% of 1Gi (~90 MB), i.e. it would have used ~17% of 512Mi, and no
+          # sample around the crash came near the limit. Memory was never the
+          # constraint and the earlier "the image is ~450 MB so it exhausted
+          # 512Mi" reasoning was wrong — Cloud Run fetches image layers lazily,
+          # so only touched pages ever cost anything.
+          #
+          # What did change: on gen1 the container stalled 55s and took SIGBUS
+          # on a page the sandbox could not serve; on gen2 it reported
+          # "Containers became healthy in 6.8s". That is gVisor's lazy page-in
+          # being the bottleneck, not the heap. Dropping back to 512Mi would
+          # very likely still work, but 1Gi costs nothing extra while idle
+          # (min-instances=0) and buys headroom against a cold-start spike that
+          # the per-minute metric could miss, so it stays.
           flags: --allow-unauthenticated --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
@@ -260,8 +268,16 @@ jobs:
             echo "host=staging.lemelyig.com" >> "$GITHUB_OUTPUT"
           fi
 
+      # 5 minutes of retries, not 30 seconds. On the first successful frontend
+      # deploy the Worker Custom Domain is created seconds before this job runs,
+      # and Cloudflare then has to issue and attach an edge certificate to a
+      # hostname that has never served TLS — its own guidance for that window is
+      # minutes, not seconds. A 6x5s budget would red the run for a certificate
+      # that was always going to arrive, which is the likeliest false failure
+      # left in this pipeline. Costs nothing on a healthy deploy: curl stops at
+      # the first success.
       - name: Frontend responds
-        run: curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${{ steps.domain.outputs.host }}/"
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/"
 
       - name: API health through the same-origin proxy
-        run: curl --fail --silent --show-error --retry 6 --retry-delay 5 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"
