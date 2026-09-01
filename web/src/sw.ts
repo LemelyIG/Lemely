@@ -42,18 +42,53 @@ declare const self: ServiceWorkerGlobalScope
 
 // --- App shell (the generateSW half, reproduced) ----------------------------
 
-// `self.__WB_MANIFEST` is replaced at build time with the precache manifest
-// built from `injectManifest.globPatterns` in vite.config.ts.
-precacheAndRoute(self.__WB_MANIFEST)
+// Precaching is production-only, because it is the one cache no server-side
+// setting can reach. A precaching worker answers navigations out of Cache
+// Storage before the request ever leaves the browser, so neither a Cloudflare
+// Cache Rule nor Development Mode gets a say — staging would keep serving the
+// previous deploy's shell to anyone who had loaded it before. staging exists to
+// show the newest deploy immediately, so it does not precache.
+//
+// Gated on the production hostnames rather than naming staging, so preview
+// deploys and `localhost` stay live too; the only host that precaches is the
+// one real users are on.
+const PRECACHE_HOSTS = new Set(["lemelyig.com", "www.lemelyig.com"])
+const precacheEnabled = PRECACHE_HOSTS.has(self.location.hostname)
 
-// `navigateFallback: "/index.html"` with `navigateFallbackDenylist: [/^\/api/]`.
-// The SPA serves every navigation from the precached shell — except anything
-// under /api, which must reach the network.
-registerRoute(
-  new NavigationRoute(createHandlerBoundToURL("/index.html"), {
-    denylist: [/^\/api/],
-  }),
-)
+// `self.__WB_MANIFEST` is replaced at build time with the precache manifest
+// built from `injectManifest.globPatterns` in vite.config.ts. Read it
+// unconditionally: vite-plugin-pwa substitutes that literal token wherever it
+// appears, and keeping it out of the branch means the build-time injection does
+// not depend on this runtime guard.
+const precacheManifest = self.__WB_MANIFEST
+
+if (precacheEnabled) {
+  precacheAndRoute(precacheManifest)
+
+  // `navigateFallback: "/index.html"` with `navigateFallbackDenylist: [/^\/api/]`.
+  // The SPA serves every navigation from the precached shell — except anything
+  // under /api, which must reach the network.
+  registerRoute(
+    new NavigationRoute(createHandlerBoundToURL("/index.html"), {
+      denylist: [/^\/api/],
+    }),
+  )
+} else {
+  // Registering no fetch handler at all is what makes every request pass
+  // straight to the network. But a worker installed back when this host did
+  // precache still holds that shell in Cache Storage, and it would go on being
+  // served until something evicted it — so drop every cache on activate. This
+  // is what actually gets a returning staging visitor onto the new deploy
+  // rather than the one they saw last time.
+  self.addEventListener("activate", (event) => {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        .then(() => undefined),
+    )
+  })
+}
 
 // `registerType: "autoUpdate"` meant the new worker took over without asking.
 // Preserved explicitly, because injectManifest does not imply it.
