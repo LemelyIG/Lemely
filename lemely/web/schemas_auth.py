@@ -26,11 +26,19 @@ class SignupRequestDTO(ApiModel):
     ``deviceId`` is the stable client fingerprint the SPA mints once and stores
     locally; when supplied the login is registered against the 3-device limit and
     a re-login on the same device reuses its slot (D1.11).
+
+    ``acceptedTerms`` (D7.11) records consent to ``/data`` — the data-handling
+    page that actually exists, since this repository has no terms-of-service
+    document to have "agreed" to. Deliberately carries **no default**: an
+    absent field is a pydantic 422 (missing required field), never a silently
+    assumed ``False``. A consent checkbox the server does not itself enforce
+    would be decorative, and a default here is exactly what would make it so.
     """
 
     email: str
     password: str
     role: Role
+    acceptedTerms: bool
     displayName: str | None = None
     phone: str | None = None
     deviceId: str | None = None
@@ -82,12 +90,24 @@ class TokenResponseDTO(ApiModel):
     ``refreshToken`` is present on every real sign-in and is echoed back unchanged
     by ``/auth/refresh`` (refresh tokens do not rotate). It is ``None`` only for
     the flows that register no device and so have nothing to bind one to.
+
+    ``devLink`` (D7.4/D7.6/D7.7) is the freshly minted email-verification link
+    from :meth:`~lemely.auth.service.AuthService.signup`, under the same
+    D3.16-derived rule :attr:`OtpRequestResponseDTO.devCode` carries:
+    populated **only** when the configured
+    :class:`~lemely.auth.email.EmailProvider` does not deliver out of band,
+    i.e. only when this response is the sole way to obtain the link. It is
+    ``None`` on every other flow that returns this DTO (``login``,
+    ``refresh``, ``otp/verify``), none of which mint a verification token at
+    all. The UI must render it in an explicitly-labelled developer panel,
+    never as ordinary product copy.
     """
 
     accessToken: str
     userId: str
     role: Role
     refreshToken: str | None = None
+    devLink: str | None = None
 
 
 class OtpRequestResponseDTO(ApiModel):
@@ -106,14 +126,93 @@ class OtpRequestResponseDTO(ApiModel):
     devCode: str | None = None
 
 
+class VerifyEmailRequestDTO(ApiModel):
+    """Redeem an email-verification token (``/verify-email/:token``, spec §4.4)."""
+
+    token: str
+
+
+class VerifyEmailResponseDTO(ApiModel):
+    """Acknowledgement that ``users.email_verified_at`` was stamped."""
+
+    status: Literal["verified"] = "verified"
+
+
+class ResendVerificationResponseDTO(ApiModel):
+    """Acknowledgement that a fresh verification token was minted and (re)sent.
+
+    Deliberately no matching request DTO: the caller is read from
+    :class:`~lemely.web.deps.AuthContext`, never a body field (an attacker
+    could fill a body field with someone else's address).
+
+    ``devLink`` — see :attr:`TokenResponseDTO.devLink`; the same D3.16-derived
+    rule, applied to :meth:`~lemely.auth.service.AuthService.resend_verification`.
+    """
+
+    status: Literal["sent"] = "sent"
+    devLink: str | None = None
+
+
+class PasswordResetRequestDTO(ApiModel):
+    """Request a password-reset link for ``email``.
+
+    Anti-enumeration is binding here (D7 §4.3): the response is **always**
+    200 with the same shape, whether or not ``email`` belongs to an account —
+    see :meth:`~lemely.auth.service.AuthService.request_password_reset`.
+    """
+
+    email: str
+
+
+class PasswordResetRequestResponseDTO(ApiModel):
+    """Acknowledgement of a password-reset request. Always 200.
+
+    See :class:`PasswordResetRequestDTO`. ``devLink`` — see
+    :attr:`TokenResponseDTO.devLink`; the same D3.16-derived
+    rule, applied to :meth:`~lemely.auth.service.AuthService.request_password_reset`.
+    ``None`` both when a real provider delivered and when ``email`` was
+    unknown — the two cases are indistinguishable by design.
+    """
+
+    status: Literal["sent"] = "sent"
+    devLink: str | None = None
+
+
+class PasswordResetConfirmDTO(ApiModel):
+    """Redeem a password-reset token and set a new credential.
+
+    Confirming (:meth:`~lemely.auth.service.AuthService.reset_password`)
+    revokes every outstanding ``auth_tokens`` row for the account **and every
+    device session** — the reason for a reset may be a compromise, so the
+    account is signed out everywhere, not only on the device completing the
+    reset.
+    """
+
+    token: str
+    newPassword: str
+
+
+class PasswordResetConfirmResponseDTO(ApiModel):
+    """Acknowledgement that the credential was changed and every session revoked."""
+
+    status: Literal["reset"] = "reset"
+
+
 __all__ = [
     "ApiModel",
     "LoginRequestDTO",
     "OtpRequestDTO",
     "OtpRequestResponseDTO",
     "OtpVerifyDTO",
+    "PasswordResetConfirmDTO",
+    "PasswordResetConfirmResponseDTO",
+    "PasswordResetRequestDTO",
+    "PasswordResetRequestResponseDTO",
     "RefreshRequestDTO",
+    "ResendVerificationResponseDTO",
     "Role",
     "SignupRequestDTO",
     "TokenResponseDTO",
+    "VerifyEmailRequestDTO",
+    "VerifyEmailResponseDTO",
 ]

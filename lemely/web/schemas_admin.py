@@ -9,7 +9,9 @@ who would act on the number, and nobody downstream re-checks their work.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict
+from typing import Annotated
+
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class ApiModel(BaseModel):
@@ -166,17 +168,111 @@ class PipelineHealthDTO(ApiModel):
     markingAccuracyNote: str
 
 
+# ── Schools (D7.8, spec §1.1: the account graph's missing first link) ─────────
+
+
+class SchoolAdminSummaryDTO(ApiModel):
+    """One school_admin staffing a school, for the roster on the schools list."""
+
+    userId: str
+    email: str
+    displayName: str | None = None
+
+
+class SchoolSummaryDTO(ApiModel):
+    """One school's provisioning state: quota, seat usage, and its admins.
+
+    ``seatsAssigned`` counts non-revoked seats — the identical definition
+    :class:`~lemely.web.schemas_school.SeatUsageDTO.used` already uses, so a
+    seat count never means two different things depending on which screen
+    reads it.
+    """
+
+    schoolId: str
+    name: str
+    seatQuota: int
+    seatsAssigned: int
+    seatsAvailable: int
+    admins: list[SchoolAdminSummaryDTO]
+
+
+class SchoolListDTO(ApiModel):
+    """Every school on the platform (X-01's sibling list, but for schools)."""
+
+    schools: list[SchoolSummaryDTO]
+
+
+class CreateSchoolRequestDTO(ApiModel):
+    """Create a school with an initial seat quota (D7.8).
+
+    ``seatQuota`` is required rather than defaulted to the column's own
+    ``0``: a platform admin creating a school is the one moment a real
+    commercial quota should be set. D7.2 is the reason self-service signup
+    never gets to do this at all — a visitor-created school would carry a
+    quota of 0 and be unusable until a platform admin intervened anyway, so
+    that intervention happens here, up front, instead.
+    """
+
+    name: str
+    seatQuota: Annotated[int, Field(ge=0)]
+
+
+class UpdateSchoolRequestDTO(ApiModel):
+    """Update a school's name and/or seat quota. Both fields optional.
+
+    Independently settable so a name correction and a quota change are
+    different edits — a caller changing only the name is never forced to
+    resend (and thus risk clobbering) a quota someone else is mid-edit on.
+    A quota that would fall below the seats already assigned is refused by
+    the service with a 409 naming both numbers (Task 12's own test for this).
+    """
+
+    name: str | None = None
+    seatQuota: Annotated[int, Field(ge=0)] | None = None
+
+
+class CreateSchoolAdminRequestDTO(ApiModel):
+    """Create a school_admin account and bind it to the school in the path.
+
+    Same credential handling as
+    :class:`~lemely.web.schemas_school.InviteTeacherRequestDTO`: no email
+    provider exists in v1 (D7.6), so an omitted ``password`` is generated
+    once by the router and returned once in ``temporaryPassword`` for the
+    platform admin to convey out of band.
+    """
+
+    email: str
+    displayName: str | None = None
+    password: str | None = None
+
+
+class CreateSchoolAdminResponseDTO(ApiModel):
+    """The created school_admin's identity, its membership, and any generated password."""
+
+    userId: str
+    membershipId: str
+    email: str
+    temporaryPassword: str | None = None
+
+
 __all__ = [
     "ActivationDecisionDTO",
     "ActivationQueueDTO",
     "ActivationResultDTO",
     "ApiModel",
+    "CreateSchoolAdminRequestDTO",
+    "CreateSchoolAdminResponseDTO",
+    "CreateSchoolRequestDTO",
     "PendingActivationDTO",
     "PipelineHealthDTO",
     "PlatformCountsDTO",
     "PlatformOverviewDTO",
+    "SchoolAdminSummaryDTO",
+    "SchoolListDTO",
+    "SchoolSummaryDTO",
     "SignupDTO",
     "SpendDTO",
     "SubjectCoverageDTO",
     "SystemHealthDTO",
+    "UpdateSchoolRequestDTO",
 ]

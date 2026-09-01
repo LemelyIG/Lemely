@@ -13,10 +13,24 @@ import { Badge } from "@/components/ui/badge"
 import {
   adminLoadFailureMessage,
   adminMutationFailureMessage,
+  seatInviteCodeFailureMessage,
   seatInviteFailureMessage,
 } from "@/lib/adminOutcome"
-import { useInviteStudent, useRevokeSeat, useSeatUsage } from "@/lib/hooks/useSchoolApi"
+import {
+  useInviteStudent,
+  useMintSeatInviteCode,
+  useRevokeSeat,
+  useSeatUsage,
+} from "@/lib/hooks/useSchoolApi"
 import type { SeatRow, SeatUsage } from "@/lib/schoolTypes"
+// A cross-portal import: `JoinCodeChip` is the D7.10 copy-to-clipboard code
+// display, exported from `ClassDetail.tsx` (teacher portal) specifically so
+// `CreateFirstClass.tsx` (same portal) could reuse it rather than build a
+// second one. B8's own "what would close it" note names this exact reuse
+// across into the admin portal too: "the same shape CreateFirstClass.tsx
+// already uses ... extended to the new invites.code" — one artifact, three
+// screens now, never a second implementation of a copyable code chip.
+import { JoinCodeChip } from "@/portals/teacher/screens/ClassDetail"
 import { formatAdminDate } from "../data"
 
 /**
@@ -50,6 +64,18 @@ import { formatAdminDate } from "../data"
  * which. It is deliberately **not** a progress bar over a batch endpoint that
  * does not exist, and a partial failure does not roll back the successes,
  * because the route cannot.
+ *
+ * ── Invite by code (D7.3, spec §1.2, closes BUILD/BLOCKERS.md B8) ──────────
+ *
+ * A third, genuinely different way in, not a third skin on the email forms
+ * above: `POST /school/seats/invite-code` mints a redeemable code with no
+ * account created and no address required, for a student who signs
+ * themselves up and previews the school's name before committing
+ * (`JoinWithCode.tsx`). Before this task, the backend route existed, tested,
+ * and unreachable from any screen — B8's exact finding, and the reason spec
+ * §6's "a school admin can mint a seat invite code" bullet could not be
+ * claimed as done until now. Minting reserves a seat immediately, the same
+ * as `useInviteStudent`, so it shares that mutation's `atQuota` gate.
  */
 export function Seats() {
   const { data, isPending, isError, error } = useSeatUsage()
@@ -163,6 +189,7 @@ function InvitePanel({ school }: { school: SeatUsage }) {
   const [results, setResults] = useState<InviteOutcome[]>([])
   const [running, setRunning] = useState(false)
   const invite = useInviteStudent()
+  const mintCode = useMintSeatInviteCode()
 
   const atQuota = school.quota > 0 && school.available === 0
 
@@ -262,6 +289,60 @@ function InvitePanel({ school }: { school: SeatUsage }) {
               </Button>
             </div>
           </form>
+        </div>
+
+        {/*
+         * The redeemable-code path (D7.3, spec §1.2, BUILD/BLOCKERS.md B8).
+         * Genuinely different from the two forms above rather than a third
+         * skin on the same action: those create the account outright and
+         * hand back a temporary password to convey out of band, with no
+         * student ever seeing which school they were being added to before
+         * it happened. This mints a code with no address required up front —
+         * the student signs themselves up, previewing the school's name
+         * first (`JoinWithCode.tsx`, G-08) — which is what closes spec §6's
+         * acceptance bullet for a school admin. Disabled at the same
+         * `atQuota` the two forms above already gate on: minting reserves a
+         * seat immediately (`InviteService.mint_seat_invite`'s own binding
+         * rule 2), so a code minted past quota is exactly as impossible as a
+         * direct invite past quota, and offering the button would just trade
+         * an early, clear refusal for a 409 after the click.
+         */}
+        <div className="border-t border-rule pt-5 flex flex-col items-start gap-3">
+          <div className="flex flex-col gap-1">
+            <span className="text-label text-ink">Or generate a code</span>
+            <p className="text-body-sm text-ink-muted max-w-prose">
+              No address needed. Hand the code to a student and they sign themselves up, seeing
+              your school's name before they commit. Reserves a seat the moment you generate it,
+              same as an invite above.
+            </p>
+          </div>
+
+          {mintCode.data ? (
+            <div className="flex flex-col items-start gap-1.5">
+              <span className="text-eyebrow text-ink-faint">Seat invite code</span>
+              <JoinCodeChip code={mintCode.data.code} />
+            </div>
+          ) : null}
+
+          {/* Plain `secondary` (this component's default), matching the bulk
+              button above rather than the top form's `primary`: three
+              accent-filled buttons in one card would leave the screen with no
+              single obvious primary action (DESIGN.md §12), and this path is
+              exactly as legitimate an alternative as bulk-by-list is. */}
+          <Button
+            type="button"
+            loading={mintCode.isPending}
+            disabled={atQuota}
+            onClick={() => mintCode.mutate({ schoolId: school.schoolId })}
+          >
+            {mintCode.data ? "Generate another code" : "Generate an invite code"}
+          </Button>
+
+          {mintCode.isError ? (
+            <p role="alert" className="text-body-sm text-err">
+              {seatInviteCodeFailureMessage(mintCode.error)}
+            </p>
+          ) : null}
         </div>
 
         {atQuota ? (

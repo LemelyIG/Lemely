@@ -301,6 +301,36 @@ class AttemptOrigin(enum.Enum):
     custom_paper = "custom_paper"  # T-11, marked through the same path
 
 
+class AuthTokenPurpose(enum.StrEnum):
+    """What a row in ``auth_tokens`` entitles its holder to do (D7.7).
+
+    Two purposes, one table: the lifecycle is identical (mint, single-use,
+    expire, revoke-all-on-password-change), so a second table would duplicate
+    a repository rather than express a distinction. The purpose is part of the
+    redemption predicate, never inferred — a verification token presented to
+    the reset route must not be accepted, and matching on ``purpose`` in the
+    lookup is what makes that structural rather than careful.
+    """
+
+    email_verification = "email_verification"
+    password_reset = "password_reset"  # noqa: S105 - an enum member value, not a credential
+
+
+class InviteRole(enum.StrEnum):
+    """The role an invite code provisions (D7.3).
+
+    Deliberately **not** :class:`Role`. An invite may only ever produce a
+    student or a teacher; reusing the five-member ``Role`` here would put
+    ``platform_admin`` in the type system of a code an anonymous caller
+    redeems, and the only thing standing between that and an escalation would
+    be a validation nobody had written yet. A narrower type cannot express the
+    mistake.
+    """
+
+    student = "student"
+    teacher = "teacher"
+
+
 # ---------------------------------------------------------------------------
 # Shared ORM mixins
 # ---------------------------------------------------------------------------
@@ -334,11 +364,13 @@ class TimestampMixin:
 __all__ = [
     "SESSION_MONTH_LABELS",
     "AttemptOrigin",
+    "AuthTokenPurpose",
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
     "ExamBoard",
     "FriendshipStatus",
+    "InviteRole",
     "MarkerSource",
     "MembershipRole",
     "NotificationType",

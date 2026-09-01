@@ -117,6 +117,27 @@ export function seatInviteFailureMessage(err: unknown): string {
 }
 
 /**
+ * Minting a seat invite code failed (D7.3, spec §1.2, BUILD/BLOCKERS.md B8).
+ *
+ * The 409 is the identical underlying fact `seatInviteFailureMessage` reports
+ * above: `InviteQuotaExceededError`, raised by `InviteService.
+ * mint_seat_invite` the instant it would reserve a seat past the school's
+ * quota, mirroring `SeatService.invite_student`'s own check exactly. Worded
+ * differently on purpose rather than reusing that sentence verbatim, because
+ * this route was never given an address to send anything to, so "the invite
+ * wasn't sent" would describe an action that never happened here. K-02's
+ * spec calls out this exact state by name ("Quota reached: explain and give
+ * a route to request more"), and the explanation is the one
+ * `seatInviteFailureMessage` already gives, unchanged.
+ */
+export function seatInviteCodeFailureMessage(err: unknown): string {
+  if (statusOf(err) === 409) {
+    return "This school is using every seat it has, so a code couldn't be minted."
+  }
+  return adminMutationFailureMessage(err)
+}
+
+/**
  * Removing a teacher failed.
  *
  * The 409 covers both of the backend's refusals — classes that would be
@@ -152,6 +173,71 @@ export function activationDecisionFailureMessage(err: unknown): string {
   }
   if (statusOf(err) === 404) {
     return "That request is no longer in the queue. Nothing has changed."
+  }
+  return adminMutationFailureMessage(err)
+}
+
+// ── Schools (Task 22, D7.8) ─────────────────────────────────────────────────
+
+/**
+ * Renaming or requoting a school failed.
+ *
+ * The 409 is `school_provisioning_repo.QuotaBelowAssignedSeatsError`: a quota
+ * that would fall below the seats already assigned. `requestedQuota` and
+ * `seatsAssigned` are supplied by the caller — the value the form just
+ * submitted and the count the row was showing when the edit opened — rather
+ * than read off `err.message`/`err.detail`. Two reasons, not one:
+ *
+ * 1. The rule this whole module exists to keep (`error.message` is never
+ *    rendered) is about more than the literal property access. The backend's
+ *    sentence for this one (`f"Requested quota {q} is below the {n}
+ *    seat(s) already assigned"`) is prose written for a human to read once,
+ *    not a contract this screen should parse with a regex and silently break
+ *    against the next time someone rewords it.
+ * 2. The screen already knows both numbers *more* reliably than the string
+ *    would give them back — `requestedQuota` is exactly what was typed, with
+ *    no float/locale formatting to undo, and `seatsAssigned` is the same
+ *    field the row already renders.
+ *
+ * The 404 is the school having been deleted between the list loading and the
+ * edit being submitted — nothing else on this surface deletes a school, so it
+ * is a narrow window, but a real one, and "something went wrong" would be a
+ * worse answer than the truth.
+ */
+export function schoolUpdateFailureMessage(
+  err: unknown,
+  requestedQuota: number,
+  seatsAssigned: number,
+): string {
+  if (statusOf(err) === 409) {
+    return (
+      `A quota of ${requestedQuota} is below the ${seatsAssigned} ` +
+      `${seatsAssigned === 1 ? "seat" : "seats"} this school already has assigned. ` +
+      `Choose ${seatsAssigned} or higher, or free up seats first.`
+    )
+  }
+  if (statusOf(err) === 404) {
+    return "This school no longer exists. Reload the list and try again."
+  }
+  return adminMutationFailureMessage(err)
+}
+
+/**
+ * Creating a school_admin failed.
+ *
+ * The 404 is the school itself having been removed between the list loading
+ * and the click — the same narrow race `schoolUpdateFailureMessage` names.
+ * Every other failure, an email already in use included, reaches this
+ * function as an unqualified server fault: `create_school_admin` calls
+ * `AuthService.signup` at the service layer and the router
+ * (`lemely/web/routers/admin.py`) catches only `SchoolNotFoundError`, so a
+ * duplicate address is not a status code this module can honestly promise to
+ * read — saying "something went wrong" is true, and the only true statement
+ * this module can make about it from here.
+ */
+export function schoolAdminCreateFailureMessage(err: unknown): string {
+  if (statusOf(err) === 404) {
+    return "That school no longer exists. Reload the list and try again."
   }
   return adminMutationFailureMessage(err)
 }

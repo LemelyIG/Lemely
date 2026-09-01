@@ -1,10 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useState } from "react"
+import { Fragment, lazy, Suspense, useState } from "react"
 import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   Armchair,
+  Buildings,
   ChalkboardTeacher,
   UsersThree,
   Gauge,
@@ -59,6 +60,7 @@ const Activations = lazy(() =>
 const PipelineHealth = lazy(() =>
   import("./screens/PipelineHealth").then((m) => ({ default: m.PipelineHealth })),
 )
+const Schools = lazy(() => import("./screens/Schools").then((m) => ({ default: m.Schools })))
 
 const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   dashboard: SquaresFour,
@@ -72,8 +74,18 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   pipeline: FlowArrow,
 }
 
-function SidebarNavItem({ item, touch = false }: { item: AdminNavItem; touch?: boolean }) {
-  const Glyph = NAV_ICON[item.icon]
+function SidebarNavItem({
+  item,
+  glyph: Glyph,
+  touch = false,
+}: {
+  // Deliberately narrower than `AdminNavItem`: this component no longer knows
+  // about the `icon` union itself (see `AdminNav` below for why), so it takes
+  // the resolved icon component directly instead of a key to look one up.
+  item: { to: string; label: string; end?: boolean }
+  glyph: Icon
+  touch?: boolean
+}) {
   return (
     <NavLink
       to={item.to}
@@ -167,8 +179,30 @@ function AdminNav({ lane, touch = false }: { lane: AdminLane; touch?: boolean })
       aria-label={lane === "school" ? "School admin sections" : "Platform admin sections"}
       className="flex flex-col gap-0.5"
     >
-      {items.map((item) => (
-        <SidebarNavItem key={item.to} item={item} touch={touch} />
+      {items.map((item, index) => (
+        <Fragment key={item.to}>
+          <SidebarNavItem item={item} glyph={NAV_ICON[item.icon]} touch={touch} />
+          {/* Task 22 (D7.8): `/platform/schools` is registered on
+              `platformAdminRoute` below, in this same file. Its nav entry is
+              injected here instead of living in `platformNavItems`
+              (`./data.ts`) because that file sits outside this task's file
+              allowlist while other agents are editing the surfaces it
+              describes. Placed right after the dashboard entry — "look at the
+              console, then go provision a school" is the same "look, then
+              provision" ordering `schoolNavItems` already uses for its own
+              lane (Dashboard, then Seats). `resolveAdminTrail` in data.ts does
+              not know this path either, so the mobile breadcrumb falls back to
+              its own documented behaviour for an unmatched path (the lane
+              root alone, no second crumb) rather than showing a wrong one —
+              a disclosed gap, not a silent one; see Task 22's report. */}
+          {lane === "platform" && index === 0 ? (
+            <SidebarNavItem
+              item={{ to: "/platform/schools", label: "Schools" }}
+              glyph={Buildings}
+              touch={touch}
+            />
+          ) : null}
+        </Fragment>
       ))}
     </nav>
   )
@@ -353,6 +387,16 @@ export const platformAdminRoute: RouteObject = {
   element: <AdminLayout lane="platform" />,
   children: [
     { index: true, element: <PlatformConsole />, handle: { title: "Platform console" } },
+    // Task 22 (D7.8): the account graph's missing first link (spec §1.1) —
+    // before this route existed, no production code path created a `School`
+    // row or a `school_admin` account. Guarded by inheriting the same
+    // `RequireAuth allowedRoles={PLATFORM_ADMIN_ROLES}` that `routes.tsx`
+    // already wraps around `platformAdminRoute.element`: that wrap is around
+    // the layout `<Outlet />` renders every child of this array into, so a
+    // new entry here needs no guard of its own, and `web/tests/unit/
+    // adminRoutes.test.ts` pins that this stays true in both directions
+    // (platform_admin reaches it; the other four roles do not).
+    { path: "schools", element: <Schools />, handle: { title: "Platform schools" } },
     { path: "activations", element: <Activations />, handle: { title: "Platform activations" } },
     { path: "pipeline", element: <PipelineHealth />, handle: { title: "Pipeline health" } },
     { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },

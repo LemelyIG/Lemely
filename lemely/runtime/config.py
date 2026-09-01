@@ -214,9 +214,16 @@ class AuthSettings(BaseModel):
 
     Email/password identity is delegated to Supabase GoTrue; these knobs govern
     the token lifetimes the backend mints under (D1.5 — the backend is the sole
-    issuer) and the in-memory parent phone-OTP challenge lifecycle, both owned by
-    ``lemely.auth.service.AuthService``. Override via ``lemely.toml`` under the
-    ``[auth]`` section or via ``LEMELY_AUTH__*`` env vars.
+    issuer), the ``auth_tokens`` verification/reset lifetimes
+    ``lemely.db.auth_token_repo.AuthTokenService`` mints under (D7.7), the
+    in-memory parent phone-OTP challenge lifecycle, and the two
+    ``lemely.auth.cooldown.CooldownStore`` resend windows (D7.12) — the first
+    three owned by ``lemely.auth.service.AuthService``, the cooldowns enforced
+    one layer up in ``lemely.web.routers.auth`` (a ``CooldownStore`` is a
+    router-level throttle, not a fact about an identity, so it is not a
+    constructor argument of ``AuthService`` the way the token services are).
+    Override via ``lemely.toml`` under the ``[auth]`` section or via
+    ``LEMELY_AUTH__*`` env vars.
     """
 
     model_config = ConfigDict(extra="forbid")
@@ -231,6 +238,22 @@ class AuthSettings(BaseModel):
     # the token being bound to a `devices` row, so signing that device out (or
     # evicting it past the 3-device cap) kills it immediately regardless of exp.
     refresh_token_ttl_seconds: int = Field(default=60 * 60 * 24 * 30, ge=300)
+    # Lifetime of an email-verification token (D7.4/D7.7), 24 hours. Generous on
+    # purpose: verification only soft-gates the Gemini spend behind
+    # `POST /api/student/correct` (D7.5) — the account itself is fully usable
+    # while unverified — so there is little cost to a link that is still good
+    # the next day, and a lot of value in not making a student re-signup because
+    # they read their inbox after dinner instead of immediately.
+    email_verification_ttl_seconds: int = Field(default=60 * 60 * 24, ge=300)
+    # Lifetime of a password-reset token (D7.7), 1 hour. Deliberately much
+    # shorter than verification: a reset token is a bearer credential that lets
+    # its holder take the account over outright (set a new password, no old one
+    # required, and `AuthService.reset_password` then signs out every device) —
+    # a stale copy of that sitting in an inbox for a day is a materially
+    # different risk from a stale verification link, which unlocks nothing an
+    # attacker could not already reach by other means (D7's binding design
+    # decision: the two purposes must not share a lifetime).
+    password_reset_ttl_seconds: int = Field(default=60 * 60, ge=300)
     # Time-to-live for a pending OTP challenge, in seconds.
     otp_ttl_seconds: int = Field(default=300, ge=1)
     # Maximum verify attempts before a challenge is locked out.
@@ -240,6 +263,22 @@ class AuthSettings(BaseModel):
     # Minimum seconds between successive OTP issues for the same phone. Stops an
     # attacker resetting the attempt counter by re-requesting before lockout.
     otp_min_resend_seconds: int = Field(default=30, ge=0)
+    # D7.12: reuses D1.7 item 2's OTP-resend-cooldown mechanism
+    # (``lemely.auth.cooldown.CooldownStore``) for the cheapest abuse shape on
+    # the two *public, unauthenticated* auth routes that mint an account or
+    # trigger a mail-like send from a caller-supplied address: signup and
+    # password-reset-request. Both are keyed by the submitted email and share
+    # this one window — they are the same question ("how often may this
+    # address trigger a side effect") asked twice, so a second knob would add
+    # a number to tune without buying any real independence between the two.
+    signup_and_reset_cooldown_seconds: int = Field(default=30, ge=0)
+    # D7.12, the authenticated counterpart of the knob above. Guards
+    # ``verify-email/resend``, which is reached only by a signed-in caller
+    # asking to re-send *their own* verification mail — a different trust
+    # level and a different key (``user_id``, not an attacker-suppliable
+    # email) from ``signup_and_reset_cooldown_seconds``, so it is tuned
+    # separately rather than sharing that store.
+    resend_verification_cooldown_seconds: int = Field(default=30, ge=0)
 
 
 class IntegritySettings(BaseModel):

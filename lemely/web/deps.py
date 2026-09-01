@@ -10,6 +10,7 @@ wrappers make these injectable into routers and overridable in tests via
 from __future__ import annotations
 
 import random
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from functools import lru_cache
@@ -18,6 +19,8 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
+from lemely.auth.cooldown import CooldownStore
+from lemely.auth.email import MockEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.otp import OtpStore
@@ -28,12 +31,14 @@ from lemely.db.admin_repo import PlatformAdminService
 from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
+from lemely.db.auth_token_repo import AuthTokenService
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
 from lemely.db.friend_repo import FriendService
 from lemely.db.history_repo import DbHistoryStore
+from lemely.db.invite_repo import InviteService
 from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
@@ -48,6 +53,7 @@ from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
 from lemely.db.school_admin_repo import SchoolAdminService
+from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
@@ -63,7 +69,6 @@ from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
 
 if TYPE_CHECKING:
-    import uuid
     from collections.abc import Callable
 
     from lemely.core.history import HistoryStoreProtocol
@@ -136,13 +141,62 @@ def get_device_registry() -> DeviceRegistry:
 
 
 @lru_cache(maxsize=1)
+def get_auth_token_service() -> AuthTokenService:
+    """Return the process-wide :class:`AuthTokenService` singleton (D7.7).
+
+    Wraps the DB session factory only — a wall-clock default (the constructor's
+    own ``datetime.now(UTC)``) is fine here because nothing in production needs
+    to control time, only the token-repo's own expiry tests do (see that
+    module's docstring). Every call site that mints a token
+    (:class:`AuthService`) passes an explicit ``ttl_seconds`` per purpose, so
+    this getter's constructor default is never actually read.
+    """
+    return AuthTokenService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_signup_and_reset_cooldown_store() -> CooldownStore:
+    """Return the process-wide per-email signup/password-reset cooldown (D7.12).
+
+    Shared by ``POST /auth/signup`` and ``POST /auth/password-reset/request`` —
+    see ``AuthSettings.signup_and_reset_cooldown_seconds`` for why one store
+    serves both. Enforced in ``lemely.web.routers.auth``, not inside
+    :class:`AuthService`: a cooldown is a router-level throttle on a caller's
+    *request rate*, not a fact about an identity the service owns.
+    """
+    return CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=get_settings().auth.signup_and_reset_cooldown_seconds,
+    )
+
+
+@lru_cache(maxsize=1)
+def get_resend_verification_cooldown_store() -> CooldownStore:
+    """Return the process-wide per-user verification-resend cooldown (D7.12).
+
+    Backs ``POST /auth/verify-email/resend`` alone, keyed by the caller's own
+    ``user_id`` (never an address) — see
+    ``AuthSettings.resend_verification_cooldown_seconds``.
+    """
+    return CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=get_settings().auth.resend_verification_cooldown_seconds,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_auth_service() -> AuthService:
     """Return the process-wide :class:`AuthService` singleton.
 
     Wired with the real GoTrue HTTP backend, the DB-backed user mirror, the mock
-    SMS provider, an OTP store using a wall-clock and the default RNG, and the
-    device registry that enforces the 3-device limit (D1.11). Tests override this
-    dependency with a service built on the fake seams.
+    SMS provider, an OTP store using a wall-clock and the default RNG, the
+    device registry that enforces the 3-device limit (D1.11), the mock email
+    provider (D7.6 — nothing in this deployment sends a real mail; see
+    :mod:`lemely.auth.email`'s module docstring for the honesty rule that
+    follows from wiring it unconditionally), and the Postgres-backed
+    :class:`AuthTokenService` (D7.7) that mints and redeems verification/reset
+    tokens. Tests override this dependency with a service built on the fake
+    seams.
     """
     settings = get_settings()
     otp_store = OtpStore(
@@ -160,6 +214,8 @@ def get_auth_service() -> AuthService:
         otp_store=otp_store,
         settings=settings,
         device_registry=get_device_registry(),
+        email=MockEmailProvider(),
+        tokens=get_auth_token_service(),
     )
 
 
@@ -705,6 +761,119 @@ def require_role(*allowed: Role) -> Callable[[AuthContext], AuthContext]:
     return _guard
 
 
+def require_verified_email(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+) -> AuthContext:
+    """Gate a route behind a verified ``users.email_verified_at`` (D7.5).
+
+    A **soft** gate, deliberately narrow: D7.5 protects exactly one thing, the
+    Gemini spend behind ``POST /api/student/correct``, not the product as a
+    whole. An unverified account can still sign in, onboard, browse and read
+    — see that route's own docstring, and D7.5's explicit carve-out that
+    ``POST /api/student/uploads`` must **never** carry this dependency, so a
+    student who has already photographed a paper cannot lose the capture to a
+    verification wall.
+
+    Role-agnostic on purpose (unlike :func:`require_role`, this checks a fact
+    about the account, not the caller's platform role) so any future gated
+    route composes it the same way ``/student/correct`` does: as a *second*,
+    independent ``Depends`` alongside whichever ``require_role(...)`` already
+    guards that route — never a replacement for one. **Ordering matters and
+    is the caller's responsibility**: a route that wants "this role, and
+    verified" must declare its ``require_role(...)`` parameter *before* this
+    one in its signature, so an unauthorized caller is rejected by the role
+    guard first. FastAPI resolves a route's ``Depends`` in the order its
+    parameters are declared, so this dependency only ever runs once the
+    caller has already cleared whatever role check the route also carries
+    (see ``lemely.web.routers.student.student_correct`` for the pattern).
+
+    Raises:
+        HTTPException: **403** with ``detail={"code": "email_unverified"}`` —
+            a stable, machine-readable marker (never prose) the frontend's
+            ``lib/authOutcome.ts``-family outcome modules match on (spec
+            §4.6: no server ``detail`` is ever rendered as-is). Raised both
+            when the mirrored row has no ``email_verified_at`` and when no
+            mirrored row is found at all — the latter should be unreachable
+            for a real token (verification always names a user
+            :meth:`~lemely.auth.service.AuthService.signup` itself just
+            mirrored), and this is not the place to invent a second failure
+            mode for the token and the mirror having disagreed about who
+            exists.
+    """
+    user = mirror.get_by_id(uuid.UUID(auth.user_id))
+    if user is None or user.email_verified_at is None:
+        raise HTTPException(status_code=403, detail={"code": "email_unverified"})
+    return auth
+
+
+class AuthServiceSchoolAdminCreator:
+    """Real ``SchoolAdminAccountCreator`` (school_provisioning_repo) over :class:`AuthService`.
+
+    Sibling of :class:`AuthServiceTeacherCreator`/:class:`AuthServiceStudentCreator`,
+    pinned to :attr:`Role.school_admin`. This is the seam D7.8 and spec §1.1 are
+    about: before it, the only caller in the codebase that ever minted a
+    ``school_admin`` was ``lemely/db/seed.py``, calling ``AuthService.signup``
+    directly. Reachable now only through the platform-admin schools router
+    (``lemely/web/routers/admin.py``, gated to :attr:`Role.platform_admin`), which
+    is exactly the authenticated-admin surface D1.7 reserves elevated-role
+    creation for.
+    """
+
+    def __init__(self, auth_service: AuthService) -> None:
+        """Wrap an :class:`AuthService` used to create school_admin identities."""
+        self._auth = auth_service
+
+    def create_school_admin(
+        self,
+        email: str,
+        password: str,
+        display_name: str | None = None,
+    ) -> uuid.UUID:
+        """Create a school_admin account and return its ``public.users`` id."""
+        return self._auth.signup(
+            email, password, Role.school_admin, display_name=display_name
+        ).user_id
+
+
+@lru_cache(maxsize=1)
+def get_school_provisioning_service() -> SchoolProvisioningService:
+    """Return the process-wide :class:`SchoolProvisioningService` singleton (D7.8).
+
+    Wired with the DB session factory and an :class:`AuthServiceSchoolAdminCreator`
+    that provisions a school's admin through the same GoTrue-backed signup path
+    every other admin-created identity uses. This getter, and the router it feeds,
+    are the account graph's missing first link (spec §1.1): before them, no
+    production code path created a ``School`` row or a ``school_admin`` account,
+    which made ``POST /api/school/teachers/invite`` — the only teacher-creation
+    path D1.7 allows — unreachable in any real deployment. Tests override this
+    dependency with a service built on a fake account creator and a throwaway
+    Postgres database.
+    """
+    return SchoolProvisioningService(
+        get_sessionmaker(get_settings()),
+        AuthServiceSchoolAdminCreator(get_auth_service()),
+    )
+
+
+@lru_cache(maxsize=1)
+def get_invite_service() -> InviteService:
+    """Return the process-wide :class:`InviteService` singleton (D7.3, spec §1.2).
+
+    Wired with the DB session factory and the same :class:`ClassService`
+    singleton every other class-scoped service composes, so a class
+    invite's redemption reuses the identical
+    :meth:`~lemely.db.class_repo.ClassService.join_by_code` every
+    self-enrolling student already goes through (D3.1) — never a second,
+    independently-derived enrolment path. Unlike :func:`get_seat_service`,
+    this needs no account-creation seam: redemption always attaches an
+    *existing* account (its route is authenticated), never creates one.
+    Tests override this dependency with a service built on a throwaway
+    Postgres database.
+    """
+    return InviteService(get_sessionmaker(get_settings()), get_class_service())
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -734,3 +903,19 @@ def reset_singletons() -> None:
     get_exam_calendar_service.cache_clear()
     get_notification_service.cache_clear()
     get_push_transport.cache_clear()
+    # The three admin-surface singletons. `get_platform_admin_service` and
+    # `get_school_admin_service` were absent here before issue #10 — an
+    # omission, not a policy: this function's docstring promises to clear
+    # *all* cached singletons, and a test that swapped settings silently kept
+    # whichever of these it had already built. Added together so the promise
+    # is true rather than nearly true.
+    get_platform_admin_service.cache_clear()
+    get_school_admin_service.cache_clear()
+    get_school_provisioning_service.cache_clear()
+    get_invite_service.cache_clear()
+    # Issue #10 / D7.7 / D7.12: the token service and the two cooldown stores
+    # `get_auth_service` now wires. Added for the same reason the comment
+    # above this one records — the promise is *all* cached singletons.
+    get_auth_token_service.cache_clear()
+    get_signup_and_reset_cooldown_store.cache_clear()
+    get_resend_verification_cooldown_store.cache_clear()

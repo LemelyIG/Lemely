@@ -8,14 +8,21 @@ super-role bypass), so the global view has to be a different door, not a wider
 one. A bug in this file cannot leak one school's data into another school's
 screen, because nothing here is per-school.
 
-The one route that mutates is X-02's activation decision. Everything else is a
-read of counted facts.
+X-02's activation decision was the only route that mutated until the schools
+surface below (D7.8): platform admins create schools, adjust their quotas, and
+create the school_admin accounts that administer them. That surface is still
+gated by the same rule as everything else here — it operates on every school
+equally rather than a caller-owned subset, because a platform admin does not
+*have* schools (D1.6/D1.10, no super-role bypass; see
+``lemely.db.school_provisioning_repo`` for why that is a separate module rather
+than new methods on :class:`~lemely.db.admin_repo.PlatformAdminService`).
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type
 # imports at runtime (see the per-file-ignore in pyproject.toml).
 from __future__ import annotations
 
+import secrets
 import uuid
 from typing import Annotated
 
@@ -28,12 +35,20 @@ from lemely.db.admin_repo import (
     SubscriptionNotFoundError,
 )
 from lemely.db.models.enums import Role
+from lemely.db.school_provisioning_repo import (
+    QuotaBelowAssignedSeatsError,
+    SchoolNotFoundError,
+    SchoolProvisioningService,
+    SchoolSummary,
+)
 from lemely.io.cost_ledger import CostLedger
 from lemely.io.grade_boundaries import GradeBoundaryStore
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
+    AuthContext,
     get_boundary_store,
     get_platform_admin_service,
+    get_school_provisioning_service,
     get_settings,
     require_role,
 )
@@ -41,14 +56,21 @@ from lemely.web.schemas_admin import (
     ActivationDecisionDTO,
     ActivationQueueDTO,
     ActivationResultDTO,
+    CreateSchoolAdminRequestDTO,
+    CreateSchoolAdminResponseDTO,
+    CreateSchoolRequestDTO,
     PendingActivationDTO,
     PipelineHealthDTO,
     PlatformCountsDTO,
     PlatformOverviewDTO,
+    SchoolAdminSummaryDTO,
+    SchoolListDTO,
+    SchoolSummaryDTO,
     SignupDTO,
     SpendDTO,
     SubjectCoverageDTO,
     SystemHealthDTO,
+    UpdateSchoolRequestDTO,
 )
 
 # Gating at the router level means every current and future admin route inherits
@@ -73,6 +95,12 @@ _MARKING_ACCURACY_NOTE = (
     "fixture set, not by this service. Run the harness and read reports/ for the "
     "current figures."
 )
+
+# Length (in bytes of entropy) of a generated one-time school_admin password.
+# Identical to `school.py`'s `_TEMP_PASSWORD_ENTROPY_BYTES` — same credential
+# handling as `invite_teacher`, because the reason for it is the same: no email
+# provider exists in v1 (D7.6) to deliver anything else.
+_TEMP_PASSWORD_ENTROPY_BYTES = 24
 
 
 @router.get("/admin/overview", response_model=PlatformOverviewDTO)
@@ -224,4 +252,117 @@ def pipeline_health(
         uploadsByStatus=health.uploads_by_status,
         recentFailedUploadIds=[str(upload_id) for upload_id in health.recent_failed_uploads],
         markingAccuracyNote=_MARKING_ACCURACY_NOTE,
+    )
+
+
+# ── Schools (D7.8, spec §1.1) ───────────────────────────────────────────────
+#
+# The account graph's missing first link: before these four routes, no
+# production code path created a `School` row or a `school_admin` account, so
+# `POST /api/school/teachers/invite` — the only teacher-creation path D1.7
+# allows — was unreachable in any real deployment. See
+# `lemely.db.school_provisioning_repo` for the full account of why this is a
+# separate service module rather than new methods on `PlatformAdminService`.
+
+
+def _school_summary_to_dto(summary: SchoolSummary) -> SchoolSummaryDTO:
+    """Convert a service :class:`SchoolSummary` into its wire DTO."""
+    return SchoolSummaryDTO(
+        schoolId=str(summary.school_id),
+        name=summary.name,
+        seatQuota=summary.seat_quota,
+        seatsAssigned=summary.seats_assigned,
+        seatsAvailable=summary.seats_available,
+        admins=[
+            SchoolAdminSummaryDTO(
+                userId=str(admin.user_id), email=admin.email, displayName=admin.display_name
+            )
+            for admin in summary.admins
+        ],
+    )
+
+
+@router.get("/admin/schools", response_model=SchoolListDTO)
+def list_schools(
+    service: Annotated[SchoolProvisioningService, Depends(get_school_provisioning_service)],
+) -> SchoolListDTO:
+    """Return every school on the platform, with quota, seat usage and admins.
+
+    No school id is supplied and none is needed: a platform admin has no
+    tenant to scope to (D1.6/D1.10), so this is every school there is, not a
+    caller-owned subset — the same "no tenant scope at all" property
+    :class:`~lemely.db.admin_repo.PlatformAdminService` already documents for
+    the rest of this router.
+    """
+    return SchoolListDTO(schools=[_school_summary_to_dto(s) for s in service.list_schools()])
+
+
+@router.post("/admin/schools", response_model=SchoolSummaryDTO)
+def create_school(
+    body: CreateSchoolRequestDTO,
+    auth: Annotated[AuthContext, Depends(require_role(Role.platform_admin))],
+    service: Annotated[SchoolProvisioningService, Depends(get_school_provisioning_service)],
+) -> SchoolSummaryDTO:
+    """Create a school with an initial seat quota — the missing first link (spec §1.1).
+
+    ``createdBy`` is not a wire field; the school's ``created_by`` column is
+    stamped from the authenticated caller so the schema records who
+    provisioned each tenant, the first path ever to write to that column with
+    a real, identified admin rather than a fixture.
+    """
+    summary = service.create_school(body.name, body.seatQuota, created_by=auth.user_id)
+    return _school_summary_to_dto(summary)
+
+
+@router.patch("/admin/schools/{school_id}", response_model=SchoolSummaryDTO)
+def update_school(
+    school_id: uuid.UUID,
+    body: UpdateSchoolRequestDTO,
+    service: Annotated[SchoolProvisioningService, Depends(get_school_provisioning_service)],
+) -> SchoolSummaryDTO:
+    """Rename a school and/or change its seat quota.
+
+    A quota lowered below the seats already assigned is a **409** naming both
+    numbers, never a silent accept that would leave usage over capacity
+    (Task 12's own test for this).
+    """
+    try:
+        summary = service.update_school(school_id, name=body.name, seat_quota=body.seatQuota)
+    except SchoolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except QuotaBelowAssignedSeatsError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return _school_summary_to_dto(summary)
+
+
+@router.post("/admin/schools/{school_id}/admins", response_model=CreateSchoolAdminResponseDTO)
+def create_school_admin(
+    school_id: uuid.UUID,
+    body: CreateSchoolAdminRequestDTO,
+    service: Annotated[SchoolProvisioningService, Depends(get_school_provisioning_service)],
+) -> CreateSchoolAdminResponseDTO:
+    """Create a school_admin account and bind it to ``school_id`` as staff.
+
+    Account and membership are written together, in one service call: a
+    school_admin with no membership administers nothing and meets an empty
+    console, which D4.10 found indistinguishable on screen from a broken one.
+
+    Same credential handling as ``POST /api/school/teachers/invite``: no email
+    provider exists in v1 (D7.6), so an omitted password is generated once
+    here and returned once in ``temporaryPassword`` for the platform admin to
+    convey out of band.
+    """
+    generated = body.password is None
+    password = body.password or secrets.token_urlsafe(_TEMP_PASSWORD_ENTROPY_BYTES)
+    try:
+        result = service.create_school_admin(
+            school_id, body.email, password, display_name=body.displayName
+        )
+    except SchoolNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return CreateSchoolAdminResponseDTO(
+        userId=str(result.user_id),
+        membershipId=str(result.membership_id),
+        email=result.email,
+        temporaryPassword=password if generated else None,
     )

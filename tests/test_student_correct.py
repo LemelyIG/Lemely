@@ -45,6 +45,7 @@ from lemely.web.deps import (
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
+    get_user_mirror,
 )
 from lemely.web.routers import student
 from lemely.web.upload_utils import check_upload_cap
@@ -98,8 +99,52 @@ def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
 def _seed_user(sm: sessionmaker[Session], role: Role = Role.student) -> str:
     uid = uuid.uuid4()
     with sm.begin() as session:
-        session.add(User(id=uid, email=f"{uid}@example.com", role=role))
+        # Issue #10 / D7.5: `POST /student/correct` now soft-gates on a
+        # verified email (`lemely.web.deps.require_verified_email`). This
+        # file's whole subject is the correction pipeline, not verification,
+        # so every seeded user is pre-verified — the alternative would be
+        # every test below failing on a 403 this file was never about.
+        session.add(
+            User(id=uid, email=f"{uid}@example.com", role=role, email_verified_at=datetime.now(UTC))
+        )
     return str(uid)
+
+
+class _PgUserMirror:
+    """Minimal ``UserMirror`` bound to this file's throwaway sessionmaker.
+
+    ``require_verified_email`` (new, issue #10) reads the mirror directly;
+    without this override the route would fall back to the real,
+    unoverridden ``DbUserMirror`` against the default configured database —
+    not the throwaway one this file's ``student_id`` actually lives in — and
+    see nothing, gating every request in this file at 403. Only ``get_by_id``
+    is exercised by that dependency; the rest raise so an unexpected call
+    surfaces immediately rather than returning a quietly-wrong answer.
+    """
+
+    def __init__(self, sm: sessionmaker[Session]) -> None:
+        self._sm = sm
+
+    def get_by_id(self, user_id: uuid.UUID) -> User | None:
+        with self._sm() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                session.expunge(user)
+            return user
+
+    def get_by_phone(self, phone: str) -> User | None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def get_by_email(self, email: str) -> User | None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def upsert(self, *args: object, **kwargs: object) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
+
+    def mark_email_verified(
+        self, user_id: uuid.UUID, *, verified_at: datetime
+    ) -> None:  # pragma: no cover - unused here
+        raise NotImplementedError
 
 
 # ---------------------------------------------------------------------------
@@ -182,6 +227,8 @@ def client(
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=student_id, role="student"
     )
+    # Issue #10 / D7.5: see `_PgUserMirror`'s own docstring above.
+    app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
     yield TestClient(app), student_id, upload_repo
     app.dependency_overrides.clear()
 

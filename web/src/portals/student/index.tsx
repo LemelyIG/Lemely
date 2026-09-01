@@ -12,7 +12,7 @@ import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
-import { useProfile } from "@/lib/hooks/useMeApi"
+import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
@@ -578,8 +578,83 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
 // all three portals and `App.tsx` need it and four local copies had already
 // drifted to three different type/padding combinations before they were merged.
 
+/**
+ * D7.9 — is a redirect to `/student/onboard` owed on this render?
+ *
+ * Pulled out of `StudentLayout` as a pure function, deliberately, rather than
+ * left as inline branches against the raw query result. `vitest.config.ts`
+ * runs this repo's unit suite under Node with no jsdom and no renderer
+ * (D3.20), so nothing that requires mounting `StudentLayout` — a hook call, a
+ * `<Suspense>` boundary, `useLocation()` itself — is reachable from a unit
+ * test here. The *decision* the gate makes is reachable, once it is
+ * something callable on its own, and that is the whole reason this function
+ * exists rather than living as `if`s in the component:
+ * `web/tests/unit/onboardingGate.test.ts` pins it directly, all four states.
+ *
+ * `status` is `useStudentProfile()`'s own three-way react-query status, not a
+ * boolean the caller reduces it to first. That matters because the two
+ * states that must NEVER redirect are exactly the two non-`"success"` ones,
+ * and a caller left holding only `onboardingCompletedAt` cannot tell "not
+ * answered yet" (`undefined`, mid-flight) apart from "answered no" (`null`,
+ * resolved) — both look like "falsy" to a careless check. That conflation is
+ * the specific failure D7.9's own risk register names: firing on `undefined`
+ * bounces every returning student on every cold load, and firing on a fetch
+ * error traps an account whenever `/me/student-profile` hiccups. Requiring
+ * the real status up front makes both structurally impossible here, rather
+ * than a discipline every call site has to keep separately.
+ *
+ * The third guard, `pathname === "/student/onboard"`, is what keeps this a
+ * redirect and not a trap. The wizard finishes by calling
+ * `useCompleteOnboarding()` and navigating away itself (see
+ * `screens/Onboarding.tsx`'s `handleFinish`) — and until that mutation
+ * resolves, the student is legitimately standing on the one screen this gate
+ * would otherwise send them to, which must render, not bounce to itself.
+ */
+export type OnboardingProfileQueryStatus = "pending" | "error" | "success"
+
+export function studentOnboardingRedirect(
+  status: OnboardingProfileQueryStatus,
+  onboardingCompletedAt: string | null,
+  pathname: string,
+): string | null {
+  if (status !== "success") return null
+  if (onboardingCompletedAt !== null) return null
+  if (pathname === "/student/onboard") return null
+  return "/student/onboard"
+}
+
 function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
+  const location = useLocation()
+
+  /*
+   * The wiring for `studentOnboardingRedirect` above: `useStudentProfile()`
+   * reads the S-02 record onboarding itself writes (`useProfile()` in
+   * `UserBlock` above is a different endpoint, `/me/profile`, whose
+   * `Profile` type carries no onboarding field at all).
+   *
+   * A pending query renders the shared route fallback in place of the whole
+   * shell rather than the shell with a fallback inside it: until the profile
+   * resolves we do not yet know whether this student belongs on this route,
+   * so there is nothing honest to put in a sidebar built for a destination
+   * we might immediately redirect away from. An errored or a
+   * resolved-and-complete query both fall through to the portal exactly as
+   * it rendered before this gate existed — an errored profile fetch must
+   * degrade to "the portal renders", never to "the account is stuck on
+   * onboarding until the network recovers".
+   */
+  const studentProfile = useStudentProfile()
+  if (studentProfile.isPending) {
+    return <RouteFallback className="p-8" />
+  }
+  const onboardingRedirect = studentOnboardingRedirect(
+    studentProfile.status,
+    studentProfile.data?.profile.onboardingCompletedAt ?? null,
+    location.pathname,
+  )
+  if (onboardingRedirect) {
+    return <Navigate to={onboardingRedirect} replace />
+  }
 
   return (
     // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise

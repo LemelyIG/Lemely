@@ -58,6 +58,10 @@ class GoTrueBackend(Protocol):
         """Authenticate ``email``/``password`` and return an access token."""
         ...
 
+    def admin_update_user_password(self, user_id: uuid.UUID, password: str) -> None:
+        """Set ``user_id``'s password directly, bypassing the old one (service-role key)."""
+        ...
+
 
 def _parse_user(body: dict[str, Any]) -> GoTrueUser:
     """Build a :class:`GoTrueUser` from a GoTrue JSON user object."""
@@ -154,6 +158,33 @@ class HttpGoTrueBackend:
             )
         except (KeyError, TypeError) as exc:
             raise ExternalServiceError(f"Malformed GoTrue token response: {exc}") from exc
+
+    def admin_update_user_password(self, user_id: uuid.UUID, password: str) -> None:
+        """Admin-set ``user_id``'s password (service-role key).
+
+        Used by password-reset confirmation: the caller has already redeemed a
+        single-use reset token and this is what actually changes the
+        credential GoTrue checks on the next ``password_grant``.
+        """
+        service_key = self._service_key()
+        try:
+            response = httpx.put(
+                f"{self._base_url}/auth/v1/admin/users/{user_id}",
+                json={"password": password},
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "apikey": service_key,
+                },
+                timeout=_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError as exc:
+            raise ExternalServiceError(
+                f"GoTrue admin-update-password request failed: {exc}"
+            ) from exc
+        if response.status_code >= 400:
+            raise AuthError(
+                f"GoTrue admin-update-password failed ({response.status_code}): {response.text}"
+            )
 
 
 __all__ = ["GoTrueBackend", "GoTrueToken", "GoTrueUser", "HttpGoTrueBackend"]

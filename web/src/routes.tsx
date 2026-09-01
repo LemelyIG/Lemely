@@ -55,6 +55,45 @@ const NotificationSettings = lazy(() =>
   })),
 )
 
+/*
+ * Task 19 (spec §4.4) · lazy consts for the five G-02/G-03/G-06/G-07/G-08
+ * screens (SignupRoleSelect.tsx, SignupDetails.tsx, VerifyEmail.tsx,
+ * PasswordReset.tsx, JoinWithCode.tsx), built and committed ahead of this
+ * file and unreachable until something registers a route for them. Six
+ * consts rather than five, because `/reset` and `/reset/:token` are two
+ * screens exported from one module (`PasswordResetRequest`/
+ * `PasswordResetConfirm`, Task 17's "two routes, two views each") while
+ * `/signup/student` and `/signup/teacher` go the other way: one component,
+ * `SignupDetails`, taking `role` as a prop the route supplies rather than
+ * two files (see that component's own module docstring). Likewise
+ * `VerifyEmail` and `JoinWithCode` each back two routes on their own,
+ * reading the optional route param themselves.
+ *
+ * Same P6.1b reasoning as the four above, and the same consequence below:
+ * each gets its own inline `<Suspense>` at its route definition rather than
+ * a shared boundary, because there is still no portal layout here to hang
+ * one off. A first-time visitor moving from `/signup` to `/signup/student`
+ * on a slow connection should not have the role-select screen it already
+ * painted go blank while the details screen's chunk loads in behind it.
+ */
+const SignupRoleSelect = lazy(() =>
+  import("@/portals/auth/SignupRoleSelect").then((m) => ({ default: m.SignupRoleSelect })),
+)
+const SignupDetails = lazy(() =>
+  import("@/portals/auth/SignupDetails").then((m) => ({ default: m.SignupDetails })),
+)
+const VerifyEmail = lazy(() =>
+  import("@/portals/auth/VerifyEmail").then((m) => ({ default: m.VerifyEmail })),
+)
+const PasswordResetRequest = lazy(() =>
+  import("@/portals/auth/PasswordReset").then((m) => ({ default: m.PasswordResetRequest })),
+)
+const PasswordResetConfirm = lazy(() =>
+  import("@/portals/auth/PasswordReset").then((m) => ({ default: m.PasswordResetConfirm })),
+)
+const JoinWithCode = lazy(() =>
+  import("@/portals/auth/JoinWithCode").then((m) => ({ default: m.JoinWithCode })),
+)
 
 const STUDENT_ROLES = ["student"] as const
 const PARENT_ROLES = ["parent"] as const
@@ -159,13 +198,24 @@ const errorElement = <NotFound />
 /*
  * P6.5 · page metadata for the top-level routes.
  *
- * These four are the only routes in the product a signed-out reader can reach,
- * so they are the only ones that carry a `description` (the module note in
+ * `/`, `/login`, `/login/parent` and the `*` catch-all carried a `description`
+ * here directly before Task 19; the nine routes spec §4.4 registers below join
+ * them the same way. `/landing` and `/data` carry one too, spread in from route
+ * objects `portals/marketing/index.tsx` defines, so they do not show up as a
+ * `handle` literal in this file the way the rest do. Together this is the
+ * entire list of routes a signed-out reader can reach in the product, and the
+ * only ones that get a `description` (the module note in
  * `lib/meta/documentMeta.ts` explains why the authenticated screens do not).
  * Everything behind `RequireAuth` gets a title only.
  *
- * The descriptions describe the screen and claim nothing about the product that
- * the product does not do (§3.2 item 10).
+ * The descriptions describe the screen and claim nothing about the product
+ * that the product does not do (§3.2 item 10) — and, for the nine below in
+ * particular, never that a mail or a text was sent. `deps.py` wires
+ * `MockEmailProvider` unconditionally, exactly as it already wires
+ * `MockSmsProvider`, so no deployment of this code as written delivers
+ * either. The comment on `/login/parent` below records that finding for the
+ * SMS side in full; the nine descriptions below follow its lead rather than
+ * re-arguing it.
  */
 const rootMeta: PageMeta = { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION }
 
@@ -230,6 +280,223 @@ export const appRoutes: RouteObject[] = [
           <ParentLogin />
         </Suspense>
       </LoginRoute>
+    ),
+  },
+  /*
+   * ────────────────────────────────────────────────────────────────────────
+   * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes.
+   *
+   * Five of the nine (`/signup`, `/signup/student`, `/signup/teacher`,
+   * `/reset`, `/reset/:token`) are wrapped in `LoginRoute` exactly like
+   * `/login` and `/login/parent` above: a signed-in visitor has an account
+   * already and belongs back in their own portal rather than on a form for
+   * creating one or recovering a password they can currently use.
+   *
+   * The other four (`/verify-email`, `/verify-email/:token`, `/join`,
+   * `/join/:code`) are deliberately NOT wrapped — each carries its own
+   * comment below saying why, because this is the exception in this block
+   * most likely to look like an oversight to a future reader and get "fixed"
+   * into a bug: wrapping either would make the screen unreachable for
+   * exactly the signed-in account it is for.
+   * ────────────────────────────────────────────────────────────────────────
+   */
+  // G-02. Role selection, the entry point for every self-service signup.
+  {
+    path: "/signup",
+    errorElement,
+    handle: {
+      title: "Sign up",
+      description:
+        "Sign up for Lemely as a student or a teacher, and get started marking past papers.",
+    } satisfies PageMeta,
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <SignupRoleSelect />
+        </Suspense>
+      </LoginRoute>
+    ),
+  },
+  /*
+   * G-03's two variants are deliberately NOT wrapped in `LoginRoute`, and this
+   * is the third exception in this file rather than an oversight.
+   *
+   * A successful signup mints a session — `AuthContext`'s `signup` sets it in
+   * `onSuccess` — and the screen then routes to `/verify-email` itself, because
+   * it is the only place that knows whether an invite code still has to be
+   * redeemed first. Wrapping the route puts a guard in the tree that reads the
+   * very session the form just created, and `LoginRoute` wins that race: it
+   * renders `<Navigate to={portalPathForRole(...)}>` on the same commit, so the
+   * screen's own `navigate("/verify-email")` is overridden before it is seen.
+   *
+   * The symptom was a new student landing on `/student/onboard` and G-07 being
+   * unreachable on the happy path — a screen this product ships and, until the
+   * E2E journeys ran for the first time, nobody could reach by signing up. Every
+   * unit gate passed throughout: the route table is well-formed, the screen's
+   * navigate call is correct in isolation, and the defect only exists once both
+   * are mounted together with a real session.
+   *
+   * `/signup` above keeps its wrapper: role selection mints nothing, so bouncing
+   * an already-signed-in visitor off it is right and cannot race anything.
+   */
+  // G-03, student variant. Two static paths rather than one route with a
+  // `:role` segment (design spec §4.4's own choice) — see `SignupDetails.tsx`'s
+  // module docstring for why that makes this the single source of truth for
+  // which variant renders, not a `:role` param this file would have to parse.
+  {
+    path: "/signup/student",
+    errorElement,
+    handle: {
+      title: "Student sign up",
+      description:
+        "Create a Lemely student account, upload a past paper, and see exactly what to study next.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <SignupDetails role="student" />
+      </Suspense>
+    ),
+  },
+  // G-03, teacher variant (D7.1, D7.2). The same `SignupDetails`, the other
+  // `role`.
+  {
+    path: "/signup/teacher",
+    errorElement,
+    handle: {
+      title: "Teacher sign up",
+      description:
+        "Create a Lemely teacher account and mark past papers faster, with partial credit worked out for you.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <SignupDetails role="teacher" />
+      </Suspense>
+    ),
+  },
+  /*
+   * G-07, pending. NOT wrapped in `LoginRoute`, unlike every other route in
+   * this block, and deliberately so: `VerifyEmail.tsx` itself is reachable
+   * both signed out (`SignedOutPending`) and signed in (`SignedInPending`),
+   * and a signed-in but unverified account is the ordinary case here, not an
+   * edge one — it is exactly the account this screen exists for. Wrapping
+   * this route would bounce that account straight back into its portal
+   * before it ever saw a way to check its status or ask for the link again,
+   * which is the "unreachable for the account that needs it" failure this
+   * task exists to avoid. `VerifyEmail.tsx`'s own module docstring records
+   * the identical reasoning from the component's side.
+   */
+  {
+    path: "/verify-email",
+    errorElement,
+    handle: {
+      title: "Verify your email",
+      description:
+        "Check whether a Lemely account's email address is verified. Everything except marking a paper stays open in the meantime.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <VerifyEmail />
+      </Suspense>
+    ),
+  },
+  // G-07, confirm. Same exception, same component: `VerifyEmail.tsx` reads
+  // `useParams().token` itself to choose which of its two states to render,
+  // the same "one component, two RouteObjects" shape `/login`/`/login/parent`
+  // above already use. See the comment on `/verify-email` for why neither of
+  // this pair is wrapped.
+  {
+    path: "/verify-email/:token",
+    errorElement,
+    handle: {
+      title: "Confirm your email",
+      description:
+        "Confirm a Lemely account's email address from a verification link, then continue into the app.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <VerifyEmail />
+      </Suspense>
+    ),
+  },
+  // G-06, request. Wrapped in `LoginRoute`: unlike verification, a password
+  // reset has nothing for a signed-in visitor to do here, since they can
+  // already sign in with the password they have. `AuthContext.tsx`'s own note
+  // on `confirmPasswordReset` records that this route is never reachable with
+  // a session in the first place, for exactly this reason.
+  {
+    path: "/reset",
+    errorElement,
+    handle: {
+      title: "Reset your password",
+      description: "Request a password reset for a Lemely account by email address.",
+    } satisfies PageMeta,
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <PasswordResetRequest />
+        </Suspense>
+      </LoginRoute>
+    ),
+  },
+  // G-06, set a new password. Same wrapping, same reasoning; the other half
+  // of the "two routes, two views each" shape `PasswordReset.tsx`'s module
+  // docstring describes.
+  {
+    path: "/reset/:token",
+    errorElement,
+    handle: {
+      title: "Set a new password",
+      description:
+        "Set a new password for a Lemely account from a reset link. Every device gets signed out once the change takes effect.",
+    } satisfies PageMeta,
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteFallback className="p-8" />}>
+          <PasswordResetConfirm />
+        </Suspense>
+      </LoginRoute>
+    ),
+  },
+  /*
+   * G-08, enter a code. NOT wrapped in `LoginRoute`, and for a different
+   * reason than `/verify-email`'s: redeeming a class code while signed in is
+   * not an edge case to tolerate but the ordinary path for D1.10's
+   * seat/school-linking case, not only the fresh-signup one — a teacher can
+   * hand a code to a student who already holds an account from a previous
+   * class. `JoinWithCode.tsx`'s own module docstring carries the identical
+   * reasoning; this comment exists so the same fact does not live only inside
+   * the component that happens to get mounted here.
+   */
+  {
+    path: "/join",
+    errorElement,
+    handle: {
+      title: "Join with an invite code",
+      description:
+        "Enter an invite code from your school to see what it joins, before you redeem it or sign up to claim it.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <JoinWithCode />
+      </Suspense>
+    ),
+  },
+  // G-08, deep-linked preview. Same exception as `/join` above, same
+  // component: `JoinWithCode.tsx` exports one route-level wrapper that reads
+  // the optional `:code` param itself and hands it to the screen as both a
+  // `key` and an initial value (see that export's own docstring for why a
+  // `key` rather than a plain prop).
+  {
+    path: "/join/:code",
+    errorElement,
+    handle: {
+      title: "Preview your invite",
+      description: "Preview the class an invite code joins, then redeem it or sign up to claim it.",
+    } satisfies PageMeta,
+    element: (
+      <Suspense fallback={<RouteFallback className="p-8" />}>
+        <JoinWithCode />
+      </Suspense>
     ),
   },
   // G-11 (devices section). Top-level rather than inside a portal subtree: the

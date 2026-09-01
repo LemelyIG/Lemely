@@ -301,6 +301,16 @@ phone, so they skip the email form).
 **Contains.** Name, email, password (with strength feedback and a show/hide
 toggle), terms acceptance. Teacher variant adds: school or centre name
 (optional, with "I work independently" option).
+
+> **Shipped divergence (`BUILD/DECISIONS.md` D7.2).** The teacher variant's
+> optional "school or centre name" field was dropped, not built and left
+> unused. A self-registered teacher is always independent at signup — no
+> `School` row, no membership — because a `School` carries a real seat quota
+> and letting an anonymous visitor mint one via a text field would only ever
+> produce one with a quota of zero. Real school membership arrives later, by
+> an invite code (G-08) or platform-admin provisioning (K-01 equivalent),
+> never by what a visitor types here.
+
 **Interactions.** Inline validation on blur, not on every keystroke. Submit →
 G-07.
 **States.** Field errors; email-already-registered error that offers a route to
@@ -337,6 +347,20 @@ success. Keep it three screens, no surprises.
 **Contains.** "Check your email" with the address shown, resend button with
 cooldown, "Wrong address? Change it," and — importantly — a way to continue
 into a limited preview of the app rather than a hard wall.
+
+> **Shipped divergence (`BUILD/DECISIONS.md` D7.5, D7.6).** Verification is a
+> **soft gate landing on exactly one route**, `POST /api/student/correct` (the
+> Gemini spend) — everywhere else, including upload, an unverified account
+> works normally, which is the "limited preview rather than a hard wall" this
+> section already asks for, made concrete as one guarded route instead of a
+> mood. The literal **"Check your email" heading is not used**: no configured
+> email provider in this build actually sends anything (`MockEmailProvider` is
+> wired unconditionally), so a heading claiming mail was sent or should be
+> checked would be false in every deployment of this code as written. The
+> shipped screen states plainly what verification unlocks and offers the
+> developer-only link affordance instead, mirroring how G-05 already handles
+> the SMS mock's own equivalent gap.
+
 **Exits.** Onboarding (S-01) once verified.
 
 ### G-08 · Join with invite code
@@ -347,6 +371,20 @@ class"), and a confirm action. If the person has no account yet, this flows into
 G-03 with the code retained.
 **States.** Invalid code, expired code, seat quota full (explain and tell them
 to contact their school).
+
+> **Shipped divergence (`BUILD/DECISIONS.md` D7.3; see also `BUILD/BLOCKERS.md`
+> B9).** The **"seat quota full" state cannot occur on this screen**, by
+> design rather than by omission. A seat invite reserves its seat at *mint*
+> time (when a school admin generates the code), not at redemption, so a code
+> that exists has already secured a place — the preview shown here never
+> promises a seat that could have gone by the time someone redeems it. Quota
+> refusal is therefore an admin-side error on the school-management screen
+> (a school admin cannot mint past capacity), never something a code holder
+> sees. The screen keeps a real, tested rendering branch for this state
+> against a structured `seat_quota_exceeded` marker in case a defensive
+> re-check is ever added at redemption — it is inert against the live backend
+> today, and that is expected, not a bug.
+
 **Exits.** G-03, S-01, S-06.
 
 ### G-09 · Install app prompt

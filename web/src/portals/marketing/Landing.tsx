@@ -146,14 +146,24 @@ export function Landing() {
             */}
             <div className="mt-8 flex flex-wrap gap-3">
               {/*
-                Both CTAs go to /login rather than deep into the app. The old
-                page sent "Mark a paper" straight to `/student/correct`, which
-                for a signed-out visitor — every visitor this page now has —
-                is a bounce to /login with the destination lost. Sending them
-                to the sign-in they were always going to need is one step, not
-                two, and it is the step that is honest about what happens next.
+                Both CTAs (this one and the close CTA further down the page)
+                go to /signup rather than to /login. That was stale before
+                Task 19: `/signup` did not exist yet, so `/login` was the only
+                honest one-step destination for a first-time visitor, even
+                though the sign-in form it led to was never going to accept
+                credentials nobody had created. The old build sent "Mark a
+                paper" straight to `/student/correct`, which for a signed-out
+                visitor — every visitor this page now has — was a bounce to
+                /login with the destination lost anyway.
+                /signup (G-02) exists now and is the genuinely correct
+                one-step destination for someone with no account: it is where
+                the sign-in itself sends the same reader (`Login.tsx`'s own
+                "Create an account" link), so this page no longer routes a new
+                visitor through a form built for someone who already has
+                credentials. /login stays reachable from the header above and
+                the footer below, for the reader who already does.
               */}
-              <Button variant="primary" size="lg" onClick={() => navigate("/login")}>
+              <Button variant="primary" size="lg" onClick={() => navigate("/signup")}>
                 {landingHero.primaryCta}
               </Button>
               {/*
@@ -438,11 +448,19 @@ export function Landing() {
                     branches inline, one of which set a raw `oklch()` border —
                     a token-discipline gate failure (§3.2 item 13) sitting in
                     the one section that also carried the invented prices.
+
+                    Unreachable today, same as the rest of this branch:
+                    `pricing` is `[]` (the C2 note above), so this button never
+                    renders until a real plan exists to put here. Its
+                    destination is kept in step with the hero and close CTAs
+                    anyway (Task 19: /signup, not /login) so that whichever
+                    plan ships first does not silently resurrect the
+                    pre-signup routing this page just moved away from.
                   */}
                   <Button
                     variant={p.ctaAccent ? "primary" : "secondary"}
                     className="mt-auto w-full"
-                    onClick={() => navigate("/login")}
+                    onClick={() => navigate("/signup")}
                   >
                     {p.cta}
                   </Button>
@@ -462,7 +480,9 @@ export function Landing() {
               {landingClose.body}
             </p>
             <div className="flex flex-wrap items-center gap-5">
-              <Button variant="primary" size="lg" onClick={() => navigate("/login")}>
+              {/* The close CTA the hero's own comment refers to as "the close
+                  CTA further down the page" — same destination, same reason. */}
+              <Button variant="primary" size="lg" onClick={() => navigate("/signup")}>
                 {landingClose.cta}
               </Button>
               {/*

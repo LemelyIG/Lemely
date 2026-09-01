@@ -613,3 +613,244 @@ ntfy. `BUILD/STEERING.md` and this file were the only channels that survived,
 which is what §10's file fallback is for, except §10 assumes the file mirrors
 an ntfy message and there it *was* the message. Still worth a real fix: a
 reporting path that does not need the same shell.
+---
+
+## B6 — The hallmark pre-emit stamp is largely ceremonial, and its own skill is a broken symlink
+
+**Raised:** 2026-08-26 (Task 23, sign-up flows issue #10) · **Status: NOT BLOCKING — recorded for
+follow-up, not fixed here.** Nothing in this issue depended on the stamp being real; this is a
+finding about a gate that has quietly stopped doing its job, surfaced while closing out the plan.
+
+### What was found
+
+`web/tests/unit/hallmarkStamp.test.ts` requires a `/* Hallmark · pre-emit critique: P_ H_ E_ S_ R_
+V_ */` comment on every `web/src/portals/**` file, every axis scored `>=3`. Two independent facts,
+each verified rather than assumed:
+
+1. **`.claude/skills/hallmark` is a broken symlink in this checkout** —
+   `.claude/skills/hallmark -> ../../.agents/skills/hallmark`, and the target does not exist. There
+   is therefore **no canonical glossary of what P/H/E/S/R/V stand for** available to an agent
+   asked to stamp a new file. Three separate agents working on this plan each reconstructed a
+   different reading independently (Persona/Hierarchy/Editorial/Systemization/Restraint/Voice;
+   Polish/Hierarchy/Emotion/Spacing/Rhythm/Value; Pattern-originality/Hierarchy/Economy/
+   System-fidelity/Responsiveness/Voice) — three different rubrics, all passing the same gate,
+   because the gate only checks that six digits are present, never what they mean.
+2. **Every pre-existing portal file carries one of exactly two score sets** — `P4 H4 E4 S5 R4 V4`
+   or `P5 H4 E4 S5 R5 V4`. A gate whose values cluster into two constants across dozens of files,
+   written by different agents on different days, is a gate that is being satisfied by copying a
+   neighbour's stamp rather than by a fresh critique landing on those numbers independently.
+
+### Why it matters beyond one broken symlink
+
+The derivation, not the six digits, is what the stamp is supposed to buy — a moment where an agent
+actually looks at what it is about to ship and scores it honestly. A copied stamp passes the test
+and buys nothing. This was not hypothetical on this plan: an agent that copied a neighbouring
+file's score shipped an invented `max-w-[560px]` on a new auth screen where `DESIGN.md` §13
+specifies `680px`, and it was only caught because a later re-derivation, done honestly against the
+(reconstructed) rubric, disagreed with the copied numbers and someone checked why.
+
+### What was NOT done, and why
+
+Not fixed here: restoring `.agents/skills/hallmark` (its content is outside this repository, per
+the symlink target) or redesigning the stamp mechanism is a real piece of work with its own design
+question — what makes a check resistant to being satisfied by copying — and doing it unattended,
+inside a task about sign-up flows, risks a worse rubric replacing a merely-broken one.
+
+### What would unblock it (either is enough)
+
+1. **Restore the symlink target** — drop the real `hallmark` skill content at
+   `.agents/skills/hallmark` (or wherever it is meant to live) so `P/H/E/S/R/V` has one canonical
+   meaning again.
+2. **Or replace the numeric stamp with something a copy cannot satisfy** — e.g. a short written
+   justification per axis rather than a bare digit, or a check that flags a stamp identical to
+   another file's as suspect rather than passing it silently.
+
+---
+
+## B7 — `api.ts` treats every `/auth/*` call as unauthenticated, and G-07's resend is the first one that isn't
+
+**Raised:** 2026-08-26 (Task 23) · **Status: NOT BLOCKING — recorded for follow-up, not fixed
+here.** The behaviour is real but narrow, already flagged in a code comment at its call site, and
+fixing it means changing a file (`web/src/lib/api.ts`) outside every task in this plan's file list.
+
+### What happens
+
+`isAuthCall` in `web/src/lib/api.ts` treats **any** path starting `/auth/` as "a 401 here means the
+wrong credential, never a stale token" — which is correct for login, signup, refresh and the
+public verify/reset routes, none of which depend on a *pre-existing* access token being fresh. It
+was written before this issue shipped `POST /auth/verify-email/resend`
+(`AuthContext.tsx`'s `resendVerification`), which is the **first authenticated call** ever placed
+under the `/auth/` prefix — it is read from the caller's bearer token by design (`D7.5`'s sibling
+rule: no body field could be trusted to name the caller's own address). Because it still matches
+`isAuthCall`, it silently skips `api.ts`'s pre-emptive token refresh and its one-shot 401 retry,
+both of which exist specifically to keep a request working through a stale-but-refreshable access
+token.
+
+### Why it matters, and why it is small
+
+A visitor who has been sitting on `/verify-email` long enough for their access token to go stale
+(the same window `api.ts`'s header comment describes for every other route: "an hour into a
+session") can press Resend and get a bare 401 instead of a transparent refresh-and-retry. It is
+not silent forever: any *other* authenticated request the same screen fires in the background still
+refreshes the stored session normally through the ordinary path, and the next press of Resend then
+succeeds. So the failure mode is a single wasted click under a specific, recoverable timing
+condition, not a stuck screen.
+
+### Where it is already recorded
+
+`AuthContext.tsx`, in a comment directly above the `resendVerification` mutation, spells out this
+exact mechanism and states plainly that `api.ts` was left untouched because it sits outside this
+plan's task file lists. This blocker entry exists so the finding is not visible only to a reader of
+that one file.
+
+### What would fix it properly
+
+Narrow `isAuthCall` from "any path starting `/auth/`" to an explicit list of the routes that are
+genuinely credential-only (`login`, `signup`, `refresh`, `verify-email`, `verify-email/resend`'s
+GET-preview-equivalents if any, `password-reset/request`, `password-reset/confirm`) minus the ones
+that are authenticated and should get the normal refresh-and-retry treatment — or, more simply, key
+the check on whether the call carries a bearer token at all rather than on its path prefix, since
+that is the actual distinction that matters.
+
+---
+
+## B8 — The invite-code *mint* endpoints have no frontend wiring at all
+
+**Raised:** 2026-08-26 (Task 23, discovered while writing the E2E invite journey) · **Status:
+RESOLVED the same day.** Both mint actions are now wired: a school admin mints a seat code from
+`Seats.tsx` (quota-aware) and a teacher mints a single-use class code from `ClassDetail.tsx`,
+which already displayed that class's permanent join code — the two are documented against each
+other rather than blurred, since a reusable code and a single-use one are different promises to
+whoever receives them. Both render through the existing `JoinCodeChip`. The finding below is kept
+in full because the *mechanism* is the lesson: a plan can wire one half of a feature and leave the
+other half an API-only capability, which is the same defect §1.2 records against
+`POST /api/student/classes/join`.
+
+### What was found, verified by a repo-wide grep, not assumed
+
+`POST /api/school/seats/invite-code` and `POST /api/school/classes/{class_id}/invite-code`
+(`lemely/web/routers/school.py:173`, `lemely/web/routers/classes.py:687` — Task 11, `D7.3`) are
+real, tested, reachable routes. **No file under `web/src/` calls either one.**
+`grep -rn "invite-code" web/src/` returns nothing; `web/src/lib/hooks/useSchoolApi.ts` wires only
+the pre-existing `POST /api/school/seats/invite` (direct-create, temporary password) and
+`web/src/portals/admin/screens/Seats.tsx` — the one school_admin screen that would plausibly host a
+"generate a join code" action — has no such control. The *redemption* side is fully wired
+(`JoinWithCode.tsx` → `GET /api/invites/{code}` and `POST /api/invites/{code}/redeem`, Task 18); it
+is only the **minting** side that has no screen.
+
+### Why this is worth recording rather than assuming it is fine
+
+The design doc's own acceptance list (spec §6) states as a standalone bullet: "A school admin can
+mint a seat invite code; a visitor holding it sees the school's name before committing, and signs
+up straight into the seat." As shipped, a school_admin **cannot** do the first half of that sentence
+from the product itself — only by a direct API call. This plan's Task 23 e2e journey therefore has
+to mint the code through a direct authenticated API request (Playwright's `request` context) rather
+than through any button in the UI; see the comment in `web/e2e/signup.spec.ts`'s Invite journey for
+where this is done and why. Nothing about the *backend* is wrong — `InviteService.mint_seat_invite`
+and its class-invite sibling are real, ownership-checked, and tested (`D7.3`) — the gap is purely
+that no task in this plan's frontend list (13–22) included wiring a mint action into `Seats.tsx` or
+`ClassDetail.tsx`.
+
+### What would close it
+
+Add a "Generate an invite code" action to `Seats.tsx` (calling the seat-invite mint route) and to
+the teacher-facing class detail screen (calling the class-invite mint route), each showing the
+resulting code with copy-to-clipboard — the same shape `CreateFirstClass.tsx` (`D7.10`) already
+uses for a `classes.join_code`, extended to the new `invites.code`.
+
+---
+
+## B9 — G-08's "seat quota full" state: the inert branch that has no live trigger, cross-referenced
+
+**Raised:** 2026-08-26 (Task 23) · **Status: NOT BLOCKING — recorded for follow-up, not fixed
+here. Cross-reference, not a new finding:** the underlying fact is `D7.3` in
+`BUILD/DECISIONS.md` and the annotation on `docs/LEMELY_UI_SPEC.md` §G-08; this entry exists only
+because the plan named this specifically among the follow-up items this file should carry.
+
+### The follow-up question, stated plainly
+
+`JoinWithCode.tsx` keeps a real, tested rendering branch keyed on a `seat_quota_exceeded` marker
+that the live backend cannot currently send — quota is enforced at `mint_seat_invite` time, never
+at `redeem` time, so by the time a code exists to preview it has already reserved its seat and
+cannot be redeemed into a full school. The open question for a future reader is whether `redeem`
+should gain a **defensive** re-check anyway (belt-and-braces against a bug in the reservation path
+someday making a redemption without a live reservation possible) — in which case this branch stops
+being inert and the marker starts being useful — or whether the branch should instead be **deleted**
+as dead code once someone is confident the mint-time reservation can never be bypassed. Left
+undecided deliberately: either answer is defensible, and picking one was outside this issue's scope.
+
+---
+
+## B9 — The sign-up E2E journeys are written but have never been run
+
+**Raised:** 2026-08-26 (issue #10, Task 23) · **Status: RESOLVED the same day. All three journeys
+pass against a real local Supabase stack (`3 passed`, exit 0).**
+
+### What running them cost, and what it bought
+
+The CLI was installed to `~/.local/bin/supabase` (the path `playwright.config.ts` already prepends)
+and `supabase start` brought up GoTrue on 54321 and Postgres on 54322; the database was migrated to
+`0023_invites` and `seed_reference_data()` run. The hosted Supabase connector was evaluated first
+and rejected: it exposes only publishable/anon keys by design, and every journey begins at signup,
+where `admin_create_user` needs the service-role key. Both hosted projects are also paused, and
+these journeys write real user rows — not something to point at a real project to find out.
+
+**Two real product bugs, both of which had passed every gate in this repository:**
+
+1. **`LoginRoute` raced signup's own redirect.** `/signup/student` and `/signup/teacher` were
+   wrapped, so the session the form had just minted was read by the guard on the same commit and
+   `navigate("/verify-email")` lost. A new student landed on `/student/onboard` and **G-07 was
+   unreachable by signing up at all.** A unit test asserted the wrapper *should* be there, so the
+   bug was pinned in place by its own coverage.
+2. **Completing onboarding bounced back into onboarding.** `useCompleteOnboarding` only
+   `invalidateQueries`'d, which is non-blocking; `handleFinish` navigated before the refetch landed,
+   so the D7.9 gate read a stale `onboardingCompletedAt: null` and returned the student to the
+   wizard. **A student could never leave onboarding.** Introduced by the gate added in this issue.
+
+Both share one shape: every component is correct in isolation, and the defect exists only where two
+correct things meet under real timing. Unit tests cannot see that by construction.
+
+**Three faults in the journeys themselves**, none fixed by loosening an assertion: a seat baseline
+measured after the mint (D7.3 reserves at mint, so redemption cannot move the count); a join-code
+locator that forbade the whitespace the accessible-name algorithm inserts; and a landing CTA locator
+ambiguous across two same-labelled buttons, which Playwright's strict mode correctly refused rather
+than guessing at.
+
+**One setup gap:** `scripts/seed_e2e.py` assumes `subjects` is already populated, which is only true
+if `lemely/db/seed.py`'s reference-data step has run. On a fresh database it fails with
+`Unknown subject code: '0625'`, which does not point at the cause. Worth a guard in the seeder.
+
+### The original entry, kept because the reasoning still applies
+
+### What was tried, and the exact failure
+
+`web/e2e/signup.spec.ts` (260 lines: the student, teacher and invite journeys) was written against
+the real `global-setup.ts` / `seed.ts` fixtures. Running it fails before a single test executes:
+
+```
+Error: Could not resolve Supabase local-stack keys via "supabase status -o json".
+Is the local stack up? (Error: Command failed: supabase status -o json)
+    at resolveSupabaseEnv (web/playwright.config.ts:45:11)
+```
+
+`playwright.config.ts` resolves the anon and service-role keys from a running local Supabase stack
+at config-load time. This sandbox has bare Postgres on 127.0.0.1:54322 (started for this work) but
+**not** the Supabase stack: the `supabase` CLI is not installed, and standing the full stack up
+means GoTrue, PostgREST, Storage, Kong and Studio containers in an environment whose Docker daemon
+already died once mid-session. The E2E suite genuinely needs GoTrue, because the flows it exercises
+are real signup and password-grant calls, not mocks.
+
+### What assurance the spec does have
+
+It is **typechecked**. `tsconfig.e2e.json` is in the root project's reference graph, so
+`npm run typecheck` (`tsc -b --force --noEmit`) compiles the spec against the real Playwright types,
+the real seed helpers and the real page fixtures: 0 errors. So it is well-formed and type-correct
+against the actual fixtures, and unproven against a running product. Those are different claims and
+this entry keeps them apart deliberately.
+
+### What would close it
+
+Install the `supabase` CLI, `supabase start`, then `cd web && npx playwright test signup.spec.ts`.
+Treat the first run as a real review: a journey that has never executed usually has at least one
+selector or timing assumption wrong, and the point of running it is to find those, not to confirm
+a green tick.

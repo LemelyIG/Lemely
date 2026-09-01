@@ -17,6 +17,7 @@ import type {
   BulkApproveResponse,
   ClassAnalytics,
   ClassDetail,
+  ClassInviteCode,
   ClassList,
   ClassSummary,
   CreateClassRequest,
@@ -202,6 +203,33 @@ export function useRemoveStudent(
       queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
     },
+  })
+}
+
+/**
+ * `POST /school/classes/{classId}/invite-code` — mint a single-use class
+ * invite code (D7.3, spec §1.2, closes BUILD/BLOCKERS.md B8). Another way
+ * to hand out a class's self-enrolment capability alongside its permanent
+ * `joinCode` (`ClassDetail.joinCode`, T-03's spec bullet "Add students by
+ * invite code or from school seats"): unlike that code, an invite minted
+ * here works once and is tracked by who redeemed it
+ * (`mint_class_invite_code`'s own docstring). No request body — `classId`
+ * is a path segment and the router reads the caller's own id/role off the
+ * bearer token, nothing else needs stating — so unlike `useEnrollStudent`
+ * above there is no matching request type to pass through `mutate()`.
+ *
+ * Invalidates nothing. Minting a class invite changes no field
+ * `useClassDetail`/`useTeacherClasses` render — student count, join code and
+ * every stat are untouched by this call, unlike `useEnrollStudent`'s roster
+ * change above — and the minted code is shown once, on this screen alone;
+ * nothing else reads it.
+ */
+export function useMintClassInviteCode(
+  classId: string | undefined,
+): UseMutationResult<ClassInviteCode, Error, void> {
+  return useMutation({
+    mutationFn: () =>
+      request<ClassInviteCode>(`/school/classes/${classId}/invite-code`, { method: "POST" }),
   })
 }
 
