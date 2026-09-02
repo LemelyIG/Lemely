@@ -4,12 +4,18 @@ Two deployments are described here:
 
 1. **[Local packaged run](#1-local-packaged-run)** — the one-command Docker Compose
    stack that exists today and is verified working (`make up`).
-2. **[Future cloud deploy](#3-cloud-deploy-supabase-cloud--a-container-host)** — Supabase
-   Cloud plus a container host. **This has never been run.** It is written from the
-   real configuration surface of the code, not from a deploy that happened. Every
-   step is derived from a file in this repo and cites it, so you can check the claim
-   rather than trust it. Treat it as a checklist to execute carefully, not a
-   transcript of a success.
+2. **[Cloud deploy recipe](#3-cloud-deploy-supabase-cloud--a-container-host)** — Supabase
+   Cloud plus a container host, written from the real configuration surface of the
+   code rather than from a deploy that happened. Every step is derived from a file
+   in this repo and cites it, so you can check the claim rather than trust it.
+
+   **[`docs/ci-cd.md`](ci-cd.md) is the automated, opinionated version of this
+   recipe** — GitHub Actions, Cloud Run, and Cloudflare specifically, with staging
+   and production environments wired up. The two Supabase Cloud projects it uses
+   are provisioned for real (not hypothetical); the pipeline itself has not been
+   run end-to-end yet, pending the credentials `docs/ci-cd.md` asks for. Read this
+   section for the *why* behind the constraints (single replica, gated migrations,
+   the JWT secret trap); read `docs/ci-cd.md` for the concrete, automated *how*.
 
 MISSION §3 fixes the definition of done as *"one-command local run via Docker Compose
 … plus written deployment docs for a future free-tier cloud deploy. No live hosting."*
@@ -224,9 +230,10 @@ multi-replica host.
 For a real deploy, do one of:
 
 - **Preferred:** run `alembic upgrade head` as an explicit release/job step against
-  the production database, then start containers with the entrypoint's migration
-  line removed or guarded (e.g. `if [ "${LEMELY_RUN_MIGRATIONS:-1}" = "1" ]`).
-  A guard flag does not exist yet — adding it is a small, honest change.
+  the production database, then start containers with `LEMELY_RUN_MIGRATIONS=0` so
+  the entrypoint skips its own migration line (`docker-entrypoint.sh`). This is
+  exactly what `docs/ci-cd.md`'s pipeline does: a dedicated `migrate` job runs
+  first, and the Cloud Run deploy step sets `LEMELY_RUN_MIGRATIONS=0`.
 - Or run migrations from an operator machine before rolling the image, and accept
   the entrypoint's re-run as a no-op (it is idempotent at head).
 
@@ -343,7 +350,13 @@ shipping. `LEMELY_LOGGING__FORMAT=json` is the one lever that already exists.
 
 ## 6. Deployment checklist
 
-Copy this. Every line maps to something above.
+Copy this. Every line maps to something above. It's written for the generic
+"nginx + any container host" shape — if you're using the automated GitHub
+Actions pipeline (`docs/ci-cd.md`, Cloud Run + Cloudflare Workers), most of
+this is handled by the workflow itself; use `docs/ci-cd.md`'s own credentials
+checklist instead, which maps to this one but names exact secrets and skips
+the nginx-specific lines (there is no nginx in that path — Cloudflare Workers
+replaces it).
 
 ```
 [ ] Supabase Cloud project created; region matches the container host

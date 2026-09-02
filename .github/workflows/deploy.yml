@@ -1,0 +1,283 @@
+name: deploy
+
+# One pipeline, parameterised by environment — see docs/ci-cd.md for the
+# full picture. `develop` deploys to staging automatically; `main` deploys
+# to production behind a manual approval gate (the `approve` job below).
+# workflow_dispatch lets either environment be redeployed on demand without
+# a new commit, for prototyping/iteration or to re-run a flaky step.
+on:
+  push:
+    branches: [develop, main]
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'reports/**'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Environment to (re)deploy
+        type: choice
+        options: [staging, production]
+        required: true
+
+concurrency:
+  # Two deploys to the SAME environment must never race (a slower run
+  # landing after a newer one would silently roll production backwards).
+  # Different environments deploy independently — no group overlap.
+  group: deploy-${{ github.event.inputs.environment || (github.ref == 'refs/heads/main' && 'production' || 'staging') }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # Push events don't carry a workflow_dispatch input, so the environment is
+  # derived from the branch instead. Centralised here rather than repeated
+  # per job so every job downstream agrees on one value.
+  resolve-env:
+    runs-on: ubuntu-latest
+    outputs:
+      environment: ${{ steps.resolve.outputs.environment }}
+    steps:
+      - id: resolve
+        run: |
+          ENV="${{ github.event.inputs.environment }}"
+          if [ -z "$ENV" ]; then
+            if [ "${{ github.ref }}" = "refs/heads/main" ]; then ENV=production; else ENV=staging; fi
+          fi
+          echo "environment=$ENV" >> "$GITHUB_OUTPUT"
+
+  # GitHub's environment-approval gate is per-JOB, not per-workflow-run — if
+  # every job below declared `environment: production` directly, a required
+  # reviewer would have to click Approve three separate times per deploy
+  # (see docs/ci-cd.md's "why a separate gate job" note). Routing everything
+  # through one gate job first means exactly one approval, then the rest of
+  # the run proceeds normally. Staging targets the auto-created, unprotected
+  # "no-gate" environment, so it passes through instantly with nothing to
+  # configure.
+  approve:
+    needs: resolve-env
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment == 'production' && 'production-gate' || 'no-gate' }}
+    steps:
+      - run: echo "Proceeding to deploy ${{ needs.resolve-env.outputs.environment }}."
+
+  # A separate, gated step — never run from docker-entrypoint.sh in this
+  # pipeline (LEMELY_RUN_MIGRATIONS=0 is set on the Cloud Run deploy below).
+  # docs/deployment.md §3.4 calls out why: a container rollout silently
+  # doubling as an unreviewed schema change, possibly racing itself across
+  # replicas. Running it here, before the image deploys, keeps schema
+  # changes visible in this job's log on every single run.
+  migrate:
+    needs: [resolve-env, approve]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # `[db]` only — sqlalchemy/alembic/psycopg/pyjwt. This job never
+      # imports fastapi or gradio, so the web/ui extras would only slow it
+      # down for nothing.
+      - run: pip install -e ".[db]"
+
+      - name: Alembic upgrade head
+        env:
+          # Supabase's dashboard gives `postgresql://...`; this app's
+          # SQLAlchemy driver needs `postgresql+psycopg://...`
+          # (docs/deployment.md §3.2 step 4) — rewritten below so the secret
+          # can just be pasted as Supabase shows it, no manual editing.
+          RAW_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          LEMELY_DATABASE__URL="$(printf '%s' "$RAW_DB_URL" | sed -E 's#^postgresql://#postgresql+psycopg://#')"
+          echo "::add-mask::$LEMELY_DATABASE__URL"
+          export LEMELY_DATABASE__URL
+          alembic upgrade head
+
+  deploy-backend:
+    needs: [resolve-env, migrate]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    permissions:
+      contents: read
+      id-token: write # Workload Identity Federation — no long-lived GCP key anywhere
+    outputs:
+      url: ${{ steps.deploy.outputs.url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: google-github-actions/auth@v3
+        with:
+          workload_identity_provider: ${{ vars.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ vars.GCP_SERVICE_ACCOUNT }}
+
+      - uses: google-github-actions/setup-gcloud@v3
+
+      - name: Configure Docker for Artifact Registry
+        run: gcloud auth configure-docker us-central1-docker.pkg.dev --quiet
+
+      - name: Build and push image
+        env:
+          IMAGE: us-central1-docker.pkg.dev/${{ vars.GCP_PROJECT_ID }}/lemely/backend-${{ needs.resolve-env.outputs.environment }}:${{ github.sha }}
+        run: |
+          docker build -t "$IMAGE" .
+          docker push "$IMAGE"
+          echo "IMAGE=$IMAGE" >> "$GITHUB_ENV"
+
+      - name: Compute SQLAlchemy DB URL
+        env:
+          RAW_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          DB_URL_PSYCOPG="$(printf '%s' "$RAW_DB_URL" | sed -E 's#^postgresql://#postgresql+psycopg://#')"
+          # The rewritten string no longer matches secrets.SUPABASE_DB_URL
+          # byte-for-byte, so GitHub's automatic log masking (which only
+          # matches registered secret values verbatim) would NOT redact it
+          # on its own once it crosses into the next step via $GITHUB_ENV —
+          # explicitly register it too.
+          echo "::add-mask::$DB_URL_PSYCOPG"
+          echo "DATABASE_URL_PSYCOPG=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
+
+      # Free-tier shape throughout: max-instances=1 is NOT a cost knob, it is
+      # load-bearing — docs/deployment.md §5.1 documents two pieces of
+      # in-process state (the correction-job registry, the parent OTP store)
+      # that break silently with a second replica. min-instances=0 is the
+      # cost knob: it scales to zero between requests so idle time costs
+      # nothing, at the price of a cold start on the next request.
+      # --allow-unauthenticated is required for the Cloudflare Worker's
+      # plain fetch() to reach it (see web/worker/index.ts and docs/ci-cd.md
+      # for the tradeoff and the optional shared-secret hardening it notes).
+      - id: deploy
+        uses: google-github-actions/deploy-cloudrun@v3
+        with:
+          service: lemely-backend-${{ needs.resolve-env.outputs.environment }}
+          region: us-central1
+          image: ${{ env.IMAGE }}
+          # gen2 is the load-bearing flag here; 1Gi is only insurance.
+          #
+          # The first run of this pipeline died 55s into startup, before uvicorn
+          # bound, with "Uncaught signal: 7, pid=1, tid=1" — SIGBUS. That message
+          # is gVisor's sentry, so it was gen1. The commit that fixed it changed
+          # memory AND execution environment together, but the Cloud Run memory
+          # metric then settled the attribution: the healthy revision runs at
+          # 8.8% of 1Gi (~90 MB), i.e. it would have used ~17% of 512Mi, and no
+          # sample around the crash came near the limit. Memory was never the
+          # constraint and the earlier "the image is ~450 MB so it exhausted
+          # 512Mi" reasoning was wrong — Cloud Run fetches image layers lazily,
+          # so only touched pages ever cost anything.
+          #
+          # What did change: on gen1 the container stalled 55s and took SIGBUS
+          # on a page the sandbox could not serve; on gen2 it reported
+          # "Containers became healthy in 6.8s". That is gVisor's lazy page-in
+          # being the bottleneck, not the heap. Dropping back to 512Mi would
+          # very likely still work, but 1Gi costs nothing extra while idle
+          # (min-instances=0) and buys headroom against a cold-start spike that
+          # the per-minute metric could miss, so it stays.
+          flags: --allow-unauthenticated --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          env_vars: |-
+            LEMELY_RUN_MIGRATIONS=0
+            LEMELY_LOGGING__FORMAT=json
+            LEMELY_SUPABASE__URL=${{ secrets.SUPABASE_URL }}
+            LEMELY_SUPABASE__JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}
+            LEMELY_SUPABASE__ANON_KEY=${{ secrets.SUPABASE_ANON_KEY }}
+            LEMELY_SUPABASE__SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+            LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
+            GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+
+      # A rollout that fails the startup probe reports only "the user-provided
+      # container failed to start and listen on the port" plus a Cloud Console
+      # link — a dead end in CI, where nobody is holding a browser. The
+      # revision's status conditions and the container's own stderr are what
+      # actually name the cause (they are how the SIGBUS above was found, after
+      # the logs had to be pulled by hand). `run.admin` — granted by
+      # scripts/gcp-bootstrap.sh — already covers `revisions describe`; reading
+      # logs additionally needs roles/logging.viewer, so that call is allowed to
+      # fail with a message naming the missing role rather than masking the
+      # real error.
+      - name: Why the rollout failed
+        if: failure()
+        run: |
+          SERVICE="lemely-backend-${{ needs.resolve-env.outputs.environment }}"
+          REV="$(gcloud run revisions list --service="$SERVICE" --region=us-central1 \
+                   --sort-by=~metadata.creationTimestamp --limit=1 \
+                   --format='value(metadata.name)' 2>/dev/null || true)"
+          echo "== latest revision: ${REV:-<none created>} =="
+          if [ -n "$REV" ]; then
+            gcloud run revisions describe "$REV" --region=us-central1 \
+              --format='yaml(status.conditions)' || true
+            echo "== container stdout/stderr =="
+            gcloud logging read \
+              "resource.type=cloud_run_revision AND resource.labels.revision_name=\"$REV\"" \
+              --limit=200 --order=asc --freshness=30m \
+              --format='value(textPayload,jsonPayload.message)' \
+              || echo "(could not read logs — grant roles/logging.viewer to the deploy service account)"
+          fi
+
+      - name: Verify health directly against Cloud Run
+        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health"
+
+  deploy-frontend:
+    needs: [resolve-env, deploy-backend]
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: web/package-lock.json
+
+      - name: Install dependencies
+        working-directory: web
+        run: npm ci
+
+      - name: Build SPA
+        working-directory: web
+        run: npm run build
+
+      # `--var BACKEND_URL:<url>` overrides the placeholder in wrangler.jsonc
+      # with the Cloud Run URL this same run just deployed — see
+      # web/worker/index.ts for how the Worker uses it.
+      - name: Deploy Worker (static assets + /api/* proxy)
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: web
+          command: deploy --env ${{ needs.resolve-env.outputs.environment }} --var BACKEND_URL:${{ needs.deploy-backend.outputs.url }}
+
+  # End-to-end proof the whole chain works — DNS, the Worker's /api/* proxy,
+  # and the backend it points at — through the real public domain, not just
+  # each piece in isolation. Mirrors docs/deployment.md's "What was
+  # verified" approach: checked against the live thing, not inferred from
+  # config.
+  smoke-test:
+    needs: [resolve-env, deploy-backend, deploy-frontend]
+    runs-on: ubuntu-latest
+    steps:
+      - id: domain
+        run: |
+          if [ "${{ needs.resolve-env.outputs.environment }}" = "production" ]; then
+            echo "host=lemelyig.com" >> "$GITHUB_OUTPUT"
+          else
+            echo "host=staging.lemelyig.com" >> "$GITHUB_OUTPUT"
+          fi
+
+      # 5 minutes of retries, not 30 seconds. On the first successful frontend
+      # deploy the Worker Custom Domain is created seconds before this job runs,
+      # and Cloudflare then has to issue and attach an edge certificate to a
+      # hostname that has never served TLS — its own guidance for that window is
+      # minutes, not seconds. A 6x5s budget would red the run for a certificate
+      # that was always going to arrive, which is the likeliest false failure
+      # left in this pipeline. Costs nothing on a healthy deploy: curl stops at
+      # the first success.
+      - name: Frontend responds
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/"
+
+      - name: API health through the same-origin proxy
+        run: curl --fail --silent --show-error --retry 30 --retry-delay 10 --retry-all-errors "https://${{ steps.domain.outputs.host }}/api/health"

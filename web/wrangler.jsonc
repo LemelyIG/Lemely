@@ -1,0 +1,51 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Base name; each deploy target below overrides it so staging and
+  // production are fully separate Worker scripts (matching the fully
+  // separate Cloud Run services and Supabase projects per environment —
+  // see docs/ci-cd.md).
+  "name": "lemely-web",
+  "compatibility_date": "2026-08-18",
+  "main": "worker/index.ts",
+  "assets": {
+    "directory": "./dist",
+    "binding": "ASSETS",
+    // React Router uses browser history — any path that isn't a real build
+    // artifact falls back to index.html, same as web/nginx.conf's
+    // `try_files $uri $uri/ /index.html`.
+    "not_found_handling": "single-page-application",
+    // Only /api/* invokes worker/index.ts; every other request is served
+    // as a static asset directly by the platform without running any
+    // Worker code (cheaper and faster than a catch-all fetch handler).
+    "run_worker_first": ["/api/*"]
+  },
+  // Included on the Workers Free plan — cheap, useful when an /api/*
+  // proxy call fails and you need to see why without reproducing locally.
+  "observability": {
+    "enabled": true
+  },
+  // Local `wrangler dev` / `npm run cf:dev` target — mirrors vite.config.ts's
+  // own dev-server proxy target so both point at the same local backend.
+  "vars": {
+    "BACKEND_URL": "http://127.0.0.1:8000"
+  },
+  "env": {
+    "staging": {
+      "name": "lemely-web-staging",
+      // CI overrides this with the real Cloud Run staging URL on every
+      // deploy (`wrangler deploy --env staging --var BACKEND_URL:<url>`;
+      // see .github/workflows/deploy.yml) — the value here only matters if
+      // someone runs `npm run cf:deploy:staging` before CI has ever set it.
+      "vars": { "BACKEND_URL": "https://REPLACED-BY-CI.invalid" },
+      // No trailing "/*" — a Custom Domain maps the WHOLE hostname to this
+      // Worker (that's what makes it a "custom domain" rather than a plain
+      // Route); wrangler rejects a wildcard/path here.
+      "routes": [{ "pattern": "staging.lemelyig.com", "custom_domain": true }]
+    },
+    "production": {
+      "name": "lemely-web-production",
+      "vars": { "BACKEND_URL": "https://REPLACED-BY-CI.invalid" },
+      "routes": [{ "pattern": "lemelyig.com", "custom_domain": true }]
+    }
+  }
+}
