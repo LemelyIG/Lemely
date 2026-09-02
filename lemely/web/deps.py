@@ -32,6 +32,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
@@ -89,6 +90,12 @@ def get_history_store() -> HistoryStoreProtocol:
     in-tmp JSON store double without touching Postgres.
     """
     return DbHistoryStore(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_catalogue_service() -> CatalogueService:
+    """The syllabus catalogue reader, bound to the process sessionmaker."""
+    return CatalogueService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
