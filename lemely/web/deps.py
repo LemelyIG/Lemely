@@ -59,6 +59,7 @@ from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
@@ -96,6 +97,16 @@ def get_history_store() -> HistoryStoreProtocol:
 def get_catalogue_service() -> CatalogueService:
     """The syllabus catalogue reader, bound to the process sessionmaker."""
     return CatalogueService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_threshold_service() -> ThresholdService:
+    """The grade-threshold reader, bound to the process sessionmaker.
+
+    Derives `/api/reference`'s `targetGradeVocabularies` from the ingested
+    `option_thresholds` rows (see `ThresholdService.target_vocabularies`).
+    """
+    return ThresholdService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -886,6 +897,7 @@ def reset_singletons() -> None:
     get_settings.cache_clear()
     get_history_store.cache_clear()
     get_catalogue_service.cache_clear()
+    get_threshold_service.cache_clear()
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()

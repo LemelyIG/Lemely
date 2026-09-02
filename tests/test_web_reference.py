@@ -23,10 +23,17 @@ from lemely.db.base import Base
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.models.academic import Subject
 from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
-from lemely.db.models.enums import ExamBoard, PaperTier, QualificationLevel, Role
+from lemely.db.models.enums import ExamBoard, PaperTier, QualificationLevel, Role, SessionMonth
+from lemely.db.models.thresholds import OptionThreshold
+from lemely.db.threshold_repo import ThresholdService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
-from lemely.web.deps import AuthContext, get_auth_context, get_catalogue_service
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_catalogue_service,
+    get_threshold_service,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -150,6 +157,11 @@ def _use_catalogue(client: TestClient, sm: sessionmaker[Session]) -> None:
     client.app.dependency_overrides[get_catalogue_service] = lambda: service  # type: ignore[union-attr]
 
 
+def _use_thresholds(client: TestClient, sm: sessionmaker[Session]) -> None:
+    service = ThresholdService(sm)
+    client.app.dependency_overrides[get_threshold_service] = lambda: service  # type: ignore[union-attr]
+
+
 def test_unauthenticated_call_is_401(client: TestClient) -> None:
     assert client.get("/api/reference").status_code == 401
 
@@ -161,6 +173,7 @@ def test_every_authenticated_role_can_read_the_catalogue(
     _seed_catalogue(pg_sessionmaker)
     _authenticate(client, role)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     assert client.get("/api/reference").status_code == 200
 
 
@@ -170,6 +183,7 @@ def test_subjects_are_ordered_by_code_and_exclude_inactive(
     _seed_catalogue(pg_sessionmaker)
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     body = client.get("/api/reference").json()
     assert [s["code"] for s in body["subjects"]] == ["0580", "0625"]
 
@@ -180,6 +194,7 @@ def test_papers_are_ordered_by_number_and_carry_their_tier(
     _seed_catalogue(pg_sessionmaker)
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     physics = next(
         s for s in client.get("/api/reference").json()["subjects"] if s["code"] == "0625"
     )
@@ -193,6 +208,7 @@ def test_topics_are_code_prefixed_strings_in_syllabus_order(
     _seed_catalogue(pg_sessionmaker)
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     physics = next(
         s for s in client.get("/api/reference").json()["subjects"] if s["code"] == "0625"
     )
@@ -223,6 +239,7 @@ def test_topics_past_ten_stay_in_syllabus_order(
             )
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     subject = next(
         s for s in client.get("/api/reference").json()["subjects"] if s["code"] == "0606"
     )
@@ -237,6 +254,7 @@ def test_classifier_vocabulary_is_never_served(
     _seed_catalogue(pg_sessionmaker)
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     raw = client.get("/api/reference").text
     assert "keywords" not in raw
     assert "strong" not in raw
@@ -247,6 +265,7 @@ def test_an_empty_catalogue_is_an_empty_list_not_an_error(
 ) -> None:
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     response = client.get("/api/reference")
     assert response.status_code == 200
     assert response.json()["subjects"] == []
@@ -257,6 +276,7 @@ def test_enumerations_mirror_the_backend_enums(
 ) -> None:
     _authenticate(client, Role.student)
     _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
     body = client.get("/api/reference").json()
     assert [q["value"] for q in body["qualificationLevels"]] == [
         "igcse",
@@ -286,3 +306,46 @@ def test_reset_singletons_clears_get_catalogue_service() -> None:
     first = get_catalogue_service()
     reset_singletons()
     assert get_catalogue_service() is not first
+
+
+def test_reset_singletons_clears_get_threshold_service() -> None:
+    """Same omission risk as :func:`get_catalogue_service` above: a stale
+    :class:`ThresholdService` bound to a torn-down sessionmaker must not
+    survive a settings swap between tests."""
+    from lemely.web.deps import get_threshold_service, reset_singletons
+
+    first = get_threshold_service()
+    reset_singletons()
+    assert get_threshold_service() is not first
+
+
+# ── targetGradeVocabularies ─────────────────────────────────────────────────
+
+
+def test_target_grade_vocabularies_round_trip(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The field the router now populates from ``ThresholdService`` reaches
+    the wire with the shape ``TargetGradeVocabularyDTO`` declares."""
+    _seed_catalogue(pg_sessionmaker)
+    with pg_sessionmaker.begin() as s:
+        s.add(
+            OptionThreshold(
+                subject_code="0625",
+                session_month=SessionMonth.may_june,
+                session_year=2024,
+                option_code="AX",
+                component_numbers=[21],
+                max_mark_after_weighting=200,
+                thresholds={"A*": 152, "A": 125, "B": 98, "C": 72, "D": 56, "E": 40},
+                source_url="https://example.invalid/gt.pdf",
+            )
+        )
+    _authenticate(client, Role.student)
+    _use_catalogue(client, pg_sessionmaker)
+    _use_thresholds(client, pg_sessionmaker)
+    body = client.get("/api/reference").json()
+    vocab = next(v for v in body["targetGradeVocabularies"] if v["subjectCode"] == "0625")
+    assert vocab["qualificationLevel"] == "igcse"
+    assert vocab["tier"] == "extended"
+    assert vocab["grades"] == ["A*", "A", "B", "C", "D", "E", "U"]

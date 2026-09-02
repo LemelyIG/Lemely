@@ -14,12 +14,19 @@ from fastapi import APIRouter, Depends
 from lemely.core.difficulty import _BANDS
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.models.enums import SESSION_MONTH_LABELS, QualificationLevel
-from lemely.web.deps import AuthContext, get_auth_context, get_catalogue_service
+from lemely.db.threshold_repo import ThresholdService
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_catalogue_service,
+    get_threshold_service,
+)
 from lemely.web.schemas_reference import (
     LabelledValueDTO,
     ReferenceDTO,
     SubjectCatalogueDTO,
     SubjectPaperDTO,
+    TargetGradeVocabularyDTO,
 )
 
 router = APIRouter(prefix="/api")
@@ -38,6 +45,7 @@ QUALIFICATION_LEVEL_LABELS: dict[QualificationLevel, str] = {
 def get_reference(
     _auth: Annotated[AuthContext, Depends(get_auth_context)],
     catalogue: Annotated[CatalogueService, Depends(get_catalogue_service)],
+    thresholds: Annotated[ThresholdService, Depends(get_threshold_service)],
 ) -> ReferenceDTO:
     """Return the subject catalogue and every UI enumeration.
 
@@ -61,6 +69,15 @@ def get_reference(
                 topics=s.topics,
             )
             for s in catalogue.subjects()
+        ],
+        targetGradeVocabularies=[
+            TargetGradeVocabularyDTO(
+                subjectCode=v.subject_code,
+                qualificationLevel=v.qualification_level,
+                tier=v.tier,
+                grades=v.grades,
+            )
+            for v in thresholds.target_vocabularies()
         ],
         qualificationLevels=[
             LabelledValueDTO(value=level.value, label=label)
