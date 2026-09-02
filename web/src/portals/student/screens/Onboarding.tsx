@@ -2,6 +2,8 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Stepper } from "@/components/ui/stepper"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { subjectFor, targetGradesFor, tierForPapers } from "@/lib/reference"
 import { studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
   useCompleteOnboarding,
@@ -11,7 +13,6 @@ import {
   useStudentProfile,
 } from "@/lib/hooks/useMeApi"
 import {
-  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
@@ -19,7 +20,6 @@ import {
   clampStepIndex,
   placementInviteSubject,
   toggleInSet,
-  SUPPORTED_SUBJECTS,
   type QuestionnaireAnswers,
   type SubjectDraft,
 } from "./onboarding/onboardingData"
@@ -72,13 +72,13 @@ type WizardStep = "subjects" | "questionnaire"
 export function Onboarding() {
   const navigate = useNavigate()
   const { data: existing } = useStudentProfile()
+  const { data: reference, isLoading: referenceLoading, isError: referenceError, refetch } = useReference()
   const patchProfile = usePatchStudentProfile()
   const putEnrolments = usePutEnrolments()
   const putConfidenceRatings = usePutConfidenceRatings()
   const completeOnboarding = useCompleteOnboarding()
 
   const [wizardStep, setWizardStep] = useState<WizardStep>("subjects")
-  const [qualificationLevel, setQualificationLevel] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, SubjectDraft>>({})
   const [answers, setAnswers] = useState<QuestionnaireAnswers>({})
   const [confidenceBySubject, setConfidenceBySubject] = useState<
@@ -89,13 +89,16 @@ export function Onboarding() {
 
   const seeded = useRef(false)
   useEffect(() => {
-    if (seeded.current || !existing) return
+    // `reference` is load-bearing, not decorative: the filter below drops any
+    // enrolment whose subject is not in the catalogue, so seeding against an
+    // empty catalogue would drop *every* saved enrolment and the student would
+    // silently lose the subjects they picked last session.
+    if (seeded.current || !existing || !reference) return
     seeded.current = true
-    setQualificationLevel(existing.profile.qualificationLevel)
     const seededDrafts: Record<string, SubjectDraft> = {}
     const seededConfidence: Record<string, Record<string, number>> = {}
     for (const enrolment of existing.enrolments) {
-      if (!SUPPORTED_SUBJECTS.some((s) => s.code === enrolment.subjectCode)) continue
+      if (!reference.subjects.some((s) => s.code === enrolment.subjectCode)) continue
       seededDrafts[enrolment.subjectCode] = {
         subjectCode: enrolment.subjectCode,
         qualificationLevel: enrolment.qualificationLevel,
@@ -118,7 +121,7 @@ export function Onboarding() {
       weeklyStudyHours: existing.profile.weeklyStudyHours ?? undefined,
       gradeLevel: existing.profile.gradeLevel ?? undefined,
     })
-  }, [existing])
+  }, [existing, reference])
 
   const questionnaireSteps = buildQuestionnaireSteps(Object.keys(drafts))
 
@@ -130,7 +133,10 @@ export function Onboarding() {
       } else {
         next[code] = {
           subjectCode: code,
-          qualificationLevel: qualificationLevel,
+          // The subject's own level (D10) — 0580/0606/0625 are IGCSE
+          // syllabuses, so asking the student produced answers like "A-Level
+          // Physics 0625" that describe nothing that exists.
+          qualificationLevel: subjectFor(reference, code)?.qualificationLevel ?? null,
           papers: new Set(),
           targetGrade: null,
           sessionMonth: null,
@@ -160,9 +166,6 @@ export function Onboarding() {
   async function handleSubjectsContinue() {
     setError(null)
     try {
-      if (qualificationLevel) {
-        await patchProfile.mutateAsync(buildProfilePatchPayload({ qualificationLevel }))
-      }
       await putEnrolments.mutateAsync({
         enrolments: buildEnrolmentPayload(Object.values(drafts)),
       })
@@ -244,7 +247,7 @@ export function Onboarding() {
       // order S-01 presented them. A student who selected nothing has no
       // subject to invite them into a placement test for — S-06 directly.
       // See `placementInviteSubject` for why this is not `Object.keys(...)[0]`.
-      const firstSubject = placementInviteSubject(Object.keys(drafts))
+      const firstSubject = placementInviteSubject(Object.keys(drafts), reference?.subjects ?? [])
       navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
     } catch (err) {
       setError(studentSaveFailureMessage(err))
@@ -272,30 +275,31 @@ export function Onboarding() {
 
       {wizardStep === "subjects" ? (
         <SubjectsStep
-          qualificationLevel={qualificationLevel}
-          onQualificationLevel={(value) => {
-            setQualificationLevel(value)
-            // Back-fill drafts still at `null` — a subject ticked before the
-            // level was picked must not be left behind. A draft with its own
-            // per-subject override is left untouched. See
-            // `backfillNullQualificationLevels`'s docstring.
-            setDrafts((prev) => backfillNullQualificationLevels(prev, value))
-          }}
+          subjects={reference?.subjects ?? []}
+          sessionMonths={reference?.sessionMonths ?? []}
+          targetGrades={(code) =>
+            targetGradesFor(
+              reference,
+              code,
+              tierForPapers(subjectFor(reference, code), [...(drafts[code]?.papers ?? [])]),
+            )
+          }
+          loading={referenceLoading}
+          loadError={referenceError}
+          onRetry={() => void refetch()}
           drafts={drafts}
           onToggleSubject={toggleSubject}
-          onSubjectQualificationLevel={(code, value) =>
-            updateDraft(code, { qualificationLevel: value })
-          }
           onTogglePaper={togglePaper}
           onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
           onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
           onSessionYear={(code, year) => updateDraft(code, { sessionYear: year })}
           onContinue={handleSubjectsContinue}
-          saving={saving}
+          saving={putEnrolments.isPending}
           error={error}
         />
       ) : (
         <QuestionnaireStep
+          reference={reference}
           steps={questionnaireSteps}
           stepIndex={questionnaireIndex}
           onBack={() => goToStep(questionnaireIndex - 1)}

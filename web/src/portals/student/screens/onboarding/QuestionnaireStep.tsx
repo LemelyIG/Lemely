@@ -4,10 +4,11 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
 import { Slider } from "@/components/ui/slider"
+import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
+import type { ReferenceData } from "@/lib/referenceTypes"
 import {
   CONFIDENCE_MAX,
   CONFIDENCE_MIN,
-  SUPPORTED_SUBJECTS,
   WEEKLY_HOURS_MAX,
   WEEKLY_HOURS_MIN,
   type QuestionnaireAnswers,
@@ -157,6 +158,7 @@ function QuestionShell({ question, children }: { question: string; children: Rea
 }
 
 export interface QuestionnaireStepProps {
+  reference: ReferenceData | undefined
   steps: QuestionnaireStepDef[]
   stepIndex: number
   onBack: () => void
@@ -179,6 +181,7 @@ export interface QuestionnaireStepProps {
 }
 
 export function QuestionnaireStep({
+  reference,
   steps,
   stepIndex,
   onBack,
@@ -280,7 +283,8 @@ export function QuestionnaireStep({
       </QuestionShell>
     )
   } else {
-    const subject = SUPPORTED_SUBJECTS.find((s) => s.code === step.subjectCode)
+    const subject = subjectFor(reference, step.subjectCode ?? "")
+    const topics = confidenceTopicsFor(subject)
     const ratings = (step.subjectCode ? confidenceBySubject[step.subjectCode] : undefined) ?? {}
     answered = Object.values(ratings).some((v) => v !== undefined)
     body = (
@@ -288,7 +292,7 @@ export function QuestionnaireStep({
         question={`How confident do you feel in ${subject?.name ?? "this subject"} right now?`}
       >
         <Card className="flex flex-col gap-5 p-5">
-          {(subject?.confidenceTopics ?? []).map((topic) => (
+          {topics.map((topic) => (
             <SkippableSlider
               key={topic}
               value={ratings[topic]}

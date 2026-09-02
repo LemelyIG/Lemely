@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest"
+import type { CatalogueSubject } from "@/lib/referenceTypes"
 import {
-  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
@@ -12,37 +12,48 @@ import {
   type SubjectDraft,
 } from "@/portals/student/screens/onboarding/onboardingData"
 
+function cat(code: string): CatalogueSubject {
+  return { code, name: code, board: "caie", qualificationLevel: "igcse", papers: [], topics: [] }
+}
+
+// Catalogue order is `code` order now (spec D3 drops the display-order
+// column), so the fixture is ordered the way `/api/reference` returns it.
+const CATALOGUE = [cat("0580"), cat("0606"), cat("0625")]
+
 describe("placementInviteSubject — S-02 → S-03 routing", () => {
   it("sends a single-subject student to that subject", () => {
-    expect(placementInviteSubject(["0580"])).toBe("0580")
+    expect(placementInviteSubject(["0580"], CATALOGUE)).toBe("0580")
   })
 
   it("returns null when the student enrolled in nothing (S-06 instead)", () => {
-    expect(placementInviteSubject([])).toBeNull()
+    expect(placementInviteSubject([], CATALOGUE)).toBeNull()
   })
 
-  it("orders by the S-01 catalogue, not by the order the codes arrive in", () => {
-    // 0625 is first in SUPPORTED_SUBJECTS, so it wins regardless of argument
-    // order — the rule is "the first subject as S-01 presented them".
-    expect(placementInviteSubject(["0606", "0625"])).toBe("0625")
-    expect(placementInviteSubject(["0625", "0606"])).toBe("0625")
+  it("orders by the fetched catalogue, not by the order the codes arrive in", () => {
+    expect(placementInviteSubject(["0625", "0580"], CATALOGUE)).toBe("0580")
+    expect(placementInviteSubject(["0580", "0625"], CATALOGUE)).toBe("0580")
   })
 
   it("does not depend on JS object key enumeration order", () => {
     // The regression this function exists for. `Object.keys` hoists
-    // integer-like keys ahead of insertion order, so a future syllabus code
-    // without a leading zero would silently jump the queue and route the
-    // student to a subject they picked second. Today's codes all have a
-    // leading zero, which is exactly why the bug was invisible.
+    // integer-like keys ahead of insertion order, so a syllabus code without a
+    // leading zero silently jumps the queue. Today's codes all have one, which
+    // is exactly why the bug was invisible.
     const drafts: Record<string, boolean> = {}
     drafts["0625"] = true
     drafts["9709"] = true
     expect(Object.keys(drafts)[0]).toBe("9709") // the trap, pinned
-    expect(placementInviteSubject(Object.keys(drafts))).toBe("0625")
+    expect(placementInviteSubject(Object.keys(drafts), CATALOGUE)).toBe("0625")
   })
 
-  it("ignores a code that is not a supported subject", () => {
-    expect(placementInviteSubject(["9999"])).toBeNull()
+  it("ignores a code that is not in the catalogue", () => {
+    expect(placementInviteSubject(["9999"], CATALOGUE)).toBeNull()
+  })
+
+  it("returns null when the catalogue has not loaded", () => {
+    // Guards the same failure `Onboarding.tsx`'s seeding effect guards: acting
+    // on an empty catalogue must not silently mean "no subjects".
+    expect(placementInviteSubject(["0625"], [])).toBeNull()
   })
 })
 
@@ -150,56 +161,6 @@ describe("buildEnrolmentPayload", () => {
     const payload = buildEnrolmentPayload(drafts)
 
     expect(payload[0].qualificationLevel).toBe("igcse")
-  })
-})
-
-describe("backfillNullQualificationLevels — toggle-then-set-global level regression", () => {
-  it("backfills a draft still at null when the profile-wide level is set afterwards", () => {
-    // The bug: a student ticks Physics and Maths (both drafts seed `null`
-    // because no level has been picked yet), then scrolls up and picks
-    // "A-Level". Without the back-fill, both enrolments PUT
-    // `qualificationLevel: null` despite the explicit choice.
-    const drafts: Record<string, SubjectDraft> = {
-      "0625": {
-        subjectCode: "0625",
-        qualificationLevel: null,
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-      "9709": {
-        subjectCode: "9709",
-        qualificationLevel: null,
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-    }
-
-    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
-    const payload = buildEnrolmentPayload(Object.values(backfilled))
-
-    expect(payload.every((entry) => entry.qualificationLevel !== null)).toBe(true)
-    expect(payload.map((entry) => entry.qualificationLevel)).toEqual(["a_level", "a_level"])
-  })
-
-  it("does not overwrite a draft that already has its own per-subject level", () => {
-    const drafts: Record<string, SubjectDraft> = {
-      "0625": {
-        subjectCode: "0625",
-        qualificationLevel: "igcse", // an explicit per-subject override
-        papers: new Set([1]),
-        targetGrade: null,
-        sessionMonth: null,
-        sessionYear: null,
-      },
-    }
-
-    const backfilled = backfillNullQualificationLevels(drafts, "a_level")
-
-    expect(backfilled["0625"].qualificationLevel).toBe("igcse")
   })
 })
 
