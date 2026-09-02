@@ -35,6 +35,7 @@ import structlog
 from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.session import get_sessionmaker
 from lemely.io.ciegt import ComponentRow, ciegt_page_url, fetch_rows, gt_pdf_url
+from lemely.io.grade_boundaries import invalidate_reference_cache
 from lemely.io.threshold_pdf import ParsedComponent, parse_threshold_pdf
 
 if TYPE_CHECKING:
@@ -198,6 +199,7 @@ def ingest(
                         )
                     )
 
+    invalidate_reference_cache()
     logger.info("threshold.ingest.done", **vars(report))
     return report
 
