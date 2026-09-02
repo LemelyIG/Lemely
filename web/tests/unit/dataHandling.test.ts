@@ -162,6 +162,28 @@ describe("the page states facts, not promises — D6.8", () => {
   it("says a parent sees only a student they are linked to", () => {
     expect(allCopy).toMatch(/only for a student they are linked to/i)
   })
+
+  /*
+   * PR 1B (client error reporting) added a real code path this page used to
+   * say did not exist ("no code path sends any of this to anyone" used to be
+   * unqualified). These pin the fourth fact the page now has to carry: that
+   * a crash report exists, what it contains, where it goes, and that it
+   * excludes the things a reader would most want excluded.
+   */
+  it("says a crash report is sent only when something breaks, not on an ordinary visit", () => {
+    expect(allCopy).toMatch(/sent only when something breaks/i)
+  })
+
+  it("names where a crash report goes: Lemely's backend, then Google Cloud Logging", () => {
+    expect(allCopy).toMatch(/Lemely's own backend/i)
+    expect(allCopy).toMatch(/Google Cloud Logging/)
+  })
+
+  it("says a crash report never includes what you typed, session data or your marks", () => {
+    expect(allCopy).toMatch(/never includes what you typed/i)
+    expect(allCopy).toMatch(/stored in your session/i)
+    expect(allCopy).toMatch(/your marks/i)
+  })
 })
 
 describe("the page cannot silently outlive the product it describes — D6.8", () => {

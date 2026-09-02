@@ -19,21 +19,34 @@ import { ApiError } from "@/lib/api"
  *
  * `<QueryState>` is a general-purpose wrapper any screen can reach for, so its
  * fallback has to be genuinely generic: a sentence that is true regardless of
- * which endpoint failed, for the ~25 screens a follow-up PR converts that have
+ * which endpoint failed, for the ~47 screens a follow-up PR converts that have
  * no outcome module of their own (yet, or ever — a screen with a real one
  * keeps passing its own `body`, and this only fires when none was supplied).
- * It follows the family's shared rule rather than inventing a new one: keep a
- * `detail` a human wrote, translate a status the reader can act on, and never
- * let a machine's own words reach a screen.
  *
- * ── The rule this exists to keep off the screen ─────────────────────────────
+ * ── Status-only, never detail-first ─────────────────────────────────────────
  *
- * `correctionOutcome.ts`'s header records how "Failed to fetch" and "500
- * Internal Server Error" reached students before that module existed: a
- * render read `err.message` on whatever `fetch` or `api.ts` threw. This
- * module never does that. A non-`ApiError` (a bare `TypeError`, a thrown
- * string, anything) always falls through to `QUERY_GENERIC_FAILURE`, which is
- * this codebase's own sentence, not the runtime's.
+ * Earlier drafts of this module read `error.detail` before the status class,
+ * copying `correctionOutcome.ts`'s policy. That policy is right for
+ * `correctionOutcome.ts` because it was checked against the specific routes
+ * it covers: the marking stream's 4xx `detail`s are written for a student to
+ * read. It is wrong here, and `studentOutcome.ts`'s own header is the
+ * evidence — it counted 154 `detail=str(exc)` sites across
+ * `lemely/web/routers/`, plus details like `f"Unknown session month:
+ * {value!r}"` that are a Python repr, not a sentence. This module has no
+ * fixed set of routes to check against; it is the DEFAULT for every screen a
+ * follow-up PR converts, so a passthrough here would put a stringified
+ * exception or a `{field!r}` in front of whichever of those ~47 readers hit
+ * it first, product-wide, exactly the defect `correctionOutcome.ts`'s header
+ * records reaching students before that module existed. The rule this module
+ * follows instead — the same one `parentOutcome.ts` reaches for a different
+ * reason — is: classify on **status**, write every sentence here, and never
+ * repeat a machine's own words. A screen that has a `detail` genuinely worth
+ * showing has a way to show it: pass `body` to `<QueryState>`, or write an
+ * outcome module of its own the way the other seven did.
+ *
+ * A non-`ApiError` (a bare `TypeError`, a thrown string, anything) always
+ * falls through to `QUERY_GENERIC_FAILURE`, which is this codebase's own
+ * sentence, not the runtime's.
  */
 
 /** No response at all, as opposed to a bad one. `request()` in `lib/api.ts`
@@ -67,21 +80,17 @@ export const QUERY_GENERIC_FAILURE = "Something went wrong loading this. Try aga
 
 /**
  * Turn whatever a react-query result's `error` field holds into one
- * student-readable sentence.
+ * portal-agnostic, human-readable sentence.
  *
- * Order matters, the same way it does in `correctionOutcome.ts`: a `detail`
- * FastAPI wrote for a human is checked before the status class, because a 422
- * that names the actual problem is worth more than anything generic this
- * module could say about a 422. Status 0 is checked first among the status
- * branches because it is a client-side synthesised code, not a real HTTP
- * response, and would otherwise fall into the `>= 500` test by coincidence of
- * ordering on some future refactor.
+ * Status only, never `error.detail` — see the module header for why a
+ * detail-first policy that is correct in `correctionOutcome.ts` is wrong
+ * here. Status 0 is checked first among the branches because it is a
+ * client-side synthesised code, not a real HTTP response, and would
+ * otherwise fall into the `>= 500` test by coincidence of ordering on some
+ * future refactor.
  */
 export function describeQueryFailure(error: unknown): string {
   if (error instanceof ApiError) {
-    if (typeof error.detail === "string" && error.detail.trim() !== "") {
-      return error.detail.trim()
-    }
     if (error.status === 0) return QUERY_NETWORK_FAILURE
     if (error.status === 401) return QUERY_SESSION_EXPIRED
     if (error.status === 403) return QUERY_ACCESS_DENIED

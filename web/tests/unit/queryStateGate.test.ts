@@ -57,6 +57,7 @@ import { relativeTo, sourceFiles } from "./support/jsxSource"
 
 const ROOT = join(import.meta.dirname, "..", "..")
 const SCREENS_ROOT = join(ROOT, "src", "portals")
+const QUIZ_ROOT = join(ROOT, "src", "components", "quiz")
 
 /**
  * Matches `import { a, b } from "@/lib/hooks/whatever"` (optionally
@@ -135,10 +136,14 @@ function usesQueryState(source: string): boolean {
  *
  * This list may shrink and must never grow. A NEW screen that loads data
  * must use `QueryState` from the day it is written — it has no excuse to
- * land here, because unlike the 47 below it was never hand-rolling its own
+ * land here, because unlike the 53 below it was never hand-rolling its own
  * pending/error branches to begin with.
  */
 const ALLOWLIST: { path: string; reason: string }[] = [
+  {
+    path: "src/components/quiz/QuizTaker.tsx",
+    reason: "shared quiz-taking surface, converted in the per-screen sweep (PR 3)",
+  },
   { path: "src/portals/admin/screens/Activations.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/admin/screens/Classes.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/admin/screens/PipelineHealth.tsx", reason: "converted in the per-screen sweep (PR 3)" },
@@ -147,10 +152,30 @@ const ALLOWLIST: { path: string; reason: string }[] = [
   { path: "src/portals/admin/screens/Schools.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/admin/screens/Seats.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/admin/screens/Teachers.tsx", reason: "converted in the per-screen sweep (PR 3)" },
+  {
+    path: "src/portals/auth/JoinWithCode.tsx",
+    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+  },
+  {
+    path: "src/portals/auth/SignupDetails.tsx",
+    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+  },
+  {
+    path: "src/portals/auth/VerifyEmail.tsx",
+    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+  },
   { path: "src/portals/parent/screens/ChildOverview.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/parent/screens/Children.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/parent/screens/SubjectDetail.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/parent/screens/Weaknesses.tsx", reason: "converted in the per-screen sweep (PR 3)" },
+  {
+    path: "src/portals/settings/DeviceSettings.tsx",
+    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+  },
+  {
+    path: "src/portals/settings/NotificationSettings.tsx",
+    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+  },
   { path: "src/portals/student/screens/Announcements.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/student/screens/CorrectPaper.tsx", reason: "converted in the per-screen sweep (PR 3)" },
   { path: "src/portals/student/screens/Friends.tsx", reason: "converted in the per-screen sweep (PR 3)" },
@@ -190,15 +215,51 @@ const ALLOWLIST: { path: string; reason: string }[] = [
 
 const ALLOWLISTED_PATHS = new Set(ALLOWLIST.map((entry) => entry.path))
 
-/** Every screen under `portals/**\/screens/**`, not every `.tsx` under
- * `portals/`: `sourceFiles` walks the whole subtree, which also holds
- * `index.tsx`, layout shells and portal-local components that never render
- * a route on their own — the `/screens/` segment is what makes something a
- * screen, matching how the portals lay themselves out on disk (see the
- * directory listing in the module header's own reasoning). */
-const SCREENS = sourceFiles(SCREENS_ROOT)
+/**
+ * The gated surface is every `.tsx` under `portals/**\/screens/**`, plus
+ * every `.tsx` directly under `portals/settings/`, `portals/auth/` and
+ * `components/quiz/` — not every `.tsx` under `portals/`: `sourceFiles`
+ * walks the whole subtree, which also holds `index.tsx` layout shells and
+ * portal-local components that never render a route or a pending/error
+ * state of their own.
+ *
+ * Two things widened this from "just `/screens/`" (its original, narrower
+ * shape):
+ *
+ *  - `PlacementTest.tsx` and `PracticeSet.tsx` (both under `/screens/`)
+ *    import no hook from `@/lib/hooks/` themselves — they delegate all
+ *    data-loading to `QuizTaker.tsx`, which hand-rolls its own
+ *    pending/error branches around `useStudentQuizTake`. A gate that only
+ *    ever reads `/screens/` files never reaches that component, so a
+ *    genuinely hand-rolled pending/error branch sat one hop outside the
+ *    net. `components/quiz/` closes that gap.
+ *  - Several route-level surfaces render outside any portal's
+ *    `screens/` directory entirely: `portals/settings/DeviceSettings.tsx`,
+ *    `portals/settings/NotificationSettings.tsx`,
+ *    `portals/auth/VerifyEmail.tsx`, `portals/auth/JoinWithCode.tsx` and
+ *    `portals/auth/SignupDetails.tsx` are each routed to directly
+ *    (`routes.tsx`), not composed from inside a screen, so the original
+ *    `/screens/`-only filter never saw them either.
+ *
+ * `portals/**\/index.tsx` layout shells are deliberately still excluded:
+ * a layout renders its portal's persistent chrome (nav, sidebar) from a
+ * query, but that query drives what to *show*, not a page-level
+ * pending/error state to compose — there is no screen-shaped "loading"
+ * moment a layout itself owns, `<Outlet/>` renders whatever screen is
+ * routed to regardless. `portals/marketing/` is excluded for a different
+ * reason: it is static landing/legal content with no data-loading screens
+ * at all, checked by `loadsData` the same as anything else — it merely
+ * never trips it.
+ */
+const SCREENS = [...sourceFiles(SCREENS_ROOT), ...sourceFiles(QUIZ_ROOT)]
   .map((file) => ({ path: relativeTo(ROOT, file), source: readFileSync(file, "utf8") }))
-  .filter((f) => f.path.includes("/screens/"))
+  .filter(
+    (f) =>
+      f.path.includes("/screens/") ||
+      f.path.startsWith("src/portals/settings/") ||
+      f.path.startsWith("src/portals/auth/") ||
+      f.path.startsWith("src/components/quiz/"),
+  )
 
 describe("every data-loading screen uses QueryState or is allowlisted", () => {
   it("has no unlisted screen still hand-rolling its own pending/error branches", () => {

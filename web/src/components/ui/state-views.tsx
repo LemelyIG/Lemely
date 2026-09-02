@@ -57,8 +57,15 @@ import { Button } from "@/components/ui/button"
  * `kind="offline"` is `role="status"` (polite — connectivity dropping is a
  * fact of the moment, not an event to interrupt over). `kind="empty"` gets
  * neither; there is nothing to announce about content that was never going to
- * exist. Applies to both layouts, since it is about what assistive tech is
- * told, not about which one is on screen.
+ * exist.
+ *
+ * `compact` narrows `kind="error"` to `role="status"` instead: `lazy-chart.tsx`
+ * renders one `compact` `ErrorState` per failed chart, and a dashboard with
+ * three broken panels would otherwise interrupt the reader three times with
+ * `alert`'s assertive announcement for what is, from a single chart's own
+ * layout box, a much smaller failure than a whole panel refusing to load. The
+ * full, centred layout keeps `alert` — that one is always the reader's whole
+ * reason for being on the page.
  */
 
 export type StateViewKind = "empty" | "error" | "offline"
@@ -128,7 +135,16 @@ export function StateView({
   // error panel in the product is announced the same way without every
   // screen having to remember to ask for it. `{...props}` still spreads after
   // this, so an unusual caller can override it via the ordinary HTML prop.
-  const regionRole = kind === "error" ? "alert" : kind === "offline" ? "status" : undefined
+  // `compact` error is `status`, not `alert` — see the module header: three
+  // `compact` chart fallbacks on one dashboard must not interrupt three times.
+  const regionRole =
+    kind === "error"
+      ? compact
+        ? "status"
+        : "alert"
+      : kind === "offline"
+        ? "status"
+        : undefined
 
   if (compact) {
     return (

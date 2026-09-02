@@ -28,10 +28,18 @@ registerPushClientBridge()
  * `event.error` is `null` for a small set of browsers/cases (notably a
  * cross-origin script error reported as "Script error." with no detail);
  * falling back to `event.message` keeps that case from reporting a message
- * of `"null"`.
+ * of `"null"`. `event.message` can itself be `""` (an `ErrorEvent` fired by
+ * hand with no message, say), so the final fallback is the literal
+ * "Unknown error" rather than letting an empty string through —
+ * `describeThrown` in `clientErrors.ts` does the same mapping for a caught
+ * value with no message of its own, for the same reason: the backend's DTO
+ * requires at least one character on `message`.
  */
 window.addEventListener("error", (event) => {
-  reportClientError({ error: event.error ?? event.message, kind: "unhandled" })
+  reportClientError({
+    error: event.error ?? (event.message || "Unknown error"),
+    kind: "unhandled",
+  })
 })
 window.addEventListener("unhandledrejection", (event) => {
   reportClientError({ error: event.reason, kind: "rejection" })

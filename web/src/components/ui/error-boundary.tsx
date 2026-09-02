@@ -100,14 +100,18 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
 
   /**
    * `resetKey` changing is the navigation-recovery path described on the
-   * prop itself. Compared with `Object.is` via a plain `!==`, matching how
-   * React itself compares hook dependencies — `resetKey` is typed `unknown`
-   * so a caller can hand it any primitive (a pathname, an id) without this
-   * component caring which, and a primitive is exactly what `!==` compares
-   * correctly without needing a deep-equality helper.
+   * prop itself. Compared with `Object.is`, matching how React itself
+   * compares hook dependencies — `resetKey` is typed `unknown` so a caller
+   * can hand it any primitive (a pathname, an id) without this component
+   * caring which, and `Object.is` is what tells two primitives apart
+   * correctly without needing a deep-equality helper. Plain `!==` does not:
+   * `NaN !== NaN` is `true`, so a caller passing something that can be
+   * `NaN` (a parsed id that failed to parse, say) would see `resetKey`
+   * compare as "changed" on every render — an infinite reset loop, since
+   * `reset()` triggers a re-render that runs this same comparison again.
    */
   componentDidUpdate(prevProps: ErrorBoundaryProps): void {
-    if (this.state.error !== null && prevProps.resetKey !== this.props.resetKey) {
+    if (this.state.error !== null && !Object.is(prevProps.resetKey, this.props.resetKey)) {
       this.reset()
     }
   }

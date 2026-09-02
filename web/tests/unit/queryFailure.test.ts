@@ -15,28 +15,40 @@ import {
  * Loading/error primitives PR, part A · `<QueryState>`'s generic failure
  * sentence, pinned the same way `correctionOutcome.test.ts` pins the marking
  * flow's: every one of these is what a reader sees when a screen has no
- * outcome module of its own, so a silent regression here reaches ~25 screens
+ * outcome module of its own, so a silent regression here reaches ~47 screens
  * at once rather than one.
  */
 
 describe("describeQueryFailure", () => {
-  it("prefers a backend detail written for a human", () => {
-    const detail = "No mark scheme available for this paper; cannot mark."
+  /*
+   * These two pin the defect the module header now records: a detail-first
+   * policy that is correct in `correctionOutcome.ts` (whose routes write
+   * `detail` for a human) is wrong as this module's DEFAULT, because most of
+   * `lemely/web/routers/`'s `detail`s are machine text — see
+   * `studentOutcome.ts`'s header for the 154-site count. Both of these must
+   * fall through to the status mapping, never echo the detail verbatim.
+   */
+  it("does not return a stringified-exception detail (str(exc)-style)", () => {
+    // `placement.py`'s pattern: `HTTPException(422, detail=str(exc))`.
+    const detail = "ValidationError: 1 validation error for StudentProfile"
     const err = new ApiError(422, detail, detail)
-    expect(describeQueryFailure(err)).toBe(detail)
+    const result = describeQueryFailure(err)
+    expect(result).toBe(QUERY_GENERIC_FAILURE)
+    expect(result).not.toBe(detail)
+    expect(result).not.toContain("ValidationError")
   })
 
-  it("trims a detail string before returning it", () => {
-    const err = new ApiError(422, "  Check the file and try again.  ", "  Check the file and try again.  ")
-    expect(describeQueryFailure(err)).toBe("Check the file and try again.")
+  it("does not return a Python-repr detail", () => {
+    // `me.py`'s pattern: `f"Unknown session month: {value!r}"`.
+    const detail = "Unknown session month: 'x'"
+    const err = new ApiError(400, detail, detail)
+    const result = describeQueryFailure(err)
+    expect(result).toBe(QUERY_GENERIC_FAILURE)
+    expect(result).not.toBe(detail)
+    expect(result).not.toContain("'x'")
   })
 
-  it("treats a whitespace-only detail as no detail", () => {
-    const err = new ApiError(500, "500 Internal Server Error", "   ")
-    expect(describeQueryFailure(err)).toBe(QUERY_SERVICE_FAILURE)
-  })
-
-  it("treats a structured (non-string) detail as no detail", () => {
+  it("treats a structured (non-string) detail the same as a missing one", () => {
     // The placement 409's `detail` is a full DTO object, not a string — see
     // `studentOutcome.ts`'s header. This function must not stringify it.
     const err = new ApiError(409, "409 Conflict", { reason: "not_available" })
@@ -109,17 +121,28 @@ describe("describeQueryFailure", () => {
     }
   })
 
-  it("carries no em-dash and no exclamation mark in any returned sentence", () => {
-    const sentences = [
-      QUERY_NETWORK_FAILURE,
-      QUERY_SESSION_EXPIRED,
-      QUERY_ACCESS_DENIED,
-      QUERY_NOT_FOUND,
-      QUERY_RATE_LIMITED,
-      QUERY_SERVICE_FAILURE,
-      QUERY_GENERIC_FAILURE,
+  /*
+   * The no-em-dash/no-exclamation invariant runs over the function's actual
+   * return values for every status class it distinguishes, not just the
+   * exported constants — so a future branch that builds a sentence instead of
+   * returning a constant (e.g. interpolating a status code) is still caught,
+   * not just the seven names this file happens to import.
+   */
+  it("carries no em-dash and no exclamation mark in any returned sentence, for every status class", () => {
+    const cases: unknown[] = [
+      new ApiError(0, "network"),
+      new ApiError(401, "unauthorized"),
+      new ApiError(403, "forbidden"),
+      new ApiError(404, "not found"),
+      new ApiError(429, "too many requests"),
+      new ApiError(500, "server error"),
+      new ApiError(502, "bad gateway"),
+      new ApiError(400, "bad request"),
+      new TypeError("Failed to fetch"),
+      undefined,
     ]
-    for (const sentence of sentences) {
+    for (const thrown of cases) {
+      const sentence = describeQueryFailure(thrown)
       expect(sentence).not.toContain("—")
       expect(sentence).not.toContain("–")
       expect(sentence).not.toContain("!")

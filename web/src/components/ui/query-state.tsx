@@ -55,6 +55,34 @@ import { describeQueryFailure } from "@/lib/queryFailure"
  * instead, which is why this is not simply "always render a heading". Optional
  * because not every `QueryState` call site is a whole route (a panel inside a
  * larger screen has no landmark of its own to announce).
+ *
+ * ── `idle`, and why `pending` alone is not "loading" ────────────────────────
+ *
+ * react-query's `enabled: false` (18+ hooks across `useStudentApi.ts`,
+ * `usePlacementApi.ts`, `usePracticeApi.ts` and `useTeacherApi.ts` use it;
+ * `useParentApi.ts`'s child-linking query stays disabled permanently) parks a
+ * query at `status: "pending", fetchStatus: "idle"` with no fetch ever
+ * scheduled, rather than transitioning it through `"success"` or `"error"`.
+ * The first draft of this component treated `"pending"` as one state and
+ * always rendered `skeleton`, which is correct for an enabled query mid-fetch
+ * and wrong for a disabled one — a skeleton that never resolves is worse than
+ * no skeleton at all, since it tells a reader something is coming. `idle`
+ * exists for that second case; see its own doc comment for what a caller
+ * should put there. `fetchStatus` is optional on `QueryStateQuery` for the
+ * same structural reason `data`/`error`/`refetch` already are: a hand-built
+ * query object that never sets it just never idles.
+ *
+ * ── Why a `"success"` status can still reach the error branch ──────────────
+ *
+ * `request()` in `lib/api.ts` returns `undefined as T` on a 204, so
+ * `status === "success"` does not imply `data !== undefined` the way
+ * react-query's own discriminated union would suggest — `QueryStateQuery` is
+ * a structural type, not that union, and stays that way for the reason given
+ * above. The old code cast past this (`query.data as T`) and handed a value
+ * the caller's own `T` says cannot be `undefined` straight to `isEmpty` and
+ * `children`. This module now checks for it explicitly and renders the error
+ * branch instead — see that block's own comment for why error, not skeleton
+ * or empty.
  */
 
 /**
@@ -71,6 +99,14 @@ export interface QueryStateQuery<T> {
   data: T | undefined
   error: unknown
   refetch: () => unknown
+  /** react-query's own `fetchStatus` — "fetching" while a request is in
+   * flight, "paused" while offline, "idle" otherwise. Optional, and
+   * deliberately not required: a hand-built object (this file's own tests,
+   * the kit preview page) satisfies `QueryStateQuery` without inventing one.
+   * A caller whose query can sit at `status: "pending", fetchStatus: "idle"`
+   * — any `enabled: false` query, for as long as it stays disabled — should
+   * supply both this and `idle`; see that prop's doc for why. */
+  fetchStatus?: "fetching" | "paused" | "idle"
 }
 
 /** What to show for `status === "error"`. `body` defaults to
@@ -92,8 +128,22 @@ export interface QueryStateProps<T> {
    * arrives — see the module header on why this is never invented here. */
   skeleton: ReactNode
   error: QueryStateErrorProps
+  /** Rendered instead of `skeleton` when `query.status === "pending"` and
+   * `query.fetchStatus === "idle"` — a query sitting at `enabled: false`,
+   * which react-query leaves pending forever rather than fetching. Without
+   * this, a converted screen behind a conditional `enabled:` shows a
+   * skeleton that never resolves, because no fetch is coming to resolve it.
+   * Falls back to `skeleton` when omitted, so a query that is always enabled
+   * (most of them) needs nothing extra. A call site with a conditionally
+   * enabled query should supply this — an empty state or a prompt naming
+   * what turns the query on, not the loading shape for data that is not
+   * being asked for. */
+  idle?: ReactNode
   /** Whether the loaded `data` counts as empty. Only consulted once
-   * `query.status === "success"` and `data` is defined. */
+   * `query.status === "success"` and `data` is defined — a success with
+   * `data === undefined` (a 204; see `lib/api.ts`) is handled before this
+   * runs, as an error rather than empty, since the module's error branch
+   * doc explains why. */
   isEmpty?: (data: T) => boolean
   /** Rendered when `isEmpty` returns true. If `isEmpty` says empty but no
    * `empty` was supplied, falls through to `children` — a call site that has
@@ -110,6 +160,7 @@ export interface QueryStateProps<T> {
 export function QueryState<T>({
   query,
   skeleton,
+  idle,
   error,
   isEmpty,
   empty,
@@ -119,6 +170,23 @@ export function QueryState<T>({
   const heading = srHeading ? <h1 className="sr-only">{srHeading}</h1> : null
 
   if (query.status === "pending") {
+    // `enabled: false` (18+ hooks across the API modules use it, and
+    // `useParentApi.ts`'s child-linking query stays disabled permanently)
+    // leaves react-query sitting at `status: "pending", fetchStatus: "idle"`
+    // forever — no fetch is in flight, so nothing will ever move this query
+    // off `pending` on its own. Rendering `skeleton` there is a promise this
+    // component cannot keep: a skeleton says "this resolves shortly", and
+    // this one would not resolve at all. `idle` is what the caller shows
+    // instead; falling back to `skeleton` keeps every always-enabled query
+    // (most of them) working with no extra prop.
+    if (query.fetchStatus === "idle") {
+      return (
+        <>
+          {heading}
+          {idle ?? skeleton}
+        </>
+      )
+    }
     return (
       <>
         {heading}
@@ -145,11 +213,41 @@ export function QueryState<T>({
     )
   }
 
-  // `query.status === "success"` from here: `data` is defined by react-query's
-  // own contract once status is success, but `QueryStateQuery` types it as
-  // `T | undefined` to stay structural rather than re-declaring react-query's
-  // discriminated union, so the narrowing below is explicit rather than free.
-  const data = query.data as T
+  if (query.data === undefined) {
+    // `query.status === "success"` with `data === undefined` is
+    // representable, not theoretical: `request()` in `lib/api.ts` returns
+    // `undefined as T` on a 204. Handing that straight to `isEmpty`/
+    // `children` as `T` would be the same false cast this block exists to
+    // remove, just moved one line down — and holding on `skeleton` is worse
+    // than that, because react-query already resolved successfully, so
+    // (unlike the `idle` case above) no further fetch is coming to replace
+    // the skeleton with anything. Rendering the error branch is the honest
+    // answer: the caller asked for data and got none, which is a failure to
+    // show something even though nothing in `query.error` says so — a
+    // reader who sees a retry button can act on that (a manual refetch may
+    // turn up whatever a 204 stood in for) where a reader staring at a
+    // skeleton that will never resolve cannot. `error.body` is deliberately
+    // not consulted here: it exists to interpret `query.error`, and there is
+    // no `query.error` to interpret — `describeQueryFailure(undefined)` is
+    // this module's own generic sentence, not a stand-in for the caller's.
+    return (
+      <>
+        {heading}
+        <ErrorState
+          heading={error.heading}
+          body={describeQueryFailure(undefined)}
+          marginalia={error.marginalia}
+          action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
+        />
+      </>
+    )
+  }
+
+  // `query.status === "success"` and `query.data !== undefined` from here,
+  // so `data` narrows to `T` from the check above with no cast — see the
+  // block above for why `data` can be `undefined` on a `"success"` status in
+  // the first place.
+  const data: T = query.data
 
   if (isEmpty?.(data)) {
     return empty ?? children(data)

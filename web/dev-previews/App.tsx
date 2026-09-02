@@ -261,7 +261,7 @@ interface QueryStateDemoData {
   rows: { id: string; label: string }[]
 }
 
-/** The loaded render every `QueryState` demo cell shares, so the four cells
+/** The loaded render every `QueryState` demo cell shares, so the cells below
  * differ only in `query`, which is the thing being demonstrated. */
 function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
   return (
@@ -276,14 +276,28 @@ function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
 }
 
 /**
- * Four hand-built `QueryStateQuery` objects, one per cell below. Hand-built
+ * Five hand-built `QueryStateQuery` objects, one per cell below. Hand-built
  * rather than a real `useQuery()` call because a live query cannot be forced
- * into "pending forever" or "failed with a 503" on demand for a static
- * preview page, and `QueryState`'s whole point is that a hand-built object
- * satisfies the same structural type a real query result does, with no cast.
+ * into "pending forever", "pending and idle" or "failed with a 503" on
+ * demand for a static preview page, and `QueryState`'s whole point is that a
+ * hand-built object satisfies the same structural type a real query result
+ * does, with no cast.
  */
-const QUERY_STATE_DEMO: Record<"pending" | "error" | "empty" | "success", QueryStateQuery<QueryStateDemoData>> = {
+const QUERY_STATE_DEMO: Record<
+  "pending" | "idle" | "error" | "empty" | "success",
+  QueryStateQuery<QueryStateDemoData>
+> = {
   pending: { status: "pending", data: undefined, error: null, refetch: () => undefined },
+  // `enabled: false`'s own resting state: `fetchStatus: "idle"` alongside
+  // `status: "pending"`, which is what makes `QueryState` render `idle`
+  // instead of `skeleton` — see that prop's doc comment.
+  idle: {
+    status: "pending",
+    fetchStatus: "idle",
+    data: undefined,
+    error: null,
+    refetch: () => undefined,
+  },
   error: {
     status: "error",
     data: undefined,
@@ -805,7 +819,7 @@ function AppBody() {
 
           <ComponentSection
             name="QueryState"
-            summary="Loading/error primitives PR, part A. Takes a react-query result and renders the matching skeleton, error or empty view without every screen composing that switch by hand; see student Overview.tsx for the reference conversion. The four cells below use hand-built query objects rather than a live query, so every state is reachable on demand."
+            summary="Loading/error primitives PR, part A. Takes a react-query result and renders the matching skeleton, error or empty view without every screen composing that switch by hand; see student Overview.tsx for the reference conversion. The cells below use hand-built query objects rather than a live query, so every state is reachable on demand."
           >
             <StateCell state="loading" provenance="prop" note="Skeleton is caller-supplied, from loading-shapes.tsx">
               <div className="w-full">
@@ -827,6 +841,27 @@ function AppBody() {
                 <QueryState<QueryStateDemoData>
                   query={QUERY_STATE_DEMO.error}
                   skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="An enabled: false query: status pending, fetchStatus idle. Renders the idle prop, not a skeleton that would never resolve on its own."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.idle}
+                  skeleton={<PanelSkeleton />}
+                  idle={
+                    <EmptyState
+                      heading="Pick a class to see this panel"
+                      body="This loads once a class is selected above."
+                    />
+                  }
                   error={{ heading: "Couldn't load the demo panel" }}
                 >
                   {(data) => <QueryStateDemoPanel rows={data.rows} />}

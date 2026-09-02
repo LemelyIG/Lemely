@@ -82,11 +82,30 @@ function ChartFallback({ height, className }: { height?: number; className?: str
  * keeps `ErrorState` to the left-aligned inline treatment rather than the
  * centred full-panel one — the latter's own min height (`py-12` plus a 48px
  * icon) does not reliably fit inside a 220px chart box at every width.
+ *
+ * `onRetry` wires to the `ErrorBoundary`'s own `reset`, passed through as
+ * `action` rather than dropped: a chart can fail on one bad render (a stale
+ * average that briefly went NaN, an empty series mid-refetch) and recover on
+ * the next, and a fallback with no way back forces a full page reload to
+ * find out — the one recovery path `ErrorBoundary.reset` exists for.
  */
-function ChartErrorFallback({ height, className }: { height?: number; className?: string }) {
+function ChartErrorFallback({
+  height,
+  className,
+  onRetry,
+}: {
+  height?: number
+  className?: string
+  onRetry: () => void
+}) {
   return (
     <div className={cn("w-full overflow-hidden", className)} style={{ height: height ?? DEFAULT_CHART_HEIGHT }}>
-      <ErrorState compact heading="This chart failed to load" className="h-full" />
+      <ErrorState
+        compact
+        heading="This chart failed to load"
+        className="h-full"
+        action={{ label: "Try again", onClick: onRetry }}
+      />
     </div>
   )
 }
@@ -94,8 +113,9 @@ function ChartErrorFallback({ height, className }: { height?: number; className?
 export function LineChart(props: LineChartProps) {
   return (
     <ErrorBoundary
-      label="This chart"
-      fallback={() => <ChartErrorFallback height={props.height} className={props.className} />}
+      fallback={(_error, reset) => (
+        <ChartErrorFallback height={props.height} className={props.className} onRetry={reset} />
+      )}
     >
       <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
         <LineChartImpl {...props} />
@@ -107,8 +127,9 @@ export function LineChart(props: LineChartProps) {
 export function BarChart(props: BarChartProps) {
   return (
     <ErrorBoundary
-      label="This chart"
-      fallback={() => <ChartErrorFallback height={props.height} className={props.className} />}
+      fallback={(_error, reset) => (
+        <ChartErrorFallback height={props.height} className={props.className} onRetry={reset} />
+      )}
     >
       <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
         <BarChartImpl {...props} />

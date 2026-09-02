@@ -140,18 +140,59 @@ export const dataHandlingSections: DataHandlingSection[] = [
   {
     heading: "What this site does not do",
     /*
-     * Verified by search rather than asserted: no analytics, advertising,
-     * session-recording or error-reporting script appears anywhere in
-     * `web/src`, `web/index.html` or `web/package.json`. Payment processing is
-     * out of scope outright (PRODUCT.md:74), which is also why the landing
-     * page's plans section renders a placeholder rather than tiers.
+     * Was "verified by search rather than asserted: no analytics,
+     * advertising, session-recording or error-reporting script appears
+     * anywhere in `web/src`". PR 1B (client error reporting) made that
+     * search stale rather than the sentence merely aging: `lib/clientErrors.ts`
+     * now exists, `main.tsx` wires it to `window`'s "error" and
+     * "unhandledrejection" listeners, and every portal's `ErrorBoundary`
+     * (`components/ui/error-boundary.tsx`) calls it from
+     * `componentDidCatch`. So this panel now names that path explicitly
+     * instead of continuing to claim it does not exist — see the section
+     * below. Payment processing is still out of scope outright
+     * (PRODUCT.md:74), which is also why the landing page's plans section
+     * renders a placeholder rather than tiers, and analytics, advertising
+     * and session-recording scripts are still genuinely absent — this
+     * sentence was re-verified against `web/src`, `web/index.html` and
+     * `web/package.json` for this change, not carried over unread.
      *
      * The last sentence is phrased as a fact about code paths, not as an
      * undertaking. "We will never sell your data" is a promise and cannot be
      * derived from a repository; "no code path sends it anywhere else" is a
-     * property of the code and can.
+     * property of the code and can. It now excepts the crash-report path
+     * named below by cross-reference rather than by silently no longer being
+     * true.
      */
-    body: "It loads no analytics, advertising or session-recording scripts. There is no payment processing anywhere in the product, so there is nothing to enter a card into. Beyond the services named on this page, no code path sends any of this to anyone.",
+    body: "It loads no analytics, advertising or session-recording scripts. There is no payment processing anywhere in the product, so there is nothing to enter a card into. Beyond the services named on this page and the crash reports described next, no code path sends any of this to anyone.",
+  },
+  {
+    heading: "If something breaks while you are using it",
+    /*
+     * `lib/clientErrors.ts` is the whole of this: `buildClientErrorReport()`
+     * defines the exact wire body (message, stack, componentStack, route,
+     * buildId, kind, userAgent, occurredAt), `redactRoute()` is what keeps a
+     * password-reset or invite-code token in the URL out of it, and the
+     * module's own comment is where "sent only when something breaks" comes
+     * from: it fires from `ErrorBoundary.componentDidCatch`
+     * (`components/ui/error-boundary.tsx`) and from the two `window`
+     * listeners `main.tsx` installs ("error", "unhandledrejection"), and
+     * from nowhere else in the client.
+     *
+     * "Lemely's backend" and "Google Cloud Logging" name where the report
+     * goes and stops, not a promise about retention: this page has no
+     * retention machinery to describe (see `notYetBuilt` below), and a crash
+     * report is no exception to that gap. The client IP is not something
+     * this client sends; it is what every HTTP request carries and what
+     * Cloud Logging records the request as having arrived from, the same as
+     * it would for any other route this backend serves.
+     *
+     * "Never what you typed, stored session data or your marks" is the
+     * negative space worth stating plainly: `buildClientErrorReport()` never
+     * reads `localStorage`/`sessionStorage` (its own comment says so), takes
+     * no form field or answer text as input, and the fields it does send are
+     * about the failure, not about you.
+     */
+    body: "If a screen breaks, Lemely sends a small report to help fix it: what went wrong, the technical detail of where in the code that happened, which screen you were on, your browser's user agent string and when it happened. That report goes to Lemely's own backend, which writes it to Google Cloud Logging alongside the network address the report arrived from, the same as any other request this backend receives. It is sent only when something breaks, never on an ordinary visit, and it never includes what you typed, anything stored in your session, or your marks.",
   },
 ]
 

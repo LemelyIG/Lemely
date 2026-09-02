@@ -53,6 +53,64 @@ describe("buildClientErrorReport", () => {
     expect(report.stack).toBeNull()
   })
 
+  describe("describeThrown defensiveness (only reachable through buildClientErrorReport, since describeThrown itself is not exported)", () => {
+    it("falls back to a literal message for a null-prototype throwable (String() throws on it)", () => {
+      // Object.create(null) has no inherited toString/valueOf, so
+      // String(x) throws TypeError("Cannot convert object to primitive
+      // value") rather than producing "[object Object]".
+      const bad = Object.create(null) as unknown
+      const report = buildClientErrorReport(baseInput({ error: bad }))
+      expect(report.message).toBe("Unreportable error")
+      expect(report.stack).toBeNull()
+    })
+
+    it("falls back to a literal message when a thrown object's own toString throws", () => {
+      const bad = {
+        toString() {
+          throw new Error("toString exploded")
+        },
+      }
+      const report = buildClientErrorReport(baseInput({ error: bad }))
+      expect(report.message).toBe("Unreportable error")
+      expect(report.stack).toBeNull()
+    })
+
+    it("falls back to a literal message when an Error's message getter throws", () => {
+      const bad = new Error("irrelevant, the getter below wins")
+      Object.defineProperty(bad, "message", {
+        get() {
+          throw new Error("message getter exploded")
+        },
+      })
+      const report = buildClientErrorReport(baseInput({ error: bad }))
+      expect(report.message).toBe("Unreportable error")
+    })
+
+    it("falls back to a null stack when an Error's stack getter throws", () => {
+      const bad = new Error("boom")
+      Object.defineProperty(bad, "stack", {
+        get() {
+          throw new Error("stack getter exploded")
+        },
+      })
+      const report = buildClientErrorReport(baseInput({ error: bad }))
+      expect(report.message).toBe("boom")
+      expect(report.stack).toBeNull()
+    })
+
+    it("maps an empty Error message to the literal 'Unknown error', not an empty string", () => {
+      // The backend DTO for POST /api/client-errors requires min_length=1
+      // on message.
+      const report = buildClientErrorReport(baseInput({ error: new Error("") }))
+      expect(report.message).toBe("Unknown error")
+    })
+
+    it("maps a thrown empty string to 'Unknown error' the same way", () => {
+      const report = buildClientErrorReport(baseInput({ error: "" }))
+      expect(report.message).toBe("Unknown error")
+    })
+  })
+
   it("passes the buildId straight through untouched when under the limit", () => {
     const report = buildClientErrorReport(baseInput({ buildId: "a1b2c3d4e5f6" }))
     expect(report.buildId).toBe("a1b2c3d4e5f6")
@@ -142,7 +200,11 @@ describe("buildClientErrorReport", () => {
     })
 
     it("truncates route at 500 chars, after redaction", () => {
-      const longRoute = `/student/subject/${"a".repeat(600)}`
+      // Many short segments (none reaching the 20-char opaque-segment
+      // threshold below) rather than one long one, so this pins truncation
+      // alone without the path-redaction rules in the "route redaction"
+      // block below also firing on the same string.
+      const longRoute = `/student/board?extra=${"seg/".repeat(150)}`
       const report = buildClientErrorReport(baseInput({ route: longRoute }))
       expect(report.route).toHaveLength(500)
       expect(report.route).toBe(longRoute.slice(0, 500))
@@ -173,8 +235,19 @@ describe("buildClientErrorReport", () => {
     it.each(["token", "code", "access_token", "refresh_token"])(
       "redacts a %s query param to the literal value 'redacted'",
       (key) => {
-        const route = redactRoute(`/reset/confirm?${key}=super-secret-value`)
-        expect(route).toBe(`/reset/confirm?${key}=redacted`)
+        // A route with no "reset"/"verify-email"/"join" segment, so only the
+        // query-key rule under test is in play — the path-segment rule has
+        // its own tests below.
+        const route = redactRoute(`/auth/callback?${key}=super-secret-value`)
+        expect(route).toBe(`/auth/callback?${key}=redacted`)
+      },
+    )
+
+    it.each(["Token", "TOKEN", "Code", "Access_Token"])(
+      "matches a sensitive query key case-insensitively (%s)",
+      (key) => {
+        const route = redactRoute(`/auth/callback?${key}=super-secret-value`)
+        expect(route).toBe(`/auth/callback?${key}=redacted`)
       },
     )
 
@@ -198,6 +271,58 @@ describe("buildClientErrorReport", () => {
         baseInput({ route: "/join?token=abcdef123456" }),
       )
       expect(report.route).toBe("/join?token=redacted")
+    })
+
+    describe("path-segment redaction", () => {
+      // Every credential this app puts in a URL at all is a path segment,
+      // not a query param — see routes.tsx's /reset/:token,
+      // /verify-email/:token and /join/:code, none of which sit inside a
+      // portal ErrorBoundary.
+      it("redacts the segment after /reset", () => {
+        expect(redactRoute("/reset/a1b2c3d4e5f6g7h8i9j0")).toBe("/reset/redacted")
+      })
+
+      it("redacts the segment after /verify-email", () => {
+        expect(redactRoute("/verify-email/a1b2c3d4e5f6g7h8i9j0")).toBe(
+          "/verify-email/redacted",
+        )
+      })
+
+      it("redacts the segment after /join", () => {
+        expect(redactRoute("/join/abc123")).toBe("/join/redacted")
+      })
+
+      it("redacts a bare path segment that looks like a UUID even with no route context", () => {
+        expect(redactRoute("/teacher/classes/550e8400-e29b-41d4-a716-446655440000")).toBe(
+          "/teacher/classes/redacted",
+        )
+      })
+
+      it("leaves a short path segment alone", () => {
+        expect(redactRoute("/teacher/classes/42")).toBe("/teacher/classes/42")
+      })
+
+      it("leaves a segment just under the 20-char opaque threshold alone", () => {
+        const segment = "a".repeat(19)
+        expect(redactRoute(`/teacher/classes/${segment}`)).toBe(`/teacher/classes/${segment}`)
+      })
+
+      it("redacts a path segment of exactly 20 chars", () => {
+        const segment = "a".repeat(20)
+        expect(redactRoute(`/teacher/classes/${segment}`)).toBe("/teacher/classes/redacted")
+      })
+
+      it("redacts both a path segment and a query key on the same route", () => {
+        const route = redactRoute("/reset/a1b2c3d4e5f6g7h8i9j0?next=%2Flogin")
+        expect(route).toBe("/reset/redacted?next=%2Flogin")
+      })
+
+      it("end to end via buildClientErrorReport: a reset token in the path is redacted", () => {
+        const report = buildClientErrorReport(
+          baseInput({ route: "/reset/a1b2c3d4e5f6g7h8i9j0" }),
+        )
+        expect(report.route).toBe("/reset/redacted")
+      })
     })
 
     it("never touches a hash — redactRoute only ever receives pathname+search", () => {
