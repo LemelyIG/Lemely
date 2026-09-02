@@ -27,6 +27,16 @@ def s19() -> tuple[list, list]:
     return parse_threshold_pdf((FIXTURES / "0625_s19_gt.pdf").read_bytes())
 
 
+@pytest.fixture(scope="module")
+def s11() -> tuple[list, list]:
+    """0580 s11: 2011-era layout. Grade cells use the literal string "N/A"
+    (not a dash) for "not applicable at this tier", and the component-table
+    header wraps onto its own lines rather than sharing one line with the
+    grade letters. A parser that raises on "N/A" or only recognises the
+    single-line header aborts the whole ingest run on this document."""
+    return parse_threshold_pdf((FIXTURES / "0580_s11_gt.pdf").read_bytes())
+
+
 def test_components_parse_with_their_raw_marks(s24: tuple[list, list]) -> None:
     components, _ = s24
     assert len(components) == 18
@@ -194,3 +204,69 @@ def test_a_too_short_option_row_is_dropped_with_a_warning(
         option = _parse_option_row("AX 40 130 106 84", _GRADES_8, has_max_mark_column=False)
     assert option is None
     assert any("skipping" in record.message for record in caplog.records)
+
+
+def test_the_2011_era_document_parses_without_raising(s11: tuple[list, list]) -> None:
+    """The bug this guards against: 2011-era documents use "N/A" instead of a
+    dash, and previously `int("N/A")` propagated a ValueError out of the
+    parser and aborted the whole ingest run -- 0625 was never even reached."""
+    components, options = s11
+    assert len(components) == 12
+    assert len(options) == 6
+
+    p11 = next(c for c in components if (c.paper_number, c.paper_variant) == (1, 1))
+    assert p11.max_mark == 56
+    assert p11.thresholds == {"C": 33, "E": 21, "F": 14}
+
+    ax = next(o for o in options if o.option_code == "AX")
+    assert ax.component_numbers == [11, 31]
+    assert ax.max_mark_after_weighting is None
+
+
+def test_n_slash_a_cell_is_omitted_not_stored_as_zero_or_string(
+    s11: tuple[list, list],
+) -> None:
+    """ "N/A" means "not available at this tier", exactly like a dash. It must
+    be absent from the thresholds dict, not coerced to 0 and not left as the
+    literal string."""
+    components, _ = s11
+    p11 = next(c for c in components if (c.paper_number, c.paper_variant) == (1, 1))
+    assert "A" not in p11.thresholds
+    assert "B" not in p11.thresholds
+    assert 0 not in p11.thresholds.values()
+    assert all(isinstance(v, int) for v in p11.thresholds.values())
+
+
+@pytest.mark.parametrize("marker", ["N/A", "n/a", "N/a"])
+def test_grade_value_recognises_n_slash_a_case_insensitively(marker: str) -> None:
+    from lemely.io.threshold_pdf import _grade_value
+
+    assert _grade_value(marker, "irrelevant line") is None
+
+
+def test_an_unrecognised_grade_cell_is_omitted_and_logged_rather_than_raised(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A convention this parser has never seen (here, junk "??") must not
+    raise. It is treated as not-applicable, exactly like a dash or "N/A",
+    and the drop is logged so it stays visible rather than silent."""
+    from lemely.io.threshold_pdf import _grade_value
+
+    with caplog.at_level("WARNING", logger="lemely.io.threshold_pdf"):
+        value = _grade_value("??", "Component 11 40 ?? 21 18 16 15 14 13")
+    assert value is None
+    assert any("unrecognised grade cell" in record.message for record in caplog.records)
+
+
+def test_option_row_with_a_junk_grade_cell_does_not_raise() -> None:
+    """The exact call path that used to crash on "N/A": a full option row
+    parsed end to end, with one cell replaced by junk instead of a
+    recognised not-applicable marker."""
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "BX 21, 41, 51 ?? 106 84 62 50 38 26 14", _GRADES_8, has_max_mark_column=False
+    )
+    assert option is not None
+    assert "A*" not in option.thresholds
+    assert option.thresholds["A"] == 106

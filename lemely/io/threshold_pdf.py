@@ -22,6 +22,14 @@ to infer "is this token a max mark or a component number" from punctuation
 alone is ambiguous for a single-component option in the no-max-mark era (e.g.
 ``AX 40 130 106 84 ...`` -- no comma anywhere), and silently misreads the
 component number as a max mark and shifts every grade value by one column.
+
+Individual grade cells are read defensively. CAIE has used at least three
+spellings of "not applicable at this tier" across the document's lifetime --
+an en dash, a hyphen, and (2011-era documents) the literal string "N/A" -- and
+a fourth is only a matter of time. A cell that is not a recognised
+not-applicable marker and not an integer is logged and treated as
+not-applicable rather than raising: one unexpected glyph in one cell must not
+abort ingestion of every subject that would otherwise parse cleanly.
 """
 
 from __future__ import annotations
@@ -39,6 +47,13 @@ logger = logging.getLogger("lemely.io.threshold_pdf")
 _NOT_APPLICABLE = ("–", "-", "—")  # noqa: RUF001 - matches CAIE's literal dash glyphs
 
 _COMPONENT_HEADER = re.compile(r"^(?:mark|Component)\s+((?:[A-Z]\*?\s+)*[A-Z]\*?)$")
+#: A third, older layout wraps the header cell onto its own lines: a bare
+#: "mark" line, then the grade letters alone on the next line (e.g. 0580
+#: s11: "mark" / "A C E F" / "available"). The grade-letters line is matched
+#: only when it directly follows a line that is exactly "mark", so a stray
+#: single letter elsewhere in the text (this exact fixture has watermark
+#: bleed-through of isolated characters) cannot be mistaken for a header.
+_COMPONENT_HEADER_WRAPPED_GRADES = re.compile(r"^((?:[A-Z]\*?\s+)+[A-Z]\*?)$")
 _COMPONENT_ROW = re.compile(r"^Component\s+(\d+)\s+(\d+)\s+(.+)$")
 #: `mark after` is optional -- that is the whole difference between the eras. It
 #: is captured (not just matched) so callers know, from the header alone,
@@ -48,6 +63,42 @@ _OPTION_HEADER = re.compile(r"^Option\s+(?:(mark\s+after)\s+)?((?:[A-Z]\*?\s+)*[
 #: sliced by position -- see `_parse_option_row` -- because a single regex
 #: cannot unambiguously tell a max-mark token from a lone component number.
 _OPTION_ROW_PREFIX = re.compile(r"^([A-Z]{1,3})\s+(.+)$")
+
+
+def _grade_value(value: str, line: str) -> int | None:
+    """Return the integer for one grade cell, or ``None`` if it is not applicable.
+
+    "Not applicable at this tier" covers a dash, "N/A" (any case), or a
+    convention this parser has never seen before. A cell this function
+    cannot make sense of never raises: it is logged and treated as
+    not-applicable, exactly like a recognised marker, so a single unexpected
+    glyph cannot abort parsing of the whole document.
+    """
+    stripped = value.strip()
+    if stripped in _NOT_APPLICABLE or stripped.upper() == "N/A":
+        return None
+    try:
+        return int(stripped)
+    except ValueError:
+        logger.warning(
+            "threshold PDF: unrecognised grade cell %r, treating as not applicable: %r",
+            value,
+            line,
+        )
+        return None
+
+
+def _grade_thresholds(grades: list[str], values: list[str], line: str) -> dict[str, int]:
+    """Zip a header's grades against a row's values.
+
+    Not-applicable cells are dropped rather than raised or stored as a sentinel.
+    """
+    thresholds: dict[str, int] = {}
+    for grade, value in zip(grades, values, strict=True):
+        parsed = _grade_value(value, line)
+        if parsed is not None:
+            thresholds[grade] = parsed
+    return thresholds
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,11 +180,7 @@ def _parse_option_row(
         option_code=code,
         component_numbers=[int(t) for t in component_tokens],
         max_mark_after_weighting=int(max_mark_token) if max_mark_token is not None else None,
-        thresholds={
-            grade: int(value)
-            for grade, value in zip(option_grades, value_tokens, strict=True)
-            if value not in _NOT_APPLICABLE
-        },
+        thresholds=_grade_thresholds(option_grades, value_tokens, line),
     )
 
 
@@ -160,11 +207,18 @@ def parse_threshold_pdf(pdf_bytes: bytes) -> tuple[list[ParsedComponent], list[P
     component_grades: list[str] | None = None
     option_grades: list[str] | None = None
     option_has_max_mark_column = False
+    lines = [raw.strip() for raw in text.splitlines()]
 
-    for line in (raw.strip() for raw in text.splitlines()):
+    for i, line in enumerate(lines):
         header = _COMPONENT_HEADER.match(line)
         if header:
             component_grades = header.group(1).split()
+            continue
+        # 0580 s11-era layout: the header cell wraps onto its own lines, so
+        # the grade letters appear alone, directly after a bare "mark" line.
+        wrapped_header = _COMPONENT_HEADER_WRAPPED_GRADES.match(line)
+        if wrapped_header and i > 0 and lines[i - 1] == "mark":
+            component_grades = wrapped_header.group(1).split()
             continue
         option_header = _OPTION_HEADER.match(line)
         if option_header:
@@ -189,11 +243,7 @@ def parse_threshold_pdf(pdf_bytes: bytes) -> tuple[list[ParsedComponent], list[P
                     paper_number=int(number_variant[0]),
                     paper_variant=int(number_variant[1]) if len(number_variant) > 1 else 0,
                     max_mark=max_mark,
-                    thresholds={
-                        grade: int(value)
-                        for grade, value in zip(component_grades, rest, strict=True)
-                        if value not in _NOT_APPLICABLE
-                    },
+                    thresholds=_grade_thresholds(component_grades, rest, line),
                 )
             )
             continue
