@@ -10,6 +10,7 @@ wrappers make these injectable into routers and overridable in tests via
 from __future__ import annotations
 
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -67,6 +68,7 @@ from lemely.io.storage import HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
+from lemely.web.ratelimit import SlidingWindowLimiter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -874,6 +876,57 @@ def get_invite_service() -> InviteService:
     return InviteService(get_sessionmaker(get_settings()), get_class_service())
 
 
+@dataclass(frozen=True, slots=True)
+class ClientErrorLimiters:
+    """The two :class:`SlidingWindowLimiter` instances guarding ``POST /api/client-errors``.
+
+    That route is anonymous (see its own module docstring for why): ``per_client``
+    throttles a single caller, keyed by IP, and ``global_`` caps the endpoint's
+    aggregate volume regardless of caller, so no single source and no
+    combination of sources can flood Cloud Logging through it.
+    """
+
+    per_client: SlidingWindowLimiter
+    global_: SlidingWindowLimiter
+
+
+# Client-error reports (PR 1 chunk C): 10 per caller per minute, 300 across
+# every caller per minute. Both numbers are a first cut, sized to comfortably
+# absorb a genuine crash storm (one bad deploy tripping the same
+# `ErrorBoundary` for every visitor at once) while still bounding the log
+# volume — and Cloud Logging bill — an anonymous, unauthenticated caller can
+# generate. See `lemely.web.routers.client_errors`'s module docstring for the
+# full reasoning.
+_CLIENT_ERROR_PER_CLIENT_LIMIT = 10
+_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS = 60.0
+_CLIENT_ERROR_GLOBAL_LIMIT = 300
+_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS = 60.0
+
+
+@lru_cache(maxsize=1)
+def get_client_error_limiters() -> ClientErrorLimiters:
+    """Return the process-wide rate limiters guarding ``POST /api/client-errors``.
+
+    Wired with the real monotonic clock (``time.monotonic`` — immune to a
+    system clock adjustment, and fine here since nothing compares this clock's
+    value across a process restart, unlike the cooldown stores' wall-clock
+    ``datetime.now(UTC)``). Tests override this dependency with limiters built
+    on an injected fake clock, so no test sleeps out a 60-second window.
+    """
+    return ClientErrorLimiters(
+        per_client=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_PER_CLIENT_LIMIT,
+            window_seconds=_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        global_=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_GLOBAL_LIMIT,
+            window_seconds=_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+    )
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
@@ -919,3 +972,6 @@ def reset_singletons() -> None:
     get_auth_token_service.cache_clear()
     get_signup_and_reset_cooldown_store.cache_clear()
     get_resend_verification_cooldown_store.cache_clear()
+    # PR 1 chunk C: the client-error rate limiters — same reasoning as the two
+    # comments above, the promise is *all* cached singletons.
+    get_client_error_limiters.cache_clear()
