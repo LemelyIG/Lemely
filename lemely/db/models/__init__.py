@@ -12,10 +12,10 @@ from __future__ import annotations
 # These imports must come before import_all_models so they are always available
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
-from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
+from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
