@@ -7,6 +7,7 @@ rule would give 0580 Extended an F and a G it does not publish.
 
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING
 
 from lemely.db.models.enums import SessionMonth
@@ -14,6 +15,7 @@ from lemely.db.models.thresholds import OptionThreshold
 from lemely.db.threshold_repo import ThresholdService
 
 if TYPE_CHECKING:
+    import pytest
     from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -101,3 +103,46 @@ def test_the_vocabulary_carries_the_subjects_qualification_level(
         v.qualification_level == "igcse"
         for v in ThresholdService(migrated_sessionmaker).target_vocabularies()
     )
+
+
+def _reenable_logger() -> None:
+    """``migrated_sessionmaker`` runs ``alembic upgrade head``, and Alembic's
+    ``env.py`` calls ``logging.config.fileConfig``, which (per its default
+    ``disable_existing_loggers=True``) disables every already-instantiated
+    logger not named in ``alembic.ini`` — including this module's, created at
+    import time. Undo that so ``caplog`` can see our warnings; production
+    never runs migrations in-process this way, so this is a test-only wrinkle."""
+    logging.getLogger("lemely.db.threshold_repo").disabled = False
+
+
+def test_a_tiered_subjects_unresolvable_option_warns_rather_than_silently_untiering(
+    migrated_sessionmaker: sessionmaker[Session],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """0580 is tiered (papers 1-4 are all Core or Extended). An option whose
+    component numbers match none of them — a typo, a deleted paper, a subject
+    not yet in the catalogue — must not disappear into `tier=None` next to a
+    genuinely untiered subject like 0606 with no trace it happened."""
+    _seed(migrated_sessionmaker)
+    with migrated_sessionmaker.begin() as s:
+        s.add(_option("0580", "ZZ", [99], {"C": 1}))
+    _reenable_logger()
+    with caplog.at_level(logging.WARNING, logger="lemely.db.threshold_repo"):
+        ThresholdService(migrated_sessionmaker).target_vocabularies()
+    [record] = [r for r in caplog.records if "ZZ" in r.getMessage()]
+    assert "0580" in record.getMessage()
+    assert "[99]" in record.getMessage()
+
+
+def test_a_genuinely_untiered_subjects_option_does_not_warn(
+    migrated_sessionmaker: sessionmaker[Session],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """0606 has no tiered papers at all, so its options landing under
+    `tier=None` is the correct outcome and must stay silent — otherwise a
+    silent bug was traded for a noisy false alarm on every untiered subject."""
+    _seed(migrated_sessionmaker)
+    _reenable_logger()
+    with caplog.at_level(logging.WARNING, logger="lemely.db.threshold_repo"):
+        ThresholdService(migrated_sessionmaker).target_vocabularies()
+    assert not any("0606" in r.getMessage() for r in caplog.records)

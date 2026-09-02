@@ -14,6 +14,7 @@ papers carry no tier at all.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -25,6 +26,8 @@ from lemely.db.models.thresholds import OptionThreshold
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
+
+logger = logging.getLogger("lemely.db.threshold_repo")
 
 #: Descending grade order, the order a picker renders and `gradeRank` indexes.
 #: `U` is appended rather than published: no threshold table lists it, because
@@ -59,6 +62,14 @@ class ThresholdService:
             }
             options = session.scalars(sa.select(OptionThreshold)).all()
 
+        # Subjects with at least one tiered paper. An option for one of these
+        # whose component numbers still resolve to no tier is a lookup
+        # failure (typo, deleted paper, ...), not a genuinely untiered
+        # subject like 0606 — see the warning below.
+        tiered_subjects = {
+            subject_code for (subject_code, _number), tier in tier_by_paper.items() if tier
+        }
+
         grades_by_key: dict[tuple[str, str | None], set[str]] = {}
         for option in options:
             tiers = {
@@ -66,6 +77,14 @@ class ThresholdService:
                 for number in option.component_numbers
             }
             tiers.discard(None)
+            if not tiers and option.subject_code in tiered_subjects:
+                logger.warning(
+                    "target vocabulary: option %s/%s has component numbers %r that match no"
+                    " tiered paper, treating as untiered",
+                    option.subject_code,
+                    option.option_code,
+                    option.component_numbers,
+                )
             # Extended wins a mixed option: a candidate sitting any Extended
             # component is an Extended candidate.
             tier = "extended" if "extended" in tiers else ("core" if "core" in tiers else None)
@@ -76,6 +95,12 @@ class ThresholdService:
             grades_by_key.items(), key=lambda kv: (kv[0][0], kv[0][1] or "")
         ):
             subject = subjects.get(code)
+            if subject is None:
+                logger.warning(
+                    "target vocabulary: subject %s has option thresholds but no catalogue"
+                    " entry, qualification level will be unknown",
+                    code,
+                )
             level = subject.qualification_level if subject else None
             vocabularies.append(
                 TargetVocabulary(
