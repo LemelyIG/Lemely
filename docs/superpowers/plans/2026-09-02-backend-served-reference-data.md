@@ -805,6 +805,36 @@ def test_paper_timings_still_exclude_practicals_by_default(
 Run: `pytest tests/test_loader_cache.py -v`
 Expected: FAIL — `module 'lemely.io.paper_timing' has no attribute 'invalidate_reference_cache'`
 
+- [ ] **Step 3a: Add the shared topic sort key to `lemely/core/topics.py`**
+
+Syllabus codes are dotted decimals and both levels run past ten — 0606 has
+fourteen top-level topics and 0580's subtopics reach `1.18`. Sorting them as
+text puts `"10"` before `"2"` and `"1.10"` before `"1.2"`, which is not a
+cosmetic ordering issue: S-02's confidence step asks about the *first three*
+topics, so under text order a 0606 student is asked about topics 1, 10 and 11.
+Verified against the migrated database, not assumed.
+
+```python
+def topic_sort_key(code: str) -> tuple[tuple[int, str], ...]:
+    """Sort key putting syllabus codes in syllabus order.
+
+    ``"2"`` before ``"10"``, and ``"1.2"`` before ``"1.10"``. Each dotted
+    segment becomes ``(0, n)`` when numeric and ``(1, text)`` otherwise, so a
+    non-numeric segment sorts after every number at that depth instead of
+    raising a TypeError on a mixed comparison.
+    """
+    parts: list[tuple[int, str]] = []
+    for segment in code.split("."):
+        if segment.isdigit():
+            # Zero-pad so the tuple compares numerically without int/str mixing.
+            parts.append((0, f"{int(segment):09d}"))
+        else:
+            parts.append((1, segment))
+    return tuple(parts)
+```
+
+Export it from that module's `__all__`.
+
 - [ ] **Step 3: Rewrite `lemely/io/paper_timing.py`**
 
 ```python
@@ -930,7 +960,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
-from lemely.core.topics import SyllabusTaxonomy, TopicNode
+from lemely.core.topics import SyllabusTaxonomy, TopicNode, topic_sort_key
 from lemely.db.models.academic import Subject
 from lemely.db.models.catalogue import SubjectTopic
 from lemely.db.session import get_sessionmaker
@@ -954,7 +984,12 @@ def invalidate_reference_cache() -> None:
 def _build_nodes(
     children: dict[uuid.UUID | None, list[SubjectTopic]], parent: uuid.UUID | None
 ) -> list[TopicNode]:
-    """Depth-first tree build. Ordered by `code` so syllabus order survives."""
+    """Depth-first tree build, in syllabus order.
+
+    Ordered by :func:`~lemely.core.topics.topic_sort_key`, never by the code
+    string: sorting ``"1.10"`` as text puts it before ``"1.2"``, and 0580's
+    subtopics really do run past ten.
+    """
     return [
         TopicNode(
             code=row.code,
@@ -963,7 +998,7 @@ def _build_nodes(
             keywords=list(row.keywords),
             subtopics=_build_nodes(children, row.id),
         )
-        for row in sorted(children.get(parent, []), key=lambda r: r.code)
+        for row in sorted(children.get(parent, []), key=lambda r: topic_sort_key(r.code))
     ]
 
 
@@ -1222,6 +1257,25 @@ def test_topics_are_code_prefixed_strings_in_syllabus_order(
     assert physics["topics"] == ["1 Motion, forces and energy", "2 Thermal physics"]
 
 
+def test_topics_past_ten_stay_in_syllabus_order(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """0606 really has fourteen top-level topics. A text sort returns 1, 10, 11
+    before 2 — and S-02 asks about the first three, so text order asks the
+    student the wrong questions."""
+    with pg_sessionmaker.begin() as s:
+        s.add(Subject(code="0606", name="Additional Mathematics", board=ExamBoard.caie,
+                      active=True, qualification_level=QualificationLevel.igcse))
+        for n in range(1, 15):
+            s.add(SubjectTopic(subject_code="0606", code=str(n), name=f"Topic {n}",
+                               strong=[], keywords=[]))
+    _authenticate(client, Role.student)
+    _use_catalogue(client, pg_sessionmaker)
+    subject = next(s for s in client.get("/api/reference").json()["subjects"] if s["code"] == "0606")
+    assert subject["topics"][:3] == ["1 Topic 1", "2 Topic 2", "3 Topic 3"]
+    assert subject["topics"][-1] == "14 Topic 14"
+
+
 def test_classifier_vocabulary_is_never_served(
     client: TestClient, pg_sessionmaker: sessionmaker[Session]
 ) -> None:
@@ -1283,6 +1337,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 
+from lemely.core.topics import topic_sort_key
 from lemely.db.models.academic import Subject
 from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 
@@ -1334,10 +1389,13 @@ class CatalogueService:
                 sa.select(SyllabusPaper).order_by(SyllabusPaper.paper_number)
             ).all()
             topics = session.scalars(
-                sa.select(SubjectTopic)
-                .where(SubjectTopic.parent_id.is_(None))
-                .order_by(SubjectTopic.code)
+                sa.select(SubjectTopic).where(SubjectTopic.parent_id.is_(None))
             ).all()
+            # Ordered in Python, not SQL: `ORDER BY code` is a text sort, and
+            # 0606 has fourteen top-level topics, so it would return 1, 10, 11
+            # before 2. S-02 shows the first three of these, so the wrong order
+            # is a wrong question asked of the student.
+            topics = sorted(topics, key=lambda t: topic_sort_key(t.code))
 
         papers_by_subject: dict[str, list[CataloguePaper]] = {}
         for row in papers:
