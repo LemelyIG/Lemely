@@ -68,8 +68,10 @@ make up      # http://localhost:8080
 make down
 ```
 
-Full instructions, the configuration reference, and a recipe for a future
-cloud deploy are in [`docs/deployment.md`](docs/deployment.md).
+Full instructions and the configuration reference are in
+[`docs/deployment.md`](docs/deployment.md). For the automated staging/production
+pipeline (Supabase Cloud + Google Cloud Run + Cloudflare, via GitHub Actions),
+see [`docs/ci-cd.md`](docs/ci-cd.md).
 
 ### Local development
 
@@ -182,6 +184,7 @@ CI runs the backend checks across Python 3.12 / 3.13 / 3.14.
 | --- | --- |
 | [`DELIVERY.md`](DELIVERY.md) | Every feature, its status, files, proving tests, and the honest limitations |
 | [`docs/deployment.md`](docs/deployment.md) | Local stack, cloud recipe, configuration reference |
+| [`docs/ci-cd.md`](docs/ci-cd.md) | Automated staging/production pipeline — GitHub Actions, Cloud Run, Cloudflare, Supabase Cloud |
 | [`docs/database.md`](docs/database.md) | Schema, tenancy model, migration policy |
 | [`docs/LEMELY_UI_SPEC.md`](docs/LEMELY_UI_SPEC.md) | The authoritative product and UI specification |
 | [`docs/COMPONENT_CATALOGUE.md`](docs/COMPONENT_CATALOGUE.md) | Cross-cutting component library and states |

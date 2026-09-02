@@ -41,6 +41,15 @@ this entry is the user-visible summary.
 - Marketing CTAs and the login screen now point at `/signup` and `/reset` instead of dead-ending
   at `/login`.
 
+#### Deployment and CI/CD
+
+- Automated CI/CD: GitHub Actions deploys staging (`develop`) and production
+  (`main`, behind a manual approval gate) to Google Cloud Run (backend) and
+  Cloudflare Workers (frontend — static assets plus a `/api/*` reverse proxy
+  that preserves the existing same-origin, no-CORS architecture). Database
+  migrations run as their own gated job ahead of each deploy rather than on
+  container start. See [`docs/ci-cd.md`](docs/ci-cd.md).
+
 ### Known limitations, stated rather than discovered later
 
 - **No configured provider sends mail.** The email seam (`EmailProvider`, mirroring the existing
