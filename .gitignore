@@ -39,8 +39,14 @@ dist/
 *.swo
 
 # Secrets
-.env
-.env.local
+# Broad by design: any dotenv file, however it is named, in any directory.
+# `.ci-cd.env` sat untracked and un-ignored here for a while, one `git add -A`
+# away from committing GCP and Cloudflare deploy identifiers.
+*.env
+.env*
+# ...except the checked-in template that documents which variables are needed,
+# which plays the same role as `lemely.toml.example`.
+!.env.example
 
 Sources/
 outputs/
