@@ -11,13 +11,53 @@ repos:
       # `reports/` holds machine-generated phase evidence (axe/Lighthouse JSON,
       # the contact sheet, screenshot corpora). Rewriting those files makes the
       # committed artifact differ byte-for-byte from what the tool actually
-      # emitted, so the next re-baseline run shows a spurious diff. Exempt them
-      # from the two formatting hooks only — `detect-private-key` still sees
-      # everything.
+      # emitted, so the next re-baseline run shows a spurious diff.
+      #
+      # The vendored skills listed below are copied verbatim from upstream
+      # repos (see `docs/agent-tooling.md`); reformatting them means every
+      # re-copy on update shows a diff that is ours, not theirs. First-party
+      # skills under `.claude/skills/` are deliberately NOT exempt.
+      #
+      # Exempt from the two formatting hooks only — `detect-private-key` still
+      # sees everything.
       - id: trailing-whitespace
-        exclude: ^reports/
+        exclude: |
+          (?x)^(
+            reports/
+            |\.claude/commands/
+            |\.claude/skills/(
+              composition-patterns
+              |deploy-to-vercel
+              |react-best-practices
+              |react-native-skills
+              |react-view-transitions
+              |ui-refactor
+              |ux-heuristics
+              |vercel-cli-with-tokens
+              |vercel-optimize
+              |web-design-guidelines
+              |writing-guidelines
+            )/
+          )
       - id: end-of-file-fixer
-        exclude: ^reports/
+        exclude: |
+          (?x)^(
+            reports/
+            |\.claude/commands/
+            |\.claude/skills/(
+              composition-patterns
+              |deploy-to-vercel
+              |react-best-practices
+              |react-native-skills
+              |react-view-transitions
+              |ui-refactor
+              |ux-heuristics
+              |vercel-cli-with-tokens
+              |vercel-optimize
+              |web-design-guidelines
+              |writing-guidelines
+            )/
+          )
       - id: check-yaml
       - id: check-toml
       - id: check-merge-conflict
