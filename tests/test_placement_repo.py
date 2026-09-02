@@ -26,6 +26,7 @@ MCQ-only questions throughout, so marking never touches Gemini
 
 from __future__ import annotations
 
+import os
 import re
 import uuid
 from pathlib import Path
@@ -39,14 +40,19 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+import lemely.io.paper_timing as paper_timing_loader
+import lemely.io.syllabus_topics as syllabus_topics_loader
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import User
+from lemely.db.models.academic import Subject
 from lemely.db.models.attempts import Attempt
+from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.enums import (
     AttemptOrigin,
     DifficultySource,
+    ExamBoard,
     QuestionSource,
     Role,
 )
@@ -62,6 +68,7 @@ from lemely.db.placement_repo import (
 from lemely.db.question_bank_repo import NewBankQuestion, QuestionBankService
 from lemely.db.quiz_marking_repo import QuizMarkingService
 from lemely.db.quiz_taking_repo import QuizTakingService
+from lemely.db.session import dispose_engine
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, PathsSettings, load_settings
 
@@ -75,6 +82,15 @@ _PHYSICS_TOPICS = [
     "3 Waves",
     "4 Electricity and magnetism",
 ]
+
+# The same transcribed facts `tests/test_placement_assembly.py`'s `P4` fixture
+# uses (75 min / 80 marks) and 0625's real top-level topic labels above —
+# seeded into *this* test's own throwaway database so that
+# `placement_repo.py`'s bare (session-less) `get_paper_timings`/`get_taxonomy`
+# calls resolve against it rather than an ambient one. See
+# `_hermetic_reference_data` below for why this is necessary.
+_SOURCE_URL = "https://www.cambridgeinternational.org/Images/595430-2023-2025-syllabus.pdf"
+_SYLLABUS_VERSION = "2023-2025"
 
 
 # ---------------------------------------------------------------------------
@@ -115,6 +131,91 @@ def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
         with admin.connect() as conn:
             conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
         admin.dispose()
+
+
+@pytest.fixture(autouse=True)
+def _hermetic_reference_data(pg_sessionmaker: sessionmaker[Session]) -> Iterator[None]:
+    """Give `placement_repo.py`'s bare loader calls somewhere real to read.
+
+    ``PlacementService._timings_for`` (``placement_repo.py:409``) and
+    ``_placement_title`` (``:510``) call ``get_paper_timings``/``get_taxonomy``
+    with no ``session=`` — deliberately, per the P4.9 rewire brief, since
+    threading a session through every call site was out of scope and the
+    ``session`` parameter is additive. A bare call falls back to
+    ``_load_with_own_session()``, which opens a session against whatever
+    database ``get_sessionmaker()``'s *process-wide* default settings resolve
+    to — not this test's own throwaway ``pg_sessionmaker`` database. Without
+    this fixture the suite only passes by accident, on a machine whose
+    ambient default database happens to already be migrated with real 0625
+    data (or because another test warmed the process cache first); on a
+    clean environment it fails in a way that reads like a placement-logic bug
+    rather than a missing seed.
+
+    So, for the duration of each test:
+
+    1. Point ``LEMELY_DATABASE__URL`` — the same override
+       ``tests/conftest.py``'s ``migrated_sessionmaker`` uses, because
+       ``load_settings()`` is what ``_load_with_own_session()`` ultimately
+       reads — at *this* test's own throwaway database.
+    2. Seed the ``Subject``/``SyllabusPaper``/``SubjectTopic`` rows those two
+       bare call sites need: 0625's real top-level topic labels (so
+       ``get_taxonomy`` resolves and ``_placement_title`` can put "Physics" in
+       a quiz title) and the real Paper 4 timing (75 min / 80 marks) that
+       ``test_placement_assembly.py``'s own ``P4`` fixture uses, so the
+       assembled-minutes assertions here are exercising the genuine
+       transcribed rate, not a coincidence.
+    3. Invalidate both loaders' process caches before *and* after, so this
+       test neither inherits a warm cache left by another test file nor
+       leaves one behind for the next.
+    """
+    paper_timing_loader.invalidate_reference_cache()
+    syllabus_topics_loader.invalidate_reference_cache()
+
+    engine = pg_sessionmaker.kw["bind"]
+    rendered_url = engine.url.render_as_string(hide_password=False)
+    previous_db_url = os.environ.get("LEMELY_DATABASE__URL")
+    os.environ["LEMELY_DATABASE__URL"] = rendered_url
+
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Subject(
+                code="0625",
+                name="Physics",
+                board=ExamBoard.caie,
+                source_url=_SOURCE_URL,
+                syllabus_version=_SYLLABUS_VERSION,
+            )
+        )
+        session.add(
+            SyllabusPaper(
+                board=ExamBoard.caie,
+                subject_code="0625",
+                paper_number=4,
+                name="Theory (Extended)",
+                duration_minutes=75,
+                total_marks=80,
+                practical=False,
+                source_document="595430-2023-2025-syllabus.pdf",
+                source_url=_SOURCE_URL,
+                syllabus_version=_SYLLABUS_VERSION,
+            )
+        )
+        for label in _PHYSICS_TOPICS:
+            code, name = label.split(" ", 1)
+            session.add(
+                SubjectTopic(board=ExamBoard.caie, subject_code="0625", code=code, name=name)
+            )
+
+    try:
+        yield
+    finally:
+        if previous_db_url is None:
+            os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            os.environ["LEMELY_DATABASE__URL"] = previous_db_url
+        dispose_engine()
+        paper_timing_loader.invalidate_reference_cache()
+        syllabus_topics_loader.invalidate_reference_cache()
 
 
 @pytest.fixture
