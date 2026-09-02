@@ -10,7 +10,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { PortalErrorFallback } from "@/components/route-error"
+import { portalErrorFallback } from "@/components/route-error"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 
@@ -320,7 +320,7 @@ function ParentLayout() {
           <ErrorBoundary
             label="This page"
             resetKey={location.pathname}
-            fallback={(error, reset) => <PortalErrorFallback error={error} reset={reset} />}
+            fallback={portalErrorFallback}
           >
             <Outlet />
           </ErrorBoundary>

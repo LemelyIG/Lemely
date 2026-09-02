@@ -9,7 +9,7 @@ import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { PortalErrorFallback } from "@/components/route-error"
+import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
@@ -726,7 +726,7 @@ function StudentLayout() {
             <ErrorBoundary
               label="This page"
               resetKey={location.pathname}
-              fallback={(error, reset) => <PortalErrorFallback error={error} reset={reset} />}
+              fallback={portalErrorFallback}
             >
               <Outlet />
             </ErrorBoundary>

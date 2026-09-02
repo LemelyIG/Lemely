@@ -164,9 +164,6 @@
         align-items: center;
         gap: 10px;
       }
-      .lm-shell-footer {
-        margin-top: auto;
-      }
 
       .lm-shell-main {
         display: flex;
@@ -236,9 +233,12 @@
         }
       }
 
+      /* The section-label bar above each nav group ("eyebrow" as in DESIGN.md's
+         type scale, not the tall block P6.6's screenshot caught this as before
+         the fix: a short wide bar, not a heading-sized slab). */
       .lm-shell-eyebrow {
-        height: 3.5rem;
-        width: 40%;
+        height: 11px;
+        width: 3.5rem;
       }
       .lm-shell-navicon {
         height: 18px;
@@ -249,10 +249,37 @@
         height: 10px;
         width: 56%;
       }
-      .lm-shell-avatar {
+      /* Sidebar footer: an identity row (squircle + name/role bars) pinned to
+         the bottom with a hairline separating it from the nav above, matching
+         the account switcher every portal's real sidebar footer renders. */
+      .lm-shell-footer {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-top: 16px;
+        border-top: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      .lm-shell-footer-avatar {
         height: 32px;
         width: 32px;
-        border-radius: 9999px;
+        border-radius: 12px;
+        flex: none;
+      }
+      .lm-shell-footer-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+      .lm-shell-footer-line1 {
+        height: 10px;
+        width: 70%;
+      }
+      .lm-shell-footer-line2 {
+        height: 8px;
+        width: 45%;
       }
       .lm-shell-crumb {
         height: 12px;
@@ -270,12 +297,6 @@
       .lm-shell-subtitle {
         height: 14px;
         width: min(34rem, 85%);
-      }
-      .lm-shell-row-avatar {
-        height: 28px;
-        width: 28px;
-        border-radius: 9999px;
-        flex: none;
       }
       .lm-shell-row-line1 {
         height: 10px;
@@ -297,13 +318,23 @@
         height: 14px;
         width: 45%;
       }
+      /* `PanelSkeleton`'s (`components/ui/loading-shapes.tsx`) second line -
+         a subtitle under the title before the body block. */
+      .lm-shell-panel-subtitle {
+        height: 12px;
+        width: 65%;
+      }
       .lm-shell-panel-body {
         height: 96px;
         border-radius: 8px;
       }
 
       /* Tier 3: the slow-load screen. Always available on every path, portal
-         or not — a marketing page can be slow too. */
+         or not — a marketing page can be slow too. On a portal path it
+         replaces only the content well (see the `#root[data-shell="portal"]`
+         rule below), so tier 2's sidebar and header stay painted around it
+         rather than being covered over; on every other path there is no
+         chrome to preserve, so it stays the full-viewport treatment. */
       .lm-shell-tier3 {
         display: flex;
         flex-direction: column;
@@ -316,6 +347,15 @@
         opacity: 0;
         animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SLOW% both;
       }
+      /* Inset tier 3 by the sidebar's width and the header's height (both
+         read off `.lm-shell-tier2`'s own layout above) so it only paints the
+         content well; the sidebar and header stay tier 2's, showing through
+         the margin this creates. */
+      #root[data-shell="portal"] .lm-shell-tier3 {
+        margin-left: 246px;
+        margin-top: 68px;
+        min-height: calc(100vh - 68px);
+      }
       @keyframes lm-shell-appear {
         from {
           opacity: 0;
@@ -325,8 +365,8 @@
         }
       }
       .lm-shell-mark {
-        width: 40px;
-        height: 40px;
+        width: 96px;
+        height: 96px;
       }
       .lm-shell-heading {
         margin: 0;
@@ -511,15 +551,22 @@
               <div class="lm-shell-navrow">
                 <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
               </div>
-              <div class="lm-shell-navrow">
-                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
-              </div>
+            </nav>
+            <!-- The second nav group (settings/account, below the main
+                 sections) gets its own eyebrow bar above its single row,
+                 matching the real sidebar's two-group layout. -->
+            <div class="sk lm-shell-eyebrow"></div>
+            <nav class="lm-shell-nav">
               <div class="lm-shell-navrow">
                 <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
               </div>
             </nav>
             <div class="lm-shell-footer">
-              <span class="sk lm-shell-avatar"></span>
+              <span class="sk lm-shell-footer-avatar"></span>
+              <div class="lm-shell-footer-lines">
+                <span class="sk lm-shell-footer-line1"></span>
+                <span class="sk lm-shell-footer-line2"></span>
+              </div>
             </div>
           </aside>
           <div class="lm-shell-main">
@@ -530,19 +577,18 @@
             <div class="lm-shell-content">
               <span class="sk lm-shell-title"></span>
               <span class="sk lm-shell-subtitle"></span>
+              <!-- No row avatar: the Overview ledger this stands in for has
+                   no per-row avatar, just a description and a value. -->
               <div class="lm-shell-list">
                 <div class="lm-shell-row">
-                  <span class="sk lm-shell-row-avatar"></span>
                   <span class="sk lm-shell-row-line1"></span>
                   <span class="sk lm-shell-row-line2"></span>
                 </div>
                 <div class="lm-shell-row">
-                  <span class="sk lm-shell-row-avatar"></span>
                   <span class="sk lm-shell-row-line1"></span>
                   <span class="sk lm-shell-row-line2"></span>
                 </div>
                 <div class="lm-shell-row">
-                  <span class="sk lm-shell-row-avatar"></span>
                   <span class="sk lm-shell-row-line1"></span>
                   <span class="sk lm-shell-row-line2"></span>
                 </div>
@@ -550,10 +596,12 @@
               <div class="lm-shell-panels">
                 <div class="lm-shell-panel">
                   <span class="sk lm-shell-panel-title"></span>
+                  <span class="sk lm-shell-panel-subtitle"></span>
                   <span class="sk lm-shell-panel-body"></span>
                 </div>
                 <div class="lm-shell-panel">
                   <span class="sk lm-shell-panel-title"></span>
+                  <span class="sk lm-shell-panel-subtitle"></span>
                   <span class="sk lm-shell-panel-body"></span>
                 </div>
               </div>

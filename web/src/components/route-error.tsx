@@ -173,3 +173,15 @@ export function PortalErrorFallback({ error, reset }: { error: Error; reset: () 
 
   return renderFailure(failure, "portal", onRetry, countdown)
 }
+
+/**
+ * `ErrorBoundary`'s `fallback` prop for the four portal layouts
+ * (`portals/*\/index.tsx`), as a plain, stable function reference rather than
+ * an arrow closure written inline at each of the four call sites. Behaviourally
+ * identical either way — `ErrorBoundary` just calls whatever `fallback` it was
+ * given with `(error, reset)` — this exists so the four portals share one
+ * definition instead of four character-for-character copies of the same line.
+ */
+export function portalErrorFallback(error: Error, reset: () => void) {
+  return <PortalErrorFallback error={error} reset={reset} />
+}

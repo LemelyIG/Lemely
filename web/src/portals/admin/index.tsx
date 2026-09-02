@@ -17,7 +17,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
-import { PortalErrorFallback } from "@/components/route-error"
+import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -382,7 +382,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
             <ErrorBoundary
               label="This page"
               resetKey={location.pathname}
-              fallback={(error, reset) => <PortalErrorFallback error={error} reset={reset} />}
+              fallback={portalErrorFallback}
             >
               <Outlet />
             </ErrorBoundary>

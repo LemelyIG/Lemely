@@ -23,13 +23,37 @@
  * So the check is narrow on purpose. A checker that flags all three is a
  * checker whose output gets ignored, which is worse than no checker.
  *
+ * ── Rule 2: exclamation marks (REDESIGN-MISSION §3.2 item 10, DESIGN.md §12)
+ *
+ * The mission bans exclamation marks in product copy ("No exclamation marks
+ * in success messages"; DESIGN.md §12's error-state rule is "active voice",
+ * not "!"). `!` is also, constantly, not punctuation at all in this codebase:
+ * `!==`, `!isValid`, `!!value`, a regex character class, and TypeScript's
+ * non-null `value!` all use the same character for something a reader of the
+ * UI never sees. So this rule only looks *inside* a string literal or a JSX
+ * text node (the same two places rule 1 restricts itself to, for the same
+ * reason: those are the only places a `!` is copy rather than code), and even
+ * there it only counts a `!` that reads as sentence punctuation: one directly
+ * followed by the string's closing quote, whitespace, `<` (a JSX text node
+ * ending flush against the next tag), or the end of the line. That excludes
+ * `!==` inside an example string, a literal `"!important"` CSS override, and
+ * `!!x` written out as prose about code, all of which are followed by a
+ * character (`=`, a letter) no real "Wait!" or "Reconnected!" ever is.
+ *
+ * Deliberately NOT attempted: detecting passive voice for the mission's
+ * separate "active voice errors" rule. That is a judgement about grammar a
+ * regex cannot make honestly — "was closed" is passive, "closed" can be a
+ * past participle in an active clause, and a checker that guesses wrong half
+ * the time teaches people to ignore it, same as rule 1's own reasoning above.
+ * Passive voice belongs to code review, not this gate.
+ *
  * Usage:
  *   node scripts/check_copy.mjs            # report, exit 1 if anything found
  *   node scripts/check_copy.mjs --count    # totals per file, always exit 0
  *
- * Scope is deliberately `src/`. Comments are stripped before matching, so an
- * em-dash in a code comment (which no user reads, and which this codebase's
- * documentation style uses heavily) is not a finding.
+ * Scope is deliberately `src/`. Comments are stripped before matching, so a
+ * dash or bang in a code comment (which no user reads, and which this
+ * codebase's documentation style uses heavily) is not a finding.
  */
 
 import { readFileSync } from "node:fs"
@@ -174,6 +198,94 @@ export function findEmDashes(source) {
   return findings
 }
 
+/**
+ * Files allowed to keep a `!` the general rule would otherwise flag, each
+ * with the reason it is not product copy. Checked as a path suffix against
+ * `sourceFiles`'s `relative(ROOT, file)` output, so an entry here reads the
+ * same as the paths the CLI report itself prints.
+ *
+ * Empty today: nothing under `src/` needs one (see the header's findings
+ * paragraph below). Kept as a named export, not inlined into the CLI block,
+ * so a future legitimate case — a literal example string quoting someone
+ * else's "!" that the followed-by heuristic cannot tell from prose — has
+ * somewhere to go without loosening the classifier itself.
+ */
+export const EXCLAMATION_ALLOWLIST = []
+
+/**
+ * One line's worth of "prose spans": the character ranges that are either
+ * the inside of a quoted string literal, or a JSX text node sitting directly
+ * between `>` and `<`. Only characters inside one of these count as copy for
+ * `findExclamationMarks` — everything else on the line is code, where `!` is
+ * an operator, and reading it as punctuation would be wrong.
+ *
+ * Line-based, like `stripComments` and `findEmDashes` above: it does not
+ * parse, so a template literal that spans multiple lines is invisible to it.
+ * That trades completeness for a checker whose output can be trusted one
+ * line at a time, the same trade this file's header already makes for `//`
+ * inside a string truncating a line early.
+ *
+ * A backtick literal's `${...}` interpolations are blanked (not treated as
+ * prose) before scanning: `${value!}`'s non-null assertion is code sitting
+ * inside a template string, not a sentence. Only *simple* (non-nested)
+ * interpolations are blanked — `${a ?? b}`, not `${fn({ a: 1 })}` — which is
+ * the same shape of limitation as the multi-line one above: a nested brace
+ * inside an interpolation can hide a real `!` from this function, never
+ * invent one, so the safe direction of error.
+ */
+export function proseSpans(line) {
+  const blankInterpolations = (inner) =>
+    inner.replace(/\$\{[^{}]*\}/g, (match) => " ".repeat(match.length))
+
+  const spans = []
+  for (const re of [/"(?:[^"\\]|\\.)*"/g, /'(?:[^'\\]|\\.)*'/g, /`(?:[^`\\]|\\.)*`/g]) {
+    for (const match of line.matchAll(re)) {
+      spans.push(blankInterpolations(match[0].slice(1, -1)))
+    }
+  }
+  for (const match of line.matchAll(/>([^<>{]*)</g)) {
+    spans.push(match[1])
+  }
+  return spans
+}
+
+/**
+ * Every exclamation mark that reads as prose punctuation in one file's
+ * source, as `{line, text}`. Same shape and the same reasoning as
+ * `findEmDashes`: exported and pure so the classifier is unit-tested rather
+ * than trusted, one finding per line.
+ *
+ * A `!` counts only when both of these hold:
+ *   1. it sits inside a `proseSpans` range (a string literal's contents or a
+ *      JSX text node) — never bare code, so `!isValid`, `!==`, `!!x` and a
+ *      TypeScript non-null `x!` are never even examined.
+ *   2. the character right after it, within that same span, is the end of
+ *      the span (i.e. the original string's closing quote or the `<` that
+ *      ended the JSX text node) or whitespace — the shape sentence
+ *      punctuation actually has. `!==` inside a string, `!important` in a
+ *      CSS-in-JS literal, and `!!x` written out in prose about code all fail
+ *      this: the character after their `!` is `=` or a letter, never one a
+ *      real "Wait!" or "Reconnected!" is followed by.
+ */
+export function findExclamationMarks(source) {
+  const findings = []
+  const lines = stripComments(source).split("\n")
+
+  lines.forEach((line, lineIndex) => {
+    const found = proseSpans(line).some((span) => {
+      for (let i = 0; i < span.length; i += 1) {
+        if (span[i] !== "!") continue
+        const next = span[i + 1]
+        if (next === undefined || /\s/.test(next)) return true
+      }
+      return false
+    })
+    if (found) findings.push({ line: lineIndex + 1, text: line.trim().slice(0, 120) })
+  })
+
+  return findings
+}
+
 /*
  * CLI entry, guarded.
  *
@@ -188,32 +300,63 @@ const invokedDirectly =
   import.meta.url === new URL(`file://${process.argv[1]}`).href
 
 if (invokedDirectly) {
-  const findings = []
+  const emDashFindings = []
+  const exclamationFindings = []
   for (const file of sourceFiles(SRC)) {
-    for (const hit of findEmDashes(readFileSync(file, "utf8"))) {
-      findings.push({ file: relative(ROOT, file), ...hit })
+    const rel = relative(ROOT, file)
+    const source = readFileSync(file, "utf8")
+    for (const hit of findEmDashes(source)) {
+      emDashFindings.push({ file: rel, ...hit })
+    }
+    if (!EXCLAMATION_ALLOWLIST.includes(rel)) {
+      for (const hit of findExclamationMarks(source)) {
+        exclamationFindings.push({ file: rel, ...hit })
+      }
     }
   }
 
   if (process.argv.includes("--count")) {
     const perFile = new Map()
-    for (const f of findings) perFile.set(f.file, (perFile.get(f.file) ?? 0) + 1)
+    for (const f of [...emDashFindings, ...exclamationFindings]) {
+      perFile.set(f.file, (perFile.get(f.file) ?? 0) + 1)
+    }
     const sorted = [...perFile.entries()].sort((a, b) => b[1] - a[1])
     for (const [file, count] of sorted) console.log(`${String(count).padStart(3)}  ${file}`)
-    console.log(`\n${findings.length} lines across ${perFile.size} files`)
+    console.log(
+      `\n${emDashFindings.length} em-dash line(s), ${exclamationFindings.length} ` +
+        `exclamation-mark line(s), across ${perFile.size} files`,
+    )
     process.exit(0)
   }
 
-  if (findings.length === 0) {
-    console.log("check_copy: no em-dashes in UI copy.")
+  if (emDashFindings.length === 0 && exclamationFindings.length === 0) {
+    console.log("check_copy: no em-dashes or exclamation marks in UI copy.")
     process.exit(0)
   }
 
-  console.error(`check_copy: ${findings.length} em-dash(es) in UI copy (MISSION §3.2 item 10).`)
-  console.error("Restructure the sentence, or use a comma or a full stop.\n")
-  for (const f of findings) {
-    console.error(`  ${f.file}:${f.line}`)
-    console.error(`    ${f.text}`)
+  if (emDashFindings.length > 0) {
+    console.error(
+      `check_copy: ${emDashFindings.length} em-dash(es) in UI copy (MISSION §3.2 item 10).`,
+    )
+    console.error("Restructure the sentence, or use a comma or a full stop.\n")
+    for (const f of emDashFindings) {
+      console.error(`  ${f.file}:${f.line}`)
+      console.error(`    ${f.text}`)
+    }
   }
+
+  if (exclamationFindings.length > 0) {
+    if (emDashFindings.length > 0) console.error("")
+    console.error(
+      `check_copy: ${exclamationFindings.length} exclamation mark(s) in UI copy ` +
+        "(MISSION §3.2 item 10, DESIGN.md §12).",
+    )
+    console.error("Rewrite without the exclamation mark.\n")
+    for (const f of exclamationFindings) {
+      console.error(`  ${f.file}:${f.line}`)
+      console.error(`    ${f.text}`)
+    }
+  }
+
   process.exit(1)
 }
