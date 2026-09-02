@@ -84,6 +84,7 @@ from lemely.db.models.quizzes import (
 from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
+from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
 
@@ -109,6 +110,7 @@ def import_all_models() -> None:
         profiles,
         quizzes,
         study_plan,
+        thresholds,
         users,
     )
 
@@ -127,6 +129,7 @@ __all__ = [
     "BoundarySource",
     "CardSource",
     "ClassEnrollment",
+    "ComponentThreshold",
     "ConfidenceBand",
     "DeckOrigin",
     "Device",
@@ -147,6 +150,7 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationType",
+    "OptionThreshold",
     "Paper",
     "PaperTier",
     "ParentChildLink",
