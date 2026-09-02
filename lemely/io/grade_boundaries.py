@@ -118,21 +118,41 @@ def _percentages(thresholds: dict[str, int], max_mark: int) -> dict[str, float]:
 
 
 def _load(session: Session) -> _ReferenceTuple:
+    """Build the exact/subject-default/global-default maps from verified rows only.
+
+    An unverified row (``verified=False``) is a real transcription whose PDF
+    could not be read; ``component_thresholds`` stores it as coverage awaiting
+    verification, but nothing may cite Cambridge as its source
+    (``lemely/db/models/thresholds.py``). Letting it populate ``exact`` or
+    either average would report a guess as ``boundary_source="exact"`` — worse
+    than the fallback the chain exists to provide — so unverified rows are
+    skipped here entirely. A paper whose only row is unverified falls through
+    to the subject/global default instead, which is the intended behaviour.
+
+    ``by_paper`` is keyed ``(subject_code, paper_number)`` rather than just
+    ``subject_code`` so the fallback map for a Core paper is built only from
+    other Core papers. Grade vocabularies differ by tier at the same subject
+    (Core C-G, Extended A*-G) — grouping by subject alone would let an
+    Extended paper's A/B boundaries leak into a Core paper's fallback, which a
+    Core candidate can never be awarded.
+    """
     exact: dict[str, dict[str, float]] = {}
-    by_subject: dict[str, dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    by_paper: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
     everything: dict[str, list[float]] = defaultdict(list)
     for row in session.scalars(sa.select(ComponentThreshold)):
+        if not row.verified:
+            continue
         pct = _percentages(row.thresholds, row.max_mark)
         code = _SESSION_CODE_BY_MONTH[row.session_month]
         year_suffix = row.session_year % 100
         key = f"{row.subject_code}_{code}{year_suffix:02d}_p{row.paper_number}{row.paper_variant}"
         exact[key] = pct
         for grade, value in pct.items():
-            by_subject[row.subject_code][grade].append(value)
+            by_paper[(row.subject_code, row.paper_number)][grade].append(value)
             everything[grade].append(value)
     subject_defaults = {
-        subject: {g: round(mean(v), 2) for g, v in grades.items()}
-        for subject, grades in by_subject.items()
+        f"{subject}_p{paper_number}": {g: round(mean(v), 2) for g, v in grades.items()}
+        for (subject, paper_number), grades in by_paper.items()
     }
     global_default = (
         {g: round(mean(v), 2) for g, v in everything.items()}
@@ -181,20 +201,23 @@ class GradeBoundaryStore:
 
     @property
     def subject_default_count(self) -> int:
-        """How many subjects carry a fallback boundary set of their own."""
+        """How many (subject, paper number) pairs carry a fallback boundary set."""
         return len(self._defaults)
 
     def resolve(self, metadata: ExamMetadata) -> tuple[dict[str, float], BoundarySource]:
         """Return (boundary_map, source_tag) using the fallback chain.
 
         source_tag is one of: 'exact', 'subject_default', 'global_default'.
+        The subject-default rung is scoped to ``(subject_code, paper_number)``,
+        never subject alone, so a Core paper's fallback never contains a grade
+        (e.g. "A") sourced entirely from Extended papers of the same subject.
         """
         key = _make_key(metadata)
         if key and key in self._exact:
             return self._exact[key], "exact"
 
-        subject = metadata.subject_code
-        if subject in self._defaults:
-            return self._defaults[subject], "subject_default"
+        paper_key = f"{metadata.subject_code}_p{metadata.paper_number}"
+        if paper_key in self._defaults:
+            return self._defaults[paper_key], "subject_default"
 
         return self._global, "global_default"
