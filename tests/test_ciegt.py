@@ -69,6 +69,42 @@ def test_rows_carry_raw_marks_and_drop_the_not_applicable_sentinel() -> None:
     assert core.max_mark == 40
 
 
+def test_zero_valued_thresholds_survive_the_decode_and_the_sentinel_filter() -> None:
+    """0 is a real, if unusual, raw-mark threshold — only the payload's -1
+    "not available at this tier" sentinel must be dropped. A later task treats
+    a threshold at or below zero as its own fallback signal for rows it cannot
+    verify against the official PDF; if this client silently dropped zeros
+    upstream, that filter would become a no-op and the rows it exists to catch
+    would be invisible. Do not "simplify" the filter in ciegt.py to
+    `not in (None, 0, _NOT_APPLICABLE)` — it must stay `(None, _NOT_APPLICABLE)`.
+
+    0625's captured fixture happens to carry no 0-mark rows (they cluster in
+    0606 and 0580), so this is exercised against a small hand-built devalue
+    payload instead: pool[0] is the root object, pool[1] is the table array,
+    pool[2] is the one row (whose field values are indices into the pool),
+    and pool[3:] are the literals those indices resolve to — a number
+    *inside* a dict/list is an index, a number *in* the pool is a literal.
+    """
+    pool = [
+        {"table": 1},  # 0: root
+        [2],  # 1: table = [row]
+        {"session": 3, "component": 4, "max": 5, "A": 6, "B": 7, "C": 8},  # 2: row
+        "M/J 24",  # 3: session
+        "11",  # 4: component
+        40,  # 5: max
+        0,  # 6: A threshold = 0 (a real, if unusual, mark)
+        -1,  # 7: B threshold = not available at this tier
+        27,  # 8: C threshold = 27
+    ]
+    payload = {"nodes": [{"type": "data", "data": pool}]}
+
+    (row,) = rows_from_payload(payload, "0625")
+
+    assert row.thresholds["A"] == 0
+    assert "B" not in row.thresholds
+    assert row.thresholds["C"] == 27
+
+
 def test_source_url_points_at_the_official_document() -> None:
     rows = rows_from_payload(json.loads(FIXTURE.read_text(encoding="utf-8")), "0625")
     row = next(
