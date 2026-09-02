@@ -147,6 +147,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # Prompts __init__ re-exports everything; F403 and F401 are intentional.
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
+"lemely/io/ciegt.py" = ["ANN401"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
 # Unicode lookalikes are the entire subject matter here: the module maps Adobe
@@ -265,6 +266,7 @@ module = [
   "lemely.io.answer_extraction",
   "lemely.io.correction_ai",
   "lemely.io.subject",
+  "lemely.io.ciegt",
   "lemely.app.gradio_callbacks",
   "lemely.io.det.metadata",
   "lemely.io.det.tables",
