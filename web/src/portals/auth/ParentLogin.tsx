@@ -1,11 +1,12 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useRef, useState, type ClipboardEvent, type FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { ArrowLeft } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { otpRequestFailureMessage, otpVerifyFailureMessage } from "@/lib/authOutcome"
+import { safeNextPath } from "@/lib/nextPath"
 import { AuthFrame } from "./Login"
 
 /*
@@ -364,6 +365,11 @@ function CodeStep({
 export function ParentLogin() {
   const { requestOtp, verifyOtp } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // PR 2 part A2: same `?next=` handling as `Login.tsx`'s own success
+  // handler — see that component's comment for why it is re-validated here
+  // rather than trusted from whichever screen sent this reader on.
+  const next = safeNextPath(searchParams.get("next"))
 
   const [dial, setDial] = useState<string>(COUNTRIES[0].dial)
   const [phone, setPhone] = useState("")
@@ -416,11 +422,11 @@ export function ParentLogin() {
     verifyOtp.mutate(
       { phone: sentTo, code },
       {
-        onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
+        onSuccess: (result) => navigate(next ?? portalPathForRole(result.role), { replace: true }),
         onError: (err) => setVerifyError(otpVerifyFailureMessage(err)),
       },
     )
-  }, [code, sentTo, verifyOtp, navigate])
+  }, [code, sentTo, verifyOtp, navigate, next])
 
   return (
     /*

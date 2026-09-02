@@ -102,3 +102,23 @@ export function takeSessionExpired(): boolean {
   expiredSignal = false
   return expired
 }
+
+/**
+ * Read the expiry flag without clearing it.
+ *
+ * Two readers need two different reads of the same bit. `Login.tsx` wants
+ * `takeSessionExpired`: it reads once on mount to decide whether to show
+ * "Your session expired", and must consume the flag so a later remount does
+ * not show the notice a second time for the same expiry. `RequireAuth`
+ * cannot use that same consuming read — it renders on every navigation
+ * inside a guarded subtree, not once, and it is asking a different question
+ * ("did `api.ts`'s silent refresh just get refused, mid-session, on this
+ * very render?") than Login's "should I show the notice right now". Taking
+ * the flag there would clear it before the reader ever reaches `/login` to
+ * see it — `peekSessionExpired` lets `RequireAuth` route a dead session to
+ * `/session-ended` without deciding, on its behalf, that the flag has been
+ * shown.
+ */
+export function peekSessionExpired(): boolean {
+  return expiredSignal
+}

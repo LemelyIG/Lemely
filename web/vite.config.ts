@@ -7,6 +7,7 @@ import { VitePWA } from "vite-plugin-pwa"
 // requires one. `allowImportingTsExtensions` is already set there.
 import { fontPreload } from "./vite/fontPreload.ts"
 import { themeColor } from "./vite/themeColor.ts"
+import { preMountShell } from "./vite/preMountShell.ts"
 import { tokenHex } from "./vite/brandTokens.ts"
 
 // https://vite.dev/config/
@@ -32,6 +33,10 @@ export default defineConfig({
     // P6.5: `<meta name="theme-color">` from the --paper token. See
     // web/vite/themeColor.ts.
     themeColor(),
+    // PR 2 part B: the static pre-mount shell's colour/duration placeholders
+    // in index.html, resolved from the same tokens RouteFallback uses. See
+    // web/vite/preMountShell.ts.
+    preMountShell(),
     VitePWA({
       registerType: "autoUpdate",
       // P6.3. The default (`injectRegister: "auto"`) emits a bare

@@ -29,6 +29,7 @@ import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink } from "@/components/ui/skip-link"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { FullPageState } from "@/portals/misc/FullPageState"
 
 /**
  * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
@@ -1050,6 +1051,144 @@ function AppBody() {
                     },
                   ]}
                 />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part A1. Nine full-page states, one `ComponentSection` each,
+            all shown in the PORTAL frame: the standalone frame is
+            `min-h-screen` and would blow out the grid this page lays cells
+            out in. `NotFound`/`PortalNotFound` (and every future caller) pick
+            `frame="standalone"` at the real top-level routes; the frame prop
+            itself is exercised nowhere here, on purpose, since a screenshot
+            of a full viewport is not a state cell. */}
+        <Group title="Full-page states">
+          <ComponentSection
+            name="Not found"
+            summary="`not-found`. What `NotFound`/`PortalNotFound` render for a genuinely unmatched path. Amber/neutral tone throughout this family, never red (DESIGN.md's accessibility guidance)."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="not-found" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Crash"
+            summary="`crash`. What `NotFound` renders when `useRouteError` returns something other than a 404 Response, i.e. a render actually threw. Primary goes home, secondary reloads."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="crash" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline"
+            summary="No primary action — there is nothing to navigate to while offline — and the waiting line pulses to show the page is still listening, not stalled. `onRetry` is supplied here only so the secondary Try again control has something to render; the real caller wires it to whatever check brought the reader here."
+          >
+            <StateCell state="error" provenance="prop" note="The waiting line is role=status, polite, not alert">
+              <div className="w-full">
+                <FullPageState variant="offline" frame="portal" onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="New version"
+            summary="`new-version`. A stale build caught by the chunk-load guard: reload picks up the new one and nothing typed is lost, so this is the one variant that gets straight to a single reload action with no secondary."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="new-version" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Session ended"
+            summary="`session-ended`. `returnTo` (omitted here) carries the reader back to where they were once they sign back in, via `/login?next=...`."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="session-ended" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="No access"
+            summary="`no-access`. A signed-in reader on the wrong role's route. Home is role-aware (`portalPathForRole`), so this always offers somewhere the reader can actually go, never the page they were just refused."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="no-access" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Service trouble"
+            summary="`service-trouble`. `health` is optional and caller-supplied (no polling happens in this component); omitted, the status row simply does not render. Both reachable statuses shown below; `unknown` renders the same row with a neutral rule-coloured dot."
+          >
+            <StateCell state="error" provenance="prop" note="health.status = 'not-responding'">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "not-responding", checkedSecondsAgo: 12 }}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="health.status = 'responding' — the service answered, but this page still failed to load">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "responding", checkedSecondsAgo: 3 }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Too many requests"
+            summary="`too-many-requests`. `retryAfterSeconds` is caller-owned countdown state, re-rendered every second; this component only formats it and disables the retry control while it is still above zero. No timer runs inside it."
+          >
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=42 — retry disabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={42}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=0 — retry enabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={0}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Slow load"
+            summary="`slow-load`. Copy-only — no `DoodleKind` of its own — for a page that is taking unusually long rather than one that has actually failed. Renders the animated `Mark` (§9.2's one documented stroke-dashoffset exception) instead of a `Doodle`."
+          >
+            <StateCell state="loading" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="slow-load" frame="portal" />
               </div>
             </StateCell>
           </ComponentSection>

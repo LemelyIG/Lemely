@@ -339,8 +339,13 @@ const throttle = new ReportThrottle()
  * the unit-test runner the identifier is real at the type level but does
  * not exist at runtime, and a bare reference would throw a `ReferenceError`
  * before a single assertion ran.
+ *
+ * Exported as of PR 2 part C: `lib/staleChunk.ts`'s reload guard and
+ * `components/recovery-effects.tsx`'s "Updated" toast both need the exact
+ * same build identity this module already computes, so they import it
+ * rather than re-deriving the `__LEMELY_BUILD_ID__` guard a second time.
  */
-function currentBuildId(): string {
+export function currentBuildId(): string {
   return typeof __LEMELY_BUILD_ID__ === "string" ? __LEMELY_BUILD_ID__ : "dev"
 }
 
