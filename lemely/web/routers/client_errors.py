@@ -18,6 +18,21 @@ address, then the literal string ``"unknown"``) purely to key the rate
 limiter below — it is never treated as an authenticated identity, and no
 route in this app ever will be on the strength of an IP address alone.
 
+**The per-client limiter only binds traffic that actually came through the
+Worker.** ``docs/ci-cd.md`` ("Known gaps this setup doesn't close") records,
+as a known live gap, that this Cloud Run service is reachable directly
+(``--allow-unauthenticated``) at its ``*.run.app`` URL, bypassing the Worker
+entirely. A caller who hits that URL directly controls its own
+``X-Forwarded-For`` header — a fresh, unverified value on every request
+buys a fresh :func:`_client_ip` bucket each time, so :attr:`ClientErrorLimiters.per_client`
+does nothing for that caller. What still holds regardless of how the request
+arrived is the shared cap: at most 300 accepted reports per minute, each at
+most about 19 000 characters (see :class:`~lemely.web.schemas_client_errors.ClientErrorReportDTO`'s
+``max_length``s). Making the per-client limit honest against a direct caller
+needs the shared-secret header ``docs/ci-cd.md`` proposes there (the Worker
+stamps it, a small FastAPI middleware checks it) — infrastructure work out of
+scope for this route.
+
 **There is no database row for a report.** The only sink is Cloud Logging: an
 accepted report becomes one structured ``client_error`` event
 (``lemely.runtime.logging`` ships JSON to stderr, which Cloud Run forwards on
@@ -56,11 +71,18 @@ log = structlog.get_logger(__name__)
 
 router = APIRouter(prefix="/api")
 
-# 32 KiB: comfortably above a real report (message/stack/componentStack capped
-# at 2000/8000/8000 chars by the DTO, ~11 KB of text at the very most) with
-# room for JSON structure and multi-byte characters, and small enough that
-# even the global limiter's worst case (300 requests/minute) is a few MB.
-_MAX_BODY_BYTES = 32 * 1024
+# 96 KiB. The DTO's own per-field max_length is in *characters*, not bytes:
+# message (2000) + stack (8000) + componentStack (8000) + route (500) +
+# buildId (64) + userAgent (500) = 19064 chars at the very most, and a
+# character can cost up to 4 bytes in UTF-8 (astral-plane characters —
+# emoji, some CJK — are exactly this worst case), so a DTO-valid report can
+# be ~19064 * 4 ≈ 74.5 KB of text alone before the JSON structure (field
+# names, quotes, commas, braces) around it is even counted. 32 KiB — this
+# constant's old value — undercounted that and could 413 a legitimate report
+# with enough multi-byte content. 96 KiB comfortably covers the ~75 KB worst
+# case with headroom for structure, and is still small enough that the
+# global limiter's worst case (300 requests/minute) tops out around 28 MB.
+_MAX_BODY_BYTES = 96 * 1024
 _OVERSIZED_DETAIL = f"Client error report exceeds {_MAX_BODY_BYTES} byte limit."
 
 # The key the global limiter tracks its one shared bucket under. Not a real
@@ -79,6 +101,14 @@ def _client_ip(request: Request) -> str:
     ``"unknown"`` — which means every caller with no identifying header at all
     shares one rate-limit bucket, never that the request is refused for
     lacking one.
+
+    This trusts ``X-Forwarded-For`` as-is, which is only honest for a request
+    that actually transited the Cloudflare Worker. A caller reaching this
+    Cloud Run service directly (see the module docstring's "per-client
+    limiter only binds..." section) can set that header to anything,
+    including a fresh value per request — for that caller this function
+    still returns *a* key, but not one that binds them to a shared bucket
+    across requests, so only the global limiter constrains them.
     """
     forwarded_for = request.headers.get("x-forwarded-for")
     if forwarded_for:
@@ -116,7 +146,7 @@ def _reject_oversized_content_length(request: Request) -> None:
     validation rather than guessed at. What *does* bound an accepted report
     regardless is
     :class:`~lemely.web.schemas_client_errors.ClientErrorReportDTO`'s own
-    per-field ``max_length``s — a little over 11 KB of text at the very most.
+    per-field ``max_length``s — about 19 000 characters at the very most.
     """
     declared = request.headers.get("content-length")
     if declared is None:
@@ -157,6 +187,14 @@ def report_client_error(
     ``Retry-After`` header once exceeded. The body is never echoed back — the
     response is a bare acknowledgement.
     """
+    # Per-client is consulted first, deliberately. The alternative (global
+    # first) would let one IP burn the *entire* shared 300/min budget on
+    # requests that all get rejected once its own 10 are gone — silencing
+    # every other caller's reports for the rest of the window. Per-client
+    # first bounds the damage one address can do to the shared budget to its
+    # own 10 slots, at the cost of an honest caller sometimes burning some of
+    # its 10 per-client slots on a request that the global limiter would have
+    # rejected anyway during a global flood. That trade is intentional.
     client_ip = _client_ip(request)
     if not limiters.per_client.allow(client_ip):
         raise _rate_limited(limiters.per_client.retry_after(client_ip))

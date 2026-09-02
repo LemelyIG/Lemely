@@ -122,13 +122,15 @@ def test_rejects_bad_kind(client: TestClient) -> None:
 
 
 def test_413_on_oversized_content_length(client: TestClient) -> None:
-    """A declared ``Content-Length`` over 32 KiB is rejected before parsing.
+    """A declared ``Content-Length`` over 96 KiB is rejected before parsing.
 
     The oversized field here (``message``) would also fail DTO validation on
     its own (max 2000 chars) — the point of this test is that the response is
-    **413**, not 422, proving the size guard runs first.
+    **413**, not 422, proving the size guard runs first. 100_000 chars pushes
+    the JSON body's ``Content-Length`` past the 96 KiB (98_304 byte) cap with
+    comfortable margin for the surrounding JSON structure.
     """
-    resp = client.post("/api/client-errors", json=_valid_report(message="x" * 40_000))
+    resp = client.post("/api/client-errors", json=_valid_report(message="x" * 100_000))
     assert resp.status_code == 413, resp.text
 
 

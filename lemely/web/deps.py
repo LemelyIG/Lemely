@@ -882,8 +882,23 @@ class ClientErrorLimiters:
 
     That route is anonymous (see its own module docstring for why): ``per_client``
     throttles a single caller, keyed by IP, and ``global_`` caps the endpoint's
-    aggregate volume regardless of caller, so no single source and no
-    combination of sources can flood Cloud Logging through it.
+    aggregate volume regardless of caller.
+
+    **``per_client`` only binds a caller that arrived through the Cloudflare
+    Worker.** ``docs/ci-cd.md`` ("Known gaps this setup doesn't close")
+    records, as a known live gap, that the Cloud Run service behind this app
+    is reachable directly (``--allow-unauthenticated``), bypassing the
+    Worker that would otherwise stamp a trustworthy ``X-Forwarded-For``. A
+    caller hitting the ``*.run.app`` URL directly can send a fresh,
+    unverified ``X-Forwarded-For`` on every request and get a fresh
+    ``per_client`` bucket each time — for that caller, ``global_`` is the
+    only thing that binds anything: at most 300 accepted reports per minute,
+    each at most about 19 000 characters. Making ``per_client`` honest against a
+    direct caller needs the shared-secret header ``docs/ci-cd.md`` proposes
+    there (the Worker stamps it, a small FastAPI middleware checks it) —
+    infrastructure work out of scope for this PR. See
+    ``lemely.web.routers.client_errors``'s own module docstring for the full
+    reasoning.
     """
 
     per_client: SlidingWindowLimiter
