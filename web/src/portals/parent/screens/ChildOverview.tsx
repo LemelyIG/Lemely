@@ -9,6 +9,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
 import { relativeTime } from "@/lib/utils"
 import type { ParentAtRiskFlag, SubjectOverview, WeakTopic } from "@/lib/parentTypes"
@@ -43,7 +44,9 @@ import type { ParentAtRiskFlag, SubjectOverview, WeakTopic } from "@/lib/parentT
  * inconsistency once) — the same number must not read differently on two
  * screens, and least of all across two audiences. */
 function SubjectRow({ childId, subject }: { childId: string; subject: SubjectOverview }) {
+  const { data: reference } = useReference()
   const { primary, secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
     subject.subjectName,
     subject.subjectCode,
     subject.qualificationLevel,

@@ -7,6 +7,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { accuracyTone, TONE_TO_SEVERITY } from "@/lib/severity"
 import { relativeTime } from "@/lib/utils"
 
@@ -65,6 +66,7 @@ function PredictedBasis({ papers }: { papers: number }) {
 export function SubjectDetail() {
   const { childId = "", code = "" } = useParams<{ childId: string; code: string }>()
   const { data, isPending, isError, error } = useChildSubject(childId, code)
+  const { data: reference } = useReference()
 
   if (isPending) {
     return (
@@ -87,6 +89,7 @@ export function SubjectDetail() {
 
   const { papers, boundaryDistance, weakTopics } = data
   const { primary, secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
     data.subjectName,
     data.subjectCode,
     data.qualificationLevel,

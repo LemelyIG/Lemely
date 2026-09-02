@@ -6,6 +6,7 @@ import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-sh
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useSubject } from "@/lib/hooks/useStudentApi"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
@@ -51,6 +52,7 @@ export function Subject() {
   const navigate = useNavigate()
   const { code } = useParams<{ code: string }>()
   const { data, isPending, isError, error } = useSubject(code ?? "")
+  const { data: reference } = useReference()
 
   /* The page must identify itself in every state, not only the populated one.
      The visible title below is the subject's full name, which is exactly what
@@ -101,6 +103,7 @@ export function Subject() {
 
   const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } = data
   const { primary, secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
     subjectHeader.name,
     subjectHeader.code,
     subjectHeader.qualificationLevel,

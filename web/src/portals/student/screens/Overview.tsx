@@ -12,6 +12,7 @@ import { ErrorState } from "@/components/ui/state-views"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
@@ -120,6 +121,7 @@ function trendOf(row: SubjectRow): {
 function SubjectLedgerRow({ row }: { row: SubjectRow }) {
   const trend = trendOf(row)
   const TrendIcon = trend.icon
+  const { data: reference } = useReference()
 
   return (
     <Link
@@ -146,7 +148,12 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
     >
       <div className="flex items-center gap-3 md:contents">
         {(() => {
-          const { primary, secondary } = subjectIdentifier(row.name, row.code, row.qualificationLevel)
+          const { primary, secondary } = subjectIdentifier(
+            reference?.qualificationLevels,
+            row.name,
+            row.code,
+            row.qualificationLevel,
+          )
           return (
             <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
               {/* The name is the row's identity now, so it is the element that
