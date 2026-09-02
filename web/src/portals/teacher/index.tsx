@@ -16,6 +16,7 @@ import {
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -462,7 +463,17 @@ function TeacherLayout() {
           className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            <Outlet />
+            {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+                rebuilds each surface") for this portal: a render crash in one
+                screen stays inside this content slot rather than taking the
+                sidebar down with it or falling out to the top-level
+                `errorElement`. Inside `Suspense` so a failed chunk load and a
+                render throw both land in this boundary.
+                `resetKey={location.pathname}` clears a caught error on
+                navigation. */}
+            <ErrorBoundary label="This page" resetKey={location.pathname}>
+              <Outlet />
+            </ErrorBoundary>
           </Suspense>
         </main>
       </div>

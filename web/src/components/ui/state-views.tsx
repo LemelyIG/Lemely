@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V3 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { HTMLAttributes, ReactNode } from "react"
 import { Tray, WarningCircle, WifiSlash, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -27,6 +27,38 @@ import { Button } from "@/components/ui/button"
  * per §4.1 Caveat decorates and never carries, so a state view without one is
  * still complete, and a generic default ("Nothing here yet") on every empty
  * state in the product would be decoration pretending to be voice.
+ *
+ * ── The merge with `error-state.tsx` (loading/error primitives PR) ─────────
+ *
+ * The product carried two `ErrorState`s: this file's (amber default, `heading`
+ * `/body`/`action`, product-wide) and a second, unimported one in
+ * `error-state.tsx` (red-only, `title`/`message`/`onRetry`) that only the kit
+ * preview page rendered. The decision is one component, this one, amber
+ * default per PRODUCT.md's "avoid red-heavy error states." Two things from the
+ * old file were real and worth keeping rather than losing at the merge:
+ *
+ *   - **`compact`**, a small inline slot for a single form field or table
+ *     cell — 16px icon, tight padding, left-aligned, tone-wash background —
+ *     rather than the centred full-panel treatment every other `kind` here
+ *     uses. Its retry is an underlined text button, not `<Button>`: a filled
+ *     button reads as too heavy a control for a cell-sized failure.
+ *   - **`children`**, a trailing slot after the actions for a call site that
+ *     needs to append something (a diagnostic id, a secondary link) the fixed
+ *     prop set does not model.
+ *
+ * The old file's central rule about copy carries over unchanged: no default
+ * `heading`, ever. A component that falls back to "Something went wrong" on
+ * a missing prop teaches call sites to omit the one sentence a reader actually
+ * needed, and every empty/error/offline panel in the product has to say what
+ * specifically happened or specifically isn't here.
+ *
+ * `role` is new: `kind="error"` is `role="alert"` (an assertive live region —
+ * a failure a reader did not cause and needs to hear about promptly) and
+ * `kind="offline"` is `role="status"` (polite — connectivity dropping is a
+ * fact of the moment, not an event to interrupt over). `kind="empty"` gets
+ * neither; there is nothing to announce about content that was never going to
+ * exist. Applies to both layouts, since it is about what assistive tech is
+ * told, not about which one is on screen.
  */
 
 export type StateViewKind = "empty" | "error" | "offline"
@@ -50,7 +82,16 @@ export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
   body?: string
   action?: StateViewAction
   secondaryAction?: StateViewAction
+  /** Small inline slot for a single field or table cell instead of the
+   * centred full panel: 16px icon, tight `px-3 py-2.5` padding, left-aligned,
+   * tone-wash background. `action` renders as an underlined text button
+   * rather than `<Button>` — a filled button is too heavy a control for a
+   * cell-sized failure. Ported from the pre-merge `error-state.tsx`. */
+  compact?: boolean
   className?: string
+  /** Trailing slot after the actions, for anything the fixed prop set does
+   * not model (a diagnostic id, a secondary link). */
+  children?: ReactNode
 }
 
 const kindDefaults: Record<StateViewKind, { icon: Icon; tone: StateViewTone }> = {
@@ -74,16 +115,76 @@ export function StateView({
   body,
   action,
   secondaryAction,
+  compact = false,
   className,
+  children,
   ...props
 }: StateViewProps) {
   const defaults = kindDefaults[kind]
   const resolvedTone = tone ?? defaults.tone
   const toneCls = toneClasses[resolvedTone]
   const Glyph = defaults.icon
+  // `role` is computed from `kind`, not hardcoded per call site, so every
+  // error panel in the product is announced the same way without every
+  // screen having to remember to ask for it. `{...props}` still spreads after
+  // this, so an unusual caller can override it via the ordinary HTML prop.
+  const regionRole = kind === "error" ? "alert" : kind === "offline" ? "status" : undefined
+
+  if (compact) {
+    return (
+      <div
+        role={regionRole}
+        className={cn(
+          "flex items-start gap-2 rounded-md border border-rule px-3 py-2.5",
+          toneCls.bg,
+          className,
+        )}
+        {...props}
+      >
+        <div className="mt-0.5 shrink-0">
+          {icon ?? <Glyph size={16} className={toneCls.icon} aria-hidden="true" />}
+        </div>
+        <div className="flex min-w-0 flex-col gap-1">
+          {marginalia ? <p className="text-hand text-ink-muted">{marginalia}</p> : null}
+          <p className="text-body-sm font-medium text-ink">{heading}</p>
+          {body ? <p className="text-body-sm text-ink-muted">{body}</p> : null}
+          {action || secondaryAction ? (
+            <div className="mt-0.5 flex flex-wrap items-center gap-3">
+              {action ? (
+                <button
+                  type="button"
+                  onClick={action.onClick}
+                  className={cn(
+                    "self-start text-label text-accent-ink underline decoration-1 underline-offset-2 transition-colors",
+                    "hover:text-accent-hover",
+                  )}
+                >
+                  {action.label}
+                </button>
+              ) : null}
+              {secondaryAction ? (
+                <button
+                  type="button"
+                  onClick={secondaryAction.onClick}
+                  className={cn(
+                    "self-start text-label text-ink-muted underline decoration-1 underline-offset-2 transition-colors",
+                    "hover:text-ink",
+                  )}
+                >
+                  {secondaryAction.label}
+                </button>
+              ) : null}
+            </div>
+          ) : null}
+          {children}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div
+      role={regionRole}
       className={cn(
         // `w-full` is load-bearing, not decoration: `max-w-sm` alone leaves the
         // box its intrinsic 384px, which is wider than the 380px breakpoint the
@@ -124,6 +225,7 @@ export function StateView({
           ) : null}
         </div>
       ) : null}
+      {children}
     </div>
   )
 }

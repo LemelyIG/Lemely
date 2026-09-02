@@ -3,6 +3,8 @@ import { Suspense, lazy } from "react"
 import type { LineChartProps } from "./line-chart"
 import type { BarChartProps } from "./bar-chart"
 import { SkeletonBlock } from "./skeleton"
+import { ErrorBoundary } from "./error-boundary"
+import { ErrorState } from "./state-views"
 import { cn } from "@/lib/utils"
 
 /*
@@ -41,6 +43,19 @@ import { cn } from "@/lib/utils"
  * pulls `nivoTheme` into the route regardless, so wrapping its charts in
  * Suspense would add a boundary and defer nothing. Left alone deliberately
  * rather than changed for symmetry.
+ *
+ * ── PR 1B: an `ErrorBoundary` around each chunk, not just a `Suspense` ─────
+ *
+ * `@nivo/*` renders SVG from whatever data a screen hands it; a shape it does
+ * not expect (an empty series, a NaN slipped through a bad average) throws
+ * during Nivo's own render, same as any other component. Before this, that
+ * throw had nothing between it and the portal's `<Outlet/>` boundary (see
+ * `portals/*\/index.tsx`), so a broken chart on a dashboard that also shows
+ * three unrelated panels blanked the whole screen instead of just the chart.
+ * `ErrorState` renders `compact`, matching `ChartFallback`'s `height` on its
+ * own wrapper `<div>` so the failure state occupies the same box the chart or
+ * its loading skeleton would have — a failed chart must not reflow whatever
+ * sits below it on the page.
  */
 
 const LineChartImpl = lazy(() =>
@@ -60,18 +75,44 @@ function ChartFallback({ height, className }: { height?: number; className?: str
   )
 }
 
+/**
+ * What renders in place of a chart that threw. Fixed to the same `height` as
+ * `ChartFallback` (and the chart it stands in for), so a reader scrolling a
+ * dashboard never sees the layout jump the moment one panel fails. `compact`
+ * keeps `ErrorState` to the left-aligned inline treatment rather than the
+ * centred full-panel one — the latter's own min height (`py-12` plus a 48px
+ * icon) does not reliably fit inside a 220px chart box at every width.
+ */
+function ChartErrorFallback({ height, className }: { height?: number; className?: string }) {
+  return (
+    <div className={cn("w-full overflow-hidden", className)} style={{ height: height ?? DEFAULT_CHART_HEIGHT }}>
+      <ErrorState compact heading="This chart failed to load" className="h-full" />
+    </div>
+  )
+}
+
 export function LineChart(props: LineChartProps) {
   return (
-    <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
-      <LineChartImpl {...props} />
-    </Suspense>
+    <ErrorBoundary
+      label="This chart"
+      fallback={() => <ChartErrorFallback height={props.height} className={props.className} />}
+    >
+      <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
+        <LineChartImpl {...props} />
+      </Suspense>
+    </ErrorBoundary>
   )
 }
 
 export function BarChart(props: BarChartProps) {
   return (
-    <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
-      <BarChartImpl {...props} />
-    </Suspense>
+    <ErrorBoundary
+      label="This chart"
+      fallback={() => <ChartErrorFallback height={props.height} className={props.className} />}
+    >
+      <Suspense fallback={<ChartFallback height={props.height} className={props.className} />}>
+        <BarChartImpl {...props} />
+      </Suspense>
+    </ErrorBoundary>
   )
 }

@@ -95,12 +95,43 @@ function renderedMessages(source: string): string[] {
     .map((line) => line.trim())
 }
 
+/*
+ * PR 1B (client error reporting) exemption.
+ *
+ * `renderedMessages`'s "`.message` inside a `{...}` on one line" check exists
+ * to catch a JSX expression container (`<p>{err.message}</p>`) — and cannot,
+ * by construction, tell that shape apart from a plain object literal that
+ * happens to also fit on one line, e.g.
+ * `return { message: error.message, stack: error.stack ?? null }`. That is
+ * exactly the line `lib/clientErrors.ts` builds `POST /api/client-errors`'s
+ * request body with: a telemetry payload sent to the backend's structured
+ * logging, never a JSX prop or a `useState` setter, so it can never reach a
+ * render — see that file's own module comment for the fuller argument
+ * (`request()`/`ApiError` are the paths this repo's other error-copy modules
+ * exist to launder; this one is not in that family at all).
+ *
+ * A per-file allowlist, not a general escape hatch: `.ts`, not `.tsx` (this
+ * module has no JSX, so widening the exemption to "anywhere in this file"
+ * costs nothing it could ever legitimately catch), one entry, and the
+ * reason travels with it rather than living only in a commit message —
+ * exactly what the offenders message below asks any *other* addition here
+ * to do.
+ */
+const TELEMETRY_PAYLOAD_FILES: Record<string, string> = {
+  "lib/clientErrors.ts":
+    "buildClientErrorReport() copies Error#message into the client-error " +
+    "report body POSTed to the backend's structured logging. It is read " +
+    "for telemetry, never assigned to a render.",
+}
+
 describe("§6.2 no machine text reaches a reader", () => {
   it("renders no error's own message anywhere under src/", () => {
     const offenders: string[] = []
     for (const file of sourceFiles(SRC)) {
+      const relative = file.slice(SRC.length + 1)
+      if (relative in TELEMETRY_PAYLOAD_FILES) continue
       for (const line of renderedMessages(readFileSync(file, "utf8"))) {
-        offenders.push(`${file.slice(SRC.length + 1)}: ${line}`)
+        offenders.push(`${relative}: ${line}`)
       }
     }
     expect(
@@ -110,8 +141,18 @@ describe("§6.2 no machine text reaches a reader", () => {
         "settingsOutcome / friendOutcome / correctionOutcome). If the backend " +
         "genuinely wrote that sentence for this reader, say so at the call " +
         "site the way correctionOutcome.ts does, and widen this gate with the " +
-        "reason attached.",
+        "reason attached. If it never reaches a render at all (a telemetry " +
+        "payload, say), add it to TELEMETRY_PAYLOAD_FILES above instead, with " +
+        "the same kind of reason.",
     ).toEqual([])
+  })
+
+  it("keeps the telemetry allowlist honest: each entry still exists and is real .ts", () => {
+    const stale = Object.keys(TELEMETRY_PAYLOAD_FILES).filter((relative) => {
+      const absolute = join(SRC, relative)
+      return !statSync(absolute, { throwIfNoEntry: false })?.isFile() || relative.endsWith(".tsx")
+    })
+    expect(stale, "listed but gone, or a .tsx that could legitimately render JSX").toEqual([])
   })
 
   /*

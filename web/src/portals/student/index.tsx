@@ -7,6 +7,7 @@ import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -697,7 +698,19 @@ function StudentLayout() {
           className="flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            <Outlet />
+            {/* PR 1B fulfils the note above ("Phase 4 places those as it
+                rebuilds each surface", `routes.tsx`): a render crash in one
+                screen now stays inside this content slot instead of taking
+                the sidebar/header down with it or falling out to the
+                top-level `errorElement`. Inside `Suspense`, not outside it,
+                so a failed chunk load and a render throw both land in this
+                boundary while the chrome stays painted.
+                `resetKey={location.pathname}` clears a caught error on
+                navigation — a crash on `/student/board` must not still be
+                showing once the reader is on `/student/friends`. */}
+            <ErrorBoundary label="This page" resetKey={location.pathname}>
+              <Outlet />
+            </ErrorBoundary>
           </Suspense>
         </main>
       </div>
