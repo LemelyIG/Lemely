@@ -80,10 +80,13 @@ def _parse_option_row(
 ) -> ParsedOption | None:
     """Parse one option row, or return ``None`` (after logging) on a shape mismatch.
 
-    The row is split into whitespace tokens after the option code. Whether a
-    maximum-mark column exists is known in advance from the header, not
-    guessed per row, so the split is unambiguous for all four shapes: old/new
-    era crossed with single/multi component.
+    The row is split into whitespace tokens after the option code, and the
+    last N of them (N = the header's grade count) are always the grade
+    values. Whether a maximum-mark column precedes the component list is
+    known in advance from the header, not guessed per row, so the split is
+    unambiguous for all four shapes: old/new era crossed with single/multi
+    component. The component list itself is re-normalised on comma and/or
+    whitespace, since CAIE is inconsistent about the space after a comma.
     """
     match = _OPTION_ROW_PREFIX.match(line)
     if not match:
@@ -105,11 +108,17 @@ def _parse_option_row(
     prefix_tokens = tokens[:-grade_count]
 
     if has_max_mark_column:
-        max_mark_token, component_tokens = prefix_tokens[0], prefix_tokens[1:]
+        max_mark_token, component_prefix = prefix_tokens[0], prefix_tokens[1:]
     else:
-        max_mark_token, component_tokens = None, prefix_tokens
+        max_mark_token, component_prefix = None, prefix_tokens
 
-    if not component_tokens or not all(t.rstrip(",").isdigit() for t in component_tokens):
+    # Commas separating component numbers are not reliably followed by a
+    # space ("21, 41, 51" and "21,41,51" both occur), so the component list
+    # is normalised by re-splitting the joined prefix on any run of commas
+    # and/or whitespace rather than trusting whitespace token boundaries.
+    component_tokens = [t for t in re.split(r"[,\s]+", " ".join(component_prefix)) if t]
+
+    if not component_tokens or not all(t.isdigit() for t in component_tokens):
         logger.warning("threshold PDF: option row has no valid component list, skipping: %r", line)
         return None
     if max_mark_token is not None and not max_mark_token.isdigit():
@@ -118,7 +127,7 @@ def _parse_option_row(
 
     return ParsedOption(
         option_code=code,
-        component_numbers=[int(t.rstrip(",")) for t in component_tokens],
+        component_numbers=[int(t) for t in component_tokens],
         max_mark_after_weighting=int(max_mark_token) if max_mark_token is not None else None,
         thresholds={
             grade: int(value)

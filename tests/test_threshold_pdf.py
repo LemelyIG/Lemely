@@ -165,6 +165,24 @@ def test_new_era_multi_component_option_row() -> None:
     assert option.thresholds["G"] == 44
 
 
+@pytest.mark.parametrize(
+    "component_field",
+    ["21, 41, 51", "21,41,51", "21,41, 51"],
+    ids=["spaced", "unspaced", "mixed-spacing"],
+)
+def test_component_list_comma_spacing_is_immaterial(component_field: str) -> None:
+    """CAIE is not consistent about the space after a comma in the component
+    list. `component_numbers` must come out identical regardless."""
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    line = f"BX {component_field} 130 106 84 62 50 38 26 14"
+    option = _parse_option_row(line, _GRADES_8, has_max_mark_column=False)
+    assert option is not None
+    assert option.component_numbers == [21, 41, 51]
+    assert option.max_mark_after_weighting is None
+    assert option.thresholds["A*"] == 130
+
+
 def test_a_too_short_option_row_is_dropped_with_a_warning(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
