@@ -33,7 +33,7 @@ from lemely.db.base import Base
 from lemely.db.models import import_all_models
 from lemely.db.models.enums import SessionMonth
 from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
-from lemely.io.ciegt import ComponentRow
+from lemely.io.ciegt import ComponentRow, ciegt_page_url, gt_pdf_url
 from lemely.io.threshold_pdf import ParsedComponent, ParsedOption
 from lemely.runtime.config import DatabaseSettings
 from scripts.ingest_thresholds import ingest, verify_row
@@ -259,3 +259,78 @@ def test_a_second_ingest_of_the_same_option_updates_rather_than_duplicates(
 
         components = session.query(ComponentThreshold).all()
         assert len(components) == 1
+
+
+def test_source_url_names_the_document_actually_read(
+    pg_engine: sa.Engine, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A verified row's ``source_url`` is the Cambridge PDF that confirmed it.
+
+    An unverified row must not carry that same URL: the document was never
+    read for it, so citing it would misattribute the number to Cambridge --
+    exactly the failure mode this whole design exists to prevent. Its
+    ``source_url`` instead names the ciegt page the number actually came
+    from.
+    """
+    subject_code = "0625"
+    month, year = SessionMonth.oct_nov, 2023
+    verified_row = ComponentRow(
+        subject_code=subject_code,
+        session_month=month,
+        session_year=year,
+        paper_number=3,
+        paper_variant=3,
+        max_mark=80,
+        thresholds={"A": 60},
+        source_url=gt_pdf_url(subject_code, month, year),
+    )
+    unverified_row = ComponentRow(
+        subject_code=subject_code,
+        session_month=month,
+        session_year=year,
+        paper_number=4,
+        paper_variant=4,
+        max_mark=80,
+        thresholds={"A": 60},
+        source_url=gt_pdf_url(subject_code, month, year),
+    )
+
+    def fake_fetch_rows(code: str) -> list[ComponentRow]:
+        assert code == subject_code
+        return [verified_row, unverified_row]
+
+    # The document is readable and confirms component 33 -- but says nothing
+    # about component 44, so that row stays unverified even though a PDF was
+    # fetched for the session.
+    parsed_components = [
+        ParsedComponent(paper_number=3, paper_variant=3, max_mark=80, thresholds={"A": 60})
+    ]
+    monkeypatch.setattr("scripts.ingest_thresholds.fetch_rows", fake_fetch_rows)
+    monkeypatch.setattr(
+        "scripts.ingest_thresholds.parse_threshold_pdf",
+        lambda pdf_bytes: (parsed_components, []),
+    )
+    factory = sessionmaker(bind=pg_engine, future=True)
+
+    ingest([subject_code], session_factory=factory, fetch_pdf=lambda url: b"placeholder")
+
+    with Session(pg_engine) as session:
+        verified = (
+            session.query(ComponentThreshold)
+            .filter_by(subject_code=subject_code, paper_number=3, paper_variant=3)
+            .one()
+        )
+        unverified = (
+            session.query(ComponentThreshold)
+            .filter_by(subject_code=subject_code, paper_number=4, paper_variant=4)
+            .one()
+        )
+
+        assert verified.verified is True
+        assert verified.source_url == gt_pdf_url(subject_code, month, year)
+        assert "papacambridge" in verified.source_url
+
+        assert unverified.verified is False
+        assert unverified.source_url == ciegt_page_url(subject_code)
+        assert "papacambridge" not in unverified.source_url
+        assert "pastpapers" not in unverified.source_url

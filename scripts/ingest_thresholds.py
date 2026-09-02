@@ -34,7 +34,7 @@ import structlog
 
 from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.session import get_sessionmaker
-from lemely.io.ciegt import ComponentRow, fetch_rows, gt_pdf_url
+from lemely.io.ciegt import ComponentRow, ciegt_page_url, fetch_rows, gt_pdf_url
 from lemely.io.threshold_pdf import ParsedComponent, parse_threshold_pdf
 
 if TYPE_CHECKING:
@@ -142,6 +142,13 @@ def ingest(
                     report.grades_dropped += len(row.thresholds) - len(thresholds)
                     report.components_written += 1
                     report.components_verified += int(verified)
+                    # Only a verified row may cite the Cambridge PDF as its
+                    # source -- that document is what substantiated it. An
+                    # unverified row's numbers were never checked against it,
+                    # so it names the ciegt page they actually came from.
+                    component_source_url = (
+                        row.source_url if verified else ciegt_page_url(subject_code)
+                    )
                     session.execute(
                         sa.dialects.postgresql.insert(ComponentThreshold)
                         .values(
@@ -154,7 +161,7 @@ def ingest(
                             max_mark=row.max_mark,
                             thresholds=thresholds,
                             verified=verified,
-                            source_url=row.source_url,
+                            source_url=component_source_url,
                         )
                         .on_conflict_do_update(
                             constraint="uq_component_thresholds_identity",
@@ -162,7 +169,7 @@ def ingest(
                                 "thresholds": thresholds,
                                 "verified": verified,
                                 "max_mark": row.max_mark,
-                                "source_url": row.source_url,
+                                "source_url": component_source_url,
                             },
                         )
                     )

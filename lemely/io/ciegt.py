@@ -93,6 +93,17 @@ def gt_pdf_url(subject_code: str, month: SessionMonth, year: int) -> str:
     return f"{_PAPACAMBRIDGE}/{subject_code}_{session_filename_code(month, year)}_gt.pdf"
 
 
+def ciegt_page_url(subject_code: str, *, qualification: str = "igcse") -> str:
+    """The human-checkable ciegt page for one syllabus.
+
+    Distinct from the ``__data.json`` route :func:`fetch_rows` calls: this is a
+    page a person can open in a browser. It is the honest ``source_url`` for a
+    row the official PDF never confirmed — naming Cambridge for a number
+    Cambridge was never checked against would misattribute it.
+    """
+    return f"{_BASE}/{qualification}/{subject_code}"
+
+
 def _unflatten(pool: list[Any], index: Any) -> Any:
     """Resolve one devalue index into a plain Python value.
 

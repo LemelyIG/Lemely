@@ -63,6 +63,10 @@ class ComponentThreshold(TimestampMixin, Base):
     #: "drop anything at or below zero raw marks" filter was applied. Nothing
     #: may cite Cambridge as the source of an unverified row.
     verified: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
+    #: The document that stands behind ``thresholds``. When ``verified`` is
+    #: True this is the official Cambridge PDF that confirmed the values; when
+    #: False it is the ciegt page they came from instead — never the PDF's
+    #: URL, since that document was never actually read for this row.
     source_url: Mapped[str] = mapped_column(sa.String, nullable=False)
 
 
