@@ -18,7 +18,7 @@ from lemely.db.models.enums import Role
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.app import create_app
-from lemely.web.deps import get_auth_service, get_device_registry, reset_singletons
+from lemely.web.deps import get_auth_service, get_device_registry, get_user_mirror, reset_singletons
 from tests.auth_fakes import FakeDeviceRegistry, FakeGoTrueBackend, FakeUserMirror
 
 
@@ -42,6 +42,14 @@ def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
     )
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
+    # Issue #10: /auth/signup now reads the mirror directly (a read-only
+    # duplicate-address pre-check gating whether D7.12's cooldown applies at
+    # all — see routers/auth.py's `signup` docstring). Override it to the
+    # SAME mirror `service` is built on, or this app would fall back to the
+    # real, unoverridden DbUserMirror against a database these hermetic tests
+    # never touch — which would see every address as unclaimed forever and
+    # make `test_signup_duplicate_returns_400`'s second call spuriously 429.
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
     client = TestClient(app)
     try:
         yield client, service, settings
@@ -54,7 +62,12 @@ def test_signup_endpoint(context: tuple[TestClient, AuthService, Settings]) -> N
     client, _, _ = context
     resp = client.post(
         "/api/auth/signup",
-        json={"email": "s@example.com", "password": "pw-123456", "role": "student"},
+        json={
+            "email": "s@example.com",
+            "password": "pw-123456",
+            "role": "student",
+            "acceptedTerms": True,
+        },
     )
     assert resp.status_code == 200, resp.text
     body = resp.json()
@@ -63,24 +76,39 @@ def test_signup_endpoint(context: tuple[TestClient, AuthService, Settings]) -> N
     assert body["userId"]
 
 
-@pytest.mark.parametrize("role", ["teacher", "school_admin", "platform_admin"])
+@pytest.mark.parametrize("role", ["school_admin", "platform_admin"])
 def test_signup_elevated_role_forbidden(
     context: tuple[TestClient, AuthService, Settings], role: str
 ) -> None:
-    # D1.7: self-service signup may only mint a student account. Requesting any
-    # privileged role must be a 403 so signup can never be a privilege-escalation
-    # path (anonymous caller POSTing role="platform_admin" to mint an admin token).
+    # D1.7, revised in scope but not in spirit by D7.1 (which admits `teacher`
+    # to self-service signup — see `_SELF_SERVICE_SIGNUP_ROLES`'s own comment
+    # in `lemely/web/routers/auth.py`, and `test_web_auth.py`'s
+    # `test_signup_elevated_role_still_forbidden`, the fuller, house-style
+    # version of this test). `school_admin`/`platform_admin` remain
+    # unobtainable by an anonymous caller: requesting either must be a 403 so
+    # signup can never be a privilege-escalation path (anonymous caller
+    # POSTing role="platform_admin" to mint an admin token).
     client, _, _ = context
     resp = client.post(
         "/api/auth/signup",
-        json={"email": f"{role}@example.com", "password": "pw-123456", "role": role},
+        json={
+            "email": f"{role}@example.com",
+            "password": "pw-123456",
+            "role": role,
+            "acceptedTerms": True,
+        },
     )
     assert resp.status_code == 403, resp.text
 
 
 def test_signup_duplicate_returns_400(context: tuple[TestClient, AuthService, Settings]) -> None:
     client, _, _ = context
-    payload = {"email": "dup@example.com", "password": "pw-123456", "role": "student"}
+    payload = {
+        "email": "dup@example.com",
+        "password": "pw-123456",
+        "role": "student",
+        "acceptedTerms": True,
+    }
     assert client.post("/api/auth/signup", json=payload).status_code == 200
     resp = client.post("/api/auth/signup", json=payload)
     assert resp.status_code == 400
@@ -90,7 +118,12 @@ def test_login_endpoint(context: tuple[TestClient, AuthService, Settings]) -> No
     client, _, _ = context
     client.post(
         "/api/auth/signup",
-        json={"email": "l@example.com", "password": "pw-abcdef", "role": "student"},
+        json={
+            "email": "l@example.com",
+            "password": "pw-abcdef",
+            "role": "student",
+            "acceptedTerms": True,
+        },
     )
     resp = client.post(
         "/api/auth/login",
@@ -106,7 +139,12 @@ def test_login_wrong_password_returns_401(
     client, _, _ = context
     client.post(
         "/api/auth/signup",
-        json={"email": "w@example.com", "password": "right-pw-1", "role": "student"},
+        json={
+            "email": "w@example.com",
+            "password": "right-pw-1",
+            "role": "student",
+            "acceptedTerms": True,
+        },
     )
     resp = client.post(
         "/api/auth/login",
@@ -214,6 +252,8 @@ def refreshable() -> Iterator[tuple[TestClient, AuthService, Settings, FakeDevic
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
     app.dependency_overrides[get_device_registry] = lambda: registry
+    # See the `context` fixture above for why this override is required now.
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
     client = TestClient(app)
     try:
         yield client, service, settings, registry
@@ -230,6 +270,7 @@ def _signup(client: TestClient, email: str = "r@example.com") -> dict[str, str]:
             "password": "pw-123456",
             "role": "student",
             "deviceId": "device-A",
+            "acceptedTerms": True,
         },
     )
     assert resp.status_code == 200, resp.text

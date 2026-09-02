@@ -74,10 +74,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/classes"): TEACHER,
     ("DELETE", "/api/classes/{class_id}"): TEACHER,
     ("PATCH", "/api/classes/{class_id}"): TEACHER,
-    # ── SCHOOL_ADMIN (7) ────────────────────
+    # ── SCHOOL_ADMIN (8) ────────────────────
     ("GET", "/api/school/seats"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/seats/{seat_id}/revoke"): SCHOOL_ADMIN,
+    # D7.3/spec §1.2: mints a redeemable seat invite code (the alternative to
+    # `invite_student` above, which creates the account outright). Same
+    # school_admin-only guard, same reason - a seat is a school_admin's to
+    # give out, not a teacher's.
+    ("POST", "/api/school/seats/invite-code"): SCHOOL_ADMIN,
     # P4.7 (UI spec K-01/K-03). Same router, so the same guard by construction —
     # but declared individually here on purpose: property 2 is a freeze, and a
     # route inheriting a guard it should not have is exactly what a
@@ -86,7 +91,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/school/teachers"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/invite"): SCHOOL_ADMIN,
     ("POST", "/api/school/teachers/{teacher_id}/remove"): SCHOOL_ADMIN,
-    # ── PLATFORM_ADMIN (5) ────────────────────
+    # ── PLATFORM_ADMIN (9) ────────────────────
     # P4.7 (UI spec X-01/X-02/X-03), and the first routes in the product gated
     # to this role. Note what the 403 sweep below therefore proves here: a
     # `school_admin` is denied every one of them. There is no super-role, and
@@ -97,16 +102,30 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/activations/{subscription_id}/activate"): PLATFORM_ADMIN,
     ("POST", "/api/admin/activations/{subscription_id}/reject"): PLATFORM_ADMIN,
     ("GET", "/api/admin/pipeline"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (3) ────────────────────
+    # D7.8 / spec §1.1: the account graph's missing first link — before these,
+    # no production path created a `School` row or a `school_admin` account.
+    # `school_admin` is denied here for the same reason it is denied every
+    # other PLATFORM_ADMIN route above: a school_admin administers a school,
+    # they do not mint one (Task 12's own boundary test for this route).
+    ("GET", "/api/admin/schools"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
+    ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
+    ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
+    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
+    # D7.3/spec §1.2: mints a redeemable class invite code. Router-level guard
+    # on `classes.py` is the STAFF triple; narrowed here, per-route, to just
+    # the two roles that may manage a class's roster (D3.1) - platform_admin
+    # cannot reach this route, mirroring every other class-mutating route.
+    ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
     # ── PARENT (4) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (6) ────────────────────
+    # ── PUBLIC (10) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
     ("POST", "/api/auth/otp/request"): PUBLIC,
     ("POST", "/api/auth/otp/verify"): PUBLIC,
@@ -118,8 +137,23 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # `test_a_refresh_token_cannot_be_used_as_a_bearer_token`).
     ("POST", "/api/auth/refresh"): PUBLIC,
     ("POST", "/api/auth/signup"): PUBLIC,
+    # Issue #10 / D7 §4.3, three of the four new account-lifecycle routes.
+    # Each redeems (or requests) a single-use token that IS the credential —
+    # there is no caller identity to authenticate yet (verify-email,
+    # password-reset/confirm) or the identity must stay unconfirmed by design
+    # (password-reset/request's binding anti-enumeration rule: a 404 here
+    # would be an oracle for which addresses hold an account).
+    ("POST", "/api/auth/verify-email"): PUBLIC,
+    ("POST", "/api/auth/password-reset/request"): PUBLIC,
+    ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
-    # ── AUTH_ANY (12) ────────────────────
+    # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
+    # by design - a visitor sees what a code joins *before* creating an
+    # account, and `InviteService.preview` is written to be paranoid about
+    # disclosure precisely because this route carries no bearer token at all
+    # (see its own docstring for the "no id, no roster, no count" rule).
+    ("GET", "/api/invites/{code}"): PUBLIC,
+    # ── AUTH_ANY (14) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
@@ -132,6 +166,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/notifications/push/unsubscribe"): AUTH_ANY,
     ("POST", "/api/notifications/read-all"): AUTH_ANY,
     ("POST", "/api/notifications/{notification_id}/read"): AUTH_ANY,
+    # D7.3/spec §1.2: redeem is authenticated but role-agnostic - an invite's
+    # own `role` decides what redeeming it does, not the caller's platform
+    # role, so this is `get_auth_context` alone (no `require_role`), the same
+    # AUTH_ANY shape as the `/api/me/*` routes above.
+    ("POST", "/api/invites/{code}/redeem"): AUTH_ANY,
+    # Issue #10 / D7 §4.3: re-mint and re-send is scoped to "whoever this
+    # token belongs to", never to a caller-supplied address (an attacker
+    # could otherwise fill a body field with someone else's email) - so it is
+    # `get_auth_context` alone, the same AUTH_ANY shape as the invite-redeem
+    # route above, not a `require_role` guard.
+    ("POST", "/api/auth/verify-email/resend"): AUTH_ANY,
     # ── STAFF (40) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,
@@ -428,7 +473,10 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    assert len(_NON_PUBLIC) == len(ROUTES) - 6  # 5 auth entrypoints + /api/health
+    # 8 auth entrypoints (the original 5 + issue #10's verify-email,
+    # password-reset/request, password-reset/confirm) + /api/health + invite
+    # preview.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 10
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

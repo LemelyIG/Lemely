@@ -81,6 +81,8 @@ EXPECTED_TABLES = {
     "announcement_reads",
     "exam_dates",
     "push_subscriptions",
+    "auth_tokens",
+    "invites",
 }
 
 
@@ -302,6 +304,30 @@ def test_unique_email_enforced(pg_engine: sa.Engine) -> None:
     with Session(pg_engine) as session, pytest.raises(IntegrityError):
         session.add(User(id=uuid.uuid4(), email="dup@example.com", role=Role.teacher))
         session.commit()
+
+
+def test_user_account_lifecycle_timestamps_are_nullable(pg_engine: sa.Engine) -> None:
+    """D7.4/D7.11: both timestamps default NULL and round-trip when set."""
+    from datetime import UTC, datetime
+
+    from lemely.db.models import User
+    from lemely.db.models.enums import Role
+
+    with Session(pg_engine) as session:
+        user = User(id=uuid.uuid4(), email="lifecycle@example.com", role=Role.student)
+        session.add(user)
+        session.commit()
+        session.refresh(user)
+        assert user.email_verified_at is None
+        assert user.terms_accepted_at is None
+
+        now = datetime.now(UTC)
+        user.email_verified_at = now
+        user.terms_accepted_at = now
+        session.commit()
+        session.refresh(user)
+        assert user.email_verified_at is not None
+        assert user.terms_accepted_at is not None
 
 
 def test_foreign_key_enforced(pg_engine: sa.Engine) -> None:
@@ -754,3 +780,110 @@ def test_student_confidence_rating_unique_per_enrolment_and_topic(pg_engine: sa.
             )
         )
         session.commit()
+
+
+# ---------------------------------------------------------------------------
+# Issue #10 — sign-up flows: auth tokens, invites (D7.3/D7.7)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_token_round_trips_and_enforces_unique_hash(pg_engine: sa.Engine) -> None:
+    """D7.7: a token row stores a hash, expires, and is single-use."""
+    from datetime import UTC, datetime, timedelta
+
+    from lemely.db.models import AuthToken, User
+    from lemely.db.models.enums import AuthTokenPurpose, Role
+
+    with Session(pg_engine) as session:
+        user = User(id=uuid.uuid4(), email="tokens@example.com", role=Role.student)
+        session.add(user)
+        session.flush()
+        user_id = user.id  # captured before the session below closes and detaches `user`
+
+        token = AuthToken(
+            user_id=user_id,
+            purpose=AuthTokenPurpose.password_reset,
+            token_hash="a" * 64,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(token)
+        session.commit()
+        session.refresh(token)
+        assert token.used_at is None
+        assert token.purpose is AuthTokenPurpose.password_reset
+
+        token.used_at = datetime.now(UTC)
+        session.commit()
+        session.refresh(token)
+        assert token.used_at is not None
+
+    with Session(pg_engine) as session:
+        duplicate = AuthToken(
+            user_id=user_id,
+            purpose=AuthTokenPurpose.email_verification,
+            token_hash="a" * 64,
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+        session.add(duplicate)
+        with pytest.raises(sa.exc.IntegrityError):
+            session.commit()
+
+
+def test_invite_round_trips_for_school_and_class_targets(pg_engine: sa.Engine) -> None:
+    """D7.3: an invite may target a school or a class independently."""
+    from lemely.db.models import Invite, School, SchoolClass, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    with Session(pg_engine) as session:
+        admin = User(id=uuid.uuid4(), email="school-inviter@example.com", role=Role.school_admin)
+        teacher = User(id=uuid.uuid4(), email="class-inviter@example.com", role=Role.teacher)
+        session.add_all([admin, teacher])
+        session.flush()
+
+        school = School(name="Invite School")
+        session.add(school)
+        session.flush()
+
+        school_class = SchoolClass(teacher_id=teacher.id, name="10A")
+        session.add(school_class)
+        session.flush()
+
+        school_invite = Invite(
+            code="SCHOOLCODE",
+            role=InviteRole.student,
+            school_id=school.id,
+            created_by=admin.id,
+        )
+        class_invite = Invite(
+            code="CLASSCODE",
+            role=InviteRole.teacher,
+            class_id=school_class.id,
+            created_by=teacher.id,
+        )
+        session.add_all([school_invite, class_invite])
+        session.commit()
+
+        session.refresh(school_invite)
+        session.refresh(class_invite)
+
+        assert school_invite.school_id == school.id
+        assert school_invite.class_id is None
+        assert school_invite.redeemed_at is None
+        assert school_invite.redeemed_by is None
+
+        assert class_invite.class_id == school_class.id
+        assert class_invite.school_id is None
+
+
+def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
+    """D7.3: an invite that points at neither a school nor a class is refused."""
+    from lemely.db.models import Invite, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    with Session(pg_engine) as session:
+        admin = User(id=uuid.uuid4(), email="inviter@example.com", role=Role.school_admin)
+        session.add(admin)
+        session.flush()
+        session.add(Invite(code="TARGETLESS", role=InviteRole.student, created_by=admin.id))
+        with pytest.raises(sa.exc.IntegrityError):
+            session.commit()

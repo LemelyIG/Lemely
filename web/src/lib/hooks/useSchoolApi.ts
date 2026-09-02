@@ -18,6 +18,11 @@ import type {
   SchoolTeacherList,
   SeatUsageList,
 } from "@/lib/schoolTypes"
+// `MintSeatInviteRequest`/`SeatInviteCode` mirror `schemas_invites.py`, not
+// `schemas_admin.py` like the rest of `adminTypes.ts` — see that file's own
+// note, right above these two interfaces, for why they live there rather
+// than beside `InviteStudentRequest` above.
+import type { MintSeatInviteRequest, SeatInviteCode } from "@/lib/adminTypes"
 
 /*
  * React-query hooks wrapping `/api/school/*` (`lemely/web/routers/school.py`),
@@ -107,6 +112,43 @@ export function useInviteStudent(): UseMutationResult<
   return useMutation({
     mutationFn: (body: InviteStudentRequest) =>
       request<InviteStudentResponse>("/school/seats/invite", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      }),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: SEATS_KEY })
+      void queryClient.invalidateQueries({ queryKey: OVERVIEW_KEY })
+    },
+  })
+}
+
+/**
+ * `POST /api/school/seats/invite-code` — mint a redeemable seat invite code
+ * (D7.3, spec §1.2, closes BUILD/BLOCKERS.md B8), reserving its seat
+ * immediately. The alternative to `useInviteStudent` above: rather than
+ * creating the account outright and handing back a temporary password, this
+ * mints a code the admin hands to a student, who signs themselves up and
+ * sees which school they're joining before committing (`JoinWithCode.tsx`,
+ * G-08) — closing the half of spec §6's acceptance bullet ("A school admin
+ * can mint a seat invite code...") this product could not do until now.
+ *
+ * Invalidates the same two keys `useInviteStudent` does, for a sharper
+ * reason here than there: the seat is reserved at *mint* time, not at
+ * redemption (`InviteService.mint_seat_invite`'s own binding rule 2), so
+ * `seatsUsed`/`available` move the instant this call succeeds, before any
+ * student has redeemed anything. Leaving the seats table stale would show a
+ * seat as free that this admin just spent.
+ */
+export function useMintSeatInviteCode(): UseMutationResult<
+  SeatInviteCode,
+  Error,
+  MintSeatInviteRequest
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (body: MintSeatInviteRequest) =>
+      request<SeatInviteCode>("/school/seats/invite-code", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),

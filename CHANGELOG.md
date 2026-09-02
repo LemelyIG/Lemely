@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+Self-service sign-up (issue [#10](https://github.com/LemelyIG/Lemely/issues/10)), closing the gap
+recorded in `DELIVERY.md` §5: `POST /api/auth/signup` existed and every marketing CTA still pointed
+at `/login`. Full detail, decisions and screenshots are in `BUILD/DECISIONS.md` (`D7.1`–`D7.12`);
+this entry is the user-visible summary.
+
+### Added
+
+#### Accounts and sign-up
+
+- Nine new public screens: role selection, student/teacher sign-up details, email verification
+  pending and confirm, password reset (request/confirm), and join-with-invite-code
+  (preview/redeem) — `/signup`, `/signup/student`, `/signup/teacher`, `/verify-email(/:token)`,
+  `/reset(/:token)`, `/join(/:code)`.
+- **Self-service sign-up now admits `teacher`, not only `student`.** A self-registered teacher is
+  always independent (no school field, no `School` row) — school membership arrives later, by
+  invite or platform-admin provisioning. `school_admin` and `platform_admin` remain unobtainable by
+  an anonymous caller, unchanged.
+- Email verification, gating exactly one route — submitting a paper for marking — and nothing
+  else; an unverified account can sign in, browse and upload normally *(limited: no configured mail
+  provider actually sends anything in this build — see below)*.
+- Password reset by email link, which revokes every outstanding token **and every signed-in
+  device** on success.
+- Redeemable invite codes: a school admin can mint a seat invite, a teacher can mint a class
+  invite; a visitor holding either sees what they're joining before committing. Coexists with the
+  pre-existing direct-create/temporary-password flow rather than replacing it.
+- Platform-admin surface for schools: create a school with a seat quota, edit it, and create a
+  school_admin for it — the missing first link that made `POST /api/school/teachers/invite`
+  unreachable in any real deployment before this.
+- First-run gates: a student with no completed onboarding is routed to the onboarding wizard from
+  anywhere in the portal; a teacher with zero classes is routed to a create-first-class step that
+  ends on the class's join code.
+- Marketing CTAs and the login screen now point at `/signup` and `/reset` instead of dead-ending
+  at `/login`.
+
+### Known limitations, stated rather than discovered later
+
+- **No configured provider sends mail.** The email seam (`EmailProvider`, mirroring the existing
+  SMS seam) ships with only an offline mock, exactly like parent phone-OTP. No screen claims a
+  mail was sent.
+- **The sign-up/resend/reset-request cooldown is in-process and per-worker** — a real deterrent
+  against casual abuse from one process, not a distributed rate limit.
+- **The invite-code *mint* action has no screen yet.** The redemption side (`/join`) is fully
+  wired; a school admin or teacher can mint a code today only via a direct API call, not a button
+  in the product. See `BUILD/BLOCKERS.md` B8.
+
 ### Changed
 
 - **The extraction & marking accuracy programme is retired** (2026-08-29, human

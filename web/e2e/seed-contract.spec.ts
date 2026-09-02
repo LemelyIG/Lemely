@@ -48,6 +48,11 @@ const SHAPE: Record<string, "string" | "number"> = {
   ...account("schoolAdmin"),
   ...account("emptyTeacher"),
 
+  "schoolWithSeats.schoolId": "string",
+  "schoolWithSeats.name": "string",
+  "schoolWithSeats.seatQuota": "number",
+  ...account("schoolWithSeats.admin"),
+
   "class.classId": "string",
   "class.name": "string",
   "class.joinCode": "string",
@@ -131,12 +136,13 @@ const SHAPE: Record<string, "string" | "number"> = {
   // board still looks correct. They get their own test below.
 }
 
-/** The 15 keys `build_result_payload` returns (scripts/seed_e2e.py). */
+/** The 16 keys `build_result_payload` returns (scripts/seed_e2e.py). */
 const TOP_LEVEL_KEYS = [
   "runTag",
   "generatedAt",
   "teacher",
   "schoolAdmin",
+  "schoolWithSeats",
   "class",
   "students",
   "parent",

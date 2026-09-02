@@ -13,16 +13,19 @@ from __future__ import annotations
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
+from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
+    AuthTokenPurpose,
     BoundarySource,
     ConfidenceBand,
     DifficultySource,
     ExamBoard,
     FriendshipStatus,
+    InviteRole,
     MarkerSource,
     MembershipRole,
     NotificationType,
@@ -51,6 +54,7 @@ from lemely.db.models.flashcards import (
     FlashcardReview,
 )
 from lemely.db.models.flashcards import ReviewGrade as FlashcardReviewGrade
+from lemely.db.models.invites import Invite
 from lemely.db.models.ops import (
     Announcement,
     AnnouncementRead,
@@ -92,9 +96,11 @@ def import_all_models() -> None:
     from lemely.db.models import (  # noqa: F401
         academic,
         attempts,
+        auth_tokens,
         billing,
         engagement,
         flashcards,
+        invites,
         ops,
         orgs,
         profiles,
@@ -113,6 +119,8 @@ __all__ = [
     "Attempt",
     # Enums and mixins
     "AttemptOrigin",
+    "AuthToken",
+    "AuthTokenPurpose",
     "BoundarySource",
     "CardSource",
     "ClassEnrollment",
@@ -128,6 +136,8 @@ __all__ = [
     "FlashcardReviewGrade",
     "Friendship",
     "FriendshipStatus",
+    "Invite",
+    "InviteRole",
     "MarkScheme",
     "MarkerSource",
     "MembershipRole",

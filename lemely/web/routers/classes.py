@@ -53,6 +53,7 @@ from lemely.db.class_repo import (
     RosterEntry,
     StudentNotSeatedError,
 )
+from lemely.db.invite_repo import InviteNotFoundError, InviteOwnershipError, InviteService
 from lemely.db.models.enums import Role
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.det.profiles import get_profile
@@ -61,9 +62,11 @@ from lemely.web.deps import (
     get_at_risk_ack_service,
     get_class_service,
     get_history_store,
+    get_invite_service,
     get_student_profile_service,
     require_role,
 )
+from lemely.web.routers.invites import _invite_to_dto
 from lemely.web.routers.teacher import (
     _GRADE_ORDER,
     _acknowledgement_index,
@@ -86,6 +89,7 @@ from lemely.web.schemas_classes import (
     RosterEntryDTO,
     UpdateClassRequestDTO,
 )
+from lemely.web.schemas_invites import InviteCodeDTO
 from lemely.web.schemas_teacher import (
     ClassDetailDTO,
     ClassListDTO,
@@ -666,3 +670,47 @@ def remove_student(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Class invite code (D7.3, spec §1.2). Path is `/school/classes/{id}/...`
+# (design doc §4.3), not `/classes/{id}/...`, to sit alongside
+# `/school/seats/invite-code` conceptually - both are "mint a redeemable
+# code" actions on the school-facing admin/teacher surface, distinct from
+# this file's read/CRUD routes above. It lives in this module rather than
+# `school.py` because minting is teacher-or-school_admin, not
+# school_admin-only, and ownership is `ClassService.get_class`'s dual rule
+# (D3.1) - the same rule every other route in this file already enforces.
+# ---------------------------------------------------------------------------
+
+
+@router.post("/school/classes/{class_id}/invite-code", response_model=InviteCodeDTO)
+def mint_class_invite_code(
+    class_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+) -> InviteCodeDTO:
+    """Mint a redeemable class invite code (D7.3/G-08).
+
+    Another way to hand out a class's self-enrolment capability alongside
+    its permanent ``join_code`` (``ClassRow.joinCode``): unlike that code,
+    an invite minted here is single-use (see
+    :meth:`~lemely.db.invite_repo.InviteService.redeem`'s "single-use, not
+    idempotent-for-a-stranger" rule) and previewable before an account
+    exists (``GET /api/invites/{code}``). No quota applies - a class has no
+    capacity limit.
+
+    ``platform_admin`` cannot reach this route at all: the router-level
+    guard on this file (teacher/school_admin/platform_admin) is narrowed
+    here, per-route, to just the two roles that may actually manage a
+    class's roster (D1.6/D1.10, no super-role bypass).
+    """
+    try:
+        invite = service.mint_class_invite(auth.user_id, auth.role, class_id)
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except InviteOwnershipError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return _invite_to_dto(invite)

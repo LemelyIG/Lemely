@@ -667,6 +667,12 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
         "generated_at": _NOW,
         "teacher": {"userId": "t1"},
         "school_admin": {"userId": "a1"},
+        "school_with_seats": {
+            "schoolId": "sc1",
+            "name": "P23 Seed School tag123",
+            "seatQuota": 5,
+            "admin": {"userId": "sa1"},
+        },
         "class_row": {"classId": "c1", "name": "n", "joinCode": "J1"},
         "students": {
             "declining": {"userId": "d1", "expectedAtRiskReasons": ["declining_trend"]},
@@ -749,6 +755,12 @@ class TestBuildResultPayload:
             "generatedAt": _NOW.isoformat(),
             "teacher": {"userId": "t1"},
             "schoolAdmin": {"userId": "a1"},
+            "schoolWithSeats": {
+                "schoolId": "sc1",
+                "name": "P23 Seed School tag123",
+                "seatQuota": 5,
+                "admin": {"userId": "sa1"},
+            },
             "class": {"classId": "c1", "name": "n", "joinCode": "J1"},
             "students": {
                 "declining": {"userId": "d1", "expectedAtRiskReasons": ["declining_trend"]},

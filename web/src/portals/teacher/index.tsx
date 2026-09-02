@@ -2,7 +2,7 @@
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
 import { RouteFallback } from "@/components/ui/state-views"
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   FileText,
@@ -41,6 +41,12 @@ const ClassDetailLayout = lazy(() =>
 const ClassRoster = lazy(() => import("./screens/ClassRoster").then((m) => ({ default: m.ClassRoster })))
 const ClassAnalytics = lazy(() =>
   import("./screens/ClassAnalytics").then((m) => ({ default: m.ClassAnalytics })),
+)
+// D7.10 / Task 21 — the create-first-class step `teacherFirstClassRedirect`
+// (below) sends a zero-class teacher to. Lazy for the same reason as every
+// other screen here (P6.1b): most sessions, most of the time, never mount it.
+const CreateFirstClass = lazy(() =>
+  import("./screens/CreateFirstClass").then((m) => ({ default: m.CreateFirstClass })),
 )
 const StudentDetail = lazy(() =>
   import("./screens/StudentDetail").then((m) => ({ default: m.StudentDetail })),
@@ -344,8 +350,89 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
   )
 }
 
+/**
+ * D7.10 — is a redirect to `/teacher/first-class` owed on this render?
+ *
+ * The teacher-side mirror of `studentOnboardingRedirect` (D7.9,
+ * `portals/student/index.tsx`), pulled out of `TeacherLayout` as a pure
+ * function for the identical reason: `vitest.config.ts` runs this repo's
+ * unit suite under Node with no jsdom and no renderer (D3.20), so nothing
+ * that requires mounting `TeacherLayout` — a hook call, `useLocation()`
+ * itself — is reachable from a unit test here. The *decision* the gate makes
+ * is reachable, once it is something callable on its own:
+ * `web/tests/unit/teacherFirstRun.test.ts` pins it directly, all four states.
+ *
+ * `status` is `useTeacherClasses()`'s own three-way react-query status, not a
+ * boolean the caller reduces it to first — the same defence D7.9's version
+ * takes, for the same reason. The two states that must NEVER redirect are
+ * exactly the two non-`"success"` ones, and a caller left holding only a
+ * class count cannot tell "the list hasn't loaded yet" (`undefined`,
+ * mid-flight) apart from "the list loaded and it is empty" (`0`, resolved) —
+ * both look like "nothing" to a careless `!count` check. Firing on the
+ * pending state would bounce a returning teacher who has real classes on
+ * every cold load; firing on error would trap an account whenever
+ * `GET /teacher/classes` hiccups. Requiring the real status up front makes
+ * both structurally impossible here, rather than a discipline every call
+ * site has to keep separately.
+ *
+ * The third guard, `pathname === "/teacher/first-class"`, is what keeps this
+ * a redirect and not a trap: the step this gate sends a teacher to is itself
+ * a route under `/teacher`, so without this guard a teacher standing on
+ * it — which is every such teacher, immediately after the gate has already
+ * sent them there once — would be told to redirect to the exact page they
+ * are already on, on every render.
+ *
+ * Unlike onboarding, there is deliberately no "skip for now" reachable from
+ * here. D7.10's own rationale is why: the review queue, the at-risk list,
+ * class analytics and the join code itself all have nothing to scope to
+ * without at least one class, so there is nowhere useful for a skip to land.
+ */
+export type TeacherClassesQueryStatus = "pending" | "error" | "success"
+
+export function teacherFirstClassRedirect(
+  status: TeacherClassesQueryStatus,
+  classCount: number,
+  pathname: string,
+): string | null {
+  if (status !== "success") return null
+  if (classCount > 0) return null
+  if (pathname === "/teacher/first-class") return null
+  return "/teacher/first-class"
+}
+
 function TeacherLayout() {
   const [navOpen, setNavOpen] = useState(false)
+  const location = useLocation()
+
+  /*
+   * The wiring for `teacherFirstClassRedirect` above. Reads the same query
+   * `ClassesNavSection` already subscribes to (`useTeacherClasses()`,
+   * `GET /teacher/classes`) — react-query dedupes by queryKey
+   * (`["teacher", "classes"]`), so this adds no second network request, only
+   * a second subscriber to the one already in flight.
+   *
+   * A pending query renders the shared route fallback in place of the whole
+   * shell rather than the shell-with-a-fallback-inside-it, for the same
+   * reason D7.9's version does: until the list resolves we do not yet know
+   * whether this teacher belongs on this route, so there is nothing honest
+   * to put in a sidebar built for a destination we might immediately
+   * redirect away from. An errored query falls through to the portal exactly
+   * as it rendered before this gate existed — a `/teacher/classes` hiccup
+   * must degrade to "the portal renders", never to "the account is stuck on
+   * the first-class step until the network recovers".
+   */
+  const classesQuery = useTeacherClasses()
+  if (classesQuery.isPending) {
+    return <RouteFallback className="p-8" />
+  }
+  const firstClassRedirect = teacherFirstClassRedirect(
+    classesQuery.status,
+    classesQuery.data?.classes.length ?? 0,
+    location.pathname,
+  )
+  if (firstClassRedirect) {
+    return <Navigate to={firstClassRedirect} replace />
+  }
 
   return (
     // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
@@ -404,6 +491,19 @@ export const teacherRoute: RouteObject = {
         { index: true, element: <ClassRoster />, handle: { title: "Class roster" } },
         { path: "analytics", element: <ClassAnalytics />, handle: { title: "Class analytics" } },
       ],
+    },
+    // D7.10 / Task 21. Deliberately not in `navItems` (`./data.ts`), matching
+    // `/student/onboard`'s exclusion from the student nav for the identical
+    // reason: this is a gate destination, not a standing section a teacher
+    // with classes already has any reason to navigate to. It stays mounted
+    // and deep-linkable regardless — `teacherFirstClassRedirect` above only
+    // ever sends a teacher here, it does not gate this route itself, so a
+    // teacher who already has classes can still open it directly (e.g. to
+    // create a second class the same way) without being bounced.
+    {
+      path: "first-class",
+      element: <CreateFirstClass />,
+      handle: { title: "Create your first class" },
     },
     { path: "students/:studentId", element: <StudentDetail />, handle: { title: "Student" } },
     { path: "at-risk", element: <AtRiskList />, handle: { title: "Students at risk" } },

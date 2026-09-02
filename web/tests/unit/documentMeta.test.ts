@@ -110,6 +110,123 @@ describe("every route names itself", () => {
   })
 })
 
+/*
+ * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes' metadata.
+ *
+ * These nine join `/`, `/landing`, `/data`, `/login` and `/login/parent` as
+ * the only routes in the product a signed-out reader can reach, so — unlike
+ * every authenticated screen this file's other tests only require a title
+ * from — each of the nine must carry a real `description` too (P6.5, above).
+ * And because `deps.py` wires `MockEmailProvider` unconditionally, the same
+ * finding `routes.tsx` already records for `MockSmsProvider` on
+ * `/login/parent`, not one of the nine may claim a mail or a text was sent.
+ * The banned-claim assertion below is deliberately literal, matching
+ * `marketing.test.ts`'s own approach to the identical kind of risk: the
+ * failure mode is not a wrong word, it is a plausible sentence about a
+ * delivery nothing in this codebase performs.
+ */
+describe("the nine signup/verify/reset/join routes carry honest metadata — Task 19", () => {
+  const NEW_PATHS = [
+    "/signup",
+    "/signup/student",
+    "/signup/teacher",
+    "/verify-email",
+    "/verify-email/:token",
+    "/reset",
+    "/reset/:token",
+    "/join",
+    "/join/:code",
+  ]
+
+  /** Each of the nine, resolved to its `PageMeta`. Throws rather than
+   * returning `undefined` for a missing route, so a route that Task 19
+   * failed to register fails every test below with a clear cause instead of
+   * a downstream `Cannot read properties of undefined`. */
+  const metaFor = (path: string): { title: string; description?: string } => {
+    const route = appRoutes.find((r) => r.path === path)
+    if (!route) throw new Error(`${path} is not mounted`)
+    const handle = route.handle
+    if (!isPageMeta(handle)) throw new Error(`${path} has no valid PageMeta handle`)
+    return handle
+  }
+
+  it("mounts all nine as leaf routes with a valid PageMeta handle", () => {
+    const found = leafRoutes()
+      .filter(({ path }) => NEW_PATHS.includes(path))
+      .map(({ path }) => path)
+    expect(found.sort()).toEqual([...NEW_PATHS].sort())
+    for (const path of NEW_PATHS) {
+      expect(isPageMeta(appRoutes.find((r) => r.path === path)?.handle), path).toBe(true)
+    }
+  })
+
+  it("gives every one of the nine a non-empty description", () => {
+    for (const path of NEW_PATHS) {
+      const { description } = metaFor(path)
+      expect(typeof description, `${path} has no description`).toBe("string")
+      expect((description ?? "").length, `${path}'s description is empty`).toBeGreaterThan(0)
+    }
+  })
+
+  /*
+   * The exact rule Task 19 states: no description may say a mail or a link
+   * was sent. Matches "send"/"sent"/"resend" and their -ing/-s forms as whole
+   * words, plus "delivered"/"emailed"/"texted", rather than a bare substring
+   * match — narrow enough not to flag an unrelated word, wide enough to catch
+   * the actual shapes a fabricated delivery claim would take.
+   */
+  it("claims no mail or text was sent, delivered, emailed, or texted", () => {
+    const bannedClaim = /\b(re)?sen(d|t|ds|ding)\b|\bdelivered\b|\bemailed\b|\btexted\b/i
+    for (const path of NEW_PATHS) {
+      const { description } = metaFor(path)
+      expect(description, `${path} claims a delivery: "${description}"`).not.toMatch(bannedClaim)
+    }
+  })
+
+  it("writes no em-dash into any of the nine titles or descriptions", () => {
+    for (const path of NEW_PATHS) {
+      const { title, description } = metaFor(path)
+      expect(title, `${path} title`).not.toMatch(/[—–]/)
+      expect(description ?? "", `${path} description`).not.toMatch(/[—–]/)
+    }
+  })
+
+  it("gives each of the nine a title distinct from the other eight", () => {
+    const titles = NEW_PATHS.map((path) => metaFor(path).title)
+    expect(new Set(titles).size).toBe(titles.length)
+  })
+
+  /*
+   * The other direction, and the reason this describe block is not just five
+   * assertions about nine strings: a description is exactly as much a claim
+   * of "this route is signed-out-reachable" as its absence is a claim of
+   * "this one is not", and only testing the nine additions would let a
+   * tenth, accidental description slip onto an authenticated screen with
+   * every test above still green. Pinned against the full leaf-route walk,
+   * not a hand-picked list of "the other ones I remembered" — a route this
+   * suite forgot to name is a route this assertion still sees.
+   */
+  it("gives a description to exactly the signed-out-reachable routes and no others", () => {
+    const PUBLIC_WITH_DESCRIPTION = new Set([
+      "/",
+      "/landing",
+      "/data",
+      "/login",
+      "/login/parent",
+      ...NEW_PATHS,
+      "*",
+    ])
+    const offenders: string[] = []
+    for (const { path, route } of leafRoutes()) {
+      const handle = route.handle
+      const hasDescription = isPageMeta(handle) && Boolean(handle.description)
+      const shouldHaveOne = PUBLIC_WITH_DESCRIPTION.has(path)
+      if (hasDescription !== shouldHaveOne) offenders.push(`${path} (has one: ${hasDescription})`)
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
 describe("resolving a title from a match chain", () => {
   it("takes the deepest handle, so a child overrides its layout", () => {
     const meta = pageMetaFromMatches([

@@ -1501,6 +1501,85 @@ const PARENT_LOGIN_STATES = {
   },
 }
 
+/* ── Sign-up flows (issue #10, Task 23) ───────────────────────────────────
+ *
+ * All nine surfaces below are the nine public routes design spec §4.4 lists
+ * (`/signup`, `/signup/student`, `/signup/teacher`, `/verify-email(/:token)`,
+ * `/reset(/:token)`, `/join(/:code)`). Every one of them is signed-out by
+ * construction except `verify-email-pending`, which needs a live-but-
+ * unverified session to reach its real content (D8.4/D8.5) — see that
+ * surface's own `session` field. States are kept to what actually renders
+ * differently, matching this file's own established restraint (`landing`,
+ * `not-found`) rather than manufacturing a fifth near-duplicate state per
+ * screen.
+ */
+
+const SIGNUP_STUDENT_STATES = {
+  empty: {},
+  // `signUpFailureMessage` renders for any 400; a conflict body is the
+  // realistic one (D8.1/D8.11's own anti-enumeration rule keeps the sentence
+  // itself vague, so the body content here does not have to be exact).
+  conflict: { submit: true, status: 400, body: { detail: "conflict" } },
+}
+
+const SIGNUP_TEACHER_STATES = {
+  // One state: the only thing this variant needs to show that the student
+  // one does not is the "this creates an independent account" banner
+  // (D8.2), which is static copy with no request behind it.
+  empty: {},
+}
+
+const VERIFY_EMAIL_PENDING_STATES = {
+  idle: {},
+  // The developer-only link panel (D8.6): what the screen shows with the
+  // mock provider wired, which is every deployment of this build.
+  devLink: { resend: true, devLink: "/verify-email/capture-dev-token" },
+}
+
+const VERIFY_EMAIL_CONFIRM_STATES = {
+  verifying: { delayMs: 8_000 },
+  invalid: { status: 400, body: { detail: "invalid or expired token" } },
+}
+
+const RESET_REQUEST_STATES = {
+  empty: {},
+  // D8.6's anti-enumeration UI rule: this is the SAME confirmation screen
+  // regardless of whether the address exists, so one state stands in for
+  // both — a second "unknown address" state would be visually identical by
+  // design and the duplicate-hash check would (correctly) refuse it.
+  sent: { submit: true, devLink: "/reset/capture-dev-token" },
+}
+
+const RESET_CONFIRM_STATES = {
+  empty: {},
+  // Requirement 2 (D8.7): the success screen states plainly that every
+  // device was signed out.
+  success: { submit: true },
+}
+
+const JOIN_CODE_ENTRY_STATES = {
+  default: {},
+}
+
+// `describeInvitePreview`'s three fields, chosen to render the exact example
+// UI spec §G-08 itself quotes ("Al-Nasr Language School — Mr Hassan's
+// Physics 0625 class"), so this capture is checkable against the spec by eye.
+const INVITE_PREVIEW_FIXTURE = {
+  role: "student",
+  schoolName: "Al-Nasr Language School",
+  className: "Physics 0625",
+  teacherName: "Mr Hassan",
+}
+
+const JOIN_CODE_PREVIEW_STATES = {
+  populated: { preview: INVITE_PREVIEW_FIXTURE },
+  // Both "invalid" and "expired" resolve to the same 404 panel (D8.3's own
+  // `InviteService._find_live_invite` reasoning, quoted in
+  // `useInvitesApi.ts`'s `previewErrorCopy`) — one state stands in for both,
+  // same reasoning as `RESET_REQUEST_STATES.sent` above.
+  notFound: { status: 404, body: { detail: "invite not found" } },
+}
+
 /*
  * A marketing page has no loading, empty or error branch to photograph, so
  * this surface's states are not request outcomes like every other one here.
@@ -2283,6 +2362,169 @@ const SURFACES = {
         await page.keyboard.type(digit)
       }
       await page.waitForTimeout(700)
+    },
+  },
+
+  /* ── Sign-up flows (issue #10, Task 23) ───────────────────────────────── */
+
+  "signup-role-select": {
+    prefix: "signup-role-select",
+    route: "/signup",
+    states: { default: {} },
+    session: null,
+    async stub() {
+      /* Three links and no request of its own (G-02's own docstring: "no
+       * field and no submission"). Nothing to stub. */
+    },
+  },
+
+  "signup-student": {
+    prefix: "signup-student",
+    route: "/signup/student",
+    states: SIGNUP_STUDENT_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/auth/signup", (route) =>
+        route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.body ?? {}),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.submit) return
+      await page.getByLabel("Name").fill("Amina Farouk")
+      await page.getByLabel("Email").fill("amina@example.com")
+      await page.getByLabel("Password").fill("a-strong-passphrase")
+      await page.getByRole("checkbox").check()
+      await page.getByRole("button", { name: "Create account" }).click()
+      await page.waitForTimeout(700)
+    },
+  },
+
+  "signup-teacher": {
+    prefix: "signup-teacher",
+    route: "/signup/teacher",
+    states: SIGNUP_TEACHER_STATES,
+    session: null,
+    async stub(page) {
+      await page.route("**/api/auth/signup", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+      )
+    },
+  },
+
+  "verify-email-pending": {
+    prefix: "verify-email-pending",
+    route: "/verify-email",
+    states: VERIFY_EMAIL_PENDING_STATES,
+    // Signed in but unverified is the ordinary case this screen exists for
+    // (D8.4/D8.5) — the common path lands here straight from signup, still
+    // holding the fresh session `AuthService.signup` minted. `session: null`
+    // would only ever render `SignedOutPending`'s two-link fallback.
+    session: SESSION,
+    profile: PROFILE,
+    async stub(page, state) {
+      await page.route("**/api/auth/verify-email/resend", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ devLink: state.devLink ?? null }),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.resend) return
+      await page.getByRole("button", { name: "Resend verification link" }).click()
+      await page.waitForTimeout(500)
+    },
+  },
+
+  "verify-email-confirm": {
+    prefix: "verify-email-confirm",
+    route: "/verify-email/capture-token",
+    states: VERIFY_EMAIL_CONFIRM_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/auth/verify-email", async (route) => {
+        if (state.delayMs) {
+          await new Promise((r) => setTimeout(r, state.delayMs))
+          return
+        }
+        await route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.body ?? { status: "verified" }),
+        })
+      })
+    },
+  },
+
+  "reset-request": {
+    prefix: "reset-request",
+    route: "/reset",
+    states: RESET_REQUEST_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/auth/password-reset/request", (route) =>
+        route.fulfill({
+          status: 200,
+          contentType: "application/json",
+          body: JSON.stringify({ devLink: state.devLink ?? null }),
+        }),
+      )
+    },
+    async act(page, state) {
+      if (!state.submit) return
+      await page.getByLabel("Email").fill("amina@example.com")
+      await page.getByRole("button", { name: "Send reset link" }).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  "reset-confirm": {
+    prefix: "reset-confirm",
+    route: "/reset/capture-token",
+    states: RESET_CONFIRM_STATES,
+    session: null,
+    async stub(page) {
+      await page.route("**/api/auth/password-reset/confirm", (route) =>
+        route.fulfill({ status: 200, contentType: "application/json", body: "{}" }),
+      )
+    },
+    async act(page, state) {
+      if (!state.submit) return
+      await page.getByLabel("New password").fill("a-different-strong-passphrase")
+      await page.getByRole("button", { name: "Set new password" }).click()
+      await page.waitForTimeout(600)
+    },
+  },
+
+  "join-code-entry": {
+    prefix: "join-code-entry",
+    route: "/join",
+    states: JOIN_CODE_ENTRY_STATES,
+    session: null,
+    async stub() {
+      /* No code is active yet, so `useInvitePreview` never fires (`enabled`
+       * is tied to a non-empty code) — nothing to stub. */
+    },
+  },
+
+  "join-code-preview": {
+    prefix: "join-code-preview",
+    route: "/join/capture-preview-code",
+    states: JOIN_CODE_PREVIEW_STATES,
+    session: null,
+    async stub(page, state) {
+      await page.route("**/api/invites/capture-preview-code", (route) =>
+        route.fulfill({
+          status: state.status ?? 200,
+          contentType: "application/json",
+          body: JSON.stringify(state.status ? (state.body ?? {}) : state.preview),
+        }),
+      )
     },
   },
 

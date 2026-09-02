@@ -89,3 +89,32 @@ export function teacherMutationFailureMessage(err: unknown): string {
   if (c.kind === "service") return `${TEACHER_SERVICE_FAILURE} Nothing was saved.`
   return "That didn't go through, and we couldn't tell why. Nothing was saved."
 }
+
+/**
+ * Minting a class invite code failed (D7.3, spec §1.2, BUILD/BLOCKERS.md B8).
+ *
+ * Overrides `classify`'s detail-first default for exactly two statuses,
+ * rather than deferring to `teacherMutationFailureMessage` for everything as
+ * every other mutation in this portal does. Both come from `ClassService.
+ * get_class`'s ownership check, reused as-is by `InviteService.
+ * mint_class_invite` (`lemely/db/class_repo.py`): `Unknown class: <uuid>`
+ * for a 404, `Caller does not own/administer class <uuid>` for a 403. That
+ * is the exact class of "machine text with a raw id in it"
+ * `adminOutcome.ts` documents refusing to show verbatim for the identical
+ * shape of error one router over (`schoolUpdateFailureMessage`'s own note),
+ * and it is no more a sentence written for a teacher here than it is for an
+ * admin there. A teacher pressing this button is already looking at this
+ * exact class, successfully loaded, so either status means the same thing in
+ * practice: the class changed under them between the page loading and the
+ * click, the same race `teacherRemovalFailureMessage` (`adminOutcome.ts`)
+ * names for its own 409. No quota branch exists here, unlike the seat
+ * invite's sibling in `adminOutcome.ts`: `mint_class_invite_code`'s own
+ * docstring is explicit that "a class has no capacity limit".
+ */
+export function classInviteCodeFailureMessage(err: unknown): string {
+  const status = err instanceof ApiError ? err.status : null
+  if (status === 404 || status === 403) {
+    return "This class is no longer available to you. Reload and try again."
+  }
+  return teacherMutationFailureMessage(err)
+}

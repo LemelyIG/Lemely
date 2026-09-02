@@ -79,6 +79,7 @@ from lemely.web.deps import (
     get_user_mirror,
     get_xp_service,
     require_role,
+    require_verified_email,
 )
 from lemely.web.notify import notify_safely
 
@@ -875,6 +876,11 @@ def _alert_teachers_and_parents(
 def student_correct(
     payload: CorrectRequest,
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    # D7.5: the ONE route this soft-gate applies to — see
+    # `require_verified_email`'s own docstring for why it is declared here,
+    # after `auth`, and not e.g. on `/student/uploads`. Its result is unused
+    # (the gate is the point, not the value), unlike `auth` above.
+    _verified: Annotated[AuthContext, Depends(require_verified_email)],
     upload_repo: Annotated[StudentUploadRepository, Depends(get_student_upload_repo)],
     attempt_repo: Annotated[AttemptRepository, Depends(get_attempt_repo)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
@@ -889,6 +895,14 @@ def student_correct(
     parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
+
+    **Gated on a verified email (D7.5).** This is the Gemini spend, and it is
+    the *only* student route that carries ``require_verified_email`` — an
+    unverified caller is refused with a **403**
+    (``detail={"code": "email_unverified"}``) before any of the work below
+    runs. ``POST /student/uploads`` is deliberately never gated the same way:
+    a student who has already photographed a paper must not lose the capture
+    to a verification wall.
 
     Resolves the caller-owned upload (a 404 for an unknown or foreign paper is
     raised *before* streaming starts, so the client never has to parse a

@@ -13773,3 +13773,453 @@ was set by some path that did not go through the guard. **The issue state was th
 truth and the board was the stale copy** — which is the same failure mode as the
 stale figures above, in a different tracker. Closing them under C26 resolved the
 divergence by making both say closed-unanswered.
+---
+
+## Sign-up flows for students and teachers (issue #10)
+
+**Namespace note.** These twelve are `D7.1`–`D7.12`, number-for-number the ids the spec
+(`docs/superpowers/specs/2026-08-25-signup-flows-design.md` §3) and all 67 source files that cite
+them already use.
+
+One dangling cross-reference exists and is worth naming so the next reader is not misled.
+`STATE.md`'s Phase-7 closing row says "See D7.1-D7.3 and `BUILD/DESIGN-REPORT.md` §6 for the five
+open items". Those ids were never written: `DESIGN-REPORT.md` contains no `D7.x` at all, and this
+file had no `D7.x` heading before this block. So that sentence points at coordinates that do not
+exist, and always did.
+
+An earlier draft of this block shifted these decisions to `D8.x` to dodge that reference. That
+traded a phantom collision for a real one: the code comments, the spec and twenty commit messages
+all say `D7`, so `D8` would have left 67 files pointing at ids this file did not define. The
+dangling `STATE.md` line is the smaller defect, it belongs to a frozen history section this
+repository's own rule says not to rewrite, and it is now recorded here instead.
+
+### D7.1 — Self-service signup is extended to `teacher`, and the admin chain is built
+
+**What.** `_SELF_SERVICE_SIGNUP_ROLES` (`lemely/web/routers/auth.py`) becomes
+`frozenset({Role.student, Role.teacher})`. `AuthService.signup` itself was never the enforcement
+point — it has always created whatever `Role` it is given, including `school_admin`, because an
+authenticated admin flow needs that same method — so the change is entirely the router's
+allow-list, plus the platform-admin chain (`D7.8`) that finally gives a teacher account a real
+path to exist in a deployment.
+
+**This revises `D1.7` item 1 in scope, and deliberately not in spirit.** `D1.7`'s own words for
+the risk it closed: "anyone could POST `role=platform_admin` and mint an admin token." That is an
+*escalation* risk, and a self-registered teacher escalates nothing. Every teacher-facing service
+in `lemely/db` is ownership-scoped by construction, with no super-role bypass anywhere in that
+path (`D1.6`, `D1.10`): `ClassService` scopes to classes the caller owns, `InviteService.
+mint_class_invite` and `mint_seat_invite` check ownership *in the service*, never the router, so
+there is no route at any layer where holding `role=teacher` alone reaches another teacher's
+students, another school's data, or an admin surface. A bad actor who self-registers as a teacher
+gets exactly one thing: the ability to create a class and hand its code to whoever they choose.
+The two roles `D1.7` actually meant to keep out of reach — `school_admin` and `platform_admin` —
+remain **completely unobtainable by an anonymous caller** after this change, same as before it.
+`test_signup_elevated_role_still_forbidden` (`tests/test_web_auth.py`) asserts both explicitly,
+by name, and its own docstring says it must never be deleted — a decision that quietly narrows
+scope without a test guarding the boundary it left standing is how a rule gets lost, and this one
+is guarded twice: once by that test, once by this paragraph.
+
+**Why now, not left as `D1.7` originally described it** ("an authenticated admin via the
+seat/invite flow, later task"). Tracing the account graph for this issue's spec (`design §1.1`)
+found that "later task" had never landed: no production code path created a `School` row or a
+`school_admin` membership — only `lemely/db/seed.py` and eighteen test files ever constructed
+either, calling `AuthService.signup` directly exactly as this admin flow now does deliberately
+(`D7.8`). `POST /api/school/teachers/invite`, the only teacher-creation path `D1.7` names, was
+therefore unreachable in any real deployment. Widening self-service signup and building the
+missing first link were the same fix looked at from both ends: a visitor can now become a teacher
+directly, or a platform admin can build the school chain that reaches the same role through
+invitation — both paths exist, and neither depends on the other having shipped first.
+
+**Tests.** `test_signup_admits_a_teacher`, `test_signup_stamps_terms_accepted_at`
+(`tests/test_auth_service.py`); `test_signup_as_teacher_returns_a_token`,
+`test_signup_elevated_role_still_forbidden` (`tests/test_web_auth.py`, asserting `school_admin`
+*and* `platform_admin` explicitly, each 403).
+
+**Alternatives rejected.** *Leave `D1.7` as originally scoped and ship only the admin chain
+(`D7.8`)* — a teacher account would then exist only as something an already-provisioned
+school_admin creates, which does nothing for the independent tutor `MISSION §1` names as a real
+user ("a teacher can be independent, belong to a school, or both") and leaves issue #12 exactly as
+unreachable as it was found. *Gate teacher signup behind an approval queue* — invents a workflow
+and a screen this spec never asked for, to defend against a risk (escalation) that ownership
+scoping already closes structurally; a queue would be theatre around a boundary that does not
+need one.
+
+### D7.2 — A self-registered teacher is always independent
+
+**What.** No school field on the teacher variant of the signup form, no `School` row, no
+membership created at signup. UI spec §G-03's optional "school or centre name (optional, with 'I
+work independently' option)" is dropped entirely rather than built and left unused — annotated in
+`docs/LEMELY_UI_SPEC.md` §G-03 itself so the omission reads as a recorded decision, not a bug
+report waiting to happen.
+
+**Why.** `SchoolClass.school_id` has been nullable since `D3.1`, specifically for this case.
+A `School` is not a label — it is a commercial artifact carrying `seat_quota`, seats and
+memberships (`D1.10`), and letting an anonymous visitor mint one at signup would produce a School
+with a quota of zero: unusable by anyone until a platform admin noticed it and intervened, which
+is worse than not creating it at all. Real membership arrives later, by exactly the paths this
+issue built for it — an invite code (`D7.3`) or platform-admin provisioning (`D7.8`) — both of
+which attach a teacher to a school that already has a real quota, rather than a placeholder one a
+form field could not honestly set.
+
+**Tests.** The signup payload builder (`web/src/portals/auth/signupDetailsLogic.ts`, pinned by
+`web/tests/unit/signup.test.ts`) has no school field to serialize in the first place — there is no
+`schoolName` on `SignupRequest` (`lib/authTypes.ts`) for a test to assert is dropped, which is the
+point: the field was never wired, not wired and then discarded server-side.
+
+**Alternatives rejected.** *Ship the field but ignore its value server-side* — a form control that
+visibly collects something the product silently throws away is worse than no control, and is
+exactly the kind of divergence this issue's design doc (§4.6) treats as a defect class of its own.
+*Create a placeholder `School` row named after whatever the visitor typed* — invents an
+organizational record from unverified user input, with no owner, no real quota, and no way to
+later reconcile it with the real school if one is provisioned by a platform admin.
+
+### D7.3 — Both invite models coexist: direct-create stays, redeemable codes are added
+
+**What.** Migration `0023` adds `invites` (code, role, nullable `school_id`/`class_id`,
+`created_by`, `redeemed_by`/`redeemed_at`, `ck_invites_target` CHECK). `InviteService`
+(`lemely/db/invite_repo.py`) adds `mint_seat_invite`, `mint_class_invite`, `preview` and `redeem`
+alongside the pre-existing `POST /api/school/seats/invite` (direct-create, temporary password,
+untouched).
+
+**Why both.** Direct-create genuinely suits an admin who already holds a roster and wants to
+provision ten accounts in one sitting; it is not being replaced because nothing about this issue
+made it worse at that job. Redeemable codes are what UI spec §G-08 describes and what makes
+joining feel like joining a school rather than receiving a password over WhatsApp with no context
+about what was joined. Neither subsumes the other, so both ship.
+
+**`ck_invites_target` is the `friendships`-table rule again**: idempotency and validity are
+enforced by the database, not by the redemption path's own care. An invite pointing at neither a
+school nor a class is not an invite — the CHECK makes that a rejected insert
+(`test_invite_requires_a_target`, `tests/test_db_schema.py`) instead of a row every future reader
+of `redeem` has to remember to defend against. `InviteRole` (`student`/`teacher` only) is
+deliberately narrower than the five-member `Role` enum for the same reason `D7.1`'s ownership
+argument holds: reusing `Role` here would put `platform_admin` in the type system of a code an
+anonymous caller redeems, and the only thing stopping that becoming real would be a validation
+nobody had written yet.
+
+**A seat invite reserves its seat at mint time** (`mint_seat_invite`'s own binding rule), not at
+redemption. This is the fact that makes the G-08 preview's promise true — a visitor who sees "a
+seat is waiting" is not shown a place that a second visitor could take out from under them between
+preview and redemption. It is also, read the other way, why UI spec §G-08's "seat quota full"
+state **cannot occur on the join screen at all**: `InviteQuotaExceededError` is raised in exactly
+one place, `mint_seat_invite`, which only a school_admin ever calls. Quota refusal is therefore an
+admin-side 409 on the school screen (`D7.8`), never something a code holder sees. Annotated in
+`docs/LEMELY_UI_SPEC.md` §G-08 rather than left for a future reader to find as an unreachable
+branch and wonder whether it is dead code or a bug. `JoinWithCode.tsx` keeps a real, tested
+rendering branch for a `seat_quota_exceeded` marker the live backend cannot currently send —
+deliberately, in case a defensive re-check at redemption is ever added — documented in that file's
+own header and in `useInvitesApi.ts`'s `isSeatQuotaExceededError`.
+
+**Tests.** `test_mint_seat_invite_reserves_an_available_seat`, `test_mint_seat_invite_at_quota_raises`,
+`test_mint_seat_invite_by_non_admin_is_ownership_error`, `test_preview_does_not_leak_member_identities`,
+`test_redeem_an_already_redeemed_invite_by_another_user_is_refused` — the one that matters most:
+a code shared onward must not consume a second seat or attach a stranger to a school — and
+`test_preview_resolves_a_class_join_code` / `test_redeem_resolves_a_bare_class_join_code`, which
+pin that `preview`/`redeem` accept **either** an `invites.code` or a pre-existing `classes.
+join_code`, because the holder of a code cannot be asked which kind they have (all in
+`tests/test_invite_repo.py`).
+
+**Alternatives rejected.** *Check quota at redemption instead of at mint* — would let `preview`
+promise a seat a second, faster redeemer had already taken, reopening exactly the TOCTOU shape
+`SeatService.invite_student` already guards against from the other direction. *Replace
+direct-create with codes entirely* — removes a genuinely useful bulk-provisioning path for no
+gain the spec asked for.
+
+### D7.4 — Email-verification state lives in `public.users`, not in GoTrue
+
+**What.** Migration `0021` adds nullable `users.email_verified_at`.
+`HttpGoTrueBackend.admin_create_user` keeps `email_confirm=True` unconditionally — this was
+already true before this issue and is now load-bearing rather than incidental.
+
+**Why.** GoTrue-native confirmation is a *hard* wall: it refuses the password grant outright until
+the account is confirmed. UI spec §G-07 explicitly asks for "a way to continue into a limited
+preview of the app rather than a hard wall." Those two facts are incompatible unless verification
+state is owned somewhere GoTrue does not control the consequences of — hence `public.users`. This
+also means sign-in always succeeds for a freshly-created account regardless of whether its
+verification mail was ever opened, which is what makes the soft gate in `D7.5` possible at all
+rather than merely intended.
+
+**`users.is_active` remains dead, and was deliberately not repurposed here.** It is written
+nowhere and read nowhere in this codebase — activation in this product is a *subscription*
+concept (`/api/admin/activations/*`), not a user one, and `is_active` already carries an unrelated
+meaning in `question_bank`. Verification needed a genuinely new signal, not a second meaning
+grafted onto a column that already has one; `email_verified_at` is that new column, additive per
+`D1.2`, and `is_active` stays exactly as unused as it was before this issue, on purpose.
+
+**Tests.** `test_user_account_lifecycle_timestamps_are_nullable` (`tests/test_db_schema.py`);
+`test_verify_email_sets_email_verified_at`, `test_signup_mints_and_sends_a_verification_token`
+(`tests/test_auth_service.py`).
+
+**Alternatives rejected.** *Flip `email_confirm` to `False` and let GoTrue gate sign-in* — the
+plan and this decision both forbid it outright: it is the literal hard wall §G-07 asks not to
+build, and it would make an unverified account's password grant fail with no soft path back in at
+all. *Store verification state as a claim on the self-signed JWT instead of a DB column* — would
+require reissuing every outstanding token the moment an account verifies, for no benefit over a
+column `require_verified_email` (`D7.5`) can read fresh on every request.
+
+### D7.5 — Verification soft-gates marking only
+
+**What.** `require_verified_email` (`lemely/web/deps.py`) is a dependency applied to exactly one
+route, `POST /api/student/correct` — the correction submission that spends Gemini budget — and
+nowhere else. It raises **403** with `detail={"code": "email_unverified"}`, a stable
+machine-readable marker rather than prose, specifically so `web/src/lib/authOutcome.ts` can route
+the caller to `/verify-email` instead of parroting a server string.
+
+**Why this route and no other.** It is the one operation this issue's design doc calls "the Gemini
+spend" — gating it protects the single costly operation without walling the rest of the product
+off from an account that has not yet clicked a link. Upload is **deliberately not gated**: a
+student who has already photographed a paper must not lose the capture to a verification wall
+they hit only when they try to have it marked, which is precisely the "limited preview rather than
+a hard wall" §G-07 asks for, made concrete as one route instead of a mood.
+
+**The literal §G-07 copy is not used, and that is recorded rather than left for a mismatch to be
+found later.** The spec's prose for G-07 opens with `"Check your email"` as the heading; the
+shipped screen does not use it, because `deps.py` wires `MockEmailProvider` unconditionally
+(`D7.6`) and no configured provider in this build actually sends anything — a heading claiming an
+email was checked, or even sent, would be false in every deployment of this code as written.
+Annotated directly in `docs/LEMELY_UI_SPEC.md` §G-07.
+
+**Tests.** `test_correct_is_403_for_an_unverified_account`, `test_correct_succeeds_once_verified`
+— a guard asserted in only one direction is a guard that could be permanently closed and still
+pass — and `test_upload_is_not_gated_by_verification`, all in `tests/test_web_student.py`.
+
+**Alternatives rejected.** *Gate at login, or gate the whole student portal* — exactly the hard
+wall §G-07 names as the thing not to build. *Gate every write route, not just marking* — the
+design doc's own accepted risk table only ever named the Gemini spend as costly enough to guard;
+walling off onboarding or profile writes behind email verification adds friction the spec never
+asked for and D7.9's onboarding gate would then stack against, confusingly, on the same first
+session.
+
+### D7.6 — An `EmailProvider` seam mirroring `SmsProvider`, shipped with only an offline mock
+
+**What.** `lemely/auth/email.py` — `EmailProvider` (Protocol) and `MockEmailProvider`, modelled
+line-for-line on `lemely/auth/sms.py`. `delivers_out_of_band: bool` is the whole mechanism: it,
+not an environment string, is what gates whether a route may hand back `devLink`
+(`SignupResponseDTO.devLink`, `ResendVerificationResponseDTO.devLink`,
+`PasswordResetRequestResponseDTO.devLink`) for the §G-06/§G-07 developer affordance — exactly
+`D3.16`'s rule for the OTP's `devCode`, applied to a second channel rather than re-derived for it.
+
+**Why copy the shape rather than design a new one.** `sms.py` had already solved this problem and
+already reasoned through the dangerous part — when it is safe to return a live credential through
+an API response. Copying it means that reasoning carries over unchanged, a real provider drops in
+later with zero screen changes (the flag alone decides what a screen may say), and both new flows
+are testable end to end offline from day one.
+
+**Shipped limitation, stated here rather than discovered later: no configured provider sends
+mail.** `lemely/web/deps.py` wires `MockEmailProvider()` unconditionally — the same posture
+`MockSmsProvider` already has for parent OTP. Every new screen reads `delivers_out_of_band`
+through the `devLink` value it receives rather than asserting delivery happened; none claims a
+mail was sent, which is the exact defect `web/src/routes.tsx` already records against the parent
+OTP screen ("we'll text you a code" when only `MockSmsProvider` logs it) — this issue's screens
+were written specifically not to repeat it.
+
+**The dev-panel affordance is itself a mild existence oracle, and that tension is recorded rather
+than missed.** `request_password_reset` mints nothing for an unknown address and returns
+`devLink=None` for it; for a known address, with the offline mock wired, it returns a real link.
+So on `/reset`, the developer panel **appears only for addresses that exist** — reopening by
+*presence* the enumeration question the 200-for-everyone response and identical confirmation copy
+(`D7.11`'s anti-enumeration sibling rule, spec §4.3) close by *content*. Not a production leak:
+any real provider sets `delivers_out_of_band=True`, so `devLink` is always `None` and the panel
+never renders at all, in dev or in production, once one is configured. Documented in
+`passwordResetLogic.ts`'s own docstring (`passwordResetDevPanel`) rather than left for a future
+reader to discover the two rules disagree with each other.
+
+**Tests.** `test_mock_provider_does_not_deliver_out_of_band`, `test_mock_provider_logs_the_
+verification_link`, `test_mock_provider_logs_the_reset_link` (`tests/test_auth_email.py`);
+`test_signup_returns_the_dev_link_only_when_the_provider_does_not_deliver` (`tests/test_auth_
+service.py`), asserted in **both** directions — a provider with `delivers_out_of_band=True` must
+yield `None`, or the rule is decorative.
+
+**Alternatives rejected.** None seriously considered beyond the mirror itself; a bespoke seam for
+email would have re-litigated a decision `D3.16` already made correctly.
+
+### D7.7 — Verification and reset tokens live in one `auth_tokens` table, hashed, not in memory
+
+**What.** Migration `0022` — `authtokenpurpose` enum (`email_verification`, `password_reset`),
+`auth_tokens` (`token_hash`, `expires_at`, `used_at`). `AuthTokenService`
+(`lemely/db/auth_token_repo.py`) — `mint` returns plaintext and stores only
+`hashlib.sha256(token).hexdigest()`; `redeem` matches on `(token_hash, purpose)` **in the WHERE
+clause**, under `SELECT … FOR UPDATE`; `revoke_all` stamps `used_at` rather than deleting.
+
+**Why a table, not a second `OtpStore`.** `OtpStore` is a plain in-memory dict: challenges die on
+restart and do not exist across more than one worker. That is a real but tolerable limitation for
+a six-digit code a parent types within sixty seconds, and not tolerable for a reset link someone
+opens from an inbox an hour and one deploy later. One table with a `purpose` column rather than
+two near-identical tables, because the lifecycle — mint, single-use, expire, revoke-all-on-
+password-change — is identical for both purposes; a second table would duplicate a repository
+rather than express a real distinction.
+
+**The purpose match is structural, not defensive.** `redeem`'s query filters on `(token_hash,
+purpose)` together, so a verification token presented to the reset route (or vice versa) is
+**indistinguishable from an unknown token** — both raise `TokenNotFound` — rather than raising a
+different, more informative error that would let a caller learn something about which purpose a
+given hash was minted for. `SELECT … FOR UPDATE` closes the other race this design has to answer
+for: two concurrent redemptions of one link (two tabs, a doubled click) must not both succeed, and
+locking the row for the length of the transaction that reads and marks it is what makes that true
+rather than merely likely. The stored value is never the credential — `token_hash` is a SHA-256
+digest, so a database read (a backup, a log, a support query, a leak) yields nothing redeemable.
+
+**Tests.** `test_mint_returns_plaintext_and_stores_only_a_hash`, `test_redeem_with_the_wrong_
+purpose_raises_token_not_found`, `test_redeem_twice_raises_token_already_used`, `test_redeem_
+after_expiry_raises_token_expired`, `test_revoke_all_marks_every_live_token_for_that_purpose_used`
+(`tests/test_auth_token_repo.py`); `test_reset_password_revokes_outstanding_tokens_and_all_devices`
+(`tests/test_auth_service.py`), for the password-change side of `revoke_all`.
+
+**Alternatives rejected.** *Extend `OtpStore` to cover both new purposes* — would couple a
+durable, hour-scale credential to an in-memory challenge lifecycle built for a sixty-second one,
+and would not survive a restart or a second worker, the exact gap this decision exists to close.
+
+### D7.8 — Platform admins get real screens for schools and school admins
+
+**What.** `SchoolProvisioningService` (`lemely/db/school_provisioning_repo.py`) —
+`create_school(name, seat_quota, created_by)`, `update_school` (409 on a quota dropped below
+seats already assigned, naming both numbers), `create_school_admin(school_id, email, password,
+display_name)` (account + `SchoolMembership` in one unit of work), `list_schools`. Routes at
+`GET`/`POST /api/admin/schools`, `PATCH /api/admin/schools/{id}`, `POST /api/admin/schools/{id}/
+admins`, all gated `platform_admin`. Frontend at `/platform/schools`
+(`web/src/portals/admin/screens/Schools.tsx`).
+
+**Why build the screens rather than ship the routes alone.** `D4.10` already answered exactly this
+question for the admin surfaces during the redesign: "fully build the required screens and
+completely wire them." Shipping the routes without a screen would have recreated, in the same
+issue that names it as a problem, the unreachable-endpoint pattern spec §1.2 exists to fix — two
+working endpoints (`POST /api/student/classes/join`, `POST /api/school/seats/invite`) that no
+screen in the product called.
+
+**Account and membership are written in the same transaction on purpose.** A `school_admin`
+account that exists with no `SchoolMembership` administers nothing and meets an empty console on
+first login — on screen, that is indistinguishable from a broken one, which is `D4.10`'s own
+finding about this exact failure shape, now guarded against structurally rather than by review.
+`created_by` on `schools` — nullable, unused by every path before this one — gets its first real
+write here, becoming a traceable fact (which admin created this school) rather than a column that
+has sat idle since the schema was drawn.
+
+**Tests.** `test_create_school_requires_platform_admin` (asserts 403 for student, teacher **and**
+school_admin — a school_admin administers a school, they do not mint one, and this is the boundary
+where getting that wrong creates a tenant); `test_create_school_admin_creates_the_account_and_the_
+membership`; `test_create_school_admin_returns_the_temporary_password_once` (same handling as the
+pre-existing `invite_teacher`: no email provider delivers, so it is generated once and shown once);
+`test_quota_below_assigned_seats_is_refused` (all `tests/test_web_admin.py`).
+
+**Alternatives rejected.** *Ship the four routes and let a future task build the screen* — the
+whole reason this decision cites `D4.10` is that the redesign already tried the "routes now,
+screen later" shape once and found it produces an unreachable feature indistinguishable from a
+missing one; repeating it here would have been choosing the mistake back deliberately.
+
+### D7.9 — A student with no `onboardingCompletedAt` is redirected to `/student/onboard` from anywhere in the portal
+
+**What.** `portals/student/index.tsx`'s layout: once `useStudentProfile()` resolves, if
+`onboardingCompletedAt == null` and the caller is not already on `/student/onboard`, render
+`<Navigate to="/student/onboard" replace />`. A pending or errored query renders the ordinary
+portal (or its loading fallback), never a redirect.
+
+**Why.** The onboarding wizard (S-01/S-02) was, per this issue's design doc §1.4, "fully built and
+polished" and reachable only through one action button on the Announcements screen — near
+invisible. Every downstream student surface — study plan, placement, subject pages, exam calendar
+— reads enrolment data that only onboarding writes, so a student who skips it does not see an
+error, they see every one of those screens correctly and quietly empty, which reads as the product
+being broken rather than as a step being missed. Onboarding already carries its own "Skip for now"
+affordance, so this gate is a redirect for the impatient to pass through deliberately, not a trap
+they cannot leave.
+
+**The pending/error discipline is the load-bearing half of this decision, not a footnote to it.**
+A gate that fires on `undefined` (a query still in flight) would bounce a *returning*, already-
+onboarded student back to the wizard on every cold load, since the profile has not resolved yet to
+prove otherwise. A gate that fires on a query error would trap an account the moment the profile
+endpoint has a bad moment. Both are refused explicitly, and pinned in both directions.
+
+**Tests.** `web/tests/unit/onboardingGate.test.ts` — all four states asserted: pending → no
+redirect, error → no redirect, completed → no redirect, null-and-resolved → redirect.
+
+**Alternatives rejected.** *Gate at the router level instead of the portal layout* — the decision
+depends on data fetched after the session resolves (the profile), which a route-level guard
+cannot see without duplicating the same fetch; the portal layout already owns the one place that
+data is available.
+
+### D7.10 — A teacher with zero classes is routed to a create-first-class step
+
+**What.** The role-symmetric gate to `D7.9`, in `portals/teacher/index.tsx`: a resolved,
+zero-length class list and a route other than `/teacher/first-class` redirects there.
+`CreateFirstClass.tsx` reuses the existing create-class form rather than a second one, and ends by
+showing the new class's join code via `ClassDetail.tsx`'s existing `JoinCodeChip`, with
+copy-to-clipboard.
+
+**Why.** Everything a teacher portal shows — the review queue, the at-risk list, class analytics —
+has nothing to scope to without at least one class, and the join code a teacher needs in order to
+hand it to a single student does not exist until a class does. Ending the step on the join code
+specifically, rather than a generic "class created" confirmation, hands the teacher the one
+artifact they actually came here for.
+
+**Tests.** `web/tests/unit/teacherFirstRun.test.ts`, same four-state pending/error discipline as
+`D7.9`.
+
+**Alternatives rejected.** *Build a second, purpose-built "first class" form* — `ClassDetail.tsx`'s
+create-class form already exists, is tested, and does the same job; a second copy would only
+diverge from it over time for no functional gain.
+
+### D7.11 — Consent is to `/data`, and it is recorded
+
+**What.** Nullable `users.terms_accepted_at` (migration `0021`). A required checkbox on G-03
+linking to `/data`, the existing data-handling page. `AuthService.signup(..., accepted_terms:
+bool = False)` stamps the current time only when `True`; the field has **no default that resolves
+to consent** at any layer — the DTO field is required with no default (an absent field is a 422,
+not a silent `False`), so a client cannot omit it and have the server assume agreement.
+
+**Why `/data` and not a terms-of-service document.** No ToS exists anywhere in this repository, and
+`PRODUCT.md` is explicit that absent things must not be fabricated to fill a gap like this one. The
+consent that is real is to the page that genuinely exists and states, verifiably, what happens to
+a photographed scan — `web/tests/unit/dataHandling.test.ts` already holds backend source claims to
+account against that same page, so the consent and the page it targets are checked by the same
+kind of gate. `terms_accepted_at` is nullable specifically because every account created before
+this migration — and every parent, who signs up through no form at all — has no such timestamp,
+and backfilling one would be recording a consent nobody gave.
+
+**Server-enforced, not merely collected.** A checkbox the API does not itself require is
+decorative — a client could ship a build that never renders it and the server would be none the
+wiser. `test_signup_without_accepted_terms_is_rejected` closes that gap at the HTTP boundary, not
+only at the form.
+
+**Tests.** `test_signup_stamps_terms_accepted_at` (`tests/test_auth_service.py`);
+`test_signup_without_accepted_terms_is_rejected` (`tests/test_web_auth.py`).
+
+**Alternatives rejected.** *Default `acceptedTerms` to `True` for backward compatibility with
+existing callers* — exactly the "assumed consent" this decision exists to rule out; every existing
+caller (`seed.py`, the admin/invite flows) simply keeps the pre-existing default (`False`,
+unstamped) instead, which is honest about what those flows actually showed the account holder.
+
+### D7.12 — Public auth routes reuse the OTP cooldown pattern, mapped to 429
+
+**What.** `lemely/auth/cooldown.py` — `CooldownStore`/`CooldownError`, the resend-cooldown
+mechanism inside `OtpStore` extracted to somewhere three unrelated routes can each get their own
+instance of it: signup, `verify-email/resend`, and `password-reset/request`. `deps.py` wires two
+`CooldownStore` singletons (one shared for signup + reset-request, one for resend); the auth
+router maps `CooldownError` to **429** on all three, matching the existing OTP-resend route's own
+status code.
+
+**Why reuse rather than write a third throttle.** `D1.7` item 2 already established both the
+mechanism and the status code for exactly this abuse shape — an unthrottled endpoint that mints
+accounts or triggers a send. `OtpStore` keeps its own inline copy rather than being rewritten to
+compose this store: the two are independent call sites that happen to share a shape (a per-key
+last-stamped-at check), and there is no correctness reason to entangle an OTP challenge's fuller
+lifecycle (issue, verify, attempt-lockout) with a generic dependency three other routes also need.
+
+**Shipped limitation, stated here rather than discovered later: the cooldown is in-process and
+per-worker.** Like `OtpStore`, `CooldownStore` is a single process-local `dict`. Two workers behind
+a load balancer each enforce their own cooldown independently, so a retry that happens to land on
+a different worker sees no cooldown at all, and every outstanding cooldown is forgotten on restart
+or redeploy. This is an accepted simplification, stated plainly in `cooldown.py`'s own module
+docstring, not an oversight: it is a cheap deterrent against casual same-process abuse, not a
+security boundary, and per-IP/infrastructure-backed throttling is explicitly out of scope for the
+same reason `D1.7` left it out originally — in-process IP limiting behind a proxy is unreliable and
+not worth faking.
+
+**Tests.** `test_immediate_second_call_raises_with_positive_retry_after`, `test_a_rejected_call_
+does_not_reset_the_window` (`tests/test_auth_cooldown.py`); `test_signup_within_cooldown_is_429`,
+`test_resend_verification_within_cooldown_is_429`, `test_password_reset_request_within_cooldown_
+is_429` (`tests/test_web_auth.py`).
+
+**Alternatives rejected.** *A shared, single global cooldown store across all three routes* — would
+let a resend attempt throttle an unrelated signup from the same address, or vice versa, for no
+security benefit; each route gets its own keyspace by construction (two stores, not one, in
+`deps.py`) so the three abuse shapes cannot bleed into each other. *Real per-IP rate limiting* —
+explicitly out of scope, same reasoning `D1.7` already recorded: it needs infrastructure this
+build does not have and would fake behind a proxy that owns the real client address.

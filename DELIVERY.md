@@ -107,6 +107,8 @@ cell, and the fuller version is in §5.
 | Announcements (teacher → class, school_admin → school) | 3/5 | Delivered | `lemely/db/announcement_repo.py`, `lemely/web/routers/announcements.py` | `tests/test_announcement_repo.py`, `tests/test_web_announcements.py` |
 | **Accounts + platform** | | | | |
 | Personalized accounts (5 roles) | 1 | Delivered | `lemely/auth/service.py`, `lemely/web/routers/auth.py` | `tests/test_auth_service.py`, `tests/test_auth_e2e_roles.py` |
+| Self-service sign-up (student + teacher), email verification (soft-gates marking only), password reset | issue #10 | Delivered (limited) | `lemely/auth/service.py`, `lemely/auth/email.py`, `lemely/db/auth_token_repo.py`, `lemely/web/routers/auth.py`, `web/src/portals/auth/{SignupRoleSelect,SignupDetails,VerifyEmail,PasswordReset}.tsx` | `tests/test_auth_service.py`, `tests/test_web_auth.py`, `tests/test_auth_token_repo.py`, `web/tests/unit/{signup,authOutcome}.test.ts` |
+| Redeemable invite codes (seat + class) and platform-admin school/school-admin provisioning (closes spec §1.1/§1.2's unreachable-endpoint gap) | issue #10 | Delivered (limited) | `lemely/db/invite_repo.py`, `lemely/db/school_provisioning_repo.py`, `lemely/web/routers/{invites,admin}.py`, `web/src/portals/auth/JoinWithCode.tsx`, `web/src/portals/admin/screens/Schools.tsx` | `tests/test_invite_repo.py`, `tests/test_web_invites.py`, `tests/test_web_admin.py` |
 | RBAC on every route | 1 | Delivered | `lemely/web/deps.py` | `tests/test_authz_matrix_complete.py`, `tests/test_authz_matrix.py`, `web/e2e/rbac.spec.ts` |
 | Subscriptions / seats / manual activation (no payment processing, by scope) | 1 | Delivered | `lemely/db/seat_repo.py` | `tests/test_seat_repo.py` |
 | 3-device limit + sharing friction | 1/5 | Delivered | `lemely/db/device_repo.py`, `web/src/portals/settings/DeviceSettings.tsx` | `tests/test_device_repo.py`, `tests/test_web_devices.py`, `web/tests/unit/devices.test.ts` |
@@ -125,6 +127,8 @@ They are listed so that "absent" is never mistaken for "missed".
 | Edexcel / Oxford AQA | Architecture is board-agnostic; these arrive as data plus parser plugins, not as a rewrite. |
 | Arabic UI | v1 is English-only. |
 | Real SMS provider | Parent phone-OTP ships behind a provider abstraction with a mock provider that logs the OTP. One config switch changes it. |
+| Real email provider (issue #10) | Verification and password-reset links ship behind an `EmailProvider` abstraction mirroring the SMS one, with only an offline mock (`MockEmailProvider`, logs the link) wired. One config switch changes it, exactly as for SMS. |
+| Per-IP rate limiting on public auth routes (issue #10) | The sign-up/resend/reset-request cooldown is per-email and in-process only (`BUILD/DECISIONS.md` D7.12) — the same posture the original OTP-resend cooldown already had. Real per-IP limiting needs infrastructure this build does not have. |
 | Cloud hosting | The definition of done was a one-command local stack plus written deployment docs. No live hosting was in scope. |
 
 ## 5. Honest limitations
