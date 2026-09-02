@@ -18,11 +18,13 @@ from typing import TYPE_CHECKING
 
 import pytest
 import structlog.testing
+from fastapi import HTTPException, Request
 from fastapi.testclient import TestClient
 
 from lemely.web.app import create_app
 from lemely.web.deps import ClientErrorLimiters, get_client_error_limiters, reset_singletons
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.routers.client_errors import _client_ip, _reject_oversized_content_length
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -243,3 +245,44 @@ def test_reset_singletons_clears_the_client_error_limiters() -> None:
     reset_singletons()
 
     assert get_client_error_limiters.cache_info().currsize == 0
+
+
+# ── The two request helpers, driven directly ─────────────────────────────────
+# TestClient always supplies a peer address ("testclient") and refuses a
+# malformed Content-Length, so the fallbacks below cannot be reached through
+# HTTP. They are reached here with a bare Starlette Request built from an ASGI
+# scope, which is all either helper reads.
+
+
+def _request(headers: dict[str, str], client: tuple[str, int] | None) -> Request:
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": "/api/client-errors",
+        "query_string": b"",
+        "headers": [(k.lower().encode(), v.encode()) for k, v in headers.items()],
+        "client": client,
+    }
+    return Request(scope)
+
+
+def test_client_ip_prefers_forwarded_for_then_real_ip_then_peer_then_unknown() -> None:
+    assert _client_ip(_request({"x-forwarded-for": "203.0.113.5, 10.0.0.1"}, ("1.1.1.1", 1))) == (
+        "203.0.113.5"
+    )
+    assert _client_ip(_request({"x-forwarded-for": " ", "x-real-ip": "198.51.100.9"}, None)) == (
+        "198.51.100.9"
+    )
+    assert _client_ip(_request({}, ("192.0.2.7", 4242))) == "192.0.2.7"
+    assert _client_ip(_request({}, None)) == "unknown"
+
+
+def test_content_length_guard_ignores_absent_and_malformed_headers() -> None:
+    # Absent and malformed both fall through to ordinary validation: neither
+    # is a signal the guard trusts, and pydantic's per-field caps still bound
+    # what an accepted report can put in a log line.
+    _reject_oversized_content_length(_request({}, None))
+    _reject_oversized_content_length(_request({"content-length": "not-a-number"}, None))
+    with pytest.raises(HTTPException) as excinfo:
+        _reject_oversized_content_length(_request({"content-length": str(96 * 1024 + 1)}, None))
+    assert excinfo.value.status_code == 413

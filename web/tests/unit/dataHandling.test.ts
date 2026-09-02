@@ -179,8 +179,8 @@ describe("the page states facts, not promises — D6.8", () => {
     expect(allCopy).toMatch(/Google Cloud Logging/)
   })
 
-  it("says a crash report never includes what you typed, session data or your marks", () => {
-    expect(allCopy).toMatch(/never includes what you typed/i)
+  it("says a crash report does not include answers, marks or session data", () => {
+    expect(allCopy).toMatch(/does not include your answers, your marks, or anything stored in your session/i)
     expect(allCopy).toMatch(/stored in your session/i)
     expect(allCopy).toMatch(/your marks/i)
   })

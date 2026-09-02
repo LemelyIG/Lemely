@@ -186,13 +186,13 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * Cloud Logging records the request as having arrived from, the same as
      * it would for any other route this backend serves.
      *
-     * "Never what you typed, stored session data or your marks" is the
+     * "Does not include your answers, your marks or your session data" is the
      * negative space worth stating plainly: `buildClientErrorReport()` never
      * reads `localStorage`/`sessionStorage` (its own comment says so), takes
      * no form field or answer text as input, and the fields it does send are
      * about the failure, not about you.
      */
-    body: "If a screen breaks, Lemely sends a small report to help fix it: what went wrong, the technical detail of where in the code that happened, which screen you were on, your browser's user agent string and when it happened. That report goes to Lemely's own backend, which writes it to Google Cloud Logging alongside the network address the report arrived from, the same as any other request this backend receives. It is sent only when something breaks, never on an ordinary visit, and it never includes what you typed, anything stored in your session, or your marks.",
+    body: "If a screen breaks, Lemely sends a small report to help fix it: what went wrong, the technical detail of where in the code that happened, which screen you were on, your browser's user agent string and when it happened. That report goes to Lemely's own backend, which writes it to Google Cloud Logging alongside the network address the report arrived from, the same as any other request this backend receives. It is sent only when something breaks, never on an ordinary visit, and it does not include your answers, your marks, or anything stored in your session.",
   },
 ]
 

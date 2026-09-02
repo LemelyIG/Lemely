@@ -9,11 +9,11 @@ structured ``client_error`` log line for Cloud Logging, so these DTOs
 describe the wire contract only, never a persisted shape.
 
 Field caps are a second, independent backstop behind the router's own
-HTTP-layer size guard (``_MAX_BODY_BYTES``, 32 KiB): a request that slips past
-that check (or is crafted directly, bypassing the browser and its 32 KiB
-budget entirely) still cannot make a single log line larger than roughly
-about 19 000 characters — see :class:`ClientErrorReportDTO`'s own field comments for
-each cap's number.
+HTTP-layer size guard (``_MAX_BODY_BYTES``, 96 KiB): a request that slips past
+that check (or is crafted directly, bypassing the browser and its 64 KiB
+``keepalive`` budget entirely) still cannot make a single log line larger than
+about 19 000 characters — see :class:`ClientErrorReportDTO`'s own field
+comments for each cap's number.
 """
 
 from __future__ import annotations
