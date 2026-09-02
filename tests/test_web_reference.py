@@ -271,3 +271,18 @@ def test_enumerations_mirror_the_backend_enums(
         "specimen",
     ]
     assert body["difficultyBands"] == ["foundation", "standard", "challenge"]
+
+
+# ── deps.py wiring sanity ───────────────────────────────────────────────────
+
+
+def test_reset_singletons_clears_get_catalogue_service() -> None:
+    """``reset_singletons``'s docstring promises to clear *every* cached
+    singleton, and its own comment (deps.py) reverses an earlier omission for
+    exactly this reason: a caller that swaps settings between tests must not
+    keep a stale :class:`CatalogueService` bound to a torn-down sessionmaker."""
+    from lemely.web.deps import get_catalogue_service, reset_singletons
+
+    first = get_catalogue_service()
+    reset_singletons()
+    assert get_catalogue_service() is not first

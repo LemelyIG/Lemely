@@ -885,6 +885,7 @@ def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
     get_history_store.cache_clear()
+    get_catalogue_service.cache_clear()
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
