@@ -68,7 +68,7 @@ from lemely.runtime.config import DatabaseSettings, PathsSettings, load_settings
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# 0625's real top-level syllabus labels (lemely/data/syllabus_topics.json).
+# 0625's real top-level syllabus labels (the `subject_topics` table).
 _PHYSICS_TOPICS = [
     "1 Motion, forces and energy",
     "2 Thermal physics",

@@ -430,13 +430,14 @@ _MCQ_LETTERS: tuple[str, ...] = ("A", "B", "C", "D")
 # ---------------------------------------------------------------------------
 
 #: Same subject as the at-risk roster (:data:`SUBJECT_CODE`) — reused rather
-#: than restated, since both need a bank that already has a bundled syllabus
-#: taxonomy (:mod:`lemely.io.syllabus_topics`) and a transcribed paper timing
-#: entry (:mod:`lemely.io.paper_timing`).
+#: than restated, since both need a bank that already has a syllabus taxonomy
+#: (:mod:`lemely.io.syllabus_topics`, backed by ``subject_topics``) and a
+#: transcribed paper timing entry (:mod:`lemely.io.paper_timing`, backed by
+#: ``syllabus_papers``).
 PLACEMENT_SUBJECT_CODE = SUBJECT_CODE
 
-#: 0625's real top-level syllabus labels (``lemely/data/syllabus_topics.json``),
-#: the exact "<code> <name>" vocabulary D4.2's classifier writes — copied from
+#: 0625's real top-level syllabus labels (the ``subject_topics`` table), the
+#: exact "<code> <name>" vocabulary D4.2's classifier writes — copied from
 #: ``tests/test_placement_repo.py``'s viable-0625-bank fixture (its
 #: ``_PHYSICS_TOPICS``) rather than invented, per this chunk's brief.
 PLACEMENT_TOPICS: list[str] = [
@@ -447,7 +448,7 @@ PLACEMENT_TOPICS: list[str] = [
 ]
 
 #: 0625 Paper 2 (Multiple Choice, Extended) — a real, non-practical paper
-#: carried in ``lemely/data/paper_timing.json`` (45 min / 40 marks; Papers 5/6
+#: carried in the ``syllabus_papers`` table (45 min / 40 marks; Papers 5/6
 #: are practical and excluded from placement by
 #: :func:`~lemely.io.paper_timing.get_paper_timings`'s default).
 #:

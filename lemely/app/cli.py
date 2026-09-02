@@ -747,11 +747,11 @@ def question_bank_survey_cmd(ctx: click.Context) -> None:
 def question_bank_classify_topics_cmd(
     ctx: click.Context, subject: str | None, reclassify: bool, dry_run: bool
 ) -> None:
-    """Backfill ``question_bank.topic`` from the bundled CAIE syllabus taxonomies (P4.2).
+    """Backfill ``question_bank.topic`` from the CAIE syllabus taxonomies (P4.2).
 
-    Deterministic and free: keyword scoring against
-    ``lemely/data/syllabus_topics.json``, no Gemini call. Idempotent unless
-    ``--reclassify`` is passed.
+    Deterministic and free: keyword scoring against the ``subject_topics``
+    table (:mod:`lemely.io.syllabus_topics`), no Gemini call. Idempotent
+    unless ``--reclassify`` is passed.
 
     Only ``high``- and ``medium``-confidence matches are written; ``low`` ones
     are counted and discarded (``lemely.core.topics.WRITABLE_BANDS`` explains

@@ -1,69 +1,102 @@
-"""Loader for the bundled CAIE paper timing facts (P4.4, D4.6 §5).
+"""Loader for CAIE paper timing facts, backed by ``syllabus_papers``.
 
-Mirrors :mod:`lemely.io.syllabus_topics`: bundled static JSON, no network
-calls, keyed on ``(board, subject_code)`` so Edexcel and Oxford AQA arrive as
-extra entries rather than a schema change.
+Was bundled static JSON; the table is the source of truth now (spec D1), so a
+subject can be added without a deploy. The public shape is deliberately
+unchanged — same function names, same ``dict[int, PaperTiming]`` return, same
+practical-exclusion policy — so the placement assembler did not have to change.
 
-The file stores only ``duration_minutes`` and ``total_marks``, both
-transcribed from the syllabus's Assessment overview. The minutes-per-mark rate
-a placement estimate needs is *computed* from those two
+Only ``duration_minutes`` and ``total_marks`` are stored. The minutes-per-mark
+rate a placement estimate needs is computed from them
 (:attr:`~lemely.core.placement.PaperTiming.minutes_per_mark`) and never
-written down — so every number on disk is one a human can check against the
-source document, and there is no derived figure to drift out of step with it.
+written down, so every stored number is one a human can check against the
+syllabus PDF named in ``source_document``.
 """
 
 from __future__ import annotations
 
-import json
-from functools import lru_cache
+import threading
+from typing import TYPE_CHECKING
+
+import sqlalchemy as sa
 
 from lemely.core.placement import PaperTiming
-from lemely.data import DATA_DIR
+from lemely.db.models.catalogue import SyllabusPaper
+from lemely.db.session import get_sessionmaker
 
-_TIMING_PATH = DATA_DIR / "paper_timing.json"
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session
+
+_lock = threading.Lock()
+_cache: dict[tuple[str, str], dict[int, PaperTiming]] | None = None
 
 
-@lru_cache(maxsize=1)
-def load_paper_timings() -> dict[tuple[str, str], dict[int, PaperTiming]]:
-    """Return every bundled timing, keyed ``(board, subject_code)`` → ``paper_number``.
+def invalidate_reference_cache() -> None:
+    """Drop the process cache. Called by the seeding and ingest paths."""
+    global _cache
+    with _lock:
+        _cache = None
 
-    Cached: the file is static and placement assembly consults it once per
-    candidate question.
-    """
-    payload = json.loads(_TIMING_PATH.read_text(encoding="utf-8"))
+
+def _load(session: Session) -> dict[tuple[str, str], dict[int, PaperTiming]]:
     out: dict[tuple[str, str], dict[int, PaperTiming]] = {}
-    for raw in payload["papers"]:
+    for row in session.scalars(sa.select(SyllabusPaper)):
         timing = PaperTiming(
-            board=raw["board"],
-            subject_code=raw["subject_code"],
-            paper_number=int(raw["paper_number"]),
-            duration_minutes=int(raw["duration_minutes"]),
-            total_marks=int(raw["total_marks"]),
-            practical=bool(raw["practical"]),
-            source_document=raw["source"]["document"],
-            syllabus_version=raw["source"]["syllabus_version"],
+            board=row.board.value,
+            subject_code=row.subject_code,
+            paper_number=row.paper_number,
+            duration_minutes=row.duration_minutes,
+            total_marks=row.total_marks,
+            practical=row.practical,
+            source_document=row.source_document,
+            syllabus_version=row.syllabus_version,
         )
         out.setdefault((timing.board, timing.subject_code), {})[timing.paper_number] = timing
     return out
 
 
+def load_paper_timings(
+    session: Session | None = None,
+) -> dict[tuple[str, str], dict[int, PaperTiming]]:
+    """Every timing, keyed ``(board, subject_code)`` → ``paper_number``.
+
+    Cached per process: the catalogue changes only when the ingest or seeder
+    runs, and both call :func:`invalidate_reference_cache`.
+    """
+    global _cache
+    with _lock:
+        if _cache is not None:
+            return _cache
+    loaded = _load(session) if session is not None else _load_with_own_session()
+    with _lock:
+        _cache = loaded
+    return loaded
+
+
+def _load_with_own_session() -> dict[tuple[str, str], dict[int, PaperTiming]]:
+    with get_sessionmaker()() as session:
+        return _load(session)
+
+
 def get_paper_timings(
-    subject_code: str, *, board: str = "caie", include_practical: bool = False
+    subject_code: str,
+    *,
+    board: str = "caie",
+    include_practical: bool = False,
+    session: Session | None = None,
 ) -> dict[int, PaperTiming]:
     """Timings for one subject, keyed by paper number.
 
-    An empty mapping is a normal outcome, not an error: a subject we have not
-    transcribed an Assessment overview for yet has no eligible placement
+    An empty mapping is a normal outcome, not an error: a subject whose
+    Assessment overview has not been transcribed has no eligible placement
     questions, which is what the caller should report.
 
-    Practical papers (0625 Paper 5/6) are **excluded by default**. Their
-    questions assume apparatus in front of the candidate, so a practical
-    question in an at-home 15-minute placement test measures whether the
-    student has a ripple tank, not what they know. The timings are still
-    transcribed and available — this is a placement-assembly policy, not a
-    claim that the data is wrong.
+    Practical papers (0625 Papers 5/6) are excluded by default. Their questions
+    assume apparatus in front of the candidate, so a practical question in an
+    at-home placement test measures whether the student owns a ripple tank. The
+    rows are still stored — this is an assembly policy, not a claim the data is
+    wrong.
     """
-    timings = load_paper_timings().get((board, subject_code), {})
+    timings = load_paper_timings(session).get((board, subject_code), {})
     if include_practical:
         return dict(timings)
     return {number: t for number, t in timings.items() if not t.practical}
