@@ -8,7 +8,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { usePlacementResult } from "@/lib/hooks/usePlacementApi"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { placementResultView } from "./placementData"
 
 /*
@@ -64,6 +64,7 @@ export function PlacementResult() {
   const navigate = useNavigate()
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const { data, isPending, isError, error, refetch } = usePlacementResult(assignmentId)
+  const subjectName = useSubjectName(data?.subjectCode ?? "")
 
   /* `sr-only` h1 per branch, as in PlacementInvite — see the note there.
    * Deliberately worded "starting picture", never "result" or "score": S-05
@@ -91,9 +92,6 @@ export function PlacementResult() {
       </>
     )
   }
-
-  const subjectName =
-    SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
   const view = placementResultView(data)
 
   if (view.kind === "unmarked") {

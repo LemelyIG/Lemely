@@ -10,7 +10,7 @@ import { Slider } from "@/components/ui/slider"
 import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import type { CreatePracticeResponse, PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   groupTopicsBySyllabusGroup,
@@ -36,7 +36,7 @@ const DIFFICULTY_BANDS = ["foundation", "standard", "challenge"] as const
 export function PracticeGenerator() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const topicsQuery = usePracticeTopics(subjectCode)
   const createPractice = useCreatePractice()

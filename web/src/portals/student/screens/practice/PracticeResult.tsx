@@ -9,7 +9,7 @@ import { QuestionRow } from "@/components/ui/question-row"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { confidenceBandTier, practiceMarkState, practiceResultView } from "./practiceData"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 
@@ -62,6 +62,7 @@ export function PracticeResult() {
   const justSubmitted = isJustSubmitted(location.state)
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const { data, isPending, isError, error, refetch } = usePracticeResult(assignmentId)
+  const subjectName = useSubjectName(data?.subjectCode ?? "")
 
   if (isPending) {
     return (
@@ -86,8 +87,6 @@ export function PracticeResult() {
       </>
     )
   }
-
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
   const view = practiceResultView(data)
 
   if (view.kind === "not_submitted") {

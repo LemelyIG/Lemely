@@ -9,7 +9,7 @@ import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useCreatePlacement, usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
 import type { PlacementAvailability } from "@/lib/placementTypes"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { placementInviteView } from "./placementData"
 
 /*
@@ -45,8 +45,7 @@ export function PlacementInvite() {
   const { data, isPending, isError, error, refetch } = usePlacementAvailability(subjectCode)
   const createPlacement = useCreatePlacement()
   const [raceUnavailable, setRaceUnavailable] = useState<PlacementAvailability | null>(null)
-
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   async function handleStartNow() {
     setRaceUnavailable(null)
