@@ -124,11 +124,44 @@ are needed — `wrangler deploy` (via the `custom_domain: true` routes in
 [`web/wrangler.jsonc`](../web/wrangler.jsonc)) provisions the DNS + TLS for
 `lemelyig.com` and `staging.lemelyig.com` itself on first deploy.
 
+**The hostname must have no existing DNS record of its own.** A Custom
+Domain is Cloudflare creating the record, and it refuses rather than
+overwrite one that is already there:
+
+```
+Hostname 'lemelyig.com' already has externally managed DNS records
+(A, CNAME, etc). Delete them first or try a different hostname. [code: 100117]
+```
+
+That is what happened on the first production deploy — the apex still
+carried the A record of an older static deployment, and `deploy-frontend`
+failed on it. The Worker script uploads fine and only the trigger fails, so
+the job goes red with the Worker deployed but routed nowhere; wrangler says
+as much (`Successful trigger changes were not rolled back`). Delete the
+existing record in Cloudflare DNS, re-run the job, and it succeeds.
+
+Worth stating plainly because the opposite is easy to assume: **wrangler
+will not take a hostname away from whatever is already serving it.** There
+is no `--force`, and being non-interactive in CI does not change it.
+
 You need an API token: [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens)
-→ **Create Token** → the **"Edit Cloudflare Workers"** template → scope it
-to your account and the `lemelyig.com` zone. That template's permissions
-(Account: Workers Scripts Edit, Zone: Workers Routes Edit) are exactly what
-`wrangler deploy` needs, nothing more.
+→ **Create Token** → start from the **"Edit Cloudflare Workers"** template
+→ scope it to the account holding the `lemelyig.com` zone, and to that zone.
+
+**The template alone is not enough.** It grants Account: Workers Scripts
+Edit and Zone: Workers Routes Edit, which cover deploying the script — but
+`custom_domain: true` also creates a DNS record, so the token additionally
+needs **Zone → DNS → Edit** on `lemelyig.com`. Add it before the first
+deploy; without it the script uploads and the Custom Domain step fails.
+
+**A User API Token can only carry permissions its user actually holds.** If
+the zone lives in an account you are a *member* of rather than own, check
+your membership roles there first — a member with only domain/zone roles
+cannot mint a Workers-capable token, and `wrangler deploy` fails its very
+first call with `Authentication error [code: 10000]` against
+`/accounts/<id>/workers/services/<name>`. Either have the account's super
+admin grant a Workers role, or have them create an **Account API Token**,
+which is owned by the account and not tied to any member's roles.
 
 ### 4. GitHub — environments, secrets, variables
 
@@ -164,7 +197,7 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `CLOUDFLARE_ACCOUNT_ID` | Repo variable | [dash.cloudflare.com](https://dash.cloudflare.com) → any domain's overview page → right sidebar "Account ID" |
 | `CLOUDFLARE_API_TOKEN` | Repo secret | [dash.cloudflare.com/profile/api-tokens](https://dash.cloudflare.com/profile/api-tokens) → Create Token → "Edit Cloudflare Workers" template |
 | `SUPABASE_URL` | Env secret (staging + production) | Already known — see table above (`https://<ref>.supabase.co`) |
-| `SUPABASE_ANON_KEY` | Env secret (staging + production) | Already known — see below (safe to paste; anon keys are meant to be public-facing) |
+| `SUPABASE_ANON_KEY` | Env secret (staging + production) | Already known — see below. **Not as harmless as "anon keys are public-facing" suggests — read the note under the values before relying on that.** |
 | `SUPABASE_JWT_SECRET` | Env secret (staging + production) | Dashboard → project → Settings → API → **JWT Secret** (click reveal). **The one thing that will silently break auth if left wrong** — `docs/deployment.md` §2 explains why. |
 | `SUPABASE_SERVICE_ROLE_KEY` | Env secret (staging + production) | Dashboard → project → Settings → API → **service_role** key (click reveal) |
 | `SUPABASE_DB_URL` | Env secret (staging + production) | Dashboard → project → Settings → Database → Connection string → **Session pooler** tab (not "Direct connection" — GitHub Actions runners are IPv4-only and the direct connection is IPv6-only). Paste it exactly as shown, including your DB password; `deploy.yml` rewrites the `postgresql://` prefix itself. If you don't have the DB password (these two projects were created via API, so it was never shown to anyone), reset it from the same Database settings page. |
@@ -189,6 +222,51 @@ SUPABASE_URL=https://ynrmqjiqcvmcakondjbp.supabase.co
 SUPABASE_ANON_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Inlucm1xamlxY3ZtY2Frb25kamJwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODcwNTMxODAsImV4cCI6MjEwMjYyOTE4MH0.rOYMoHqZ5lB3Wvqq3FtA4AOpCxxm3dMwckcZdsM5pLE
 ```
 
+> ### An anon key is only public-safe when RLS is on
+>
+> The usual advice — anon keys are meant to be shipped to browsers — assumes
+> Row Level Security is enabled and policied. **This schema has neither.**
+> Alembic creates plain tables; nothing turns RLS on, and there are no
+> policies. Supabase's stock default privileges then grant `anon` and
+> `authenticated` full `SELECT, INSERT, UPDATE, DELETE, TRUNCATE` on every
+> table it creates.
+>
+> With RLS off and those grants in place, the anon key is not a public
+> identifier — it is an unauthenticated read/write credential for the entire
+> database, reachable over PostgREST by anyone who can read this file. Both
+> keys above are committed to a public repository.
+>
+> **What closes it**, and what has been applied to both projects:
+>
+> ```sql
+> REVOKE ALL ON ALL TABLES IN SCHEMA public FROM anon, authenticated;
+> ALTER DEFAULT PRIVILEGES IN SCHEMA public REVOKE ALL ON TABLES FROM anon, authenticated;
+> ```
+>
+> The second statement is the load-bearing half: without it the next
+> migration that adds a table hands `anon` full access to it again. Alembic
+> connects as `postgres`, and that is the role the default-privilege revoke
+> is recorded against, so new tables it creates are covered. Verify with:
+>
+> ```sql
+> SELECT pg_get_userbyid(defaclrole), defaclacl FROM pg_default_acl d
+> JOIN pg_namespace n ON n.oid = d.defaclnamespace
+> WHERE n.nspname = 'public' AND d.defaclobjtype = 'r';
+> ```
+>
+> The `postgres` row must not list `anon` or `authenticated`. (A
+> `supabase_admin` row still grants them — that is Supabase's own default for
+> tables *it* creates, and application migrations do not run as that role.)
+>
+> This is safe for this application because nothing in it talks to
+> PostgREST: the backend reaches Postgres through SQLAlchemy, and uses
+> Supabase only for GoTrue auth and Storage. Revoking these grants breaks
+> nothing here. **It would break a project that uses `supabase-js` against
+> the database** — enable RLS with policies instead, in that case.
+>
+> Rotating both keys in the Supabase dashboard remains worthwhile regardless:
+> removing them from this file does not remove them from git history.
+
 ## First deploy
 
 Once section 4's environments/secrets/variables are in place:
@@ -204,6 +282,24 @@ the backend behind it, not just each piece in isolation
 (`docs/deployment.md`'s own "verified, not inferred" standard). Once
 staging looks right, merge `develop` → `main` to exercise the production
 path (approval click included).
+
+Both environments have since been deployed this way. Three things the first
+runs turned up, none of which are obvious from the config:
+
+- **`--execution-environment=gen2` is load-bearing, not a preference.** On
+  gen1 the container died 55s into startup with `Uncaught signal: 7`
+  (SIGBUS, from gVisor's sentry) before uvicorn ever bound. On gen2 the same
+  image reports healthy in under 7s. `deploy.yml` carries the full reasoning
+  — including that memory was *not* the cause, despite an early commit
+  saying so.
+- **The Custom Domain step fails on a hostname that already has a DNS
+  record** — see §3. Clear the record first.
+- **A `docker push` can return a bare 502 from Artifact Registry** and fail
+  the job mid-upload with no revision created. That one is genuinely
+  transient; re-running the failed jobs is the fix, and the `Why the rollout
+  failed` step in `deploy-backend` will say `latest revision: <none
+  created>`, which is how you tell it apart from a container that started
+  and then died.
 
 ## Known gaps this setup doesn't close
 
