@@ -79,10 +79,100 @@ def test_an_unparseable_document_yields_empty_lists_rather_than_raising() -> Non
     assert parse_threshold_pdf(b"%PDF-1.4 not really a pdf") == ([], [])
 
 
-def test_option_row_regex_does_not_match_a_component_line() -> None:
+def test_option_row_parser_does_not_match_a_component_line() -> None:
     """A component line starts with the word "Component", not a 1-3 letter
-    option code, so the option-row regex must not match it even though both
+    option code, so the option-row parser must not match it even though both
     rows are dense sequences of numbers."""
-    from lemely.io.threshold_pdf import _OPTION_ROW
+    from lemely.io.threshold_pdf import _parse_option_row
 
-    assert _OPTION_ROW.match("Component 11 40 – – 27 24 22 19 17") is None  # noqa: RUF001
+    grades = ["A*", "A", "B", "C", "D", "E", "F", "G"]
+    line = "Component 11 40 – – 27 24 22 19 17"  # noqa: RUF001
+    assert _parse_option_row(line, grades, has_max_mark_column=False) is None
+    assert _parse_option_row(line, grades, has_max_mark_column=True) is None
+
+
+# The four option-row shapes: old/new layout era crossed with single/multi
+# component. Each is a synthetic line, not a new PDF fixture -- the fixtures
+# happen to contain no single-component option, which is exactly why the
+# earlier regex-based parser's ambiguity went unnoticed.
+_GRADES_8 = ["A*", "A", "B", "C", "D", "E", "F", "G"]
+
+
+def test_old_era_single_component_option_row() -> None:
+    """No max-mark column, one component: nothing disambiguates the leading
+    number from a max mark except knowing, from the header, that this table
+    has no max-mark column at all."""
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "AX 40 130 106 84 62 50 38 26 14", _GRADES_8, has_max_mark_column=False
+    )
+    assert option is not None
+    assert option.option_code == "AX"
+    assert option.component_numbers == [40]
+    assert option.max_mark_after_weighting is None
+    assert option.thresholds == {
+        "A*": 130,
+        "A": 106,
+        "B": 84,
+        "C": 62,
+        "D": 50,
+        "E": 38,
+        "F": 26,
+        "G": 14,
+    }
+
+
+def test_old_era_multi_component_option_row() -> None:
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "BX 21, 41, 51 130 106 84 62 50 38 26 14", _GRADES_8, has_max_mark_column=False
+    )
+    assert option is not None
+    assert option.option_code == "BX"
+    assert option.component_numbers == [21, 41, 51]
+    assert option.max_mark_after_weighting is None
+    assert option.thresholds["A*"] == 130
+    assert option.thresholds["G"] == 14
+
+
+def test_new_era_single_component_option_row() -> None:
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "AX 200 40 144 119 94 70 63 56 50 44", _GRADES_8, has_max_mark_column=True
+    )
+    assert option is not None
+    assert option.option_code == "AX"
+    assert option.component_numbers == [40]
+    assert option.max_mark_after_weighting == 200
+    assert option.thresholds["A*"] == 144
+    assert option.thresholds["G"] == 44
+
+
+def test_new_era_multi_component_option_row() -> None:
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "BX 200 21, 41, 51 144 119 94 70 63 56 50 44", _GRADES_8, has_max_mark_column=True
+    )
+    assert option is not None
+    assert option.option_code == "BX"
+    assert option.component_numbers == [21, 41, 51]
+    assert option.max_mark_after_weighting == 200
+    assert option.thresholds["A*"] == 144
+    assert option.thresholds["G"] == 44
+
+
+def test_a_too_short_option_row_is_dropped_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A row that matches the leading option-code pattern but does not carry
+    enough tokens for the active header must not disappear silently."""
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    with caplog.at_level("WARNING", logger="lemely.io.threshold_pdf"):
+        option = _parse_option_row("AX 40 130 106 84", _GRADES_8, has_max_mark_column=False)
+    assert option is None
+    assert any("skipping" in record.message for record in caplog.records)
