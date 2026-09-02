@@ -31,7 +31,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 from lemely.core.loose_schemas import AnswerPoint, MathMarkType, Question, QuestionType
-from lemely.io.det.marks import parse_marks_cell
+from lemely.io.det.marks import extract_trailing_mark_code, parse_marks_cell
 from lemely.runtime.errors import ParseError
 
 if TYPE_CHECKING:
@@ -95,6 +95,73 @@ def decompose_compound_q(q_cell: str) -> list[str] | None:
     for sub in re.findall(r"\([a-z]+\)", m.group(2)):
         parts.append(sub)
     return parts
+
+
+# #112 — CAIE's alternative-branch markers, as they actually reach the parser.
+#
+# The detector this replaces fired only when the answer cell EQUALLED "OR"/
+# "EITHER", or STARTED with the marker plus a SPACE. pdfplumber returns the
+# marker and the following working in ONE cell separated by a NEWLINE, so
+# neither branch matched and mutually exclusive routes were summed.
+#
+# The rule is "a line consisting solely of a marker", and the line-alone
+# requirement is what makes it safe. CAIE also writes "accept either form" as an
+# INLINE or — `0625_s22_ms_33` carries "4000 / 10 OR 4000 / 9.8" inside ONE mark
+# point. Treating that as a branch marker would split a single point in half and
+# drop half its text, trading an overcount for a silent loss.
+_ALT_MARKER_LINE_RE = re.compile(
+    r"^[ \t]*(OR|EITHER|ALTERNATIVELY|ALTERNATIVE)[ \t]*[:.]?[ \t]*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+
+
+def split_on_alternative_marker(text: str) -> tuple[str, str, str] | None:
+    """Split an answer cell on a line that is solely an alternative marker.
+
+    Returns ``(before, after, MARKER)`` or ``None`` when there is no such line.
+
+    ``before`` is kept deliberately: when the marker sits mid-cell — an operator
+    fragment from the previous row precedes it, as in `0606_s23_ms_12` leaf 33b —
+    that text belongs to the PRIMARY branch. Discarding it would trade #112's
+    overcount for an undercount, which is not an improvement.
+
+    ``EITHER`` opens the FIRST route, not the alternative; ``OR`` and
+    ``ALTERNATIVE`` open the second. The caller uses the returned marker to tell
+    them apart.
+    """
+    m = _ALT_MARKER_LINE_RE.search(text)
+    if m is None:
+        return None
+    return text[: m.start()].strip(), text[m.end() :].strip(), m.group(1).upper()
+
+
+def _prune_phantom_leaves(questions: list[Question]) -> list[Question]:
+    """Drop TOP-LEVEL leaf questions carrying neither marks nor answer points (#110).
+
+    A data-table line beginning with a number — a stem-and-leaf row, a frequency
+    table, a list of readings — is decomposed as a new **top-level** question.
+    #136 mechanism (C) already stops those rows minting a mark, which leaves
+    them as empty shells: no marks, no points, and an id that collides with the
+    real question of the same number, silently collapsing two leaves into one
+    under DA6's ``(paper_id, question_id)`` identity.
+
+    **This is not deduping and not renumbering**, both of which would invent
+    question identity rather than read it (see the #110 note in the main loop).
+    It removes nodes with no content: a leaf with no marks and no points
+    contributes nothing to any total, cannot be matched against a candidate's
+    answer, and cannot be marked.
+
+    Deliberately narrow in two ways, both learned from a test that caught the
+    wider rule doing harm:
+
+    * **Top level only.** A labelled sub-part like ``1(b)`` is structure the
+      paper printed, and is kept even when empty. Only a bare top-level number
+      can be the data-table artefact this targets.
+    * **Both conditions required.** A question whose tariff was read off the
+      page is real even if its answer text failed to parse; dropping it would
+      silently shrink the paper.
+    """
+    return [q for q in questions if q.parts or (q.marks or 0) or (q.answer_points or [])]
 
 
 def build_questions(
@@ -194,10 +261,19 @@ def build_questions(
     ) -> AnswerPoint:
         nonlocal point_idx
         point_idx += 1
+        # #38 (M1.3): when `marks_int is None` the marks cell was absent or
+        # unparseable and this 1-mark value is MINTED, not read. Record that.
+        #
+        # The default is right by luck for every single-mark code (B1/M1/A1/C1),
+        # which is exactly why it went unnoticed for so long — see DA21, where
+        # this same line silently cost `0625_s20_ms_31` 4 marks and
+        # `0625_w21_ms_32` 4 more by turning `B4`/`B2`/`B3` into 1. Provenance
+        # does not change the value; it makes the guess countable.
         return AnswerPoint(
             id=f"p{point_idx}",
             point=text,
             marks=marks_int if marks_int is not None else 1,
+            marks_defaulted=marks_int is None,
             math_mark_type=math_type,
             is_alternative=is_alt,
         )
@@ -230,6 +306,33 @@ def build_questions(
         math_type: MathMarkType | None = (
             parsed_mark.math_mark_type if parsed_mark is not None else None
         )
+        # #136 mechanism (D) / `mark_aggregation_overcount`: a PARENTHESISED
+        # mark cell — "(A1)", "(M1)", "(3)" — is CAIE's notation for an
+        # ALTERNATIVE route to the same allocation, printed under an
+        # "Or"/"Alternative" heading. Summing it alongside the primary route
+        # double-counts: `0606_s23_ms_12` parsed to 116 against a printed 80,
+        # and its 23 bracketed rows total exactly 36.
+        #
+        # Routed through the SAME is_alternative machinery that already handles
+        # standalone "OR"/"EITHER", so flush()'s primary-only sum excludes it
+        # without a second aggregation rule to keep in step with the first.
+        mark_is_alternative = parsed_mark is not None and parsed_mark.is_alternative
+
+        # #136 mechanism (B) / DA21: in the 3-column geometry some papers use,
+        # the marks column merges into the answer cell, so the code arrives as
+        # trailing text ("...where lines cross B3") and the marks cell parses
+        # empty. Left alone, make_point() below mints 1 — right by luck for
+        # every single-mark code, and silently short by `value - 1` for every
+        # multi-mark one.
+        #
+        # Only consulted when the marks COLUMN gave nothing: a real marks cell
+        # is always authoritative. See extract_trailing_mark_code for why a
+        # bare trailing integer is deliberately NOT recovered.
+        if marks_int is None and answer_cell:
+            recovered = extract_trailing_mark_code(answer_cell)
+            if recovered is not None:
+                answer_cell, leaked = recovered
+                marks_int, math_type = leaked.value, leaked.math_mark_type
 
         # --- Skip remaining header rows (inline defence) --------------------
         cells_lower = {(c or "").strip().lower() for c in row}
@@ -246,10 +349,59 @@ def build_questions(
         if _INDICATIVE_CONTENT_RE.search(answer_cell):
             raise ParseError("Indicative-content section detected: fall back to Gemini parser")
 
+        # #136 mechanism (C) / DA21, and the only one of the three that
+        # OVERcounts: papers embed data tables — stem-and-leaf, frequency
+        # tables, lists of readings — inside a question's rows. pdfplumber
+        # emits each line as a row with numeric text and no marks cell, and
+        # make_point() then minted 1 mark per line. `0580_s23_ms_22` parsed to
+        # 73 against a printed 70 entirely this way.
+        #
+        # Narrow on purpose: BOTH an unparseable marks cell AND text with no
+        # alphabetic content. A numeric answer that carries its own marks cell
+        # is untouched. Where it does fire the mark was MINTED, not read, so
+        # declining to guess understates rather than inventing — the safe
+        # direction, and the same one mechanism (A)'s no-preceding-point case
+        # takes.
+        # Narrowed after measuring: firing on a LABELLED sub-part row ate a
+        # real answer. `0625_s20_ms_61` 1(a) answers "0.025, 0.037, 0.050,
+        # 0.063, 0.075" — numeric, no marks cell, and entirely genuine. A row
+        # that opens a labelled part like "1(a)" is an answer row; a data-table
+        # line is either unlabelled or carries a bare number the compound
+        # decomposer mistakes for a new top-level question (which is #110's
+        # defect, and the reason those rows reach here at all).
+        if marks_int is None and answer_cell and not any(ch.isalpha() for ch in answer_cell):
+            q_components = decompose_compound_q(q_cell)
+            if q_components is None or len(q_components) == 1:
+                answer_cell = ""
+
         # --- Determine if this row starts a new question --------------------
         components = decompose_compound_q(q_cell)
 
         if components is not None:
+            # #110 mechanism 1: CAIE reprints the question number at the top of
+            # each continuation page, and the parser opened a FRESH question
+            # each time. `0606_w23_ms_13` opens question `10` four times that
+            # way, and since leaf identity is (paper_id, question_id) per DA6,
+            # the duplicates COLLAPSE two different questions into one leaf.
+            # Measured: 34 of 477 schemes, 57 leaves lost — and 14 of those
+            # schemes reconcile exactly, so the mark-total gate cannot see it.
+            #
+            # Narrow on purpose: only a bare re-declaration of the question that
+            # is CURRENTLY open counts as a continuation. Going back to an
+            # earlier number is the OTHER mechanism (a stray non-question table
+            # whose first column holds small integers) and must not be folded in
+            # silently — that would be inventing question identity rather than
+            # reading it. It stays distinct so the reconcile check can flag it.
+            if len(components) == 1 and labels and components[0] == labels[0]:
+                if answer_cell:
+                    current_points.append(
+                        make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                    )
+                    q_row_had_answer = True
+                    if math_type == MathMarkType.A:
+                        has_a_mark = True
+                continue
+
             flush()
             in_alt_branch = False
 
@@ -268,12 +420,16 @@ def build_questions(
                 if k < common_len:
                     continue
                 is_leaf = k == len(components) - 1
-                push_question(comp, is_leaf, marks_int, guidance_cell)
+                push_question(
+                    comp, is_leaf, None if mark_is_alternative else marks_int, guidance_cell
+                )
 
             upper = answer_cell.upper()
             if answer_cell and upper not in ("EITHER", "OR"):
                 # Real answer on the Q row — add as a point.
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
@@ -288,9 +444,11 @@ def build_questions(
             flush()
             in_alt_branch = False
             unwind_to(2)
-            push_question(q_cell, True, marks_int, guidance_cell)
+            push_question(q_cell, True, None if mark_is_alternative else marks_int, guidance_cell)
             if answer_cell:
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
@@ -299,24 +457,97 @@ def build_questions(
             flush()
             in_alt_branch = False
             unwind_to(1)
-            push_question(q_cell, True, marks_int, guidance_cell)
+            push_question(q_cell, True, None if mark_is_alternative else marks_int, guidance_cell)
             if answer_cell:
-                current_points.append(make_point(answer_cell, marks_int, math_type, False))
+                current_points.append(
+                    make_point(answer_cell, marks_int, math_type, mark_is_alternative)
+                )
                 q_row_had_answer = True
                 if math_type == MathMarkType.A:
                     has_a_mark = True
 
         else:
             # Continuation row — add an AnswerPoint to the deepest question.
+            sticky_reset = False
+
+            # #136 mechanism (A) / DA21: a row carrying a real mark but no
+            # answer text. pdfplumber merges some layouts (matching tables,
+            # multi-line lists) wholly into the FIRST cell and leaves the
+            # remaining rows holding nothing but their mark codes —
+            # `0625_w21_ms_32` 6(a) prints 4 marks and parsed as 1 this way.
+            # The blank-row guard below fired before the marks column was
+            # consulted, so those marks were discarded silently.
+            #
+            # The marks are merged into the preceding point rather than
+            # becoming textless points of their own: the text that earns them
+            # is in that merged cell, and an AnswerPoint with no text cannot be
+            # matched against a candidate's answer, so it would be unmarkable.
+            if (
+                not answer_cell
+                and marks_int is not None
+                and not mark_is_alternative
+                and current_points
+            ):
+                last = current_points[-1]
+                current_points[-1] = last.model_copy(
+                    update={"marks": (last.marks or 0) + marks_int}
+                )
+                q_row_had_answer = True
+                continue
+
             if not answer_cell or not stack:
                 continue
 
             upper = answer_cell.upper()
 
-            # Standalone OR / EITHER: switch all remaining points to the alt branch.
-            if upper in ("OR", "EITHER"):
-                in_alt_branch = True
-                continue
+            # #112: a marker on a line of its own, which is how pdfplumber
+            # actually delivers it. Handles all three sub-defects at once —
+            # marker followed by a newline, "Alternative" in the vocabulary,
+            # and a marker that is not at the cell start.
+            split = split_on_alternative_marker(answer_cell)
+            if split is not None:
+                before, after, marker = split
+                # EITHER opens the FIRST route; OR / ALTERNATIVE open the
+                # second. The Q-row branch already treated EITHER as
+                # structural-not-alternative; this branch did the opposite, so
+                # an "EITHER ... OR ..." pair scored NEITHER route as primary.
+                if before:
+                    # The cell-splitting decision (B15). A cell like
+                    # "primary working / OR / alternative working" holds ONE
+                    # mark awarded for EITHER route, so BOTH halves carry the
+                    # row's mark and the alternative is excluded from the
+                    # primary sum. That is not minting: it is one mark, two
+                    # ways to earn it.
+                    #
+                    # Measured against the alternative design, where `before`
+                    # was merged text-only into the preceding point: that
+                    # removed more marks and reconciled WORSE (304 schemes
+                    # exact against 329), so the fragment is usually this row's
+                    # own primary form rather than the previous row's spill.
+                    # `mark_is_alternative` must be honoured here too: a BRACKETED row
+                    # (#136 mechanism D) is an alternative route whichever half of a
+                    # split cell the text lands in. Omitting it counted the primary
+                    # half of an already-alternative row and pushed 0606_s23_ms_12
+                    # from an exact 80 to 82.
+                    current_points.append(
+                        make_point(
+                            before, marks_int, math_type, in_alt_branch or mark_is_alternative
+                        )
+                    )
+                    q_row_had_answer = True
+                in_alt_branch = marker != "EITHER"
+                if not after:
+                    continue
+                answer_cell = after
+                upper = answer_cell.upper()
+                # NON-STICKY, chosen by measurement (see the run notes): the
+                # marker governs its OWN point, not everything to the end of the
+                # leaf. #112 names both readings and bounds them at 77 and 246
+                # marks. Sticky removed 245 corpus-wide and cost 26 schemes their
+                # reconciliation; non-sticky removed 58 and cost 8. Over-removal
+                # turns this overcount into an undercount, which is the harder
+                # error to notice, so the conservative reading is preferred.
+                sticky_reset = marker != "EITHER"
 
             is_alt = in_alt_branch
             text = answer_cell
@@ -344,13 +575,21 @@ def build_questions(
             if not text:
                 continue
 
-            current_points.append(make_point(text, marks_int, math_type, is_alt))
+            current_points.append(
+                make_point(text, marks_int, math_type, is_alt or mark_is_alternative)
+            )
+            if sticky_reset:
+                # Non-sticky reading: the marker governs its OWN point only.
+                in_alt_branch = False
+                sticky_reset = False
             if math_type == MathMarkType.A:
                 has_a_mark = True
 
     # Final flush and full unwind
     flush()
     unwind_to(0)
+
+    top_level = _prune_phantom_leaves(top_level)
 
     if not top_level:
         raise ParseError("Theory table contained no questions after parsing")

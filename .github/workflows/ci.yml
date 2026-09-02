@@ -71,6 +71,32 @@ jobs:
       - name: Pytest
         run: pytest
 
+      # M0.9 (#33): review-rate two-part ratchet gate (spec §4 M0.9, §5).
+      #
+      # This step DOES run in CI. Verified 2026-08-29 against run 33235411251,
+      # whose log carries the gate's own output. The text here previously read
+      # "it has not been executed in CI and must not be claimed as
+      # CI-verified" — accurate when written, while GitHub Actions was org-wide
+      # billing-blocked. Billing was restored, the step began running, and the
+      # comment was never updated, so it went on telling every reader that
+      # MISSION §13 clause 2's "enforced in CI" half was not happening (DA48).
+      #
+      # What it does NOT do is BLOCK. The gate exits 0 on a breach while
+      # review_rate_ratchet_armed=false, so CI observes and records rather than
+      # failing. Clause 2 therefore stays PARTIAL — observation is not
+      # enforcement — but the gate is wired, and nobody needs to build it.
+      #
+      # Arming is not a flag flip. #161/DA33 measured all four limbs failing:
+      # signal 3.6x, total 2.9x, p95 5.6x, and three of those are absolute
+      # targets that no value of review_rate_last_merged can move. It needs the
+      # review rate itself to come down.
+      #
+      # Falls back to the committed BUILD/review-rate-baseline.json —
+      # tests/golden/results/ is gitignored and will not exist on a fresh CI
+      # checkout, so CI deterministically gates on the committed artifact.
+      - name: Review-rate gate
+        run: python scripts/check_review_rate_gate.py
+
   pre-commit:
     runs-on: ubuntu-latest
     steps:

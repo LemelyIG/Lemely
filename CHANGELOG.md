@@ -52,6 +52,29 @@ this entry is the user-visible summary.
   wired; a school admin or teacher can mint a code today only via a direct API call, not a button
   in the product. See `BUILD/BLOCKERS.md` B8.
 
+### Changed
+
+- **The extraction & marking accuracy programme is retired** (2026-08-29, human
+  ruling C26). It was **retired, not completed**: its own Definition of Done
+  (`BUILD/ACCURACY-MISSION.md` §13) is not met, and none of the three components of its
+  stated objective landed — a wrong mark still cannot be attributed to extractor or
+  marker, the review rate did not fall (32.58% measured against a 10% budget), and
+  and the wrong-mark catch rate FELL rather than doubled (`flag_recall` 14.29%, n=71,
+  on the honest post-D18 run, against the 27.3% the "≥6/11" target was set from). All 24 open accuracy issues are
+  closed — **none as completed, all 24 as `not planned`**, meaning retired
+  unfinished. (#136 came closest: five of its six acceptance bullets are met, but
+  bullet 6 asked for #95 unblocked or re-routed and neither happened.) **The closing account is
+  [`BUILD/ACCURACY-FINAL-REPORT.md`](BUILD/ACCURACY-FINAL-REPORT.md)** — read it
+  before relying on any accuracy figure in this repo.
+- The measurement instrument the programme built **does** ship and is on `develop`:
+  `lemely/eval` (record model, run manifest, pure analyses), the cache-bypass seam,
+  the published A/A churn floor, honest denominators, paired statistics, the frozen
+  split, and the review-rate CI gate (wired and running, deliberately **unarmed**).
+- `BUILD/ACCURACY-REPORT.md` corrected at retirement: det parse coverage restated
+  to **393 of 1,130 (34.8%)** over the expanded 2010–2025 corpus — the previously
+  published *"331 of 479"* was as-of the 2019–2025 population — and the spend table
+  re-summed to **$6.370451**. Both figures were stale when found.
+
 ## [1.0.0] — 2026-08-12
 
 The first complete product. Lemely went from a CLI around a marking core to a
@@ -99,8 +122,11 @@ line here.
 - Plagiarism and AI-detection advisory flags (signals, never verdicts).
 - Accuracy harness with ten golden fixtures across 0580 / 0606 / 0625, plus an
   end-to-end measurement against two real solved scripts *(limited)*: the
-  synthetic accuracy target is **not met** — 83.8% mark-level agreement against
-  a ≥95% goal, with flag recall 27.3%. Both real papers landed inside the stated
+  synthetic accuracy target is **not met** — 83.8% mark-level agreement
+  (historical; see BUILD/DECISIONS.md DA8 for the current honest baseline:
+  90.1% raw n=71 / 77.4% DA6-collapsed n=31) against a ≥95% goal, with flag
+  recall 27.3% (historical; the current honest baseline is 14.29%, n=71 —
+  worse, not better). Both real papers landed inside the stated
   tolerance, but one of them was confidently wrong (all 40 marks at confidence
   1.0, zero flags, three marks of pure transcription error), because MCQ
   confidence measures the marker while the error happens in the extractor.

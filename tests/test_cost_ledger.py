@@ -9,6 +9,7 @@ from pathlib import Path
 import structlog
 
 from lemely.io.cost_ledger import CostLedger
+from tests.conftest import RepoLedgerWriteAttempted
 
 
 class CostLedgerTests(unittest.TestCase):
@@ -93,6 +94,76 @@ class CostLedgerTests(unittest.TestCase):
         ledger = CostLedger(self.path)
         total, _ = ledger.add(2.0, thresholds=[])
         self.assertAlmostEqual(total, 2.0)
+
+
+class RepoLedgerWriteGuardTests(unittest.TestCase):
+    """Regression tests for the session-scoped `_forbid_repo_ledger_writes`
+    fixture in tests/conftest.py (issue #114). The fixture is autouse, so it
+    is already active for every test in this process."""
+
+    def setUp(self) -> None:
+        self.tmp = Path(tempfile.mkdtemp())
+        self.path = self.tmp / "sub" / "gemini_spend.json"
+
+    def test_repo_internal_path_raises_and_never_writes(self) -> None:
+        repo_root = Path(__file__).resolve().parent.parent
+        target = repo_root / "outputs" / "gemini_spend_TEST_GUARD_SHOULD_NOT_EXIST.json"
+        self.assertFalse(target.exists())
+        ledger = CostLedger(target)
+        try:
+            with self.assertRaises(RepoLedgerWriteAttempted):
+                ledger.add(1.0, thresholds=[])
+        finally:
+            # Guard must fire before any write — assert no file was created,
+            # then clean up defensively in case the guard failed to fire.
+            if target.exists():
+                target.unlink()
+        self.assertFalse(target.exists())
+
+    def test_guard_survives_a_broad_except_exception_handler(self) -> None:
+        """The guard must not be swallowable by application error handling.
+
+        This is the load-bearing property, not a style choice. While #114 was
+        being fixed, an earlier revision raised ``RuntimeError`` and
+        ``correct_paper``'s broad ``except Exception`` caught it: the real
+        ledger was protected, but
+        ``test_mark_submission_low_confidence_non_mcq_queues_review`` went on
+        passing while silently exercising the error-fallback path instead of
+        the ``confidence=0.5`` path it documents. A blocked write that nobody
+        can see is a test-integrity bug wearing the fix's clothes, so the
+        exception deliberately derives from ``BaseException``.
+        """
+        repo_root = Path(__file__).resolve().parent.parent
+        target = repo_root / "outputs" / "gemini_spend_TEST_GUARD_UNMASKABLE.json"
+        ledger = CostLedger(target)
+        swallowed = False
+        leaked = False
+        try:
+            # The guard must escape the inner `except Exception` and be caught
+            # by assertRaises. If it does not fire at all, `add` succeeds and
+            # assertRaises fails the test — which is the mutation an earlier
+            # revision of this test missed, because it deleted the leaked file
+            # before asserting on it.
+            with self.assertRaises(RepoLedgerWriteAttempted):
+                try:
+                    ledger.add(1.0, thresholds=[])
+                except Exception:  # deliberately mimics correct_paper's handler
+                    swallowed = True
+        finally:
+            leaked = target.exists()
+            if leaked:
+                target.unlink()
+        self.assertFalse(swallowed, "a broad `except Exception` swallowed the ledger guard")
+        self.assertFalse(leaked, "the guard did not fire — a real file was written into the repo")
+
+    def test_tmp_dir_path_still_writes_and_reads_normally(self) -> None:
+        # Same code path as the rest of this test class's ledger exercises,
+        # confirming the guard does NOT fire for a legitimate tmp-dir path.
+        ledger = CostLedger(self.path)
+        total, _ = ledger.add(3.0, thresholds=[])
+        self.assertAlmostEqual(total, 3.0)
+        self.assertTrue(self.path.exists())
+        self.assertAlmostEqual(CostLedger(self.path).total(), 3.0)
 
 
 if __name__ == "__main__":

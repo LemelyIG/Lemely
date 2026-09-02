@@ -1,0 +1,32 @@
+{
+  "label": "counterfactual-0625p2-2026-08-24",
+  "issues": [
+    45,
+    88
+  ],
+  "kind": "counterfactual reparse \u2014 supplies the one piece of evidence #45's census explicitly did NOT attempt",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "network": "none",
+  "what_it_answers": "#45 labels 40 schemes paper_profile_misconfiguration on a DEMONSTRATED BRANCH DIFFERENCE, and its manifest says so plainly: '_changes_parse_path confirms MCQ vs. THEORY_CORE actually sends classify_one down a different code path, NOT an attempted counterfactual reparse'. A branch difference is not yet a cause. This run performs that reparse with the REAL DeterministicMarkSchemeParser, patching only _PHYSICS_PROFILE.paper_type_by_number[2] -> PaperType.MCQ, exactly the runtime state the profiles.py:50 fix would produce.",
+  "method": "For each of the 40 stems labelled paper_profile_misconfiguration in census-2026-08-24-b/classified-failures.txt, run DeterministicMarkSchemeParser over the PDF twice: once as shipped, once with paper 2 mapped to MCQ. Count clean parses. Read-only: no file is written, no production source is edited, git diff against lemely/io/det/profiles.py stays empty.",
+  "result": {
+    "n_stems": 40,
+    "parsed_as_shipped": 0,
+    "parsed_counterfactual": 39,
+    "moved_fail_to_pass_by_the_fix": 39,
+    "still_failing_after_fix": 1
+  },
+  "control": "as-shipped 0/40 independently reproduces #88's and #45's failure set for these stems \u2014 they are in the det-failure set by construction, so 0/40 is the expected control and confirms this harness drives the same parser the census did.",
+  "finding_1_bucket_upgraded": "For 39 of 40 rows paper_profile_misconfiguration is now a DEMONSTRATED CAUSE, not only a demonstrated branch difference: correcting the profile alone turns the parse from failing to clean. This is the strongest-evidenced bucket in the census and M3 can consume it.",
+  "finding_2_one_row_misattributed": {
+    "stem": "0625_s24_ms_21",
+    "detail": "Still fails after the fix, with the SAME signature as before it ('parsed 12, expected 40') \u2014 the MCQ branch does not rescue it, so the profile misconfiguration is NOT a sufficient cause for this row. It carries at least one further, distinct defect and should not be retired by a profiles.py fix. Bucket count is therefore 39 causal + 1 misattributed, not 40."
+  },
+  "bearing_on_88_question_2": "Quantifies the free half of the fix: it moves 39 schemes from the paid Gemini set to the free det set, cutting the paid denominator 229 -> 190 (-17.0%). It does NOT decide question 2 \u2014 the fix moves schemes between DA1 strata, which is the human's call, and profiles.py is untouched here.",
+  "reproduce": {
+    "command": ".venv/bin/python BUILD/accuracy-runs/counterfactual-0625p2-2026-08-24/counterfactual_0625p2.py",
+    "cost": "free, zero network, 80 PDF parses (40 stems x 2 arms)"
+  },
+  "not_committed": "no PDF text or mark-scheme content \u2014 only stems, counts and parse outcomes (MISSION \u00a712.7)"
+}

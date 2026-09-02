@@ -15,7 +15,7 @@ from lemely.io.det import gmp as _gmp
 from lemely.io.det import metadata as _meta
 from lemely.io.det import reconcile as _reconcile
 from lemely.io.det.columns import detect_columns
-from lemely.io.det.mcq import parse_mcq_tables
+from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
 from lemely.io.det.rows import build_questions
 from lemely.io.det.tables import select_tables
 from lemely.runtime.config import DetParserSettings
@@ -91,6 +91,8 @@ class DeterministicMarkSchemeParser:
             escalate_on_mark_mismatch=cfg.escalate_on_mark_mismatch,
             mark_reconcile_tolerance=cfg.mark_reconcile_tolerance,
             escalate_on_defaulted_marks=cfg.escalate_on_defaulted_marks,
+            escalate_on_duplicate_leaf_ids=cfg.escalate_on_duplicate_leaf_ids,
+            escalate_on_primary_sum_breach=cfg.escalate_on_primary_sum_breach,
             source=pdf_path.name,
         )
 
@@ -117,7 +119,31 @@ class DeterministicMarkSchemeParser:
                     f"No tables found in {metadata.source_document or 'PDF'} — "
                     "may be an image-only or scan-based PDF"
                 )
-            return parse_mcq_tables(all_tables)
+            mcq_diag = MCQParseDiagnostics()
+            questions_mcq = parse_mcq_tables(
+                all_tables,
+                source=metadata.source_document or "unknown",
+                diagnostics=mcq_diag,
+            )
+            # The reconciler compares MARKS against maximum_mark; this compares
+            # QUESTION COUNTS, which is not the same check. On an MCQ paper the
+            # two coincide only because every question carries one mark, and a
+            # drop compensated by an overcount elsewhere would net out of the
+            # mark comparison while still losing questions (#94).
+            expected = metadata.maximum_mark
+            if expected and len(questions_mcq) < expected:
+                log.warning(
+                    "det_mcq_question_shortfall",
+                    source=metadata.source_document or "unknown",
+                    parsed_questions=len(questions_mcq),
+                    # One mark per MCQ question makes maximum_mark a proxy for
+                    # the question count, not a declared count — the papers do
+                    # not print one. Stated here rather than implied.
+                    expected_questions_proxy=expected,
+                    shortfall=expected - len(questions_mcq),
+                    **mcq_diag.as_log_fields(),
+                )
+            return questions_mcq
 
         # Theory / practical papers
         all_tables = select_tables(

@@ -997,11 +997,56 @@ def aggregate_subject_cmd(
     show_default=True,
     help="Directory to write timestamped result JSON.",
 )
+@click.option(
+    "--cache-mode",
+    "cache_mode",
+    default="read_write",
+    type=click.Choice(["read_write", "bypass", "refresh"]),
+    show_default=True,
+    help=(
+        "Gemini response-cache behaviour for this run. Use 'bypass' for "
+        "repeat-run churn measurement (M0.3): without it every repeat after "
+        "the first is served from cache and the measured churn is 0 by "
+        "construction."
+    ),
+)
+@click.option(
+    "--arm",
+    "arm",
+    default=None,
+    type=click.Choice(["extract+mark", "oracle+mark"]),
+    show_default=True,
+    help=(
+        "Force every case in this run onto one ablation arm (#28/M0.4), "
+        "overriding the default per-case selection by scan_path presence. "
+        "'oracle+mark' ignores each case's scan and marks from injected "
+        "ground-truth text; 'extract+mark' requires every case to carry a "
+        "scan_path and errors otherwise (no silent fallback)."
+    ),
+)
 @click.pass_context
-def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) -> None:
+def measure_accuracy_cmd(
+    ctx: click.Context,
+    golden_dir: str,
+    results_dir: str,
+    cache_mode: str,
+    arm: str | None,
+) -> None:
     """Measure correction accuracy against the golden dataset.
 
     Exits non-zero if any metric falls below its configured target.
+
+    ``--cache-mode`` exists because the bypass seam (M0.2/#26) was reachable
+    only from library code: no CLI flag, no settings field, no env var, so the
+    single ``default_cache_mode=`` call site in the repo was a unit test.
+    An A/A churn floor (M0.3/#27) measured through the default read-write cache
+    would report **exactly 0.0 disagreement** — every repeat after the first
+    replays the first one's cached responses — and a 0.0 floor makes every
+    later A/B delta look "above noise" no matter how small it is (#77).
+
+    The chosen mode is recorded in ``RunManifest.cache_mode`` (#73), which
+    reads it back off the client, so the saved run states which cache
+    behaviour actually produced it rather than assuming the default.
     """
     from lemely.accuracy.harness import (
         format_report,
@@ -1009,6 +1054,8 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
         measure_accuracy,
         save_result,
     )
+    from lemely.eval.analyses import coherence_trigger_rate, review_rate
+    from lemely.eval.review_gate import evaluate_review_rate_gate
     from lemely.io.gemini import GeminiClient
 
     settings = _get_settings(ctx)
@@ -1023,8 +1070,16 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
 
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
-    client = GeminiClient(settings)
-    result = measure_accuracy(cases, client, settings)
+    client = GeminiClient(
+        settings,
+        default_cache_mode=cast("Literal['read_write', 'bypass', 'refresh']", cache_mode),
+    )
+    result = measure_accuracy(
+        cases,
+        client,
+        settings,
+        arm=cast("Literal['extract+mark', 'oracle+mark'] | None", arm),
+    )
     click.echo(format_report(result, settings.accuracy_eval))
 
     saved = save_result(result, Path(results_dir))
@@ -1049,10 +1104,149 @@ def measure_accuracy_cmd(ctx: click.Context, golden_dir: str, results_dir: str) 
     if m.flag_recall < t.flag_recall_target:
         failed.append(f"flag_recall {m.flag_recall:.3f} < {t.flag_recall_target}")
 
+    # M0.9 (#33): the review-rate two-part ratchet gate. review_rate() must be
+    # fed only a dev-split run's records (spec §5). measure_accuracy() always
+    # builds a dev-split manifest by default and this command never overrides
+    # split, but that is a convention, not a guarantee this function can see
+    # for itself — assert it explicitly rather than silently computing a
+    # wrong-split rate if that convention ever drifts (matches the explicit
+    # check in scripts/check_review_rate_gate.py).
+    if result.manifest.split != "dev":
+        raise click.ClickException(
+            "measure-accuracy: refusing to compute review_rate over a "
+            f"'{result.manifest.split}'-split run — review_rate is only defined "
+            "over the golden dev split (spec §5)."
+        )
+    rr = review_rate(result.eval_records)
+    gate = evaluate_review_rate_gate(
+        rr,
+        last_merged_review_rate=t.review_rate_last_merged,
+        armed=t.review_rate_ratchet_armed,
+        signal_target=t.review_rate_signal_target,
+        total_target=t.review_rate_total_target,
+        p95_target=t.review_rate_p95_target,
+    )
+    click.echo(
+        "\nReview rate: "
+        f"signal={rr['review_rate_signal']:.3f} total={rr['review_rate_total']:.3f} "
+        f"per_paper_p95={rr['per_paper_p95']:.3f} "
+        f"ratchet_ceiling={gate['ratchet_ceiling']:.3f} "
+        f"armed={gate['armed']} (n={rr['n']})"
+    )
+    if gate["breaches"]:
+        click.echo("Review-rate gate breaches:", err=True)
+        for b in gate["breaches"]:
+            click.echo(f"  ! {b}", err=True)
+        if not gate["armed"]:
+            click.echo("  (ratchet unarmed — recorded, not blocking)", err=True)
+    if gate["blocking_failure"]:
+        failed.append("review_rate_gate: " + "; ".join(gate["breaches"]))
+
+    # M1.5 (#40) bullet 4: the coherence gate's own contribution to review
+    # volume, measured and reported SEPARATELY from review_rate above —
+    # never folded into it, and never fed into the review-rate gate/ratchet.
+    # This is reporting only: it does not affect `failed` or the exit code.
+    #
+    # Read that precisely: it is the coherence_trigger_rate METRIC that is
+    # kept out of the gate. The coherence TRIGGER itself is NOT neutral —
+    # `_check_coherence` is a fourth OR-branch of `needs_teacher_review`
+    # (`correction_ai.py`), so a coherence-flagged leaf also carries the
+    # generic "needs_teacher_review" trigger and therefore DOES raise
+    # `review_rate_signal` and `review_rate_total`. This line exists to make
+    # that cost visible; it does not make the cost zero.
+    ctr = coherence_trigger_rate(result.eval_records)
+    click.echo(f"Coherence trigger rate: {ctr['coherence_trigger_rate']:.3f} (n={ctr['n']})")
+
     if failed:
         click.echo("\nTargets missed:", err=True)
         for f in failed:
             click.echo(f"  x {f}", err=True)
+        raise click.exceptions.Exit(1)
+
+
+@cli.command("label")
+@click.argument("paper_id")
+@click.option(
+    "--split",
+    type=click.Choice(["train", "dev", "test"]),
+    default="train",
+    show_default=True,
+    help="Split this paper belongs to, recorded in the label manifest (spec §6).",
+)
+@click.option(
+    "--labeller-id",
+    default=None,
+    help="Labeller identity, recorded in the label manifest. Defaults to $USER.",
+)
+@click.option("--host", default="127.0.0.1", show_default=True)
+@click.option("--port", type=int, default=8765, show_default=True)
+def label_cmd(paper_id: str, split: str, labeller_id: str | None, host: str, port: int) -> None:
+    """Start the two-pass blind labeller server for PAPER_ID (spec §6, M2.3/#46).
+
+    Delegates entirely into :mod:`lemely.labelling` — this command must not
+    inline labeller logic here, so the "labeller stays blind to the
+    correction pipeline" import-linter contract can target that module
+    narrowly rather than this file (which imports the correction pipeline
+    for other commands).
+    """
+    from lemely.labelling.server import run_labeller
+
+    resolved_labeller_id = labeller_id or os.environ.get("USER", "anonymous")
+    run_labeller(
+        paper_id,
+        split=cast("Literal['train', 'dev', 'test']", split),
+        labeller_id=resolved_labeller_id,
+        host=host,
+        port=port,
+    )
+
+
+@cli.command("label-verify")
+@click.argument("paper_id")
+@click.pass_context
+def label_verify_cmd(ctx: click.Context, paper_id: str) -> None:
+    """Verify PAPER_ID's tamper-evident label hash chains (spec §6, #46 repair pass 3).
+
+    Exits non-zero if either ``transcription.jsonl`` or ``marking.jsonl`` is
+    broken. Without this command, ``verify_chain`` had no production
+    caller — a human auditing the label corpus had no way to actually run
+    the tamper-evidence check the spec calls for; this just delegates into
+    :func:`lemely.labelling.verify.verify_paper_labels`.
+    """
+    from lemely.labelling.verify import verify_paper_labels
+
+    verification = verify_paper_labels(paper_id)
+
+    if ctx.obj.get("json_output", False):
+        _dump_json(
+            {
+                "paperId": verification.paper_id,
+                "ok": verification.ok,
+                "files": {
+                    name: (
+                        None
+                        if result is None
+                        else {
+                            "ok": result.ok,
+                            "brokenIndex": result.broken_index,
+                            "reason": result.reason,
+                        }
+                    )
+                    for name, result in verification.files.items()
+                },
+            }
+        )
+    else:
+        click.echo(f"Label chain verification for {paper_id}:")
+        for name, result in verification.files.items():
+            if result is None:
+                click.echo(f"  {name}: no file (skipped)")
+            elif result.ok:
+                click.echo(f"  {name}: OK")
+            else:
+                click.echo(f"  {name}: BROKEN at record {result.broken_index} — {result.reason}")
+
+    if not verification.ok:
         raise click.exceptions.Exit(1)
 
 

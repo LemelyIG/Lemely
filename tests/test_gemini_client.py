@@ -10,7 +10,12 @@ from unittest.mock import MagicMock
 
 from pydantic import BaseModel
 
-from lemely.io.gemini import GeminiClient, _reset_process_counters, _strip_schema
+from lemely.io.gemini import (
+    GeminiClient,
+    _reset_process_counters,
+    _strip_schema,
+    process_token_totals,
+)
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ExternalServiceError, ParseError
 
@@ -46,7 +51,17 @@ class StripSchemaTests(unittest.TestCase):
         self.assertEqual(children_items, {"type": "object"})
 
 
-def _mock_response(text: str, in_tok: int = 10, out_tok: int = 20) -> MagicMock:
+def _mock_response(
+    text: str, in_tok: int = 10, out_tok: int = 20, thoughts_tok: int = 0
+) -> MagicMock:
+    """A stubbed Gemini response.
+
+    ``thoughts_tok`` is set explicitly, and defaults to 0, because a bare
+    MagicMock auto-creates any attribute asked of it: the client reads
+    ``int(getattr(um, "thoughts_token_count", 0) or 0)``, and ``int(MagicMock())``
+    is 1 — so leaving it unset silently added a phantom thinking token to every
+    mocked call and inflated every token and USD figure derived from one.
+    """
     resp = MagicMock()
     resp.text = text
     cand = MagicMock()
@@ -57,7 +72,31 @@ def _mock_response(text: str, in_tok: int = 10, out_tok: int = 20) -> MagicMock:
     resp.usage_metadata = MagicMock(
         prompt_token_count=in_tok,
         candidates_token_count=out_tok,
+        thoughts_token_count=thoughts_tok,
     )
+    return resp
+
+
+def _mock_response_without_thoughts_attr(
+    text: str, in_tok: int = 10, out_tok: int = 20
+) -> MagicMock:
+    """A response whose usage_metadata genuinely lacks ``thoughts_token_count``.
+
+    Real GA responses for a call made with no thinking budget omit the field
+    entirely, so the ``getattr(..., 0)`` default is a live code path, not
+    defensive padding. ``spec=[...]`` is what stops MagicMock inventing it.
+    """
+    resp = MagicMock()
+    resp.text = text
+    cand = MagicMock()
+    finish = MagicMock()
+    finish.__str__ = lambda self: "STOP"
+    cand.finish_reason = finish
+    resp.candidates = [cand]
+    um = MagicMock(spec=["prompt_token_count", "candidates_token_count"])
+    um.prompt_token_count = in_tok
+    um.candidates_token_count = out_tok
+    resp.usage_metadata = um
     return resp
 
 
@@ -249,6 +288,274 @@ class GeminiClientTests(unittest.TestCase):
                 response_schema=_SimpleSchema,
                 prompt_version="1",
             )
+
+    def test_default_pricing_is_ga_rate(self) -> None:
+        """_DEFAULT_PRICING must carry GA rates, not the stale preview sheet."""
+        from lemely.io.gemini import _DEFAULT_PRICING
+
+        self.assertEqual(_DEFAULT_PRICING["gemini-2.5-flash"], (0.000300, 0.002500))
+        self.assertEqual(_DEFAULT_PRICING["gemini-2.5-flash-lite"], (0.000100, 0.000400))
+        self.assertEqual(_DEFAULT_PRICING["gemini-2.5-pro"], (0.001250, 0.010000))
+
+    def test_params_fingerprint_cache_hit_and_miss(self) -> None:
+        """Two calls with identical temperature/top_p/seed hit the cache; two
+        with a differing seed do not — _cache_key must fold in a
+        params_fingerprint derived from the resolved generation params."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "a"}'),
+            _mock_response('{"value": "b"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(self.tmp, temperature=0.2, top_p=0.9, seed=42)
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        # Identical params → cache hit, no second API call.
+        r1b = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual((r1.value, r1b.value), ("a", "a"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+        # Different seed → different params_fingerprint → cache miss, second call.
+        settings2 = _make_settings(self.tmp, temperature=0.2, top_p=0.9, seed=43)
+        client2 = GeminiClient(settings2, _genai_client=mock_genai)
+        r2 = client2.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual(r2.value, "b")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_cache_mode_bypass_ignores_existing_cache_entry(self) -> None:
+        """cache_mode='bypass' must call the API even when a cache entry exists."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "first"}'),
+            _mock_response('{"value": "second"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual(r1.value, "first")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+        r2 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            cache_mode="bypass",
+        )
+        self.assertEqual(r2.value, "second")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_cache_mode_refresh_overwrites_existing_entry(self) -> None:
+        """cache_mode='refresh' calls the API and overwrites the stale entry."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "stale"}'),
+            _mock_response('{"value": "fresh"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        r2 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            cache_mode="refresh",
+        )
+        self.assertEqual(r2.value, "fresh")
+
+        # A subsequent read_write call must now read the refreshed entry, not
+        # make a third API call.
+        r3 = client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        self.assertEqual(r3.value, "fresh")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_thinking_tokens_counted_in_ledger(self) -> None:
+        """thoughts_token_count must be folded into the output-token/usd ledger,
+        not just candidates_token_count."""
+        from lemely.io.gemini import process_token_totals
+
+        resp_no_thinking = _mock_response('{"value": "a"}', in_tok=100, out_tok=50)
+        resp_with_thinking = _mock_response('{"value": "b"}', in_tok=100, out_tok=50)
+        resp_with_thinking.usage_metadata.thoughts_token_count = 200
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            resp_no_thinking,
+            resp_with_thinking,
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u1",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        _, out_after_first = process_token_totals()
+
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u2",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        _, out_after_second = process_token_totals()
+
+        # The second call's thinking budget (200 thoughts tokens) must be
+        # reflected, so output tokens grow by more than candidates_token_count
+        # (50) alone would account for.
+        self.assertGreater(out_after_second - out_after_first, 50)
+        self.assertEqual(out_after_second - out_after_first, 250)
+
+    def test_bypassed_multi_sweep_does_not_trip_token_ceiling(self) -> None:
+        """A cache-bypassed 2-sweep run completes under a run-sized ceiling.
+
+        Deliberately calls NO reset anywhere: the counters accumulate straight
+        through both sweeps, exactly as they do in production. That is the
+        point — ``per_run_token_ceiling`` budgets the whole run, so the fix for
+        the false trip is sizing it for a run (lemely.toml uses 2,000,000
+        against ~115k tokens/sweep), not resetting between sweeps.
+
+        An earlier version of this test called ``reset_process_counters()``
+        inside its own sweep loop. That made it vacuous: it passed identically
+        against the pre-existing private helper and failed only when the
+        in-test reset was removed, so it certified the workaround rather than
+        the shipped behaviour.
+        """
+        mock_genai = MagicMock()
+        # ~70 calls/sweep, ~1650 tokens/call ≈ 115k tokens/sweep, ~230k for two.
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "x"}', in_tok=800, out_tok=850) for _ in range(140)
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(self.tmp, per_run_token_ceiling=2_000_000)
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        for sweep in range(2):
+            for i in range(70):
+                client.generate_structured(
+                    system_prompt="s",
+                    user_prompt=f"sweep{sweep}-call{i}",
+                    response_schema=_SimpleSchema,
+                    prompt_version="1",
+                    cache_mode="bypass",
+                )
+        self.assertEqual(mock_genai.models.generate_content.call_count, 140)
+        in_tok, out_tok = process_token_totals()
+        self.assertGreater(in_tok + out_tok, 150_000, "both sweeps must be on one tally")
+
+    def test_differing_response_schema_does_not_reuse_a_cached_reply(self) -> None:
+        """Identical prompts + different response schema must not share a cache entry.
+
+        The cache key is model:prompt_hash:files_hash:params_fingerprint, and
+        prompt_hash covers only the prompts — so before the schema entered the
+        fingerprint, the second call silently received the first call's
+        differently-shaped reply instead of calling the API.
+        """
+
+        class _OtherSchema(BaseModel):
+            other: str
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "x"}'),
+            _mock_response('{"other": "y"}'),
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        common = {"system_prompt": "s", "user_prompt": "u", "prompt_version": "1"}
+        client.generate_structured(response_schema=_SimpleSchema, **common)
+        client.generate_structured(response_schema=_OtherSchema, **common)
+
+        self.assertEqual(
+            mock_genai.models.generate_content.call_count,
+            2,
+            "second schema must miss the cache, not reuse the first schema's reply",
+        )
+
+    def test_missing_thoughts_token_count_ledgers_candidates_only(self) -> None:
+        """usage_metadata without thoughts_token_count must ledger candidates alone.
+
+        Guards the getattr default against a regression to a bare attribute
+        read, which would raise on every no-thinking-budget GA response.
+        """
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response_without_thoughts_attr(
+            '{"value": "x"}', in_tok=100, out_tok=40
+        )
+        mock_genai.files.upload.return_value = MagicMock()
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        _reset_process_counters()
+        client.generate_structured(
+            system_prompt="s",
+            user_prompt="u",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+            cache_mode="bypass",
+        )
+        self.assertEqual(process_token_totals(), (100, 40))
+
+    def test_run_token_ceiling_still_fires_when_a_run_really_exceeds_it(self) -> None:
+        """The companion to the above: sizing the ceiling must not disarm it.
+
+        Same accumulate-through-sweeps behaviour, but with a ceiling a two-sweep
+        run genuinely exceeds — it must raise rather than spend on.
+        """
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "x"}', in_tok=800, out_tok=850) for _ in range(140)
+        ]
+        mock_genai.files.upload.return_value = MagicMock()
+        settings = _make_settings(self.tmp, per_run_token_ceiling=150_000)
+        client = GeminiClient(settings, _genai_client=mock_genai)
+
+        with self.assertRaises(ExternalServiceError):
+            for sweep in range(2):
+                for i in range(70):
+                    client.generate_structured(
+                        system_prompt="s",
+                        user_prompt=f"sweep{sweep}-call{i}",
+                        response_schema=_SimpleSchema,
+                        prompt_version="1",
+                        cache_mode="bypass",
+                    )
 
     def test_schema_validation_failure_raises_parse_error(self) -> None:
         mock_genai = MagicMock()

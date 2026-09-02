@@ -1,0 +1,27 @@
+{
+  "run_id": "aa-floor-2026-08-23-a-aa-repeats-repeat-04-20260823T114620-a1",
+  "git_sha": "b364bf7",
+  "timestamp": "2026-08-23T11:48:31.760709Z",
+  "prompt_versions": {
+    "extraction": "5",
+    "correction": "4",
+    "mark_scheme": "3"
+  },
+  "params_fingerprint": "8a08cb821f60",
+  "models_by_task": {
+    "mark_scheme": "gemini-2.5-flash",
+    "extraction": "gemini-2.5-flash",
+    "correction": "gemini-2.5-flash"
+  },
+  "cache_mode": "bypass",
+  "split": "dev",
+  "corpus_digest": "e982c884f7f30cd7",
+  "_actual_cache_mode_requested": "bypass",
+  "_n_gemini_calls": 74,
+  "_sum_input_tokens": 118089,
+  "_sum_output_tokens_incl_thoughts": 10635,
+  "_sum_thoughts_tokens": 0,
+  "_recosted_usd_corrected_pricing": 0.062014,
+  "_cache_hit_detected_any_attempt": false,
+  "_attempts": 1
+}

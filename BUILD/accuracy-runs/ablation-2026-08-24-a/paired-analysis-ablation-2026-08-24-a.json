@@ -1,0 +1,32 @@
+{
+  "analysis": "paired_mcnemar_ablation_2x2",
+  "input_records_path": "BUILD/accuracy-runs/ablation-2026-08-24-a/records-extract-mark.jsonl",
+  "n_records": 71,
+  "arms_present": [
+    "extract+mark"
+  ],
+  "distinct_leaves_extract_mark": 31,
+  "wilson_extract_mark": {
+    "n": 31,
+    "successes": 24,
+    "point": 0.7741935483870968,
+    "lower": 0.6018723994130262,
+    "upper": 0.886050084055012
+  },
+  "mcnemar_raw_call_result": {
+    "b": 0,
+    "c": 0,
+    "n_pairs": 0,
+    "underpowered": true,
+    "chi2": 0.0,
+    "p_value": 1.0
+  },
+  "ablation_2x2_raw_call_result": {
+    "both_correct": 0,
+    "extraction_attributable": 0,
+    "marking_attributable": 0,
+    "masked": 0
+  },
+  "verdict": "NOT_APPLICABLE",
+  "reason": "oracle+mark arm produced zero records (issue #28 open, dead code path). mcnemar()/ablation_2x2() were called for completeness but both arms of their internal per-arm dict split show oracle+mark empty, so b=c=n_pairs=0 and the ablation 2x2 table is all zeros -- these are degenerate results reflecting missing data, not a real paired comparison. No paired McNemar, no Wilson-interval comparison across arms, and no min-detectable-effect computation are reportable from this run."
+}

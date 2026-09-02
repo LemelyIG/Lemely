@@ -9,7 +9,10 @@ import unittest
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+from structlog.testing import capture_logs
+
 from lemely.core.loose_schemas import (
+    AnswerPoint,
     MarkSchemeMetadata,
     MathMarkType,
     MCQAnswer,
@@ -23,12 +26,22 @@ from lemely.core.loose_schemas import (
 from lemely.io.det import DeterministicMarkSchemeParser
 from lemely.io.det.columns import ColumnLayout, detect_columns
 from lemely.io.det.gmp import extract_gmp
-from lemely.io.det.marks import ParsedMark, is_marks_column, parse_marks_cell
+from lemely.io.det.marks import (
+    ParsedMark,
+    extract_trailing_mark_code,
+    is_marks_column,
+    parse_marks_cell,
+)
 from lemely.io.det.mcq import find_mcq_answer_col, parse_mcq_tables
 from lemely.io.det.metadata import extract_metadata
 from lemely.io.det.profiles import SubjectProfile, get_profile, register_profile
 from lemely.io.det.reconcile import check as reconcile_check
-from lemely.io.det.rows import build_questions, decompose_compound_q, make_id
+from lemely.io.det.rows import (
+    build_questions,
+    decompose_compound_q,
+    make_id,
+    split_on_alternative_marker,
+)
 from lemely.io.det.tables import qualifies_as_mark_scheme_table, select_tables
 from lemely.runtime.config import DetParserSettings
 from lemely.runtime.errors import ParseError
@@ -165,7 +178,12 @@ class ParseMarksCellTests(unittest.TestCase):
         self.assertEqual(parse_marks_cell("C1"), ParsedMark(1, MathMarkType.C))
 
     def test_a_mark_parenthesised(self) -> None:
-        self.assertEqual(parse_marks_cell("(A1)"), ParsedMark(1, MathMarkType.A))
+        # The bracket is CAIE's ALTERNATIVE-route notation (#136 mechanism
+        # (D)) — the value and letter are unchanged, and is_alternative is
+        # what keeps it out of the primary sum.
+        self.assertEqual(
+            parse_marks_cell("(A1)"), ParsedMark(1, MathMarkType.A, is_alternative=True)
+        )
 
     def test_m_mark(self) -> None:
         self.assertEqual(parse_marks_cell("M2"), ParsedMark(2, MathMarkType.M))
@@ -303,6 +321,139 @@ class ParseMCQTablesTests(unittest.TestCase):
         table: list[list[str | None]] = [["1", "text"], ["2", "more"]]
         with self.assertRaises(ParseError):
             parse_mcq_tables([table])
+
+
+# ---------------------------------------------------------------------------
+# mcq silent-loss instrumentation (#94)
+# ---------------------------------------------------------------------------
+
+
+class MCQSilentLossInstrumentationTests(unittest.TestCase):
+    """#94: a discarded table must say WHY, not just shrink the total.
+
+    The premise #94 was opened on has been corrected by measurement and the
+    correction is encoded here rather than left on the issue. The *fact* of a
+    shortfall was never silent: ``reconcile`` compares the parsed mark total
+    against ``maximum_mark`` and logs ``mark_total_mismatch_escalating``. What
+    was silent is the *mechanism* — that a 29-row table was thrown away because
+    one cell read ``QUESTION DISCOUNTED``. These tests assert the mechanism is
+    reported; they deliberately do NOT re-assert the shortfall, which other
+    machinery already owns.
+    """
+
+    def test_rejected_table_names_the_disqualifying_value(self) -> None:
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [["1", "A"], ["2", "B"], ["3", "QUESTION DISCOUNTED"]]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(rejection["disqualifying_count"], 1)
+        self.assertEqual(rejection["values_in_column"], 3)
+
+    def test_rejection_names_the_densest_column_not_the_rightmost(self) -> None:
+        """A one-cell header must not be reported as the offending column.
+
+        The real answer column is the dense one; naming the rightmost instead
+        would report ``MARKS`` and bury the cell that actually caused the loss.
+        This is the shape the real 0625_s24_ms_21 table has.
+        """
+        from lemely.io.det.mcq import describe_answer_col_rejection
+
+        rows: list[list[str | None]] = [
+            ["QUESTION", "ANSWER", "MARKS"],
+            ["1", "A", None],
+            ["2", "B", None],
+            ["3", "QUESTION DISCOUNTED", None],
+        ]
+        rejection = describe_answer_col_rejection(rows)
+
+        self.assertEqual(rejection["column"], 1, "the dense answer column, not the MARKS header")
+        self.assertIn("QUESTION DISCOUNTED", rejection["disqualifying_values"])
+
+    def test_discarded_table_rows_are_counted(self) -> None:
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        good: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        lost: list[list[str | None]] = [["3", "C"], ["4", "D"], ["5", "QUESTION DISCOUNTED"]]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([good, lost], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 2)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 3, "the whole table, not just the bad row")
+        self.assertEqual(diag.questions_parsed, 2)
+        self.assertEqual(diag.rejections[0]["table_index"], 1)
+
+    def test_rows_dropped_inside_a_kept_table_are_counted(self) -> None:
+        """The reconciler cannot see these at all — it only sees the total."""
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        # Column 1 stays clean (A/B/C) so the table is ACCEPTED — the point
+        # is loss inside a table that parsed, not a rejected one.
+        table: list[list[str | None]] = [
+            ["1", "A"],
+            ["1", "B"],  # duplicate id
+            ["Q", "C"],  # q_cell not a digit
+        ]
+        diag = MCQParseDiagnostics()
+
+        questions = parse_mcq_tables([table], source="synthetic", diagnostics=diag)
+
+        self.assertEqual(len(questions), 1)
+        self.assertEqual(diag.rows_discarded_in_kept_tables, 2)
+
+    def test_diagnostics_are_optional_and_behaviour_is_unchanged_without_them(self) -> None:
+        from lemely.io.det.mcq import parse_mcq_tables
+
+        table: list[list[str | None]] = [["1", "A"], ["2", "B"]]
+        self.assertEqual([q.id for q in parse_mcq_tables([table])], ["1", "2"])
+
+
+class MCQSilentLossRealPaperTests(unittest.TestCase):
+    """The confirmed instance from #94, against the real PDF when it is present.
+
+    Skipped rather than failed when the source PDF is absent: it lives in the
+    PaperScraper corpus outside this repo, and a test that fails on a checkout
+    without it would be a broken gate, not a real signal.
+    """
+
+    PDF = Path("/home/sico/PaperScraper/papers/CAIE/igcse/physics-0625/2024/s24/0625_s24_ms_21.pdf")
+
+    def test_0625_s24_ms_21_reports_the_reason_for_its_28_question_loss(self) -> None:
+        if not self.PDF.exists():
+            self.skipTest(f"corpus PDF not present: {self.PDF}")
+        try:
+            import pdfplumber
+        except ImportError:  # pragma: no cover - pdfplumber is a hard dep here
+            self.skipTest("pdfplumber not installed")
+
+        from lemely.io.det.mcq import MCQParseDiagnostics, parse_mcq_tables
+
+        with pdfplumber.open(self.PDF) as pdf:
+            tables: list[list[list[str | None]]] = []
+            for page in pdf.pages[1:]:
+                tables.extend(page.extract_tables())
+
+        diag = MCQParseDiagnostics()
+        questions = parse_mcq_tables(tables, source=self.PDF.name, diagnostics=diag)
+
+        # The measured facts, asserted rather than described: 12 of 40 parse,
+        # and the 28 lost go with ONE discarded table.
+        self.assertEqual(len(questions), 12)
+        self.assertEqual(diag.tables_without_answer_col, 1)
+        self.assertEqual(diag.rows_discarded_data, 29, "28 questions plus the header row")
+
+        rejection = diag.rejections[0]
+        self.assertEqual(rejection["column"], 3)
+        self.assertEqual(rejection["disqualifying_values"], ["QUESTION DISCOUNTED"])
+        self.assertEqual(
+            rejection["disqualifying_count"],
+            1,
+            "a SINGLE anomalous cell costs the entire table — the whole point of #94",
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -908,6 +1059,70 @@ class ProfileTests(unittest.TestCase):
         profile = get_profile("9999")
         self.assertEqual(profile.paper_type(2, ""), PaperType.THEORY_EXTENDED)
 
+    def test_0625_paper_2_is_mcq(self) -> None:
+        """0625 Paper 2 is "Multiple Choice (Extended)", not Theory (Core).
+
+        ``profiles.py`` mapped ``2: THEORY_CORE`` from the day the file was
+        created (810ac08) and never changed. Confirmed against the real
+        0625_s23_ms_22.pdf, whose cover page reads "Paper 2 Multiple Choice
+        (Extended) May/June 2023".
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(2), PaperType.MCQ)
+
+    def test_cover_text_wins_over_a_contradicting_number_map(self) -> None:
+        """The actual defect: the number map used to short-circuit the cover.
+
+        A wrong constant silently overrode correct evidence sitting right there
+        in the document, and the next wrong constant would have done the same.
+        Paper 4 is mapped THEORY_EXTENDED; a cover that says otherwise wins.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(4, "Paper 4 Multiple Choice (Extended)"),
+            PaperType.MCQ,
+        )
+        self.assertEqual(
+            profile.paper_type(1, "Paper 1 Theory (Core)"),
+            PaperType.THEORY_CORE,
+        )
+
+    def test_number_map_still_used_when_the_cover_says_nothing(self) -> None:
+        """No cover evidence must fall back to the table, not to the default."""
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(5), PaperType.PRACTICAL)
+        self.assertEqual(profile.paper_type(5, ""), PaperType.PRACTICAL)
+
+    def test_0625_paper_3_falls_back_to_core_theory_not_extended(self) -> None:
+        """B7: the 0625 paper-3 constant is THEORY_CORE, not THEORY_EXTENDED.
+
+        CAIE 0625 Paper 3 is Theory (Core); the table said Extended from the
+        file's creation until 2026-08-26. This pins the **fallback**, which is
+        the only thing the constant still governs — when a real cover page is
+        present it says "Paper 3 Core Theory" and outranks the table anyway,
+        which is why correcting the constant is causally inert for parsing
+        (``scheme_format`` is POINT_BASED either way). The case that changes
+        is a scheme whose cover text is missing or unreadable: it used to
+        default to the wrong tier.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(profile.paper_type(3), PaperType.THEORY_CORE)
+        self.assertEqual(profile.paper_type(3, ""), PaperType.THEORY_CORE)
+        # Paper 4 genuinely is Extended — guard against an over-broad fix.
+        self.assertEqual(profile.paper_type(4), PaperType.THEORY_EXTENDED)
+
+    def test_unrecognised_cover_text_falls_back_to_the_number_map(self) -> None:
+        """Cover text only wins where it carries an actual paper-type keyword.
+
+        Otherwise a cover page whose wording we do not model would silently
+        demote every paper to the THEORY_EXTENDED default.
+        """
+        profile = get_profile("0625")
+        self.assertEqual(
+            profile.paper_type(5, "Cambridge IGCSE — May/June 2023 — 45 minutes"),
+            PaperType.PRACTICAL,
+        )
+
     def test_register_profile_roundtrip(self) -> None:
         register_profile(
             SubjectProfile(code="9998", name="TestSubject", paper_type_by_number={1: PaperType.MCQ})
@@ -1122,3 +1337,806 @@ class ChainedParserTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestMarksDefaultedProvenance(unittest.TestCase):
+    """#38 (M1.3): `make_point` mints a 1-mark point when the marks cell is
+    unparseable. Until now the parser never recorded that it had guessed, so a
+    minted mark was indistinguishable from one read off the page.
+
+    These pin the provenance flag only. They deliberately do NOT assert any
+    change to `marks` — the value is unchanged by design; what is new is that
+    the guess is countable.
+    """
+
+    def test_parsed_marks_cell_is_not_defaulted(self) -> None:
+        """A readable marks cell yields marks_defaulted=False."""
+        rows: list[list[str | None]] = [["1(a)", "the answer", "2"]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 2)
+        self.assertFalse(point.marks_defaulted)
+
+    def test_unparseable_marks_cell_is_flagged_defaulted(self) -> None:
+        """An empty marks cell mints 1 mark AND records that it did."""
+        rows: list[list[str | None]] = [["1(a)", "the answer", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 1, "value is unchanged — still the minted default")
+        self.assertTrue(point.marks_defaulted, "but it is now recorded as minted")
+
+    def test_leaked_multi_mark_code_is_now_recovered_not_defaulted(self) -> None:
+        """The DA21 mechanism (B) case — FIXED by #136, so this test inverted.
+
+        It used to assert that ``B3`` silently became 1 and was flagged as
+        minted: that was the defect being pinned so it stayed countable. #136
+        recovers the code from the answer text instead, so the value is now
+        read rather than guessed, and ``marks_defaulted`` must be False — a
+        recovered mark is not a minted one, and flagging it would overstate the
+        defaulted-mark rate #38 measures.
+        """
+        rows: list[list[str | None]] = [["5(a)", "centre of mass is where lines cross B3", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 3, "B3 is now read, not minted as 1")
+        self.assertFalse(point.marks_defaulted)
+        self.assertEqual(point.point, "centre of mass is where lines cross")
+
+    def test_single_mark_code_leak_is_also_recovered(self) -> None:
+        """The case that made the bug invisible: the minted 1 happened to be right.
+
+        The value is the same before and after the fix, which is exactly why
+        this one is worth keeping — it is now right for the right reason, and
+        the flag distinguishes the two.
+        """
+        rows: list[list[str | None]] = [["5(b)", "marked on line of symmetry B1", ""]]
+        qs = _run_theory(rows)
+        point = qs[0].parts[0].answer_points[0]
+        self.assertEqual(point.marks, 1, "same value as before, now read rather than guessed")
+        self.assertFalse(point.marks_defaulted)
+        self.assertEqual(point.point, "marked on line of symmetry")
+
+    def test_defaulted_flag_defaults_false_on_the_schema(self) -> None:
+        """A point built without the flag is not silently marked as a guess."""
+        self.assertFalse(AnswerPoint(id="p1", point="x", marks=1).marks_defaulted)
+
+
+# ---------------------------------------------------------------------------
+# #136 / DA21 — the two one-directional mark-loss mechanisms in rows.py
+# ---------------------------------------------------------------------------
+
+
+class ExtractTrailingMarkCodeTests(unittest.TestCase):
+    """Mechanism (B): the marks column merges into the answer cell.
+
+    In the 3-column geometry some CAIE papers use, pdfplumber puts the mark
+    code at the END of the answer text instead of in its own cell. The marks
+    cell then parses as empty and ``make_point`` mints 1 — right by luck for
+    every single-mark code, wrong for every multi-mark one.
+    """
+
+    def test_recovers_a_multi_mark_code_and_strips_it(self) -> None:
+        got = extract_trailing_mark_code("centre of mass is where lines cross B3")
+        assert got is not None
+        text, mark = got
+        self.assertEqual(text, "centre of mass is where lines cross")
+        self.assertEqual(mark, ParsedMark(value=3, math_mark_type=MathMarkType.B))
+
+    def test_recovers_each_caie_letter(self) -> None:
+        for letter, expected in (
+            ("B", MathMarkType.B),
+            ("C", MathMarkType.C),
+            ("A", MathMarkType.A),
+            ("M", MathMarkType.M),
+        ):
+            got = extract_trailing_mark_code(f"some answer {letter}2")
+            assert got is not None, letter
+            self.assertEqual(got[0], "some answer")
+            self.assertEqual(got[1], ParsedMark(value=2, math_mark_type=expected))
+
+    def test_a_bare_trailing_integer_is_NOT_a_mark_code(self) -> None:
+        # The single most dangerous false positive: an answer that legitimately
+        # ends in a number ("the reading is 12") would otherwise be rewritten
+        # into a 12-mark point. Only letter-prefixed codes are recovered.
+        for text in ("the reading is 12", "answer = 4", "300 000 000 m/s 3"):
+            self.assertIsNone(extract_trailing_mark_code(text))
+
+    def test_a_letter_glued_to_the_preceding_word_is_not_a_code(self) -> None:
+        # "...vitaminB2" must not be read as a B2 mark.
+        self.assertIsNone(extract_trailing_mark_code("contains vitaminB2"))
+
+    def test_a_code_not_at_the_end_is_left_alone(self) -> None:
+        self.assertIsNone(extract_trailing_mark_code("B1 is awarded for the method"))
+
+    def test_zero_valued_code_is_rejected(self) -> None:
+        self.assertIsNone(extract_trailing_mark_code("no marks here B0"))
+
+    def test_empty_and_whitespace(self) -> None:
+        self.assertIsNone(extract_trailing_mark_code(""))
+        self.assertIsNone(extract_trailing_mark_code("   "))
+
+    def test_a_code_that_is_the_entire_cell_is_not_stripped_to_nothing(self) -> None:
+        # Stripping would leave an AnswerPoint with no text at all, which is
+        # unmarkable. Better to leave it for the caller's default.
+        self.assertIsNone(extract_trailing_mark_code("B3"))
+
+
+class LeakedMarkCodeRecoveryTests(unittest.TestCase):
+    """Mechanism (B) end to end through ``build_questions``."""
+
+    def test_leaked_code_sets_the_real_value_not_the_minted_1(self) -> None:
+        rows: list[list[str | None]] = [
+            ["1(a)", "centre of mass is where lines cross B3", ""],
+        ]
+        leaf = _run_theory(rows)[0].parts[0]
+        (point,) = leaf.answer_points or []
+        self.assertEqual(point.marks, 3)
+        self.assertEqual(point.point, "centre of mass is where lines cross")
+        self.assertEqual(point.math_mark_type, MathMarkType.B)
+
+    def test_recovered_marks_are_not_flagged_as_defaulted(self) -> None:
+        # marks_defaulted means "this 1 was minted, not read" (#38/M1.3). A
+        # recovered code WAS read, just from the wrong column — flagging it
+        # would overstate the defaulted-mark rate #38 is measuring.
+        rows: list[list[str | None]] = [["1(a)", "some answer B2", ""]]
+        (point,) = _run_theory(rows)[0].parts[0].answer_points or []
+        self.assertFalse(point.marks_defaulted)
+
+    def test_a_real_marks_cell_always_wins_over_the_text(self) -> None:
+        # Recovery must only ever fire when the marks cell gave nothing. If
+        # both are present the column is authoritative.
+        rows: list[list[str | None]] = [["1(a)", "some answer B3", "1"]]
+        (point,) = _run_theory(rows)[0].parts[0].answer_points or []
+        self.assertEqual(point.marks, 1)
+        self.assertEqual(point.point, "some answer B3")
+
+    def test_question_marks_reflect_the_recovered_value(self) -> None:
+        rows: list[list[str | None]] = [["1(a)", "answer text B4", ""]]
+        self.assertEqual(_run_theory(rows)[0].parts[0].marks, 4)
+
+
+class MarksOnlyContinuationRowTests(unittest.TestCase):
+    """Mechanism (A): a continuation row with marks but no answer text.
+
+    ``rows.py``'s blank-row guard fired before the marks column was consulted,
+    so a row carrying a real ``B1`` and an empty answer cell was discarded with
+    its mark. Real case: ``0625_w21_ms_32`` 6(a), where pdfplumber merges a
+    whole matching table into the first cell and leaves three bare ``B1`` rows
+    behind — the parser emitted 1 mark where the paper prints 4.
+    """
+
+    def test_marks_only_rows_are_added_to_the_preceding_point(self) -> None:
+        rows: list[list[str | None]] = [
+            ["6(a)", "conductor copper wire; insulator cotton cloth", "B1"],
+            ["", "", "B1"],
+            ["", "", "B1"],
+            ["", "", "B1"],
+        ]
+        leaf = _run_theory(rows)[0].parts[0]
+        (point,) = leaf.answer_points or []
+        self.assertEqual(point.marks, 4)
+        self.assertEqual(leaf.marks, 4)
+
+    def test_the_text_stays_on_the_point_that_earned_it(self) -> None:
+        # The marks are merged INTO the existing point rather than becoming
+        # textless points of their own — an AnswerPoint with no text cannot be
+        # matched against a candidate's answer, so it would be unmarkable.
+        rows: list[list[str | None]] = [
+            ["6(a)", "the merged cell text", "B1"],
+            ["", "", "B1"],
+        ]
+        points = _run_theory(rows)[0].parts[0].answer_points or []
+        self.assertEqual(len(points), 1)
+        self.assertEqual(points[0].point, "the merged cell text")
+
+    def test_a_genuinely_blank_row_still_adds_nothing(self) -> None:
+        rows: list[list[str | None]] = [
+            ["6(a)", "an answer", "B1"],
+            ["", "", ""],
+        ]
+        self.assertEqual(_run_theory(rows)[0].parts[0].marks, 1)
+
+    def test_a_marks_only_row_with_no_preceding_point_is_dropped(self) -> None:
+        # Stated limit, not an oversight: with nothing to attach to, the
+        # alternative is inventing a textless point. Dropping is the
+        # conservative direction — it can only ever understate.
+        rows: list[list[str | None]] = [
+            ["6(a)", "", "B1"],
+            ["", "", "B1"],
+        ]
+        # The question's OWN marks cell still reads B1 — that is read off the
+        # page, not invented. What must not happen is the second row's mark
+        # also landing here.
+        self.assertEqual(_run_theory(rows)[0].parts[0].marks, 1)
+
+    def test_marks_only_row_does_not_leak_across_a_question_boundary(self) -> None:
+        # The stray mark must attach within its own question, never to the
+        # previous question's last point.
+        rows: list[list[str | None]] = [
+            ["1(a)", "first answer", "B1"],
+            ["1(b)", "", ""],
+            ["", "", "B1"],
+        ]
+        questions = _run_theory(rows)
+        parts = questions[0].parts or []
+        # 1(b) has no point of its own, so the stray B1 has nothing to attach
+        # to and is dropped. It must NOT drift back onto 1(a)'s point.
+        self.assertEqual([p.marks for p in parts], [1, 0])
+
+
+class NumericDataRowsAreNotAnswerPointsTests(unittest.TestCase):
+    """#136 mechanism (C): an OVERCOUNT, the opposite direction to (A)/(B).
+
+    Some papers embed a data table — stem-and-leaf, a frequency table, a list of
+    readings — inside a question's rows. pdfplumber emits each of its lines as a
+    row with numeric text and NO marks cell, so ``make_point`` minted 1 mark per
+    line. Real case: ``0580_s23_ms_22`` parsed to 73 against a printed 70,
+    entirely from three such rows (``'(1 3) 4 5 5 8'``, ``'1 2'``, ``'3 4'``).
+
+    The rule is narrow on purpose: suppression needs BOTH an unparseable marks
+    cell AND text with no alphabetic content. A genuine numeric answer that
+    carries its own marks cell is untouched, and a minted mark is a guess
+    either way — declining to guess understates, which is the safe direction.
+    """
+
+    def test_a_numeric_row_with_no_marks_cell_mints_nothing(self) -> None:
+        rows: list[list[str | None]] = [
+            ["8(a)", "the real answer", "2"],
+            ["", "(1 3) 4 5 5 8", ""],
+        ]
+        leaf = _run_theory(rows)[0].parts[0]
+        self.assertEqual(leaf.marks, 2)
+        self.assertEqual(len(leaf.answer_points or []), 1)
+
+    def test_a_numeric_answer_WITH_a_marks_cell_is_untouched(self) -> None:
+        # The guard must not eat legitimate numeric answers. This is the case
+        # that makes a blanket "digits are not answers" rule wrong.
+        rows: list[list[str | None]] = [["8(b)", "3.5", "2"]]
+        leaf = _run_theory(rows)[0].parts[0]
+        self.assertEqual(leaf.marks, 2)
+        (point,) = leaf.answer_points or []
+        self.assertEqual(point.point, "3.5")
+
+    def test_text_with_any_letter_is_still_an_answer_point(self) -> None:
+        rows: list[list[str | None]] = [
+            ["8(c)", "first", "1"],
+            ["", "2 cm", ""],
+        ]
+        leaf = _run_theory(rows)[0].parts[0]
+        self.assertEqual(len(leaf.answer_points or []), 2)
+        self.assertEqual(leaf.marks, 2)
+
+    def test_a_numeric_answer_on_a_LABELLED_sub_part_row_survives(self) -> None:
+        # Measured regression, caught by the corpus before/after rather than by
+        # reasoning: `0625_s20_ms_61` 1(a) answers "0.025, 0.037, 0.050,
+        # 0.063, 0.075" — numeric, no marks cell, entirely genuine. Suppressing
+        # it cost the paper a mark it had before. A labelled part is an answer
+        # row; a data-table line is not labelled.
+        rows: list[list[str | None]] = [
+            ["1(a)", "0.025, 0.037, 0.050, 0.063, 0.075", ""],
+        ]
+        leaf = _run_theory(rows)[0].parts[0]
+        self.assertEqual(len(leaf.answer_points or []), 1)
+        self.assertEqual(leaf.marks, 1)
+
+    def test_a_numeric_row_read_as_a_new_question_carries_no_marks(self) -> None:
+        # A data-table line beginning with a number is decomposed as a new
+        # top-level question (that id defect is #110's, deliberately not fixed
+        # here). What must not happen is it also minting a mark.
+        rows: list[list[str | None]] = [
+            ["8(a)", "the real answer", "2"],
+            ["1", "2", ""],
+            ["3", "4", ""],
+        ]
+        total = sum(
+            leaf.marks or 0
+            for root in _run_theory(rows)
+            for leaf in ([root] if not root.parts else root.parts)
+        )
+        self.assertEqual(total, 2)
+
+
+class BracketedMarksAreAlternativeRoutesTests(unittest.TestCase):
+    """#136 mechanism (D): ``mark_aggregation_overcount``.
+
+    CAIE brackets a mark belonging to an ALTERNATIVE route to the same
+    allocation, printed under an "Or"/"Alternative" heading. The parser read
+    "(A1)" as identical to "A1" and summed both routes. ``0606_s23_ms_12``
+    parsed to 116 against a printed 80 — and its 23 bracketed rows total
+    exactly 36, which is exactly the discrepancy.
+    """
+
+    def test_a_balanced_bracket_marks_an_alternative(self) -> None:
+        for cell in ("(A1)", "(M1)", "(3)", "(B2)"):
+            parsed = parse_marks_cell(cell)
+            assert parsed is not None, cell
+            self.assertTrue(parsed.is_alternative, cell)
+
+    def test_an_unbracketed_cell_is_primary(self) -> None:
+        for cell in ("A1", "M1", "3", "B2"):
+            parsed = parse_marks_cell(cell)
+            assert parsed is not None, cell
+            self.assertFalse(parsed.is_alternative, cell)
+
+    def test_a_one_sided_paren_is_NOT_treated_as_an_alternative(self) -> None:
+        # An extraction artefact must not silently delete a real mark from the
+        # total. Only a balanced pair is CAIE notation.
+        for cell in ("(A1", "A1)"):
+            parsed = parse_marks_cell(cell)
+            assert parsed is not None, cell
+            self.assertFalse(parsed.is_alternative, cell)
+
+    def test_bracketed_cells_still_qualify_as_a_marks_column(self) -> None:
+        # The bracket changes AGGREGATION, not parseability — column detection
+        # must be unaffected, or the whole table stops being found.
+        self.assertTrue(is_marks_column(["B1", "C1", "(A1)", "(3)"]))
+
+    def test_an_alternative_route_is_excluded_from_the_question_total(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "2"],
+            ["", "final answer", "A1"],
+            ["", "Or alternative method", "(2)"],
+            ["", "alternative final answer", "(A1)"],
+        ]
+        leaf = _run_theory(rows)[0]
+        self.assertEqual(leaf.marks, 3, "2 + A1, with the bracketed route excluded")
+
+    def test_the_alternative_points_are_KEPT_not_discarded(self) -> None:
+        # They are a real marking route a candidate may have taken — excluding
+        # them from the TOTAL must not delete them from the scheme.
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "2"],
+            ["", "Or alternative method", "(2)"],
+        ]
+        points = _run_theory(rows)[0].answer_points or []
+        self.assertEqual(len(points), 2)
+        self.assertEqual([p.is_alternative for p in points], [False, True])
+
+    def test_a_bracketed_mark_on_the_question_row_sets_no_tariff(self) -> None:
+        rows: list[list[str | None]] = [["9", "an alternative opening", "(2)"]]
+        self.assertEqual(_run_theory(rows)[0].marks, 0)
+
+    def test_a_bracketed_marks_only_row_is_not_merged_into_a_primary_point(self) -> None:
+        # Mechanism (A) recovers marks from textless rows; it must not pull an
+        # ALTERNATIVE mark into the primary point and reintroduce the overcount
+        # this mechanism removes.
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "B1"],
+            ["", "", "(B2)"],
+        ]
+        self.assertEqual(_run_theory(rows)[0].marks, 1)
+
+
+class SplitOnAlternativeMarkerTests(unittest.TestCase):
+    """#112 — the alternative-branch detector missed three shapes.
+
+    ``rows.py`` fired only when the answer cell **equalled** ``OR``/``EITHER``
+    or **started** with the marker plus a **space**. pdfplumber returns the
+    marker and the following working in ONE cell separated by a **newline**, so
+    neither branch matched and mutually exclusive routes were summed.
+    """
+
+    def test_marker_alone_on_the_first_line(self) -> None:
+        # Sub-defect 1: marker followed by \n, the shape 0606_s23_ms_12 uses.
+        got = split_on_alternative_marker("Or\n4 2\n1 + - x dx")
+        assert got is not None
+        before, after, marker = got
+        self.assertEqual(before, "")
+        self.assertEqual(after, "4 2\n1 + - x dx")
+        self.assertEqual(marker, "OR")
+
+    def test_alternative_is_in_the_vocabulary(self) -> None:
+        # Sub-defect 2: "Alternative" is the word CAIE 0606 actually prints and
+        # it was not a recognised marker at all.
+        for word in ("Alternative", "ALTERNATIVE", "Alternatively"):
+            got = split_on_alternative_marker(f"{word}\n3y2 - 14y + 11 (=0)")
+            assert got is not None, word
+            self.assertEqual(got[1], "3y2 - 14y + 11 (=0)")
+
+    def test_marker_not_at_cell_start_splits_the_cell(self) -> None:
+        # Sub-defect 3, and the cell-splitting decision B15 asked for. The real
+        # case is 0606_s23_ms_12 leaf 33b, where an operator fragment from the
+        # previous row precedes the marker. Text BEFORE the marker belongs to
+        # the primary branch; text after is the alternative. Keeping both is
+        # what makes this a split rather than a reclassification.
+        got = split_on_alternative_marker("⩽ ⩽\nAlternative\n9x2 - 28x + 3 * 0")
+        assert got is not None
+        before, after, _ = got
+        self.assertEqual(before, "⩽ ⩽")
+        self.assertEqual(after, "9x2 - 28x + 3 * 0")
+
+    def test_an_inline_OR_between_expressions_is_NOT_a_marker(self) -> None:
+        # The false positive that matters. CAIE writes "accept either form" as
+        # an inline OR inside ONE mark point — 0625_s22_ms_33 carries
+        # "4000 / 10 OR 4000 / 9.8". Treating that as a branch marker would
+        # split a single point in half and drop half its text.
+        self.assertIsNone(split_on_alternative_marker("4000 / 10 OR 4000 / 9.8"))
+        self.assertIsNone(split_on_alternative_marker("same as (c)(i) OR 0.4(0) A"))
+
+    def test_a_word_merely_containing_a_marker_is_not_one(self) -> None:
+        self.assertIsNone(split_on_alternative_marker("ORA applies here"))
+        self.assertIsNone(split_on_alternative_marker("Order of magnitude"))
+
+    def test_no_marker_returns_none(self) -> None:
+        self.assertIsNone(split_on_alternative_marker("just an ordinary answer"))
+        self.assertIsNone(split_on_alternative_marker(""))
+
+    def test_trailing_punctuation_on_the_marker_line_is_tolerated(self) -> None:
+        got = split_on_alternative_marker("Alternative:\nsecond method")
+        assert got is not None
+        self.assertEqual(got[1], "second method")
+
+
+class AlternativeRouteBranchingTests(unittest.TestCase):
+    """#112 end to end: mutually exclusive routes must not be summed."""
+
+    def test_newline_marker_puts_the_second_route_in_the_alt_branch(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "2"],
+            [None, "Or\nalternative method", "2"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, True])
+        self.assertEqual(leaf.marks, 2, "the alternative route must not be summed in")
+
+    def test_alternative_keyword_behaves_the_same(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "primary method", "3"],
+            [None, "Alternative\nsecond route", "3"],
+        ]
+        leaf = _run_theory(rows)[0]
+        self.assertEqual(leaf.marks, 3)
+
+    def test_a_split_cell_keeps_both_halves_each_carrying_the_rows_mark(self) -> None:
+        # The cell-splitting decision (B15). A cell holding
+        # "primary working / OR / alternative working" carries ONE mark awarded
+        # for EITHER route, so both halves take the row's mark and only the
+        # alternative is excluded from the primary sum. Merging `before` as
+        # text-only instead was measured and reconciled WORSE (304 schemes
+        # exact against 329).
+        rows: list[list[str | None]] = [
+            ["9", "opening", "1"],
+            [None, "tail of the primary working\nAlternative\nsecond route", "1"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual(
+            [(p.point, p.marks, p.is_alternative) for p in points],
+            [
+                ("opening", 1, False),
+                ("tail of the primary working", 1, False),
+                ("second route", 1, True),
+            ],
+        )
+        self.assertEqual(leaf.marks, 2, "both primary points count; the alternative does not")
+
+    def test_a_leading_fragment_with_nothing_to_attach_to_takes_the_mark(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9", "", "0"],
+            [None, "leading working\nOr\nsecond route", "2"],
+        ]
+        points = _run_theory(rows)[0].answer_points or []
+        self.assertEqual(
+            [(p.point, p.marks, p.is_alternative) for p in points],
+            [("leading working", 2, False), ("second route", 2, True)],
+        )
+
+    def test_a_split_cell_on_a_BRACKETED_row_stays_wholly_alternative(self) -> None:
+        # #136 mechanism (D) and #112 can fire on the SAME row. A bracketed
+        # marks cell means the whole row is an alternative route, so neither
+        # half of a split cell may be counted as primary. Missing this pushed
+        # 0606_s23_ms_12 from an exact 80 to 82.
+        rows: list[list[str | None]] = [
+            ["9", "primary route", "2"],
+            [None, "alternative working\nOr\nyet another form", "(2)"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, True, True])
+        self.assertEqual(leaf.marks, 2)
+
+    def test_EITHER_opens_the_PRIMARY_route_not_the_alternative(self) -> None:
+        # The Q-row branch already treats EITHER as structural (see
+        # test_either_on_q_row_is_structural_not_a_point). The continuation
+        # branch did the opposite and switched INTO the alternative on EITHER,
+        # so an "EITHER ... OR ..." pair scored neither route as primary.
+        rows: list[list[str | None]] = [
+            ["9", "opening working", "1"],
+            [None, "Either\nfirst route", "2"],
+            [None, "Or\nsecond route", "2"],
+        ]
+        leaf = _run_theory(rows)[0]
+        points = leaf.answer_points or []
+        self.assertEqual([p.is_alternative for p in points], [False, False, True])
+        self.assertEqual(leaf.marks, 3, "opening + the EITHER route; the OR route excluded")
+
+
+class DuplicateTopLevelIdTests(unittest.TestCase):
+    """#110 — the parser emitted duplicate top-level ids, breaking DA6 leaf identity.
+
+    Leaf identity is ``(paper_id, question_id)``, so a duplicate id WITHIN a
+    paper collapses two different questions into one leaf. Measured over 477
+    parsed source schemes: **34 (7.13%) carry duplicates and 57 leaves collapse**
+    — and **14 of those schemes reconcile with their printed maximum exactly**,
+    so `mark_total_mismatch_escalating` cannot catch it.
+
+    Two mechanisms were found. This class covers the unambiguous one: CAIE
+    repeats the question number at the top of each continuation page, and the
+    parser opened a fresh question each time. `0606_w23_ms_13` opens question
+    `10` four times that way.
+    """
+
+    def test_a_repeated_top_level_number_continues_the_open_question(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10", "first page working", "2"],
+            # continuation page: CAIE reprints the number
+            ["10", "second page working", "3"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["10"])
+        self.assertEqual(
+            [p.point for p in questions[0].answer_points or []],
+            ["first page working", "second page working"],
+        )
+        self.assertEqual(questions[0].marks, 5)
+
+    def test_a_genuinely_new_question_still_opens(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10", "answer ten", "2"],
+            ["11", "answer eleven", "3"],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["10", "11"])
+
+    def test_a_reprinted_number_before_its_own_subparts_does_not_duplicate(self) -> None:
+        rows: list[list[str | None]] = [
+            ["10(a)", "part a", "1"],
+            ["10", "continuation working", "1"],
+            ["10(b)", "part b", "1"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["10"])
+        leaf_ids = [p.id for p in questions[0].parts or []]
+        self.assertEqual(len(leaf_ids), len(set(leaf_ids)), f"duplicate leaves: {leaf_ids}")
+
+    def test_going_back_to_an_earlier_number_is_NOT_treated_as_continuation(self) -> None:
+        # The second mechanism — a stray non-question table whose first column
+        # holds small integers, e.g. 0580_w21_ms_22 emitting 2,3,5 between
+        # questions 20 and 20(b). That is NOT a page-break continuation and must
+        # not be silently folded into question 2; it stays a distinct question so
+        # the loud detector can see it.
+        rows: list[list[str | None]] = [
+            ["2", "answer two", "1"],
+            ["20", "answer twenty", "1"],
+            ["2", "stray table row", "1"],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["2", "20", "2"])
+
+
+class DuplicateLeafIdDetectorTests(unittest.TestCase):
+    """#110 bullet 4 — duplicate leaf ids must fail LOUDLY, not flow into a join.
+
+    They are invisible to the mark-total gate: 14 of the 333 schemes that
+    reconcile with their printed maximum exactly still carry duplicates.
+    """
+
+    def test_duplicate_leaf_ids_are_reported(self) -> None:
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        with capture_logs() as logs:
+            reconcile_check(dup, _metadata(80))
+        events = [entry.get("event") for entry in logs]
+        self.assertIn("duplicate_leaf_ids", events)
+        entry = next(e for e in logs if e.get("event") == "duplicate_leaf_ids")
+        self.assertEqual(entry["duplicate_ids"], ["1"])
+        self.assertEqual(entry["leaves_lost_to_collapse"], 1)
+
+    def test_distinct_leaf_ids_are_silent(self) -> None:
+        ok = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="2", marks=40, type=QuestionType.RECALL),
+        ]
+        with capture_logs() as logs:
+            reconcile_check(ok, _metadata(80))
+        self.assertNotIn("duplicate_leaf_ids", [entry.get("event") for entry in logs])
+
+    def test_it_escalates_only_when_armed(self) -> None:
+        # Unarmed by default, deliberately. Escalating routes the paper to the
+        # Gemini fallback, which #166 measured failing on ~50% of the schemes
+        # det cannot parse — so arming is a cost AND coverage decision, not a
+        # tidy-up. Same treatment as escalate_on_defaulted_marks.
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        reconcile_check(dup, _metadata(80))  # must not raise
+        with self.assertRaises(ParseError):
+            reconcile_check(dup, _metadata(80), escalate_on_duplicate_leaf_ids=True)
+
+    def test_duplicates_are_caught_even_when_the_marks_reconcile(self) -> None:
+        # The whole point: this defect is orthogonal to mark totals.
+        dup = [
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+            Question(id="1", marks=40, type=QuestionType.RECALL),
+        ]
+        with self.assertRaises(ParseError) as ctx:
+            reconcile_check(dup, _metadata(80), escalate_on_duplicate_leaf_ids=True)
+        self.assertIn("1", str(ctx.exception))
+
+
+class PhantomLeafTests(unittest.TestCase):
+    """#110 mechanism 2, the part that CAN be repaired without inventing identity.
+
+    A data-table line beginning with a number is decomposed as a new top-level
+    question. #136 mechanism (C) already stops those rows minting a mark, which
+    leaves them as **empty shells**: no marks, no answer points, and an id that
+    collides with the real question of the same number.
+
+    Dropping them is not deduping and not renumbering — it removes a node with
+    no content. Measured: 11 of the 71 leaves involved in duplicate ids are such
+    shells, and in `0580_s23_ms_22` (a golden-corpus scheme) each duplicate pair
+    is exactly one real question plus one shell, so dropping the shells clears
+    the collision entirely.
+    """
+
+    def test_an_empty_phantom_leaf_is_dropped(self) -> None:
+        rows: list[list[str | None]] = [
+            ["8(a)", "the real answer", "2"],
+            # data-table lines: numeric first cell, numeric text, no marks cell
+            ["1", "2", ""],
+            ["3", "4", ""],
+        ]
+        self.assertEqual([q.id for q in _run_theory(rows)], ["8"])
+
+    def test_dropping_shells_clears_the_duplicate_id_collision(self) -> None:
+        # The 0580_s23_ms_22 shape: real questions 1 and 2, then a data table
+        # whose rows re-open ids 1 and 2 as empty shells.
+        rows: list[list[str | None]] = [
+            ["1", "first answer", "1"],
+            ["2", "second answer", "1"],
+            ["8(a)", "eighth answer", "2"],
+            ["1", "2", ""],
+            ["2", "3", ""],
+        ]
+        ids = [q.id for q in _run_theory(rows)]
+        self.assertEqual(ids, ["1", "2", "8"])
+        self.assertEqual(len(ids), len(set(ids)), "no duplicate top-level ids remain")
+
+    def test_a_question_with_marks_but_no_points_is_KEPT(self) -> None:
+        # Only a node with NEITHER marks NOR points is contentless. A question
+        # whose tariff was read off the page is real even if its answer text
+        # did not parse — dropping it would silently shrink the paper.
+        rows: list[list[str | None]] = [["7", "", "3"]]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["7"])
+        self.assertEqual(questions[0].marks, 3)
+
+    def test_a_parent_whose_subparts_are_real_is_KEPT(self) -> None:
+        rows: list[list[str | None]] = [
+            ["9(a)", "part a", "1"],
+            ["9(b)", "part b", "1"],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual([q.id for q in questions], ["9"])
+        self.assertEqual([p.id for p in questions[0].parts or []], ["9a", "9b"])
+
+    def test_dropping_shells_cannot_change_the_mark_total(self) -> None:
+        rows: list[list[str | None]] = [
+            ["1", "real", "5"],
+            ["2", "3", ""],
+        ]
+        questions = _run_theory(rows)
+        self.assertEqual(sum(q.marks or 0 for q in questions), 5)
+
+
+class PrimaryMarkPointSumIsActuallyCheckedTests(unittest.TestCase):
+    """#39 bullet 1 — the invariant is written correctly and does not RUN on det output.
+
+    ``Question.validate_mark_point_sum`` is a ``model_validator(mode="after")``,
+    so it fires on ``model_validate`` — and ``rows.py`` assigns ``marks`` and
+    ``answer_points`` **after** construction. Pydantic's
+    ``revalidate_instances`` defaults to ``never``, so wrapping the mutated
+    Question in a ``MarkScheme`` does not re-check it either.
+
+    Measured: **4 questions across the 479 source schemes** carry a primary
+    point sum exceeding their tariff and reach output unflagged. Small in count;
+    the point is that the invariant #39 asks for exists and is silent.
+
+    Reported, not blocking — arming routes the paper to the Gemini fallback,
+    which DA35 measured failing on ~50% of det-failures. Same footing as
+    ``escalate_on_duplicate_leaf_ids`` and ``escalate_on_defaulted_marks``.
+    """
+
+    def _q(self, marks: int, point_marks: list[int], alt: list[bool] | None = None):
+        alt = alt or [False] * len(point_marks)
+        q = Question(id="1", marks=marks, type=QuestionType.RECALL)
+        q.answer_points = [
+            AnswerPoint(id=f"p{i}", point=f"pt{i}", marks=m, is_alternative=a)
+            for i, (m, a) in enumerate(zip(point_marks, alt, strict=True))
+        ]
+        return q
+
+    def test_a_primary_sum_over_the_tariff_is_reported(self) -> None:
+        with capture_logs() as logs:
+            reconcile_check([self._q(1, [1, 1])], _metadata(1))
+        entry = next(e for e in logs if e.get("event") == "primary_point_sum_exceeds_marks")
+        self.assertEqual(entry["questions"], ["1"])
+
+    def test_ALTERNATIVE_points_are_excluded_from_the_check(self) -> None:
+        # The whole reason #39 insists on the FILTERED sum: alternative points
+        # are supposed to exceed the tariff, and a raw-sum gate would produce
+        # false positives on a well-formed corpus.
+        with capture_logs() as logs:
+            reconcile_check([self._q(1, [1, 1], alt=[False, True])], _metadata(1))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_an_exact_sum_is_silent(self) -> None:
+        with capture_logs() as logs:
+            reconcile_check([self._q(2, [1, 1])], _metadata(2))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_an_UNDER_sum_is_not_reported_by_this_check(self) -> None:
+        # #39 bullet 2 asks for the under-sum direction. Measured over 13,690
+        # det questions carrying points, it fires ZERO times — det derives the
+        # tariff from the filtered sum, so under-summing is impossible by
+        # construction. The direction only has meaning on the Gemini path,
+        # which is bullet 3's missing paper-level aggregate.
+        with capture_logs() as logs:
+            reconcile_check([self._q(5, [1, 1])], _metadata(5))
+        self.assertNotIn("primary_point_sum_exceeds_marks", [e.get("event") for e in logs])
+
+    def test_it_escalates_only_when_armed(self) -> None:
+        q = self._q(1, [1, 1])
+        reconcile_check([q], _metadata(1))  # must not raise
+        with self.assertRaises(ParseError):
+            reconcile_check([q], _metadata(1), escalate_on_primary_sum_breach=True)
+
+
+_LEGACY_COVER = """CAMBRIDGE INTERNATIONAL EXAMINATIONS
+International General Certificate of Secondary Education
+MARK SCHEME for the May/June 2013 series
+0580 MATHEMATICS
+0580/21 Paper 2 (Extended), maximum raw mark 70
+This mark scheme is published as an aid to teachers and candidates.
+"""
+
+
+class LegacyCoverPageMaximumMarkTests(unittest.TestCase):
+    """The pre-2017 cover page says "maximum raw mark N", not "Maximum Mark: N".
+
+    Measured over the corpus expanded to 2010-2025: **411 of 438 parse failures
+    (93.8%)** were this one pattern, and **every affected session is 2010-2016**.
+    CAIE changed the cover page at the 2016/17 boundary and `_MAX_MARK_RE` only
+    ever knew the newer wording, so the parser raised before it looked at a
+    single question.
+    """
+
+    def _pdf_with_cover(self, cover_text: str) -> MagicMock:
+        return _fake_pdf([_fake_page(text=cover_text)])
+
+    def test_legacy_maximum_raw_mark_is_read(self) -> None:
+        md = extract_metadata(self._pdf_with_cover(_LEGACY_COVER), Path("0580_s13_ms_21.pdf"))
+        self.assertEqual(md.maximum_mark, 70)
+
+    def test_modern_wording_still_works(self) -> None:
+        md = extract_metadata(self._pdf_with_cover(_THEORY_COVER), Path("0625_s19_ms_42.pdf"))
+        self.assertGreater(md.maximum_mark, 0)
+
+    def test_a_cover_with_no_maximum_at_all_still_raises(self) -> None:
+        # The guard must keep guarding — widening the pattern must not turn a
+        # genuinely unreadable cover into a silent zero.
+        bare = "CAMBRIDGE INTERNATIONAL EXAMINATIONS\n0580 MATHEMATICS\n"
+        with self.assertRaises(ParseError):
+            extract_metadata(self._pdf_with_cover(bare), Path("0580_s13_ms_21.pdf"))
+
+    def test_the_word_between_maximum_and_mark_is_bounded(self) -> None:
+        # "raw" specifically, not "any words at all" — a permissive gap would
+        # let unrelated prose supply the number.
+        prose = (
+            "CAMBRIDGE INTERNATIONAL EXAMINATIONS\n0580 MATHEMATICS\n"
+            "the maximum number of candidates per mark is 99\n"
+        )
+        with self.assertRaises(ParseError):
+            extract_metadata(self._pdf_with_cover(prose), Path("0580_s13_ms_21.pdf"))

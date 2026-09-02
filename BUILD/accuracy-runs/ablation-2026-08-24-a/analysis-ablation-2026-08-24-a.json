@@ -1,0 +1,20 @@
+{
+  "note": "Pure-analyst derived output for ablation-2026-08-24-a. Computed via lemely.eval.analyses (wilson, exclusion_funnel, review_rate, coherence_trigger_rate) over BUILD/accuracy-runs/ablation-2026-08-24-a/records-extract-mark.jsonl. No Gemini calls, no reruns. oracle+mark arm has zero records (blocked on #28) -> all its metrics are -1 sentinel.",
+  "extract_mark": {
+    "wilson_all": {"n": 31, "successes": 24, "point": 0.7741935483870968, "lower": 0.6018723994130262, "upper": 0.886050084055012},
+    "wilson_det": {"n": 8, "successes": 8, "point": 1.0, "lower": 0.6755843804891231, "upper": 1.0},
+    "wilson_gemini": {"n": 23, "successes": 16, "point": 0.6956521739130435, "lower": 0.4913387093942739, "upper": 0.8439617197902755},
+    "exclusion_funnel_all": {"total": 31, "scored": 31, "excluded": 0, "by_outcome": {"correct": 24, "under": 6, "unmatched": 1}},
+    "exclusion_funnel_det": {"total": 8, "scored": 8, "excluded": 0, "by_outcome": {"correct": 8}},
+    "exclusion_funnel_gemini": {"total": 23, "scored": 23, "excluded": 0, "by_outcome": {"correct": 16, "under": 6, "unmatched": 1}},
+    "review_rate_all": {"n": 31, "review_rate_signal": 0.2903225806451613, "review_rate_total": 0.2903225806451613, "per_paper_p95": 0.6666666666666666},
+    "review_rate_det": {"n": 8, "review_rate_signal": 0.0, "review_rate_total": 0.0, "per_paper_p95": 0.0},
+    "review_rate_gemini": {"n": 23, "review_rate_signal": 0.391304347826087, "review_rate_total": 0.391304347826087, "per_paper_p95": 0.6666666666666666},
+    "coherence_trigger_rate_all": {"n": 31, "coherence_trigger_rate": 0.06451612903225806},
+    "raw_record_note": "manifest-extract-mark.json's own summary.mark_accuracy=0.9014 is computed over 71 raw (pre-DA6-collapse, per-fixture-variant) records, not the 31 distinct-leaf denominator; not directly comparable to the wilson point estimate above."
+  },
+  "oracle_mark": {
+    "status": "not run -- blocked on open issue #28 (M0.4). measure_accuracy() selects arm purely from case.scan_path, and every golden case ships scan.pdf, so oracle+mark is dead code with no CLI/harness escape hatch.",
+    "all_metrics": -1
+  }
+}

@@ -10156,6 +10156,3623 @@ typecheck, lint (0 errors), **1,432 web unit tests (+29)**, `check:copy` 0, both
 builds. Full `adapt` re-run, Python tests and `pre-commit run --all-files`
 recorded with the commit.
 
+## DA1 — H4: the frozen train/dev/test split policy, and the spec contradiction it had to resolve (#49, blocks #57/#47)
+
+First decision of the accuracy programme; DA-numbered so the accuracy stream stays
+separate from the redesign's D6 series. Recorded from a human interview on 2026-08-19.
+It fixes the **rule**; the membership **list** is signed off separately, on #57, once
+#44 has restored the corpus the rule partitions (spec §7: corpus restore → split
+membership).
+
+**Unit: the question, not the paper and not the leaf.** A leaf's root parent is
+atomic — a multi-part question is never divided across splits — but two questions from
+the same paper may land in different splits. This buys control over per-stratum leaf
+counts at a budget of ~7–8 labelled papers, where paper-level assignment can only move
+ground truth in ~40-leaf chunks. It is bought with leakage, and the leakage is recorded
+rather than argued away: dev and test will share papers, so mark-scheme house style,
+layout and scan quality carry across the boundary. **The H9 write-up therefore claims
+"unseen questions", never "unseen papers".** The split manifest carries this sentence.
+
+**Proportions: 10 / 60 / 30 ≈ 30 / 180 / 90 leaves.** `train` is the only place real
+papers may be eyeballed freely — prompt work, threshold tuning, regression fixtures.
+`dev` carries all A/B measurement. `test` is read once, at H9.
+
+The arithmetic that forced the choice: §6 puts the paired-McNemar floor for 83.8% →
+88.8% at n=219, and a ~90-leaf test split gives a 95% Wilson interval of roughly ±7.5pp.
+A 300-leaf budget cannot fund both a provable dev improvement and a tight headline. Dev
+at 180 sits **below** the McNemar floor deliberately, and the consequence is accepted in
+advance: per M0.6, an improvement claim on dev prints as underpowered rather than as a
+number. The alternative (0/70/30) would have reached the floor by deleting the tuning
+pool — which does not remove the iteration, it just moves it onto dev leaves and
+contaminates them silently. Raising the label budget to ~450 was offered and declined;
+it remains the only way to get both.
+
+**Strata: pre-label observables only.** Assignment stratifies on syllabus code
+(0580/0606/0625) × parse path (det/Gemini) × tariff band (1 / 2 / 3+ marks).
+
+This resolves a contradiction in the spec. §4 requires stratification to use "the
+labeller's own type judgement, never the pipeline-emitted `question_type`" — but that
+judgement is an **output of labelling pass 2**, and the freeze is what unblocks
+labelling (#49 → #57 → #47). As written, §4 stratifies assignment on a variable that
+cannot exist at assignment time. The resolution keeps both halves of the intent: the
+labeller's type judgement drives the **published stratification table** in M2.4's
+acceptance — which is a reporting requirement — while assignment uses only what is
+observable before any label exists. The pipeline-emitted `question_type` is still never
+used for either purpose; on the det path it is hardcoded to `recall`, which is the
+defect §4 was guarding against. **§4 needs amending to say this**; raised on #43.
+
+Two alternatives were rejected. Pilot-then-freeze (label ~40 leaves, observe the type
+distribution, then freeze) makes the freeze a function of labels already seen, which is
+the independence the freeze exists to protect. A command-word heuristic
+("calculate"/"explain"/"draw"/"state") lifted from the question paper is closer to the
+intended variable but unvalidated — and on the det path the stem text is precisely what
+is least reliable.
+
+**Assignment: a deterministic hash, not a seeded shuffle.**
+`split = bucket(sha256(salt ‖ question_id))` within each stratum, with the salt recorded
+in the manifest. No RNG state, no dependence on input ordering, no Python-version
+sensitivity: a reviewer recomputes every assignment from the manifest alone and gets the
+same answer. A seeded shuffle is reproducible only if the sort order and RNG
+implementation are *also* pinned, which is three more things to get wrong. Hand-picking
+was rejected outright — with n this small it would give the most balanced splits and no
+defensible answer to "why is that hard paper in dev?".
+
+**Amendments: drop-only, logged, never backfilled.** A leaf that turns out unlabellable
+— corrupt scan, missing mark scheme, an unadjudicable question — is excluded with a
+reason in the manifest, and its split simply loses a leaf. No replacement is drawn.
+Backfilling is what lets a labeller shop for easy leaves, and deterministic backfill
+only removes the shopping, not the post-freeze membership churn. Splits will therefore
+land under their target n, and M0.5's exclusion funnel publishes the shortfall so the
+shrinkage is visible rather than silent.
+
+**Test-touch: the token gates evaluation joins, not file access.** Acceptance box 3 says
+the test split is "read exactly once", but the labeller must read test-split papers to
+label them at all, so the literal reading is unsatisfiable. What consumes the single
+read is **any run that joins pipeline output against test labels** — the harness, the
+pure analyses, `AccuracyMetrics`. Labelling a test-split paper is a ground-truth
+*write*, is unrestricted, and cannot leak results because the labeller imports no
+pipeline module (already asserted by a test, §6). One token, issued by the human at H9;
+one ledger append; CI fails an untokened join. This is the contract M0.7a (#31) builds.
+
+Gating every artefact access instead would put a token in #47's path and fill the ledger
+with routine labelling entries, diluting the one entry that matters. Extending the gate
+to reporting (a CI grep over `BUILD/` and `reports/` for test-split numbers before H9)
+was considered and not adopted; the leak path it closes — running the join locally and
+pasting the number — remains open, and is held by discipline rather than by CI.
+
+**Status.** #49 acceptance boxes 1 and 3 are met by this record. Box 2 — membership
+frozen in the manifest — stays open until #57 generates the manifest over the restored
+corpus and the human signs off on the actual list, so that "human approved the
+membership" remains a true statement rather than a pre-approved abstraction.
+
+---
+
+## DA2 — H7: the agreement ceiling becomes a two-labeller measurement (#51, blocked by #47)
+
+**The figure is inter-annotator agreement, not self-agreement.** A second named person
+(labeller B) marks the sample. This is the quantity the ceiling was always a proxy for:
+*if a competent examiner labelled this leaf independently, would they reach the same
+verdict?* Delayed self-agreement was the substitute the spec assumed because only one
+labeller was thought to be available; with a real second person the substitute is
+unnecessary. **§6's "self-agreement" paragraph needs amending**, along with #51's title
+and acceptance wording; raised on #43.
+
+**No delay, and why the delay existed.** With one labeller, re-marking a leaf soon after
+measures recall, not judgement — agreement returns near 100%, every pipeline-vs-label
+disagreement is then booked as pipeline error, and M3/M4 spend effort chasing headroom
+that is really one person's inconsistency on one weekend. The delay was the only defence
+against that. B has no memory of A's verdict to recall, so the defence is not needed and
+its schedule cost (up to a fortnight between the end of #47 and any publishable figure)
+is not paid.
+
+**Sample: rule pre-committed, membership computed after labelling.** The manifest states,
+before labelling begins, that the sample is the 10% of labelled leaves with the lowest
+`sha256(relabel_salt ‖ question_id)`, drawn **per stratum** so the ceiling is not
+computed entirely on 0580 tariff-1 recall items. Membership cannot be known during
+labelling because the ranking needs the full set of labelled leaves, which does not exist
+until #47 completes. Fixing membership up front was rejected: A would be labelling leaves
+known to be watched, and the resulting figure would bound A's care rather than A's
+consistency. This is the same rule/membership split as [[DA1]].
+
+**Both passes, marking held against A's transcription.** B redoes transcription blind,
+giving a transcription-agreement figure; B then marks against **A's** pass-1 text rather
+than B's own. This yields two separately attributable ceilings — how consistently
+handwriting is read, and how consistently the mark scheme is applied — with the marking
+figure measured on identical input in both arms, so transcription drift cannot leak into
+it. A fully independent re-run was rejected because a disagreement could then be either
+layer and the ceiling gives no direction to improve in; marking-only was rejected because
+it leaves handwriting reading, the pipeline's largest known gap, unmeasured.
+
+**B is calibrated first.** B reads the complete #52 ruling log before marking. Rulings
+are conventions with a right answer once someone decides; an uncalibrated B disagrees on
+convention, that disagreement is counted as irreducible human variability, and the
+ceiling comes out lower than the truth — which stops optimisation too early. The cost,
+accepted: a convention that is unwritten but which A and B happen to share stays
+invisible, so the log's own completeness is not tested by this exercise.
+
+**Disagreements: A's label stands.** B's verdicts compute the agreement figure and
+nothing else. Ground truth stays homogeneous — all ~300 leaves produced the same way —
+so the accuracy number is not quietly better on the 10% that got two pairs of eyes, and
+sampled leaves landing in the test split do not give the release number a mixed-quality
+reference. Where a disagreement is systematic rather than a one-off judgement call it
+goes to #52 as a new ruling applying to future labelling, which captures the value
+without making the sample special. Accepted cost: labels known to be contested are
+retained on roughly the disagreement rate of 30 leaves.
+
+**Size stays at 10%, and the interval is published.** ~30 leaves. At 93% agreement the
+95% Wilson interval is roughly ±10pp, so the ceiling is known only to lie somewhere from
+the low eighties to the high nineties. That is enough to catch a catastrophic ceiling and
+enough to print beside the headline number; it is **not** enough to justify a
+fine-grained stop-optimising decision, and the interval must appear wherever the figure
+does. Reaching ±4pp would need ~150 leaves — half the corpus — and was rejected as the
+wrong place for that effort.
+
+**Consequences for the issue.** #51's stated 45-minute effort is wrong: 1–2 h of B's
+time across both passes, plus onboarding on the labeller UI. B's identity is recorded in
+each label manifest (§6 already requires labeller identity). The published figure is
+labelled *inter-annotator agreement, two labellers, calibrated, n≈30* — never compared
+against or averaged with a single-labeller figure from any other regime.
+
+---
+
+## DA3 — H8: the ruling log is a record, not an authority (#52)
+
+**What #52 actually adds.** The person raising a judgement question during labelling is
+the same person ruling on it. #52 therefore adds no independent examiner authority, and
+the issue should stop implying one. Its entire value is the **written record**: that
+session 8 marks the same way as session 1, and that labeller B ([[DA2]]) can be
+calibrated against something explicit rather than against A's memory.
+
+**Storage.** `eval/rulings.jsonl` at repository root, append-only with a hash chain
+exactly like the labels, deliberately outside the `lemely/eval/` package (§3.1). It is
+published alongside the accuracy figures: the rulings are part of the ground-truth
+definition, and the number is not reproducible without them.
+
+**Scope is a machine-evaluable predicate.** Each ruling records its scope over a fixed
+small set of fields already present on a label — syllabus code, tariff, parse path, the
+labeller's own type judgement, and the presence of mark-scheme tokens such as `oe` or
+`ecf`. The pre-freeze sweep then selects affected leaves automatically and provably
+completely, which is the only version in which "the corpus is consistent under the final
+rule set" is a checkable claim. Free-text scope plus hand-listed keys was rejected:
+completeness would rest on the labeller recalling affected earlier leaves while
+mid-labelling on a different one, so the sweep would systematically miss exactly the
+cases most likely to be inconsistent. Free text alone was rejected because the sweep
+becomes ~300 leaves × every ruling, by hand, immediately before the freeze — which under
+time pressure gets abbreviated and the consistency claim quietly becomes false.
+
+**Retroactivity: forward immediately, one deferred sweep before the freeze.** A ruling
+governs labelling from the moment it is made. When #47's labelling completes, a single
+sweep re-serves every earlier leaf inside some ruling's scope and re-marks it, appending
+**supersede records** so the hash chain stays intact and the original verdict remains
+visible. Forward-only was rejected: it leaves the corpus inconsistent in a systematic,
+direction-carrying way, and that inconsistency is indistinguishable from pipeline error
+in the accuracy figure. It would also corrupt [[DA2]] — B reads the *final* ruling log
+while A's early leaves were marked under a partial one, so part of the measured
+disagreement would be ruling drift rather than judgement, deflating the ceiling.
+Immediate retroactive sweeps on every ruling were rejected because repeatedly
+interrupting sessions to do rework is the pattern most likely to stop the labeller
+raising questions at all.
+
+**Mid-session: park and continue.** A judgement question writes the leaf as
+`pending_ruling` and the session continues; parked leaves are resolved in a batch and
+completed. This preserves flow across a 6–8 h job split over sessions. The parked tail
+must reach zero before the split freeze, and any leaf never resolved is an **exclusion
+that appears in the M0.5 funnel with its reason** — never silently dropped from the
+denominator. Ruling provisionally in the moment was rejected: with the leaf already
+marked there is no forcing function to revisit, and provisional rulings become permanent
+by inertia. Stopping the session was rejected: a question needing real research into CAIE
+conventions blocks for hours, and the pressure to unblock is what produces a hasty
+ruling.
+
+**Blindness holds during adjudication.** A ruling is never resolved by consulting what
+the pipeline produced for that leaf. Adjudication is the natural place to breach §6's
+structural blindness — the labeller is stuck, the pipeline's answer is available, and it
+looks like evidence. It is not evidence; it is the thing being measured.
+
+---
+
+## DA4 — H9: what pre-commits the single test read, and what happens when it disappoints (#55)
+
+**Both arms in one touch.** The acceptance requires a paired McNemar comparison, which
+needs the release candidate *and* its baseline scored on the same test leaves. Both
+arms execute inside the **same authorised touch**, from a single command, with both
+results written to the ledger together. Running the baseline first "to have it ready"
+spends the one read, and the candidate's number is then the second.
+
+**Release candidate: human choice from dev-evaluated candidates.** Candidates are
+measured on dev and the human picks one. Selecting on dev is what dev is for, and the
+test split stays untouched throughout — this is not a leak. It does carry a cost that
+must be handled explicitly, because selection is otherwise invisible: many dev
+comparisons inflate the winner's dev figure through selection, so the test number is
+*expected* to regress downward. Two guardrails, both written into #55: the candidates
+considered and their dev figures are published alongside the result, and the expected
+downward regression is stated **before** the read so the gap does not read as failure
+when it appears. The candidate's git SHA is recorded before authorisation is issued.
+
+A fully pre-committed mechanical checklist was offered and not taken; it would remove
+discretion at the decision that matters most, at the price of being unable to ship
+something that misses one box for a good reason.
+
+**A disappointing result is published and the split is spent.** The number goes out with
+its Wilson interval and the McNemar comparison, whatever it says. The test split is then
+burned: all subsequent work is measured on dev only, and any future release needing a
+fresh test figure requires a **new test split drawn from currently unlabelled corpus** —
+more labelling, more of B's time for a fresh ceiling ([[DA2]]), and real schedule cost.
+Deciding this now is the whole mechanism; the cost has to be accepted before it is a live
+temptation. A disclosed re-run was rejected: it degrades the guarantee from "read once"
+to "read twice", and the second number is selected on knowledge of the first, so its
+interval understates the real uncertainty and the McNemar comparison is no longer clean.
+Leaving the response open was rejected because the decision would then be made by whoever
+is looking at a disappointing number under release pressure, which is the exact
+circumstance the mechanism exists to remove it from.
+
+**Enforcement** is the M0.7a token and ledger from [[DA1]]: one token issued by the human
+at H9, one ledger append, CI failing any untokened join of pipeline output against test
+labels.
+
+**Issue hygiene.** #55 carries no milestone, unlike #51 and #52; it needs the release
+milestone set so it cannot be picked up early by accident.
+
+---
+
+## DA5 — Ordering: B labels after the ruling sweep (#51 after #52, both after #47)
+
+[[DA2]] requires labeller B to read the complete ruling log, and [[DA3]] leaves the
+corpus consistent only after the pre-freeze sweep. B must therefore mark **after** that
+sweep, not merely after #47's labelling. Neither issue states this and neither does
+spec §7. The constraint belongs in §7's strict-orderings table:
+
+| first | then | why |
+|---|---|---|
+| ruling sweep (#52) | agreement sample (#51) | Otherwise part of the A–B gap is ruling drift, not judgement, and the ceiling is deflated |
+
+Raised on #43 together with the §6 amendment.
+
+---
+
+## DA6 — What a distinct leaf's outcome *is* when its variants disagree (#25, M0.1/M0.6)
+
+**The gap.** Spec §2.3(b) and §3.3 settle the *denominator* and nothing else. §2.3(b):
+"Observations within a family are not independent, so every interval and power
+calculation quoted on n=68 is invalid." §3.3: "every interval or power calculation
+collapses to **distinct leaves** first." Verified against the corpus this run: the 10
+golden case dirs hold 68 answer rows, and stripping the `_correct`/`_partial`/`_wrong`
+suffix yields exactly 7+6+8+7 = **28** distinct `(paper, question)` leaves, matching
+§2.3(b) exactly.
+
+What no line of the spec states is **which record represents a leaf once three variants
+of the same question collapse into one row**. That is not a detail: `_distinct_leaves`
+feeds `wilson`, `risk_coverage`, `exclusion_funnel` and `review_rate`, so the surviving
+row supplies the **numerator**, not merely the count.
+
+**Why the obvious fix is a trap.** #25's review prescribed "a deterministic (not
+first-seen) collapse rule". Taken literally — sort and keep the first — the variants sort
+`correct` < `partial` < `wrong`, so every leaf would be represented by its **correct**
+variant and measured accuracy would approach 100% by construction. That pairs an honest
+denominator with a dishonest numerator, which is worse than the inert collapse it
+replaces, because it looks rigorous. The programme already has a name for this shape
+(D18, §2): a number that improves because of how it was counted.
+
+**Decision.** A leaf's outcome is **derived from all of its variant records, never
+sampled from them**. For the binary analyses, a distinct leaf counts as `correct` iff
+**every** scored record for that leaf is `correct`; otherwise it counts as not-correct.
+Properties that make this the defensible default: it is order-independent and
+deterministic; it consumes all 68 records rather than discarding 40; it cannot be gamed
+by sort order; and it errs **conservative** — it can only lower a reported accuracy,
+never flatter it (§14).
+
+**The alternative, recorded rather than silently discarded.** The textbook treatment of
+clustered binary data is a design-effect correction: the point estimate uses all 68
+records, while the interval's `n` is the 28 independent leaves. That preserves more
+information than unanimity does and is arguably the more accurate estimator. It is
+**not** adopted here because it changes `wilson`'s contract rather than its input, and
+because M1's gate is non-regression (§2), where the conservative direction is the safe
+one. If the human prefers the design-effect form, it supersedes this record and #25's
+analyses change shape.
+
+**Scope.** Applies to `wilson`, `review_rate` and any future leaf-level binary analysis.
+`ablation_2x2` and `mcnemar` collapse per arm via `_distinct_leaves_by_arm` and take the
+same unanimity rule within each arm. `exclusion_funnel` counts leaves and is unaffected
+by the outcome rule.
+
+Flagged to the human on #25 and the accuracy topic, because it moves every published
+accuracy figure and the spec genuinely does not decide it.
+
+## DA6a — Amendment: the DA6 scope sentence about `exclusion_funnel` was wrong (#25)
+
+**The error.** DA6's Scope paragraph above states "`exclusion_funnel` counts leaves and
+is unaffected by the outcome rule." That sentence is **false as implemented**, and this
+record does not silently rewrite it — DA6 stays as written above for the historical
+record, and this amendment supersedes only that one clause.
+
+**Why it was wrong.** DA6's Scope sentence assumed `exclusion_funnel`'s leaf set and
+`wilson`'s leaf set were built the same way. They were not. `wilson`, `review_rate` and
+`risk_coverage` all call `_scored()` — which drops `excluded` records — **before**
+collapsing to distinct leaves via `_distinct_leaves`. `exclusion_funnel` collapsed to
+distinct leaves directly, with no `_scored()` prefilter, because its whole job is to
+report the excluded count that `_scored()` elsewhere throws away. That difference is
+exactly where DA6's unanimity rule bites: take a leaf with two fixture-variant records,
+one `excluded` (that variant's extraction failed) and one `correct` (the other variant
+was scored correct). `wilson` drops the `excluded` record via `_scored()` first, so the
+surviving single `correct` record makes the leaf count as scored-and-correct. But
+`exclusion_funnel`, collapsing both records together, applies DA6 unanimity over "all of
+the leaf's records" as written — not all `correct`, so it picks a non-`correct`
+representative, which here is the `excluded` record, so the SAME leaf is reported as
+excluded by the funnel. The funnel — which exists to *explain* `wilson`'s denominator —
+could disagree with the denominator it was supposed to justify. Spec §9 gate 7 requires
+every reported rate to name its denominator and its exclusions; a funnel that can
+contradict the number it exists to explain fails that gate by construction.
+
+**Decision.** A leaf is `excluded` in `exclusion_funnel` iff **every** record for that
+leaf is `excluded` — i.e. the leaf has no scored record at all. If any record for the
+leaf was scored, the leaf is scored, not excluded: one variant's extraction failing is
+not evidence the question was never attempted, when another variant proves it was
+(spec §3.3's outcome-semantics table defines `excluded` as "never attempted"). For a
+scored leaf, the outcome is still derived by DA6 unanimity, but over its **scored**
+records only — `excluded` records are discarded first and never allowed to make an
+otherwise-scored leaf non-correct, because an `excluded` record carries no marking-
+accuracy evidence; letting it poison the outcome would understate accuracy for a reason
+unrelated to marking, which is a different-shaped dishonest numerator than the one DA6
+was written to prevent.
+
+**The checkable invariant.** `exclusion_funnel`'s scored-leaf count must equal the `n`
+that `wilson` reports on the same records. This is pinned by a regression test over the
+real `tests/golden` corpus (`tests/eval/test_analyses.py`,
+`test_exclusion_funnel_scored_count_matches_wilson_n`), not synthetic rows, so the two
+can never silently drift apart again.
+
+**Scope (superseding DA6's).** `exclusion_funnel` now collapses leaves via a
+scored-aware variant of the DA6 rule (`_distinct_leaves_scored_aware` /
+`_collapse_leaf_group_scored_aware` in `lemely/eval/analyses.py`), not the plain
+`_distinct_leaves`/`_collapse_leaf_group` that `wilson` and `review_rate` use on their
+already-`_scored()`-filtered input. `risk_coverage` was checked against the same
+question and does **not** have this bug: it filters `_scored()` before collapsing,
+exactly like `wilson` and `review_rate`, so it needs no change.
+
+Flagged to the human on #25 and the accuracy topic, alongside DA6, because it corrects a
+claim in that same record.
+
+## DA6b — Amendment: DA6's corpus counts (68 rows / 28 leaves) are pre-#32 (#32, M0.8)
+
+**What changed.** DA6 above records "the 10 golden case dirs hold 68 answer rows, and
+stripping the `_correct`/`_partial`/`_wrong` suffix yields exactly 7+6+8+7 = **28**
+distinct `(paper, question)` leaves". That was verified and true when written. M0.8
+(#32) added an 11th case dir, `tests/golden/0625_w21_qp_32_theory_nested`, which carries
+three leaves (`1a_i`, `1a_ii`, `1b`) and has no `_correct`/`_partial`/`_wrong` variants
+to collapse. DA6's sentence is **not** rewritten — it stays as the historical record;
+this amendment supersedes only its two numbers.
+
+**The current counts, re-verified against the corpus this run:** 11 case dirs hold
+**71** answer rows, collapsing to 7+6+8+7+3 = **31** distinct `(paper, question)`
+leaves. Anything citing 68/28 as *current* is stale; 68/28 remains correct as the
+pre-#32 baseline.
+
+**Why this is bookkeeping, not a change of rule.** The unanimity collapse rule DA6
+decides is untouched — only the corpus it runs over grew. The numbers are load-bearing
+anyway, because `n=31` is the denominator every Wilson interval and power calculation
+in M0.6 is quoted on, and the `review_rate` denominator moves with it. The two asserts
+that pin these counts live in `tests/eval/test_analyses.py`
+(`test_wilson_n_is_31_distinct_leaves` and
+`test_exclusion_funnel_scored_count_matches_wilson_n`), so a future fixture addition
+that moves them again fails the suite by name rather than drifting silently.
+
+**Note on `review_rate`.** The 19.1% figure in `BUILD/ACCURACY-STATE.md` was measured on
+the pre-#32 corpus and is therefore quoted on the old denominator. It is left as-is here
+rather than recomputed, because M0.9's ratchet (#33) is unarmed and §2 forbids any
+baseline run until M0.8 merges — the first post-#32 measurement re-establishes it.
+
+## DA-M0.9 — #33's real `review_rate` baseline diverges hugely from the pre-#32 figure DA6b left in place
+
+**What was measured.** A single `lemely measure-accuracy` dev-split sweep (default split,
+`gemini-2.5-flash`, prompt versions extraction=5/correction=4/mark_scheme=3) was run against
+the current 11-case-dir / 31-distinct-leaf golden corpus (DA6b), through the accuracy-measure
+costed-preflight workflow, at commit `f7be062`. Cost: **$0.0642** (74 Gemini calls, summed
+from the run's `gemini_call` log events), well under both the per-run token ceiling
+(2,000,000) and the `$25` total USD ceiling already configured. Result saved to
+`tests/golden/results/2026-08-22-f7be062.json` (gitignored; a summary is committed at
+`BUILD/review-rate-baseline.json` since the gate and CI need something durable to read).
+
+**The funnel (do not skip a stage).** 71 raw question-level answer rows collapse (DA6) to 31
+distinct `(paper_id, question_id)` leaves. Of the 71 raw rows, 12 carry a non-empty `triggers`
+list. Those 12 flagged rows land on only 9 distinct leaves (some leaves have more than one
+flagged fixture-variant record). That gives three legitimately different candidate numbers,
+and none of them is unambiguously "the" review rate for a corpus that mixes synthetic
+correct/partial/wrong fixture variants per leaf — this decision states which was chosen and
+why, not that it is uniquely correct:
+
+| candidate | formula | value | what it answers |
+|---|---|---|---|
+| row-level | 12 flagged rows / 71 rows | **16.9%** | "of every row we ever wrote a mark against, how many were flagged" — inflated by leaves with multiple fixture-variant rows, and not what `review_rate()`'s contract (question-level, distinct-leaf) promises |
+| leaf-union (**chosen**) | 9 flagged leaves / 31 leaves | **29.03%** | "of every distinct question a student answered, was ANY record of it flagged" — matches `review_rate()`'s stated denominator (DA6 distinct leaves) with a numerator that doesn't silently drop trigger evidence living on a sibling fixture-variant record |
+| representative-only (superseded, was the pre-fix bug) | 1 flagged representative leaf / 31 leaves | **3.23%** | an artifact of reading `triggers` off the single DA6-collapsed representative row `min()` happens to pick — see below |
+
+**Why representative-only (3.23%) was wrong, not just different.** The original #33 landing
+(`f7be062`) computed `review_rate()`'s numerator by reading `triggers` off the same
+DA6-collapsed representative row `_distinct_leaves()` already produces for the denominator.
+DA6's representative-picker is free to choose ANY record among a leaf's unanimously-`correct`
+fixture variants — so whenever a leaf's variants were all `correct`, whichever variant `min()`
+happened to pick decided whether that leaf's trigger was visible to the gate at all. 8 of the
+9 actually-flagged leaves in this corpus were invisible to `review_rate()` under that logic —
+not a rounding difference, a **~9x undercount** (3.23% vs the real 29.03%) that was previously,
+and wrongly, described here as "the real, current, correctly-denominatored number" and "6x
+smaller than the stale 19.1% figure." Both of those claims are retracted: the 3.23% figure was
+never correctly denominatored, and comparing it favourably to the pre-#32 19.1% row-level
+figure compared a broken numerator to a different corpus on a different basis — neither
+comparison told us anything about review burden. `review_rate()` (`lemely/eval/analyses.py`)
+now unions `triggers` across a leaf's raw records before collapsing, so the numerator can no
+longer depend on which record the DA6 collapse happens to keep as representative; see
+`test_counts_leaf_via_trigger_union_not_representative` in `tests/eval/test_analyses.py`.
+
+**The pre-#32 19.1% figure is separately stale.** `BUILD/ACCURACY-STATE.md` and the #33 issue
+body both quoted 19.1% (13 of 68 rows, Wilson [11.5%, 30.0%]) as the "starting" review rate.
+That number predates #25/M0.1's `review_rate()` implementation entirely and was computed on
+the pre-#32 68-row/28-leaf corpus — it is not comparable to any of the three candidates above,
+which all use the current 71-row/31-leaf corpus. Anything citing 19.1%/13-of-68/Wilson-[11.5%,
+30.0%] as the *current* baseline is stale as of this decision, independent of the
+representative-vs-union numerator question.
+
+**What was chosen and why.** `review_rate_last_merged = 0.2903` (leaf-union, truncated down
+from 0.29032258... so the ratchet ceiling only ever tightens) — because it is the number
+`review_rate()`'s own documented contract (question-level, distinct-leaf) actually produces
+once the numerator bug is fixed, and because using row-level (16.9%) would double-count leaves
+with multiple flagged fixture variants against a denominator that has already collapsed them.
+The **honest caveat**: this corpus mixes synthetic correct/partial/wrong fixture variants per
+leaf specifically to exercise DA6's collapse logic, so its flagged-leaf rate is a property of
+the fixture design as much as of the underlying marking behaviour — treat 29.03% as this
+golden corpus's *measured* baseline for the ratchet to tighten from, not as a claim about the
+review burden of a real deployment.
+
+**`per_paper_p95` moves too.** Under the union numerator, `per_paper_p95` is **83.33%**
+(up from the representative-only run's 16.67%), because several papers now correctly show more
+than one reviewed leaf once sibling fixture-variant triggers are counted. It breaches the 15%
+target by a wide margin. Exactly as before, the gate (`lemely/eval/review_gate.py`) records
+this breach in `breaches` on every run; because the ratchet starts **unarmed**
+(`review_rate_ratchet_armed=false`), it does not fail `measure-accuracy` or CI today, but it is
+not silently dropped — it prints, and `scripts/check_review_rate_gate.py`'s output still lists
+it as a named breach.
+
+**Storage location.** `last_merged_review_rate` lives on `AccuracyEvalSettings` (mirroring
+every other accuracy-eval target: `mark_accuracy_target` et al.), not a dedicated JSON file or
+an overload of `BUILD/ACCURACY-STATE.md`'s free-text `ratchet` field — that field is updated
+too, but only as the human-readable mirror `scripts/accuracy_board.py` already treats
+`ACCURACY-STATE.md`'s header as (see that file's own "Contract" section: GitHub-adjacent
+tracker state does not duplicate there, but this is measurement state the supervisor's grep
+needs at a glance). The gate's actual source of truth is `lemely.toml`
+(`[accuracy_eval] review_rate_last_merged = 0.2903`, default baked into
+`AccuracyEvalSettings.review_rate_last_merged`) and the committed
+`BUILD/review-rate-baseline.json` artifact `scripts/check_review_rate_gate.py`/CI fall back to
+when no fresh `tests/golden/results/*.json` exists (that directory is gitignored); that
+artifact now also carries `run_id`/`corpus_digest` provenance so a locally-preferred fresh run
+that diverges from the committed baseline's corpus prints a warning instead of silently gating
+on different data (`scripts/check_review_rate_gate.py`'s `_baseline_provenance`).
+
+**M0-unarmed / M1-armed semantics.** `review_rate_ratchet_armed` defaults to `false`. Unarmed,
+`evaluate_review_rate_gate()` still computes and reports every limb's pass/fail and the
+ratchet direction, but `blocking_failure` is forced `False` regardless of breaches — the run
+is observed, not gated, which is why this real (breaching-on-p95) baseline can be recorded and
+merged today without contradicting "never weaken a gate to get green." Arming
+(`review_rate_ratchet_armed = true`) is spec §7's M1 acceptance step, gated on M0.9 landing
+first (`M0.9 | M1.1`), and is out of scope for #33 itself.
+## DA7 — The McNemar n-floor: why `MCNEMAR_IMPROVEMENT_N_FLOOR = 219` is quoted, not recomputed (#30, M0.6)
+
+**The requirement.** Spec §6: "paired McNemar can prove an improvement to 88.8% with
+n=219 where unpaired needs 741 per arm" — the sample size to detect an improvement from
+the 83.8% legacy baseline to an 88.8% target at alpha=0.05, power=0.80. Spec §4 M0.6: "a
+metric below its n-floor prints as underpowered rather than as a number." Neither passage
+states the formula or the discordant-pair-rate assumption behind 219; it is given as a
+fact, not derived in the spec text.
+
+**Why 219 is quoted, not recomputed from first principles.** The paired-proportion
+(McNemar) sample-size formula (Connor 1987 / Fleiss) needs the *discordant-pair
+proportion* between the two arms — how often `oracle+mark` and `extract+mark` disagree on
+the same leaf — not just the two marginal accuracy rates (83.8%, 88.8%). That rate is an
+empirical property of how correlated the two arms' scoring is; this codebase has no
+measurement of it yet (the golden corpus is 31 leaves, nowhere near paired-McNemar scale).
+Reverse-engineering a discordant-pair-rate parameter that makes the formula spit out
+exactly 219 would be curve-fitting a number to match a target, which is precisely the kind
+of invented measurement the programme forbids elsewhere (§2, D18-adjacent). So
+`MCNEMAR_IMPROVEMENT_N_FLOOR = 219` in `lemely/eval/analyses.py` is taken **directly from
+spec §6**, not computed. The constant is named `..._IMPROVEMENT_N_FLOOR`, not `..._N_FLOOR`
+— see the orchestrator's adjudication below for why that distinction is load-bearing.
+
+**What is computed: an independently-checkable lower bound.** `paired_proportion_min_n`
+implements the Connor/Fleiss favourable-case bound — the discordant-pair proportion `psi`
+set to its minimum possible value `psi = d = |p2 - p1|` (the case where every discordant
+pair moves in the `p1 -> p2` direction and none reverse, the smallest paired sample any
+real correlation structure could need for this effect size):
+
+```
+n = ceil((z_alpha*sqrt(d) + z_beta*sqrt(d*(1-d)))**2 / d**2)
+```
+
+Evaluated at `paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80)`, this returns
+`155`, which is `<= MCNEMAR_IMPROVEMENT_N_FLOOR` (219). That inequality is the checkable
+relationship: if the lower bound ever exceeded 219, `MCNEMAR_IMPROVEMENT_N_FLOOR` would not
+actually be power-respecting for this effect size and the constant would need to move.
+`_inverse_normal_cdf` (Acklam's rational approximation) turns `alpha`/`power` into z-scores
+without a scipy dependency, matching `mcnemar`'s own no-scipy p-value calculation.
+
+*(Correction, this pass.)* The formula previously implemented here divided by `d`, not
+`d**2`, and dropped the `sqrt(psi)`/`sqrt(psi - d**2)` weighting entirely — it was not
+actually the Connor/Fleiss bound its docstring claimed, just a number that happened to
+land under 219 (157, by coincidence of the missing terms roughly cancelling at this `d`).
+That has been fixed to the formula above (now pinned at 155 by
+`test_paired_proportion_min_n_pinned_value_and_monotonicity`, plus a monotonicity check:
+larger effect size -> smaller n, higher power -> larger n), so the docstring's "lower
+bound" claim is now true rather than merely plausible.
+
+**Orchestrator adjudication: `chi2`/`p_value` are always computed, never `None`.** The
+first pass of this issue made `mcnemar()` return `chi2: float | None` / `p_value: float |
+None`, both `None` whenever `underpowered` — i.e. the floor gated the *computation*, not
+just the *presentation*, of the statistic. That conflates two different things: (1) whether
+a paired comparison has enough pairs to trust as an IMPROVEMENT CLAIM against the spec §6
+target (83.8% -> 88.8%), which is what `MCNEMAR_IMPROVEMENT_N_FLOOR` actually measures, and
+(2) whether the chi-square/p-value arithmetic is well-defined, which it is at any `n_pairs
+>= 1` (and trivially at `b + c == 0`, where `chi2 = 0.0`, `p_value = 1.0`). Nulling the
+numeric fields below the floor makes `mcnemar()` unusable for anything BUT the one
+spec-§6-shaped improvement claim — a caller doing its own ablation breakdown, or plotting
+the discordant-pair counts, gets `None` for no statistical reason. The fix: `mcnemar()`
+always returns real floats for `chi2`/`p_value`; `underpowered` stays exactly as before
+(`n_pairs < MCNEMAR_IMPROVEMENT_N_FLOOR`, reading the same `_distinct_leaves_by_arm`-derived
+`n_pairs`, never a hardcoded leaf count). The refusal to present the number as an
+improvement claim now lives in exactly one place — the new, pure reporting-layer function
+`mcnemar_improvement_p_value(result) -> float | Literal["underpowered"]` — rather than
+inside the statistic's own computation. `wilson()` is untouched: spec §3.3 says Wilson
+intervals are reported on every rate, and its own width is the honesty signal — Wilson has
+no refusal behaviour, only the McNemar improvement claim does.
+
+**Tests.** `tests/eval/test_analyses.py::TestNFloor` — the real ~31-leaf golden corpus
+(well under 219) is asserted `underpowered` AND to carry real `chi2`/`p_value` floats, with
+`b`/`c` pinned to their actual golden-corpus values (`b=31`, `c=0`); synthetic paired data
+at exactly `MCNEMAR_IMPROVEMENT_N_FLOOR` returns a numeric, non-underpowered result (proving
+the branch is real, not vacuous); a pinned-value-plus-monotonicity test proves
+`paired_proportion_min_n` actually implements the bound its docstring claims, not just
+`0 < n <= 219`. `TestReportingLayer` exercises `mcnemar_improvement_p_value` directly, one
+test per branch (underpowered -> `"underpowered"`; powered -> the numeric `p_value`
+unchanged). `test_mcnemar_signature_rejects_unpaired_rate_summaries` uses
+`inspect.signature(mcnemar)` to pin the sole parameter as `records: list[EvalRecord]` (AC1
+— no code path accepts two independent rate summaries and returns a p-value).
+`TestWilson::test_diverges_from_clamped_normal_approximation` pins Wilson's bound at n=10,
+100% correct (lower=0.7225) against a clamped normal approximation that degenerates to
+`[1.0, 1.0]` at the same input, so the suite actually falsifies "clamped normal
+approximation" rather than merely being satisfiable by one. The pre-existing
+`test_leaf_count_is_derived_not_hardcoded` (raw-rows-vs-leaves) was removed: it duplicated
+`TestMcnemar::test_collapses_duplicate_question_level_rows_to_one_leaf` and the DA6/DA6b
+golden-corpus tests below with no content specific to the n-floor, and it only ever failed
+pre-fix via the module-level `ImportError` from the renamed constant, not a real behavioural
+difference. Two pre-existing `TestMcnemar` tests
+(`test_discordant_pairs_produce_nonzero_statistic`,
+`test_no_discordant_pairs_gives_zero_statistic`) remain padded with concordant filler pairs
+to reach the floor, since they exist to test the chi2/p-value math on a non-underpowered
+result.
+## DA8 — M0.5: D18 fixed (honest denominators), and the two figures this supersedes (#29)
+
+**The bug (D18).** `measure_accuracy()`'s per-case loop iterated
+`correction.questions` and `continue`d past any question the extractor never returned
+an answer for (`harness.py:596`, pre-#29). That question was dropped from the run
+entirely — no `EvalRecord`, no denominator entry, nothing but a footnote in
+`id_match_rate`. A run that extracted FEWER answers therefore scored on a SMALLER,
+self-selected denominator, and could score *higher* than a run that extracted more —
+the fewer-answers-cannot-score-higher regression test
+(`test_fewer_extracted_questions_cannot_score_higher`,
+`tests/test_accuracy_harness.py`) reproduces this: pre-fix, a run returning one correct
+answer out of three scored 1.0, strictly above a run returning all three (one wrong)
+scoring 0.667.
+
+**The fix.** The loop now iterates `case.ground_truth` — every ground-truth leaf the
+case attempted — not `correction.questions`. Each leaf produces exactly one
+`EvalRecord`: `correct`/`over`/`under` when `correct_paper` marked it and the extractor
+returned an id for it; `unmatched` (`predicted_marks=None`, stays in the denominator,
+never counted as correct) when `correct_paper` marked it but the extractor did not
+return it; `excluded` (dropped from `_scored()`/`wilson`/`review_rate` via the existing
+DA6a-aware machinery in `lemely/eval/analyses.py` — no change there was needed) only
+when `correct_paper` produced no `CorrectedQuestion` for the leaf at all, e.g. a
+ground-truth id that names no leaf in the mark scheme. A five-stage exclusion funnel
+(`leaves -> extracted -> matched -> marked -> scored`) is now tracked in
+`measure_accuracy()` (`FunnelCounts`) and printed by `format_report()`, with `scored`
+read from `analyses.exclusion_funnel()` — the single source of truth — rather than
+recomputed.
+
+**Two figures, not one.** The historical **83.8%** (`docs/ACCURACY-STRATEGIES.md`,
+D2.5, 10-fixture corpus, n=68 rows) predates this fix and multiple corpus additions
+(DA6b); it is recorded here as **legacy** and is the number §6's paired-McNemar floor
+(n=219, DA1) is quoted on — that floor is *not* recomputed here, per the accepted
+#29 risk note; recomputing it against a new baseline is separate work.
+
+The **honest baseline**, re-run over the current 11-case, 71-row / 31-leaf golden
+corpus (DA6b) with the D18 fix in place (`run_id=run-ef443fc2931e`,
+`corpus_digest=e982c884f7f30cd7`, saved to
+`tests/golden/results/2026-08-22-79f5fa8.json`):
+
+- `measure_accuracy()`'s own `AccuracyMetrics.mark_accuracy` (raw per-row, no DA6
+  fixture-variant collapse): **90.1%** (64/71 rows correct — unchanged in value from
+  the pre-#29 run recorded the same day, because this corpus's `id_match_rate` is
+  100%: no leaf in it currently exercises the `unmatched` or `excluded` path, per the
+  #29 risk note. D18 protects future runs where extraction misses ids; it is not a
+  retroactive correction of this corpus's number).
+- `analyses.wilson()` over the same `eval_records`, DA6-collapsed to distinct
+  `(paper_id, question_id)` leaves: **77.4%** (24/31 leaves; 95% Wilson
+  [60.2%, 88.6%]). This is materially lower than the raw 90.1% because DA6 unanimity
+  requires every fixture variant of a leaf to be correct for the leaf to count as
+  correct, and several leaves in this corpus have a `wrong`-variant miss.
+
+Both numbers are published, not just the flattering one — hiding the DA6-collapsed
+77.4% behind the raw 90.1% would recreate exactly the denominator-shell-game D18 was
+about. **The honest baseline going forward is the pair (90.1% raw n=71 /
+77.4% DA6-collapsed n=31), not the legacy 83.8%**; no code path in this change presents
+83.8% as current.
+
+**Open governance item: spend for `run-ef443fc2931e` is unmeasured, not zero.**
+The re-run used `manifest.cache_mode="read_write"` (a real, billable sweep, not a
+cache-only replay), but the saved manifest (`tests/golden/results/2026-08-22-79f5fa8.json`,
+gitignored) carries no cost field — `RunManifest` does not record spend at all. Checking
+`lemely/io/cost_ledger.py`: `CostLedger` persists only a single cumulative-USD counter
+across the whole process/machine lifetime (no per-run breakdown, no ledger JSON file
+present on this checkout), so there is no before/after snapshot to diff and recover this
+run's actual cost from. Recording it as **0.4026** (per this issue's plan text) would be
+assuming the ledger's cumulative figure at some other point in time is this run's cost,
+which it is not shown to be — that number is not adopted here. The correct statement is:
+this run's `spend_usd` is **unmeasured**. A future fix should add a per-run cost field to
+`RunManifest` (populated from the ledger delta around the run) so this stops recurring.
+
+**The other two headline metrics moved too, and downward.** The first #29 pass
+qualified `mark_accuracy`'s legacy 83.8% as historical and published the honest
+90.1% beside it — but left `flag_recall` (27.3%) and `flag_precision_high`
+(91.7%) stated in the present tense, unqualified, in `DELIVERY.md`,
+`CHANGELOG.md` and `docs/ACCURACY-STRATEGIES.md`. The same honest run
+(`run-ef443fc2931e`) reports **`flag_recall` 14.29%** and
+**`flag_precision_high` 89.8%**.
+
+So the only metric that received the "historical, superseded" treatment was the
+one that moved in the *flattering* direction, while the two that moved
+unfavourably kept their better-looking legacy numbers. That is selective
+disclosure, and it is the same family of defect as D18 — the failure this very
+issue exists to fix — so it is recorded here rather than quietly corrected. All
+three metrics now carry the qualifier and the honest figure in all three files.
+
+**Open, non-blocking risk: two funnel implementations.** `FunnelCounts` in
+`lemely/accuracy/harness.py` was added rather than extending
+`lemely/eval/analyses.py::exclusion_funnel()`, contrary to this issue's
+binding note. They do not currently disagree (`scored` is read from
+`analyses.exclusion_funnel()`), but nothing enforces that, and `funnel` is not
+serialised by `save_result()`, so `extracted` is **not recoverable from a saved
+run**. Unify them before the funnel is used as published evidence.
+
+`extracted` is also **not a nested stage** of the funnel: it counts leaves the
+extractor returned an id for, while `matched` counts leaves `correct_paper`
+produced a `CorrectedQuestion` for. Neither implies the other, so printing them
+in sequence could emit a chain that *rises* (e.g. `extracted=2 -> matched=3`),
+reading as a denominator growing mid-funnel. The printed chain is now
+`leaves -> matched -> marked -> scored`, with `extracted` reported separately
+and pinned by `test_printed_funnel_chain_never_rises`.
+
+**Provenance correction.** DA8 describes the honest-baseline artifact as
+produced "with the D18 fix in place", but its manifest records
+`git_sha=79f5fa8`, which is the **pre-fix** commit (the fix landed in
+`761231c`). The figures reproduce exactly (`mark_accuracy` 0.90140845; Wilson
+n=31, 77.4% [60.2%, 88.6%]) because this corpus contains no `unmatched` or
+`excluded` rows at all — the D18 path is simply never exercised by it. The
+number is therefore correct, but it is **not evidence that the fix works**;
+the behavioural tests are.
+
+**Numbering note (2026-08-23).** This entry was authored as `DA7` on the #29
+branch while #30 independently authored a different `DA7` (the McNemar n-floor)
+on a branch cut in parallel. #30 landed first, so it keeps `DA7` and this entry
+was renumbered to `DA8` at merge time. References in `CHANGELOG.md`,
+`DELIVERY.md` and `docs/ACCURACY-STRATEGIES.md` were updated with it; the `DA7`
+citation in `lemely/eval/analyses.py` points at #30's entry and is unchanged.
+
+---
+
+## DA9 — The A/A churn floor: 11.6% of leaf outcomes flip at constant configuration (#27, M0.3)
+
+**The measurement.** Ten repeats of the full golden set at byte-identical
+configuration, cache bypassed (`--cache-mode bypass`, the #77 seam), run
+2026-08-23 as `aa-floor-2026-08-23-a` over git sha `b364bf76`, model
+`gemini-2.5-flash`, split `dev (pre-M0.7a)`. Raw evidence is committed under
+`BUILD/accuracy-runs/aa-floor-2026-08-23-a/` — ten `records-repeat-NN.jsonl`
+files of 71 `EvalRecord` rows each (710 rows), ten per-repeat manifests, and a
+run manifest recording `cache_hit_detected=false` on every repeat across ~740
+real API calls. Cost $0.958711 at corrected GA pricing (1,186,229 in /
+241,137 out; `thoughts_token_count` was 0 on every call), against a $1.58
+preflight estimate.
+
+**The floor.** Collapsing each repeat to distinct `(paper_id, question_id)`
+leaves with the production DA6 rule (`_group_by_leaf` /
+`_collapse_leaf_group`) gives 31 leaves per repeat, an identical leaf set
+every time. Over all C(10,2) = 45 repeat-pairs:
+
+| figure | value |
+|---|---|
+| **pairwise leaf-outcome churn** | **11.61%** (162 / 1395 pair-leaf comparisons) |
+| per-pair spread | 0.0% – 19.35% |
+| leaves that ever churned | 9 of 31, 95% Wilson **[16.1%, 46.6%]** |
+| `det` parse path | **0.0%** (0 / 360) |
+| `gemini` parse path | **15.65%** (162 / 1035) |
+
+**No Wilson interval is quoted on 162/1395.** The 45 pairs re-use the same 10
+runs, so those comparisons are not independent and a binomial interval over
+them would be fiction. The honest spread on that statistic is the per-pair
+range, 0.0%–19.35%. The Wilson interval above is quoted on the one figure that
+*is* a clean binomial: 9 of 31 independent leaves ever churning.
+
+**All churn is on the gemini path; the det path is exactly deterministic.**
+0 of 360 det pair-leaf comparisons differed. That is a floor of 0.0 on the det
+path measured at n=360, not an assumption — and it means an A/B that moves only
+det-path behaviour is not subject to this floor. Quote the path-specific floor,
+not the pooled 11.6%, whenever an arm touches only one path.
+
+**The rule this establishes (acceptance box 4).** Any A/B delta on the gemini
+path smaller than **11.6 percentage points** is **within noise** and must be
+reported as noise — not as a small improvement, not as a trend, not as
+directionally encouraging. The det-path floor is 0.0%. This applies to every
+later comparison in the programme, and it is the floor §2 of the mission
+requires exist before any A/B claim is interpretable.
+
+**What this run is NOT.** Single-arm, so it shows no A/B effect of any kind.
+n=31 leaves against the n=219 paired-McNemar floor (DA7), so it could not carry
+an improvement claim even if it had two arms. Split is `dev (pre-M0.7a)`, i.e.
+the membership is not yet frozen (#57 waits on #44). Nothing here licenses an
+accuracy claim.
+
+### DA9a — Two published single-run figures are now shown to be draws from a wide distribution
+
+This run re-measures, ten times, two numbers the programme had published from a
+**single run each**. Both survive, but neither is as sharp as one run made it look.
+
+**DA8's honest baseline (77.4%, 24/31 leaves).** Pooled over ten repeats the
+leaf accuracy is **75.8%** (235/310), per-repeat range **67.7% – 80.6%**,
+stdev 3.5pp. DA8's 24/31 is the *modal* draw — it came up 5 times in 10 — so it
+is representative rather than lucky, and DA8 is **not** retracted. But a single
+run of this corpus reports a number carrying roughly a 13pp spread, and the
+per-repeat Wilson intervals at n=31 are ~0.50–0.91 wide. **This corpus cannot
+resolve anything finer than about 10pp**, before the churn floor is even applied.
+Quote 75.8% (235/310) as the better-estimated figure from here on, and cite DA8's
+24/31 as the single-run draw it is.
+
+**DA-M0.9's `review_rate` (29.03%).** Recomputed live with the production
+`lemely.eval.analyses.review_rate` on all ten records files: mean
+`review_rate_total` = **32.58%**, per-repeat **29.03% – 41.94%**; `signal` and
+`total` are identical here because no `random_audit` trigger fired. Per-paper
+p95 averages 82.1% (range 66.7%–85.7%).
+
+**This is the fresh live sweep on post-#29 denominators that the resume pointer
+said M0.9 needed, and it changes the picture materially.** The committed
+constant is 29.03% (`lemely/runtime/config.py:168`,
+`BUILD/review-rate-baseline.json`) — and 29.03% is **the bottom of the observed
+range**, the value that came up on the 3 luckiest of 10 repeats. It is not a
+central estimate; it is a best case.
+
+**Consequence for arming the M0.9 ratchet (binding on #36).** Arming
+`min(10%, last_merged_review_rate)` against 29.03% would gate the build on a
+figure that identical-config re-runs exceed **7 times in 10**, with no code
+change whatsoever. That is a gate that fails on noise, and the failure would be
+blamed on whatever diff happened to be in flight. Before the ratchet is armed,
+`last_merged_review_rate` must be restated as a distribution-aware figure — the
+mean 32.58%, or an upper bound over the observed range — not the single lucky
+draw. This *raises* the recorded number, which looks like weakening the gate and
+is the opposite: it stops the gate firing at random. Both limbs are breached in
+every one of the ten repeats regardless (ceiling is `min(10%, 29.03%)` = 10%;
+p95 target 15% against an observed ~82%), so the breach itself is not in doubt
+and stays recorded-not-blocking while the ratchet is unarmed at M0.
+
+**Not fixed here.** This entry does not touch `config.py`,
+`BUILD/review-rate-baseline.json`, or `scripts/check_review_rate_gate.py`.
+#27 is a measurement issue; changing the gate's constant is #36's work, and
+doing it inside a measurement commit would make "did the instrument change
+between runs?" unanswerable later. The numbers are handed over on #36.
+
+**Correcting the standing "the gate has zero test coverage" note while we are
+here.** That claim, carried in the resume pointer and posted as part of the
+M0.9 constraint on #36, is imprecise and overstates the risk:
+
+- The gate's **decision logic**, `lemely.eval.review_gate.
+  evaluate_review_rate_gate`, is well covered — 13 tests in
+  `tests/eval/test_review_gate.py`, over synthetic `ReviewRateResult` dicts,
+  covering both limbs armed and unarmed.
+- What is genuinely untested is the **script wrapper**,
+  `scripts/check_review_rate_gate.py` — its `main`, `_baseline_provenance` and
+  `_load_review_rate_result`. Nothing in `tests/` references it (checked by
+  symbol search, not grep over prose).
+
+So the exposure is not "an untested gate". It is that the wrapper reads
+`BUILD/review-rate-baseline.json` and a **saved** golden run rather than
+recomputing from a live sweep — confirmed by observation, not inference: on
+this branch the gate still prints `review_rate 0.2903` while this run's live
+records give 29.03%–41.94%. The number the gate judges cannot respond to a code
+change. That is the thing #36 must fix before arming, and it is a wiring
+problem, not a missing-tests problem.
+
+## DA10 — M1.5: the coherence gate's "reconcile" semantics for empty matched_point_ids and is_alternative/is_optional groups (#40)
+
+M1.5 adds a fourth, confidence-independent review reason to
+`_build_ai_corrected` (`lemely/io/correction_ai.py`): the marker's claimed
+`matched_point_ids` must (a) all resolve in `question.answer_points` and (b)
+reconcile with `awarded_marks`. Several sub-decisions were left unspecified
+by the issue and had to be made explicitly rather than defaulted, per
+binding constraint #6 on the board comment. **This entry was corrected in a
+repair pass** (three review MUST-FIXes) after the original version of
+Decision 1 and Decision 3 shipped with defects; both the original text and
+the correction are recorded below so the history is honest.
+
+**Decision 1 — no `answer_points` at all, scoped to question TYPE, not to
+list emptiness.** The coherence check is skipped entirely — regardless of
+`awarded_marks` or `matched_point_ids` — only when
+`question.type in {QuestionType.LEVELS_BASED, QuestionType.INDICATIVE_CONTENT,
+QuestionType.MCQ}` AND `question.answer_points` is empty. These three types'
+marking is not decomposed into discrete points by design, so there is
+genuinely nothing to reconcile against. **Every other type** with empty
+`answer_points` is a data gap, not an intentional shape, and falls through
+to the ordinary dangling-id / empty-matched-list rules below (an empty
+`points_by_id` map makes every id in `matched_point_ids` dangling by
+definition, so this needs no separate branch in the implementation).
+
+*Original defect (MUST-FIX 2 of the repair pass):* the shipped version
+tested `if not question.answer_points: return None` — unconditionally, for
+ANY question type — and this check ran BEFORE the dangling-id check. A
+question of a non-exempt type (recall, calculation, explanation, diagram,
+list, multi_step, …) with an empty `answer_points` list therefore accepted
+wholly fabricated `matched_point_ids` plus a non-zero `awarded_marks` with
+`needs_teacher_review=False`, silently defeating acceptance bullet 2 ("every
+referenced point id must exist in the mark scheme"). *Prevalence, reproduced
+against this tree's own corpus* (13 scheme files — 11 `tests/golden/**/
+mark_scheme.json` plus 2 `Sources/**/*_ms_*.json` — 152 leaf questions; NOT
+the review's unreproducible 799/1410 over 35 schemes, which this repair pass
+could not confirm and does not repeat): **53/152 (34.9%)** leaf questions have
+empty `answer_points`.
+
+**CORRECTION (2026-08-23).** An earlier revision of this entry claimed "every
+one of those 53 is a non-exempt type" and that the exempt set is "disjoint from
+the empty-points set", and billed it as reproduced ground truth. **That was
+false, and the error originated with the orchestrator, not with the
+implementer** — it was asserted from a type histogram taken over *all* leaves
+rather than over the empty-`answer_points` subset, and then passed downstream
+as if it had been computed. The actual breakdown of the 53, recomputed
+directly over that subset: **48 `mcq`, 3 `explanation`, 1 `list`,
+1 `multi_step`**. `QuestionType.MCQ` **is** in `_COHERENCE_EXEMPT_TYPES`, so
+**48 of the 53 remain exempt** after the repair. The type-scoped exemption
+newly covers **5 of 152 leaves (3.3%)**, not 53/152 — the earlier text
+overstated the closed gap by roughly 10x.
+
+Narrower still on the evaluation corpus proper: over the 11 golden
+`mark_scheme.json` files alone (71 leaves) there are **8** empty-`answer_points`
+leaves and **all 8 are `mcq`**, so on that corpus the type-scoped exemption
+changes the empty-points population by **nothing**. Its value there is the
+dangling-id check on questions that *do* carry `answer_points`, plus the range
+rule below — not the empty-points path. The direction of the fix is still
+right (an `explanation`/`list`/`multi_step` leaf with empty points no longer
+gets a free pass); its measured reach on today's corpus is small, and saying so
+is the point of this record.
+
+*Baseline note, because this was misread once during review:* "the diff" above
+means `develop..feature/accuracy-40-…`, i.e. issue #40's gate as a whole.
+`_check_coherence` — the dangling-id check included — **does not exist on
+`develop` at all** (`git show develop:lemely/io/correction_ai.py | grep -c
+_check_coherence` → 0), so all of it is new work here. A reviewer comparing the
+*repair commit* against its own parent instead saw the dangling-id check
+already present and read it as pre-existing; it is pre-existing only relative
+to the earlier commit on this same branch. Attribution is to the branch, not to
+the last commit on it.
+
+The corpus also has 7 leaf questions with ≥1 `is_alternative`/`is_optional`
+matched point and 6 with >1 (relevant to Decision 3 below).
+
+Also corrects a false citation in the original text: it claimed this
+decision "matches `Question.validate_mark_point_sum`'s own guard, which
+exempts `LEVELS_BASED`/`INDICATIVE_CONTENT` questions outright." That
+function (`lemely/core/loose_schemas.py`) is an INEQUALITY check over
+primary (non-alternative/non-optional) points only — it never computes a
+`max()` and was never the provenance for a max-based rule; see the
+correction to Decision 3 below for the actual defect this false citation
+was propping up.
+
+**Decision 2 — `matched_point_ids` empty/absent, but `question.answer_points`
+is non-empty (unchanged by the repair pass).**
+
+- `awarded_marks == 0` and `matched_point_ids == []`: **coherent.** Nothing
+  was matched, nothing was awarded — this is the ordinary "no credit given"
+  case and must not be flagged.
+- `awarded_marks > 0` and `matched_point_ids == []`: **incoherent.** Marks
+  were awarded with nothing cited to justify them. Flagged with a message
+  containing `"matched_point_ids is empty"`. Decision 1's type-scoped
+  exemption now extends this same rule to non-exempt types whose
+  `answer_points` is ALSO empty — see Decision 1.
+
+**Decision 3 — `is_alternative`/`is_optional` reconciliation is a RANGE, not
+a point estimate.** Points flagged `is_alternative` (OR/EITHER…OR) or
+`is_optional` (a "any N from" pool) are non-additive by construction
+(`AnswerPoint` docstrings, `loose_schemas.py`). `AnswerPoint` carries no
+group identifier, so the number of distinct OR-groups among a set of
+*matched* non-additive points is unknowable from the data alone:
+
+```
+implied_min = sum(marks of matched points where NOT is_alternative and NOT is_optional)
+            + max(marks of matched points where is_alternative OR is_optional, default 0)
+implied_max = sum(marks of matched points where NOT is_alternative and NOT is_optional)
+            + sum(marks of matched points where is_alternative OR is_optional)
+```
+
+`awarded_marks` (post-out-of-range-clamp) is coherent iff
+`implied_min <= awarded_marks <= implied_max`; only a value OUTSIDE that
+interval is flagged, with a message that names the interval (e.g.
+`"matched_point_ids implies between 1 and 3 mark(s)"`), never a single
+number.
+
+*Original defect (MUST-FIX 1 of the repair pass):* the shipped version used
+`implied = sum(primary marks) + max(non_additive marks, default 0)` — a
+single GLOBAL `max()` over every matched alternative/optional point,
+compared to `awarded_marks` for exact equality. Because a global max cannot
+distinguish one OR-group from several (no group id exists), this collapsed
+any legitimate "any 3 from 5" award, or two independent OR-groups matched
+together, down to "implies 1 mark(s)" and forced `needs_teacher_review` on
+correctly-marked questions — a false-positive machine, not a coherence gate.
+The false `validate_mark_point_sum` citation in the original Decision 1 text
+was covering for this: that function really is an inequality
+(`sum(primary) <= question.marks`, no max, no equality requirement), so it
+was never evidence that a global-max/exact-equality rule was the right
+shape.
+
+**Detection convention for the separate trigger (bullet 4, unchanged by the
+repair pass).** Rather than threading a second boolean through
+`CorrectedQuestion`/`QuestionResult` end-to-end, every message
+`_check_coherence` returns contains the shared constant
+`lemely.io.correction_ai.COHERENCE_TRIGGER_MARKER` (`"matched_point_ids"`; no
+other review reason in `_build_ai_corrected` — `out_of_range`,
+`value_mismatch`, `low_confidence` — uses that phrase), and
+`lemely.accuracy.harness._review_triggers` imports that same constant
+(repair-pass SHOULD-FIX: previously a bare literal duplicated on the harness
+side, so a reworded message could desync the two sides with every test still
+green) to append the distinct `"coherence_mismatch"` trigger alongside the
+generic `"needs_teacher_review"` one, end-to-end-tested in
+`tests/test_accuracy_harness.py::CoherenceTriggerWiringTests`.
+`lemely.eval.analyses.coherence_trigger_rate` then reports that trigger's own
+DA6-collapse-aware leaf rate, separately from
+`review_rate_signal`/`review_rate_total` — it does not touch, arm, or feed
+into the M0.9 ratchet (`review_rate_ratchet_armed` stays `False`;
+`lemely/runtime/config.py` and `scripts/check_review_rate_gate.py` are
+untouched by this issue or its repair pass).
+
+**Bullet 4 (the coherence trigger's own contribution to `review_rate`,
+measured and reported separately): UNMET, and the original excuse for
+skipping it was false.** The original text claimed "the saved ... EvalRecord
+JSONL does not carry `matched_point_ids`... so this gate's real-corpus
+contribution to review volume cannot be measured from on-disk data" and
+implied no cached data existed to try. That is false: `.lemely-cache/gemini/`
+holds 212 cached Gemini payloads, of which **181 are `AIMarkResponse`-shaped
+(carry `matched_point_ids` and `awarded_marks`)** — verified by inspecting
+every file's keys in this repair pass, not assumed. The repair pass
+genuinely attempted the join. It fails for a different, real reason:
+
+- Every cached payload is bare — the 181 `AIMarkResponse` files' only keys
+  are `matched_point_ids`, `awarded_marks`, `feedback`, `confidence`. There
+  is no `question_id`, paper id, or any other field linking a cached mark
+  back to the `Question`/`answer_points` it was computed against.
+- The cache filename is the hex digest of `_cache_key()`
+  (`lemely/io/gemini.py`), a hash of the model, full system+user prompt
+  text, prompt version, file paths, and a params fingerprint — opaque and
+  not reversible to a question id without reconstructing the exact prompt
+  that produced it.
+- There is no manifest or index file anywhere under `.lemely-cache/`
+  mapping cache keys back to question/paper identity (checked: none
+  present).
+- The only way to recover the linkage is to recompute `_cache_key()` for
+  every candidate `(question, extracted answer, prompt version, model,
+  params)` in the corpus and check which hashes exist on disk — i.e. replay
+  the correction step across the dev-split corpus. `generate_structured`
+  (`lemely/io/gemini.py:305-365`) has exactly three `cache_mode` values —
+  `"read_write"`, `"bypass"`, `"refresh"` — and NONE of them is a
+  cache-hit-only mode that skips or errors cleanly on a miss instead of
+  falling through to `_check_cost_ceiling()` and a live paid call. Building
+  and running such a replay would either require a production code change
+  to `gemini.py` (out of scope for #40 and its repair pass, and itself a
+  change that would need its own review) or risk exactly the live spend this
+  repair pass is barred from (hard constraint: "No live sweep, no spend").
+
+So the true obstacle is not "the data is absent" — 181 relevant cache
+entries exist — it is that **the cache carries no question-identity linkage,
+and the client offers no zero-spend way to recover one.** `coherence_trigger_rate`
+remains implemented and unit-tested; its number against the real dev-split
+corpus remains an open measurement gap. Closing it for real requires either
+a `gemini.py` change adding a cache-hit-only replay mode (a separate,
+reviewable piece of work) or plumbing `matched_point_ids` through to
+`EvalRecord` going forward so future sweeps carry the linkage from the
+start — neither was in scope for this repair pass.
+
+**CORRECTION (2026-08-23): the historical-cache limitation above is real but
+was not the whole story, and the orchestrator's characterisation of this
+gap — "the machinery is delivered and wired, only the number awaits a
+sweep" — was wrong.** `coherence_trigger_rate` (`lemely/eval/analyses.py:613`)
+had **zero callers anywhere in the tree**: not in `lemely/app/cli.py`, not in
+any script. `measure-accuracy`'s report path imported and called only
+`review_rate`, so even a fresh, fully-authorised, zero-cache-hit sweep run
+today would never compute or print this function's result — the gap was not
+purely retrospective (stale cache, no question-identity linkage), it was also
+prospective (no call site). A missing call is a smaller and different defect
+than a data-linkage problem, and conflating the two understated what was
+wrong: "awaiting a sweep" implies the wiring was ready and only the
+measurement act was outstanding, when in fact the report path itself was not
+exercised by any code path.
+
+This has now been fixed: `measure-accuracy` (`lemely/app/cli.py`) imports
+`coherence_trigger_rate` alongside `review_rate` and calls it on
+`result.eval_records`, printing its own `Coherence trigger rate: <rate>
+(n=<n>)` line — separate from the `Review rate: ...` line, matching bullet
+4's "measured and reported separately" — and not fed into `failed`, the
+review-rate gate, or the M0.9 ratchet. `tests/test_cli_coherence_trigger_rate.py`
+proves this line is genuinely emitted (and fails if the call is removed).
+
+Bullet 4's status is therefore now: **the reporting path is delivered and
+exercised by a passing test; no corpus number has been produced.** The
+historical-cache obstacle above still blocks retro-measurement of the
+existing 181 cached `AIMarkResponse` payloads — that part of this entry
+stands uncorrected. But any future authorised sweep over fresh (or newly
+question-identity-linked) data will now compute and print the number, which
+was not true before this correction.
+
+## DA11 — the ledger file is authoritative for spend, and the header is a programme-wide SUM
+
+**Decided 2026-08-25**, discharging inbox item 7 of the 2026-08-25T17:36:27
+directive ("reconcile the two ledger bases and record which is authoritative").
+
+### The discrepancy, and its actual cause
+
+The directive noted `report.json`'s `spend_usd_before` 1.390218 against the
+state header's `spend_usd` 1.488057, about $0.098 apart, and asked which is
+authoritative. The cause is not drift or a bad increment. It is this:
+
+**`outputs/gemini_spend.json` is per-worktree, gitignored local state.**
+`.gitignore:46` ignores `outputs/`, and `CostLedger._path` is the relative
+`outputs/gemini_spend.json`, so every worktree keeps its own independent
+ledger and none of them is committed. Four exist:
+
+| worktree | cumulative_usd |
+|---|---|
+| `Lemely` (main) | 0.402869 |
+| `Lemely-worktrees/accuracy` | 1.958713 |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
+
+A figure read from *this* worktree's ledger therefore counts only the spend
+issued *from this worktree*, and the header — which has been carried forward
+across worktrees since the programme moved out of `Lemely` — is the larger
+number for a real reason. The `0.402869` in main is recognisably the `0.4026`
+the 2026-08-18 seed recorded as the starting figure.
+
+### The decision
+
+1. **The ledger files are authoritative for money actually spent.** They are
+   written by `CostLedger.add` on every call, in-process, and cannot be
+   forgotten by an agent writing up a run.
+2. **`spend_usd` in the state header means the PROGRAMME-WIDE total, and is the
+   SUM across all worktree ledgers** — not this worktree's ledger alone.
+   Recording one worktree's ledger there understates real spend, which is the
+   direction that matters for a ceiling check.
+3. **Neither `report.json`'s spend fields nor a `run.log` `usd_cost` sum is a
+   substitute.** The 2026-08-25 control arm proved this the hard way: two copies
+   ran concurrently against one ledger, so `report.json`'s delta silently
+   included the other copy's spend and the log's `usd_cost` sum came out
+   $0.238111 against a true ledger delta of $0.287153 because concurrent
+   appends lost writes. Derived figures are reconstructions; the ledger is the
+   record.
+
+### The hazard this leaves, recorded rather than fixed
+
+The ledger is gitignored local state, so **it does not survive deletion of a
+worktree, and it is invisible to CI and to any other machine.** The programme's
+only durable record of cumulative spend is a hand-maintained line in a markdown
+header. That is a real fragility and it is not fixed here — fixing it means
+committing the ledger or moving it outside the worktree, which is a data
+decision for the human, not a bookkeeping change to make silently.
+
+---
+
+## DA12 — the honest leaf denominator is 9,464, not 12,358 (#88 item 3)
+
+**Ratified by the human**, 2026-08-25, `BUILD/ACCURACY-INBOX.md`
+2026-08-25T17:36:27+03:00 item 3: *"the 2,894 'unbanded leaves' are PARENT
+questions, not leaves. Zero true leaves are unbanded. True leaf count is 9,464,
+not 12,358. Nothing is dropped and the drop-only rule is not triggered. Correct
+the 12,358 figure wherever it is cited."*
+
+### What was wrong
+
+`BUILD/accuracy-runs/census-2026-08-24-a/census_leaves.py` selected leaves with
+`[q for q in flat if not getattr(q, "sub_questions", None)]`. `Question` has no
+`sub_questions` field — its child list is `parts`
+(`lemely/core/loose_schemas.py:1008`). `getattr` therefore returned `None` for
+every question, the filter was a **no-op**, and everything the census called
+"LEAF questions" was **every question at every depth**.
+
+The same bug wore a second hat. Because parents carry no tariff of their own,
+they all landed in the script's `0/unknown` catch-all, which then printed as a
+fourth band — producing both the "2,894 unbanded leaves (23.4%)" story and the
+discredited "DA1 strata populated: 12".
+
+### What is true
+
+Re-run of the fixed script over the same surviving 250 parsed schemes
+(`/tmp/acc57-full/out`), output at
+`BUILD/accuracy-runs/census-2026-08-24-a/census-leaves-corrected.txt`:
+
+| quantity | value |
+|---|---|
+| all questions, flat | 12,358 |
+| of which parents | 2,894 |
+| parents carrying own marks | **0** |
+| **true leaves** | **9,464** |
+| unbanded true leaves | **0** |
+| DA1 strata populated | 9 of 18 |
+
+Band counts are unchanged (1: 4,559 · 2: 2,742 · 3+: 2,163) and the nine
+populated stratum cells sum to exactly 9,464 — those figures were always
+right and must **not** be "fixed".
+
+### Why this matters beyond bookkeeping
+
+The error ran toward **overstatement**: the headline inflated the leaf corpus by
+**30.6%**. Any n-floor, power or headroom figure computed against 12,358 is
+inflated, and must be recomputed against 9,464. Nothing is dropped, and DA1's
+drop-only rule was never triggered — the 2,894 were never in the leaf
+population to begin with.
+
+### Where it was corrected, and where it deliberately was not
+
+Corrected: `census_leaves.py` (the bug itself, plus it now prints the flat and
+leaf totals side by side so they can never be conflated again, and excludes the
+catch-all from the strata count); the census `manifest.json`; three citations in
+`BUILD/BLOCKERS.md`.
+
+**Not corrected, on purpose:** the two dated `BUILD/JOURNAL.md` entries of
+2026-08-24 that quote 12,358. The journal is an append-only record of what was
+believed on the day; rewriting it would falsify the audit trail. They are
+superseded by this entry, and the original buggy census output is preserved
+verbatim at `census-leaves.txt` beside the corrected one for the same reason.
+
+---
+
+## DA13 — `per_run_token_ceiling` raised 2M → 5M, and the re-cost that sized it (#88 items 4 and 2)
+
+**Date:** 2026-08-26 · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-25T17:36:27+03:00, #88 item 4 — *"raise `per_run_token_ceiling`
+(`lemely.toml:19`) deliberately to cover the largest preflight scenario and run
+the parse as ONE job. Batching is NOT required. Record the raise and its reason
+in DECISIONS.md."* · **Spend: $0.00.** No Gemini call was made to produce any
+number below.
+
+### This entry is the only durable record of the raise
+
+`lemely.toml` is **gitignored** (`.gitignore:47`) and has never been tracked.
+The raise therefore does **not** survive deletion of this worktree, is invisible
+to CI, and is invisible to every other worktree — the same hazard class as
+DA11's per-worktree spend ledger. If the ceiling appears to be 2,000,000
+somewhere, that is not a regression to investigate: it is a different
+`lemely.toml`. The value now in this worktree is:
+
+```toml
+per_run_token_ceiling = 5000000   # was 2000000
+```
+
+### The number it was sized against, re-measured rather than scaled
+
+The 2026-08-24 preflight on #88 sized the job over the **229**-scheme det
+failure set. #93 landed and moved 39 of those (0625 paper 2) to the free det
+path, leaving **190**. The standing instruction was explicit that this must not
+be scaled linearly, because the 39 removed are short MCQ papers, so dropping
+them **raises** the per-paper average for what remains.
+
+**That warning is now measured, not assumed.** Script and artifact:
+`BUILD/accuracy-runs/preflight-88-2026-08-26/` (`recost_88.py`, `recost.json`).
+
+| | 2026-08-24 basis | re-measured 2026-08-26 |
+|---|---|---|
+| schemes in the paid set | 229 | **190** (−17.0%) |
+| total pages | 2,084 | **1,967** (−5.6%) |
+| **mean pages per scheme** | 9.1 | **10.35** (+13.7%) |
+
+The count fell 17% while the pages fell only 5.6%. A linear 190/229 scale would
+have understated the job by roughly that gap. Verified while measuring: the 190
+is an exact **subset** of the old 229, and exactly 39 were removed — the two
+censuses describe the same population, so the comparison is like-for-like.
+
+### Two output models, and why the higher one governs
+
+Token model unchanged from 2026-08-24 so the estimates stay comparable:
+`input = pages × 258 + 1500` per call; rates $0.30/1M in, $2.50/1M out.
+
+The output side is a **proxy** — det-produced `MarkScheme` JSON standing in for
+the JSON Gemini must emit — sized over the 210 non-MCQ schemes in the committed
+`corpus/`. MCQ schemes are excluded because they are tiny and are not the shape
+of the failing population.
+
+| scenario | input | output | total | USD |
+|---|---|---|---|---|
+| per-scheme median | 0.79M | 1.87M | 2.67M | $4.92 |
+| per-scheme mean | 0.79M | 2.19M | 2.98M | $5.70 |
+| per-**page** median | 0.79M | 2.63M | 3.42M | $6.82 |
+| per-**page** mean | 0.79M | 2.81M | **3.60M** | **$7.26** |
+
+**The per-page rows govern, and the reason is the same bias again.** The
+per-scheme model applies a flat per-scheme output to a set whose papers are
+**+23.4% longer** than the proxy population they were measured on (10.35 pages
+vs 8.39). Holding output constant per scheme while the schemes get longer is
+precisely the error the linear-scaling warning describes, one level down. The
+per-scheme rows are kept in the table because they reproduce the 2026-08-24
+figures almost exactly ($4.92 vs $4.88, $5.70 vs $5.66), which is what confirms
+the two runs share a model — they are the comparability check, not the estimate.
+
+### Why 5,000,000
+
+Largest measured scenario is **3.60M** tokens. 5M is **~39% headroom** over it.
+The headroom is not padding for its own sake: the output side is a det-JSON
+proxy, and Gemini emitting more verbosely than the det parser is the obvious way
+this estimate is wrong in the expensive direction. 5M also keeps the ceiling a
+genuine runaway guard — it trips at ~1.4× the largest projected job, so a
+loop-gone-wrong still hits it — rather than being set so high it stops meaning
+anything.
+
+### What this control is and is not, stated plainly
+
+The inbox item that authorised this raise noted, correctly, that combined with
+item 7 it loosens the second of two preflight brakes ahead of the largest
+authorised spend in the programme. That reading is accepted, not softened:
+
+- `_check_cost_ceiling` (`lemely/io/gemini.py:289`) runs **before** a call is
+  issued, so it can never stop a call already in flight. It was never a hard
+  stop.
+- `per_run_token_ceiling` counts input+output **process-wide** and is
+  deliberately *not* reset between sweeps (`start_new_run`, `gemini.py:182`), so
+  it budgets a whole run.
+- **`total_usd_ceiling` ($25.00) is untouched, and MISSION §10's $20.00
+  stop-and-ask is untouched.** Money remains bounded by those.
+- With batching removed as a control, the **preflight estimate above is the
+  primary remaining control on this job**. That is the trade the directive made
+  knowingly, and the estimate is therefore recorded here with its method,
+  its proxy, and its known direction of error rather than as a bare number.
+
+**Precedent that shaped how this was costed:** the #37 preflight was wrong by
+4–5× because an aggregate was read as a per-pass rate, and that sweep tripped
+its own in-process brake mid-run. Every figure above is measured from files on
+disk, and the script that produced them is committed beside the result.
+
+### DA13a — DA13's estimate was falsified by measurement; the 5M ceiling is undersized (#88 item 2)
+
+**Date:** 2026-08-26 (run 43) · **Spend: $0.420312**, ledger 2.2997574 → 2.720069.
+
+DA13 above is left standing as written, because it is the record of what was
+believed and *why* when the ceiling was raised. This amendment says what
+measurement then did to it. **Read them together; DA13's numbers are superseded.**
+
+The item-2 sweep was started and **aborted by the orchestrator at 6 of 190
+schemes** when the measured rate falsified the preflight. Evidence:
+`BUILD/accuracy-runs/sweep88-2026-08-26/aborted-sweep.json`.
+
+| | DA13 preflight | measured |
+|---|---|---|
+| per scheme | $0.03821 | **$0.07005** |
+| 190 schemes | $7.26 | **$13.31** (1.83×) |
+| tokens for 190 | 3.60M | **7.25M** |
+
+**Consequence for item 4, stated plainly:** `per_run_token_ceiling = 5000000`
+was sized on the 3.60M figure. The real requirement is **7.25M**, so the ceiling
+**would trip at roughly scheme 131 of 190**. Item 4's stated purpose — run the
+parse as ONE job with no batching — is therefore **not achieved** by the value
+DA13 set. The ceiling has been left at 5,000,000 rather than quietly raised
+again: raising it a second time is part of the decision now in front of the
+human, not a bookkeeping fix to make my own earlier entry look right.
+
+### Why the estimate failed, and why more sampling would not have saved it
+
+1. **Input 2.07× under** — modelled `pages × 258 + 1500` = 4,170/call; actual
+   **8,630**. The PDF is uploaded through the Files API and is not billed at the
+   assumed per-page rate.
+2. **Output 1.35× under, and blind by construction** — predicted 14,790, actual
+   **19,980**, of which **7,100 (36%) is thinking tokens**. The proxy was
+   det-produced `MarkScheme` JSON, and **a deterministic parser does no
+   thinking**, so the proxy could not represent that cost *at any sample size*.
+   This is the important one: it was not an unlucky sample, it was an instrument
+   that could not see a third of the bill. Any future estimate of a Gemini path
+   built from det output inherits this blindness.
+3. **1.33 calls per scheme**, not 1.00 — retries/fallback modelled as free.
+
+### A factual correction that must not propagate: thoughts are already in `output_tokens`
+
+Pricing `input + output` alone reproduces the ledger **exactly** ($0.420312).
+Adding `thoughts_tokens` on top overshoots to $0.562302. So `output_tokens`
+**already includes** thinking, the ledger is trustworthy as recorded, and anyone
+re-deriving spend must not add thoughts separately. This also means
+`per_run_token_ceiling`, which sums input+output, already counts thinking.
+
+### The control that worked, recorded because the failure mode is the norm here
+
+The first scheme's ledger delta was checked against the preflight instead of
+assumed, which surfaced the 1.74× at **n=1** and confirmed 1.83× at n=6. The #37
+preflight was wrong by 4–5× and was only discovered when that sweep tripped its
+own in-process brake mid-run. **Cost of catching it this way: $0.42 against a
+$13.31 job.** The 6 parsed schemes are kept.
+
+---
+
+## DA14 — the whitespace golden fixtures (B5 / #88 item 6), and why the consequence B5 accepted did not arrive
+
+**Date:** 2026-08-26 (run 44) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B5** — *"ORDINARY GOLDEN CASES. AGAINST-REC. The whitespace
+fixtures join the normal corpus, not a metamorphic-only set. CONSEQUENCE
+ACCEPTED: they enter the accuracy denominator, so every published figure
+computed over the golden corpus must be RESTATED against the new membership.
+Record it in DECISIONS.md and flag it on #49, since the split is not frozen."*
+· **Spend: $0.00.**
+
+### The problem it fixes
+
+`normalise_answer_whitespace` reported **0 held / 0 violated / 71 skipped**. Every
+one of the 71 golden answers was already whitespace-normal, so the transform was
+a strict no-op corpus-wide and **no amount of spend could buy evidence for the
+property**. It was a test that could never fail.
+
+### What shipped
+
+A fourth fixture variant, `tests/golden/0580_s23_qp_22_theory_whitespace/`,
+loaded as an ordinary golden case exactly as B5 required — not a
+metamorphic-only side set. `_whitespace` was added to
+`_FIXTURE_VARIANT_SUFFIXES` (`lemely/accuracy/harness.py`). The property now
+reports **7 held / 71 skipped** where it reported 0 held.
+
+**Marks are inherited, never invented.** Each answer is its `_correct` sibling's
+answer with whitespace injected, carrying the sibling's `awarded_marks`
+unchanged. Assigning a mark is examiner judgment (MISSION §12.7) and is not
+something this work was entitled to do; a test asserts mark-for-mark equality
+with the sibling, and another asserts the answers differ from it **only** by
+whitespace.
+
+### The part that must not be glossed: B5's accepted consequence did not occur
+
+B5 accepted that the fixtures "enter the accuracy denominator" and that **every
+published figure must be restated**. **They did not, and no figure needs
+restating.** Saying so plainly matters more than appearing to have honoured the
+instruction:
+
+- DA6 counts distinct leaves by **`(paper_id, question_id)`**.
+- A *variant* shares its sibling's `paper_id`, exactly as `_correct`/`_partial`/
+  `_wrong` already do.
+- So the corpus went from **71 rows → 78 rows** while distinct leaves stayed at
+  **31**.
+
+Wilson intervals, n-floors and every power figure are computed on `n`, not on
+row count, so all of them are **unchanged**. This was chosen deliberately over
+minting a new `paper_id`, which *would* have added 7 correlated duplicate leaves
+— inflating `n` with the same content counted twice and understating variance.
+That is the narrowed/inflated-denominator failure mode, and it was available and
+declined.
+
+The restatement B5 pre-authorised is therefore **not spent**. If a future fixture
+adds a genuinely new paper, the consequence lands then and this entry is not
+licence to skip it.
+
+### A limit discovered by the renderer, worth recording rather than re-finding
+
+The first attempt injected tabs and newlines. `synth.py`'s render-fidelity guard
+**refused them**: `no vendored font has a glyph for '\t' (U+0009)`. That guard is
+M0.0/#56's work behaving correctly, and it means **a golden fixture that must
+render to `scan.pdf` structurally cannot carry a tab or a newline**.
+
+So the property's coverage is **space runs and leading/trailing strip only**.
+Tab and newline normalisation remain **untested and untestable through a rendered
+fixture** — not overlooked, and not fixable by adding more fixtures of this kind.
+Closing that gap needs either a vendored font with those glyphs or a fixture that
+never renders, and neither is decided here.
+
+### Corpus constants that moved, for anyone citing them
+
+`tests/eval/test_analyses.py` pinned `len(records) == 71` in two places; both now
+read **78**, with `wilson(...)["n"] == 31` **untouched** in both. The two are now
+a stronger demonstration of the DA6 rows-vs-leaves distinction than before: 78
+rows collapsing to 31 leaves. **Do not cite 71 as the row count, or 28 as the
+leaf count.**
+
+Flagged on **#49** as B5 required, since the split is not frozen.
+
+---
+
+## DA16 — the q11b reorder violation reproduces but is not established (B6 / #58)
+
+**Date:** 2026-08-26 (run 47) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B6** — *"AUTHORISED, ~$0.01: re-mark q11b ALONE, perturbed and
+unperturbed, ~10x each. This supersedes the earlier control-arm design. Bullet 4
+ticks on the result either way."* · **Spend: $0.013608** (20 calls, all
+`cache_hit=False`; central projection was $0.0156, the in-process brake $0.040 was
+never approached).
+
+**DA15 is deliberately skipped, not lost.** The unmerged `#41` branch
+(`feature/accuracy-41-b1-undetermined` @ `1d41a97`) already carries a `DA15` entry,
+renumbered there from `DA13` to protect develop's published numbering. Taking
+`DA15` here would force that branch to renumber a second time for no gain, so this
+entry takes **DA16** and `DA15` stays reserved for #41.
+
+### The measurement
+
+| arm | `awarded_marks` over 10 repeats | ≥2 marks |
+|---|---|---|
+| unperturbed | `1 1 1 1 1 1 1 1 1 1` | **0/10** |
+| perturbed (`p1,p2,p3 → p3,p2,p1`) | `1 2 1 1 1 1 1 1 1 2` | **2/10** |
+
+Leaf: `0625_s20_qp_31_theory_partial` q11b, ground truth **1 mark**.
+Pre-committed primary test — two-sided Fisher exact on [arm × (marks ≥ 2)],
+α = 0.05 — **p = 0.4737, not significant**.
+
+### The decision this records
+
+**The violation reproduces, and it is still not established.** Both halves are
+load-bearing:
+
+- It reproduces: 2 of 10 *fresh* perturbed repeats award 2 where truth is 1 — the
+  same 1 → 2 the original run recorded, so not a one-off call.
+- Same-input churn on this leaf is **zero, not small**: 0/10 here, and 0/14 pooling
+  every other unperturbed marking of this exact leaf already on disk
+  (`control-58-2026-08-25` `pass_a`=`pass_b`=1; the reorder and rename baseline arms
+  inside `metamorphic-58-2026-08-25`). The "just gemini churn" explanation, which
+  the earlier control could only reject corpus-wide, is now rejected on this leaf.
+- It is still not significant. Post-hoc pooling of every perturbed observation
+  against every unperturbed one gives 3/11 vs 0/14, **p = 0.0717** — closer, still
+  above α, and post-hoc, so secondary and never the finding.
+
+**This is not re-run at higher n.** At the observed ~20% effect, significance needs
+about n = 25 per arm (2/10 → p = 0.47; 5/25 → p = 0.050). MISSION §12.9 forbids
+exactly that move, and B6 authorised ~10 per arm knowing what 10 could resolve.
+Whether the reproduced instability becomes its own marker-defect issue, and whether
+to spend to prove it, is posted on #58 as a question for the human, not decided here.
+
+### Two things verified rather than assumed
+
+1. **Which of the three variants.** The metamorphic report records only `paper_id`,
+   which all three `0625_s20_qp_31_theory` fixtures share (DA6 keys a leaf on
+   `(paper_id, question_id)`; the variant directory is not in the key). Identified as
+   `_partial` from the outcomes-list position, then **independently confirmed by the
+   mark values** — the three variants' q11b score 3 / 1 / 0 and the violated record's
+   `baseline_marks` is 1.
+2. **That marking q11b alone is the same experiment, not a cheaper one.**
+   `correct_paper` builds `sibling_prior` only when `q.parent_id is not None`
+   (`lemely/io/correction_ai.py:639-645`), and q11b's `parent_id` is `None`, so its
+   prompt is byte-identical whether the scheme holds seven leaves or one. Had q11b
+   had a parent, restricting the scheme would have changed the input and the design
+   would have been illegitimate — the restriction is licensed by that fact, not by
+   its cost.
+
+### Acceptance boxes, audited rather than swept along
+
+Bullet 4 is ticked as B6 directed. Bullets 2 and 5 are ticked on live evidence
+(rename: 57 held / 0 violated / 14 skipped; per-question reporting: 213 outcomes
+each carrying property, ids, status and skip reason). **Bullets 1 and 3 are left
+unticked on purpose**: bullet 1 is a property assertion a live run falsifies, and
+bullet 3 has **no live evidence at all** — the live bypass run of 2026-08-25
+predates #134's whitespace fixtures, so live it reads 0 held / 71 skipped, and
+#134's "7 held" is a zero-spend offline run. Closing that gap is ~14 calls /
+~$0.01 and is **not authorised**.
+
+Artifacts: `BUILD/accuracy-runs/settle-58-q11b-2026-08-26/`.
+
+---
+
+## DA17 — `cumulative_usd` is a conservative UPPER BOUND, not money spent (B16, amends DA11)
+
+**Date:** 2026-08-26 (run 48) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B16** — *"KEEP THE TOTAL, ANNOTATE AS AN UPPER BOUND. The
+contamination overstates spend, so ceilings stay conservative. Do NOT
+re-baseline and do NOT rebuild from per-call logs. Record that `cumulative_usd`
+is a known-contaminated upper bound rather than money spent, and keep the
+re-sum-every-run rule."* · **Spend: $0.00.**
+
+### What is amended
+
+**DA11 said the ledger files are authoritative for money spent. That is narrowed
+here to: authoritative as a conservative UPPER BOUND on money spent.** Everything
+else in DA11 stands unchanged — the files remain the record of record, the header's
+`spend_usd` remains the programme-wide **sum** across worktree ledgers, and neither
+a `report.json` field nor a log sum substitutes for either. **The re-sum-every-run
+rule stays.**
+
+### Why an upper bound and not an exact figure
+
+Some tests call bare `load_settings()`, so `paths.output_dir` resolves to the real
+repo, and `GeminiClient` builds its ledger path from exactly that
+(`lemely/io/gemini.py:162`, verified in source this run). A test run can therefore
+bank a synthetic cost into the authoritative ledger. Measured once rather than
+inferred: **$0.0077620** landed at `2026-08-26T03:05:45Z` during a run that made
+**zero** Gemini calls (#114).
+
+### The three refusals B16 attached, recorded so they are not re-litigated
+
+1. **No back-out.** The $0.0077620 stays in the total.
+2. **No re-baseline.**
+3. **No rebuild from per-call logs.**
+
+The ground is direction, not convenience: contamination is **one-directional** — a
+test can add cost, never remove it — so a contaminated total can only *overstate*
+spend, and every ceiling check against it stays conservative. Re-baselining would
+trade a known-conservative number for a reconstructed one, and the reconstruction
+would itself need auditing.
+
+### One observation, offered as an observation
+
+The supervisor sweep of **2026-08-26T20:05Z** (21 minutes, full `pytest`) did
+**not** move this worktree's ledger: it read `2.7336773500000575` with
+`updated_at` `2026-08-26T19:33:25Z` — the B6 run's own figure — both before and
+after. So the contamination is **intermittent, not every-sweep**. Stated as a
+single clean observation and nothing more: it is one sweep, and which tests ran
+and what they did was not instrumented. It does not close #114 and is not evidence
+the writer is gone.
+
+### What this deliberately does NOT do
+
+It does not stop the writes. **Isolating the writer — #114's scope item 2, the
+autouse guard that would fail any test resolving `output_dir` inside the repo — is
+unstarted work, and #114 is CLOSED.** B16 said annotate, not fix. Naming that gap
+here matters more than the annotation itself: an annotation that reads as a
+resolution would leave the next run believing the ledger is safe to treat as exact.
+
+---
+
+## DA18 — labeller agreement is measured PER MARK POINT (B12, #140)
+
+**Date:** 2026-08-26 (run 49) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B12** — *"PER MARK POINT, per spec §6, is the published H7 figure.
+Wire `mark_point_verdicts`, which is currently declared and never read. Expect
+LOWER agreement than totals-equality: that is the measurement working, not a
+regression."* · **Spend: $0.00.** Landed as PR #141; answers §3 of #105, which
+recorded the gap and refused to resolve it because the choice was a measurement
+decision, not a coding one.
+
+### The decision
+
+**H7's published agreement figure is the proportion of MARK POINTS on which
+labellers A and B agree**, not the proportion of leaves whose `awarded_marks`
+totals match. `MarkingLeafRecord.mark_point_verdicts` was declared and never
+read; agreement was totals equality, so **two labellers awarding 2/3 by
+crediting different mark points counted as agreeing**.
+
+### The unit, and why it is keyed the way it is
+
+Point identity is **`(paper_id, question_id, mark_point_id)`** — DA6's leaf key
+with one component added, for the reason DA6 exists. Keying on `mark_point_id`
+alone would merge `p1` from every leaf in the corpus into a single point,
+shrinking the denominator *and* discarding every disagreement but one: the D18
+narrowed-denominator shape, one level down.
+
+The denominator is points **both** labellers recorded on a leaf **both** marked.
+
+### Two exclusion stages, both returned rather than described
+
+Spec §9 gate 7 is not satisfied by a docstring, so the funnel travels with the
+figure:
+
+| field | unit | meaning |
+|---|---|---|
+| `a_only` / `b_only` | **leaves** | a leaf only one labeller marked — missing data |
+| `points_a_only` / `points_b_only` | **points** | a point only one recorded, **within shared leaves** |
+| `shared_leaves_without_shared_points` | leaves | shared leaves contributing **zero** points |
+| `shared_leaves` | leaves | the leaf-stage denominator |
+
+Three of those are decisions, not bookkeeping:
+
+1. **`a_only`/`b_only` keep their LEAF meaning.** Silently re-pointing an
+   existing field's unit is a moved target even before publication, so the
+   point-level exclusions got their own names.
+2. **Point exclusions are scoped to shared leaves**, so a leaf-stage exclusion
+   is never counted a second time at the point stage.
+3. **`shared_leaves_without_shared_points` is reported.** A leaf both labellers
+   marked can still contribute nothing — no verdicts, or disjoint point ids.
+   Under a per-point denominator those vanish without trace, which is the
+   narrowed-denominator failure mode in a new costume.
+
+### The totals figure is KEPT, not deleted
+
+B12 predicts the per-point number reads **lower**. That prediction is only
+checkable if both numbers travel together — a single number cannot demonstrate
+its own drop — so `totals_n` / `totals_successes` / `totals_point` /
+`totals_lower` / `totals_upper` ship beside the headline as a named secondary.
+
+**A defect in the first version of this, caught in self-review before it
+landed:** `totals_point` was a bare rate, so at `totals_n == 0` it read `0.0` —
+indistinguishable from genuine total disagreement, and unlike the headline it had
+no interval to say which. It now comes from the same `_wilson_interval` helper,
+so no data spans `[0.0, 1.0]` and real 0/1 disagreement does not. A secondary
+figure that can publish a fabricated zero is worse than no secondary figure.
+
+### Unchanged, deliberately
+
+**DA2** — on disagreement A's label stands; the result stays aggregate-scalar
+only, and the test asserting that property was updated to encode the new key set
+rather than deleted. The required `rulings_settled` keyword with no default
+(#105) and `wilson()`'s published behaviour are both untouched.
+
+### Why now, rather than after H7
+
+**No agreement figure has ever been published** — #47 has not run and #51 is
+open — so nothing here moves an existing denominator. After H7 publishes,
+changing the unit would be a moved-target problem. That is the same argument
+#105 made for its own two items, and it is the whole reason this lands against a
+measurement with no data yet.
+
+---
+
+## DA19 — #94's premise was falsified, and MCQ silent loss is 1 paper in 80
+
+**Date:** 2026-08-27 (run 50) · **Authority:** #94 (human decision A4, split out
+of #45) · **Spend: $0.00**, det-only. Landed as PR #142.
+
+### What was corrected
+
+#94 asserted that the det parser drops questions silently — *"a scheme that
+yields 12 questions instead of 40 looks identical to one that legitimately has
+12."* **Measured before writing any code: it does not.** Re-parsing
+`0625_s24_ms_21` with today's code gives
+
+```
+[warning] mark_total_mismatch_escalating computed_total=12 discrepancy=28 maximum_mark=40
+ParseError: Mark total mismatch for 0625_s24_ms_21.pdf: parsed 12, expected 40
+```
+
+`reconcile` compares the parsed mark total against the cover page's
+`maximum_mark`, in both escalating and non-escalating modes. The premise most
+likely stopped holding when **#93** landed and this paper began being typed MCQ
+at all.
+
+**What WAS silent is the mechanism.** Nothing said a 29-row table had been
+discarded, or why. "This paper failed" is a census bucket; "one withdrawn
+question disqualified its whole answer column" is a work order. That is the gap
+#142 closes, and #94's acceptance bullet 3 is recorded **restated, not ticked as
+written**.
+
+### The prevalence, which cuts against the issue's framing
+
+479 mark schemes opened, 0 unreadable, **80 MCQ-typed** (the only papers
+`mcq.py` runs on):
+
+| | |
+|---|---|
+| papers with a discarded table | **1** |
+| papers with a shortfall | **1**, fully accounted for by that discard |
+| distinct disqualifying values corpus-wide | **1** — `QUESTION DISCOUNTED` |
+| questions parsed | **40** on 79 papers, **12** on one |
+
+**The eventual repair is a one-paper repair on today's corpus.** Recorded so it
+is not sized as though 28-question losses were widespread. This is not an
+argument the instrumentation was wasted: the prevalence was *unknown* before,
+not small, and only counting could tell the difference.
+
+### A counter that must not be misread
+
+`rows_discarded_in_kept_tables` reads **2 on 79 of the 80 papers** and that is
+**not loss** — it is the header row of each of the two tables every paper has.
+No paper exceeds 2. Its baseline is 2, not 0.
+
+Evidence: `BUILD/accuracy-runs/mcq-loss-inventory-2026-08-27/`.
+
+---
+
+## DA20 — a render is not a leaf: the second GoldenCase axis (#137, B13)
+
+**Date:** 2026-08-27 (run 51) · **Authority:** `BUILD/ACCURACY-INBOX.md`
+2026-08-26, **B13** — *"AUTHORISED as its own work: the multi-render
+`GoldenCase` data-model change gets its own issue and its own effort estimate.
+#59's stated 'Effort: S' is void. #59 runs after it."* · **Spend: $0.00.**
+Landed as PR #143.
+
+### The decision
+
+`GoldenCase` now carries **two orthogonal axes**, and conflating them would
+corrupt every denominator in the programme:
+
+| axis | means | is it a new case? |
+|---|---|---|
+| `fixture_variant` | same paper, different **answers** | **yes** — separate directory, shares `paper_id` (DA6/DA14) |
+| `renders` | same paper, same answers, different **image** | **no** |
+
+Renders are discovered from `scan.<render>.pdf` siblings and collected onto the
+**one** case for that directory. `scan_path` still points at `scan.pdf`, so every
+existing consumer and fixture is untouched.
+
+### The rejected alternative, recorded because it is the tempting one
+
+**Minting a second `paper_id`** for the other render. DA6 keys a distinct leaf on
+`(paper_id, question_id)`, so that would present the same leaves twice as if
+independent — inflating `n` and understating variance. It is the same trap #134
+declined for the whitespace fixture (DA14), and the docstring says so at the
+point where someone would be tempted to do it.
+
+### Verified, not asserted
+
+Against the real corpus: **12 cases, 31 distinct leaves, 78 rows** — unchanged,
+matching DA14 exactly. **No published figure moves**, so no restatement is owed.
+
+### What this deliberately does not do
+
+**Nothing iterates renders yet.** That is #59's work. Whatever iterates them must
+state its denominator explicitly: renders are not leaves. #59 also remains blocked
+on two things this does not touch — the handwritten renders are verbatim CAIE
+content and cannot be committed without a MISSION §12.7 decision, and the
+measurement is unauthorised live spend.
+
+---
+
+## DA21 — the two 0625 deficits are parser defects, and both mechanisms are named (#136)
+
+**Date:** 2026-08-27 · **Issue:** #136 · **PR:** #145 · **Spend:** $0.00 (det-only,
+read-only)
+
+B4 recorded the two 0625 mark-total deficits as **UNRESOLVED, not diagnosed**, and
+named the `rows.py` `flush()`/`q_row_had_answer` lead as already falsified so it
+would not be re-derived. It was not re-derived. Two *different* bugs, both in
+`rows.py` row consumption, account for both deficits with nothing left over.
+
+**(A) `lemely/io/det/rows.py:311`** — `if not answer_cell or not stack: continue`.
+The guard fires *before* the marks column is consulted, so a continuation row
+carrying real marks but an empty answer cell is dropped with its mark. `w21` `6(a)`
+is the case: four `B1` rows (three with empty answer cells, because pdfplumber puts
+the whole matching table into the first cell) become **one** point worth **1**.
+
+**(B) `lemely/io/det/rows.py:200`** — `marks=marks_int if marks_int is not None
+else 1`. Where the 3-column geometry merges the marks column into the answer cell,
+the code arrives as trailing text and `parse_marks_cell` sees an empty cell, so the
+default applies.
+
+**Why (B) survived this long, which is the part worth keeping:** the default is
+**right by luck for `B1`/`M1`/`A1`/`C1`**. Every single-mark code lands on the
+correct value, so the bug is invisible on the overwhelming majority of rows. It is
+wrong only for multi-mark codes, losing `value − 1` each time, silently.
+
+| paper | (A) guard | (B) default-to-1 | total | actual deficit |
+|---|---|---|---|---|
+| `0625_s20_ms_31` | 0 | `B4`→1 (−3), `B2`→1 (−1) | **−4** | −4 **EXACT** |
+| `0625_w21_ms_32` | 3 × `B1` (−3) | `B3`→1 (−2), `B3`→1 (−2) | **−7** | −7 **EXACT** |
+
+`BUILD/accuracy-runs/det-deficit-diagnosis-2026-08-27/probe.py` prints this
+attribution and labels it `EXACT`/`UNEXPLAINED`, so it fails loudly if it ever
+stops closing.
+
+### What this retires
+
+**The `genuine_mark_total_mismatch` reading, for these two papers only.** The full
+deficit is attributable to parser bugs, so both are **parser defects, not
+inconsistent papers**, and `escalate_on_mark_mismatch` was right to block them —
+these are **true positives**. This says nothing about the other members of #45's
+residual bucket, and does not generalise to them.
+
+### Hypotheses falsified on the way (do not re-spend a run on these)
+
+1. **Table selection** — the stated next-place-to-look after run 35, and it is
+   wrong. Every dropped table is non-mark-scheme. The `property | object` table on
+   `w21` p10 looks like a counter-example and is not: pdfplumber extracts that
+   content **twice**, once nested inside the real `6(a)` row and once standalone;
+   the standalone copy is the one dropped, so nothing is lost.
+2. **Mark-cell notation** — `unparsed={}` on both. `w21` genuinely mixes code and
+   bare-integer notations, which looks like a mechanism and is not one. The cell
+   never reaches the parser; it is not unparseable.
+3. **Propagation into leaves** — zero zero-mark leaves, zero leaves without answer
+   points, zero leaf/point mismatches.
+4. **Parent-carried marks** — checked because it would have manufactured a fake
+   deficit: 0 of 24 parents on each paper carry their own marks, so summing leaves
+   is faithful and the deficit is real loss rather than a summing artefact.
+
+### What is NOT established
+
+**Prevalence is UNMEASURED.** Both mechanisms are named on n=2 papers. Sizing them
+across the 289-scheme committed corpus means **re-parsing PDFs, not reading the
+committed JSON** — the committed corpus is the *post-loss* artefact and
+structurally cannot show what never became an answer point. Deliberately left to
+the fix half rather than estimated.
+
+Both mechanisms are **one-directional**: they can only lose marks, never invent
+them. So det mark totals are a *lower* bound wherever they fire, and a
+single-direction error is far easier to mistake for a property of the papers than
+a noisy one.
+
+**#136's fix half stays unstarted.** It is mark-changing and waits on the B15 /
+#112 + #110 sweep question posted 2026-08-27. Starting it before that answer would
+produce another complete-but-unmergeable branch — the exact failure the 2026-08-24
+gate-9 ruling retired.
+
+---
+
+## DA22 — the det-parser sweep waiver, and what stands in its place (C1, C3)
+
+**Date:** 2026-08-27 · **Issues:** #112, #110, #136, #39 · **Spend:** $0.00
+
+B15 required #112's before/after marking sweep, *"run jointly with #110"*. That
+requirement was posted back on 2026-08-26 with a structural problem B15 had not
+been shown, and rulings **C1** and **C3** resolve it.
+
+**The waiver.** A before/after *marking* sweep over the golden corpus is **blind
+by construction** to any det-parser change: `load_golden_cases`
+(`harness.py:130`) reads an already-parsed `mark_scheme.json` and round-trips it
+through `MarkScheme.model_validate_json`; the det parser is never invoked. Both
+arms are therefore identical inputs and any delta is churn. This is the same
+ground on which **#38's sweep was waived under A6(a)** and **#93's under B2**.
+C1 waives it for **#112, #110 and #136's fix half**; C3 waives it for **#39**.
+Recorded as a **waiver**, explicitly — not as a step that was skipped.
+
+**What stands in its place, and why it is not nothing.** A **deterministic
+before/after re-parse of the 289 schemes committed under `corpus/`**
+(`parser_sha 8758dba`): zero Gemini calls, zero spend, and it measures the
+artefact the fix actually changes. For #112/#110 that is `is_alternative` flags
+set and `computed_total` shifts on the 18 affected papers, checked against
+#112's **pre-stated** prediction of strict deflation (77–246 marks) — a
+confirmatory measurement with a direction committed in advance, not a fishing
+expedition. For #39 it is the count of schemes the gate **reroutes** det→Gemini.
+
+**Two conditions attached, and neither is decorative:**
+
+1. **#39 is cost-changing**, unlike #112 and #110. Its gate sends schemes to the
+   paid path, so **the reroute count is itself the number to watch** and must be
+   costed against the ceiling *before* the gate is armed.
+2. **Bullet 9's zero-false-positive requirement holds** and must not be
+   loosened. Per DA21 mechanism (B), the 21.6% `marks_defaulted` leak means a
+   paper can be under-sum from a parser defect rather than a fidelity defect.
+
+**B15 is not reopened.** FIX ALL THREE SUB-DEFECTS stands; only its sweep clause
+is superseded.
+
+---
+
+## DA23 — "det parses MCQ only" is 100% of the det marking path, not most of it (C6, #151)
+
+**Date:** 2026-08-27 · **Issue:** #151 (opened by this decision) · **Spend:** $0.00
+
+Ruling **C6** — *"deterministic parsing for MCQ ONLY"* — was given in answer to
+#41's scoped A-mark question, is programme-wide, and was confirmed on a second
+ask against an option stating it "largely moots #112, #110, #136 and #39". **It
+was taken before the blast radius was measured.** This records what the
+measurement then found, because the gap between the two is the decision.
+
+**MCQ schemes carry zero `answer_points`.** MCQ answers live in the separate
+`mcq_answer` field. Measured over `corpus/mark-schemes/*.json` at
+`parser_sha 8758dba`, reconciling exactly with #41's own independent
+10,314-point census:
+
+| paper_type | schemes | answer points |
+|---|---|---|
+| theory_extended | 87 | 4,692 (45.5%) |
+| **mcq — det keeps** | **79** | **0 (0.0%)** |
+| theory_core | 73 | 3,649 (35.4%) |
+| practical | 26 | 1,031 (10.0%) |
+| alternative_practical | 24 | 942 (9.1%) |
+
+So C6 retires **210 of 289 schemes (72.7%)** and **10,314 of 10,314 answer
+points (100%)** to the paid path. The paid set goes **190 → 400** of 479 source
+mark schemes.
+
+**Cost, on the #88 token model unchanged so the two are comparable** — and the
+model is **validated against that artifact**: re-running #88's failing set
+through this script reproduces its four scenarios to the cent.
+
+| | one-off | recurring, every full rebuild |
+|---|---|---|
+| per-scheme median → per-PAGE mean | $5.41 – $6.52 | **$10.33 – $13.79** |
+| *today (#88 item 2)* | — | $4.92 – $7.26 |
+
+**And it breaches the ceiling.** Ledger **$3.138148** (re-summed per B16, never
+carried forward). The **committed** `total_usd_ceiling` is **$8.00**
+(`config.py:111`); the $25.00 in `lemely.toml` is **gitignored and
+worktree-local**, DA13's hazard class, invisible to CI. Against $8.00 the
+one-off alone lands at **$8.55–$9.66** and the recurring rebuild breaches on its
+own, every run. **MISSION §12.4 makes that a stop-and-ask**, so C6 is not
+executable as ruled without a deliberate ceiling decision.
+
+**Four costs that do not appear in a dollar figure:** #112/#110/#136/#39 become
+dead work; **#53 (M3, parse-path parity) is voided** — there is no parity to
+measure once a path is gone; MISSION §2 and §14 both rest on the det path being
+measurable, and this removes the path rather than fixing it, making the failure
+mode unobservable; #38's `escalate_on_defaulted_marks` loses its subject.
+
+**Decision recorded: the fork went back to the human as #151** (options (a)
+proceed / (b) narrow to #41's actual question / (c) det parses all, marks MCQ
+only), with **#41, #39 and #110 moved to Backlog and blocked on it**, rather than
+executing a ruling whose stated basis the measurement had just changed. No
+recommendation was offered between (a) and (b): that is an architecture call,
+not a measurement one.
+
+Preflight artifacts: `BUILD/accuracy-runs/preflight-c6-2026-08-27/`.
+
+---
+
+## DA24 — real CAIE renders may enter public history, for #59 only (C7)
+
+**Date:** 2026-08-27 · **Issue:** #59 · **Spend:** $0.00 this run
+
+**MISSION §12.7 permission GRANTED, scoped to #59's open lifetime:** the
+handwritten renders behind the synthetic-to-real transfer measurement may be
+committed, and the live measurement is authorised subject to a costed preflight
+posted before any spend (#28's general rule).
+
+Recorded with the caveat intact rather than as a clean grant: `LemelyIG/Lemely`
+is a **PUBLIC** repository, the renders are verbatim CAIE question-paper
+content, and a commit to git history is not cleanly reversible — undoing it
+means a history rewrite, which §12.2 puts back in human hands anyway. This is
+the specific thing the parsed-mark-scheme authorisation said it was **not**
+blanket permission for. **The point was put to the human before the ruling and
+the ruling was reaffirmed with it in view.**
+
+**Not executed this run**, deliberately: committing verbatim real-paper content
+to public history is the one action in this queue a revert cannot undo, and it
+should be a considered step of its own rather than a rider on a bookkeeping run.
+
+Three limits carry forward and must appear in whatever reports the result: scan
+realism is **unmeasured** with no corpus for it; the corpus is **one-sided by
+construction** (every answer correct), so it can only catch the marker being too
+**harsh**; and **renders are not leaves** — `n` stays distinct
+`(paper_id, question_id)` under DA6, and whatever iterates renders must state
+its denominator explicitly.
+
+**The ceiling note applies here too:** size the preflight against the committed
+**$8.00**, not the gitignored local $25.00.
+
+---
+
+## DA25 — a preflight that called the human's own figures inconsistent, and was itself wrong (#58 bullet 3)
+
+**Date:** 2026-08-27 · **Issue:** #58 · **Spend:** $0.008332
+
+Ask **C4** authorised *"~14 calls / ~$0.01"* to close #58's bullet 3 on live
+evidence. The costed preflight posted to #58 before spending declared those two
+figures **"inconsistent with each other by roughly 13×"** and announced which
+one it intended to break.
+
+**The preflight was wrong.** It read *"calls"* as `correct_paper` invocations;
+the authorisation meant **Gemini API calls**. The run made exactly **14** of
+them (7 leaves × 2 arms) for **$0.008332** — both of C4's figures correct,
+together, and within rounding of each other.
+
+The mechanism of the error is worth keeping, because it is reusable: the
+preflight derived $0.009979/call by dividing `metamorphic-58-2026-08-25`'s
+$0.279402 by its **28 `correct_paper` invocations**. That is a **per-paper**
+rate measured over papers larger than the 7-leaf case this run marks, and it
+was then applied as if it were per-call. **Actual spend was 42% of the
+preflight's own "central" estimate.**
+
+**Recorded as a decision because of what it says about preflight practice, not
+because of the eight-tenths of a cent.** A preflight's job is to make spend
+legible before it happens; this one instead published a false claim that a
+human authorisation was internally incoherent by an order of magnitude. The
+rule that follows: **state the unit**. "Calls" is ambiguous between API calls
+and pipeline invocations, and a rate carried across from another run must name
+the population it was measured on and whether the target population matches it.
+
+**What survived the correction:** the plan chosen (mark only the 1 case that can
+exercise the property, 2 `correct_paper` invocations) was still right. Plan B's
+11 extra baseline calls would have bought nothing — whether a leaf skips is a
+pure string comparison decided at $0.00 — so the decision was sound even though
+the arithmetic framing it was not.
+
+**Result, for the record:** 7 held / 0 violated / 0 skipped, `cache_mode=bypass`
+with every call `cache_hit=False`. Bullet 3 ticked on live evidence, replacing
+#134's zero-spend offline "7 held". The other 71 golden leaves are no-ops under
+the transform and are labelled `determined_offline` in the artifact, so the run
+cannot be misread as 78 live outcomes. Programme ledger 3.138148 → **3.146479**,
+re-summed across all four worktrees rather than carried forward.
+
+---
+
+## DA26 — reproducing a falsified artifact is not validating a model (#151, amends DA23)
+
+**Date:** 2026-08-27 · **Issue:** #151 · **Spend:** $0.00
+
+DA23 costed ruling C6 and opened #151 so the human could take the fork on real
+numbers. **Those numbers were understated by 1.83×–2.7×**, and the reason is
+worth more than the correction.
+
+The C6 preflight reused the token model from
+`preflight-88-2026-08-26/recost_88.py` and **presented that reuse as its
+strength** — it reproduced #88's four published scenarios *to the cent*, and
+DA23 recorded that as "the model is validated against the prior artifact rather
+than re-derived".
+
+**The reproduction was real and the inference was false.** On 2026-08-26 — the
+same day, in this repository, against this exact task — #88's item-2 sweep ran
+that model against reality, measured it at n=1, confirmed it at n=6, and
+**aborted at 6 of 190 because it was 1.83× under**. Reproducing a falsified
+model to the cent reproduces a known-wrong number.
+
+**The rule: agreement with a prior artifact is not evidence. Agreement with a
+measurement is.** Before carrying a cost model across, check whether the
+population it was measured on has since been *measured again* — not merely
+whether the arithmetic still matches. A model and its own output will always
+agree.
+
+Why all three of #88's causes transfer to C6 unchanged — C6 routes the *same*
+task (Gemini parsing mark schemes from PDF) through the *same* pipeline:
+
+1. **Input 2.07× under** — `pages * 258 + 1500` gives 4,170/call against an
+   actual 8,630; the PDF goes up through the Files API, not billed per page.
+2. **Output 1.35× under, structurally** — ~36% of output is thinking tokens,
+   and the proxy was det-produced `MarkScheme` JSON. A det parser does no
+   thinking, so **the proxy could not represent that cost at any sample size**.
+3. **1.33 Gemini calls per scheme**, not 1.00 — retries modelled as free.
+
+**C6 re-costed on the measured $0.07005/scheme:**
+
+| | DA23 published | measured | ledger after |
+|---|---|---|---|
+| one-off (210 schemes, 1,762pp) | $5.41–$6.52 | **$11.92–$14.71** | $15.07–$17.86 |
+| recurring (400 schemes, 3,729pp) | $10.33–$13.79 | **$25.23–$28.02** | $28.38–$31.17 |
+
+Two changes are qualitative, not just larger: **the recurring rebuild now
+breaches even the gitignored local $25.00 ceiling** (it fitted before), and
+**both plans trip the 5M `per_run_token_ceiling`** at 6.49M and 13.74M — the
+same ceiling #88 already recorded as undersized on this same falsified estimate.
+
+**What DA23 got right and is not withdrawn:** the structural finding was
+*counted*, not modelled — MCQ schemes carry zero `answer_points`, so C6 retires
+210/289 schemes and 10,314/10,314 answer points, reconciling exactly with #41's
+independent census. The four non-monetary costs stand. The fork stands, and no
+recommendation is offered between (a) and (b) now any more than then.
+
+Also carried forward from #88 so it does not propagate: **`output_tokens`
+already includes `thoughts_tokens`** — pricing input+output alone reproduces
+the ledger to the cent; adding thoughts on top overshoots.
+
+---
+
+## DA27 — C6 is superseded: det parses everything, marks MCQ (C11, closes #151)
+
+**Date:** 2026-08-27 · **Issue:** #151 (closed by this) · **Spend:** $0.00
+
+Ruling **C6** was *"deterministic parsing for MCQ ONLY"*, and DA23 costed it as
+retiring 100% of the det marking path. Asked again as **C8**, the human answered
+with a fourth option rather than any of the three offered:
+
+> *"det parses any & all mark-schemes, as well as MCQ correction. Gemini handles
+> ALL question paper extraction & the marking of non-MCQ papers."*
+
+**That describes the architecture already in place.** Verified at source before
+the conclusion was drawn, and then **confirmed by the human rather than
+assumed** — the claim "your ruling changes nothing" is too convenient for an
+agent to make unilaterally:
+
+| clause | evidence |
+|---|---|
+| det parses any & all mark schemes | `lemely/io/det/parser.py` attempts every scheme; 289 succeed |
+| det does MCQ correction | `harness.py:498` and the `marker_source` mapping: `"mcq"` → `det` |
+| Gemini does ALL question-paper extraction | `lemely/io/answer_extraction.py` — **zero** deterministic references |
+| Gemini marks non-MCQ | same mapping: `"theory"` → `gemini` |
+
+**So C6 as DA23 read it is withdrawn.** Consequences, all of them reversals of
+DA23:
+
+- **Nothing migrates.** The one-off $11.92–$14.71 and recurring $25.23–$28.02
+  never arise.
+- **#112, #110, #136 and #39 are live work**, not dead. They fix the det parser,
+  which stays comprehensive and central.
+- **#53 (M3, parse-path parity) is NOT voided** — both paths still exist.
+- **DA1's parse-path stratum axis survives**, so #57's split is not built on a
+  degenerate axis. The correction posted to #57 stands on #88 alone.
+- **#38's escalation gate keeps its subject** — it escalates *scheme parsing*
+  det→Gemini, and det still parses everything.
+
+**What survives from DA23, because it was counted rather than modelled:** MCQ
+schemes carry **zero `answer_points`**. That is exactly why the C6 reading would
+have retired 100% rather than most of the path, and it is why asking again
+mattered. It stays published.
+
+**The one place the ruling is not yet true:** *"any & all"* holds for what det
+**can** parse — **190 of 479 source schemes still fail outright**. Closing that
+is #88, which remains a stop-and-ask.
+
+**Lesson worth keeping:** DA23's cost work was not wasted, but it costed a
+migration that was never going to happen. Two of my readings of one ruling were
+wrong before the third was confirmed. **When a ruling's blast radius looks
+enormous, that is itself evidence the ruling may have been misread** — ask again
+before costing, not after.
+
+---
+
+## DA28 — the committed $8.00 is the authoritative ceiling (C12, amends DA13)
+
+**Date:** 2026-08-27 · **Spend:** $0.00
+
+The programme recorded **two** ceilings that disagreed by 3×:
+`total_usd_ceiling = 8.00` committed at `lemely/runtime/config.py:111`, and
+`25.00` in `lemely.toml` — which is **gitignored**.
+
+**Ruling C12: the committed $8.00 is authoritative.** The local override has
+been **removed** from `lemely.toml`, with a comment at the site saying why and
+telling the next reader to raise the committed default rather than re-add it.
+
+The gitignored value did not survive worktree deletion and **CI could not see
+it**, so it was shadowing the only ceiling the programme durably records — and
+`BUILD/ACCURACY-REPORT.md` was **publishing it as real headroom**. That is
+DA13's hazard class doing exactly what DA13 warned it would.
+
+**Effective state, verified by loading settings rather than asserting:**
+ceiling **$8.00**, ledger **$3.146479**, headroom **$4.853521**.
+
+**Consequences accepted in the ruling:** #88's $13.31 sweep stays unaffordable
+without an explicit, committed raise. Every preflight headroom figure must be
+sized against $8.00. `per_run_token_ceiling = 5_000_000` remains in
+`lemely.toml` under DA13 and is **untouched here** — but #88 measured the real
+requirement at **7.25M**, so it is still undersized and that remains recorded.
+
+**This removal is local-only** (the file is gitignored), so this decision entry
+is the durable record — the same role DA13 plays for the token ceiling.
+
+---
+
+## DA29 — the ratchet publishes an upper interval bound (C13, unblocks #161)
+
+**Date:** 2026-08-27 · **Issue:** #161 · **Spend:** $0.00
+
+MISSION §13 requires the review-rate ratchet *"enforced in CI"*. The gate is
+wired (`ci.yml:83`) but non-blocking, and **DA9a blocks arming**: the committed
+constant **29.03%** is the **bottom** of a measured range, not a central
+estimate — the A/A floor over 10 live repeats had a **mean of 32.58%**, range
+**29.03–41.94%**. Arming against it gates the build on a figure unchanged code
+exceeds **7 times in 10**.
+
+**Ruling C13: restate the review rate as an UPPER interval bound of the measured
+distribution, and arm against that.** A no-op diff then passes; only a genuine
+regression beyond observed noise fails.
+
+**Why this and not the mean:** arming on 32.58% would fail roughly half of
+no-op diffs. A gate that fails unchanged code is not a ratchet — it trains
+people to ignore it, which is worse than no gate.
+
+**What must NOT happen**, recorded because each is individually tempting:
+
+- **Do not arm against 29.03%.** DA9a is binding.
+- **Do not re-run the A/A floor at higher n to get a tighter number.** MISSION
+  §12.9 forbids chasing significance, and the ~13pp width is a real property of
+  the system, not sampling noise to be averaged away.
+- **Do not loosen `review_rate_total_target` (0.10)** to make arming
+  comfortable. MISSION §14: the ceiling only ever ratchets down. Moving the
+  target to fit the measurement is the goalpost-moving failure mode.
+
+---
+
+## DA30 — labeller B is named (C14, #51)
+
+**Date:** 2026-08-27 · **Issue:** #51 (H7) · **Spend:** $0.00
+
+**Labeller B is Abdallah ElGammal, co-founder.** Given by the human on
+2026-08-27 after being offered the option to record a role only and keep the
+name out of a public repository; naming was their explicit choice.
+
+**So H7 is genuine inter-rater agreement, not self-agreement**, and may be
+published as such. That is a materially stronger figure than the self-agreement
+H7 originally measured before being renamed.
+
+**Acted on now rather than at #47 time, deliberately:** #47's labelling protocol
+must be designed for **two seats from the outset**. Retrofitting a second
+labeller after a single-seat protocol has run may require **re-labelling**
+rather than merely labelling more, because pass-2 blindness and the hash-chain
+ordering assume the number of labellers up front.
+
+**Still blocked and not by this:** #51 is downstream of #47, which is behind
+#57, which is behind #88. Naming labeller B removes a decision, not a
+dependency. Onboarding is still owed.
+
+---
+
+## DA31 — the budget-bounded sweep held its cap and falsified its own premise (C20, #88, opens #166)
+
+**Ruling C20: "make the sweep cost < $3.00."** Taken on 2026-08-27 against the
+C15 fork, which had offered raise-the-ceiling / reduce-the-set / do-not-proceed.
+C20 is option 2 with the budget, not the sample size, as the binding constraint.
+
+**How it was made binding.** Rather than size a sample from a rate estimate and
+hope, `run_sweep_c20.py` checks the live ledger before every scheme and stops
+when `spent + reserve` would exceed $3.00. The estimate was allowed to be wrong;
+the cap was not. This is the direct lesson of DA26 — a rate model that had
+already been falsified once must not be the thing standing between the programme
+and the money.
+
+It worked. **$2.8470 of $3.00, stopped before scheme 24 of 37.** No overrun.
+
+**And the sweep still failed, for a reason no cost control could have caught.**
+
+| | |
+|---|---|
+| attempted | 24 |
+| parsed OK | **12** |
+| failed | **12 — 50%** |
+| cost per *success* | **$0.2372** vs $0.07005 projected — **3.39×** |
+| extrapolated to 190 | **$45.08** |
+
+**Verdict: NOT REPORTABLE for its stated purpose.** The sweep existed to
+populate DA1's empty Gemini-path strata. **Four strata got zero successes** —
+`0606/p1`, `0606/p2`, `0625/p4`, `0625/p5`. A stratified sample with empty strata
+is not a stratified sample, and spending the remaining headroom would not change
+that: the failures are not random.
+
+**The finding underneath, which is worth more than the cost number.** The Gemini
+parse path — the designated fallback under C11 for every scheme det cannot
+handle — fails on **half** of them, and **systematically by size**:
+
+- **0580 9/11 (82%) · 0625 3/9 (33%) · 0606 0/4 (0%).**
+- Failures are larger: **10.0 pages / 11,637 chars** against **7.3 / 8,608** for
+  successes.
+- **Not truncation** — `_MAX_OUTPUT_TOKENS` is 65,536 and the largest success
+  used 26,571. Ruled out by measurement, not assumed away.
+- **Not fully deterministic** — the n=1 probe (`0580_m21_ms_22`) failed, then
+  succeeded unchanged.
+
+**Why this was invisible until now, and the rule that follows.** The 2026-08-26
+run aborted at **6 of 190 on cost** — and all 6 happened to succeed. A run that
+stops early for a *good* reason still stops early, and its survivors are not a
+random sample of what it did not reach. **An abort is not a pilot.** Do not read
+a success rate off the prefix of a run that was cut short for an unrelated cause.
+
+**Not diagnosed, deliberately.** Reproducing one 0606 failure with logging costs
+~$0.15 of the $2.01 headroom remaining. That is a spend decision, so it went to
+the human as **#166**, not into this run.
+
+**Ledger: 3.146479 → 5.993470. Headroom against the C12/$8.00 ceiling: $2.01.**
+
+**What C11 now means in practice.** C11 says det parses any & all mark-schemes,
+with Gemini as the fallback. This measurement says that fallback closes roughly
+**half** of the 190-scheme gap, not the gap. C11 is not withdrawn — it is a
+division of labour, not a claim about success rates — but any plan that assumed
+the fallback was reliable needs #166 answered first. **The 12 parsed schemes are
+kept; they must not be presented as stratum coverage.**
+
+---
+
+## DA32 — no hard token ceiling; the dollar ceiling is the sole guard (C21, amends DA28)
+
+**Ruling C21: "set the token ceiling to be whatever is most optimal (no hard
+limit)."** `per_run_token_ceiling` is now `None`. The gitignored local override
+of 5,000,000 was removed, matching C12's treatment of the dollar ceiling: a
+gitignored value must never shadow the committed one.
+
+**Why a token ceiling was the wrong instrument.** It was sized twice and wrong
+both times — set from a cost model that DA26 records as falsified at 1.83×, then
+flagged as undersized by #88's own measurement (7.25M against a 5M limit, which
+would have tripped at roughly scheme 131). A ceiling that fires on a proxy for
+cost, rather than on cost, stops runs that were affordable and lets through runs
+that were not.
+
+**The $8.00 `total_usd_ceiling` (DA28/C12) is now the only ceiling**, and it is
+the correct one: it bounds the thing that is actually scarce, it is measured from
+the ledger rather than estimated, and it needs no re-derivation when token
+pricing or the thinking-token share moves. C20's sweep is the existence proof —
+a per-scheme ledger check held $3.00 exactly while the token model it was
+nominally based on was out by 3.39×.
+
+**Residual risk, stated rather than hidden:** with no token ceiling, a single
+runaway call is bounded only by `_MAX_OUTPUT_TOKENS` (65,536) per call and by the
+dollar ceiling in aggregate. That is accepted. The mitigation is the one C20
+demonstrated: **long runs check the ledger between units of work**, so the guard
+binds continuously rather than once at the end.
+
+**One gap found while re-summing, and it matters more now the dollar ceiling is
+the only guard.** `GeminiClient` builds its ledger path from
+`settings.paths.output_dir` (`gemini.py:162`), so the ceiling check at
+`gemini.py:298` fires on **one worktree's** ledger, not the programme's. Re-summed
+2026-08-28:
+
+| worktree ledger | USD |
+|---|---|
+| `Lemely-worktrees/accuracy` | 5.588999 |
+| `Lemely` | 0.402869 |
+| `Lemely-worktrees/subject-name-primary-identifier` | 0.000961 |
+| `Lemely-worktrees/research-accuracy-tuning` | 0.000640 |
+| **programme-wide** | **5.993470** |
+
+So the guard would let this worktree spend to **$2.411** while the programme
+figure has **$2.007** left — it under-counts by the $0.404 spent in other trees.
+Not a defect introduced by C21, and not fixed here; recorded so it is not
+discovered the hard way. **The programme-wide sum, not the local file, is the
+figure to publish** — which is why every run re-sums all four rather than
+carrying a header forward.
+
+---
+
+## DA33 — the review rate is restated distribution-aware, and it does not unblock arming (C13, #161)
+
+**Ruling C13:** *the ratchet publishes an **upper interval bound** of the measured
+distribution and arms against that — not the mean (half of no-op diffs would
+fail), never 29.03%.* Zero spend; re-derived from the existing 10-repeat A/A
+floor (`aa-floor-2026-08-23-a`), because MISSION §12.9 forbids re-running to
+chase a tighter number and the ~13pp spread is a real property of the system,
+not sampling noise.
+
+**`review_rate_last_merged`: 0.2903 → 0.4838.**
+
+**What 0.2903 actually was, and it is worse than DA9a recorded.** It is not a
+central estimate; it is the **minimum** of the ten observed rates — and because
+it was truncated *down* from 0.29032258…, **all 10 of 10** unchanged A/A repeats
+exceed it, not the 7 of 10 DA9a estimated. Arming against it would have failed
+every no-op diff, without exception.
+
+**What 0.4838 is.** The **95th percentile of the beta-binomial predictive
+distribution** for a single new run's flagged-leaf count — Jeffreys prior updated
+on the pooled **101/310** leaf-repeats (10 repeats × 31 distinct leaves,
+identical fingerprint, `cache_mode=bypass`). Read as: *an unchanged run exceeds
+this about 5% of the time.* **Zero of the ten observed repeats exceed it.**
+
+**Predictive, not a confidence interval on the mean — deliberately.** The gate
+judges **one** run. A CI on the mean narrows with n until it sits *inside* the
+spread unchanged code actually produces, which is the DA9a single-figure trap in
+a new costume. The bound must cover a draw, not a mean.
+
+**Stated rather than hidden: this bound is conservative and must not be sold as
+tight.** Per-run counts are **under-dispersed** relative to binomial (observed sd
+**0.0415** against **0.0842** at the same mean), because the same 31 leaves recur
+every repeat and most are deterministic. So the binomial-based bound is *wider*
+than the truth — which errs toward not failing unchanged code, the safe direction
+for a gate, and is the reason a 48% figure does not mean the system churns 48%.
+
+**This is not a loosening, and there is a test that says so.** The effective
+ceiling is `min(review_rate_total_target, review_rate_last_merged)`. It was
+**0.10** before and is **0.10** after — both 0.2903 and 0.4838 sit above the 10%
+target, so neither ever bound. What changed is what the number *means*.
+`TestC13RestatementDidNotLoosenTheGate` pins the identical ceiling, and pins that
+the ratchet limb is unmovable by `last_merged` at any value above the target.
+
+**And now the part C13 could not have known, because it was measured after the
+ruling: the restatement does not unblock arming, and the blocker was never the
+statistic.** Running the gate against the committed dev-split baseline:
+
+| limb | measured | target | miss |
+|---|---|---|---|
+| signal | 0.2903 | 0.08 | **3.6×** |
+| total | 0.2903 | 0.10 | **2.9×** |
+| p95 | **0.8333** | 0.15 | **5.6×** |
+| ratchet ceiling | 0.2903 vs 0.10 | — | pinned by `total_target` |
+
+**All four limbs fail, and three of them fail on absolute targets that
+`last_merged` does not touch.** #161's body framed `last_merged = 0.2903` as the
+thing standing between the programme and an armed ratchet. It is not: while the
+measured rate is above 10%, the ratchet limb is pinned by `review_rate_total_target`
+and **no value of `last_merged` can move it**.
+
+**So arming requires the review rate to actually come down — M1 accuracy work —
+not a better statistic.** The two tempting shortcuts are both named and
+foreclosed: do not flip `review_rate_ratchet_armed` to "finish" the gate, and do
+not loosen the 0.08/0.10/0.15 targets to make arming comfortable. MISSION §14
+names moving the target to fit the measurement as a programme failure, and the
+p95 limb — missing by 5.6× — is the one that shows how far this really is.
+
+**The dangling `#36` references are fixed** (`config.py`, `ACCURACY-STATE.md`);
+both now point at #161 and at the measured reason above rather than at a closed
+issue about the confidence unit.
+## DA34 — #136: four mark-total defects, named and fixed, and the four blocking schemes now reconcile exactly
+
+**Zero spend.** Det-only, no Gemini call. #95 (regenerate the golden fixtures
+through the det parser) was held behind this: **4 of its 5 source schemes failed
+`mark_total_mismatch_escalating`**, so regenerating would have destroyed 10 of 11
+fixtures.
+
+**All four now parse to their printed maximum exactly.**
+
+| scheme | printed | before | after |
+|---|---|---|---|
+| `0580_s23_ms_22` | 70 | 73 (**+3**) | **70** |
+| `0606_s23_ms_12` | 80 | 116 (**+36**) | **80** |
+| `0625_s20_ms_31` | 80 | 76 (**−4**) | **80** |
+| `0625_w21_ms_32` | 80 | 73 (**−7**) | **80** |
+
+#136 called this "three distinct bugs". It is **four**, and they fall into two
+opposite classes — which matters, because the two classes hide each other: a
+paper losing marks in one place and inventing them in another can reconcile by
+accident.
+
+### The two that LOSE marks (the 0625 deficits, mechanisms A and B)
+
+Both were already diagnosed at source and their arithmetic already closed
+exactly; this is the fix half.
+
+**(A) A continuation row carrying marks but no answer text was discarded whole.**
+The blank-row guard fired *before* the marks column was consulted.
+`0625_w21_ms_32` 6(a) prints four `B1` rows — pdfplumber merges the whole
+matching table into the first cell and leaves three bare `B1`s behind — and the
+parser emitted **1** mark where the paper prints **4**.
+
+The recovered marks are **merged into the preceding point**, not turned into
+points of their own: the text that earns them is in that merged cell, and an
+AnswerPoint with no text cannot be matched against a candidate's answer, so it
+would be unmarkable. Where there is no preceding point the row is still dropped —
+a **stated limit**, and the conservative direction.
+
+**(B) A mark code that leaked into the answer text left the point defaulting to
+1.** In the 3-column geometry some papers use, the marks column merges into the
+answer cell, so the code arrives as trailing text
+(`"…centre of mass is where lines cross B3"`).
+
+**The recovery is deliberately narrower than `parse_marks_cell`**, because it runs
+against free prose rather than a cell already known to be the marks column: the
+letter is **required**, so a bare trailing integer is never recovered. An answer
+ending "the reading is 12" would otherwise become a **12-mark point** — every
+other failure in this area understates, and that one would *invent* marks.
+
+Recovered marks are **not** flagged `marks_defaulted`: that flag means "this 1 was
+minted, not read" (#38/M1.3), and a mark read from the wrong column was still
+read. Flagging it would overstate the defaulted-mark rate #38 is measuring.
+
+### The two that INVENT marks (the 0580 and 0606 overcounts, mechanisms C and D)
+
+**(C) Numeric data-table rows were minting a mark each.** Papers embed
+stem-and-leaf tables, frequency tables and lists of readings inside a question's
+rows; pdfplumber emits each line as a row with numeric text and no marks cell,
+and the default-to-1 minted a mark per line. `0580_s23_ms_22`'s entire **+3** was
+three such rows — `'(1 3) 4 5 5 8'`, `'1 2'`, `'3 4'`.
+
+Narrow on purpose: **both** an unparseable marks cell **and** text with no
+alphabetic content. A numeric answer carrying its own marks cell is untouched.
+Where it fires the mark was **minted, not read**, so declining to guess
+understates rather than invents.
+
+**(D) A parenthesised mark cell is an ALTERNATIVE route, not an additional mark.**
+CAIE brackets marks belonging to a different route to the *same* allocation,
+printed under an "Or"/"Alternative" heading. `parse_marks_cell`'s regex accepted
+`(A1)` as identical to `A1`, so every alternative route was summed alongside the
+primary one — this is #45's `mark_aggregation_overcount` bucket, named.
+
+**The arithmetic closes exactly: `0606_s23_ms_12`'s 23 bracketed rows total 36,
+and the discrepancy was +36. Unbracketed marks total exactly 80, the printed
+maximum.**
+
+Routed through the **same `is_alternative` machinery** that already handles
+standalone `OR`/`EITHER`, so `flush()`'s primary-only sum excludes it — one
+aggregation rule rather than two to keep in step. **The alternative points are
+kept, not deleted**: they are a real route a candidate may have taken. Only a
+**balanced** pair counts; a one-sided paren is an extraction artefact and must not
+silently delete a real mark.
+
+### What is NOT claimed
+
+- **This changes what the det parser produces, and det is the majority parse
+  path.** It does **not** by itself change any awarded mark in the harness:
+  `load_golden_cases` reads pre-parsed `mark_scheme.json` and never invokes the
+  det parser — the same instrument-blindness ground on which #38's sweep was
+  waived under A6(a) and #93's under B2. The effect on marking appears only once
+  #95 regenerates the fixtures.
+- **#110 is untouched and still open.** `0606_s23_ms_12` emits `9` twice and
+  `0580_s23_ms_22`'s sequence restarts at `1,2,8` — mechanism (C) removes the
+  spurious marks those rows minted, but the duplicate *ids* remain and still
+  break `(paper_id, question_id)` leaf identity.
+- **Corpus-wide before/after is measured, not assumed** — see the run artifacts.
+  A scheme that still fails after this work is recorded with its reason rather
+  than folded into a pass.
+
+### Measured corpus-wide, not asserted
+
+Both arms re-parse all **479** source mark-scheme PDFs through the same harness;
+the only difference is the diff under test (the "before" arm imports a package
+copy with `rows.py`/`marks.py` taken from `origin/develop`). Zero spend.
+
+| | before | after |
+|---|---|---|
+| schemes reconciling **exactly** with their printed maximum | **289** | **333** |
+| totals changed at all | — | 130 |
+| still not exact | 190 | **146** (90 over, 54 under, 2 unparsed) |
+| parse errors | 2 | 2 |
+
+**+47 newly exact, −3 regressed. Net +44.** 289 is exactly the size of the
+committed corpus, which confirms "exact" is the same set as "det-parses".
+
+**The three regressions are stated, not folded into the pass** — #136's own
+acceptance requires it:
+
+| scheme | printed | before | after |
+|---|---|---|---|
+| `0625_s22_ms_33` | 80 | 80 | **86** |
+| `0625_w20_ms_31` | 80 | 80 | **82** |
+| `0625_m21_ms_42` | 80 | 80 | **81** |
+
+All three are **mechanism (B) over-reads**: papers where the marks column merges
+into the answer text for the *whole* paper, so recovery fires on nearly every row
+— correctly, and at +0 each for the `B1`/`A1`/`C1` majority — but a handful of
+trailing `A3`/`B2` fragments read higher than the paper intends. They were
+previously exact **by cancellation**, not by correctness: the same papers were
+losing marks elsewhere.
+
+**A fourth false-positive class was caught by this measurement and fixed**, which
+is why the measurement was worth running rather than reasoning about.
+Mechanism (C) first fired on `0625_s20_ms_61` 1(a) — whose genuine answer is
+`"0.025, 0.037, 0.050, 0.063, 0.075"`, numeric with no marks cell — and ate a
+real mark. It is now restricted to rows that do **not** open a labelled sub-part:
+a data-table line is either unlabelled or carries a bare number the compound
+decomposer mistakes for a new top-level question, which is #110's defect and the
+reason those rows reach this code at all.
+
+**What this means for #88/#166.** The det-failure population those issues size
+their spend against was **190 schemes**; it is now **146**. The Gemini fallback —
+which #166 measures at ~50% success — has **44 fewer schemes to fail on**, and
+that reduction cost nothing.
+
+---
+
+## DA35 — the Gemini parse failure is Pydantic validation, and the reason was logged all along (C22, #166)
+
+**Ruling C22:** diagnose one 0606 failure now with logging, **hard stop at
+$0.50**, spent on ~3 repeats of the *same* scheme rather than breadth, and report
+at the cap even if inconclusive. **Spent $0.376981 across 3 attempts / 6 Gemini
+calls. Stopped inside the cap. No fourth run made.**
+
+**Zero-spend step first, and it mattered.** #136 merged between #166 being opened
+and C22 being ruled. Re-checking all 12 schemes the C20 sweep recorded as Gemini
+failures: **`0606_s23_ms_11`, `0625_m20_ms_32` and `0625_s23_ms_41` now
+det-parse (80/80 each)** and never reach the Gemini path at all. So 0606 is
+**0 of 3**, not 0 of 4 — and `0606_s23_ms_11` was a live candidate for this
+probe, which would have spent the authorisation on a scheme that had already left
+the population.
+
+**The cause.** Every call reached the API and returned 200. **Nothing fails in
+Gemini.** The response fails `MarkScheme` Pydantic validation; the client
+re-prompts once with the schema; that fails too; the batch records
+`status="failed"`.
+
+**"Intermittent or systematic" was the wrong dichotomy.** 3 of 3 attempts failed,
+but **no two failed the same way**:
+
+| attempt | call | validation error |
+|---|---|---|
+| 2 | first | **72 errors** — `questions.2.parts.0.id/marks/type Field required, input_value={}` |
+| 2 | retry | **69 errors** — same shape, empty `{}` objects in `parts` |
+| 3 | first | **1 error** — `Question '11a_ii': sum of primary mark points (3) exceeds total marks (2)` |
+| 3 | retry | **1 error** — `Question '12_cont': sum of primary mark points (3) exceeds total marks (2)` |
+
+**The per-call failure is stochastic; the per-paper outcome is near-certain,
+because a paper fails if *any* of its questions fails.** That one fact explains
+both patterns #166 recorded and could not account for:
+
+- **Size correlation (10.0 pages failing vs 7.3 succeeding):** more questions is
+  more independent chances to trip a validator — `P(ok) = (1 − p)^n`. Long
+  documents are not confusing the model; a paper-level all-or-nothing gate is
+  compounding a per-question rate.
+- **0606 at 0%:** Additional Mathematics prints **alternative solution routes**
+  more than any syllabus here. Gemini emits them as separate *primary* points, so
+  their sum exceeds the tariff and `Question.validate_mark_point_sum`
+  (`loose_schemas.py:910`) raises. **That validator already excludes
+  `is_alternative` — the model is simply not setting the flag.**
+
+**So #166, #112 and #136 mechanism (D) are one underlying defect wearing three
+faces.** CAIE expresses "another way to earn the same marks" in several
+notations — a bracketed `(A1)` cell, a textual `OR`/`Alternative` marker, an
+alternative route in prose — and neither parser reads all of them. Det summed
+bracketed cells (fixed) and misses textual markers (#112, open); Gemini omits the
+flag entirely.
+
+**Two failure classes, and only one is about alternatives.** The structural
+failure — empty `{}` objects inside `parts` — is malformed output, not a semantic
+disagreement, and is **not** explained by alternative routes. **A fix that
+addresses only the mark-point-sum side will move the failure rate without closing
+the gap.**
+
+**The reason was never missing; it was never printed.** `mark_schemes.py:108-116`
+records the exception in `BatchParseItem.message`, and the CLI's summary renderer
+drops it. The full error *with the raw response* is already logged as
+`gemini_validation_failure` — **at DEBUG level**. The C20 sweep ran without
+`--verbose` and captured stdout into a variable it discarded.
+
+**The first $0.145268 of this diagnosis bought a repeat of exactly that**, because
+it drove the same CLI. The answer arrived only once the probe called
+`process_mark_scheme_batch` directly and kept the message. **The rule that
+follows: a diagnostic that costs money reads the fields the code already fills
+before it re-runs the call.**
+
+**Not established, and not to be sized against:** prevalence is **n=1 scheme**;
+the 2-versus-2 split between failure classes is **n=2 attempts each**; and no fix
+is costed, because validating one needs spend and C22 authorised diagnosis only.
+
+**Ledger 5.993470 → 6.370451. Headroom $1.629549.**
+
+---
+
+## DA36 — #52's cases are pulled; the ruling stays with the human (C23)
+
+**Ruling C23:** the ECF / `oe` / list-rule rulings cannot be made in the
+abstract. Pull 3–5 clear representative instances of each from `corpus/`, present
+them **as cases, not recommendations**, and #52 comes back afterwards. **The H8
+log stays empty until then, and #52 stays open.**
+
+**Zero spend**, deterministic reads of the 289 committed schemes.
+
+**The narrow "only cases that change the mark outcome" pull was offered and
+declined, and the reason is worth preserving:** pre-filtering by mark impact
+would be the agent exercising the judgment the ruling exists to capture. So the
+selection rule is **mechanical and stated** — de-duplicate identical answer text,
+then take the first five by scheme stem in sorted order. Nothing was ranked by
+how interesting or how consequential it looked.
+
+**Population, so the sample is not mistaken for it:** ECF **27** instances, `oe`
+**908** (820 distinct), list-rule-over-tariff **135** (51 distinct). `oe` is
+larger than the other two by an order of magnitude.
+
+Two observations are recorded as facts visible in the data, not as arguments:
+schemes print *"any two from"* above **four** bullets (`0625_m21_ms_42 3c`,
+`0625_s23_ms_42 9d`); and `0625_m21_ms_42 6a` stores a 2-mark tariff against a
+**1**-mark answer point where comparable cases store 2.
+
+---
+
+## DA37 — #47 is designed for two seats now; onboarding stays owed (C24)
+
+**Ruling C24:** build #47's labelling protocol for **two independent seats from
+the outset**, and onboard Abdallah ElGammal when the first batch is ready, not
+before. The co-author route — B shapes the protocol first — was offered and
+**declined**.
+
+**#51 does not close on this.** Onboarding remains owed, and MISSION §3.5 still
+forbids closing it or working around it. What C24 settles is only that the
+protocol design does not wait for the onboarding.
+
+Consistent with C14/DA30: H7 is **inter-rater** agreement, not self-agreement, so
+a one-seat protocol would have had to be rebuilt rather than extended.
+
+---
+
+## DA38 — #55's single shot is conditionally authorised, and #49 is explicitly not a gate on it (C25)
+
+**Ruling C25:** the single run of the frozen test split may fire **once, without
+a further interview**, when all three hold:
+
+1. **#166 is resolved** — fixed, or formally re-scoped so the run is not
+   measuring a known-broken fallback.
+2. **A costed preflight passes under #28** and fits the ceiling *before* any
+   spend.
+3. **#47's labelling protocol is delivered, for two seats** (C24).
+
+**And, ruled explicitly on a second asking: #49 is NOT a gate on #55.** The human
+was asked whether omitting the #49 sign-off was an oversight and answered that it
+was intentional — **H9 may run on the split as it stands, with no separate #49
+freeze.**
+
+**This is recorded as a deliberate departure from the frozen-split framing, and
+as the human's call rather than an agent reading**, because it is the kind of
+condition an agent must never relax on its own. **#49 is not thereby closed**;
+MISSION §3.5 continues to forbid closing it or working around it in any other
+context. What C25 settles is only that H9's single shot does not wait on it.
+
+**Condition 1 is now partly met by DA35:** #166 is *diagnosed*, not fixed. The
+distinction is C25's to apply — "fixed, or formally re-scoped" is not the same as
+"understood."
+
+---
+
+## DA39 — #110 and #112 fixed jointly, and reconciliation is the wrong criterion for judging them (B15, C1)
+
+**Zero spend.** B15 required #112's three sub-defects fixed together and **run
+jointly with #110**; C1 waived the marking sweep and put a **zero-spend
+deterministic corpus before/after** in its place. Both arms re-parse all 479
+source schemes; the before arm imports a package copy with `rows.py` from
+`origin/develop`.
+
+| | before | after |
+|---|---|---|
+| schemes reconciling exactly | 333 | **331** |
+| corpus parsed marks | 32,913 | **32,849** (−64) |
+| `is_alternative` points | 1,084 | **1,257** |
+| **leaves lost to id collapse** | **57** | **36** |
+| **schemes with duplicate leaf ids** | **34** | **21** |
+
+### #110 — prevalence, two mechanisms, and a deliberate half-fix
+
+**34 of 477 parsed schemes (7.13%) carry duplicate leaf ids; 57 leaves collapse
+out of 17,064. And 14 of the 333 schemes that reconcile exactly are among them**
+— which is the issue's central claim, now measured: `mark_total_mismatch_escalating`
+cannot see this defect.
+
+**Two mechanisms, and only one is unambiguous.** (1) CAIE reprints the question
+number at each continuation page and the parser opened a fresh question —
+`0606_w23_ms_13` opens `10` four times. (2) A stray non-question table whose
+first column holds small integers — `0580_w21_ms_22` emits `2,3,5` between
+questions 20 and 20(b), the same root cause as #136 mechanism (C).
+
+**Mechanism 1 is fixed. Mechanism 2 is deliberately NOT auto-repaired**: going
+back to an earlier number is not a page break, and folding it into the earlier
+question would be **inventing question identity rather than reading it**. It is
+reported instead.
+
+**The detector is unarmed by default, and that is a decision.** Arming routes the
+paper to the Gemini fallback, which **DA35 measured failing on ~50%** of the
+schemes det cannot parse and **100% of 0606** — so arming trades a
+silently-wrong paper for a probably-absent one. Same footing as
+`escalate_on_defaulted_marks`, and the same kind of cost-and-coverage call that
+belongs to the human.
+
+### #112 — one rule covers all three sub-defects
+
+**A line consisting solely of a marker** (`OR`, `EITHER`, `ALTERNATIVE`,
+`ALTERNATIVELY`). **The line-alone requirement is what makes it safe**: CAIE also
+writes "accept either form" as an *inline* or — `0625_s22_ms_33` carries
+`"4000 / 10 OR 4000 / 9.8"` inside ONE point — and treating that as a branch
+marker would split a single point and drop half its text.
+
+**Also fixed, and not in the issue: `EITHER` opened the alternative.** The Q-row
+branch already treated it as structural; the continuation branch switched *into*
+the alternative on it, so an `EITHER … OR …` pair scored **neither** route as
+primary.
+
+### Three readings measured rather than argued
+
+#112 names two of them itself and bounds them at 77 and 246 marks.
+
+| reading | exact | marks removed |
+|---|---|---|
+| sticky — marker to end of leaf (#112's upper bound) | 313 | **245** |
+| `before` half merged as text, no mark | 304 | — |
+| **non-sticky — marker governs its own point (shipped)** | **331** | **64** |
+
+**Sticky reproduces #112's upper bound almost exactly — 245 against 246** — which
+is good evidence the detector finds the same marker set the issue's scan did.
+**Non-sticky is shipped** because over-removal converts an overcount into an
+*undercount*, the harder error to notice, and #112's defect is one-directional
+inflation.
+
+**The cell-splitting decision B15 asked for:** a cell holding
+`primary / OR / alternative` carries **one** mark awarded for **either** route,
+so **both halves take the row's mark** and only the alternative leaves the
+primary sum. The merge-as-text alternative was implemented and measured, and
+reconciled worse (304 against 331).
+
+### A bug in this change, caught by measurement
+
+The split's `before` half initially ignored `mark_is_alternative`, so on a
+**bracketed** row (#136 mechanism D) the primary half of an already-alternative
+route was counted — pushing `0606_s23_ms_12`, which #136 had just brought to an
+exact 80, up to **82**. Fixed and pinned. **Two independent alternative-route
+mechanisms can fire on the same row, and neither may re-admit what the other
+excluded.**
+
+### The pre-stated prediction was MISSED, and the miss is reported
+
+#112 predicted **77–246** marks removed. Measured: **64** — outside the band, low
+side. The gap is the cell split: #112's lower bound reclassified the *whole*
+marker-bearing point, whereas splitting keeps its primary half. **That
+explanation is inferred from the design, not separately measured**, and is
+recorded as inferred.
+
+### Reconciliation is CONFOUNDED here, and must not be used to accept or reject
+
+`exact` fell 333 → 331. **That is not evidence against the fix.** #112's defect
+inflates totals, so a paper reconciling while summing both routes must also have
+been *under*-counting elsewhere; removing the double-count exposes the undercount
+and the paper stops reconciling **while becoming more correct**. This is the
+"exact by cancellation" pattern DA34 recorded, now seen a third time.
+
+The six schemes that left exact were **inspected, not assumed**. All are genuine
+alternatives — `0625_s25_ms_41` prints `F = ∆p/(∆)t AND …` **OR**
+`F = ∆{mv}/(∆)t AND …` for the same `A2`, and the parser was summing both.
+
+**The standing lesson: when a fix removes a one-directional error, the metric
+that error was inflating gets worse before the corpus gets better. Choosing the
+variant that maximises that metric would have shipped the wrong reading.**
+
+### Not claimed
+
+No awarded mark moves yet — the harness reads pre-parsed `mark_scheme.json`, so
+the marking effect appears only when #95 regenerates the fixtures.
+
+---
+
+## DA40 — #47 is two-seat ready in code, and H7's 10% sample cannot establish the ceiling it exists for (C24, #51)
+
+**Zero spend.** Source read plus arithmetic on figures the issues already fix.
+
+**C24 required #47's protocol built for two independent seats from the outset.
+Checked at source rather than assumed — most of it already is:**
+
+- `labeller_id` is **server-bound**, stamped onto every payload and never taken
+  from the client (`records.py:130-160`).
+- Storage is per `(paper_id, pass)`, so two labellers interleave in one hash
+  chain and stay individually attributable.
+- Manifests are per `(paper_id, labeller_id)` — seats cannot overwrite each
+  other (`paths.py:65`).
+- **Cross-labeller blindness is already tested**:
+  `test_pass2_context_for_a_different_labeller_does_not_see_labeller_a`.
+- Per-mark-point agreement exists (`mark_point_verdicts`, `agreement_wilson`)
+  from #105/B12.
+
+**So C24 is not a rewrite** — which is what makes the unsettled part worth
+raising rather than burying.
+
+### The finding
+
+#51 states H7's purpose: without inter-annotator agreement *"there is no ceiling
+on how good the pipeline can honestly be said to be"*, and fixes the sample at
+**10% of labelled leaves**. Against #47's 300-leaf target that is **30 leaves**.
+
+Both intervals, 95% Wilson, recomputed rather than quoted:
+
+| quantity | n | interval | half-width |
+|---|---|---|---|
+| pipeline accuracy at 83.8% (#47's own justification) | 300 | 79.1–87.4% | **±4.18pp** |
+| H7 agreement at 90% | **30** | **74.4–96.5%** | **±11.08pp** |
+| H7 agreement at 95% | 30 | 78.7–98.2% | ±9.74pp |
+| H7 agreement at 100% (30/30) | 30 | 88.7–100% | ±5.68pp |
+
+**Unless labeller B agrees with A on all 30 of 30, H7's 95% lower bound sits
+BELOW the pipeline's own accuracy point estimate (83.7%).** The measurement would
+then be consistent with a human ceiling *lower than the machine's measured
+accuracy* — which is not a ceiling.
+
+Matching ±4.2pp needs **195** double-labelled leaves at 90% agreement (**65% of
+the corpus**), 276 at 85%, and 346 at 80% — the last impossible at n=300.
+
+### Stated against itself
+
+**Agreement and accuracy are different quantities**, so "match the precision" is
+a design choice, not a law; it is raised only because #51 frames H7 as bounding
+the accuracy figure. **The lower-bound point does not depend on that choice** —
+an interval admitting values below the measured accuracy cannot establish a
+ceiling above it, however one feels about matching widths.
+
+### Why no recommendation is offered
+
+The three options — restate H7's purpose, raise the overlap, or pre-commit a
+30/30 decision rule — all spend **labeller B's hours**, and the cheapest of them
+costs the programme nothing and costs the agent nothing. **That is exactly the
+shape of recommendation to distrust from an agent**, so none is given. #51's
+current estimate ("1–2 h of B's time") is consistent with 30 leaves and would not
+survive option 2.
+
+### One timing constraint, which is the actionable part
+
+The sample **rule** and its salt are already pre-committed in
+`eval/relabel_manifest.json`, with membership deliberately uncomputed until #47
+completes (DA2) so no labeller can know which leaves are watched. **Changing the
+overlap share does not weaken that guarantee** — the rule ranks all leaves and
+takes a prefix, so only the prefix length changes. **But it must be changed
+before #47 completes**, or the choice becomes visible to the sample it selects.
+
+**#51 does not close on this** (C24/DA37): onboarding remains owed.
+
+---
+
+## DA41 — #110's phantom leaves pruned; the golden corpus is duplicate-free and #95 is unblocked cleanly (#110, #95)
+
+**Zero spend, det-only.** Continues #110 after DA39, which fixed mechanism 1
+(page-break reprints) and left mechanism 2 reported-but-unrepaired on the ground
+that folding stray rows into the earlier question would be **inventing question
+identity rather than reading it**.
+
+**This repairs the half of mechanism 2 that needs no such invention.** A
+data-table line beginning with a number becomes a **top-level** question;
+#136 mechanism (C) already stopped those rows minting a mark, leaving them as
+**empty shells** — no marks, no answer points, and an id colliding with the real
+question of the same number. Dropping a node with no marks and no points is
+neither deduping nor renumbering: it removes something that contributes to no
+total, cannot be matched against a candidate's answer, and cannot be marked,
+while corrupting DA6's `(paper_id, question_id)` identity.
+
+**Narrow in two ways, the second learned from a test that caught the wider rule
+doing harm:**
+
+- **Top level only.** A labelled sub-part like `1(b)` is structure the paper
+  printed and is kept even when empty. The first version pruned it.
+- **Both conditions required.** A question whose tariff was read off the page is
+  real even if its answer text failed to parse.
+
+**Measured over all 479 source schemes:**
+
+| | before | after |
+|---|---|---|
+| schemes reconciling exactly | 331 | **331** |
+| corpus parsed marks | 32,849 | **32,849** |
+| total leaves | 17,043 | **16,985** |
+| leaves lost to id collapse | 36 | **25** |
+| schemes with duplicate leaf ids | 21 | **15** |
+
+**Totals and reconciliation are unchanged**, which is the check that matters:
+pruning a zero-mark leaf cannot move a mark, and this confirms it rather than
+assuming it.
+
+**58 phantom leaves were removed, of which only 11 were involved in a
+collision.** The other 47 were not corrupting identity — they were **inflating
+the leaf count, and therefore the denominator of every per-leaf rate the
+programme computes**. That is a quieter defect than the collisions and was not
+what #110 was opened about.
+
+**The golden corpus is now clean.** `0580_s23_ms_22` was the one #95 source
+scheme still carrying duplicates (ids `1` and `2`, each a real question plus one
+phantom): **2 duplicate ids → 0**, 37 leaves → 35, total still **70/70**. All
+five of #95's schemes are duplicate-free, so **the concern raised on #95 —
+that regenerating would bake collapsed leaves into the fixtures — no longer
+applies.**
+
+**What remains, and stays unrepaired: 15 schemes carrying 25 collapsed leaves.**
+Those are the genuinely ambiguous half — rows with real content under a colliding
+id. Deciding what they *are* is not something the parser can read off the page,
+so they remain reported by the (still unarmed) duplicate-id detector.
+
+**Cumulative across DA39 and DA41: leaves lost 57 → 36 → 25; schemes 34 → 21 →
+15.**
+
+---
+
+## DA42 — #95's parser blocker is cleared; its excerpt blocker is not, and `is_excerpt` is wrong on 5 of 11 fixtures (#95)
+
+**Zero spend, det-only, nothing regenerated.** Re-runs the 2026-08-26 feasibility
+probe now that #136, #110 and #112 have landed.
+
+**Blocker 1 is cleared.** That probe found 4 of 5 source schemes failing to
+det-parse, so regenerating would have destroyed 10 of 11 fixtures. All five now
+parse to their printed maximum exactly and are duplicate-free.
+
+**Blocker 2 stands, unchanged by three parser fixes, and is now quantified:**
+
+| fixture family | `is_excerpt` | questions | max | full-paper leaves | full max | blow-up |
+|---|---|---|---|---|---|---|
+| `0580_s23_qp_22_theory_*` (×4) | true | 7 | 70 | 35 | 70 | **5.0×** |
+| `0606_s23_qp_12_theory_*` (×3) | true | 6 | 80 | 25 | 80 | **4.2×** |
+| `0625_s20_qp_31_theory_*` (×3) | **false** | 7 | **19** | 41 | **80** | **5.9×** |
+| `0625_m20_qp_12_mcq` | **false** | 8 | **8** | 40 | 40 | **5.0×** |
+| `0625_w21_qp_32_theory_nested` | **false** | 1 | **5** | 43 | **80** | **43×** |
+
+**Every denominator would grow by 4.2×–43× while `answers.json` stays fixed to
+the excerpt.** That does not make scheme-parsing measurable; it replaces the
+measurement corpus with one whose ground truth does not correspond to it.
+
+**New finding: `is_excerpt` is FALSE on five fixtures that are excerpts.**
+`0625_s20_qp_31_theory_*` declares `maximum_mark: 19` against a real 80 with 7
+questions against 41 leaves; the MCQ carries 8 of 40; the nested fixture carries
+**1 question and max 5** against a 43-leaf, 80-mark paper.
+
+This is adjacent to but **distinct from A8's ground** for retiring #39 bullet 4.
+A8 retired it because `is_excerpt` is a harness attribute rather than a property
+of the parsed scheme — **that ground is undisturbed**. What is new is that the
+flag is also **factually wrong**, so anything that consulted it would be misled
+about which fixtures are partial. Nothing currently does, which is exactly why
+this stayed invisible.
+
+**Verdict: #95 remains NOT EXECUTABLE AS WRITTEN.** Its scope covers regenerating
+the *scheme*, and the scheme is one of three coupled artefacts per fixture.
+Regenerating `answers.json` and `scan.pdf` in step is a far larger and more
+irreversible operation than the issue describes, and is not what A6 authorised —
+**widening the scope to make the work possible is not an agent's call.**
+
+**The options have narrowed to three**, and no recommendation is offered:
+
+1. **Widen #95** to regenerate schemes, answers and scans together.
+2. **Narrow #95** to regenerating the scheme *restricted to the excerpted
+   questions*. This keeps denominators fixed and still routes the scheme through
+   the parser — but it needs a rule for "which parsed questions correspond to
+   this excerpt", and an agent choosing that rule would be **inventing
+   correspondence inside the measurement corpus**.
+3. **Abandon the rebuild** and accept that scheme-parsing stays unmeasurable in
+   the golden harness.
+
+**Option 2 is the cheapest-looking and the one I would be tempted toward, which
+is reason enough not to push it.**
+
+**Separately actionable and cheap:** correcting `is_excerpt` on the five
+mislabelled fixtures is zero-spend and changes no measurement, since nothing
+reads the flag. **Deliberately not done here** — editing fixture metadata under a
+rebuild issue is how scope creep enters an irreversible corpus.
+
+---
+
+## DA43 — #39's invariant is correct and never runs; its under-sum bullet cannot fire (#39 bullets 1–3)
+
+**Zero spend, det-only.** Measured over all 479 source schemes — 13,690 leaf
+questions carrying answer points — with the same type exemptions
+`Question.validate_mark_point_sum` itself applies. **Measured before
+implementing**, which is the order `escalate_on_defaulted_marks` got wrong in the
+other direction.
+
+### Bullet 1 — met in form, unenforced in fact
+
+The invariant is already written as the **filtered** sum, excluding
+`is_alternative` and `is_optional`. What it lacks is enforcement: it is a
+`model_validator(mode="after")`, so it fires on `model_validate`, and `rows.py`
+assigns `marks` and `answer_points` **after** construction. Pydantic's
+`revalidate_instances` defaults to `never`, so wrapping the mutated Question in a
+`MarkScheme` does not re-check it either. Verified both directions —
+`model_validate` on a breaching payload **raises**; constructing then assigning
+**does not**.
+
+**4 questions across the 479 schemes reach output in breach, unflagged** (e.g.
+`0606_s19_ms_13` `11i`, tariff 1 against a primary sum of 3). Small in count; the
+point is that the invariant exists, is correct, and is silent.
+
+### Bullet 2 — would fire ZERO times, and not by luck
+
+| | |
+|---|---|
+| leaf questions with answer points | **13,690** |
+| primary sum equals tariff | 13,668 |
+| **primary sum under tariff** | **0** |
+| primary sum over tariff | 4 |
+| questions with no answer points | 135 |
+
+`rows.py` derives `q.marks` from the filtered primary sum whenever the question
+row carried answer text, so **under-summing is impossible by construction on the
+det path**. Implementing the check would ship a gate that cannot fire.
+
+### Bullet 3 — bullets 2 and 3 are the same bullet
+
+The under-sum direction only has meaning where the tariff is **not** derived from
+the points — the **Gemini** path, which is exactly the missing paper-level
+aggregate bullet 3 names. **Bullet 2 should be folded into bullet 3 rather than
+implemented separately.**
+
+From DA35: Gemini's observed validation failures are the **over** direction,
+already caught by the shared validator — which *does* run there, because that
+path goes through `model_validate`. The under direction on the Gemini path is
+**unmeasured**, because output failing validation never lands.
+
+### What was implemented, and what deliberately was not
+
+A reporter in `reconcile.check`, **unarmed by default**
+(`escalate_on_primary_sum_breach`). Arming routes the paper to the Gemini
+fallback, which DA35 measured failing on ~50% of det-failures — the same
+cost-and-coverage call as `escalate_on_duplicate_leaf_ids` and
+`escalate_on_defaulted_marks`.
+
+**No under-sum check** (it cannot fire) and **no paper-level Gemini aggregate**
+(bullet 3's own scope, with its own design questions and a spend requirement).
+
+---
+
+## DA44 — #41's principles injection, and a broad `except` that turned my own typo into "the model failed" (#41, A13)
+
+**Zero spend.** The code half of #41 is complete; its acceptance sweep is
+**costed and not authorised** (`BUILD/accuracy-runs/preflight-41-2026-08-29/`).
+
+**Ruling A13** is that the A-mark dependency is driven from **each paper's own
+printed Generic Marking Principles**, not a hard-coded rule, with strict
+M-then-A as the **fallback only** where principles cannot be parsed.
+
+`det/gmp.py`'s `extract_gmp` has always populated
+`metadata.generic_marking_principles`, and `correct_paper` discarded it. It is
+now threaded through `mark_question` into the user prompt, with an explicit
+precedence statement — **printing the principles without saying they govern
+would leave the model following the generic text**, which is the failure this
+ruling exists to prevent.
+
+**The system prompt's A-mark rule was rewritten.** It previously read *"A marks
+are accuracy marks: dependent on the preceding M mark … Do not award an A mark
+if its associated M mark was not earned"* — stated unconditionally, which is
+exactly the hard-coded rule A13 rejects. It is now marked **FALLBACK ONLY**.
+
+**Injected into the USER prompt, deliberately.** The principles are per-paper
+rather than per-run, and the cache key is built from the user prompt
+(`gemini.py:339`), so two papers with different printed principles **cannot
+share a cached mark**. A system-prompt injection would have needed a separate
+cache-key change to be safe.
+
+`VERSION` 4 → 5, which invalidates the whole cached golden corpus — required,
+since a cached mark from the old prompt would otherwise be attributed to the new
+one. **The preflight records that this makes every subsequent marking run pay
+full price too, not only the sweep.**
+
+### The part worth recording against myself
+
+My first version read `ms.metadata.generic_marking_principles`; the variable in
+that scope is `scheme`. **The `except Exception` around `ai.mark_question`
+caught the `AttributeError`, logged `ai_marking_failed`, and awarded 0 marks to
+every question in the paper.** No crash, no traceback — just a paper that scored
+zero and a log line blaming the model.
+
+Only the existing tests caught it. **A catch that broad converts a programming
+error into a plausible-looking marking outcome**, and the failure mode is
+invisible precisely because "the AI failed to mark this question" is a thing
+that genuinely happens. Not widened or narrowed here — that is its own change
+with its own review — but recorded, because the next person to edit inside that
+`try` has the same trap waiting.
+
+### The batching constraint, re-checked rather than assumed
+
+#41 requires every M1 marker-prompt change to land in one commit with one
+`VERSION` bump. Re-checked 2026-08-29: **#38** is provenance and an escalation
+flag, **#39** was ruled parser-side by A9 and DA43's work touched only
+`reconcile.py`/`config.py`. Neither is a prompt change, so **one bump is
+correct**. If either later needs one, it must be batched with a **re-run** of
+this sweep or its delta is unattributable.
+
+---
+
+## DA45 — §13 re-walked clause by clause; three items were agent work I had written off (§13, C19)
+
+**Zero spend.** I had twice asserted §13 was "structurally impossible for an agent". That is true of the clauses needing human labels — and it was **being used to skip clauses that were not**. Re-walking the eight clauses individually, rather than judging §13 in aggregate, found three pieces of work I owed.
+
+This is the second time in this session that writing §13 off wholesale was wrong. The first was caught the same way.
+
+### Clause 1 — one issue was closeable and I had not closed it
+
+**#112 is CLOSED.** Every criterion B15 set is met and was checked individually: all three sub-defects fixed (including the one my own recommendation would have skipped — AGAINST-REC honoured), the cell-splitting decision taken **and measured against its alternative**, run jointly with #110, and the before/after run under C1's waiver.
+
+**#110 stays OPEN, and the reason is bullet 4.** Bullets 1–3 are met. Bullet 4 asks for a detector that makes duplicate ids **fail loudly**; the detector reports but does **not fail**, because arming it routes papers to a fallback DA35 measured failing ~50% of the time. **Reading "fail loudly" as satisfied by a warning would be closing an issue on a generous reading of my own work.**
+
+**#136 stays OPEN** on bullet 6 — "#95 unblocked, **or** #95's route re-decided by the human". #95 is not unblocked (DA42) and the route is not re-decided. Neither disjunct holds.
+
+### Clause 5 — the MISSION was misstating its own measured figure
+
+Clause 5 requires det **parse coverage** to be measured and read *"currently 289 of 479, so 190 unparsed"*. DA34/DA39/DA41 moved that to **331 of 479, so 148 unparsed**, at zero cost — and the mission document still carried the old numbers in **four** places (§2b's table, §1's gap paragraph, clause 5 itself, and §14's anti-goal).
+
+**A definition-of-done that misstates the quantity it is defining done against is not a small documentation lag.** Corrected in all four, each carrying the prior value and what moved it.
+
+### Clause 8 — two H issues carried stale statements
+
+Clause 8 requires each open H issue to carry *"a current statement of what is needed, **not a stale one**"*. #51 and #52 were updated this session; **#49 and #55 both last spoke on 2026-08-27 — before C25**, which changed both materially: #55 became conditionally authorised on three conditions, and #49 was ruled explicitly **not a gate** on it.
+
+Both now carry current statements. **#55's records that condition 1 says "fixed or formally re-scoped", that #166 is diagnosed rather than fixed, and that deciding whether a diagnosis satisfies that condition is the human's — not an agent's to assume.**
+
+### The standing lesson
+
+**"This cannot be completed" is a claim about a whole, and a whole is not a work item.** Judging §13 in aggregate let a true statement about clauses 4 and 6 suppress false ones about clauses 1, 5 and 8. **Walk the clauses.**
+
+---
+
+## DA46 — the clean defaulted-mark rate, and the trigger C2 asked for (#38 bullets 2–3, C2)
+
+**Zero spend, det-only.** C2 (2026-08-27) deferred #38's bullets 2 and 3 behind
+#136's fix and required the trigger to be decided **against a clean rate**,
+because the published figure was contaminated by DA21 mechanism (B). #136 landed
+(DA34), so the deferral is discharged and this is that rate.
+
+Both arms over the **same 397 papers**; the before arm imports a package copy
+with `rows.py`/`marks.py` from the commit before #136.
+
+| | contaminated | **clean** |
+|---|---|---|
+| papers carrying ≥1 defaulted point | 177 (**44.58%**) | **136 (34.26%)** |
+| papers where **every** point is defaulted | **25** | **3** |
+| answer points | 22,345 | 22,372 |
+| points defaulted | 4,928 (**22.05%**) | **2,000 (8.94%)** |
+
+**The before arm reproduces the published figures** — 44.58% against the report's
+44.4%, 22.05% against 21.6%, the gap being that the published values came from a
+60-PDF sample and these are all 397 papers. That is what makes the after arm
+comparable rather than merely different.
+
+**C2's premise was right and the contamination was most of the signal:
+mechanism (B) accounted for 2,928 of 4,928 defaulted points — 59%.** Where the
+marks column merged into the answer cell, the code arrived as trailing text,
+`parse_marks_cell` saw nothing, and every such point defaulted. Those codes are
+now recovered and are **not** flagged, because a mark read from the wrong column
+was still *read*, not minted.
+
+**The sharpest movement is papers where every point defaulted: 25 → 3.** Those
+were papers whose entire marks column merged into the answer text — the whole
+paper minted, the flag correctly saying so, and the cause the parser rather than
+the paper.
+
+### Deciding the trigger, which is what C2 actually asked for
+
+**A bare defaulted-count is still the wrong trigger at the clean rate.** 34.26%
+would route a third of the det corpus to the Gemini fallback, which DA35 measured
+failing on ~50% of the schemes det cannot parse. The original objection survives
+decontamination: most defaults are still **correct by luck**, since 1 is right
+for every `B1`/`M1`/`A1`/`C1`.
+
+**What the clean rate makes affordable for the first time:** a trigger on *"every
+point in the paper is defaulted"* — now **3 of 397 (0.76%)**, down from 25. A
+paper where **no** mark was read is suspect in a way one minted mark is not, and
+3 papers is a cost the contaminated figure could not have justified.
+
+**Proposed, not armed.** It routes papers to the same fallback as
+`escalate_on_duplicate_leaf_ids` (#110) and `escalate_on_primary_sum_breach`
+(#39). **All three are one cost-and-coverage decision and it belongs to the
+human**, which is also why bullets 2 and 3 are not ticked: this supplies the
+clean rate C2 required *before* the decision, not the decision.
+
+### Two report sections were stale and are corrected
+
+Found while checking §13 clause 2's "published" requirement — a clause-walk
+by-product (DA45):
+
+- **The ratchet row still published 29.03%** as the committed constant. DA33
+  restated it to **0.4838** on 2026-08-28. Corrected, with why the restatement
+  did not unblock arming.
+- **The det-defect section published the contaminated 44.4% / 21.6%.** Corrected
+  to the clean rate above.
+
+**A report that publishes a superseded constant is not a lag; it is the programme
+citing a number its own decision record has replaced.**
+
+---
+
+## DA47 — DA1's parse-path axis is a CONSTANT over the corpus, not a set of empty strata (#57, #88, #166)
+
+**Zero spend.** Read from `corpus/manifest.json` and the 289 committed schemes.
+
+DA1 stratifies on **syllabus code × parse path (det/Gemini) × tariff band**. The
+manifest records:
+
+```
+gemini_used: False
+cost_usd:    0.0
+totals:      {source_pdfs: 479, parsed: 289, failed: 190}
+```
+
+**Every committed scheme is det-parsed. There are zero Gemini-parsed schemes in
+the population #57 partitions.** The axis does not have sparse strata — it has
+**one level**, and a stratified split cannot stratify on a constant. #57's bullet
+1 cannot be executed as DA1 specifies.
+
+### This corrects a looser statement of mine
+
+A previous run recorded on #57 that *"the Gemini strata are empty because #88's
+sweep aborted at 6 of 190"*. **Not quite right, and the difference matters.** The
+aborted sweep's 6 and C20's 12 were parsed into **staging directories**, never
+into `corpus/`, so they are not in the partitioned population at all.
+**`cost_usd: 0.0` proves the corpus was never Gemini-parsed** — a stronger and
+more useful statement than "the sweep did not finish".
+
+The habit that produced the looser version is worth naming: I described the
+*history of a run* when the question was about the *contents of a population*.
+Those are different objects, and only one of them was in the manifest.
+
+### Why populating it is not simply a matter of finishing #88
+
+#88 is blocked by **#166**: the fallback fails on ~50% of the schemes det cannot
+parse and 100% of 0606 (DA35). A completed sweep would deliver a **lopsided,
+partly-unfillable** stratum rather than a balanced one.
+
+The population did shrink helpfully — det coverage went **289 → 331 of 479** at
+zero cost this session, so the Gemini-path remainder is **148, not 190**. But
+`corpus/` still holds the 289 parsed at `parser_sha 8758dba`, so realising that
+gain needs a regeneration.
+
+### Three routes, none of them an agent's to choose
+
+1. **Populate the axis** — regenerate `corpus/` at the current revision and
+   Gemini-parse the remainder. Needs #166 first, or it buys a stratum ~50%
+   missing by construction.
+2. **Change DA1** to stratify on the two axes that *do* vary — syllabus × tariff
+   band — recording parse path as a constant with its reason.
+3. **Wait**, and accept that #57 → #47 → #51 → #55 stay blocked.
+
+**No recommendation, and the reason is specific rather than reflexive:** option 2
+is the only one that lets this issue proceed today, and it works by **changing
+the measurement design to fit what the data currently supports**. DA1 was fixed
+in a human interview precisely so an agent could not re-derive it around an
+inconvenient measurement.
+
+---
+
+## DA48 — the CI comment denied that the ratchet gate runs in CI; it does (§13 clause 2, #33, #161)
+
+**Zero spend.** Found while checking §13 clause 2's *"published **and enforced in
+CI**"* requirement — the second half, which the clause walk (DA45) had left
+unexamined.
+
+`.github/workflows/ci.yml` carried, above the gate step:
+
+> *"Written and reviewable only — GitHub Actions is org-wide billing-blocked at
+> the time this step was added, so **it has not been executed in CI and must not
+> be claimed as CI-verified**."*
+
+**That is no longer true, and it is checkable.** Run **33235411251** — a
+completed CI run on this repository — carries the gate's own output in its log.
+The step executes on every `test` job.
+
+**What happened is ordinary and worth naming:** billing was restored, the step
+began running, and **the comment was never updated**. So it went on telling every
+reader — including me, twice — that clause 2's enforcement half was not
+happening.
+
+### The distinction the corrected comment now draws
+
+- **The gate RUNS.** Verified against a named run, not inferred from the workflow
+  file.
+- **The gate does NOT BLOCK.** It exits 0 on a breach while
+  `review_rate_ratchet_armed=false`, so CI **observes and records** rather than
+  failing.
+
+**Those are different claims, and the old comment collapsed them into "not
+CI-verified".** Clause 2 asks for enforcement; what exists is execution without
+blocking, and the honest statement of clause 2's status is *partial for that
+reason* — not because the gate is absent.
+
+**Arming is not a flag flip**, per DA33: all four limbs fail (signal 3.6×, total
+2.9×, p95 5.6×), three of them on absolute targets no constant can move.
+
+### The pattern this makes three of
+
+A stale claim in a file nobody re-reads, which then misinforms every later
+reader: MISSION's `289 of 479` after the parser improved (DA45), the report's
+`29.03%` after DA33 retired it (DA46), and now a workflow comment asserting a
+step does not run after it started running.
+
+**Each was written accurately and became false without anyone touching it.** The
+common defence is cheap: a claim about *the state of the system* should name the
+evidence that would falsify it — here, a run id.
+
+### The correction was briefly blocked by a permission, and is now applied
+
+Editing `.github/workflows/ci.yml` was written, tested and **rejected on push**:
+
+> `refusing to allow an OAuth App to create or update workflow .github/workflows/ci.yml without workflow scope`
+
+**It was not worked around.** Routing the corrected text somewhere else to dodge
+the scope check would have left the false claim exactly where readers meet it —
+the whole problem — and a scope check is a **permission boundary**, not an
+obstacle. So the finding was recorded here and the fix left undone, with its
+exact wording, for whoever held the scope.
+
+**The human granted `workflow` scope and it is now applied.** The comment above
+the `Review-rate gate` step states that the step **does run** (naming run
+`33235411251`), that it **does not block** while `review_rate_ratchet_armed` is
+false, that clause 2 therefore stays **partial because observation is not
+enforcement** — and that **the gate is wired, so nobody needs to build it**.
+
+---
+
+## DA49 — Gemini marking accuracy is 69.6%, and the headline blends it with a path carrying no answer points (§13 clause 5)
+
+**Zero spend.** Computed from `aa-floor-2026-08-23-a`'s per-repeat records, which
+already carry `parse_path`. No new run — the data has been on disk since
+2026-08-23.
+
+Clause 5 requires **both paths measured in their own terms**. The det half —
+parse coverage, **331 of 479** — was measured this session. This is the other
+half, and it had been computable all along.
+
+### Method validated before use
+
+The leaf collapse (a leaf counts correct iff **every** fixture-variant row is
+correct) **reproduces the published `wilson_mark_accuracy_per_repeat` successes
+exactly on all 10 repeats**. The script asserts this and refuses to run if it
+ever stops holding. Only then is the same collapse split by path. `parse_path`
+tracks the marking path exactly as C11 describes — `det` is the MCQ paper alone.
+
+### The result
+
+| path | leaves | correct (mean of 10) | accuracy | 95% Wilson at the honest n |
+|---|---|---|---|---|
+| **det** | 8 | 8.0 / 8 | **100%** | **67.6% – 100%** (±16.2pp) |
+| **gemini** | 23 | 15.5 / 23 | **69.6%** | **49.1% – 84.4%** (±17.6pp) |
+
+### The finding that matters
+
+**The published ~77.4% headline is a mixture of a 100% path and a 70% path, and
+the mixture weight is backwards relative to what the programme measures.**
+
+Per C11/DA23, MCQ schemes carry **zero** `answer_points`; the Gemini path carries
+**10,314 of 10,314**. So the path responsible for **every answer point in the
+corpus** measures **69.6%**, and the headline is pulled upward by a path that
+carries none of them. The weighting is an artefact of the fixture set — 8 MCQ
+leaves against 23 theory leaves — not of the production corpus.
+
+**This is the §14 anti-goal in a form nobody had named:** a headline that improves
+while the path doing the work is not separately reported. Clause 5 exists to
+prevent exactly this, and until now only its det half had been honoured.
+
+### Two things refused rather than reported
+
+**det's 100% is not evidence the det marking path is perfect.** 8 MCQ leaves from
+one paper, Wilson lower bound **67.6%** — an interval nearly as wide at n=8 as
+gemini's at n=23.
+
+**Pooling the 10 repeats would fake the precision.** They re-mark the *same* 31
+leaves under an identical fingerprint, so they are not independent observations.
+Pooling reports ±6.0pp and ±2.3pp instead of ±17.6 and ±16.2. Both are in the
+artifact, and **the naive figures are recorded to be refused, not used.**
+
+### Clause 5 status
+
+**det parse coverage MET; Gemini marking accuracy MEASURED BUT NOT TO SCOPE.**
+The clause asks for a figure covering 10,314 answer points; this covers 23 leaves
+of one golden corpus at ±17.6pp. Closing that needs #47's labelled corpus, not
+more analysis of this one — the same shape as clause 3's `NOT_APPLICABLE`, which
+the mission accepts as published-in-the-negative.
+## DA50 — the corpus went back to 2010, and it bounded the det path rather than extending it
+
+**Zero Gemini spend.** PaperScraper downloaded 1,332 documents, 0 failed:
+canonical mark schemes **479 → 1,130**, question papers **479 → 1,134**, years
+2019–2025 → **2010–2025**. Then a det-only re-parse of all 1,130.
+
+| | schemes | exact | rate |
+|---|---|---|---|
+| 2019–2025 | 477 | 331 | **69.4%** |
+| 2010–2018 | 299 | 62 | **20.7%** |
+| **all** | **1,130** | **393** | **34.8%** |
+
+**The 2019–2025 row reproduces the 331 measured earlier**, which is what makes
+the populations comparable rather than merely different.
+
+**Nothing regressed; the measurement got honest.** Every parser fix this session
+was built and validated on 2019–2025 papers. That population had **2** parse
+errors; the expanded one has **354**. `331 of 479` was measured on the easy
+decade, and DA45's correction of the MISSION to `331 of 479` is now itself
+as-of-a-population rather than absolute.
+
+### The one defect worth fixing, fixed
+
+**411 of 438 initial failures (93.8%)** were one cause, every affected session
+**2010–2016**: the pre-2017 cover page says `maximum raw mark 70`, not
+`Maximum Mark: 70`, so `_MAX_MARK_RE` raised **before looking at a single
+question**. 45 errored schemes were sampled before touching it — 41 matched.
+
+`raw` is optional but **specific**; a permissive gap would let cover prose supply
+the number, and a test pins that such a cover still raises.
+
+**Errors 438 → 354, parsed 692 → 776.**
+
+### And it bought ZERO coverage — stated because it is the point
+
+**`exact` stayed at 393.** All 84 newly-parsing schemes landed in `not_exact`.
+In production, where `escalate_on_mark_mismatch` is on, a scheme that parses but
+does not reconcile raises anyway — so **the fix changes the diagnostic picture,
+not the routing.** Correct and necessary; not, by itself, an improvement.
+
+The 2010–2018 exact *rate* fell, 28.8% → 20.7%, because the denominator grew
+while the numerator did not. Same shape as DA39.
+
+### A hypothesis of mine, falsified in one check
+
+The remaining errors are dominated by *"No tables found — may be a scanned PDF"*,
+and I was about to report that older schemes are image scans and out of reach.
+**They are not.** On the same page index, the errored 2010–16 papers carry **872
+mean text chars/page and 1.30 tables/page** against **1,029 and 0.95** for the
+papers that parse — *more* extractable content, not less.
+
+**The error message is the parser's guess, and the guess is wrong.** I nearly
+reported a source-material limitation that does not exist, on the strength of a
+string. The check that falsified it took one command.
+
+### What actually blocks them
+
+The pre-2017 layout has no ruled row separators, so pdfplumber returns **a whole
+page of questions as one 2-row table**, question boundaries being newlines
+*inside* cells (`'1 a =3, b=2, c=1'`, `'B1, B1,\nB1\n[3]'`).
+`qualifies_as_mark_scheme_table` rejects these **correctly** — they are not
+row-per-question tables. Supporting them is **a second parsing strategy, not a
+tweak**, and wants its own issue.
+
+### Consequences for the programme
+
+- **The det path's reach is bounded by CAIE's 2016/17 layout change**, not by
+  parser quality. Expanding the corpus backwards does not expand det coverage.
+- For 2010–2016 the **Gemini path is the only option**, and DA35 measured it
+  failing on ~50% of what det cannot parse.
+- **Every corpus-wide figure published before today is as-of the 479-scheme
+  population** and must carry that label rather than be silently reused.
+
+---
+
+## DA51 — the programme is retired under C26, and the report it retires with had a stale MET in it
+
+**Human ruling C26, 2026-08-29:** *"retire the mission, close the issues and move
+tasks to done in the Lemely Progress project, and merge whatever is done and can
+be merged then create a final report."* Recorded as the last ruling of the
+programme. This entry records what retirement actually did, and the one defect
+found while doing it.
+
+### The programme is retired NOT DONE, and the two are recorded separately
+
+C26 is a decision to **stop**, not a finding that the work finished. §13's
+Definition of Done is **not met**, and retirement does not make it met:
+
+| clause | at retirement |
+|---|---|
+| 1 — every non-H sub-issue closed via merged PR | **NOT MET** — 8 open (#38, #39, #41, #58; #47, #57, #59, #88), plus 6 off-epic defect issues |
+| 2 — ratchet published **and enforced** in CI | **PARTIAL** — published; the gate runs on every test job (DA48) but `review_rate_ratchet_armed=False`, so it observes and does not block |
+| 3 — the 2×2 published, or its absence | **MET** — `NOT_APPLICABLE` published with its reason |
+| 4 — ~300 labelled leaves + inter-rater figure | **NOT MET** — **zero labels exist**; `eval/labels/` holds only `.gitkeep` |
+| 5 — both paths measured in their own terms | **BOTH HALVES SHORT** — see below |
+| 6 — review rate at or below the ratchet | **NOT MET** — 32.58% mean against a 10% budget |
+| 7 — develop→main PR open for human approval | **MET** — #159 open, left open per §12.3 |
+| 8 — open H issues cleanly documented | **MET when closed** — each carried a current statement |
+
+**M0 came closest, and "all 12 sub-issues closed" is NOT the same as "acceptance
+met".** #24's acceptance box 3 names the three cells of the oracle-transcription
+2×2 — extraction-attributable, marking-attributable, masked — and **the 2×2 does
+not exist**. #28 was closed with all four acceptance boxes unticked (the honest
+record, and clause 3 publishes `NOT_APPLICABLE` for exactly this reason); the
+oracle+mark arm produced zero records, so `mcnemar()` and `ablation_2x2()` return
+`b = c = n_pairs = 0`. **The one question the programme was built to answer — is a
+wrong mark the extractor's fault or the marker's? — has no measurement behind it.**
+
+I first wrote this entry saying M0 "completed in full", counting closed sub-issues
+and calling that acceptance. It is the generous self-assessment §14 warns about,
+caught in adversarial review of my own retirement text, and corrected here rather
+than quietly. The instrument was largely built; the attribution it existed to
+produce was not.
+
+### The defect: ACCURACY-REPORT.md still said clause 5 was MET
+
+DA50 restated det parse coverage from **331 of 479 (69.1%)** to **393 of 1,130
+(34.8%)** and ruled that *every corpus-wide figure published before that day is
+as-of the 479-scheme population*. PR #189 landed DA50 into `DECISIONS.md`,
+`JOURNAL.md` and the state header — and **did not touch `ACCURACY-REPORT.md`**,
+which is the file that publishes the figures. So the report went on saying *"the
+det half is parse coverage, now 331 of 479"* and *"Clause 5 status: det parse
+coverage **MET**"* for the whole of the day DA50 falsified it.
+
+**This is the fourth instance of the DA45/DA46/DA48 pattern** — a claim accurate
+when written that rotted in place because the restatement landed somewhere else —
+and the first found in the published report rather than in a mission file, an
+issue body or a code comment. Corrected in this commit; the correction names the
+population and the evidence path so the next reader can falsify it.
+
+**The generalisation worth keeping:** a restatement is not finished when the
+decision record carries it. It is finished when **every artifact that published
+the superseded figure** carries it. DA50's own commit is the counter-example, and
+it was written by the same run that formulated the rule.
+
+### The catch rate did not stall — it FELL, and I nearly published "unmeasured"
+
+Drafting this entry I wrote that the wrong-mark catch rate was *"never
+re-measured"*, on the strength of `ACCURACY-REPORT.md` containing no catch-rate
+figure. **It was measured.** The honest post-D18 run `run-ef443fc2931e` reports
+`flag_recall` **14.29%, n=71 rows**, against the **27.3% (3/11)** the mission's
+*"≥6/11"* target was set from. The goal was ≥54.5%. **It went down, not up.**
+
+"Unmeasured" would have been the softer and wrong claim, and I would have reached
+it by searching one file and treating its silence as evidence of absence.
+
+**And the reason it was not in that file is itself the finding.** When D18 was
+fixed, `mark_accuracy` moved **up** (83.8% → 90.1%) and was promptly relabelled
+*historical, superseded* wherever it appeared. `flag_recall` (27.3% → **14.29%**)
+and `flag_precision_high` (91.7% → **89.8%**) moved **down in the very same run**
+and kept their better-looking legacy numbers in `DELIVERY.md`, `CHANGELOG.md` and
+`docs/ACCURACY-STRATEGIES.md`. **Only the metric that moved in the flattering
+direction received the restatement.**
+
+That is selective disclosure, and it is the same family of defect as D18 — the
+failure the restatement work existed to fix. It was caught during #29 and all
+three metrics now carry the qualifier. Recorded again here because at retirement
+it nearly produced a *second* generous claim, in the closing report, by a
+different route: not by choosing the flattering number, but by failing to look
+for the unflattering one and calling that absence "unmeasured".
+
+### And a second stale figure in the same file, two sections down
+
+The **Spend** table read **$5.993470** cumulative with the accuracy worktree
+ledger at **5.588999**. That was a true re-sum taken earlier on 2026-08-28 —
+before that ledger's final write at **2026-08-28T20:43:20Z**. Read at retirement,
+the four files sum to **$6.370451**, headroom **$1.629549**.
+
+Nothing turned on it: the $8.00 ceiling was never within reach on either figure,
+and no run was authorised against the stale number. It is recorded because of
+*where* it sits. The paragraph directly above that table says the sum is
+*"never carried forward from a header — that rule exists because carrying it
+forward had reproduced the previous run's arithmetic error every run."* **The
+rule was written, published, and then not applied to the table it governs.**
+
+Two stale figures in the programme's own published-figures file, found only
+because retirement forced a read of every line of it. **A document that states a
+discipline does not thereby practise it**, and neither of these was caught by a
+gate, a test or CI — they were caught by someone reading the file for another
+purpose. That is the honest reach of this programme's controls: they bind code,
+and they do not bind prose.
+
+### What retirement did NOT do, deliberately
+
+- **Did not merge PR #159 (develop → main).** §12.3 reserves that for the human,
+  and the human, asked directly, chose to keep it that way. It is open, green, and
+  105 commits ahead.
+- **Did not close #10–#22.** They are separate product work and were never part of
+  this mission; retiring the accuracy programme is not licence to clear the board
+  of everything else.
+- **Did not merge any unmerged branch.** Checked rather than assumed: every
+  substantive artifact on the surviving branches is already in `develop`
+  (`TestC13RestatementDidNotLoosenTheGate`, DA33/DA35–DA38, C22–C25, and every
+  `BUILD/accuracy-runs/` directory). The two branches carrying genuinely unlanded
+  work are orchestration tooling for a programme that no longer runs, and one of
+  them adds *"allow merging without CI under an explicit, recorded waiver"* — a
+  gate-weakening change that will not be landed unreviewed as a retirement tidy-up.
+- **Did not mark unfinished issues "completed".** **All 24 closed as `not
+  planned`; none as completed.** The board's Done column now means *"no longer
+  being worked"*, and the final report says so rather than letting a green column
+  imply a finished programme.
+
+  **#136 was going to be the single exception and did not survive review.** Five
+  of its six acceptance bullets are met and I verified them at source —
+  `det-fix-136-2026-08-28/blocking.json` shows all four blocking schemes at
+  `delta 0, status EXACT`, and both regression-test classes exist. **Bullet 6 does
+  not hold**: it asks for *"#95 unblocked, or #95's route re-decided by the
+  human"*, and `golden-reparse-95-2026-08-29/FINDINGS.md` ends with #95 **not
+  executable as written** — the excerpt blocker stands and its three options carry
+  an explicit *"no recommendation"*. I had checked the bullets I could see and
+  taken the last on trust.
+
+  **Zero of twenty-four is the honest yield**, and arriving at "one" was the same
+  move this very entry criticises #28 for, committed while writing the criticism.
+  The temptation to round up by reading acceptance generously is what DA45, DA46,
+  DA48 and DA50 were each about, and it survived all four.
+
+### The board was wrong about the H issues, and GitHub was right
+
+`#49`, `#51`, `#52` and `#55` read **Done** on the project board while their
+issues were **OPEN** and their human input had never arrived. `accuracy_board.py
+done` refuses H-numbered and `owner:human` issues (exit 2), so the board status
+was set by some path that did not go through the guard. **The issue state was the
+truth and the board was the stale copy** — which is the same failure mode as the
+stale figures above, in a different tracker. Closing them under C26 resolved the
+divergence by making both say closed-unanswered.
 ---
 
 ## Sign-up flows for students and teachers (issue #10)

@@ -1,0 +1,55 @@
+{
+  "run_label": "ablation-2026-08-24-a",
+  "arm": "extract+mark",
+  "git_sha": "1435cebf8514e937f06c5e2fe45e684d5bd5a1ec",
+  "model": "gemini-2.5-flash",
+  "cache_mode_requested": "bypass",
+  "split": "dev",
+  "completed": true,
+  "corpus_listing": [
+    "0580_s23_qp_22_theory_correct",
+    "0580_s23_qp_22_theory_partial",
+    "0580_s23_qp_22_theory_wrong",
+    "0606_s23_qp_12_theory_correct",
+    "0606_s23_qp_12_theory_partial",
+    "0606_s23_qp_12_theory_wrong",
+    "0625_m20_qp_12_mcq",
+    "0625_s20_qp_31_theory_correct",
+    "0625_s20_qp_31_theory_partial",
+    "0625_s20_qp_31_theory_wrong",
+    "0625_w21_qp_32_theory_nested"
+  ],
+  "cumulative_recosted_usd": 0.062546,
+  "preflight_estimate_usd": 0.18,
+  "stop_threshold_usd": 0.27,
+  "run_ids": [
+    "ablation-2026-08-24-a-extract+mark-20260824T015416"
+  ],
+  "anomalies": [],
+  "summary": {
+    "arm": "extract+mark",
+    "run_id": "ablation-2026-08-24-a-extract+mark-20260824T015416-a1",
+    "n_gemini_calls": 74,
+    "input_tokens": 118110,
+    "output_tokens_incl_thoughts": 10845,
+    "thoughts_tokens": 0,
+    "recosted_usd": 0.062546,
+    "cache_hit_detected": false,
+    "attempts": 1,
+    "mark_accuracy": 0.9014084507042254,
+    "mark_accuracy_theory": 0.8888888888888888,
+    "id_match_rate": 0.9859154929577465,
+    "flag_precision_high": 0.9180327868852459,
+    "flag_recall": 0.2857142857142857,
+    "funnel": {
+      "leaves": 71,
+      "extracted": 70,
+      "matched": 71,
+      "marked": 70
+    },
+    "n_eval_records": 71,
+    "records_path": "/home/sico/Lemely-worktrees/accuracy/BUILD/accuracy-runs/ablation-2026-08-24-a/records-extract-mark.jsonl",
+    "manifest_path": "/home/sico/Lemely-worktrees/accuracy/BUILD/accuracy-runs/ablation-2026-08-24-a/manifest-extract-mark.json"
+  },
+  "timestamp": "2026-08-24T01:56:34.485547+00:00"
+}

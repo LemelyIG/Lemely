@@ -151,6 +151,7 @@
  */
 
 import { spawn, execSync, spawnSync } from "node:child_process"
+import crypto from "node:crypto"
 import fs from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -229,7 +230,22 @@ const LIGHTHOUSE_CATEGORIES = ["performance", "accessibility", "best-practices",
 // Fixed to a path independent of LEMELY_REPORT_DIR: the re-baseline run points
 // that at the committed `reports/phase-3/`, and browser scratch must never land
 // in a committed directory. `reports/.scratch/` is gitignored.
-const AUDIT_TMP_DIR = path.resolve(repoRoot, "reports/.scratch/audit-tmp")
+//
+// It must also stay SHORT. Chromium binds its process-singleton socket at
+// $TMPDIR/org.chromium.Chromium.XXXXXX/SingletonSocket, and a unix socket
+// path cannot exceed sockaddr_un's 108-byte sun_path. Under the repo root
+// that path is 89 bytes, but from a worktree such as
+// /home/sico/Lemely-worktrees/accuracy it is 108 — one over — and the
+// browser aborts at launch with "Socket path too long", taking
+// puppeteer-audit and ui-thresholds down with it. Passing `userDataDir`
+// does not help: the singleton socket follows TMPDIR, not the profile.
+//
+// So: a short, disk-backed dir outside the repo, still one per worktree so
+// concurrent audits cannot wipe each other's scratch.
+const AUDIT_TMP_DIR = path.join(
+  "/var/tmp",
+  `lemely-audit-${crypto.createHash("sha256").update(repoRoot).digest("hex").slice(0, 8)}`,
+)
 fs.rmSync(AUDIT_TMP_DIR, { recursive: true, force: true })
 fs.mkdirSync(AUDIT_TMP_DIR, { recursive: true })
 process.env.TMPDIR = AUDIT_TMP_DIR

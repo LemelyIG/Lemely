@@ -88,6 +88,17 @@ class GeminiSettings(BaseModel):
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
     thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
+    # Determinism substrate (M0.2 / #26): generation parameters that affect output
+    # reproducibility and therefore must be part of the cache-key fingerprint (see
+    # GeminiClient._cache_key / _resolved_gen_params). Global defaults below, with
+    # optional per-task overrides analogous to thinking_budget_for. Unset (None)
+    # means "let the API pick its own default" — the SDK accepts None for all three.
+    temperature: float | None = None
+    top_p: float | None = None
+    seed: int | None = None
+    temperature_for: dict[str, float] = Field(default_factory=dict)
+    top_p_for: dict[str, float] = Field(default_factory=dict)
+    seed_for: dict[str, int] = Field(default_factory=dict)
     # Pricing overrides: model_name → [input_usd_per_1k, output_usd_per_1k].
     # Built-in defaults exist for gemini-2.5-flash-lite/flash/pro; only set
     # this if you use a different model or the API pricing changes.
@@ -100,6 +111,16 @@ class GeminiSettings(BaseModel):
     total_usd_ceiling: float | None = Field(default=8.0, ge=0)
     # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
     usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
+    # Checked against the module-level process counters in lemely.io.gemini (M0.2 /
+    # #26: this ceiling was previously dead in practice because a cache hit always
+    # returned before the check ran — cache_mode="bypass" is exactly what arms it).
+    # Those counters accumulate for the lifetime of the process deliberately: this
+    # budgets one RUN, and one run may drive many sweeps. A multi-sweep run must
+    # NOT reset between sweeps — that would turn a run-level budget guard into a
+    # per-sweep one and let a runaway script spend without limit. Size it instead:
+    # a golden sweep is ~115k tokens, and lemely.toml sets 2,000,000 (~17 sweeps).
+    # Left as None (no default ceiling) here: the operative value is set per-run in
+    # lemely.toml by whoever is sizing that run.
     per_run_token_ceiling: int | None = None
 
     def model_for(self, task_tag: str) -> str:
@@ -119,9 +140,91 @@ class GeminiSettings(BaseModel):
 class AccuracyEvalSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mark_accuracy_target: float = Field(default=0.95, ge=0.0, le=1.0)
+
+    # #37 (M1.2), ruling B3 (2026-08-26): 0.99 is INHERITED, NOT MEASURED, and is
+    # deliberately left untouched. The gate-9 sweep that was meant to re-derive it
+    # could not: `id_positional_fallback` fired ZERO times across the 39 leaves it
+    # covered, and `id_match_rate` came back 1.0 in BOTH arms. A corpus that scores
+    # 1.0 either way says nothing about what genuine id agreement looks like when
+    # extraction drifts, so re-deriving 0.99 from it would be PICKING a number, not
+    # measuring one. Recorded as a limitation rather than dressed up as a
+    # measurement. Do not cite tests/golden/results/2026-08-22-f7be062.json or
+    # -79f5fa8.json as evidence the fallback never fired — they predate #37 and are
+    # equally consistent with 0 fires and with all 71.
     id_match_rate_target: float = Field(default=0.99, ge=0.0, le=1.0)
+
     flag_precision_target: float = Field(default=0.99, ge=0.0, le=1.0)
     flag_recall_target: float = Field(default=0.85, ge=0.0, le=1.0)
+
+    # M0.9 (#33): the review-rate two-part ratchet gate (spec §4 M0.9, §5).
+    # See lemely.eval.review_gate.evaluate_review_rate_gate.
+    review_rate_signal_target: float = Field(default=0.08, ge=0.0, le=1.0)
+    review_rate_total_target: float = Field(default=0.10, ge=0.0, le=1.0)
+    review_rate_p95_target: float = Field(default=0.15, ge=0.0, le=1.0)
+    # Unarmed: a breach is recorded but does not fail the gate.
+    #
+    # This used to read "Armed at M1 acceptance (spec §7: M0.9 -> M1.1/#36)".
+    # #36 is CLOSED, and it is "M1.1 - The confidence unit", different work
+    # entirely - so that comment told every reader the arming trigger had
+    # already passed and arming was simply not done. It has not passed.
+    #
+    # #161 has now done the distribution-aware restatement ruling C13 asked
+    # for (see review_rate_last_merged below), and it did NOT unblock arming.
+    # The measured blocker is not the ratchet limb at all:
+    #
+    #   signal 0.2903 vs target 0.08   - misses by 3.6x
+    #   total  0.2903 vs target 0.10   - misses by 2.9x
+    #   p95    0.8333 vs target 0.15   - misses by 5.6x
+    #   ratchet ceiling min(0.10, last_merged) = 0.10, so the ratchet limb is
+    #     pinned by total_target and CANNOT be moved by last_merged at all
+    #     while the measured rate is above 10%.
+    #
+    # So all four limbs fail, and three of them fail on absolute targets that
+    # last_merged does not touch. Arming needs the review rate to actually
+    # COME DOWN - M1 accuracy work - not a different statistic.
+    #
+    # Do NOT flip this to True to "finish" the gate, and do NOT loosen
+    # review_rate_signal/total/p95_target to make arming comfortable:
+    # MISSION §14 names moving the target to fit the measurement as a
+    # programme failure, and the ceiling only ever ratchets down.
+    review_rate_ratchet_armed: bool = Field(default=False)
+    # The ratchet's comparison rate. The effective ceiling is
+    # min(review_rate_total_target, review_rate_last_merged), so this field can
+    # only ever tighten the cap, never loosen it.
+    #
+    # RESTATED 2026-08-28 under ruling C13 (#161, DA33): 0.2903 -> 0.4838.
+    #
+    # 0.2903 was ONE DRAW - and, being truncated down from 0.29032258..., it
+    # was the MINIMUM of the ten. Arming against it fails 10 of 10 unchanged
+    # A/A repeats, not the 7 of 10 DA9a estimated. It was never a central
+    # estimate and could not be used as one.
+    #
+    # 0.4838 is the 95th percentile of the beta-binomial predictive
+    # distribution for a single new run's flagged-leaf count, Jeffreys prior
+    # updated on the pooled 101/310 leaf-repeats of aa-floor-2026-08-23-a
+    # (10 repeats x 31 distinct leaves, identical config, cache_mode=bypass).
+    # Read it as: an unchanged run exceeds this rate about 5% of the time.
+    # Zero of the ten observed repeats exceed it. Derivation and the checks
+    # below: BUILD/accuracy-runs/ratchet-161-2026-08-28/.
+    #
+    # A PREDICTIVE bound, deliberately, not a confidence interval on the mean:
+    # the gate judges ONE run, and a CI on the mean narrows with n until it
+    # sits inside the spread unchanged code actually produces - which is the
+    # DA9a single-figure trap wearing a different hat.
+    #
+    # Conservative, and not to be sold as tight: per-run counts are UNDER-
+    # dispersed relative to binomial (observed sd 0.0415 against 0.0842),
+    # because the same 31 leaves recur every repeat and most are
+    # deterministic. So this bound is wider than the truth - which errs
+    # toward not failing unchanged code, the safe direction for a gate.
+    #
+    # THIS IS NOT A LOOSENING. The effective ceiling is min(0.10, x) and was
+    # 0.10 before this change and is 0.10 after it: 0.2903 and 0.4838 are both
+    # above review_rate_total_target, so neither binds. What changed is what
+    # the number MEANS - a property of a distribution instead of one draw -
+    # and it is now honest about which statistic it is. Tests pin the
+    # unchanged ceiling so this cannot be re-read as headroom.
+    review_rate_last_merged: float = Field(default=0.4838, ge=0.0, le=1.0)
 
 
 class DetParserSettings(BaseModel):
@@ -162,6 +265,27 @@ class DetParserSettings(BaseModel):
     # When True, raise ParseError if any leaf question still has marks
     # derived from the default (mark-cell not parseable → assumed 1).
     escalate_on_defaulted_marks: bool = True
+    # #110: two leaf questions in one paper sharing an id. Leaf identity is
+    # (paper_id, question_id) per DA6, so duplicates COLLAPSE two questions
+    # into one leaf and silently narrow every downstream denominator.
+    #
+    # Reported, not blocking, and deliberately so: arming routes the paper to
+    # the Gemini fallback, which #166 measured failing on ~50% of the schemes
+    # det cannot parse and 100% of 0606. That trades a silently-wrong paper for
+    # a probably-absent one — a cost and coverage decision, not a tidy-up.
+    # See lemely.io.det.reconcile.check for the measured prevalence.
+    escalate_on_duplicate_leaf_ids: bool = False
+    # #39 bullet 1: a leaf question whose FILTERED primary point sum exceeds its
+    # tariff. The invariant is already written, and correctly, on
+    # Question.validate_mark_point_sum — but it never RUNS on det output,
+    # because rows.py assigns marks/answer_points after construction and
+    # pydantic's revalidate_instances defaults to "never". 4 questions across
+    # the 479 source schemes reach output in breach.
+    #
+    # Reported, not blocking, for the same reason as the duplicate-id detector
+    # above: arming routes the paper to the Gemini fallback, which #166/DA35
+    # measured failing on ~50% of det-failures.
+    escalate_on_primary_sum_breach: bool = False
 
 
 class DatabaseSettings(BaseModel):

@@ -1,0 +1,202 @@
+{
+  "purpose": "MISSION \u00a713 clause 5 \u2014 Gemini marking accuracy in its own terms",
+  "spend_usd": 0.0,
+  "source_run": "aa-floor-2026-08-23-a",
+  "collapse_validated_against_published_successes": true,
+  "per_repeat": {
+    "01": {
+      "n": 31,
+      "correct": 23,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 15,
+          "n": 23
+        }
+      }
+    },
+    "02": {
+      "n": 31,
+      "correct": 24,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 16,
+          "n": 23
+        }
+      }
+    },
+    "03": {
+      "n": 31,
+      "correct": 24,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 16,
+          "n": 23
+        }
+      }
+    },
+    "04": {
+      "n": 31,
+      "correct": 21,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 13,
+          "n": 23
+        }
+      }
+    },
+    "05": {
+      "n": 31,
+      "correct": 24,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 16,
+          "n": 23
+        }
+      }
+    },
+    "06": {
+      "n": 31,
+      "correct": 23,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 15,
+          "n": 23
+        }
+      }
+    },
+    "07": {
+      "n": 31,
+      "correct": 24,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 16,
+          "n": 23
+        }
+      }
+    },
+    "08": {
+      "n": 31,
+      "correct": 25,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 17,
+          "n": 23
+        }
+      }
+    },
+    "09": {
+      "n": 31,
+      "correct": 24,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 16,
+          "n": 23
+        }
+      }
+    },
+    "10": {
+      "n": 31,
+      "correct": 23,
+      "by_path": {
+        "det": {
+          "correct": 8,
+          "n": 8
+        },
+        "gemini": {
+          "correct": 15,
+          "n": 23
+        }
+      }
+    }
+  },
+  "det": {
+    "distinct_leaves": 8,
+    "per_repeat_correct": [
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8,
+      8
+    ],
+    "mean_correct": 8.0,
+    "accuracy_point": 1.0,
+    "wilson_at_honest_n": [
+      0.6756,
+      1.0
+    ],
+    "half_width_pp_honest": 16.22,
+    "wilson_if_repeats_pooled_NAIVE": [
+      0.9542,
+      1.0
+    ],
+    "half_width_pp_naive": 2.29
+  },
+  "gemini": {
+    "distinct_leaves": 23,
+    "per_repeat_correct": [
+      15,
+      16,
+      16,
+      13,
+      16,
+      15,
+      16,
+      17,
+      16,
+      15
+    ],
+    "mean_correct": 15.5,
+    "accuracy_point": 0.6957,
+    "wilson_at_honest_n": [
+      0.4913,
+      0.844
+    ],
+    "half_width_pp_honest": 17.63,
+    "wilson_if_repeats_pooled_NAIVE": [
+      0.6109,
+      0.7312
+    ],
+    "half_width_pp_naive": 6.02
+  }
+}

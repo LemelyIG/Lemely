@@ -1,0 +1,63 @@
+{
+  "label": "census-2026-08-24-b",
+  "issue": 45,
+  "milestone": "M2.2",
+  "kind": "failure-reason census over the 229 det-parser failures (#88's output set)",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "input": {
+    "source": "../census-2026-08-24-a/det-failures.txt",
+    "n": 229
+  },
+  "cause_counts_ranked": {
+    "genuine_mark_total_mismatch": 70,
+    "marks_cell_notation_not_parsed": 48,
+    "mark_aggregation_overcount": 47,
+    "paper_profile_misconfiguration": 40,
+    "marks_column_detection_failure": 24,
+    "table_layout_extraction_failure": 0,
+    "UNCLASSIFIED": 0
+  },
+  "counts_sum_to_229": true,
+  "table_layout_extraction_failure_note": "count=0: this bucket's ParseError catches are enforced on BOTH the MCQ and theory paths, but the 'computed < maximum_mark / 2' shortfall heuristic (round-4 fix) is enforced ONLY on the MCQ path (_classify_mcq) -- the theory path has no equivalent check, so a large theory-path deficit falls through to classify_theory_residual's mismatch_cause instead of landing here. This count is therefore a lower bound on structural extraction failures, not a claim that none occurred on the theory path under a maximum_mark/2 heuristic; an earlier draft of the module docstring claimed theory-path enforcement that was never implemented -- corrected in this round.",
+  "d7_hypothesis": {
+    "statement": "D7 hypothesised that parse_marks_cell/is_marks_column failures (marks_column_detection_failure + marks_cell_notation_not_parsed) explain the det-parser failure set.",
+    "n_explained": 72,
+    "n_total": 229,
+    "share": 0.3144,
+    "falsifiable": true,
+    "is_upper_bound": true,
+    "note": "This count is measured from re-running the pipeline's own column/cell detectors over each failing PDF, not assumed from the hypothesis by construction -- other causes (paper_profile_misconfiguration, table_layout_extraction_failure, mark_aggregation_overcount, genuine_mark_total_mismatch, UNCLASSIFIED) were checked FIRST wherever their evidence is more specific. Round 5: marks_cell_notation_not_parsed's own sufficiency check is now excess-side only (see manifest's absence of a deficit disjunct) -- the deficit direction is a consistency-check-only note, not an enforced bound, because a defaulted AnswerPoint is not guaranteed to reach computed_total at all (lemely/io/det/rows.py's flush() only sums a leaf's AnswerPoints when that leaf's q_row_had_answer flag was set). This D7 share is therefore published explicitly as an UPPER BOUND on what the column/cell-detection hypothesis explains, not a fully enforced count."
+  },
+  "excess_bound_near_vacuous": {
+    "count": 2,
+    "stems": [
+      "0625_w20_ms_42",
+      "0625_w21_ms_43"
+    ],
+    "detail": "Rows in marks_cell_notation_not_parsed whose empty_count >= maximum_mark: the excess sufficiency check (computed_total - maximum_mark <= empty_count) is technically satisfied but close to vacuous there, since a bound that large barely constrains anything. The round-5 population fix (count_defaulted_answer_points) sharply reduced how often this happens -- round 4's raw-row count put 4 rows at empty_count >= maximum_mark, one as high as 119 for a maximum_mark of 80 -- but does not eliminate it entirely for schemes with a genuinely high fraction of defaulted cells. Recorded here rather than silently claimed away; these rows are still correctly in the denominator and still labelled, just with a weaker-than-usual bound."
+  },
+  "known_bug_classified_not_fixed": {
+    "file": "lemely/io/det/profiles.py:50",
+    "count_in_this_bucket": 40,
+    "breakdown_by_subject_and_paper": {
+      "0625 p2": 40
+    },
+    "detail": "0625 p2 maps to THEORY_CORE via paper_type_by_number even though its cover text reads 'Paper 2 Multiple Choice (Extended)' -- this is #88's documented bug, labelled here on a demonstrated branch difference (_changes_parse_path confirms MCQ vs. THEORY_CORE actually sends classify_one down a different code path), not an attempted counterfactual reparse. Classified under paper_profile_misconfiguration by this census. NOT repaired here: question 2 on #88 is an unanswered human decision, and fixing it would move ~40 schemes between DA1 strata and invalidate #88's preflight denominator. git diff against lemely/io/det/profiles.py is empty."
+  },
+  "ruled_out_metadata_defect_not_a_cause": {
+    "file": "lemely/io/det/profiles.py:52",
+    "detail": "profiles.py maps 0625 paper 3 to THEORY_EXTENDED via paper_type_by_number, but every sampled p3 cover page reads 'Paper 3 Core Theory' (e.g. 0625_m19_ms_32.pdf, 0625_s21_ms_32.pdf) -- a real metadata discrepancy, structurally identical to the 0625 p2 bug. It is deliberately NOT counted among paper_profile_misconfiguration's 229-scheme causes: classify_one only ever branches on metadata.paper_type once (MCQ vs. not-MCQ, see classify_one/_classify_mcq/_classify_theory), and THEORY_EXTENDED vs. THEORY_CORE are on the SAME side of that branch, so reclassifying under the cover-text-implied type would not change which code path parses any 0625 p3 scheme in this failure set -- the counterfactual gate (_changes_parse_path) falsifies it as a cause for all of them, whatever their exact count (this script does not separately track a 0625-p3-only count; round 1's '34' was a since-superseded classification, not a number re-derived by this run). It is recorded here as a separate, ruled-out metadata defect, flagged for the human alongside question 2 on #88, and equally NOT repaired here -- git diff against lemely/io/det/profiles.py is empty."
+  },
+  "reproduce": {
+    "cost": "free, zero network, ~229 PDFs re-parsed with pdfplumber",
+    "steps": [
+      "1. .venv/bin/python BUILD/accuracy-runs/census-2026-08-24-b/classify_failures.py",
+      "(reads ../census-2026-08-24-a/det-failures.txt, writes classified-failures.txt + this manifest in place)"
+    ]
+  },
+  "not_committed": {
+    "what": "no PDF text or mark-scheme content is committed",
+    "why": "MISSION 12.7: never commit CAIE mark-scheme text verbatim -- only derived counts, PDF filenames/stems, and classification labels are in classified-failures.txt."
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "issue": 166,
+  "ruling": "C22 \u2014 reproduce one 0606 failure with logging, cap $0.15",
+  "target": "0606_m21_ms_22",
+  "budget_usd": 0.15,
+  "ledger_before": 5.588999150000057,
+  "ledger_after": 5.7342670500000565,
+  "spent_usd": 0.145268,
+  "attempts": [
+    {
+      "attempt": 1,
+      "ok": false,
+      "returncode": 0,
+      "usd": 0.145268,
+      "cum_usd": 0.145268,
+      "stdout": "\u001b[3m     Batch parse summary      \u001b[0m\n                              \n \u001b[1m \u001b[0m\u001b[1mmetric            \u001b[0m\u001b[1m \u001b[0m \u001b[1m \u001b[0m\u001b[1mvalue\u001b[0m\u001b[1m \u001b[0m \n \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 \n  Total                    1  \n  Parsed                   0  \n  Skipped (existing)       0  \n  Failed                   1  \n  Transient (retry)        0  \n                              \n",
+      "stderr": "{\"source\": \"0606_m21_ms_22.pdf\", \"computed_total\": 89, \"maximum_mark\": 80, \"discrepancy\": 9, \"tolerance\": 0, \"event\": \"mark_total_mismatch_escalating\", \"level\": \"warning\", \"timestamp\": \"2026-08-28T20:30:58.171663Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:30:59.287095Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AJjja9ZZwEA4cF_kviZUm2hwtNLSL8cYMuv4pOfTh5IlGHY-nI7oMO1ealJ8Bd4AOgY2E9FRcTRtbcNjRxlLtIGZ0E_a2WSCIo2DRSRngWW-ics&upload_protocol=resumable \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:31:01.262906Z\"}\n{\"event\": \"AFC is enabled with max remote calls: 10.\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:31:01.301511Z\"}\n{\"event\": \"Direct use of automatic function calling (AFC) in Models.generate_content is not recommended. Instead, we recommend to use AFC in Chat.send_message. Similarly, direct use of AFC in Models.generate_content_stream is not recommended. Instead, we recommend to use AFC in Chat.send_message_stream.\", \"level\": \"warning\", \"timestamp\": \"2026-08-28T20:31:01.301606Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:32:45.404731Z\"}\n{\"component\": \"gemini_client\", \"model\": \"gemini-2.5-flash\", \"task\": \"mark_scheme\", \"input_tokens\": 9531, \"output_tokens\": 25704, \"thoughts_tokens\": 7996, \"usd_cost\": 0.067119, \"cache_hit\": false, \"params_fingerprint\": \"8bd8d94453a9\", \"event\": \"gemini_call\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:32:45.427560Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:32:45.996558Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/upload/v1beta/files?upload_id=AJjja9Yv2lqmVZrEAydcdhOL6XvUPZ952zwD8f2tmY370ENRayiUqda6KWGuo8d-22z_xttL4Uns1N2BXp0oh72wndb4VQrAeI6vzEZvOKIM3HU&upload_protocol=resumable \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:32:47.781215Z\"}\n{\"event\": \"AFC is enabled with max remote calls: 10.\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:32:47.801970Z\"}\n{\"event\": \"HTTP Request: POST https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent \\\"HTTP/1.1 200 OK\\\"\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:34:55.961611Z\"}\n{\"component\": \"gemini_client\", \"model\": \"gemini-2.5-flash\", \"task\": \"mark_scheme\", \"input_tokens\": 10037, \"output_tokens\": 30055, \"thoughts_tokens\": 7996, \"usd_cost\": 0.078149, \"cache_hit\": false, \"params_fingerprint\": \"8bd8d94453a9\", \"event\": \"gemini_call\", \"level\": \"info\", \"timestamp\": \"2026-08-28T20:34:55.996151Z\"}\n"
+    }
+  ]
+}

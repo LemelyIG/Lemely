@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import time
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, Literal, TypeVar
 
 import structlog
 from pydantic import BaseModel
@@ -24,12 +25,22 @@ from lemely.runtime.events import EventType, bus
 
 _T = TypeVar("_T", bound=BaseModel)
 
+# Output-token cap sent on every call. A module constant rather than a literal
+# because it feeds the cache-key fingerprint (spec 3.3): changing it changes what
+# the model may return, so it must invalidate cached replies.
+_MAX_OUTPUT_TOKENS: int = 65536
+
 # Built-in pricing table: model-name substring → (input_usd_per_1k, output_usd_per_1k).
-# Matched by substring so "gemini-2.5-flash-preview-05-20" maps to the flash row.
+# GA rates (M0.2 / #26) — the table previously carried the preview price sheet
+# (flash: $0.150/$0.600 per 1M) while the configured model is GA gemini-2.5-flash
+# ($0.30/$2.50 per 1M), which understated real spend against total_usd_ceiling by
+# 2-4x. Matched by substring so "gemini-2.5-flash-preview-05-20" still maps to the
+# flash row (a *model name* can legitimately say "preview" without the pricing
+# tier being the old preview tier).
 _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
-    "gemini-2.5-flash-lite": (0.000075, 0.000300),
-    "gemini-2.5-flash": (0.000150, 0.000600),
-    "gemini-2.5-pro": (0.001250, 0.005000),
+    "gemini-2.5-flash-lite": (0.000100, 0.000400),
+    "gemini-2.5-flash": (0.000300, 0.002500),
+    "gemini-2.5-pro": (0.001250, 0.010000),
 }
 
 _GEMINI_UNSUPPORTED_KEYS = {
@@ -56,6 +67,28 @@ def _reset_process_counters() -> None:
     _process_output_tokens = 0
     _process_accumulated_usd = 0.0
     _process_cost_by_task = {}
+
+
+def reset_process_counters() -> None:
+    """Reset the process-wide token/USD counters that back ``per_run_token_ceiling``.
+
+    M0.2 / #26: until ``cache_mode="bypass"`` existed, a cache hit always
+    returned before the check ran, so this ceiling was effectively dead. Bypassed
+    calls reach the API every time, which is what arms it.
+
+    The counters accumulate for the lifetime of the process **on purpose**: the
+    ceiling is per *run*, and a run is allowed to drive many sweeps. Sizing it
+    is therefore a budget decision, not a code one — ``lemely.toml`` sets the
+    operative value (2,000,000, against ~115k tokens per golden sweep, so ~17
+    sweeps fit). A multi-sweep run must NOT reset between its sweeps: that would
+    convert a run-level budget guard into a per-sweep one and let a runaway
+    script spend without limit.
+
+    Call this only when a long-lived process genuinely begins a second,
+    independent run. Previously exposed only as the private
+    ``_reset_process_counters`` test helper.
+    """
+    _reset_process_counters()
 
 
 def process_token_totals() -> tuple[int, int]:
@@ -117,10 +150,21 @@ class _TransientError(Exception):
 
 
 class GeminiClient:
-    def __init__(self, settings: Settings, *, _genai_client: Any = None) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        *,
+        _genai_client: Any = None,
+        default_cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
+    ) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
         self._ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        #: Single source of truth for this client's cache behaviour when a
+        #: call site does not pass an explicit ``cache_mode`` (spec §3.3):
+        #: ``_build_run_manifest`` reads this attribute rather than assuming
+        #: the ``"read_write"`` literal (#73).
+        self.default_cache_mode = default_cache_mode
 
     @property
     def _client(self) -> Any:
@@ -134,6 +178,62 @@ class GeminiClient:
             )
             self._raw_client = genai.Client(api_key=api_key)
         return self._raw_client
+
+    def start_new_run(self) -> None:
+        """Reset the token/USD counters at the start of a new logical RUN.
+
+        A *run*, not a sweep. ``per_run_token_ceiling`` budgets one whole run —
+        every sweep it drives — and that is the point of it: it is the guard
+        that stops a runaway multi-sweep script from spending the §10 budget.
+        Resetting between sweeps would mean a script doing 100 sweeps never
+        trips a ceiling sized for one, which is not a fix but the removal of
+        the guard. See :func:`reset_process_counters`.
+
+        A multi-sweep run must therefore NOT call this between its sweeps. It
+        exists for a long-lived process that genuinely starts a second,
+        independent run — and for tests.
+        """
+        reset_process_counters()
+
+    def _resolved_gen_params(self, task_tag: str | None) -> dict[str, Any]:
+        """Resolve the generation parameters that affect output determinism.
+
+        Single source of truth for both the actual API call config
+        (:meth:`_call_once`) and the cache-key fingerprint (:meth:`_cache_key`) —
+        keeping them in sync is what makes the fingerprint meaningful.
+        """
+        g = self._settings.gemini
+        key = task_tag or ""
+        return {
+            "thinking_budget": g.thinking_budget_for.get(key, 0),
+            "temperature": g.temperature_for.get(key, g.temperature),
+            "top_p": g.top_p_for.get(key, g.top_p),
+            "seed": g.seed_for.get(key, g.seed),
+        }
+
+    def _params_fingerprint(
+        self, model: str, task_tag: str | None, response_schema: type[BaseModel] | None = None
+    ) -> str:
+        """Hash every input that can change the model's output.
+
+        Includes the response schema and ``max_output_tokens`` per spec §3.3.
+        The schema matters for correctness, not just completeness: the cache key
+        is ``model:prompt_hash:files_hash:params_fingerprint`` and ``prompt_hash``
+        covers only the system/user prompts, so without the schema here two calls
+        with identical prompts but different response schemas collide and the
+        second silently receives the first one's differently-shaped reply.
+        """
+        params = self._resolved_gen_params(task_tag)
+        schema_hash = ""
+        if response_schema is not None:
+            schema_json = json.dumps(response_schema.model_json_schema(), sort_keys=True)
+            schema_hash = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
+        raw = (
+            f"{model}|{params['temperature']}|{params['top_p']}"
+            f"|{params['seed']}|{params['thinking_budget']}"
+            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}"
+        )
+        return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:
         """Verify the Gemini API is reachable with the configured credentials.
@@ -163,6 +263,7 @@ class GeminiClient:
         prompt_version: str,
         file_paths: list[Path] | None,
         extra_key: str,
+        params_fingerprint: str,
     ) -> str:
         prompt_hash = hashlib.sha256(
             (system_prompt + user_prompt + prompt_version + extra_key).encode()
@@ -174,7 +275,10 @@ class GeminiClient:
             files_hash = h.hexdigest()[:12]
         else:
             files_hash = "none"
-        combined = f"{model}:{prompt_hash}:{files_hash}"
+        # M0.2 / #26: params_fingerprint (temperature/top_p/seed/thinking_budget)
+        # folded in so two calls with identical generation params hit the cache
+        # and two with differing params (a real A/B) do not silently collide.
+        combined = f"{model}:{prompt_hash}:{files_hash}:{params_fingerprint}"
         return hashlib.sha256(combined.encode()).hexdigest()[:16]
 
     def _cache_path(self, key: str) -> Path:
@@ -209,7 +313,14 @@ class GeminiClient:
         model: str | None = None,
         extra_cache_key: str = "",
         task_tag: str | None = None,
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
     ) -> _T:
+        if cache_mode is None:
+            cache_mode = self.default_cache_mode
+        if cache_mode not in ("read_write", "bypass", "refresh"):
+            raise ValueError(
+                f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
+            )
         g = self._settings.gemini
         if model is not None:
             active_model = model
@@ -224,6 +335,7 @@ class GeminiClient:
             task=task_tag or "untagged",
         )
 
+        params_fingerprint = self._params_fingerprint(active_model, task_tag, response_schema)
         cache_key = self._cache_key(
             active_model,
             system_prompt,
@@ -231,10 +343,18 @@ class GeminiClient:
             prompt_version,
             file_paths,
             extra_cache_key,
+            params_fingerprint,
         )
         cache_path = self._cache_path(cache_key)
 
-        if cache_path.exists():
+        # cache_mode="read_write" (default): read-then-write, current behaviour.
+        # cache_mode="bypass": skip the read (always call the API); does NOT
+        #   write either, so a bypassed call — used for A/B churn measurement —
+        #   is fully side-effect-free with respect to the shared cache.
+        # cache_mode="refresh": skip the read (always call the API) and DOES
+        #   write, overwriting any existing entry — used to force-regenerate a
+        #   specific known-stale response so later read_write calls see it.
+        if cache_mode == "read_write" and cache_path.exists():
             log.info("gemini_cache_hit", cache_key=cache_key)
             bus.publish(
                 EventType.GEMINI_CACHE_HIT,
@@ -302,7 +422,8 @@ class GeminiClient:
                     "even after schema-correction retry."
                 ) from exc
 
-        cache_path.write_text(raw_text, encoding="utf-8")
+        if cache_mode in ("read_write", "refresh"):
+            cache_path.write_text(raw_text, encoding="utf-8")
         return result
 
     def _call_with_retry(
@@ -373,7 +494,8 @@ class GeminiClient:
             for fp in file_paths:
                 file_parts.append(self._client.files.upload(file=fp))
 
-        thinking_budget = self._settings.gemini.thinking_budget_for.get(task_tag or "", 0)
+        gen_params = self._resolved_gen_params(task_tag)
+        thinking_budget = gen_params["thinking_budget"]
         stripped_schema = _strip_schema(response_schema.model_json_schema())
         log.debug(
             "gemini_schema_sent",
@@ -386,11 +508,14 @@ class GeminiClient:
             response = self._client.models.generate_content(
                 model=model,
                 config=types.GenerateContentConfig(
-                    max_output_tokens=65536,
+                    max_output_tokens=_MAX_OUTPUT_TOKENS,
                     thinking_config=types.ThinkingConfig(thinking_budget=thinking_budget),
                     response_mime_type="application/json",
                     response_schema=stripped_schema,
                     system_instruction=system_prompt,
+                    temperature=gen_params["temperature"],
+                    top_p=gen_params["top_p"],
+                    seed=gen_params["seed"],
                 ),
                 contents=[user_prompt, *file_parts],
             )
@@ -410,7 +535,12 @@ class GeminiClient:
             _process_accumulated_usd, \
             _process_cost_by_task
         in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
-        out_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
+        candidates_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
+        # M0.2 / #26: thoughts_token_count was previously never counted, silently
+        # understating both the ledgered output-token count and its USD cost for
+        # any call made with a non-zero thinking budget (e.g. mark_scheme's 8000).
+        thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
+        out_tok = candidates_tok + thoughts_tok
         _process_input_tokens += in_tok
         _process_output_tokens += out_tok
 
@@ -443,8 +573,16 @@ class GeminiClient:
             "gemini_call",
             input_tokens=in_tok,
             output_tokens=out_tok,
+            # Broken out separately from output_tokens (which now includes them)
+            # so a thinking-budget change is visible in the logs rather than
+            # showing up as unexplained output-token drift.
+            thoughts_tokens=thoughts_tok,
             usd_cost=usd_rounded,
             cache_hit=False,
+            # M0.4 reads this off the log to record which generation parameters
+            # a sweep actually ran under, without re-deriving them from config
+            # that may have changed since.
+            params_fingerprint=self._params_fingerprint(model, task_tag, response_schema),
         )
         bus.publish(
             EventType.GEMINI_CALL_END,

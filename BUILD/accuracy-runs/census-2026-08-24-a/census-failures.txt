@@ -1,0 +1,27 @@
+mark-scheme PDFs in corpus : 479
+schemes produced by det    : 250
+DET FAILURE SET            : 229
+det success rate           : 52.2%
+
+failures by syllabus:
+  0580: 30
+  0606: 64
+  0625: 135
+
+failures by syllabus x paper:
+  0580 p1: 8
+  0580 p2: 11
+  0580 p3: 4
+  0580 p4: 7
+  0606 p1: 36
+  0606 p2: 28
+  0625 p2: 40
+  0625 p3: 34
+  0625 p4: 31
+  0625 p5: 14
+  0625 p6: 16
+
+failure reasons observed (lead for #45, not a classification):
+  mark_total_mismatch_escalating: 229
+
+failure set written to /tmp/acc57-full/det-failures.txt

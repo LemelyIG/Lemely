@@ -1,0 +1,17 @@
+{
+  "1a_i": {
+    "student_answer": "a = (v-u)/t",
+    "awarded_marks": 1,
+    "notes": "correct formula only"
+  },
+  "1a_ii": {
+    "student_answer": "a = (10-0)/4 = 2.5 m/s^2",
+    "awarded_marks": 1,
+    "notes": "correct substitution and correct final value with unit"
+  },
+  "1b": {
+    "student_answer": "F = ma = 2.0 x 2.5 = 5.0 N",
+    "awarded_marks": 3,
+    "notes": "correct formula, correct substitution, correct final value"
+  }
+}

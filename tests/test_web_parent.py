@@ -233,37 +233,23 @@ def _record(
     )
 
 
-# The two default fixture timestamps below are relative to "now", not fixed
-# dates, and that is load-bearing rather than stylistic.
-#
-# They used to be hardcoded at 2026-08-04 / 2026-08-05. `lemely/core/at_risk.py`'s
-# rule 3 fires the `inactive` flag at `_INACTIVITY_DAYS = 14` days since the most
-# recent `recorded_at`, and `routers/parent.py` appends " At least one at-risk
-# signal is active." to `statusLine` whenever any flag fires. So on 2026-08-19 —
-# fourteen days after that fixed date, with nobody touching the code — every test
-# in this file asserting `statusLine` by exact equality began to fail, and stayed
-# failing further every day.
-#
-# Anchoring to `now` expresses what these fixtures are actually for: a student who
-# has been active recently. Tests that need a genuinely inactive student still say
-# so explicitly by passing their own `recorded_at` (see the 2020-03 dates in the
-# at-risk flag test below, which assert the inactivity rule DOES fire) — those are
-# deliberate and are left exactly as they were.
-_RECENT_PAPER_AT = (datetime.now(UTC) - timedelta(days=2)).isoformat()
-"""Two days ago: recent enough that rule 3 never fires."""
+def _recent(*, days_ago: int) -> str:
+    """A ``recorded_at`` anchored to the wall clock, not a fixed date.
 
-_RECENT_QUIZ_AT = (datetime.now(UTC) - timedelta(days=1)).isoformat()
-"""One day ago. Deliberately NEWER than the paper, preserving the ordering the
-old fixed dates had (08-04 paper, 08-05 quiz): the quiz-origin tests here exist
-to prove a newer quiz does not move a grade-bearing status line or trend, which
-needs the quiz to actually be the more recent record."""
+    At-risk rule 3 compares ``recorded_at`` against ``now`` with a 14-day
+    window, so a hardcoded date silently ages into "inactive" and appends
+    an at-risk clause to ``statusLine`` — breaking tests that never meant to
+    exercise that rule. Tests that *do* want the inactivity flag pass their
+    own long-past date explicitly.
+    """
+    return (datetime.now(UTC) - timedelta(days=days_ago)).isoformat()
 
 
 def _paper(**kwargs: object) -> PaperRecord:
     defaults: dict[str, object] = {
         "percentage": 80.0,
         "grade": "B",
-        "recorded_at": _RECENT_PAPER_AT,
+        "recorded_at": _recent(days_ago=3),
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
@@ -277,7 +263,7 @@ def _quiz(**kwargs: object) -> PaperRecord:
         "paper_number": 1,
         "paper_variant": 1,
         "maximum": 10,
-        "recorded_at": _RECENT_QUIZ_AT,
+        "recorded_at": _recent(days_ago=2),
     }
     defaults.update(kwargs)
     return _record(**defaults)  # type: ignore[arg-type]
@@ -614,9 +600,7 @@ def test_child_overview_surfaces_a_real_below_target_flag_when_a_target_is_set(
     profile_service.upsert_enrolment(student, "0625", target_grade="A")
     history_store.append(
         str(student),
-        _paper(
-            student_id=student, percentage=40.0, grade="D", recorded_at="2026-08-04T10:00:00+00:00"
-        ),
+        _paper(student_id=student, percentage=40.0, grade="D"),
     )
 
     _auth_as(client, parent, Role.parent)
@@ -645,9 +629,7 @@ def test_child_overview_includes_qualification_level_per_subject(
     profile_service.upsert_enrolment(student, "0625", qualification_level="igcse")
     history_store.append(
         str(student),
-        _paper(
-            student_id=student, percentage=80.0, grade="B", recorded_at="2026-08-04T10:00:00+00:00"
-        ),
+        _paper(student_id=student, percentage=80.0, grade="B"),
     )
 
     _auth_as(client, parent, Role.parent)

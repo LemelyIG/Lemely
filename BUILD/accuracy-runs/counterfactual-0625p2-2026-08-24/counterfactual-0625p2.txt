@@ -1,0 +1,17 @@
+stems labelled paper_profile_misconfiguration: 40
+
+[AS SHIPPED  (paper 2 -> THEORY_CORE)] parsed_ok=0  failed=40  missing=0
+      1  Mark total mismatch for 0625_m19_ms_22.pdf: parsed 12, expec
+      1  Mark total mismatch for 0625_m20_ms_22.pdf: parsed 12, expec
+      1  Mark total mismatch for 0625_m21_ms_22.pdf: parsed 12, expec
+      1  Mark total mismatch for 0625_m22_ms_22.pdf: parsed 12, expec
+      1  Mark total mismatch for 0625_s19_ms_21.pdf: parsed 12, expec
+      1  Mark total mismatch for 0625_s19_ms_22.pdf: parsed 12, expec
+
+[COUNTERFACTUAL (paper 2 -> MCQ)] parsed_ok=39  failed=1  missing=0
+      1  Mark total mismatch for 0625_s24_ms_21.pdf: parsed 12, expec
+
+==== VERDICT ====
+as shipped     : 0/40 parse
+counterfactual : 39/40 parse
+schemes moved from FAIL to PASS by the profiles.py:50 fix: 39

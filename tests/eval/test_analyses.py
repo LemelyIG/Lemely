@@ -1,0 +1,1461 @@
+"""Unit tests for lemely.eval.analyses's six pure analysis functions (spec §3.3)."""
+
+from __future__ import annotations
+
+import inspect
+import json
+import math
+import random
+from pathlib import Path
+
+import pytest
+
+from lemely.eval.analyses import (
+    MCNEMAR_IMPROVEMENT_N_FLOOR,
+    ablation_2x2,
+    coherence_trigger_rate,
+    exclusion_funnel,
+    mcnemar,
+    mcnemar_improvement_p_value,
+    paired_proportion_min_n,
+    paper_grade_confidence,
+    review_rate,
+    risk_coverage,
+    wilson,
+)
+from lemely.eval.records import EvalRecord
+
+
+def _rec(**overrides: object) -> EvalRecord:
+    base: dict[str, object] = {
+        "run_id": "run-1",
+        "arm": "extract+mark",
+        "paper_id": "p1",
+        "fixture_variant": None,
+        "question_id": "1",
+        "mark_point_id": None,
+        "parse_path": "det",
+        "predicted_marks": 2,
+        "truth_marks": 2,
+        "outcome": "correct",
+        "extraction_conf": 0.9,
+        "marker_conf": 0.95,
+        "id_match": "exact",
+        "triggers": [],
+    }
+    base.update(overrides)
+    return EvalRecord(**base)  # type: ignore[arg-type]
+
+
+class TestAblation2x2:
+    def test_cross_tabulates_outcomes_per_question(self) -> None:
+        records = [
+            # both correct
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="correct"),
+            # extraction-attributable: oracle correct, extract wrong
+            _rec(arm="oracle+mark", question_id="2", outcome="correct"),
+            _rec(arm="extract+mark", question_id="2", outcome="under"),
+            # marking-attributable: both wrong
+            _rec(arm="oracle+mark", question_id="3", outcome="under"),
+            _rec(arm="extract+mark", question_id="3", outcome="over"),
+            # masked: oracle wrong, extract correct
+            _rec(arm="oracle+mark", question_id="4", outcome="under"),
+            _rec(arm="extract+mark", question_id="4", outcome="correct"),
+        ]
+        result = ablation_2x2(records)
+        assert result == {
+            "both_correct": 1,
+            "extraction_attributable": 1,
+            "marking_attributable": 1,
+            "masked": 1,
+        }
+
+    def test_empty_input_returns_all_zero_buckets(self) -> None:
+        result = ablation_2x2([])
+        assert result == {
+            "both_correct": 0,
+            "extraction_attributable": 0,
+            "marking_attributable": 0,
+            "masked": 0,
+        }
+
+    def test_excludes_point_level_rows(self) -> None:
+        records = [
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="correct"),
+            # point-level rows for the same question — must not double count
+            _rec(arm="oracle+mark", question_id="1", mark_point_id="1a", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", mark_point_id="1a", outcome="correct"),
+        ]
+        result = ablation_2x2(records)
+        assert result["both_correct"] == 1
+
+
+def _concordant_filler_pairs(n: int) -> list[EvalRecord]:
+    """``n`` extra concordant (both-correct) leaf pairs, to push ``n_pairs``
+    at/above :data:`MCNEMAR_IMPROVEMENT_N_FLOOR` without disturbing ``b``/``c``."""
+    records: list[EvalRecord] = []
+    for i in range(n):
+        qid = f"filler-{i}"
+        records.append(_rec(arm="oracle+mark", question_id=qid, outcome="correct"))
+        records.append(_rec(arm="extract+mark", question_id=qid, outcome="correct"))
+    return records
+
+
+class TestMcnemar:
+    def test_discordant_pairs_produce_nonzero_statistic(self) -> None:
+        # Padded to n_pairs >= MCNEMAR_IMPROVEMENT_N_FLOOR with concordant filler so this
+        # exercises the numeric (non-underpowered) branch's chi2/p_value math.
+        records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="under"),
+            _rec(arm="oracle+mark", question_id="2", outcome="correct"),
+            _rec(arm="extract+mark", question_id="2", outcome="under"),
+            _rec(arm="oracle+mark", question_id="3", outcome="correct"),
+            _rec(arm="extract+mark", question_id="3", outcome="correct"),
+        ]
+        result = mcnemar(records)
+        assert result["underpowered"] is False
+        assert result["b"] == 2
+        assert result["c"] == 0
+        assert result["chi2"] is not None and result["chi2"] > 0
+        assert result["p_value"] is not None and 0.0 <= result["p_value"] <= 1.0
+
+    def test_no_discordant_pairs_gives_zero_statistic(self) -> None:
+        records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="correct"),
+        ]
+        result = mcnemar(records)
+        assert result["underpowered"] is False
+        assert result["b"] == 0
+        assert result["c"] == 0
+        assert result["chi2"] == 0.0
+        assert result["p_value"] == 1.0
+
+    def test_collapses_duplicate_question_level_rows_to_one_leaf(self) -> None:
+        # Two question-level rows for the SAME (paper_id, question_id) leaf —
+        # e.g. a fixture_variant duplicate — must not inflate n_pairs. This
+        # exercises _distinct_leaves_by_arm's collapsing directly: both rows
+        # are already question-level (mark_point_id=None), so a no-op
+        # "first one seen" collapse would also pass this — the assertion
+        # that catches the real defect is in TestDistinctLeafDA6 below.
+        records = [
+            _rec(arm="oracle+mark", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", fixture_variant="correct", outcome="under"),
+            _rec(arm="oracle+mark", question_id="1", fixture_variant="wrong", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", fixture_variant="wrong", outcome="under"),
+        ]
+        result = mcnemar(records)
+        assert result["n_pairs"] == 1
+
+
+class TestNFloor:
+    """M0.6 (#30): a McNemar result below the paired-comparison n-floor must
+    report ``underpowered`` rather than a numeric p-value/statistic (spec
+    §6: n=219 to detect 83.8%->88.8% at alpha=0.05/power=0.80)."""
+
+    def test_below_floor_still_returns_numeric_statistic(self) -> None:
+        """Real ~31-leaf golden corpus, replayed as paired oracle/extract
+        arms — an order of magnitude below MCNEMAR_IMPROVEMENT_N_FLOOR (spec
+        §6's own example of exactly this population). The floor governs
+        whether the result may be PRESENTED as an improvement claim (see
+        TestReportingLayer below), not whether the statistic gets computed
+        at all: ``chi2``/``p_value`` must be real floats even here."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                arm=arm,
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="correct" if arm == "oracle+mark" else "under",
+            )
+            for case in cases
+            for qid in case.ground_truth
+            for arm in ("oracle+mark", "extract+mark")
+        ]
+        result = mcnemar(records)
+        assert result["n_pairs"] < MCNEMAR_IMPROVEMENT_N_FLOOR
+        assert result["underpowered"] is True
+        assert result["b"] == 31
+        assert result["c"] == 0
+        assert isinstance(result["chi2"], float)
+        assert isinstance(result["p_value"], float)
+        assert result["chi2"] is not None
+        assert result["p_value"] is not None
+
+    def test_at_or_above_floor_returns_numeric_result(self) -> None:
+        """Synthetic paired data with n_pairs >= MCNEMAR_IMPROVEMENT_N_FLOOR — no real
+        corpus reaches this yet — proves the underpowered branch is a real
+        branch, not vacuously always-true."""
+        records = []
+        for i in range(MCNEMAR_IMPROVEMENT_N_FLOOR):
+            qid = f"q{i}"
+            oracle_outcome = "correct"
+            extract_outcome = "under" if i % 5 == 0 else "correct"
+            records.append(_rec(arm="oracle+mark", question_id=qid, outcome=oracle_outcome))
+            records.append(_rec(arm="extract+mark", question_id=qid, outcome=extract_outcome))
+
+        result = mcnemar(records)
+        assert result["n_pairs"] == MCNEMAR_IMPROVEMENT_N_FLOOR
+        assert result["underpowered"] is False
+        assert isinstance(result["chi2"], float)
+        assert isinstance(result["p_value"], float)
+        assert 0.0 <= result["p_value"] <= 1.0
+
+    def test_paired_proportion_min_n_pinned_value_and_monotonicity(self) -> None:
+        """`paired_proportion_min_n` implements the Connor/Fleiss
+        favourable-case bound: the discordant-pair proportion is set to its
+        minimum possible value (psi = d = |p2 - p1|, i.e. every discordant
+        pair moves p1->p2 and none reverse), giving
+
+            n = ceil((z_a*sqrt(d) + z_b*sqrt(d*(1-d)))**2 / d**2)
+
+        This pins the exact value for spec §6's effect size (83.8% ->
+        88.8%, alpha=0.05, power=0.80), recomputed independently here from
+        the module's own ``_inverse_normal_cdf`` rather than asserting a
+        bare literal, plus the monotonicity any real bound must have:
+        a bigger effect size needs fewer pairs, and more power needs more."""
+        from lemely.eval.analyses import _inverse_normal_cdf
+
+        def expected(p1: float, p2: float, alpha: float, power: float) -> int:
+            z_alpha = _inverse_normal_cdf(1 - alpha / 2)
+            z_beta = _inverse_normal_cdf(power)
+            d = abs(p2 - p1)
+            return math.ceil((z_alpha * math.sqrt(d) + z_beta * math.sqrt(d * (1 - d))) ** 2 / d**2)
+
+        pinned = expected(0.838, 0.888, alpha=0.05, power=0.80)
+        assert paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.80) == pinned
+        assert 0 < pinned <= MCNEMAR_IMPROVEMENT_N_FLOOR
+
+        # Larger effect size -> strictly smaller n.
+        bigger_effect = paired_proportion_min_n(0.75, 0.888, alpha=0.05, power=0.80)
+        assert bigger_effect < pinned
+
+        # Higher power -> strictly larger n.
+        higher_power = paired_proportion_min_n(0.838, 0.888, alpha=0.05, power=0.90)
+        assert higher_power > pinned
+
+
+class TestReportingLayer:
+    """M0.6 (#30): the refusal to present a bare p-value as an improvement
+    claim below the n-floor lives ONLY in this reporting-layer function —
+    ``mcnemar()`` itself always returns the numeric statistic (see
+    TestNFloor.test_below_floor_still_returns_numeric_statistic)."""
+
+    def test_underpowered_result_returns_the_sentinel(self) -> None:
+        result = mcnemar(
+            [
+                _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+                _rec(arm="extract+mark", question_id="1", outcome="under"),
+            ]
+        )
+        assert result["underpowered"] is True
+        reported = mcnemar_improvement_p_value(result)
+        assert reported == "underpowered"
+
+    def test_powered_result_returns_the_numeric_p_value(self) -> None:
+        records = [
+            *_concordant_filler_pairs(MCNEMAR_IMPROVEMENT_N_FLOOR),
+            _rec(arm="oracle+mark", question_id="1", outcome="correct"),
+            _rec(arm="extract+mark", question_id="1", outcome="under"),
+        ]
+        result = mcnemar(records)
+        assert result["underpowered"] is False
+        reported = mcnemar_improvement_p_value(result)
+        assert reported == result["p_value"]
+        assert isinstance(reported, float)
+
+
+def test_mcnemar_signature_rejects_unpaired_rate_summaries() -> None:
+    """AC1: the sole parameter of ``mcnemar`` is ``records: list[EvalRecord]``
+    — there is no code path that accepts two independent rate summaries
+    (e.g. two bare proportions/counts) and returns a p-value."""
+    sig = inspect.signature(mcnemar)
+    assert list(sig.parameters) == ["records"]
+    (param,) = sig.parameters.values()
+    assert param.annotation in ("list[EvalRecord]", list[EvalRecord])
+
+
+class TestWilson:
+    def test_happy_path_interval_contains_point_estimate(self) -> None:
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(8)] + [
+            _rec(question_id=str(i), outcome="under") for i in range(8, 10)
+        ]
+        result = wilson(records)
+        assert result["n"] == 10
+        assert result["point"] == 0.8
+        assert result["lower"] < result["point"] < result["upper"]
+        assert 0.0 <= result["lower"] <= result["upper"] <= 1.0
+
+    def test_zero_count_denominator_returns_full_uncertainty(self) -> None:
+        result = wilson([])
+        assert result["n"] == 0
+        assert result["lower"] == 0.0
+        assert result["upper"] == 1.0
+
+    def test_excludes_excluded_outcome_from_denominator(self) -> None:
+        records = [
+            _rec(question_id="1", outcome="correct"),
+            _rec(question_id="2", outcome="excluded"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+
+    def test_diverges_from_clamped_normal_approximation(self) -> None:
+        """AC2: small n (10) at an extreme point estimate (100% correct) is
+        exactly the case where a clamped normal approximation degenerates —
+        ``se = sqrt(p*(1-p)/n) == 0`` at p=1, so the clamped-normal interval
+        collapses to the point estimate ``[1.0, 1.0]`` and would falsely
+        report zero uncertainty. Wilson does not degenerate here: its lower
+        bound is pinned at the independently-computed value below, proving
+        this is the score interval, not a normal approximation with the
+        endpoints clamped into range."""
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(10)]
+        result = wilson(records)
+        assert result["n"] == 10
+        assert result["point"] == 1.0
+
+        # A clamped normal approximation at p=1.0 degenerates to [1.0, 1.0].
+        normal_lower = max(0.0, 1.0 - 1.96 * math.sqrt(1.0 * (1.0 - 1.0) / 10))
+        assert normal_lower == 1.0
+
+        # Wilson must not degenerate: its lower bound is pinned well below 1.0.
+        assert result["lower"] == 0.7224598312333834
+        assert result["upper"] == 1.0
+        assert result["lower"] < normal_lower
+
+
+class TestWilsonIntervalExtraction:
+    """Regression: ``_wilson_interval`` is the arithmetic ``wilson()`` was built on.
+
+    #98 extracts ``wilson()``'s interval arithmetic into a pure
+    ``(successes, n, z) -> WilsonResult`` helper. This test would fail if the
+    extraction silently changed the arithmetic: it recomputes the exact
+    values from ``TestWilson`` directly against the helper, independent of
+    ``EvalRecord``/``wilson()``.
+    """
+
+    def test_matches_wilsons_own_output_for_equivalent_inputs(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(8)] + [
+            _rec(question_id=str(i), outcome="under") for i in range(8, 10)
+        ]
+        via_wilson = wilson(records)
+        via_helper = _wilson_interval(successes=8, n=10)
+        assert via_helper == via_wilson
+
+    def test_matches_wilsons_extreme_point_estimate_regression_value(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        result = _wilson_interval(successes=10, n=10)
+        assert result["n"] == 10
+        assert result["point"] == 1.0
+        assert result["lower"] == 0.7224598312333834
+        assert result["upper"] == 1.0
+
+    def test_zero_n_returns_full_uncertainty(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        result = _wilson_interval(successes=0, n=0)
+        assert result == {"n": 0, "successes": 0, "point": 0.0, "lower": 0.0, "upper": 1.0}
+
+    def test_custom_z_is_honoured_same_as_wilsons_z_kwarg(self) -> None:
+        from lemely.eval.analyses import _wilson_interval
+
+        records = [_rec(question_id=str(i), outcome="correct") for i in range(8)] + [
+            _rec(question_id=str(i), outcome="under") for i in range(8, 10)
+        ]
+        via_wilson = wilson(records, z=1.5)
+        via_helper = _wilson_interval(successes=8, n=10, z=1.5)
+        assert via_helper == via_wilson
+
+
+class TestAgreementWilson:
+    """Synthetic-only tests for the labeller-A/labeller-B agreement computation (#98, DA2/#51).
+
+    **These assert the TOTALS-equality figure, which B12/#140 demoted from
+    headline to named secondary.** They are updated rather than deleted because
+    every property they guard -- DA6 leaf identity, last-record-wins,
+    shared-leaves-only, no-mutation -- is computed by machinery both figures
+    share (``_leaf_representatives``), so they still guard it. The per-point
+    headline has its own class below.
+    """
+
+    def _leaf_record(
+        self,
+        *,
+        question_id: str,
+        awarded_marks: int,
+        paper_id: str = "paper-1",
+        mark_point_id: str | None = None,
+        mark_point_verdicts: dict[str, bool] | None = None,
+    ) -> dict[str, object]:
+        return {
+            "paper_id": paper_id,
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": mark_point_id,
+            "mark_point_verdicts": mark_point_verdicts or {},
+        }
+
+    def test_agreement_uses_wilson_interval_arithmetic(self) -> None:
+        from lemely.eval.analyses import _wilson_interval, agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            self._leaf_record(question_id="3", awarded_marks=0),
+            self._leaf_record(question_id="4", awarded_marks=3),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),  # agree
+            self._leaf_record(question_id="2", awarded_marks=1),  # agree
+            self._leaf_record(question_id="3", awarded_marks=1),  # disagree
+            self._leaf_record(question_id="4", awarded_marks=3),  # agree
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        # These records carry no mark-point verdicts, so the PER-POINT headline
+        # is empty and the leaf-level content lives in the totals figure. The
+        # property this test guards -- that the interval arithmetic is
+        # _wilson_interval's and not a second implementation -- is asserted on
+        # the headline, over records that do carry verdicts, in
+        # TestAgreementIsPerMarkPoint.
+        expected = _wilson_interval(successes=3, n=4)
+        assert result["totals_n"] == expected["n"]
+        assert result["totals_successes"] == expected["successes"]
+        assert result["totals_point"] == expected["point"]
+        assert result["n"] == 0, "no verdicts recorded, so no mark points to score"
+        assert result["shared_leaves_without_shared_points"] == 4
+
+    def test_denominator_is_distinct_leaves_not_raw_records(self) -> None:
+        """Duplicate per-leaf (mark-point-level) records must collapse to
+        one leaf each before agreement counts them -- never raw records."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(
+                question_id="1",
+                awarded_marks=2,
+                mark_point_id="1a",
+                mark_point_verdicts={"1a": True},
+            ),
+            self._leaf_record(
+                question_id="1",
+                awarded_marks=2,
+                mark_point_id="1b",
+                mark_point_verdicts={"1b": True},
+            ),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        # 4 raw records for A but only 2 distinct leaves (question_id 1, 2).
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        assert result["totals_n"] == 2
+        assert result["totals_successes"] == 2
+
+    def test_never_mutates_reorders_or_supersedes_as_records(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=5),
+        ]
+        import copy
+
+        a_before = copy.deepcopy(a_records)
+        a_ids_before = [id(r) for r in a_records]
+
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+
+        assert a_records == a_before
+        assert [id(r) for r in a_records] == a_ids_before
+        # The result carries no field that could be mistaken for a corrected
+        # A-label. This asserts the PROPERTY -- every value is an aggregate
+        # scalar -- rather than a frozen key list, so adding another aggregate
+        # (as #105 did with the a_only/b_only exclusion funnel) does not force
+        # a test edit, while smuggling in per-leaf data still fails here.
+        assert set(result.keys()) == {
+            "n",
+            "successes",
+            "point",
+            "lower",
+            "upper",
+            "a_only",
+            "b_only",
+            "shared_leaves",
+            "shared_leaves_without_shared_points",
+            "points_a_only",
+            "points_b_only",
+            "totals_n",
+            "totals_successes",
+            "totals_point",
+            "totals_lower",
+            "totals_upper",
+        }
+        assert all(isinstance(v, int | float) for v in result.values()), (
+            "every field must be an aggregate scalar; a per-leaf collection here "
+            "would be one refactor away from being read as a corrected A-label"
+        )
+
+    def test_only_leaves_present_in_both_a_and_b_count(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            self._leaf_record(question_id="3", awarded_marks=0),
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),
+            self._leaf_record(question_id="2", awarded_marks=1),
+            # question_id 3 was not in B's sample -- excluded, not a disagreement
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        assert result["totals_n"] == 2
+        assert result["totals_successes"] == 2
+
+    def test_same_question_id_in_two_papers_is_two_leaves_not_one(self) -> None:
+        """Leaf identity is ``(paper_id, question_id)`` (DA6), never the bare id.
+
+        Keyed on ``question_id`` alone this collapses to a single leaf: the
+        denominator drops from 2 to 1 **and** the real disagreement in
+        ``paper-2`` is silently discarded, so agreement reads 1/1 = 100%.
+        That is the D18 narrowed-denominator shape.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(paper_id="paper-1", question_id="1a", awarded_marks=2),
+            self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=2),
+        ]
+        b_records = [
+            self._leaf_record(paper_id="paper-1", question_id="1a", awarded_marks=2),  # agree
+            self._leaf_record(paper_id="paper-2", question_id="1a", awarded_marks=0),  # disagree
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        assert result["totals_n"] == 2, "one leaf per paper, not one leaf across papers"
+        assert result["totals_successes"] == 1, "the paper-2 disagreement must not be swallowed"
+
+    def test_a_corrected_resubmission_supersedes_the_earlier_record(self) -> None:
+        """The label log is append-only, so the LAST record for a leaf wins.
+
+        A labeller who marks 2, notices the mistake and appends 0 has
+        corrected their label. Taking the earliest record would drive the
+        agreement figure from a value its own author has already retracted.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._leaf_record(question_id="1", awarded_marks=2),  # first attempt
+            self._leaf_record(question_id="1", awarded_marks=0),  # correction
+        ]
+        b_records = [
+            self._leaf_record(question_id="1", awarded_marks=0),
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+        assert result["totals_n"] == 1
+        assert result["totals_successes"] == 1, "A's correction stands, not A's first attempt"
+
+
+class TestAgreementCarriesItsExclusionFunnel:
+    """MISSION §9 gate 7: a reported rate names its denominator AND its exclusions.
+
+    Naming them in a docstring does not satisfy the gate — a docstring does
+    not travel with the published figure. A reader handed ``n=28, point=0.86``
+    cannot otherwise tell whether 2 leaves were excluded or 200, which is the
+    difference between a sound 10% sample and a silently narrowed one.
+    """
+
+    def _rec(self, paper_id: str, question_id: str, awarded_marks: int) -> dict[str, object]:
+        return {
+            "paper_id": paper_id,
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": None,
+            "mark_point_verdicts": {},
+        }
+
+    def test_leaves_only_one_labeller_marked_are_counted_and_reported(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        a_records = [
+            self._rec("p1", "1", 2),  # shared, agree
+            self._rec("p1", "2", 1),  # A only
+            self._rec("p1", "3", 1),  # A only
+        ]
+        b_records = [
+            self._rec("p1", "1", 2),  # shared, agree
+            self._rec("p1", "9", 1),  # B only
+        ]
+        result = agreement_wilson(a_records, b_records, rulings_settled=True)
+
+        assert result["totals_n"] == 1, "denominator is the shared leaves"
+        assert result["a_only"] == 2
+        assert result["b_only"] == 1
+
+    def test_a_fully_overlapping_sample_reports_zero_exclusions(self) -> None:
+        """The funnel must not be decorative — it reads zero when nothing is excluded."""
+        from lemely.eval.analyses import agreement_wilson
+
+        records = [self._rec("p1", "1", 2), self._rec("p1", "2", 1)]
+        result = agreement_wilson(records, list(records), rulings_settled=True)
+
+        assert result["totals_n"] == 2
+        assert result["a_only"] == 0
+        assert result["b_only"] == 0
+
+
+class TestAgreementRefusesUnsettledRulings:
+    """DA3/DA5 stop being prose that a future run can walk past.
+
+    DA3 requires the ``pending_ruling`` tail at zero before the split freeze,
+    which is irreversible; DA5 requires #52's sweep before #51's sample.
+    Until #105 nothing consulted ``count_pending()`` at all — the same shape
+    as #49, which reached CLOSED with an unmet acceptance box because nothing
+    mechanical was checking.
+    """
+
+    def test_agreement_refuses_when_rulings_are_not_settled(self) -> None:
+        from lemely.eval.analyses import agreement_wilson
+
+        with pytest.raises(ValueError, match="rulings are not settled"):
+            agreement_wilson([], [], rulings_settled=False)
+
+    def test_the_precondition_cannot_be_forgotten(self) -> None:
+        """No default: omitting it is a TypeError, not a silent pass.
+
+        A defaulted flag would be skippable by accident, which is the whole
+        failure mode this guards.
+        """
+        import inspect as _inspect
+
+        from lemely.eval.analyses import agreement_wilson
+
+        parameter = _inspect.signature(agreement_wilson).parameters["rulings_settled"]
+        assert parameter.default is _inspect.Parameter.empty
+        assert parameter.kind is _inspect.Parameter.KEYWORD_ONLY
+
+
+class TestRiskCoverage:
+    def test_happy_path_curve_is_monotonic_in_coverage(self) -> None:
+        records = [
+            _rec(question_id="1", marker_conf=0.95, outcome="correct"),
+            _rec(question_id="2", marker_conf=0.85, outcome="correct"),
+            _rec(question_id="3", marker_conf=0.60, outcome="under"),
+        ]
+        points = risk_coverage(records)
+        assert [p["coverage"] for p in points] == [
+            round(1 / 3, 10),
+            round(2 / 3, 10),
+            1.0,
+        ]
+        assert points[-1]["risk"] == round(1 / 3, 10)
+
+    def test_empty_input_returns_empty_curve(self) -> None:
+        assert risk_coverage([]) == []
+
+    def test_records_without_marker_conf_are_excluded(self) -> None:
+        records = [
+            _rec(question_id="1", marker_conf=None, outcome="correct"),
+            _rec(question_id="2", marker_conf=0.9, outcome="correct"),
+        ]
+        points = risk_coverage(records)
+        assert len(points) == 1
+
+
+class TestExclusionFunnel:
+    def test_scored_denominator_excludes_never_attempted(self) -> None:
+        records = [
+            _rec(question_id="1", outcome="correct"),
+            _rec(question_id="2", outcome="over"),
+            _rec(question_id="3", outcome="abstain"),
+            _rec(question_id="4", outcome="unmatched"),
+            _rec(question_id="5", outcome="excluded"),
+        ]
+        result = exclusion_funnel(records)
+        assert result["total"] == 5
+        assert result["excluded"] == 1
+        assert result["scored"] == 4
+
+    def test_empty_input(self) -> None:
+        result = exclusion_funnel([])
+        assert result["total"] == 0
+        assert result["scored"] == 0
+        assert result["excluded"] == 0
+
+    def test_by_outcome_breakdown(self) -> None:
+        records = [
+            _rec(question_id="1", outcome="correct"),
+            _rec(question_id="2", outcome="correct"),
+            _rec(question_id="3", outcome="excluded"),
+        ]
+        result = exclusion_funnel(records)
+        assert result["by_outcome"]["correct"] == 2
+        assert result["by_outcome"]["excluded"] == 1
+
+
+class TestReviewRate:
+    def test_two_denominators_signal_vs_total(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", triggers=["low_confidence"]),
+            _rec(question_id="2", paper_id="p1", triggers=["random_audit"]),
+            _rec(question_id="3", paper_id="p1", triggers=[]),
+            _rec(question_id="4", paper_id="p1", triggers=[]),
+        ]
+        result = review_rate(records)
+        assert result["n"] == 4
+        assert result["review_rate_signal"] == 0.25
+        assert result["review_rate_total"] == 0.5
+
+    def test_empty_input_reports_zero_with_zero_n(self) -> None:
+        result = review_rate([])
+        assert result["n"] == 0
+        assert result["review_rate_signal"] == 0.0
+        assert result["review_rate_total"] == 0.0
+        assert result["per_paper_p95"] == 0.0
+
+    def test_counts_leaf_via_trigger_union_not_representative(self) -> None:
+        # Two fixture-variant records for the SAME leaf, both outcome="correct"
+        # (so DA6's unanimity rule makes both eligible candidates for the
+        # min()-picked representative), but only one carries a trigger. The
+        # leaf must be counted as reviewed regardless of which record
+        # _collapse_leaf_group's min() would have picked as representative.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=["low_confidence"],
+            ),
+        ]
+        result = review_rate(records)
+        assert result["n"] == 1
+        assert result["review_rate_total"] == 1.0
+        assert result["review_rate_signal"] == 1.0
+
+    def test_leaf_with_no_triggered_variants_is_not_reviewed(self) -> None:
+        # Companion case: both variant records triggerless — the union fix
+        # must not manufacture a false positive.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=[],
+            ),
+        ]
+        result = review_rate(records)
+        assert result["n"] == 1
+        assert result["review_rate_total"] == 0.0
+        assert result["review_rate_signal"] == 0.0
+
+    def test_per_paper_p95_reflects_worst_paper(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", triggers=["low_confidence"]),
+            _rec(question_id="2", paper_id="p1", triggers=[]),
+            _rec(question_id="3", paper_id="p2", triggers=[]),
+            _rec(question_id="4", paper_id="p2", triggers=[]),
+        ]
+        result = review_rate(records)
+        # p1: 1/2 = 0.5, p2: 0/2 = 0.0 — p95 across two papers is dominated by
+        # the worst one.
+        assert result["per_paper_p95"] == 0.5
+
+
+class TestCoherenceTriggerRate:
+    """M1.5 (#40): coherence_mismatch's own leaf-level rate, reported
+    separately from review_rate_signal/review_rate_total — NOT double-counted
+    into either."""
+
+    def test_coherence_trigger_rate_is_reported_separately_from_review_rate(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", triggers=["coherence_mismatch"]),
+            _rec(question_id="2", paper_id="p1", triggers=["needs_teacher_review"]),
+            _rec(question_id="3", paper_id="p1", triggers=[]),
+            _rec(question_id="4", paper_id="p1", triggers=[]),
+        ]
+        rr = review_rate(records)
+        ctr = coherence_trigger_rate(records)
+        assert ctr["n"] == 4
+        assert ctr["coherence_trigger_rate"] == 0.25
+        # Distinct from review_rate: 2/4 leaves carry SOME trigger, only 1/4
+        # carries the coherence one specifically. Not double-counted into
+        # either denominator: review_rate itself is unaffected by whether the
+        # trigger token spells "coherence_mismatch" or something else.
+        assert rr["review_rate_total"] == 0.5
+        assert ctr["coherence_trigger_rate"] != rr["review_rate_total"]
+        assert ctr["coherence_trigger_rate"] != rr["review_rate_signal"]
+
+    def test_empty_input_reports_zero_with_zero_n(self) -> None:
+        result = coherence_trigger_rate([])
+        assert result["n"] == 0
+        assert result["coherence_trigger_rate"] == 0.0
+
+    def test_counts_leaf_via_trigger_union_not_representative(self) -> None:
+        # Two fixture-variant records for the same leaf, both correct (DA6
+        # unanimity), but only one carries the coherence trigger — the leaf
+        # must be counted regardless of which record DA6 would collapse to.
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="a",
+                outcome="correct",
+                triggers=[],
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                fixture_variant="b",
+                outcome="correct",
+                triggers=["coherence_mismatch"],
+            ),
+        ]
+        result = coherence_trigger_rate(records)
+        assert result["n"] == 1
+        assert result["coherence_trigger_rate"] == 1.0
+
+    def test_excluded_leaves_are_not_counted_in_denominator(self) -> None:
+        records = [
+            _rec(question_id="1", paper_id="p1", outcome="excluded", triggers=[]),
+            _rec(question_id="2", paper_id="p1", triggers=["coherence_mismatch"]),
+        ]
+        result = coherence_trigger_rate(records)
+        assert result["n"] == 1
+        assert result["coherence_trigger_rate"] == 1.0
+
+
+class TestDistinctLeafDA6:
+    """DA6 (BUILD/DECISIONS.md): a leaf's outcome is derived from ALL of its
+    variant/duplicate records, never sampled from them. A leaf counts as
+    ``correct`` iff EVERY scored record for that leaf is ``correct``.
+    """
+
+    def test_unanimous_correct_variants_count_as_correct(self) -> None:
+        records = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="partial", outcome="correct"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+        assert result["successes"] == 1
+
+    def test_one_wrong_variant_prevents_the_leaf_counting_as_correct(self) -> None:
+        # The sort-order trap: variants sort correct < partial < wrong, so a
+        # naive "keep the first" collapse would represent this leaf by its
+        # correct record and inflate accuracy. It must not.
+        records = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="wrong", outcome="under"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+        assert result["successes"] == 0
+
+    def test_collapse_is_order_independent(self) -> None:
+        base = [
+            _rec(paper_id="p1", question_id="1", fixture_variant="correct", outcome="correct"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="partial", outcome="under"),
+            _rec(paper_id="p1", question_id="1", fixture_variant="wrong", outcome="over"),
+            _rec(paper_id="p2", question_id="1", fixture_variant="correct", outcome="correct"),
+        ]
+        baseline = wilson(base)
+        shuffled = list(base)
+        rng = random.Random(42)
+        for _ in range(20):
+            rng.shuffle(shuffled)
+            assert wilson(shuffled) == baseline
+
+    def test_collapse_is_order_independent_under_a_full_tie_on_the_sort_key(self) -> None:
+        """Two records that tie on every field the old sort key looked at
+        (fixture_variant, mark_point_id, run_id, arm, outcome) but differ in
+        marker_conf/triggers must still produce an order-independent result —
+        the representative choice must be a content-derived total order, never
+        "whichever tied record came first in the input list"."""
+        r_high_conf = _rec(
+            paper_id="p1",
+            question_id="1",
+            fixture_variant=None,
+            outcome="under",
+            marker_conf=0.9,
+            triggers=["low_confidence"],
+        )
+        r_low_conf = _rec(
+            paper_id="p1",
+            question_id="1",
+            fixture_variant=None,
+            outcome="under",
+            marker_conf=0.5,
+            triggers=[],
+        )
+        forward = risk_coverage([r_high_conf, r_low_conf])
+        backward = risk_coverage([r_low_conf, r_high_conf])
+        assert forward == backward
+
+        # Property-style: shuffle a tie-containing group many times and
+        # confirm the collapsed representative's full field set (not just
+        # the analysis output) is identical every time.
+        from lemely.eval.analyses import _distinct_leaves
+
+        group = [r_high_conf, r_low_conf]
+        rng = random.Random(7)
+        first = _distinct_leaves(group)
+        for _ in range(30):
+            rng.shuffle(group)
+            assert _distinct_leaves(group) == first
+
+
+class TestDistinctLeavesOverRealGoldenCorpus:
+    def test_wilson_n_is_31_distinct_leaves(self) -> None:
+        """Verified against the corpus (BUILD/DECISIONS.md DA6): 12 golden case
+        dirs hold 78 answer rows (M0.8/#32 added ``_theory_nested``,
+        contributing 3 leaves — 1a_i, 1a_ii, 1b — with no fixture-variant
+        suffix to collapse; B5/#88 item 6 added ``_whitespace``, a 4th variant
+        of ``0580_s23_qp_22_theory`` carrying 7 more rows); stripping the
+        _correct/_partial/_wrong/_whitespace fixture-variant suffix collapses
+        them to 7+6+8+7+3 = 31 distinct (paper, question) leaves.
+
+        **The row count moved and ``n`` did not, which is the point.** B5
+        accepted that new fixtures "enter the accuracy denominator", and this
+        test is where that claim is checked rather than assumed: the whitespace
+        variant shares its sibling's ``paper_id``, so it adds rows without
+        adding a distinct leaf. Wilson intervals and every power figure are
+        computed on ``n``, so they are unaffected. See BUILD/DECISIONS.md DA14.
+
+        This supersedes the pre-#32 baseline of 68 rows / 28 leaves and the
+        pre-B5 count of 71 rows — do not cite 28 as the current distinct-leaf
+        count, and do not cite 71 as the current row count."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="correct",
+            )
+            for case in cases
+            for qid in case.ground_truth
+        ]
+        assert len(records) == 78
+        result = wilson(records)
+        assert result["n"] == 31
+
+    def test_exclusion_funnel_scored_count_matches_wilson_n(self) -> None:
+        """DA6a invariant (BUILD/DECISIONS.md): exclusion_funnel exists to
+        *explain* wilson's denominator, so its scored-leaf count must equal
+        the ``n`` wilson actually used on the same records — never disagree
+        with it. Regression for the case where one fixture variant of a leaf
+        failed extraction (``excluded``) while another variant of the SAME
+        leaf was scored ``correct``: the leaf as a whole was attempted (one
+        variant proves it), so it must count as scored, not excluded, in
+        BOTH analyses.
+
+        Built over the real tests/golden corpus: the ``correct``/``partial``
+        variants of each multi-variant paper are marked ``correct`` (as is
+        B5's ``whitespace`` variant), the
+        ``wrong`` variant of the SAME leaves is marked ``excluded`` (as if
+        that one variant's extraction failed). Every leaf has at least one
+        scored record, so wilson's n must be 31 (M0.8/#32 raised this from
+        the pre-#32 baseline of 28 — see the docstring on the sibling test
+        above; B5/#88 item 6 then added rows without moving n), and the
+        funnel's scored count must equal it exactly."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        golden_dir = Path(__file__).resolve().parents[1] / "golden"
+        cases = load_golden_cases(golden_dir)
+        assert cases, "expected golden fixtures under tests/golden"
+
+        records = [
+            _rec(
+                paper_id=case.paper_id,
+                fixture_variant=case.fixture_variant,
+                question_id=qid,
+                outcome="excluded" if case.fixture_variant == "wrong" else "correct",
+            )
+            for case in cases
+            for qid in case.ground_truth
+        ]
+        assert len(records) == 78
+
+        wilson_result = wilson(records)
+        funnel_result = exclusion_funnel(records)
+
+        assert wilson_result["n"] == 31
+        assert funnel_result["scored"] == wilson_result["n"]
+
+
+class TestQuestionLevelFiltering:
+    def test_mixed_question_and_point_level_rows_exclude_points(self) -> None:
+        records = [
+            _rec(question_id="1", outcome="correct"),
+            _rec(question_id="1", mark_point_id="1a", outcome="correct"),
+            _rec(question_id="1", mark_point_id="1b", outcome="under"),
+        ]
+        result = wilson(records)
+        assert result["n"] == 1
+
+        funnel = exclusion_funnel(records)
+        assert funnel["total"] == 1
+
+
+class TestPaperGradeConfidence:
+    """paper_grade_confidence: marks-weighted mean of per-question marker_conf,
+    banded per paper (spec §4 M1.1) -- NOT a min-over-questions."""
+
+    def test_marks_weighted_mean_arithmetic(self) -> None:
+        # weights 1 and 3 (truth_marks): (0.5*1 + 0.9*3) / 4 = 3.2/4 = 0.80
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.5),
+            _rec(paper_id="p1", question_id="2", truth_marks=3, marker_conf=0.9),
+        ]
+        result = paper_grade_confidence(records)
+        score, band = result["p1"]
+        assert score == 0.8
+        assert band == "MEDIUM"
+
+    def test_boundary_at_exactly_0_85_is_high(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.85)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert score == 0.85
+        assert band == "HIGH"
+
+    def test_boundary_at_exactly_0_65_is_medium(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.65)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert score == 0.65
+        assert band == "MEDIUM"
+
+    def test_just_below_0_65_is_low(self) -> None:
+        records = [_rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.6499)]
+        score, band = paper_grade_confidence(records)["p1"]
+        assert band == "LOW"
+
+    def test_min_over_questions_would_disagree_with_the_weighted_mean(self) -> None:
+        """One low-confidence, low-weight question must not drag the whole
+        paper down to LOW the way a min-over-questions rule would."""
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.10),
+            _rec(paper_id="p1", question_id="2", truth_marks=9, marker_conf=0.95),
+        ]
+        score, band = paper_grade_confidence(records)["p1"]
+        # weighted mean: (0.10*1 + 0.95*9)/10 = 8.65/10 = 0.865 -> HIGH
+        assert score == pytest.approx(0.865)
+        assert band == "HIGH"
+
+    def test_weights_by_tariff_maximum_marks_not_earned_truth_marks(self) -> None:
+        """A 6-mark question answered wrong (truth_marks=0) must still weigh
+        6, not 0 and not clamped to 1 -- weighting must use the question's
+        tariff (``maximum_marks``), never what the student happened to earn.
+        ``max(truth_marks, 1)`` would still weigh this row 1, not 6, and
+        would still under-weight a wrongly-answered high-tariff question
+        relative to a rightly-answered one -- the same bias, merely
+        attenuated. This is the MUST-FIX regression test for #36.
+        """
+        records = [
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                truth_marks=0,
+                maximum_marks=6,
+                marker_conf=0.2,
+            ),
+            _rec(
+                paper_id="p1",
+                question_id="2",
+                truth_marks=1,
+                maximum_marks=1,
+                marker_conf=0.9,
+            ),
+        ]
+        score, band = paper_grade_confidence(records)["p1"]
+        # weighted by tariff: (0.2*6 + 0.9*1)/7 = 2.1/7 = 0.3
+        assert score == pytest.approx(0.3)
+        assert band == "LOW"
+
+    def test_all_zero_truth_marks_paper_gets_a_real_band(self) -> None:
+        """A paper where every question scored zero marks must not vanish
+        from the result. Before the fix, ``if not r.truth_marks: continue``
+        dropped every row of an all-zero paper, so ``total_weight`` stayed 0
+        and the paper was omitted entirely -- exactly the papers a
+        grade-confidence signal should be most sensitive to. With no
+        ``maximum_marks`` supplied here either, the weight falls back to
+        ``r.truth_marks or 1`` = 1 per row (equal weighting), not to zero.
+        """
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=0, marker_conf=0.9),
+            _rec(paper_id="p1", question_id="2", truth_marks=0, marker_conf=0.7),
+        ]
+        result = paper_grade_confidence(records)
+        assert "p1" in result, "an all-zero-truth_marks paper must not vanish from the result"
+        score, band = result["p1"]
+        assert score == pytest.approx((0.9 + 0.7) / 2)
+        assert band == "MEDIUM"
+
+    def test_excludes_point_level_rows(self) -> None:
+        records = [
+            _rec(paper_id="p1", question_id="1", truth_marks=1, marker_conf=0.9),
+            _rec(
+                paper_id="p1",
+                question_id="1",
+                mark_point_id="1a",
+                truth_marks=1,
+                marker_conf=0.1,
+            ),
+        ]
+        score, _band = paper_grade_confidence(records)["p1"]
+        assert score == 0.9
+
+    @pytest.mark.xfail(
+        strict=True,
+        reason=(
+            "#36 acceptance bullet 6 ('on the M0 baseline the paper-level band "
+            "distribution is not degenerate') is still UNMET after MUST-FIX 1 "
+            "(propagating extraction_confidence into the MCQ path's "
+            "confidence_score). Re-measured directly from this saved corpus: "
+            "every row's extraction_conf is None (the saved A/A-floor records "
+            "predate per-answer extraction-confidence capture), so the fix's "
+            "fallback-to-1.0 branch applies uniformly and the MCQ paper still "
+            "bands HIGH at score 1.0 -- identical to before the fix. This is "
+            "not a defect in the fix (verified directly: confidence_score DOES "
+            "track extraction_confidence when it is present -- see "
+            "tests/test_correction_ai.py::HybridCorrectPaperTests::"
+            "test_mcq_confidence_score_tracks_extraction_confidence). The "
+            "prerequisite this bullet needs is a re-run of the M0 baseline "
+            "that actually captures extraction confidence per MCQ answer; "
+            "that is a measurement task, not a code fix, and out of scope for "
+            "this repair pass (no Gemini spend permitted here). If this XPASSes "
+            "after such a re-run, remove the xfail and assert the real "
+            "distribution."
+        ),
+    )
+    def test_m0_baseline_band_distribution_reported_honestly(self) -> None:
+        """Re-scored from the saved M0 A/A-floor records (no new spend, per
+        the sequencing constraint on #36).
+
+        The expected per-paper scores are computed HERE, independently, by
+        looping over the same input rows the production function sees --
+        not pasted from an earlier run's output. A hardcoded 16-significant-
+        figure float is a change-detector, not a test: it would pass or fail
+        based on floating-point noise nobody could reason about from the
+        assertion alone. ``_independent_weighted_mean`` below intentionally
+        does not import or call :func:`paper_grade_confidence`; it recomputes
+        the marks-weighted mean directly from the filtered rows so a bug
+        shared between production and test code cannot cancel out.
+
+        None of these published rows carry ``maximum_marks`` (the field did
+        not exist when they were written), so the weight here still falls
+        back to ``truth_marks``. This is therefore an honest report of the
+        *current* band distribution on this corpus, not a claim about what a
+        tariff-weighted rerun would show -- see the docstring on
+        :func:`paper_grade_confidence` for that distinction.
+        """
+        run_dir = (
+            Path(__file__).resolve().parents[2]
+            / "BUILD"
+            / "accuracy-runs"
+            / ("aa-floor-2026-08-23-a")
+        )
+        records_path = run_dir / "records-repeat-01.jsonl"
+        assert records_path.exists(), "expected the saved M0 A/A-floor records"
+
+        records = [
+            EvalRecord.model_validate(json.loads(line))
+            for line in records_path.read_text().splitlines()
+            if line.strip()
+        ]
+        result = paper_grade_confidence(records)
+        assert result, "expected at least one paper"
+
+        def _independent_weighted_mean(paper_id: str) -> float:
+            numerator = 0.0
+            denominator = 0.0
+            for r in records:
+                if r.paper_id != paper_id or r.mark_point_id is not None:
+                    continue
+                if r.marker_conf is None:
+                    continue
+                weight = r.maximum_marks if r.maximum_marks else (r.truth_marks or 1)
+                numerator += r.marker_conf * weight
+                denominator += weight
+            assert denominator > 0
+            return numerator / denominator
+
+        def _independent_band(score: float) -> str:
+            # Recomputed independently of `_band_for_score` for the same
+            # reason `_independent_weighted_mean` avoids `paper_grade_confidence`.
+            if score >= 0.85:
+                return "HIGH"
+            if score >= 0.65:
+                return "MEDIUM"
+            return "LOW"
+
+        expected_paper_ids = {
+            "0580_s23_qp_22_theory",
+            "0606_s23_qp_12_theory",
+            "0625_m20_qp_12_mcq",
+            "0625_s20_qp_31_theory",
+            "0625_w21_qp_32_theory_nested",
+        }
+        assert set(result) == expected_paper_ids
+
+        # Reported, not assumed non-degenerate: whatever the real band
+        # distribution comes out to below is the honest finding (spec §9
+        # gate 8 discipline -- never narrow a denominator or relabel a
+        # metric to force a particular distribution).
+        bands = {band for _score, band in result.values()}
+        for paper_id in expected_paper_ids:
+            score, band = result[paper_id]
+            assert score == pytest.approx(_independent_weighted_mean(paper_id))
+            assert band == _independent_band(score)
+
+        # #36 acceptance bullet 6 asserted as MET (xfail(strict=True) above
+        # documents why it is currently not): this must NOT stay a green
+        # assertion of the degenerate distribution. On this saved corpus
+        # every extraction_conf is None, so MUST-FIX 1's propagation fix has
+        # no row to act on and the MCQ paper still bands HIGH at 1.0 -- the
+        # distribution is still degenerate. See the xfail reason for the
+        # full honest finding and the missing prerequisite (a baseline
+        # re-run that captures per-answer extraction confidence).
+        assert bands != {"HIGH"}, f"band distribution: {result}"
+
+
+class TestAgreementIsPerMarkPoint:
+    """B12 / #140: the published H7 figure is per mark point, not totals equality.
+
+    Spec §6 defines the pass-2 output per mark point. Two labellers can award
+    the same total by matching *different* mark points, so totals equality
+    overstates agreement — it counts that case as agreement. B12 ruled the
+    per-point figure the headline and predicted it would read LOWER, which is
+    the measurement working rather than a regression.
+    """
+
+    def _rec(
+        self,
+        *,
+        question_id: str,
+        awarded_marks: int,
+        verdicts: dict[str, bool],
+        paper_id: str = "p1",
+        mark_point_id: str | None = None,
+    ) -> dict[str, object]:
+        return {
+            "paper_id": paper_id,
+            "question_id": question_id,
+            "awarded_marks": awarded_marks,
+            "mark_point_id": mark_point_id,
+            "mark_point_verdicts": verdicts,
+        }
+
+    def test_same_total_via_different_points_agrees_on_totals_and_disagrees_per_point(
+        self,
+    ) -> None:
+        """The case B12 exists to catch, and the reason the headline moved.
+
+        Both labellers award 1 of 2. A credits ``p1``; B credits ``p2``. Totals
+        equality calls this perfect agreement; per mark point it is two
+        disagreements out of two.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True, "p2": False})]
+        b = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": False, "p2": True})]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 2, "denominator is mark points, not leaves"
+        assert result["successes"] == 0, "matching totals via different points is NOT agreement"
+        assert result["totals_n"] == 1
+        assert result["totals_successes"] == 1, (
+            "the totals figure is kept precisely so the per-point drop is visible; "
+            "a single number cannot demonstrate its own drop"
+        )
+
+    def test_mark_point_identity_includes_paper_and_question(self) -> None:
+        """``p1`` in one leaf is not ``p1`` in another — DA6's key, extended.
+
+        Keyed on ``mark_point_id`` alone this collapses to one point, dropping
+        the denominator from 2 to 1 and swallowing the real disagreement: the
+        D18 narrowed-denominator shape one level down.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(paper_id="p1", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(paper_id="p2", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+        ]
+        b = [
+            self._rec(paper_id="p1", question_id="1a", awarded_marks=1, verdicts={"p1": True}),
+            # Same TOTAL, opposite verdict on the shared point: this is the
+            # disagreement the totals figure cannot see, so the assertion below
+            # fails on totals-equality code rather than passing by coincidence.
+            self._rec(paper_id="p2", question_id="1a", awarded_marks=1, verdicts={"p1": False}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 2, "one point per (paper, question, point id)"
+        assert result["successes"] == 1, "the paper-2 disagreement must not be swallowed"
+        assert result["totals_successes"] == 2, "totals equality sees no disagreement at all"
+
+    def test_points_only_one_labeller_recorded_are_excluded_and_counted(self) -> None:
+        """Missing data, not disagreement — and reported rather than described."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(
+                question_id="1",
+                awarded_marks=2,
+                verdicts={"p1": True, "p2": True, "p3": False},
+            )
+        ]
+        b = [self._rec(question_id="1", awarded_marks=2, verdicts={"p1": True, "p4": True})]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["n"] == 1, "only p1 is shared"
+        assert result["successes"] == 1
+        assert result["points_a_only"] == 2, "p2 and p3"
+        assert result["points_b_only"] == 1, "p4"
+
+    def test_shared_leaves_contributing_no_shared_points_are_reported_not_dropped(self) -> None:
+        """A leaf both labellers marked can still contribute zero points.
+
+        Under a per-point denominator such leaves vanish silently, which is the
+        narrowed-denominator failure mode in a new costume. The funnel has to
+        show them, or ``n`` shrinks with no trace of why.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={}),
+            self._rec(question_id="3", awarded_marks=1, verdicts={"pX": True}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={}),
+            self._rec(question_id="3", awarded_marks=1, verdicts={"pY": True}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["shared_leaves"] == 3
+        assert result["n"] == 1, "only leaf 1 contributes a shared point"
+        assert result["shared_leaves_without_shared_points"] == 2, (
+            "leaf 2 (no verdicts at all) and leaf 3 (disjoint point ids)"
+        )
+
+    def test_leaf_level_exclusions_keep_their_leaf_meaning(self) -> None:
+        """``a_only``/``b_only`` still count LEAVES, not points.
+
+        Silently re-pointing an existing field's unit is a moved target even
+        before publication, so the point-level exclusions got their own names.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": True}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True}),
+            self._rec(question_id="9", awarded_marks=1, verdicts={"p1": True}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["a_only"] == 1, "leaf 2, counted once as a leaf — not twice as its points"
+        assert result["b_only"] == 1, "leaf 9"
+        assert result["points_a_only"] == 0, "point exclusions are scoped to SHARED leaves"
+        assert result["points_b_only"] == 0
+
+    def test_empty_totals_denominator_is_distinguishable_from_total_disagreement(
+        self,
+    ) -> None:
+        """``totals_point == 0.0`` must not be readable as "0% agreement".
+
+        At ``totals_n == 0`` the rate is ``0.0`` by the module-wide convention,
+        which looks identical to genuine total disagreement. The interval is
+        what tells them apart: no data spans ``[0.0, 1.0]``, real disagreement
+        does not. Without it the secondary figure could publish a fabricated
+        zero.
+        """
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        b = [self._rec(question_id="9", awarded_marks=1, verdicts={"p1": True})]
+
+        no_data = agreement_wilson(a, b, rulings_settled=True)
+        assert no_data["totals_n"] == 0
+        assert no_data["totals_point"] == 0.0
+        assert (no_data["totals_lower"], no_data["totals_upper"]) == (0.0, 1.0)
+
+        disagree_a = [self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True})]
+        disagree_b = [self._rec(question_id="1", awarded_marks=0, verdicts={"p1": False})]
+        real = agreement_wilson(disagree_a, disagree_b, rulings_settled=True)
+        assert real["totals_n"] == 1
+        assert real["totals_point"] == 0.0
+        assert real["totals_upper"] < 1.0, (
+            "genuine 0/1 disagreement must NOT span the full interval, or it is "
+            "indistinguishable from having measured nothing at all"
+        )
+
+    def test_per_point_reads_lower_than_totals_on_the_same_data(self) -> None:
+        """B12's prediction, asserted rather than trusted."""
+        from lemely.eval.analyses import agreement_wilson
+
+        a = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+        ]
+        b = [
+            self._rec(question_id="1", awarded_marks=1, verdicts={"p1": False, "p2": True}),
+            self._rec(question_id="2", awarded_marks=1, verdicts={"p1": True, "p2": False}),
+        ]
+
+        result = agreement_wilson(a, b, rulings_settled=True)
+
+        assert result["totals_point"] == 1.0, "both totals match"
+        assert result["point"] < result["totals_point"], (
+            "per-point must be able to read lower than totals on the same data"
+        )

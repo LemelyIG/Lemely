@@ -1,0 +1,86 @@
+{
+  "label": "census-2026-08-24-a",
+  "issue": 88,
+  "milestone": "M2.1b",
+  "kind": "zero-cost deterministic mark-scheme parse census",
+  "spend_usd": 0.0,
+  "gemini_calls": 0,
+  "command": ".venv/bin/lemely parse-mark-schemes /home/sico/PaperScraper/papers --output-root <out>",
+  "parser": "det only (no --use-gemini); ChainedMarkSchemeParser primary path",
+  "corpus_root": "/home/sico/PaperScraper/papers",
+  "corpus": {
+    "mark_scheme_pdfs": 479,
+    "parsed_by_det": 250,
+    "det_failure_set": 229,
+    "det_success_rate": 0.522
+  },
+  "leaves": {
+    "root_questions": 4339,
+    "all_questions_flat": 12358,
+    "parent_questions": 2894,
+    "parents_carrying_own_marks": 0,
+    "leaf_questions": 9464,
+    "unbanded_leaf_questions": 0,
+    "by_syllabus": {"0580": 5737, "0606": 392, "0625": 3335},
+    "by_tariff_band": {"1": 4559, "2": 2742, "3+": 2163},
+    "CORRECTION_2026-08-25": {
+      "ratified_by": "human, #88 item 3 (BUILD/ACCURACY-INBOX.md 2026-08-25T17:36:27+03:00)",
+      "what_was_wrong": "This block originally read leaf_questions: 12358 with by_syllabus {0580:7792, 0606:546, 0625:4020} and a fourth 0/unknown band of 2894. Every one of those was a count of ALL questions at every depth, not of leaves.",
+      "cause": "census_leaves.py filtered leaves on getattr(q,'sub_questions',None); Question has no such field -- the child list is `parts` (lemely/core/loose_schemas.py:1008) -- so the filter was a no-op.",
+      "what_is_true": "12358 flat = 2894 parents + 9464 true leaves. The 2894 'unbanded leaves' were the parent questions, which correctly carry no tariff because their marks live in their children. ZERO true leaves are unbanded, so nothing is dropped and DA1's drop-only rule is not triggered.",
+      "direction_of_the_error": "The headline OVERSTATED the leaf corpus by 30.6%. Any n-floor or power figure computed against 12358 is inflated; the honest denominator is 9464.",
+      "unchanged_and_not_to_be_re-fixed": "band counts (1:4559 / 2:2742 / 3+:2163), populated_counts below, and 'populated: 9' were always right -- those nine cells sum to exactly 9464.",
+      "reproduced": "census_leaves.py fixed and re-run over the same surviving /tmp/acc57-full/out (250 schemes); output at census-leaves-corrected.txt. The original buggy output is preserved verbatim at census-leaves.txt."
+    }
+  },
+  "da1_strata": {
+    "definition": "syllabus code x parse path (det|gemini) x tariff band (1|2|3+)",
+    "total_defined": 18,
+    "populated": 9,
+    "reconciles_with_census_leaves_txt": "The ORIGINAL census-leaves.txt prints 'DA1 strata populated: 12' because census_leaves.py counted its own '0/unknown' catch-all as a band. DA1 defines three bands (1/2/3+), so the honest count is 9 populated of 18 defined. Do not cite the 12. As of the 2026-08-25 correction the catch-all is empty anyway (zero unbanded true leaves) and the fixed script excludes it explicitly -- census-leaves-corrected.txt prints 9.",
+    "populated_counts": {
+      "0580 x det x 1": 1992,
+      "0580 x det x 2": 2110,
+      "0580 x det x 3+": 1635,
+      "0606 x det x 1": 46,
+      "0606 x det x 2": 107,
+      "0606 x det x 3+": 239,
+      "0625 x det x 1": 2521,
+      "0625 x det x 2": 525,
+      "0625 x det x 3+": 289
+    },
+    "smallest_populated_cell": {"stratum": "0606 x det x 1", "n": 46},
+    "empty_by_construction": "the 9 gemini-path strata; production parse path is det-if-det-succeeded / gemini-if-det-failed, so a det-only corpus cannot populate them at any n",
+    "unbanded_leaves": {
+      "n": 0,
+      "share": 0.0,
+      "note": "RESOLVED 2026-08-25 and ratified by the human (#88 item 3). There are ZERO unbanded true leaves. The 2894 figure that stood here was the count of PARENT questions, which correctly carry no tariff; see leaves.CORRECTION_2026-08-25. Nothing is dropped and DA1's drop-only rule is not triggered."
+    }
+  },
+  "det_failures": {
+    "n": 229,
+    "by_syllabus": {"0580": 30, "0606": 64, "0625": 135},
+    "logged_event": {"mark_total_mismatch_escalating": 229},
+    "event_is_a_symptom_not_a_classification": true,
+    "consumer": "#45 (M2.2 failure-reason census) takes this set as input rather than re-parsing"
+  },
+  "known_bug_not_fixed_here": {
+    "file": "lemely/io/det/profiles.py:50",
+    "detail": "_PHYSICS_PROFILE maps 0625 paper 2 to THEORY_CORE, but its cover text reads 'Paper 2 Multiple Choice (Extended)'; paper_type() consults the number map first, so the correct cover-text evidence is never read. All 40 0625 p2 schemes fail; the correctly-mapped p1 parses 40/40.",
+    "effect_if_fixed": "moves 40 schemes from the gemini-path set to the det-path set, i.e. it changes a DA1 stratification variable and the preflight denominator",
+    "status": "awaiting a human decision (question 2 on #88)"
+  },
+  "reproduce": {
+    "cost": "free, ~40min, idempotent",
+    "steps": [
+      "1. .venv/bin/lemely parse-mark-schemes /home/sico/PaperScraper/papers --output-root <out>",
+      "2. .venv/bin/python census_leaves.py <out> det",
+      "3. .venv/bin/python census_failures.py /home/sico/PaperScraper/papers <out> <parse.log>"
+    ]
+  },
+  "deliberately_not_committed": {
+    "what": "the 250 parsed MarkScheme JSON files (~18MB) and parse.log",
+    "why": "they carry CAIE mark-scheme text verbatim; publishing real-paper content is a human decision (MISSION 12.7). Only derived counts and PDF filenames are committed here.",
+    "where_it_was": "/tmp/acc57-full/out (not durable -- regenerate with the steps above)"
+  }
+}

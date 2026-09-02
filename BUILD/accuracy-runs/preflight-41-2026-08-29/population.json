@@ -1,0 +1,106 @@
+{
+  "issue": 41,
+  "spend_usd_so_far": 0.0,
+  "fixtures": 12,
+  "with_principles": {
+    "fixtures": 6,
+    "non_mcq_leaves": 39,
+    "names": [
+      "0606_s23_qp_12_theory_correct",
+      "0606_s23_qp_12_theory_partial",
+      "0606_s23_qp_12_theory_wrong",
+      "0625_s20_qp_31_theory_correct",
+      "0625_s20_qp_31_theory_partial",
+      "0625_s20_qp_31_theory_wrong"
+    ]
+  },
+  "WITHOUT_principles_the_population_A13_names": {
+    "fixtures": 6,
+    "non_mcq_leaves": 31,
+    "names": [
+      "0580_s23_qp_22_theory_correct",
+      "0580_s23_qp_22_theory_partial",
+      "0580_s23_qp_22_theory_whitespace",
+      "0580_s23_qp_22_theory_wrong",
+      "0625_m20_qp_12_mcq",
+      "0625_w21_qp_32_theory_nested"
+    ]
+  },
+  "marker_calls_per_arm": 70,
+  "arms": 2,
+  "total_marker_calls": 140,
+  "per_rows": [
+    {
+      "fixture": "0580_s23_qp_22_theory_correct",
+      "principles": 0,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0580_s23_qp_22_theory_partial",
+      "principles": 0,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0580_s23_qp_22_theory_whitespace",
+      "principles": 0,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0580_s23_qp_22_theory_wrong",
+      "principles": 0,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0606_s23_qp_12_theory_correct",
+      "principles": 6,
+      "non_mcq_leaves": 6,
+      "answers": 6
+    },
+    {
+      "fixture": "0606_s23_qp_12_theory_partial",
+      "principles": 6,
+      "non_mcq_leaves": 6,
+      "answers": 6
+    },
+    {
+      "fixture": "0606_s23_qp_12_theory_wrong",
+      "principles": 6,
+      "non_mcq_leaves": 6,
+      "answers": 6
+    },
+    {
+      "fixture": "0625_m20_qp_12_mcq",
+      "principles": 0,
+      "non_mcq_leaves": 0,
+      "answers": 8
+    },
+    {
+      "fixture": "0625_s20_qp_31_theory_correct",
+      "principles": 6,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0625_s20_qp_31_theory_partial",
+      "principles": 6,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0625_s20_qp_31_theory_wrong",
+      "principles": 6,
+      "non_mcq_leaves": 7,
+      "answers": 7
+    },
+    {
+      "fixture": "0625_w21_qp_32_theory_nested",
+      "principles": 0,
+      "non_mcq_leaves": 3,
+      "answers": 3
+    }
+  ]
+}

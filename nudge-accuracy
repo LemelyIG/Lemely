@@ -1,0 +1,32 @@
+#!/usr/bin/env bash
+# Steer the running ACCURACY programme without stopping it.
+# (Sibling of ./nudge, which steers the redesign build — different topic.)
+#
+#   ./nudge-accuracy "measure M0.3 with N=5, not N=3"   # free-text directive,
+#                                filed in BUILD/ACCURACY-INBOX.md for the agent
+#   ./nudge-accuracy STATUS      milestone bars, review rate, spend, commits
+#   ./nudge-accuracy NEXT        the next unblocked Ready issue from the board
+#   ./nudge-accuracy ISSUE 56    prioritise issue #56 next (if unblocked)
+#   ./nudge-accuracy BUDGET      Gemini spend vs the $25.00 ceiling + headroom
+#   ./nudge-accuracy GATES       run scripts/check.sh in the worktree, report
+#   ./nudge-accuracy SYNC        push all local branches to GitHub
+#   ./nudge-accuracy SYNC feature/accuracy-56-fixture-renderer   # one branch
+#   ./nudge-accuracy PAUSE       hold after the current run finishes
+#   ./nudge-accuracy STOP        kill the current run, then hold
+#   ./nudge-accuracy RESUME      continue
+#   ./nudge-accuracy SKIP        abandon the stuck issue, take the next one
+#   ./nudge-accuracy DIGEST      force the daily digest now
+#
+# With no arguments, prints the current accuracy inbox.
+set -u
+CTRL_TOPIC="lemely-acc-ctl-bqlsqcY9FfbfQd"
+NTFY_URL="http://home-server:7532"   # same base URL the supervisor uses — one
+                                     # variable, one port, on purpose
+INBOX="/home/sico/Lemely-worktrees/accuracy/BUILD/ACCURACY-INBOX.md"
+[ -f "$INBOX" ] || INBOX="$(dirname "$0")/BUILD/ACCURACY-INBOX.md"
+
+if [ $# -eq 0 ]; then
+  [ -f "$INBOX" ] && cat "$INBOX" || echo "Accuracy inbox empty."
+  exit 0
+fi
+curl -s -d "$*" "$NTFY_URL/$CTRL_TOPIC" >/dev/null && echo "Sent: $*"

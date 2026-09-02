@@ -1,0 +1,267 @@
+{
+  "label": "control-58-2026-08-25",
+  "issue": 58,
+  "purpose": "same-input control for the single reorder_mark_points violation",
+  "authorised_by": "inbox 2026-08-25T17:36:27+03:00 item 5",
+  "cache_mode": "bypass",
+  "correct_paper_invocations": 14,
+  "leaves_scored": 31,
+  "leaves_differing": 0,
+  "churn_all_paths": 0.0,
+  "gemini_leaves_scored": 31,
+  "gemini_leaves_differing": 0,
+  "churn_gemini_only": 0.0,
+  "spend_usd_before": 1.675386,
+  "spend_usd_after": 1.958713,
+  "spend_usd_delta": 0.283327,
+  "outcomes": [
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 4,
+      "pass_b_marks": 4,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "same",
+      "pass_a_marks": 1,
+      "pass_b_marks": 1,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "1",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "2",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "3a",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0606_s23_qp_12_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "same",
+      "pass_a_marks": 4,
+      "pass_b_marks": 4,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "same",
+      "pass_a_marks": 1,
+      "pass_b_marks": 1,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "same",
+      "pass_a_marks": 1,
+      "pass_b_marks": 1,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "same",
+      "pass_a_marks": 2,
+      "pass_b_marks": 2,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1a_i",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "1b",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "4a",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "5b",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "11b",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_s20_qp_31_theory",
+      "question_id": "12c",
+      "status": "same",
+      "pass_a_marks": 0,
+      "pass_b_marks": 0,
+      "marker_source": "ai"
+    },
+    {
+      "paper_id": "0625_w21_qp_32_theory_nested",
+      "question_id": "1b",
+      "status": "same",
+      "pass_a_marks": 3,
+      "pass_b_marks": 3,
+      "marker_source": "ai"
+    }
+  ]
+}

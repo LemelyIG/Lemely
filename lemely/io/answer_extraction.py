@@ -43,38 +43,35 @@ def normalize_extracted_answers(
 ) -> ExtractedAnswers:
     """Re-map extracted answer IDs to canonical manifest IDs.
 
-    First pass: fuzzy match by canonical form.
-    Second pass: positional fallback for any remaining unmatched answers.
+    One pass only: match by canonical form. An answer whose id matches nothing
+    **keeps its original id** and is left unmatched.
+
+    #37 (M1.2) deleted the second pass. It was a positional fallback: any
+    answer that matched nothing was handed the next unclaimed manifest id, in
+    order. That is a guess wearing a genuine id — and because every downstream
+    consumer keys on ``question_id``, the guess became indistinguishable from a
+    real match. Two concrete harms:
+
+    * ``id_match_rate`` counted post-fallback coverage, not id agreement. A
+      guessed answer was stamped ``id_match="exact"`` and the metric could not
+      fall below its target no matter how badly extraction drifted.
+    * One missing answer shifted every later unmatched one by a slot, so a
+      single extraction gap silently re-aligned an entire paper against the
+      wrong questions.
+
+    A gap is honest and shows up as ``UNMATCHED``; a silent realignment is not.
+    Unmatched answers are deliberately NOT dropped here — the caller needs to
+    see them to count them.
     """
-    import structlog as _sl
-
-    _norm_log = _sl.get_logger().bind(component="id_normalization")
-
     canonical_map: dict[str, str] = {_canonical_id(mid): mid for mid in manifest_ids}
-    claimed: set[str] = set()
     new_answers: list[ExtractedAnswer] = []
-    unmatched_positions: list[int] = []
 
     for ans in extracted.answers:
         canon = _canonical_id(ans.question_id)
         if canon in canonical_map:
-            target = canonical_map[canon]
-            new_answers.append(ans.model_copy(update={"question_id": target}))
-            claimed.add(target)
+            new_answers.append(ans.model_copy(update={"question_id": canonical_map[canon]}))
         else:
-            unmatched_positions.append(len(new_answers))
             new_answers.append(ans)
-
-    unclaimed = [mid for mid in manifest_ids if mid not in claimed]
-    for seq, pos in enumerate(unmatched_positions):
-        if seq < len(unclaimed):
-            target = unclaimed[seq]
-            _norm_log.warning(
-                "id_positional_fallback",
-                extracted_id=new_answers[pos].question_id,
-                mapped_to=target,
-            )
-            new_answers[pos] = new_answers[pos].model_copy(update={"question_id": target})
 
     return extracted.model_copy(update={"answers": new_answers})
 
@@ -95,12 +92,35 @@ def _calibrate_confidence(
     answer_stripped = answer.answer.strip()
     looks_like_mcq_answer = answer_stripped.upper() in {"A", "B", "C", "D"}
 
+    # D14/D19 (spec §2.1): the old heuristic added an unconditional +0.1 bonus
+    # to any single-letter answer and applied the MCQ/short-answer caps BEFORE
+    # the source_region/working_out bonuses, letting a capped value leak past
+    # its cap -- e.g. an MCQ hint with source_region set could leak
+    # 0.20 + 0.03 = 0.23, and a short non-MCQ answer with both working_out and
+    # source_region set could leak 0.30 + 0.05 + 0.03 = 0.38. There is no MCQ
+    # confidence bonus any more — Gemini's self-reported confidence on a clean
+    # single-letter answer is not something this heuristic layer should
+    # inflate. Every bonus is added first; any cap is computed and applied as
+    # the LAST step, so a capped value can never leak past 0.2/0.3.
+    #
+    # #36 bullet 2 (amended): the 0.2 cap applies ONLY to the mcq-hint-with-
+    # a-non-letter-answer case -- i.e. the question is MCQ but the extractor
+    # did not return a clean A/B/C/D letter, which is a sign of a bad
+    # extraction. A clean single letter (looks_like_mcq_answer) is a GOOD
+    # extraction and keeps its raw (bonus-adjusted) confidence uncapped; this
+    # is NOT a blanket ceiling on anything MCQ-shaped.
+    cap: float | None = None
     if is_mcq_hint or looks_like_mcq_answer:
-        conf = min(1.0, conf + 0.1) if looks_like_mcq_answer else min(conf, 0.2)
+        # MCQ-shaped: only cap the bad-extraction case (mcq hint, non-letter
+        # answer). A clean single letter is a good extraction — no cap, and
+        # it does not fall through to the non-MCQ short-answer/working_out
+        # logic below (a single letter would otherwise trip the len<2 cap).
+        if is_mcq_hint and not looks_like_mcq_answer:
+            cap = 0.2
     else:
         # Non-MCQ: check answer completeness
         if len(answer_stripped) < 2:
-            conf = min(conf, 0.3)
+            cap = 0.3
 
         # Working out present → slight boost (extractor found method, more reliable)
         if answer.working_out:
@@ -109,6 +129,9 @@ def _calibrate_confidence(
     # Source region present → slight boost (extractor located answer spatially)
     if answer.source_region:
         conf = min(1.0, conf + 0.03)
+
+    if cap is not None:
+        conf = min(conf, cap)
 
     return conf
 

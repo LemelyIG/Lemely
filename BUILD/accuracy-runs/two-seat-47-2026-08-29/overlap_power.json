@@ -1,0 +1,61 @@
+{
+  "issues": "47 (C24) / 51 (H7)",
+  "spend_usd": 0.0,
+  "leaves_target": 300,
+  "h7_overlap_share": 0.1,
+  "h7_overlap_leaves": 30,
+  "pipeline_accuracy_interval_at_n300": {
+    "point": 0.8367,
+    "low": 0.7906,
+    "high": 0.8742,
+    "half_width_pp": 4.18,
+    "note": "#47 cites +/-4.2pp; this recomputes it rather than quoting it"
+  },
+  "h7_agreement_interval_at_10pct": [
+    {
+      "assumed_agreement": 0.8,
+      "n_overlap": 30,
+      "wilson_low": 0.6269,
+      "wilson_high": 0.9049,
+      "half_width_pp": 13.9,
+      "n_needed_for_pm4.2pp": 346,
+      "share_of_300_that_would_require": 1.153
+    },
+    {
+      "assumed_agreement": 0.85,
+      "n_overlap": 30,
+      "wilson_low": 0.7032,
+      "wilson_high": 0.9469,
+      "half_width_pp": 12.19,
+      "n_needed_for_pm4.2pp": 276,
+      "share_of_300_that_would_require": 0.92
+    },
+    {
+      "assumed_agreement": 0.9,
+      "n_overlap": 30,
+      "wilson_low": 0.7438,
+      "wilson_high": 0.9654,
+      "half_width_pp": 11.08,
+      "n_needed_for_pm4.2pp": 195,
+      "share_of_300_that_would_require": 0.65
+    },
+    {
+      "assumed_agreement": 0.95,
+      "n_overlap": 30,
+      "wilson_low": 0.7868,
+      "wilson_high": 0.9815,
+      "half_width_pp": 9.74,
+      "n_needed_for_pm4.2pp": 108,
+      "share_of_300_that_would_require": 0.36
+    },
+    {
+      "assumed_agreement": 1.0,
+      "n_overlap": 30,
+      "wilson_low": 0.8865,
+      "wilson_high": 1.0,
+      "half_width_pp": 5.68,
+      "n_needed_for_pm4.2pp": 42,
+      "share_of_300_that_would_require": 0.14
+    }
+  ]
+}

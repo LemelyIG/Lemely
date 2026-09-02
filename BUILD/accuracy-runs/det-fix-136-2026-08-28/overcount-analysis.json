@@ -1,0 +1,9 @@
+{
+  "schemes_overcounting_before": 98,
+  "total_overcount_before": 845,
+  "total_overcount_after_on_the_same_schemes": 349,
+  "overcount_removed": 496,
+  "share_removed": 0.587,
+  "of_those_now_exact": 23,
+  "of_those_now_under": 5
+}

@@ -1,0 +1,48 @@
+{
+  "issues": "110 + 112",
+  "spend_usd": 0.0,
+  "schemes": 479,
+  "exact_before": 333,
+  "exact_after": 331,
+  "left_exact": [
+    "0625_m20_ms_52.pdf",
+    "0625_s23_ms_41.pdf",
+    "0625_s25_ms_32.pdf",
+    "0625_s25_ms_33.pdf",
+    "0625_s25_ms_41.pdf",
+    "0625_w24_ms_42.pdf"
+  ],
+  "became_exact": [
+    "0606_w20_ms_11.pdf",
+    "0606_w24_ms_11.pdf",
+    "0606_w24_ms_23.pdf",
+    "0625_w21_ms_52.pdf"
+  ],
+  "parsed_marks_before": 32913,
+  "parsed_marks_after": 32849,
+  "alt_points_before": 1084,
+  "alt_points_after": 1257,
+  "leaves_lost_before": 57,
+  "leaves_lost_after": 36,
+  "schemes_with_dup_ids_before": 34,
+  "schemes_with_dup_ids_after": 21,
+  "prediction_band_from_112": [
+    77,
+    246
+  ],
+  "readings_measured": {
+    "sticky_marker_to_end_of_leaf": {
+      "exact": 313,
+      "marks_removed": 245
+    },
+    "non_sticky_marker_own_point": {
+      "exact": "see exact_after",
+      "marks_removed": "see marks_removed"
+    },
+    "before_half_merged_text_only": {
+      "exact": 304
+    }
+  },
+  "marks_removed": 64,
+  "inside_prediction_band": false
+}
