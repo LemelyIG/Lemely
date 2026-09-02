@@ -3789,7 +3789,7 @@ git commit -S -m "feat(web): derive target grade vocabularies from the option th
 
 **Files:**
 - Create: `web/src/lib/grades.ts`, `web/tests/unit/grades.test.ts`
-- Modify: `Quizzes.tsx`, `ClassRoster.tsx`, `AtRiskList.tsx`, `QuizBuilder.tsx`, `AtRiskList` helpers, `web/src/lib/types.ts`, `web/src/components/ui/grade-badge.tsx`, `SubjectsStep.tsx`
+- Modify: `Quizzes.tsx`, `ClassRoster.tsx`, `AtRiskList.tsx`, `QuizBuilder.tsx`, `PracticeGenerator.tsx`, `web/src/lib/types.ts`, `web/src/components/ui/grade-badge.tsx`, `SubjectsStep.tsx`
 
 **Interfaces:**
 - Produces: `gradeRank(grade: string | null | undefined, vocabulary: readonly string[]): number`.
@@ -3878,11 +3878,18 @@ export function gradeRank(
 
 In `Quizzes.tsx:86`, `ClassRoster.tsx:68` and `AtRiskList.tsx:71`, delete the local `const GRADE_ORDER` and replace `GRADE_ORDER.indexOf(x)` with `gradeRank(x, vocabulary)`, where `vocabulary` comes from `useReference()` — these are teacher screens spanning subjects, so use the vocabulary for the subject in hand where one exists and `[]` while loading. Delete `GRADES` in `QuizBuilder.tsx:126` and render the served vocabulary. In `SubjectsStep.tsx` the target-grade `Select` already iterates `targetGrades(subject.code)` from Task 7.
 
+Delete the two difficulty-band tables in the same pass — `BAND_ORDER`
+(`QuizBuilder.tsx:128`) and `DIFFICULTY_BANDS` (`PracticeGenerator.tsx:34`) —
+and iterate `useReference().data?.difficultyBands ?? []` instead. Both are
+backend-owned (`core.difficulty._BANDS`), both are already served by
+`/api/reference`, and Task 16's gate forbids them: leaving either one makes
+that gate fail on arrival.
+
 `web/src/lib/types.ts:12`'s `Grade` union and `grade-badge.tsx:16`'s wider union both become `type Grade = string`, because the vocabulary is now data. `grade-badge.tsx`'s `A*|A|B → "top"` tone mapping stays — that is presentation, not a data table.
 
 - [ ] **Step 5: Prove the tables are gone**
 
-Run: `grep -rn 'GRADE_ORDER\|"A\*", "A", "B", "C", "D", "E"' web/src`
+Run: `grep -rn 'GRADE_ORDER\|"A\*", "A", "B", "C", "D", "E"\|BAND_ORDER\|DIFFICULTY_BANDS' web/src`
 Expected: no output.
 
 - [ ] **Step 6: Verify**
@@ -3931,7 +3938,17 @@ import { describe, expect, it } from "vitest"
 const ROOT = new URL("../../src", import.meta.url).pathname
 
 /** Files allowed to mention a value, because they define the fetch or the test. */
-const ALLOWED = new Set(["lib/referenceTypes.ts", "lib/reference.ts", "lib/hooks/useReferenceApi.ts"])
+const ALLOWED = new Set([
+  "lib/referenceTypes.ts",
+  "lib/reference.ts",
+  "lib/hooks/useReferenceApi.ts",
+  // `subjectIcon`'s glyph map keys on syllabus codes, so it trips the catalogue
+  // pattern. Spec D6 keeps it in the frontend deliberately: a glyph is
+  // presentation with no backend counterpart, and it already falls back to a
+  // generic icon for an unknown code. Exempted by path, not by loosening the
+  // pattern, so the pattern still guards every other file.
+  "portals/student/data.ts",
+])
 
 const FORBIDDEN: { name: string; pattern: RegExp }[] = [
   {
