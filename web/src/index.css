@@ -183,6 +183,20 @@
   --dur-slow: 600ms;
   --dur-celebrate: 900ms;
 
+  /* ── §12 Loading tiers (PR 2 part B) ────────────────────────────────────
+     Every full-page wait has three tiers. Tier 1, 0 to --loading-tier-skeleton:
+     warm paper only, nothing visible (a `role="status"` "Loading" announcement
+     stays, visually hidden). Tier 2, --loading-tier-skeleton to
+     --loading-tier-slow: a skeleton matching the layout being waited for.
+     Tier 3, after --loading-tier-slow: the brand mark drawing itself, "Still
+     loading", and a reload button. Both thresholds are tokens so
+     `vite/preMountShell.ts` can
+     read them out of this file rather than a second, driftable copy — the
+     pre-mount shell in index.html stages on the same two numbers `RouteFallback`
+     does. See the `.lm-tier-*` classes below for the mechanism. */
+  --loading-tier-skeleton: 200ms;
+  --loading-tier-slow: 5000ms;
+
   /* ── §4.2 Type scale (raw values) ────────────────────────────────────── */
   /* Bundled into composite classes below, because Tailwind v4's --text-* can
      carry line-height/tracking/weight but NOT font-family, and every rung here
@@ -974,6 +988,78 @@ body {
   }
 }
 
+/* ── §9.2 exception: the mark's draw-on (`Mark`, `animated`) ─────────────
+   The ONE documented exception to "animate only transform and opacity" (§9.2):
+   `stroke-dashoffset` on a single small path. The product owner granted it for
+   this one loading mark specifically, because "the interface is quietly still
+   working" is the entire content of the animation and a transform/opacity
+   treatment cannot draw a line being drawn, which is the one thing this state
+   needs to say. DESIGN.md §9.2 records the exception itself (another agent's
+   edit, PR 2).
+
+   All three paths share one 2.8s loop so the mark reads as being drawn once,
+   corner to tick, then held before it repeats: the long stroke draws over the
+   first 18% of the cycle, the short stroke over the next 14%, the tick over
+   24% starting at 38%, then the fully-drawn mark holds for the remainder.
+
+   Reduced motion still holds without a separate rule here: the existing
+   blanket rule below forces `animation-duration` to ~0 and
+   `animation-iteration-count` to 1, so the animation completes instantly and
+   fill:`both` (set at each class below) holds its LAST frame — which is why
+   every 100% keyframe here must be, and is, the fully drawn state
+   (`stroke-dashoffset: 0`). A reduced-motion viewer sees the complete mark
+   immediately, never a stalled or half-drawn stroke. */
+.lm-draw-l1 {
+  stroke-dasharray: 36;
+  stroke-dashoffset: 36;
+  animation: lm-draw-l1 2.8s var(--ease-out-soft) infinite both;
+}
+@keyframes lm-draw-l1 {
+  0% {
+    stroke-dashoffset: 36;
+  }
+  18% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+.lm-draw-l2 {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: lm-draw-l2 2.8s var(--ease-out-soft) infinite both;
+}
+@keyframes lm-draw-l2 {
+  0%,
+  18% {
+    stroke-dashoffset: 24;
+  }
+  32% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+.lm-draw-tick {
+  stroke-dasharray: 42;
+  stroke-dashoffset: 42;
+  animation: lm-draw-tick 2.8s var(--ease-out-soft) infinite both;
+}
+@keyframes lm-draw-tick {
+  0%,
+  38% {
+    stroke-dashoffset: 42;
+  }
+  62% {
+    stroke-dashoffset: 0;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
 /* ── §9.3 The celebration register ─────────────────────────────────────── */
 /* Reserved for the five moments §9.3 names, and nothing else. The rules that
    decide when these run live in `lib/celebration.ts`; these are only how they
@@ -1065,6 +1151,54 @@ body {
   border-radius: 6px;
   border: 3px solid transparent;
   background-clip: content-box;
+}
+
+/* Loading-tier staging (§12, PR 2 part B). A zero-duration animation with a
+   delay and `both` fill keeps the element at `opacity: 0` until the delay
+   elapses, then holds it at `opacity: 1` forever after — so tier 2 and tier 3
+   each simply wait for their own delay to run out, with no JavaScript timer
+   anywhere. The identical trick, with the same two tokens read out of this
+   file at build time, runs in `index.html`'s pre-mount shell
+   (`vite/preMountShell.ts`), which paints before this stylesheet is even
+   requested.
+
+   The reduced-motion rule at the bottom of this file only forces
+   `animation-duration` (and `transition-duration`) toward zero — it never
+   touches `animation-delay` — so these two classes still stage under
+   `prefers-reduced-motion`: `--loading-tier-skeleton` and
+   `--loading-tier-slow` still gate when tier 2 and tier 3 become visible,
+   only the (already instantaneous) opacity fade itself is affected, which is
+   not observable.
+
+   `visibility` rides along with `opacity` here, and that is NOT a second
+   motion property alongside it under §9.2's "animate only transform and
+   opacity" rule: `visibility` cannot be interpolated (it is a discrete,
+   keyword-only property — the UA snaps it to whichever keyframe's value is
+   current, it never tweens), so animating it produces a step, not motion.
+   It has to ride along because `opacity: 0` alone does not remove an element
+   from the accessibility tree or the tab order — only `visibility: hidden`
+   does — and both `.lm-tier-skeleton` and `.lm-tier-slow` sit inside a
+   `role="status"` live region. Without this, `RouteFallback`'s tier 3
+   ("Still loading… Reload the page") was reachable by Tab and announced by a
+   screen reader on every route transition, for the first 5s of every load,
+   never having been visible on screen at all. */
+@keyframes lm-appear {
+  from {
+    opacity: 0;
+    visibility: hidden;
+  }
+  to {
+    opacity: 1;
+    visibility: visible;
+  }
+}
+.lm-tier-skeleton {
+  visibility: hidden;
+  animation: lm-appear 0s var(--loading-tier-skeleton) both;
+}
+.lm-tier-slow {
+  visibility: hidden;
+  animation: lm-appear 0s var(--loading-tier-slow) both;
 }
 
 /* ── §10 Direction ─────────────────────────────────────────────────────── */

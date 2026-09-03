@@ -485,6 +485,13 @@ watch it perform. Expressive motion is rationed to genuine wins (§9.2).
 - Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
 - Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
 - **Nothing blocks input.** No animation gates a click.
+- **The one documented exception.** The brand mark's self-drawing stroke
+  (`stroke-dashoffset` on three short paths, in `components/ui/mark.tsx` and
+  again, inline, in the pre-mount shell in `index.html`) is the one permitted
+  non-transform/opacity animation. Granted by the product owner for the
+  slow-load tier (§12) on the grounds that a single short path is not the jank
+  this rule exists to prevent, and it renders fully drawn and still under
+  `prefers-reduced-motion` rather than animating.
 
 ### 9.3 The celebration register
 
@@ -503,6 +510,10 @@ answer, and the marked-paper result reveal. Nothing else.
 not *broken*: transforms and celebration flourishes drop to a simple opacity
 change or nothing, but every state change stays legible and every element still
 arrives. Count-ups jump to their final value immediately. Confetti does not run.
+The loading tiers (§12) still stage under reduced motion: their delays live in
+`animation-delay`, which the reduced-motion rule leaves untouched, so only the
+motion within each tier (the pulsing skeleton, the self-drawing mark) is
+affected, never when a tier appears.
 
 ---
 
@@ -553,6 +564,7 @@ that bind every component:
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
 - **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button.
+- **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
 - **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
 
