@@ -43,6 +43,20 @@ class QualificationLevel(enum.Enum):
     a_level = "a_level"
 
 
+class PaperTier(enum.Enum):
+    """Which tier of a tiered syllabus a paper belongs to.
+
+    IGCSE splits some subjects into Core and Extended. The distinction is
+    load-bearing rather than cosmetic: Cambridge publishes different grade
+    thresholds for each, and a Core candidate cannot be awarded above C. A
+    subject with no tiering (0606 Additional Mathematics) leaves the column
+    NULL rather than inventing a tier for it.
+    """
+
+    core = "core"
+    extended = "extended"
+
+
 class SessionMonth(enum.Enum):
     """CAIE exam session month codes.
 
@@ -374,6 +388,7 @@ __all__ = [
     "MarkerSource",
     "MembershipRole",
     "NotificationType",
+    "PaperTier",
     "PlanInterval",
     "QualificationLevel",
     "QuestionDifficulty",

@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { confidenceBandTier, practiceMarkState, practiceResultView } from "./practiceData"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 
@@ -63,6 +63,7 @@ export function PracticeResult() {
   const justSubmitted = isJustSubmitted(location.state)
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const query = usePracticeResult(assignmentId)
+  const subjectName = useSubjectName(query.data?.subjectCode ?? "")
 
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
@@ -92,8 +93,6 @@ export function PracticeResult() {
         }}
       >
         {(data) => {
-          const subjectName =
-            SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
           const view = practiceResultView(data)
 
           if (view.kind === "not_submitted") {

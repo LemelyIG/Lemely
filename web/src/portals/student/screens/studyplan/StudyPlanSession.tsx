@@ -9,7 +9,7 @@ import {
   useCompleteStudyPlanSession,
   useCurrentStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   activityLabel,
@@ -71,7 +71,7 @@ export function StudyPlanSession() {
     subjectCode: string
     sessionId: string
   }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const planQuery = useCurrentStudyPlan(subjectCode)
   const topicsQuery = usePracticeTopics(subjectCode)

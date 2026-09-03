@@ -2,6 +2,9 @@
 import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Stepper } from "@/components/ui/stepper"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { usePlacementAvailabilities } from "@/lib/hooks/usePlacementApi"
+import { subjectFor, targetGradesFor, tierForPapers } from "@/lib/reference"
 import { QueryState } from "@/components/ui/query-state"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
@@ -13,15 +16,14 @@ import {
   useStudentProfile,
 } from "@/lib/hooks/useMeApi"
 import {
-  backfillNullQualificationLevels,
   buildConfidenceRatingsPayload,
   buildEnrolmentPayload,
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  firstAvailablePlacementSubject,
   placementInviteSubject,
   toggleInSet,
-  SUPPORTED_SUBJECTS,
   type QuestionnaireAnswers,
   type SubjectDraft,
 } from "./onboarding/onboardingData"
@@ -92,31 +94,35 @@ type WizardStep = "subjects" | "questionnaire"
 export function Onboarding() {
   const navigate = useNavigate()
   const profileQuery = useStudentProfile()
+  const { data: reference, isLoading: referenceLoading, isError: referenceError, refetch } = useReference()
   const patchProfile = usePatchStudentProfile()
   const putEnrolments = usePutEnrolments()
   const putConfidenceRatings = usePutConfidenceRatings()
   const completeOnboarding = useCompleteOnboarding()
 
   const [wizardStep, setWizardStep] = useState<WizardStep>("subjects")
-  const [qualificationLevel, setQualificationLevel] = useState<string | null>(null)
   const [drafts, setDrafts] = useState<Record<string, SubjectDraft>>({})
   const [answers, setAnswers] = useState<QuestionnaireAnswers>({})
   const [confidenceBySubject, setConfidenceBySubject] = useState<
     Record<string, Record<string, number>>
   >({})
   const [questionnaireIndex, setQuestionnaireIndex] = useState(0)
+  const [placementChoice, setPlacementChoice] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
 
   const seeded = useRef(false)
   useEffect(() => {
     const existing = profileQuery.data
-    if (seeded.current || !existing) return
+    // `reference` is load-bearing, not decorative: the filter below drops any
+    // enrolment whose subject is not in the catalogue, so seeding against an
+    // empty catalogue would drop *every* saved enrolment and the student would
+    // silently lose the subjects they picked last session.
+    if (seeded.current || !existing || !reference) return
     seeded.current = true
-    setQualificationLevel(existing.profile.qualificationLevel)
     const seededDrafts: Record<string, SubjectDraft> = {}
     const seededConfidence: Record<string, Record<string, number>> = {}
     for (const enrolment of existing.enrolments) {
-      if (!SUPPORTED_SUBJECTS.some((s) => s.code === enrolment.subjectCode)) continue
+      if (!reference.subjects.some((s) => s.code === enrolment.subjectCode)) continue
       seededDrafts[enrolment.subjectCode] = {
         subjectCode: enrolment.subjectCode,
         qualificationLevel: enrolment.qualificationLevel,
@@ -139,9 +145,19 @@ export function Onboarding() {
       weeklyStudyHours: existing.profile.weeklyStudyHours ?? undefined,
       gradeLevel: existing.profile.gradeLevel ?? undefined,
     })
-  }, [profileQuery.data])
+  }, [profileQuery.data, reference])
 
   const questionnaireSteps = buildQuestionnaireSteps(Object.keys(drafts))
+
+  // Availability for every enrolled subject, fetched only once S-02 is
+  // reached (no point racing S-01's subject picks). `usePlacementAvailabilities`
+  // is a single hook call regardless of how many codes are passed — see its
+  // doc comment for why a `.map()` of `usePlacementAvailability` calls would
+  // not be safe here. Feeds `firstAvailablePlacementSubject` below: the
+  // placement-choice skip path must prefer a subject that actually has
+  // questions, not silently fall back to catalogue order.
+  const enrolledForAvailability = wizardStep === "questionnaire" ? Object.keys(drafts) : []
+  const placementAvailabilities = usePlacementAvailabilities(enrolledForAvailability)
 
   function toggleSubject(code: string) {
     setDrafts((prev) => {
@@ -151,7 +167,10 @@ export function Onboarding() {
       } else {
         next[code] = {
           subjectCode: code,
-          qualificationLevel: qualificationLevel,
+          // The subject's own level (D10) — 0580/0606/0625 are IGCSE
+          // syllabuses, so asking the student produced answers like "A-Level
+          // Physics 0625" that describe nothing that exists.
+          qualificationLevel: subjectFor(reference, code)?.qualificationLevel ?? null,
           papers: new Set(),
           targetGrade: null,
           sessionMonth: null,
@@ -181,9 +200,6 @@ export function Onboarding() {
   async function handleSubjectsContinue() {
     setError(null)
     try {
-      if (qualificationLevel) {
-        await patchProfile.mutateAsync(buildProfilePatchPayload({ qualificationLevel }))
-      }
       await putEnrolments.mutateAsync({
         enrolments: buildEnrolmentPayload(Object.values(drafts)),
       })
@@ -225,6 +241,7 @@ export function Onboarding() {
     else if (step?.kind === "weeklyHours")
       setAnswers((prev) => ({ ...prev, weeklyStudyHours: undefined }))
     else if (step?.kind === "gradeLevel") setAnswers((prev) => ({ ...prev, gradeLevel: undefined }))
+    else if (step?.kind === "placementChoice") setPlacementChoice(undefined)
   }
 
   /**
@@ -260,13 +277,32 @@ export function Onboarding() {
         }
       }
       await completeOnboarding.mutateAsync()
-      // S-02 -> S-03 (UI spec): the placement invite is per subject, so this
-      // sends the student to the first subject they enrolled in, in the
-      // order S-01 presented them. A student who selected nothing has no
-      // subject to invite them into a placement test for — S-06 directly.
-      // See `placementInviteSubject` for why this is not `Object.keys(...)[0]`.
-      const firstSubject = placementInviteSubject(Object.keys(drafts))
-      navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
+      // S-02 -> S-03 (UI spec): the placement invite is per subject. When
+      // the student answered the placement-choice question (>= 2 enrolled
+      // subjects), that answer wins outright — it exists precisely to
+      // remove the dependency on catalogue order.
+      //
+      // When the choice was skipped (or never asked, one subject), the
+      // fallback is NOT catalogue order directly: skip is one tap versus
+      // reading two availability cards, so it is the majority path for a
+      // multi-subject student, and catalogue order would silently reroute
+      // most of them straight back into the 0580 dead end this question
+      // exists to avoid. `firstAvailablePlacementSubject` prefers the
+      // first enrolled subject (enrolment order) that this screen already
+      // confirmed has questions; only when none of them do — genuinely
+      // nothing better to route to — does catalogue order via
+      // `placementInviteSubject` apply. A student who selected nothing has
+      // no subject to invite them into a placement test for — S-06
+      // directly.
+      const enrolledCodes = Object.keys(drafts)
+      const availableByCode = new Map(
+        enrolledCodes.map((code, i) => [code, placementAvailabilities[i]?.data?.available === true]),
+      )
+      const skipFallback =
+        firstAvailablePlacementSubject(enrolledCodes, availableByCode) ??
+        placementInviteSubject(enrolledCodes, reference?.subjects ?? [])
+      const targetSubject = placementChoice ?? skipFallback
+      navigate(targetSubject ? `/student/placement/${targetSubject}` : "/student")
     } catch (err) {
       setError(studentSaveFailureMessage(err))
     }
@@ -298,12 +334,12 @@ export function Onboarding() {
       <QueryState
         query={profileQuery}
         srHeading="Onboarding"
-        /* The loaded render is a qualification picker plus a grid of
-           per-subject cards, so a two-line page header alone would hand the
-           reader a ~60px placeholder and then jump the page several hundred
-           pixels when it resolves — the CLS this whole sweep exists to stop
-           (DESIGN.md §12), and a shift this screen did not have before, since
-           it used to render the wizard immediately. */
+        /* The loaded render is a grid of per-subject cards, so a two-line
+           page header alone would hand the reader a ~60px placeholder and
+           then jump the page several hundred pixels when it resolves — the
+           CLS this whole sweep exists to stop (DESIGN.md §12), and a shift
+           this screen did not have before, since it used to render the
+           wizard immediately. */
         skeleton={
           <>
             <PageHeaderSkeleton />
@@ -318,30 +354,31 @@ export function Onboarding() {
         {() =>
           wizardStep === "subjects" ? (
             <SubjectsStep
-              qualificationLevel={qualificationLevel}
-              onQualificationLevel={(value) => {
-                setQualificationLevel(value)
-                // Back-fill drafts still at `null` — a subject ticked before
-                // the level was picked must not be left behind. A draft with
-                // its own per-subject override is left untouched. See
-                // `backfillNullQualificationLevels`'s docstring.
-                setDrafts((prev) => backfillNullQualificationLevels(prev, value))
-              }}
+              subjects={reference?.subjects ?? []}
+              sessionMonths={reference?.sessionMonths ?? []}
+              targetGrades={(code) =>
+                targetGradesFor(
+                  reference,
+                  code,
+                  tierForPapers(subjectFor(reference, code), [...(drafts[code]?.papers ?? [])]),
+                )
+              }
+              loading={referenceLoading}
+              loadError={referenceError}
+              onRetry={() => void refetch()}
               drafts={drafts}
               onToggleSubject={toggleSubject}
-              onSubjectQualificationLevel={(code, value) =>
-                updateDraft(code, { qualificationLevel: value })
-              }
               onTogglePaper={togglePaper}
               onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
               onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
               onSessionYear={(code, year) => updateDraft(code, { sessionYear: year })}
               onContinue={handleSubjectsContinue}
-              saving={saving}
+              saving={putEnrolments.isPending}
               error={error}
             />
           ) : (
             <QuestionnaireStep
+              reference={reference}
               steps={questionnaireSteps}
               stepIndex={questionnaireIndex}
               onBack={() => goToStep(questionnaireIndex - 1)}
@@ -356,6 +393,8 @@ export function Onboarding() {
               onGradeLevel={(v) => setAnswers((prev) => ({ ...prev, gradeLevel: v }))}
               confidenceBySubject={confidenceBySubject}
               onConfidence={setConfidence}
+              placementChoice={placementChoice}
+              onPlacementChoice={setPlacementChoice}
               saving={saving}
               error={error}
             />

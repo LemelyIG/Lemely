@@ -7,89 +7,17 @@
  * cheaply pin, especially the D4.5 skip-produces-no-value rule).
  *
  * Curriculum data (subject names, paper numbers/names, syllabus topic
- * labels) is transcribed from the same backend sources already verified
- * against the official CAIE syllabus PDFs — `lemely/data/paper_timing.json`
- * (paper structure) and `lemely/data/syllabus_topics.json` (topic
- * vocabulary, D4.4) — rather than invented here. There is no student-facing
- * route that serves this structural data (`/api/me/*` only holds the
- * student's own answers), so it is mirrored once, the same way
- * `GRADE_ORDER` is already duplicated as a local const in three teacher
- * screens (`Quizzes.tsx`, `ClassRoster.tsx`, `AtRiskList.tsx`) rather than
- * fetched.
+ * labels, qualification levels, session months, target grades) used to be
+ * mirrored here from the same backend sources it now fetches directly:
+ * `GET /api/reference` (`web/src/lib/referenceTypes.ts`,
+ * `web/src/lib/reference.ts`). This module holds only the wizard logic that
+ * has no backend equivalent — building payloads, sequencing S-02's
+ * one-question-per-view steps, and picking the S-03 placement-invite
+ * target from the fetched catalogue.
  */
 
+import type { CatalogueSubject } from "@/lib/referenceTypes"
 import type { EnrolmentUpsert } from "@/lib/meTypes"
-
-// ── Curriculum data (MISSION §1 scopes this phase to exactly these three
-// subjects; "more subjects coming" is rendered explicitly in S-01 so the
-// absence of a fourth card doesn't read as a bug) ──────────────────────────
-
-export interface SubjectPaper {
-  number: number
-  name: string
-}
-
-export interface SupportedSubject {
-  code: string
-  name: string
-  papers: SubjectPaper[]
-  /** Up to 3 top-level P4.2 topic labels ("<code> <name>") this subject's
-   * S-02 confidence step asks about — the first 3 in syllabus order,
-   * transcribed verbatim from `syllabus_topics.json`, never invented. */
-  confidenceTopics: string[]
-}
-
-export const SUPPORTED_SUBJECTS: SupportedSubject[] = [
-  {
-    code: "0625",
-    name: "Physics",
-    papers: [
-      { number: 1, name: "Multiple Choice (Core)" },
-      { number: 2, name: "Multiple Choice (Extended)" },
-      { number: 3, name: "Theory (Core)" },
-      { number: 4, name: "Theory (Extended)" },
-      { number: 5, name: "Practical Test" },
-      { number: 6, name: "Alternative to Practical" },
-    ],
-    confidenceTopics: ["1 Motion, forces and energy", "2 Thermal physics", "3 Waves"],
-  },
-  {
-    code: "0580",
-    name: "Mathematics",
-    papers: [
-      { number: 1, name: "Non-calculator (Core)" },
-      { number: 2, name: "Non-calculator (Extended)" },
-      { number: 3, name: "Calculator (Core)" },
-      { number: 4, name: "Calculator (Extended)" },
-    ],
-    confidenceTopics: ["1 Number", "2 Algebra and graphs", "3 Coordinate geometry"],
-  },
-  {
-    code: "0606",
-    name: "Additional Mathematics",
-    papers: [
-      { number: 1, name: "Non-calculator" },
-      { number: 2, name: "Calculator" },
-    ],
-    confidenceTopics: ["1 Functions", "2 Quadratic functions", "3 Factors of polynomials"],
-  },
-]
-
-/** Mirrors `lemely.db.models.enums.QualificationLevel`. Re-exported from the
- * shared table so there is exactly one source of truth for it. */
-export { QUALIFICATION_LEVELS } from "@/lib/qualificationLevels"
-
-/** Mirrors `lemely.db.models.enums.SESSION_MONTH_LABELS`. */
-export const SESSION_MONTHS: { value: string; label: string }[] = [
-  { value: "may_june", label: "May/June" },
-  { value: "oct_nov", label: "Oct/Nov" },
-  { value: "feb_mar", label: "Feb/Mar" },
-  { value: "specimen", label: "Specimen" },
-]
-
-/** Mirrors `lemely.core.history.GRADE_ORDER`, already duplicated as a local
- * const in three teacher screens — same precedent, not a new pattern. */
-export const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
 
 export const WEEKLY_HOURS_MIN = 0
 /** UI-only cap, tighter than the backend's 0..80 validation ceiling — 40
@@ -102,22 +30,55 @@ export const CONFIDENCE_MAX = 5
 
 /**
  * Which subject's placement invite (S-03) to send the student to when they
- * finish S-02, or `null` if they enrolled in none — in which case there is
- * no placement test to invite them into and the caller sends them to S-06.
+ * finish S-02, or `null` if they enrolled in none — in which case there is no
+ * placement test to invite them into and the caller sends them to S-06.
  *
  * Deliberately NOT `Object.keys(drafts)[0]`. The drafts object is keyed by
- * syllabus code, and JS enumerates integer-like string keys first, in
- * ascending numeric order, ahead of every other key's insertion order. All
- * three of today's codes have a leading zero (`0625`/`0580`/`0606`) and so
- * are not integer-like — insertion order happens to survive, which is
- * exactly what makes the bug invisible now and live the day a code without
- * a leading zero is added. Ordering by the catalogue instead means the
- * student is sent to the first subject *as presented to them in S-01*,
- * which is a rule that stays true whatever the codes look like.
+ * syllabus code, and JS enumerates integer-like string keys first, ahead of
+ * every other key's insertion order. All of today's codes have a leading zero
+ * and so are not integer-like — insertion order happens to survive, which is
+ * exactly what makes the bug invisible now and live the day a code without a
+ * leading zero is added. Ordering by the catalogue instead means the student
+ * is sent to the first subject *as presented to them in S-01*, which stays
+ * true whatever the codes look like.
+ *
+ * `subjects` is the fetched catalogue rather than a module constant, so an
+ * empty array (query still loading) correctly yields `null` instead of
+ * silently claiming the student enrolled in nothing.
  */
-export function placementInviteSubject(enrolledCodes: readonly string[]): string | null {
+export function placementInviteSubject(
+  enrolledCodes: readonly string[],
+  subjects: readonly CatalogueSubject[],
+): string | null {
   const enrolled = new Set(enrolledCodes)
-  return SUPPORTED_SUBJECTS.find((subject) => enrolled.has(subject.code))?.code ?? null
+  return subjects.find((subject) => enrolled.has(subject.code))?.code ?? null
+}
+
+/**
+ * The subject to route a *skipped* placement-choice question to: the first
+ * enrolled subject, in enrolment order, that actually has placement
+ * questions — falling back to `null` (the caller falls through to
+ * `placementInviteSubject`'s catalogue-order default) only when none of
+ * the enrolled subjects have any.
+ *
+ * Skip is meant to mean "no opinion", not "silently apply the ordering
+ * default this whole question exists to remove". A skip is one tap versus
+ * reading two availability cards to choose, so it is the majority path for
+ * a multi-subject student — its default carries real weight, and cannot be
+ * catalogue order (0580 sorts first and has zero placement questions,
+ * `core/placement.py`) without reintroducing the exact dead end this
+ * question was built to avoid.
+ *
+ * `available` is keyed by subject code; a code missing from the map (its
+ * availability query hasn't resolved, or failed) is treated the same as
+ * "not known to be available" — this function only ever routes to a
+ * subject it can affirmatively confirm has questions, never guesses.
+ */
+export function firstAvailablePlacementSubject(
+  enrolledCodes: readonly string[],
+  available: ReadonlyMap<string, boolean>,
+): string | null {
+  return enrolledCodes.find((code) => available.get(code) === true) ?? null
 }
 
 // ── S-01 subject/paper/target selection ─────────────────────────────────
@@ -139,34 +100,6 @@ export function toggleInSet<T>(set: ReadonlySet<T>, item: T): Set<T> {
   if (next.has(item)) next.delete(item)
   else next.add(item)
   return next
-}
-
-/**
- * Back-fill the profile-wide qualification level into every draft that
- * hasn't been given its own level yet, when the picker changes.
- *
- * `toggleSubject` seeds a new draft's `qualificationLevel` from the
- * profile-wide picker's value *at toggle time*, so a student who ticks a
- * subject before picking a level gets a draft permanently stuck at `null` —
- * `onQualificationLevel` used to be a bare `setQualificationLevel`, which
- * updated the profile-wide value but never reconciled drafts already
- * sitting at `null`. The result was silent data loss: the student's
- * explicit level choice never reached the enrolments PUT.
- *
- * Only `null` drafts are touched. A draft the student has already given its
- * own level via `onSubjectQualificationLevel` (S-01's per-subject override)
- * must not be clobbered by a later change to the profile-wide picker.
- */
-export function backfillNullQualificationLevels(
-  drafts: Record<string, SubjectDraft>,
-  level: string | null,
-): Record<string, SubjectDraft> {
-  return Object.fromEntries(
-    Object.entries(drafts).map(([code, draft]) => [
-      code,
-      draft.qualificationLevel === null ? { ...draft, qualificationLevel: level } : draft,
-    ]),
-  )
 }
 
 /** Build the `PUT /api/me/student-profile/enrolments` body from S-01 drafts.
@@ -194,7 +127,6 @@ export interface QuestionnaireAnswers {
   hasExternalLessons?: boolean | null
   weeklyStudyHours?: number | null
   gradeLevel?: string | null
-  qualificationLevel?: string | null
 }
 
 /** Build the `PATCH /api/me/student-profile` body: only keys the student
@@ -234,6 +166,7 @@ export type QuestionnaireStepKind =
   | "weeklyHours"
   | "gradeLevel"
   | "confidence"
+  | "placementChoice"
 
 export interface QuestionnaireStepDef {
   id: string
@@ -245,8 +178,8 @@ export interface QuestionnaireStepDef {
 /**
  * The ordered S-02 question sequence: 4 fixed scalar questions, then one
  * confidence step per subject the student selected in S-01 (in S-01's
- * selection order). Every step is independently skippable — this only
- * decides *order*, not which are required.
+ * selection order), then — only when there is a real choice to make — which
+ * subject to be placed in.
  *
  * Target grade is deliberately NOT re-asked here even though the UI spec's
  * S-02 "Contains" prose lists "target grades per subject" alongside it: the
@@ -256,6 +189,14 @@ export interface QuestionnaireStepDef {
  * `targetGrade` per enrolment — there is no second slot for an S-02 answer
  * to write to. Asking twice would either silently overwrite S-01's answer or
  * be a dead question; both are worse than resolving the overlap once, here.
+ *
+ * The trailing `placementChoice` step exists because catalogue order is
+ * `code` order (spec D3), and 0580 sorts first while having no placement
+ * questions at all (`lemely/core/placement.py`). Routing by position would
+ * send a multi-subject student to an "unavailable" panel instead of a real
+ * test. Asking removes the dependency on catalogue order entirely. One
+ * enrolled subject means no question: there is nothing to choose, so the
+ * step is omitted (`placementInviteSubject` picks the only candidate).
  */
 export function buildQuestionnaireSteps(subjectCodes: string[]): QuestionnaireStepDef[] {
   return [
@@ -268,6 +209,9 @@ export function buildQuestionnaireSteps(subjectCodes: string[]): QuestionnaireSt
       kind: "confidence" as const,
       subjectCode,
     })),
+    ...(subjectCodes.length > 1
+      ? [{ id: "placementChoice", kind: "placementChoice" as const }]
+      : []),
   ]
 }
 

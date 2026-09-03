@@ -10,7 +10,7 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade, ReviewResultDTO } from "@/lib/flashcardTypes"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   cardSourceLabel,
@@ -62,7 +62,7 @@ const GRADE_BUTTONS: { grade: ReviewGrade; label: string; hint: string }[] = [
 export function FlashcardReview() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const dueQuery = useDueSession(subjectCode)
   const reviewCard = useReviewCard()

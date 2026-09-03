@@ -55,3 +55,15 @@ class AuthError(LemelyError):
     """Authentication / authorization failure (bad credentials, OTP, token)."""
 
     exit_code = 8
+
+
+class EmptyGradeBoundaryStoreError(LemelyError):
+    """``component_thresholds`` has no verified rows.
+
+    Raised by :class:`~lemely.io.grade_boundaries.GradeBoundaryStore` on a
+    fresh or unseeded database, instead of silently grading against invented
+    numbers. The remedy is always the same: run
+    ``python scripts/ingest_thresholds.py``.
+    """
+
+    exit_code = 9

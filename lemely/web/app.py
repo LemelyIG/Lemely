@@ -30,6 +30,7 @@ from lemely.web.routers import (
     placement,
     practice,
     quiz,
+    reference,
     review,
     school,
     student,
@@ -58,6 +59,7 @@ def create_app() -> FastAPI:
         version=__version__,
     )
     app.include_router(meta.router)
+    app.include_router(reference.router)
     app.include_router(client_errors.router)
     app.include_router(auth.router)
     app.include_router(teacher.router)

@@ -83,6 +83,10 @@ EXPECTED_TABLES = {
     "push_subscriptions",
     "auth_tokens",
     "invites",
+    "syllabus_papers",
+    "subject_topics",
+    "component_thresholds",
+    "option_thresholds",
 }
 
 

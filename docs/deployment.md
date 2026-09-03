@@ -240,6 +240,71 @@ For a real deploy, do one of:
 Alembic's own config reads the same `LEMELY_DATABASE__URL`, so an operator run needs
 only that variable set.
 
+### 3.5 Grade thresholds must be ingested separately — migrations do not seed them
+
+`alembic upgrade head` creates `component_thresholds` and `option_thresholds`
+(`0025_thresholds`, `0026_component_max_mark_positive`) but inserts **zero rows into
+either**. Unlike `0024_reference_catalogue`'s subjects/papers/topics, CAIE grade
+thresholds are not embedded as migration literals — they come from a live ingest
+(`scripts/ingest_thresholds.py`) that fetches ciegt.pooruli.com's transcription and
+verifies every row against the official Cambridge PDF before storing it (D2/D8 of
+the design spec). A migration can't do that: it would either embed unverified
+numbers as literals or make schema replay depend on a live network call, both wrong.
+
+**This means `alembic upgrade head` alone leaves grading unusable.**
+`GradeBoundaryStore` (`lemely/io/grade_boundaries.py`) raises
+`EmptyGradeBoundaryStoreError` rather than grade against invented boundaries when
+`component_thresholds` has zero verified rows — a deliberate regression fix: an
+earlier version of this store silently fell back to a hardcoded, wrong global
+default (e.g. it would award a Core paper, capped at C, a fabricated A). The refusal
+is correct, but it is also loud: every grading request 500s until ingest has run.
+
+Run once per environment, after migrations and before any grading traffic:
+
+```bash
+python scripts/ingest_thresholds.py
+```
+
+It targets the three subjects this build supports (`--subjects 0580 0606 0625` is
+the default) and reads `LEMELY_DATABASE__URL` the same way Alembic does. It makes
+real HTTP requests to ciegt.pooruli.com and pastpapers.papacambridge.com (one
+syllabus request plus one PDF per session, paced 2s apart — see the script's own
+docstring), so run it from a machine with outbound internet access to the database,
+not from inside a network-isolated container. It is safe to re-run: every write is
+an `ON CONFLICT DO UPDATE` keyed on the row's identity, so a second run updates in
+place rather than duplicating.
+
+> **Any database ingested by a build older than this release must re-run this
+> once.** Earlier builds marked a row `verified` after checking only its
+> threshold *values* against the PDF — the row's `max_mark` came from ciegt's
+> transcription and was never verified, while the row cites the Cambridge PDF as
+> its source. Because every grade is a percentage of `max_mark`, a wrong
+> denominator moves every boundary on that paper. The fix lives in
+> `scripts/ingest_thresholds.py::verify_row`, **not** in a migration, so
+> `alembic_version` cannot tell you whether a given database is affected —
+> `alembic upgrade head` does not repair the stored rows. Count the exposure with
+> `SELECT count(*) FROM component_thresholds WHERE verified;`: every one of those
+> rows was verified under the old rule until the ingest is re-run. Re-running
+> `scripts/ingest_thresholds.py` re-verifies and updates every row in place.
+
+**Verify it worked** with `GET /api/health` — `gradeBoundariesLoaded: true` means at
+least one verified row exists. `false` has two causes, and the backend log
+distinguishes them: a line reading `health: could not read grade boundaries from
+the database` means the **database could not be read**, not that ingest is missing;
+without it, ingest either has not run or failed partway (check the run's own
+printed report: `components=… verified=… options=… `). That line is written on
+**every** failing poll, so it is present in any recent log window, not only at the
+moment the outage began.
+
+> Scope: the boundary store is cached for the life of the process, so this flag
+> reports the state at **first load**. A database that becomes unreachable *after*
+> boundaries have loaded leaves `gradeBoundariesLoaded: true` — this is a deploy-time
+> readiness signal, not a live database monitor.
+
+This is not wired into `docs/ci-cd.md`'s `deploy.yml` pipeline (deliberately left
+alone here — see that doc's own notes on this gap). Until it is, treat this as a
+manual one-time step per environment, same as creating the Storage bucket in §3.2.
+
 ---
 
 ## 4. When you actually do need CORS
@@ -367,11 +432,17 @@ replaces it).
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
 [ ] Storage bucket "uploads" created by hand
 [ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
+[ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --
+    migrations create component_thresholds/option_thresholds empty; grading
+    stays refused (GradeBoundaryStore raises) until this has run
+[ ] Upgrading an EXISTING database, not creating one: ingest_thresholds.py
+    re-run so every verified row's max_mark is checked against the PDF (§3.5)
 [ ] Backend pinned to max 1 instance
 [ ] Volume mounted at /app/.lemely-cache so the $8 spend ledger survives
 [ ] web/nginx.conf proxy_pass repointed if the host has no Compose DNS
 [ ] TLS terminated in front of nginx
 [ ] Verified: 401 no token / 200 valid token / 403 wrong role on a real route
+[ ] Verified: GET /api/health reports gradeBoundariesLoaded: true
 ```
 
 That last line is the cheapest end-to-end proof that the deploy is wired correctly —

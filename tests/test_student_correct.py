@@ -186,6 +186,38 @@ def _mcq_scheme() -> MarkScheme:
     )
 
 
+def _mcq_scheme_extended() -> MarkScheme:
+    """Same two-question MCQ scheme as :func:`_mcq_scheme`, but 0625 paper 2
+    ("Multiple Choice (Extended)", ``syllabus_papers.tier="extended"``)
+    instead of paper 1 ("Multiple Choice (Core)", ``tier="core"``).
+
+    Cambridge's Core tier is capped at grade C and its component thresholds
+    publish no A/B boundary at all, so a Core paper's ``rail_foot`` is always
+    ``""`` — see ``test_correct_complete_frame_includes_result_header_fields``.
+    This variant exists solely to keep that assertion's "A boundary sat at
+    ..." code path under real, data-backed test coverage.
+    """
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 2,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": 2,
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"},
+                {"id": "2", "marks": 1, "type": "mcq", "mcq_answer": "B"},
+            ],
+        }
+    )
+
+
 def _extracted() -> ExtractedAnswers:
     """One correct answer (q1='A') and one blank (q2=''), so q2 is LOW confidence."""
     return ExtractedAnswers(
@@ -331,15 +363,26 @@ def test_correct_complete_frame_includes_full_questions(
 
 def test_correct_complete_frame_includes_result_header_fields(
     client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """The `complete` frame carries the same header fields GET /result computes.
 
     P2.7 step 5: `_result_header_fields` is shared by both paths, so the SSE
     completion frame should carry code/paper/session/boundaryYear/railLeft/
     railFoot/pct computed from the resolved scheme's own metadata
-    (0625 paper 1 variant 2, May/June 2020) and the awarded/maximum marks
+    (0625 paper 2 variant 2, May/June 2020) and the awarded/maximum marks
     (1/2 from the canned extraction: q1 correct, q2 blank).
+
+    Deliberately overrides the `client` fixture's paper-1 (Core) scheme with
+    `_mcq_scheme_extended()` (paper 2, Extended): Core is capped at grade C
+    and its real ingested thresholds carry no A boundary at all, so
+    `rail_foot` would always be `""` on paper 1 -- see
+    `lemely.io.grade_boundaries._load`'s docstring on why the fallback map is
+    scoped per `(subject_code, paper_number)`. Paper 2 keeps this test's whole
+    point -- a real, data-backed "A boundary sat at ..." line -- honest rather
+    than replaced with an empty-string assertion.
     """
+    monkeypatch.setattr(student, "resolve_mark_scheme", lambda *a, **k: _mcq_scheme_extended())
     api, _, _ = client
     up = api.post(
         "/api/student/uploads",
@@ -357,7 +400,7 @@ def test_correct_complete_frame_includes_result_header_fields(
     )
 
     assert complete_frame["code"] == "0625"
-    assert complete_frame["paper"] == "Paper 1 - Variant 2"
+    assert complete_frame["paper"] == "Paper 2 - Variant 2"
     assert complete_frame["session"] == "May/June 2020"
     assert complete_frame["boundary_year"] == "2020"
     # awarded=1, maximum=2 (q1 correct, q2 blank) -> 50%.
