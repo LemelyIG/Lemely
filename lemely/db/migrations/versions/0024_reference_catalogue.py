@@ -4,7 +4,7 @@ Revision ID: 0024_reference_catalogue
 Revises: 0023_invites
 Create Date: 2026-09-02 00:00:00.000000
 
-Two additive tables plus three columns on ``subjects``, and the data that used
+Two additive tables plus four columns on ``subjects``, and the data that used
 to live in ``lemely/data/paper_timing.json`` and
 ``lemely/data/syllabus_topics.json``. Those files are deleted in the same
 change, which is why the rows are **embedded here as literals** rather than

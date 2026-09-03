@@ -127,7 +127,6 @@ export interface QuestionnaireAnswers {
   hasExternalLessons?: boolean | null
   weeklyStudyHours?: number | null
   gradeLevel?: string | null
-  qualificationLevel?: string | null
 }
 
 /** Build the `PATCH /api/me/student-profile` body: only keys the student

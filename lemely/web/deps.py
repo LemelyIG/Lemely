@@ -290,10 +290,11 @@ def get_platform_admin_service() -> PlatformAdminService:
 def get_boundary_store() -> GradeBoundaryStore:
     """Return the process-wide :class:`GradeBoundaryStore` singleton.
 
-    Cached because construction parses the bundled JSON, and X-03 reads only its
-    two key counts. Other routers construct their own inline (``student.py``,
-    ``parent.py``) because they resolve boundaries per request against
-    per-request metadata; those call sites are deliberately left alone.
+    Cached because construction queries every row of ``component_thresholds``,
+    and X-03 reads only its two key counts. Other routers construct their own
+    inline (``student.py``, ``parent.py``) because they resolve boundaries per
+    request against per-request metadata; those call sites are deliberately
+    left alone.
     """
     return GradeBoundaryStore()
 
