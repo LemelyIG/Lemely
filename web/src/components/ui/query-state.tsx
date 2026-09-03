@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import type { ReactNode } from "react"
-import { ErrorState } from "@/components/ui/state-views"
+import { ErrorState, type StateViewAction } from "@/components/ui/state-views"
 import { describeQueryFailure } from "@/lib/queryFailure"
 
 /*
@@ -119,6 +119,31 @@ export interface QueryStateErrorProps {
   body?: string | ((error: unknown) => string)
   retryLabel?: string
   marginalia?: string
+  /** A second, non-retry way out of the failure, rendered beside the retry —
+   * `ErrorState` has carried this slot all along and `QueryStateErrorProps`
+   * simply did not model it. The per-screen sweep (PR 3) is what surfaced
+   * that: `teacher/screens/ClassDetail.tsx` and `StudentDetail.tsx` both
+   * offered "Back to classes" / "Go back" beside their retry before
+   * conversion, and without this prop converting them would have quietly
+   * deleted the only control on the screen that still worked when the retry
+   * did not. A detail route reached with a bad id retries into the same
+   * failure forever; the way out of that is a link elsewhere, not a
+   * fourth press of "Try again". */
+  secondaryAction?: StateViewAction
+  /** Render the failure as `ErrorState`'s inline slot — a 16px icon, tight
+   * padding, left-aligned, the action as an underlined text button — instead
+   * of the full centred panel. For a call site whose failure is one line
+   * inside a larger working page: a tab strip, a sentence inside a card, a
+   * readout under a radio button. The sweep (PR 3) is what proved this was
+   * needed. Without it a converted screen has two bad options, and screens
+   * took both: nine call sites stayed hand-rolled to avoid ballooning a
+   * one-line note into a 200px panel, and two converted anyway and did
+   * balloon — `auth/VerifyEmail` replaced a working fallback sentence with a
+   * centred error card about an email address the screen does not need, and
+   * `student/Standings` put one in its tab strip. Proportion is not a style
+   * preference here: an error the size of the page says the page is broken,
+   * and on both of those screens it was not. */
+  compact?: boolean
 }
 
 export interface QueryStateProps<T> {
@@ -208,6 +233,8 @@ export function QueryState<T>({
           body={body}
           marginalia={error.marginalia}
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
+          secondaryAction={error.secondaryAction}
+          compact={error.compact}
         />
       </>
     )
@@ -238,6 +265,8 @@ export function QueryState<T>({
           body={describeQueryFailure(undefined)}
           marginalia={error.marginalia}
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
+          secondaryAction={error.secondaryAction}
+          compact={error.compact}
         />
       </>
     )

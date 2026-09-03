@@ -5,7 +5,7 @@ import { useChildOverview } from "@/lib/hooks/useParentApi"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { TrendSparkline } from "@/components/ui/trend-sparkline"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
@@ -223,130 +223,139 @@ function WeakTopicList({ topics, childId }: { topics: WeakTopic[]; childId: stri
 
 export function ChildOverview() {
   const { childId = "" } = useParams<{ childId: string }>()
-  const { data, isPending, isError, error } = useChildOverview(childId)
-
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-8">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={3} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load this"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const { activity, subjects, recentPapers, weakTopics, atRiskFlags } = data
+  const query = useChildOverview(childId)
 
   return (
     <div className="flex flex-col gap-8">
-      <div className="margin-rule flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">{data.displayName}</h1>
-        <p className="text-body-md text-ink-muted">How they're getting on, from their marked papers.</p>
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Child overview"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={3} />
+          </>
+        }
+        error={{ heading: "We couldn't load this", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const { activity, subjects, recentPapers, weakTopics, atRiskFlags } = data
 
-      {/* "Activity summary (how much they've been working — parents ask this
-          first)." So it is first. Absence is stated as absence: a child with
-          no records reads "nothing yet", never "0 days ago". */}
-      <section className="flex flex-wrap gap-4">
-        <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
-          <div className="text-eyebrow text-ink-faint">Papers marked</div>
-          {/* A count is a figure, so it is set in the data face (§4). It used
-              to sit on the display rung, which is the same category error
-              surface 2 found on the student's mark and grade. */}
-          <div className="mt-2 text-data-lg text-ink">{activity.totalPapers}</div>
-        </div>
-        <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
-          <div className="text-eyebrow text-ink-faint">Last worked</div>
-          {/*
-           * One figure, not two. This card used to print `relativeTime(...)`
-           * and `daysSinceLastActivity` on consecutive lines, and the capture
-           * round photographed them disagreeing: **"1d ago" directly above
-           * "2 days ago"**, for one timestamp. They are two derivations of the
-           * same fact — one computed in the browser from `lastActiveAt`, one
-           * computed on the server by date arithmetic — so they round
-           * differently across a day boundary and across timezones, and a
-           * parent has no way to tell which one is the answer. This is the
-           * "same label, two numbers" divergence D3.3/D3.4/D3.5 each had to
-           * fix once, except visible on screen rather than across two screens.
-           *
-           * `relativeTime` is the one that stays: it is the phrasing the rest
-           * of the product uses for a moment in the past, and it degrades
-           * sensibly past a week ("2mo ago") where a day count does not.
-           * `daysSinceLastActivity` is still read, but only for the fact
-           * `relativeTime` cannot express, which is that today is today.
-           */}
-          <div className="mt-2 text-body-lg text-ink">
-            {activity.lastActiveAt === null
-              ? "Nothing yet"
-              : activity.daysSinceLastActivity === 0
-                ? "Today"
-                : relativeTime(activity.lastActiveAt)}
-          </div>
-        </div>
-      </section>
+          return (
+            <>
+              <div className="margin-rule flex flex-col gap-1">
+                <h1 className="text-display-lg text-ink">{data.displayName}</h1>
+                <p className="text-body-md text-ink-muted">
+                  How they're getting on, from their marked papers.
+                </p>
+              </div>
 
-      <AtRiskPanel flags={atRiskFlags} />
-
-      <section className="flex flex-col gap-3">
-        <h2 className="text-display-md text-ink">Subjects</h2>
-        {subjects.length === 0 ? (
-          // Composed, not blank (§12): a line of marginalia, the explanation,
-          // and what fills it. There is no action to offer here on purpose —
-          // everything that fills this page is done by the child on their own
-          // account, and a button for the reader to press would be a button
-          // that does nothing.
-          <div className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-raised p-6">
-            <p className="text-hand text-ink-muted">Nothing to read yet</p>
-            <p className="text-body-md text-ink-muted">
-              No marked papers yet. Subjects appear here once {data.displayName} has had a paper
-              marked.
-            </p>
-          </div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {subjects.map((subject) => (
-              <SubjectRow key={subject.subjectCode} childId={childId} subject={subject} />
-            ))}
-          </div>
-        )}
-      </section>
-
-      {recentPapers.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <h2 className="text-display-md text-ink">Recent papers</h2>
-          <div className="flex flex-col gap-2">
-            {recentPapers.map((paper) => (
-              <div
-                key={`${paper.paperId}-${paper.recordedAt}`}
-                className="flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5"
-              >
-                <GradeBadge grade={paper.grade} size="inline" basis="achieved" />
-                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-                  <div className="text-body-lg font-medium text-ink">{paper.subjectName}</div>
-                  {/* Code as secondary detail, per the §4.8 design note. */}
-                  <div className="text-body-sm text-ink-muted">
-                    <span className="text-data-sm">{paper.paperId}</span> · marked{" "}
-                    {relativeTime(paper.recordedAt)}
+              {/* "Activity summary (how much they've been working — parents ask this
+                  first)." So it is first. Absence is stated as absence: a child with
+                  no records reads "nothing yet", never "0 days ago". */}
+              <section className="flex flex-wrap gap-4">
+                <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
+                  <div className="text-eyebrow text-ink-faint">Papers marked</div>
+                  {/* A count is a figure, so it is set in the data face (§4). It used
+                      to sit on the display rung, which is the same category error
+                      surface 2 found on the student's mark and grade. */}
+                  <div className="mt-2 text-data-lg text-ink">{activity.totalPapers}</div>
+                </div>
+                <div className="min-w-40 flex-1 rounded-lg border border-rule bg-paper-raised p-6">
+                  <div className="text-eyebrow text-ink-faint">Last worked</div>
+                  {/*
+                   * One figure, not two. This card used to print `relativeTime(...)`
+                   * and `daysSinceLastActivity` on consecutive lines, and the capture
+                   * round photographed them disagreeing: **"1d ago" directly above
+                   * "2 days ago"**, for one timestamp. They are two derivations of the
+                   * same fact — one computed in the browser from `lastActiveAt`, one
+                   * computed on the server by date arithmetic — so they round
+                   * differently across a day boundary and across timezones, and a
+                   * parent has no way to tell which one is the answer. This is the
+                   * "same label, two numbers" divergence D3.3/D3.4/D3.5 each had to
+                   * fix once, except visible on screen rather than across two screens.
+                   *
+                   * `relativeTime` is the one that stays: it is the phrasing the rest
+                   * of the product uses for a moment in the past, and it degrades
+                   * sensibly past a week ("2mo ago") where a day count does not.
+                   * `daysSinceLastActivity` is still read, but only for the fact
+                   * `relativeTime` cannot express, which is that today is today.
+                   */}
+                  <div className="mt-2 text-body-lg text-ink">
+                    {activity.lastActiveAt === null
+                      ? "Nothing yet"
+                      : activity.daysSinceLastActivity === 0
+                        ? "Today"
+                        : relativeTime(activity.lastActiveAt)}
                   </div>
                 </div>
-                {/* A mark is data, not prose (§4). */}
-                <div className="flex-none text-data-md text-ink">{paper.marks}</div>
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
+              </section>
 
-      <WeakTopicList topics={weakTopics} childId={childId} />
+              <AtRiskPanel flags={atRiskFlags} />
+
+              <section className="flex flex-col gap-3">
+                <h2 className="text-display-md text-ink">Subjects</h2>
+                {subjects.length === 0 ? (
+                  // Composed, not blank (§12): a line of marginalia, the explanation,
+                  // and what fills it. There is no action to offer here on purpose —
+                  // everything that fills this page is done by the child on their own
+                  // account, and a button for the reader to press would be a button
+                  // that does nothing.
+                  //
+                  // This stays inside `children` rather than moving to `QueryState`'s
+                  // `isEmpty`/`empty` props: the copy below reads `data.displayName`
+                  // for its greeting, and `empty` renders a fixed `ReactNode` that
+                  // cannot reach the loaded payload — see `Overview.tsx`'s own comment
+                  // for the same rule.
+                  <div className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-raised p-6">
+                    <p className="text-hand text-ink-muted">Nothing to read yet</p>
+                    <p className="text-body-md text-ink-muted">
+                      No marked papers yet. Subjects appear here once {data.displayName} has had a
+                      paper marked.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-2">
+                    {subjects.map((subject) => (
+                      <SubjectRow key={subject.subjectCode} childId={childId} subject={subject} />
+                    ))}
+                  </div>
+                )}
+              </section>
+
+              {recentPapers.length > 0 ? (
+                <section className="flex flex-col gap-3">
+                  <h2 className="text-display-md text-ink">Recent papers</h2>
+                  <div className="flex flex-col gap-2">
+                    {recentPapers.map((paper) => (
+                      <div
+                        key={`${paper.paperId}-${paper.recordedAt}`}
+                        className="flex items-center gap-4 rounded-lg border border-rule bg-paper-raised p-5"
+                      >
+                        <GradeBadge grade={paper.grade} size="inline" basis="achieved" />
+                        <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                          <div className="text-body-lg font-medium text-ink">
+                            {paper.subjectName}
+                          </div>
+                          {/* Code as secondary detail, per the §4.8 design note. */}
+                          <div className="text-body-sm text-ink-muted">
+                            <span className="text-data-sm">{paper.paperId}</span> · marked{" "}
+                            {relativeTime(paper.recordedAt)}
+                          </div>
+                        </div>
+                        {/* A mark is data, not prose (§4). */}
+                        <div className="flex-none text-data-md text-ink">{paper.marks}</div>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <WeakTopicList topics={weakTopics} childId={childId} />
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

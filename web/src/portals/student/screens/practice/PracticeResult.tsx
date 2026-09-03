@@ -6,7 +6,8 @@ import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { ProgressBar } from "@/components/ui/progress-bar"
 import { QuestionRow } from "@/components/ui/question-row"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeResult } from "@/lib/hooks/usePracticeApi"
 import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
@@ -61,144 +62,158 @@ export function PracticeResult() {
   const location = useLocation()
   const justSubmitted = isJustSubmitted(location.state)
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
-  const { data, isPending, isError, error, refetch } = usePracticeResult(assignmentId)
-
-  if (isPending) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">Practice set result</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={5} />
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <>
-        <h1 className="sr-only">Practice set result</h1>
-        <ErrorState
-          heading="Couldn't load this practice set"
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => void refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
-  const view = practiceResultView(data)
-
-  if (view.kind === "not_submitted") {
-    return (
-      <>
-        <h1 className="sr-only">Practice set result</h1>
-        <EmptyState
-          marginalia="Still open on the desk"
-          heading="This practice set hasn't been submitted yet"
-          body={`Finish and submit your ${subjectName} practice set to see how you did.`}
-          action={{
-            label: "Continue the set",
-            onClick: () => navigate(`/student/practice/set/${data.assignmentId}`),
-          }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  if (view.kind === "marking") {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-5 py-12">
-        <h1 className="text-display-lg text-ink">Marking your {subjectName} practice set</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
-          This usually only takes a moment. The page updates on its own, so there's no need to
-          refresh.
-        </p>
-        <ProgressBar indeterminate ariaLabel="Marking your practice set" />
-        <div>
-          <Button variant="ghost" onClick={() => navigate("/student")}>
-            Come back to this later
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  const { awardedMarks, maximumMarks, questions } = view
-  const summary = questions.reduce(
-    (acc, q) => {
-      const tier = confidenceBandTier(q.confidenceBand)
-      if (tier === "confident") acc.confident += 1
-      else if (tier === "uncertain") acc.uncertain += 1
-      else acc.needsReview += 1
-      return acc
-    },
-    { confident: 0, uncertain: 0, needsReview: 0 },
-  )
+  const query = usePracticeResult(assignmentId)
 
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
-      <div className="flex flex-col gap-3">
-        <h1 className="text-display-lg text-ink">Your {subjectName} practice set</h1>
-        {/* The data face, per §4 and §4.2's `data-lg` rung ("the big number: a
-            score"). This is the figure the screen exists to deliver. */}
-        <p className="flex items-baseline gap-2">
-          <span className="text-data-lg text-ink">
-            {/* §9.3's result reveal, on the same rule the paper result uses:
-                the mark counts up only when it arrived while the student was
-                waiting for it. Opening this set again later shows the number
-                at once, because by then it is simply true. No flourish at any
-                mark — see `MarkDisplay`'s `reveal` for why the product has no
-                honest basis for deciding a mark deserves confetti. */}
-            {justSubmitted ? <CountUp value={awardedMarks} from={0} /> : awardedMarks}/
-            {maximumMarks}
-          </span>
-          <span className="text-body-lg text-ink-muted">
-            mark{maximumMarks === 1 ? "" : "s"}
-          </span>
-        </p>
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Practice set result"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        /* `usePracticeResult` disables itself (`enabled: !!assignmentId`)
+           rather than fetching an empty id — reachable only from a malformed
+           link missing its assignment segment. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to show"
+            heading="No practice set selected"
+            body="This link is missing which practice set to show. Go back and open your result from the dashboard."
+            action={{ label: "Back to dashboard", onClick: () => navigate("/student") }}
+          />
+        }
+        error={{
+          heading: "Couldn't load this practice set",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          const subjectName =
+            SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
+          const view = practiceResultView(data)
 
-      <ConfidenceIndicatorSummary
-        confident={summary.confident}
-        uncertain={summary.uncertain}
-        needsReview={summary.needsReview}
-      />
+          if (view.kind === "not_submitted") {
+            return (
+              <EmptyState
+                marginalia="Still open on the desk"
+                heading="This practice set hasn't been submitted yet"
+                body={`Finish and submit your ${subjectName} practice set to see how you did.`}
+                action={{
+                  label: "Continue the set",
+                  onClick: () => navigate(`/student/practice/set/${data.assignmentId}`),
+                }}
+              />
+            )
+          }
 
-      <Card>
-        <CardBody className="flex flex-col p-0">
-          {questions.length === 0 ? (
-            <p className="p-5 text-body-sm text-ink-faint">No questions in this set.</p>
-          ) : (
-            <div className="px-5">
-              {questions.map((q) => (
-                <QuestionRow
-                  key={q.questionRef}
-                  number={q.position}
-                  awarded={q.awardedMarks}
-                  available={q.totalMarks}
-                  state={practiceMarkState(q.awardedMarks, q.totalMarks)}
-                  confidence={confidenceBandTier(q.confidenceBand)}
-                  topic={formatQuestionTopic(q.topic)}
-                />
-              ))}
-            </div>
-          )}
-        </CardBody>
-      </Card>
+          if (view.kind === "marking") {
+            return (
+              <div className="flex flex-col gap-5 py-12">
+                <h1 className="text-display-lg text-ink">
+                  Marking your {subjectName} practice set
+                </h1>
+                <p className="lm-prose text-body-lg text-ink-muted">
+                  This usually only takes a moment. The page updates on its own, so there's no
+                  need to refresh.
+                </p>
+                <ProgressBar indeterminate ariaLabel="Marking your practice set" />
+                <div>
+                  <Button variant="ghost" onClick={() => navigate("/student")}>
+                    Come back to this later
+                  </Button>
+                </div>
+              </div>
+            )
+          }
 
-      <div className="flex flex-wrap gap-3">
-        {/* Subject-scoped since P4.10: the study plan is per-subject, and
-            `data.subjectCode` is this set's real subject — never a default. */}
-        <Button variant="accent" size="lg" onClick={() => navigate(`/student/plan/${data.subjectCode}`)}>
-          See your study plan
-        </Button>
-        <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>
-          Back to dashboard
-        </Button>
-      </div>
+          const { awardedMarks, maximumMarks, questions } = view
+          const summary = questions.reduce(
+            (acc, q) => {
+              const tier = confidenceBandTier(q.confidenceBand)
+              if (tier === "confident") acc.confident += 1
+              else if (tier === "uncertain") acc.uncertain += 1
+              else acc.needsReview += 1
+              return acc
+            },
+            { confident: 0, uncertain: 0, needsReview: 0 },
+          )
+
+          return (
+            <>
+              <div className="flex flex-col gap-3">
+                <h1 className="text-display-lg text-ink">Your {subjectName} practice set</h1>
+                {/* The data face, per §4 and §4.2's `data-lg` rung ("the big
+                    number: a score"). This is the figure the screen exists to
+                    deliver. */}
+                <p className="flex items-baseline gap-2">
+                  <span className="text-data-lg text-ink">
+                    {/* §9.3's result reveal, on the same rule the paper
+                        result uses: the mark counts up only when it arrived
+                        while the student was waiting for it. Opening this
+                        set again later shows the number at once, because by
+                        then it is simply true. No flourish at any mark — see
+                        `MarkDisplay`'s `reveal` for why the product has no
+                        honest basis for deciding a mark deserves confetti. */}
+                    {justSubmitted ? <CountUp value={awardedMarks} from={0} /> : awardedMarks}/
+                    {maximumMarks}
+                  </span>
+                  <span className="text-body-lg text-ink-muted">
+                    mark{maximumMarks === 1 ? "" : "s"}
+                  </span>
+                </p>
+              </div>
+
+              <ConfidenceIndicatorSummary
+                confident={summary.confident}
+                uncertain={summary.uncertain}
+                needsReview={summary.needsReview}
+              />
+
+              <Card>
+                <CardBody className="flex flex-col p-0">
+                  {questions.length === 0 ? (
+                    <p className="p-5 text-body-sm text-ink-faint">No questions in this set.</p>
+                  ) : (
+                    <div className="px-5">
+                      {questions.map((q) => (
+                        <QuestionRow
+                          key={q.questionRef}
+                          number={q.position}
+                          awarded={q.awardedMarks}
+                          available={q.totalMarks}
+                          state={practiceMarkState(q.awardedMarks, q.totalMarks)}
+                          confidence={confidenceBandTier(q.confidenceBand)}
+                          topic={formatQuestionTopic(q.topic)}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+
+              <div className="flex flex-wrap gap-3">
+                {/* Subject-scoped since P4.10: the study plan is per-subject,
+                    and `data.subjectCode` is this set's real subject — never
+                    a default. */}
+                <Button
+                  variant="accent"
+                  size="lg"
+                  onClick={() => navigate(`/student/plan/${data.subjectCode}`)}
+                >
+                  See your study plan
+                </Button>
+                <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>
+                  Back to dashboard
+                </Button>
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

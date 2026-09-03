@@ -1,16 +1,17 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useMemo, useState, type FormEvent } from "react"
-import { Link, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import type { UseQueryResult } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { Meter } from "@/components/ui/primitives"
 import { Stepper, type StepperStep } from "@/components/ui/stepper"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Select } from "@/components/ui/select"
+import { QueryState } from "@/components/ui/query-state"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
@@ -112,6 +113,25 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * So the divergence is retired here and on `Quizzes.tsx`: muted labels use
  * `--ink-faint` like every other screen in the portal, and they are AA by
  * construction rather than by avoidance.
+ *
+ * Loading/error primitives PR, part D (per-screen sweep, PR 3): `quizQuery`
+ * — the screen's primary fetch, gating everything below the header — now
+ * goes through `<QueryState>`. Four other queries on this screen stay
+ * hand-rolled on purpose, per the conversion brief's own multi-query
+ * guidance ("convert the screen's primary query and leave the secondary
+ * panels as they are if they are genuinely independent"): `StepDifficulty`'s
+ * and `StepPool`'s own `useQuizPoolCount` calls each drive one small "how
+ * many questions match" readout a few lines tall, and `StepAssign`'s
+ * `classesQuery`/`assignmentsQuery` branches each gate one form control or
+ * list inside an already-loaded panel. `<QueryState>`'s error branch is
+ * always a full centred `ErrorState` (icon, heading, body, `px-6 py-12`) —
+ * right for a screen or a chart panel, too heavy for a single inline line
+ * inside a multi-step form, and `QueryStateErrorProps` has no `compact` slot
+ * to ask for the lighter treatment `state-views.tsx` documents for exactly
+ * this case. Each of the four keeps its own one-line pending/error text,
+ * already routed through `teacherLoadFailureMessage` rather than a raw
+ * `error.message` — the specific defect this sweep exists to close — with a
+ * comment at each site saying so.
  */
 
 const STEPS: StepperStep[] = [
@@ -511,6 +531,11 @@ function StepDifficulty({
         <div className="text-eyebrow text-ink-faint mb-2">
           Example mix for a {previewCount}-question quiz at this target
         </div>
+        {/* Stays hand-rolled rather than a nested `<QueryState>` — see the
+            module header's "Loading/error primitives PR" note: this readout
+            is a few lines tall and `<QueryState>`'s error branch is always
+            the full centred `ErrorState`, too heavy for it. Already routed
+            through `teacherLoadFailureMessage`, never a raw `error.message`. */}
         {poolCountQuery.isPending ? (
           <div className="text-body-sm text-ink-faint">Loading…</div>
         ) : poolCountQuery.isError ? (
@@ -625,6 +650,9 @@ function StepPool({
         wrapperClassName="w-[200px]"
       />
 
+      {/* Same "genuinely independent panel, too small for a full ErrorState"
+          call as `StepDifficulty`'s own `poolCountQuery` block — see the
+          module header. */}
       {poolSource == null ? (
         <p className="text-body-sm text-ink-faint m-0">
           Choose a source above to see how many matching questions are available.
@@ -868,7 +896,9 @@ function StepAssign({
               were loading or had failed there was a `<label>` pointing at no
               control at all. The kit's `<Select>` owns its own label, and the
               two non-ready states are now plain lines beside it rather than
-              inside it. */}
+              inside it. Stays hand-rolled rather than a nested `<QueryState>`
+              for the same "too small for a full ErrorState" reason as the
+              two `poolCountQuery` panels — see the module header. */}
           {classesQuery.isPending ? (
             <div className="text-body-sm text-ink-faint">Loading your classes…</div>
           ) : classesQuery.isError ? (
@@ -923,6 +953,8 @@ function StepAssign({
         <div className="text-eyebrow text-ink-faint mb-2">
           Assigned to
         </div>
+        {/* Same "too small for a full ErrorState" call as the other three
+            panel-level queries on this screen — see the module header. */}
         {assignmentsQuery.isPending ? (
           <div className="text-body-sm text-ink-faint">Loading assignments…</div>
         ) : assignmentsQuery.isError ? (
@@ -1004,6 +1036,7 @@ function StepAssign({
 }
 
 export function QuizBuilder() {
+  const navigate = useNavigate()
   const { quizId } = useParams<{ quizId: string }>()
   const [searchParams, setSearchParams] = useSearchParams()
 
@@ -1022,137 +1055,158 @@ export function QuizBuilder() {
     }
   }, [quiz, searchParams, setSearchParams])
 
-  if (quizQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Quiz builder</h1>
-        {/* The stepper plus a step panel are what arrive, so two panel
-            shapes hold that space. §12: the loading state matches the layout
-            it replaces. */}
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (quizQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Quiz builder</h1>
-        <ErrorState
-          heading="Couldn't load this quiz"
-          body={teacherLoadFailureMessage(quizQuery.error)}
-          action={{ label: "Retry", onClick: () => quizQuery.refetch() }}
-          secondaryAction={{ label: "Back to quizzes", onClick: () => history.back() }}
-        />
-      </div>
-    )
-  }
-
-  const { quiz: loadedQuiz, questions } = quizQuery.data
-  const isDraft = loadedQuiz.status === "draft"
-  const stepFromUrl = Number(searchParams.get("step"))
-  const step =
-    Number.isInteger(stepFromUrl) && stepFromUrl >= 1 && stepFromUrl <= 6
-      ? stepFromUrl
-      : loadedQuiz.builderStep
-
-  function goToStep(next: number, extra?: UpdateQuizDraftRequest) {
-    setSearchParams({ step: String(next) })
-    if (isDraft) {
-      patchDraft.mutate({ ...extra, builderStep: next })
-    }
-  }
-
-  const completed = new Set<number>()
-  if (loadedQuiz.title.trim()) completed.add(1)
-  if (loadedQuiz.includedTopics.length > 0) completed.add(2)
-  if (loadedQuiz.targetGrade) completed.add(3)
-  if (loadedQuiz.poolSource) completed.add(4)
-  if (loadedQuiz.questionCount > 0) completed.add(5)
-  if (!isDraft) completed.add(6)
-
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <Link to="/teacher/quizzes" className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit">
-          <BackArrow /> All quizzes
-        </Link>
-        <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
-          <div className="min-w-0">
-            <div className="text-eyebrow text-ink-faint">
-              {loadedQuiz.subjectCode}
-            </div>
-            <h1 className="text-display-md mt-1 text-pretty">
-              {loadedQuiz.title}
-            </h1>
-          </div>
-          <div className="flex-1" />
-          <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>
-        </div>
-      </div>
+      <QueryState
+        query={quizQuery}
+        srHeading="Quiz builder"
+        // The stepper plus a step panel are what arrive, so two panel shapes
+        // hold that space. §12: the loading state matches the layout it
+        // replaces. Reused verbatim from the pre-conversion pending branch.
+        skeleton={
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        // `useQuizDetail` disables its query when `quizId` is falsy (`enabled:
+        // !!quizId`). The route this screen mounts under always supplies
+        // `:quizId`, so this is a defensive branch for a URL reached some
+        // other way, not a state normal navigation ever produces — same
+        // reasoning `ClassDetail.tsx` documents for its own `idle`.
+        idle={
+          <EmptyState
+            heading="No quiz selected"
+            body="Choose a quiz from your quiz list to open its builder."
+            action={{ label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") }}
+          />
+        }
+        // A builder opened on a quiz that will not load is a dead end with
+        // only a retry: the id in the URL is not going to start resolving on
+        // the fourth press. `secondaryAction` (added to
+        // `QueryStateErrorProps` by this sweep) keeps the way back out.
+        error={{
+          heading: "Couldn't load this quiz",
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") },
+        }}
+      >
+        {({ quiz: loadedQuiz, questions }) => {
+          const isDraft = loadedQuiz.status === "draft"
+          const stepFromUrl = Number(searchParams.get("step"))
+          const step =
+            Number.isInteger(stepFromUrl) && stepFromUrl >= 1 && stepFromUrl <= 6
+              ? stepFromUrl
+              : loadedQuiz.builderStep
 
-      {!isDraft ? (
-        <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-          This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
-          difficulty, source and questions can no longer be changed. What follows is read-only,
-          showing exactly what was configured and (below) who it's assigned to.
-        </div>
-      ) : null}
+          function goToStep(next: number, extra?: UpdateQuizDraftRequest) {
+            setSearchParams({ step: String(next) })
+            if (isDraft) {
+              patchDraft.mutate({ ...extra, builderStep: next })
+            }
+          }
 
-      {/* Navigation itself is never disabled, even for a non-draft quiz —
-          "read-only" means every step's own form controls can't be edited
-          (each step component gates its inputs on `isDraft` individually),
-          not that a teacher can no longer browse what was configured. */}
-      <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+          const completed = new Set<number>()
+          if (loadedQuiz.title.trim()) completed.add(1)
+          if (loadedQuiz.includedTopics.length > 0) completed.add(2)
+          if (loadedQuiz.targetGrade) completed.add(3)
+          if (loadedQuiz.poolSource) completed.add(4)
+          if (loadedQuiz.questionCount > 0) completed.add(5)
+          if (!isDraft) completed.add(6)
 
-      {isDraft && patchDraft.isError ? (
-        <div role="alert" className="text-body-sm text-err">
-          Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
-        </div>
-      ) : null}
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+                <Link
+                  to="/teacher/quizzes"
+                  className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit"
+                >
+                  <BackArrow /> All quizzes
+                </Link>
+                <div className="flex items-start gap-3 flex-wrap gap-y-2 mt-1">
+                  <div className="min-w-0">
+                    <div className="text-eyebrow text-ink-faint">
+                      {loadedQuiz.subjectCode}
+                    </div>
+                    <h1 className="text-display-md mt-1 text-pretty">
+                      {loadedQuiz.title}
+                    </h1>
+                  </div>
+                  <div className="flex-1" />
+                  <Chip tone={statusTone(loadedQuiz.status)}>{statusLabel(loadedQuiz.status)}</Chip>
+                </div>
+              </div>
 
-      {step === 1 ? (
-        <StepBasics quiz={loadedQuiz} isDraft={isDraft} onNext={(extra) => goToStep(2, extra)} />
-      ) : null}
-      {step === 2 ? (
-        <StepContent
-          quiz={loadedQuiz}
-          classes={classesQuery.data?.classes ?? []}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(3, extra)}
-          onBack={(extra) => goToStep(1, extra)}
-        />
-      ) : null}
-      {step === 3 ? (
-        <StepDifficulty
-          quiz={loadedQuiz}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(4, extra)}
-          onBack={(extra) => goToStep(2, extra)}
-        />
-      ) : null}
-      {step === 4 ? (
-        <StepPool
-          quiz={loadedQuiz}
-          isDraft={isDraft}
-          onNext={(extra) => goToStep(5, extra)}
-          onBack={(extra) => goToStep(3, extra)}
-        />
-      ) : null}
-      {step === 5 ? (
-        <StepPreview
-          quizId={quizId}
-          quiz={loadedQuiz}
-          questions={questions}
-          isDraft={isDraft}
-          onNext={() => goToStep(6)}
-          onBack={() => goToStep(4)}
-        />
-      ) : null}
-      {step === 6 ? (
-        <StepAssign quizId={quizId} quiz={loadedQuiz} classesQuery={classesQuery} onBack={() => goToStep(5)} />
-      ) : null}
+              {!isDraft ? (
+                <div className="text-body-sm text-ink-faint bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
+                  This quiz is {statusLabel(loadedQuiz.status).toLowerCase()}, so its title, topics,
+                  difficulty, source and questions can no longer be changed. What follows is
+                  read-only, showing exactly what was configured and (below) who it's assigned to.
+                </div>
+              ) : null}
+
+              {/* Navigation itself is never disabled, even for a non-draft quiz —
+                  "read-only" means every step's own form controls can't be edited
+                  (each step component gates its inputs on `isDraft` individually),
+                  not that a teacher can no longer browse what was configured. */}
+              <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+
+              {isDraft && patchDraft.isError ? (
+                <div role="alert" className="text-body-sm text-err">
+                  Couldn't save your progress: {teacherMutationFailureMessage(patchDraft.error)}
+                </div>
+              ) : null}
+
+              {step === 1 ? (
+                <StepBasics quiz={loadedQuiz} isDraft={isDraft} onNext={(extra) => goToStep(2, extra)} />
+              ) : null}
+              {step === 2 ? (
+                <StepContent
+                  quiz={loadedQuiz}
+                  classes={classesQuery.data?.classes ?? []}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(3, extra)}
+                  onBack={(extra) => goToStep(1, extra)}
+                />
+              ) : null}
+              {step === 3 ? (
+                <StepDifficulty
+                  quiz={loadedQuiz}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(4, extra)}
+                  onBack={(extra) => goToStep(2, extra)}
+                />
+              ) : null}
+              {step === 4 ? (
+                <StepPool
+                  quiz={loadedQuiz}
+                  isDraft={isDraft}
+                  onNext={(extra) => goToStep(5, extra)}
+                  onBack={(extra) => goToStep(3, extra)}
+                />
+              ) : null}
+              {step === 5 ? (
+                <StepPreview
+                  quizId={quizId}
+                  quiz={loadedQuiz}
+                  questions={questions}
+                  isDraft={isDraft}
+                  onNext={() => goToStep(6)}
+                  onBack={() => goToStep(4)}
+                />
+              ) : null}
+              {step === 6 ? (
+                <StepAssign
+                  quizId={quizId}
+                  quiz={loadedQuiz}
+                  classesQuery={classesQuery}
+                  onBack={() => goToStep(5)}
+                />
+              ) : null}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

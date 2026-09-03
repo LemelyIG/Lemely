@@ -2,7 +2,8 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { formatQuestionTopic } from "@/components/quiz/quizTakerData"
 import { usePracticeExport } from "@/lib/hooks/usePracticeApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
@@ -40,103 +41,114 @@ import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 export function PracticePrint() {
   const navigate = useNavigate()
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
-  const { data, isPending, isError, error, refetch } = usePracticeExport(assignmentId)
-
-  if (isPending) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">Print your practice set</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={5} />
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <>
-        <h1 className="sr-only">Print your practice set</h1>
-        <ErrorState
-          heading="Couldn't load this practice set"
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => void refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  if (data.questions.length === 0) {
-    return (
-      <>
-        <h1 className="sr-only">Print your practice set</h1>
-        <EmptyState
-          marginalia="A blank sheet"
-          heading="There's nothing in this set to print"
-          body="This practice set exported without any questions, so there is no worksheet to put on paper."
-          action={{
-            label: "Build another set",
-            onClick: () => navigate("/student"),
-          }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
+  const query = usePracticeExport(assignmentId)
 
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h1 className="text-display-lg text-ink">{data.title}</h1>
-        <div className="flex flex-wrap gap-3 print:hidden">
-          <Button variant="accent" onClick={() => window.print()}>
-            Print
-          </Button>
-          <Button variant="ghost" onClick={() => navigate(`/student/practice/set/${assignmentId}`)}>
-            Answer on screen instead
-          </Button>
-        </div>
-      </div>
-
-      <Card className="print:border-0">
-        <CardBody className="flex flex-col gap-6">
-          {data.questions.map((q) => (
-            <div
-              key={q.questionRef}
-              className="flex flex-col gap-2 border-b border-rule pb-5 last:border-b-0 print:break-inside-avoid"
-            >
-              <div className="flex items-center gap-3 text-body-sm text-ink-faint">
-                <span className="text-data-sm text-ink-muted">Q{q.position}</span>
-                <span className="text-data-sm text-ink-muted">
-                  {q.totalMarks} mark{q.totalMarks === 1 ? "" : "s"}
-                </span>
-                <span>{formatQuestionTopic(q.topic)}</span>
+      <QueryState
+        query={query}
+        srHeading="Print your practice set"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        /* `usePracticeExport` disables itself (`enabled: !!assignmentId`)
+           rather than fetching an empty id — reachable only from a malformed
+           link missing its assignment segment. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to print"
+            heading="No practice set selected"
+            body="This link is missing which practice set to print. Go back and open it from the dashboard."
+            action={{ label: "Back to dashboard", onClick: () => navigate("/student") }}
+          />
+        }
+        error={{
+          heading: "Couldn't load this practice set",
+          body: studentLoadFailureMessage,
+        }}
+        // `data.questions` needs the payload itself for its empty-sheet
+        // wording, so this stays inside `children` rather than moving to
+        // `isEmpty`/`empty`.
+      >
+        {(data) =>
+          data.questions.length === 0 ? (
+            <EmptyState
+              marginalia="A blank sheet"
+              heading="There's nothing in this set to print"
+              body="This practice set exported without any questions, so there is no worksheet to put on paper."
+              action={{
+                label: "Build another set",
+                onClick: () => navigate("/student"),
+              }}
+            />
+          ) : (
+            <>
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <h1 className="text-display-lg text-ink">{data.title}</h1>
+                <div className="flex flex-wrap gap-3 print:hidden">
+                  <Button variant="accent" onClick={() => window.print()}>
+                    Print
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    onClick={() => navigate(`/student/practice/set/${assignmentId}`)}
+                  >
+                    Answer on screen instead
+                  </Button>
+                </div>
               </div>
-              <p className="lm-prose whitespace-pre-line text-body-lg text-ink">{q.prompt}</p>
-              {q.mcqOptions ? (
-                // `ps-4`, not `pl-4`: logical inline-start padding, so the
-                // option indent follows the reading direction (P3.4).
-                <ul className="flex flex-col gap-1 ps-4 text-body-lg text-ink">
-                  {q.mcqOptions.map((option) => (
-                    <li key={option}>{option}</li>
-                  ))}
-                </ul>
-              ) : (
-                /* Answer space, on paper only. A worksheet whose questions run
-                   straight into each other gives a student nowhere to write,
-                   which defeats the one thing this screen is for.
 
-                   Deliberately blank rather than `ruled-bg`: §8's print rule
-                   strips every texture class from print output, so ruling here
-                   would silently render as nothing. The space is functional and
-                   the ruling would have been decoration, and decoration is
-                   exactly what that rule excludes. */
-                <div aria-hidden className="mt-1 hidden h-24 w-full print:block" />
-              )}
-            </div>
-          ))}
-        </CardBody>
-      </Card>
+              <Card className="print:border-0">
+                <CardBody className="flex flex-col gap-6">
+                  {data.questions.map((q) => (
+                    <div
+                      key={q.questionRef}
+                      className="flex flex-col gap-2 border-b border-rule pb-5 last:border-b-0 print:break-inside-avoid"
+                    >
+                      <div className="flex items-center gap-3 text-body-sm text-ink-faint">
+                        <span className="text-data-sm text-ink-muted">Q{q.position}</span>
+                        <span className="text-data-sm text-ink-muted">
+                          {q.totalMarks} mark{q.totalMarks === 1 ? "" : "s"}
+                        </span>
+                        <span>{formatQuestionTopic(q.topic)}</span>
+                      </div>
+                      <p className="lm-prose whitespace-pre-line text-body-lg text-ink">
+                        {q.prompt}
+                      </p>
+                      {q.mcqOptions ? (
+                        // `ps-4`, not `pl-4`: logical inline-start padding, so
+                        // the option indent follows the reading direction
+                        // (P3.4).
+                        <ul className="flex flex-col gap-1 ps-4 text-body-lg text-ink">
+                          {q.mcqOptions.map((option) => (
+                            <li key={option}>{option}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        /* Answer space, on paper only. A worksheet whose
+                           questions run straight into each other gives a
+                           student nowhere to write, which defeats the one
+                           thing this screen is for.
+
+                           Deliberately blank rather than `ruled-bg`: §8's
+                           print rule strips every texture class from print
+                           output, so ruling here would silently render as
+                           nothing. The space is functional and the ruling
+                           would have been decoration, and decoration is
+                           exactly what that rule excludes. */
+                        <div aria-hidden className="mt-1 hidden h-24 w-full print:block" />
+                      )}
+                    </div>
+                  ))}
+                </CardBody>
+              </Card>
+            </>
+          )
+        }
+      </QueryState>
     </div>
   )
 }

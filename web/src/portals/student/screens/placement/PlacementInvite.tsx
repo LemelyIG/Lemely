@@ -3,8 +3,9 @@ import { useState } from "react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useCreatePlacement, usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
@@ -42,7 +43,7 @@ import { placementInviteView } from "./placementData"
 export function PlacementInvite() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const { data, isPending, isError, error, refetch } = usePlacementAvailability(subjectCode)
+  const query = usePlacementAvailability(subjectCode)
   const createPlacement = useCreatePlacement()
   const [raceUnavailable, setRaceUnavailable] = useState<PlacementAvailability | null>(null)
 
@@ -61,7 +62,7 @@ export function PlacementInvite() {
       if (err instanceof ApiError && err.status === 409 && err.detail) {
         setRaceUnavailable(err.detail as PlacementAvailability)
       } else {
-        void refetch()
+        void query.refetch()
       }
     }
   }
@@ -70,98 +71,103 @@ export function PlacementInvite() {
     navigate("/student")
   }
 
-  /* The `sr-only` h1 on the loading and error branches follows the P3
-   * pattern (ReviewItem/StudentDetail/QuizResults): every branch of a screen
-   * is still a page and still owes a level-one heading, and `ErrorState`
-   * renders its own heading as a non-heading element (a Phase-2.5 gap
-   * recorded in that phase's report §8). */
-  if (isPending) {
-    return (
-      <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
-        <h1 className="sr-only">Placement test</h1>
-        {/* A skeleton in the shape of the panel that follows, not a sentence:
-            the standing Phase-4 rule, applied as this screen's geometry
-            settled. */}
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <>
-        <h1 className="sr-only">Placement test</h1>
-        <ErrorState
-          heading="We couldn't check whether a placement test is ready"
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => void refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  const effective = raceUnavailable ?? data
-  const view = placementInviteView(effective)
-
-  if (view.kind === "unavailable") {
-    return (
-      <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
-        <h1 className="text-display-md text-ink">{subjectName}</h1>
-        <Card>
-          <CardBody className="flex flex-col gap-3">
-            <div className="text-body-lg font-medium text-ink">{view.message.heading}</div>
-            <p className="text-body-md text-ink-muted">{view.message.body}</p>
-          </CardBody>
-        </Card>
-        <Button variant="secondary" onClick={handleLater} className="self-start">
-          Back to dashboard
-        </Button>
-      </div>
-    )
-  }
-
   return (
     <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-display-md text-ink">Get a real starting picture in {subjectName}</h1>
-        <p className="text-body-md text-ink-muted">
-          A short placement test built from real past-paper questions across the syllabus gives us
-          a much better starting picture than a guess. It finds your strongest and weakest topics,
-          not a grade.
-        </p>
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Placement test"
+        /* A skeleton in the shape of the panel that follows, not a sentence:
+           the standing Phase-4 rule, applied as this screen's geometry
+           settled. */
+        skeleton={<PanelSkeleton />}
+        /* `usePlacementAvailability` disables itself (`enabled: !!subjectCode`)
+           rather than fetching an empty subject code — reachable only from a
+           malformed link missing its subject segment, since every route that
+           renders this screen supplies one. A skeleton there would wait on a
+           fetch nothing schedules, so this names the actual problem instead. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to check"
+            heading="No subject selected"
+            body="This link is missing which subject to check for a placement test. Go back and open it from a subject's own page."
+            action={{ label: "Back to dashboard", onClick: handleLater }}
+          />
+        }
+        error={{
+          heading: "We couldn't check whether a placement test is ready",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          const effective = raceUnavailable ?? data
+          const view = placementInviteView(effective)
 
-      <Card>
-        <CardBody className="flex flex-col gap-2">
-          <div className="text-eyebrow text-ink-faint">This test</div>
-          <div className="text-body-lg font-medium text-ink">{view.estimate}</div>
-          <p className="text-body-sm text-ink-muted">
-            You can take it any time from this subject's screen. There's no rush.
-          </p>
-        </CardBody>
-      </Card>
+          if (view.kind === "unavailable") {
+            return (
+              <>
+                <h1 className="text-display-md text-ink">{subjectName}</h1>
+                <Card>
+                  <CardBody className="flex flex-col gap-3">
+                    <div className="text-body-lg font-medium text-ink">
+                      {view.message.heading}
+                    </div>
+                    <p className="text-body-md text-ink-muted">{view.message.body}</p>
+                  </CardBody>
+                </Card>
+                <Button variant="secondary" onClick={handleLater} className="self-start">
+                  Back to dashboard
+                </Button>
+              </>
+            )
+          }
 
-      {/* Directly above the button that produced it (§12). */}
-      {createPlacement.isError && !raceUnavailable ? (
-        <p role="alert" className="text-body-sm text-err">
-          We couldn't start the test. Nothing has been used up, so trying again is safe.
-        </p>
-      ) : null}
+          return (
+            <>
+              <div className="flex flex-col gap-2">
+                <h1 className="text-display-md text-ink">
+                  Get a real starting picture in {subjectName}
+                </h1>
+                <p className="text-body-md text-ink-muted">
+                  A short placement test built from real past-paper questions across the syllabus
+                  gives us a much better starting picture than a guess. It finds your strongest
+                  and weakest topics, not a grade.
+                </p>
+              </div>
 
-      <div className="flex flex-wrap gap-3">
-        <Button
-          variant="accent"
-          size="lg"
-          disabled={createPlacement.isPending}
-          onClick={() => void handleStartNow()}
-        >
-          {createPlacement.isPending ? "Starting…" : "Start now"}
-        </Button>
-        <Button variant="ghost" size="lg" onClick={handleLater}>
-          Later
-        </Button>
-      </div>
+              <Card>
+                <CardBody className="flex flex-col gap-2">
+                  <div className="text-eyebrow text-ink-faint">This test</div>
+                  <div className="text-body-lg font-medium text-ink">{view.estimate}</div>
+                  <p className="text-body-sm text-ink-muted">
+                    You can take it any time from this subject's screen. There's no rush.
+                  </p>
+                </CardBody>
+              </Card>
+
+              {/* Directly above the button that produced it (§12). */}
+              {createPlacement.isError && !raceUnavailable ? (
+                <p role="alert" className="text-body-sm text-err">
+                  We couldn't start the test. Nothing has been used up, so trying again is safe.
+                </p>
+              ) : null}
+
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="accent"
+                  size="lg"
+                  disabled={createPlacement.isPending}
+                  onClick={() => void handleStartNow()}
+                >
+                  {createPlacement.isPending ? "Starting…" : "Start now"}
+                </Button>
+                <Button variant="ghost" size="lg" onClick={handleLater}>
+                  Later
+                </Button>
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

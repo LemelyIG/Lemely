@@ -4,7 +4,8 @@ import { Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { initialsOf, relativeTime } from "@/lib/utils"
 import {
   useAnnouncements,
@@ -189,8 +190,6 @@ export function Announcements() {
     )
   }
 
-  const announcements = announcementsQuery.data?.announcements ?? []
-
   return (
     <div className="flex flex-col gap-6 min-w-0">
       <header>
@@ -246,6 +245,21 @@ export function Announcements() {
             My classes
           </label>
 
+          {/*
+           * `classesQuery` and `schoolsQuery` below stay hand-rolled rather
+           * than going through `<QueryState>`. Both are small inline notes
+           * beneath a radio option (`ps-6`, one line of text at most), and
+           * `QueryStateErrorProps` has no `compact` mode — the shared
+           * `ErrorState` it renders is `state-views.tsx`'s full centred
+           * panel (icon, `py-12`, `max-w-sm`), built for a whole route or
+           * section, not a single indented helper line under a radio button.
+           * Swapping the one-line note for that panel here would be a
+           * genuine layout regression, not a style unification. Both queries
+           * are also genuinely independent of the page's main data-loading
+           * surface (`announcementsQuery` above, which does go through
+           * `<QueryState>`): the composer form works with neither loaded,
+           * it simply can't submit to that audience yet.
+           */}
           {audience === "classes" ? (
             <div className="ps-6 flex flex-col gap-1.5">
               {classesQuery.isPending ? (
@@ -390,32 +404,44 @@ export function Announcements() {
         <h2 className="text-eyebrow text-ink-faint m-0 mb-2.5">
           Your announcements
         </h2>
-        {announcementsQuery.isPending ? (
-          <ListSkeleton rows={4} />
-        ) : announcementsQuery.isError ? (
-          <ErrorState
-            heading="Couldn't load your announcements"
-            body={teacherLoadFailureMessage(announcementsQuery.error)}
-            action={{ label: "Retry", onClick: () => announcementsQuery.refetch() }}
-          />
-        ) : announcements.length === 0 ? (
-          <EmptyState
-            heading="Nothing written yet"
-            body="Announcements you write appear here, newest first, with the class they were saved against. You can delete one at any time."
-          />
-        ) : (
-          <ul className="flex flex-col gap-2 m-0 p-0 list-none">
-            {announcements.map((a) => (
-              <AnnouncementRow
-                key={a.announcementId}
-                announcement={a}
-                audienceLabel={audienceLabelFor(a)}
-                onDelete={() => setPendingDelete(a)}
-                deleting={deleteAnnouncement.isPending}
-              />
-            ))}
-          </ul>
-        )}
+        {/*
+         * A panel inside the composer route, not a whole screen — the
+         * page's own visible `<h1>Announcements</h1>` sits above the form,
+         * so no `srHeading` here (per the recipe, that lands on a screen
+         * that is a whole route). `isEmpty`/`empty` is safe to use, unlike
+         * `Review.tsx`/`Quizzes.tsx` above: this section's heading isn't
+         * duplicated between the empty and loaded paths, so there's no
+         * markup to keep in sync by hand.
+         */}
+        <QueryState
+          query={announcementsQuery}
+          skeleton={<ListSkeleton rows={4} />}
+          error={{
+            heading: "Couldn't load your announcements",
+            body: teacherLoadFailureMessage,
+          }}
+          isEmpty={(data) => data.announcements.length === 0}
+          empty={
+            <EmptyState
+              heading="Nothing written yet"
+              body="Announcements you write appear here, newest first, with the class they were saved against. You can delete one at any time."
+            />
+          }
+        >
+          {(data) => (
+            <ul className="flex flex-col gap-2 m-0 p-0 list-none">
+              {data.announcements.map((a) => (
+                <AnnouncementRow
+                  key={a.announcementId}
+                  announcement={a}
+                  audienceLabel={audienceLabelFor(a)}
+                  onDelete={() => setPendingDelete(a)}
+                  deleting={deleteAnnouncement.isPending}
+                />
+              ))}
+            </ul>
+          )}
+        </QueryState>
         <ConfirmModal
           open={pendingDelete !== null}
           title="Delete this announcement?"

@@ -3,7 +3,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ProgressBar } from "@/components/ui/progress-bar"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import {
   useCompleteStudyPlanSession,
   useCurrentStudyPlan,
@@ -213,144 +214,156 @@ export function StudyPlanWeek() {
   const heading = `Your ${subjectName} week`
   const onRebuild = () => rebuild.mutate({ subjectCode })
 
-  if (planQuery.isPending) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">{heading}</h1>
-        <PageHeaderSkeleton />
-        <PanelSkeleton />
-        <ListSkeleton rows={4} />
-      </div>
-    )
-  }
-
-  // A query error here is a *real* failure. "No plan yet" comes back as a
-  // successful `{generated: false}` and never as an error, so this branch must
-  // not be shared with the empty state (see `useCurrentStudyPlan`).
-  if (planQuery.isError || !planQuery.data) {
-    return (
-      <>
-        <h1 className="sr-only">{heading}</h1>
-        <ErrorState
-          heading="Couldn't load your study plan"
-          body={studentLoadFailureMessage(planQuery.error)}
-          action={{ label: "Try again", onClick: () => void planQuery.refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  const view = studyPlanView(planQuery.data)
-
-  /* P6.2. Both of these appended a raw `error.message`, so the two things this
-     screen can fail at reported themselves as "Failed to fetch" or a status
-     line. The action is kept in the sentence because both can fail on this one
-     screen, and a reader told only that something went wrong has to guess
-     which. */
-  const rebuildError = rebuild.isError ? (
-    <p className="text-body-md text-err">
-      {studentActionFailureMessage(rebuild.error, "rebuild your plan")}
-    </p>
-  ) : null
-  const completeError = complete.isError ? (
-    <p className="text-body-md text-err">
-      {studentActionFailureMessage(complete.error, "mark that session as done")}
-    </p>
-  ) : null
-
-  if (view.kind === "notGenerated") {
-    return (
-      <>
-        <h1 className="sr-only">{heading}</h1>
-        <EmptyState
-          marginalia="A blank week, for now"
-          heading="No plan for this week yet"
-          body={`You don't have a ${subjectName} plan for this week. Build one and it will lay out concrete sessions across the days you have left.`}
-          action={{
-            label: rebuild.isPending ? "Building…" : "Build this week's plan",
-            onClick: onRebuild,
-          }}
-          secondaryAction={{
-            label: "Take the placement test",
-            onClick: () => navigate(`/student/placement/${subjectCode}`),
-          }}
-          className="lm-screen"
-        />
-        {rebuildError ? <div className="lm-screen pt-0">{rebuildError}</div> : null}
-      </>
-    )
-  }
-
-  if (view.kind === "refused") {
-    const message = planUnavailableMessage(view.reason)
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="text-display-lg text-ink">{heading}</h1>
-        <EmptyState
-          marginalia="Not enough to go on yet"
-          heading={message.heading}
-          body={message.body}
-          action={{
-            label: "Take the placement test",
-            onClick: () => navigate(`/student/placement/${subjectCode}`),
-          }}
-          secondaryAction={{
-            label: rebuild.isPending ? "Rebuilding…" : REBUILD_LABEL,
-            onClick: onRebuild,
-          }}
-        />
-        {rebuildError}
-      </div>
-    )
-  }
-
-  const plan = view.plan
-  const days = groupSessionsByDay(plan.sessions)
-
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
-      <WeekHeader
-        plan={plan}
-        subjectName={subjectName}
-        onRebuild={onRebuild}
-        rebuilding={rebuild.isPending}
-      />
-      {rebuildError}
-      {completeError}
-      <PlanBasis />
+      <QueryState
+        query={planQuery}
+        srHeading={heading}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <PanelSkeleton />
+            <ListSkeleton rows={4} />
+          </>
+        }
+        /* `useCurrentStudyPlan` disables itself (`enabled: !!subjectCode`)
+           rather than fetching an empty subject code — reachable only from a
+           malformed link missing its subject segment. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to open"
+            heading="No subject selected"
+            body="This link is missing which subject's plan to open. Go back and open it from your dashboard."
+            action={{ label: "Back to dashboard", onClick: () => navigate("/student") }}
+          />
+        }
+        // A query error here is a *real* failure. "No plan yet" comes back
+        // as a successful `{generated: false}` and never as an error, so
+        // this branch must not be shared with the empty state (see
+        // `useCurrentStudyPlan`).
+        error={{
+          heading: "Couldn't load your study plan",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          const view = studyPlanView(data)
 
-      {days.length === 0 ? (
-        // Distinct from both branches above: the planner *did* have something
-        // to go on and produced a week with nothing in it. Saying "no plan
-        // yet" here would be false, and saying "not enough to plan from"
-        // would be false too.
-        <EmptyState
-          marginalia="Nothing pencilled in"
-          heading="Nothing scheduled this week"
-          body="The planner had something to go on but found nothing worth scheduling for this subject this week. Correct a paper or run some practice and rebuild to give it more to work with."
-          action={{ label: "Practice", onClick: () => navigate(`/student/practice/${subjectCode}`) }}
-        />
-      ) : (
-        <div className="flex flex-col gap-5">
-          {days.map((day) => (
-            <section key={day.date} className="flex flex-col gap-2">
-              <h2 className="text-display-sm text-ink">{formatDayHeading(day.date)}</h2>
-              <Card className="overflow-hidden">
-                {day.sessions.map((session) => (
-                  <SessionRow
-                    key={session.id}
-                    session={session}
-                    subjectCode={subjectCode}
-                    onComplete={(sessionId) => complete.mutate({ sessionId, subjectCode })}
-                    completing={complete.isPending && complete.variables?.sessionId === session.id}
-                  />
-                ))}
-              </Card>
-            </section>
-          ))}
-        </div>
-      )}
+          /* P6.2. Both of these appended a raw `error.message`, so the two
+             things this screen can fail at reported themselves as "Failed to
+             fetch" or a status line. The action is kept in the sentence
+             because both can fail on this one screen, and a reader told only
+             that something went wrong has to guess which. */
+          const rebuildError = rebuild.isError ? (
+            <p className="text-body-md text-err">
+              {studentActionFailureMessage(rebuild.error, "rebuild your plan")}
+            </p>
+          ) : null
+          const completeError = complete.isError ? (
+            <p className="text-body-md text-err">
+              {studentActionFailureMessage(complete.error, "mark that session as done")}
+            </p>
+          ) : null
+
+          if (view.kind === "notGenerated") {
+            return (
+              <>
+                <EmptyState
+                  marginalia="A blank week, for now"
+                  heading="No plan for this week yet"
+                  body={`You don't have a ${subjectName} plan for this week. Build one and it will lay out concrete sessions across the days you have left.`}
+                  action={{
+                    label: rebuild.isPending ? "Building…" : "Build this week's plan",
+                    onClick: onRebuild,
+                  }}
+                  secondaryAction={{
+                    label: "Take the placement test",
+                    onClick: () => navigate(`/student/placement/${subjectCode}`),
+                  }}
+                />
+                {rebuildError}
+              </>
+            )
+          }
+
+          if (view.kind === "refused") {
+            const message = planUnavailableMessage(view.reason)
+            return (
+              <>
+                <h1 className="text-display-lg text-ink">{heading}</h1>
+                <EmptyState
+                  marginalia="Not enough to go on yet"
+                  heading={message.heading}
+                  body={message.body}
+                  action={{
+                    label: "Take the placement test",
+                    onClick: () => navigate(`/student/placement/${subjectCode}`),
+                  }}
+                  secondaryAction={{
+                    label: rebuild.isPending ? "Rebuilding…" : REBUILD_LABEL,
+                    onClick: onRebuild,
+                  }}
+                />
+                {rebuildError}
+              </>
+            )
+          }
+
+          const plan = view.plan
+          const days = groupSessionsByDay(plan.sessions)
+
+          return (
+            <>
+              <WeekHeader
+                plan={plan}
+                subjectName={subjectName}
+                onRebuild={onRebuild}
+                rebuilding={rebuild.isPending}
+              />
+              {rebuildError}
+              {completeError}
+              <PlanBasis />
+
+              {days.length === 0 ? (
+                // Distinct from both branches above: the planner *did* have
+                // something to go on and produced a week with nothing in it.
+                // Saying "no plan yet" here would be false, and saying "not
+                // enough to plan from" would be false too.
+                <EmptyState
+                  marginalia="Nothing pencilled in"
+                  heading="Nothing scheduled this week"
+                  body="The planner had something to go on but found nothing worth scheduling for this subject this week. Correct a paper or run some practice and rebuild to give it more to work with."
+                  action={{
+                    label: "Practice",
+                    onClick: () => navigate(`/student/practice/${subjectCode}`),
+                  }}
+                />
+              ) : (
+                <div className="flex flex-col gap-5">
+                  {days.map((day) => (
+                    <section key={day.date} className="flex flex-col gap-2">
+                      <h2 className="text-display-sm text-ink">{formatDayHeading(day.date)}</h2>
+                      <Card className="overflow-hidden">
+                        {day.sessions.map((session) => (
+                          <SessionRow
+                            key={session.id}
+                            session={session}
+                            subjectCode={subjectCode}
+                            onComplete={(sessionId) => complete.mutate({ sessionId, subjectCode })}
+                            completing={
+                              complete.isPending && complete.variables?.sessionId === session.id
+                            }
+                          />
+                        ))}
+                      </Card>
+                    </section>
+                  ))}
+                </div>
+              )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }
