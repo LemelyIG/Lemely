@@ -313,9 +313,7 @@ export function PaperResult() {
   /*
    * The 404 case stays its own branch ahead of `<QueryState>` rather than
    * living in its `error` slot: it renders `EmptyState`, not `ErrorState`,
-   * with two actions (`QueryStateErrorProps` has no `secondaryAction` slot —
-   * see the comment on `<QueryState>`'s own `error` below for the one this
-   * screen does route through it) and a heading that says what actually
+   * with two actions, and a heading that says what actually
    * happened ("no paper recorded here") rather than the generic "we couldn't
    * load this". `useResult`'s `enabled: !!code` only ever goes false on the
    * `live ? "" : …` branch above, which has already returned by this point —

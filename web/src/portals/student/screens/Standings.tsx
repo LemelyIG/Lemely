@@ -513,7 +513,16 @@ export function Standings() {
            * fragment, not `empty` left unset — see its own comment); this
            * `error` slot is what now tells the difference on a real failure.
            */
-          error={{ heading: "Couldn't load your subjects", body: studentLoadFailureMessage }}
+          error={{
+            heading: "Couldn't load your subjects",
+            body: studentLoadFailureMessage,
+            // The slot this fills is a one-row tab strip above the leaderboard,
+            // so the full centred panel would shove the board down the page and
+            // read as though the whole screen had failed. It has not: the board
+            // below still works. `compact` keeps the failure the size of the
+            // thing that failed.
+            compact: true,
+          }}
           isEmpty={(data) => data.enrolments.length === 0}
           // Explicit empty fragment, not left unset: `QueryState` falls
           // through an unset `empty` to `children(data)`, which here would

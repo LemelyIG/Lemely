@@ -51,6 +51,12 @@ import { vizText } from "../components/colors"
 export function Subject() {
   const navigate = useNavigate()
   const { code } = useParams<{ code: string }>()
+  // `useSubject` is `enabled: !!code`, so it would park at `fetchStatus:
+  // "idle"` on an empty code and never resolve — but the only route here is
+  // `subject/:code`, which cannot match without one, so no `idle` branch is
+  // reachable. Said out loud because six sibling screens in this sweep do
+  // carry `idle` for the same hook shape, and silence here would read as an
+  // oversight rather than a checked decision.
   const query = useSubject(code ?? "")
 
   /*

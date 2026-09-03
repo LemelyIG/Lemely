@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { useState } from "react"
-import { Link, useParams } from "react-router-dom"
+import { Link, useNavigate, useParams } from "react-router-dom"
 import { DownloadSimple, Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -353,6 +353,7 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
 }
 
 export function QuizResults() {
+  const navigate = useNavigate()
   const { quizId, assignmentId } = useParams<{ quizId: string; assignmentId: string }>()
   const resultsQuery = useQuizResults(quizId, assignmentId)
   const setStatus = useSetQuizStatus(quizId)
@@ -380,7 +381,7 @@ export function QuizResults() {
           <EmptyState
             heading="No quiz assignment selected"
             body="Open a quiz's results from its assignment list."
-            action={{ label: "Back to quizzes", onClick: () => history.back() }}
+            action={{ label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") }}
           />
         }
         error={{
@@ -390,7 +391,7 @@ export function QuizResults() {
              to offer alongside retry, via `secondaryAction`: a results route
              reached with a stale or malformed id retries into the same
              failure forever, so the way out has to be a link elsewhere. */
-          secondaryAction: { label: "Back to quizzes", onClick: () => history.back() },
+          secondaryAction: { label: "Back to quizzes", onClick: () => navigate("/teacher/quizzes") },
         }}
       >
         {(data) => {

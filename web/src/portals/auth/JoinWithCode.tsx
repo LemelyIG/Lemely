@@ -296,7 +296,18 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
    * single real query passed through, not two merged into one pseudo-query.
    */
   const previewForQueryState: QueryStateQuery<InvitePreview> = {
-    status: preview.status,
+    /*
+     * `isFetching`, not just `status`. The pre-conversion screen checked
+     * `preview.isFetching` *ahead* of its error branch, so pressing "Try
+     * again" put the loading step back on screen while the lookup ran.
+     * `QueryState` switches on `status`, which react-query leaves at
+     * `"error"` throughout a background refetch — so without this the retry
+     * button changed nothing at all for a whole round trip, and nothing ever
+     * again if the retry also failed. A button that does not visibly do
+     * anything reads as broken, which is worse than the failure it is
+     * offering to fix.
+     */
+    status: preview.isFetching ? "pending" : preview.status,
     data: preview.data,
     error: preview.error,
     fetchStatus: preview.fetchStatus,

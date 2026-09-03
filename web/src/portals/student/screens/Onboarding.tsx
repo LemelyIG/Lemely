@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Stepper } from "@/components/ui/stepper"
 import { QueryState } from "@/components/ui/query-state"
-import { PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
   useCompleteOnboarding,
@@ -298,7 +298,18 @@ export function Onboarding() {
       <QueryState
         query={profileQuery}
         srHeading="Onboarding"
-        skeleton={<PageHeaderSkeleton />}
+        /* The loaded render is a qualification picker plus a grid of
+           per-subject cards, so a two-line page header alone would hand the
+           reader a ~60px placeholder and then jump the page several hundred
+           pixels when it resolves — the CLS this whole sweep exists to stop
+           (DESIGN.md §12), and a shift this screen did not have before, since
+           it used to render the wizard immediately. */
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={4} />
+          </>
+        }
         error={{
           heading: "We couldn't load your profile",
           body: studentLoadFailureMessage,

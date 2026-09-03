@@ -127,25 +127,35 @@ function usesQueryState(source: string): boolean {
  * What is left after the per-screen sweep (PR 3).
  *
  * This list was seeded at 53 entries by running the detector above against
- * the tree on 2026-09-02. PR 3 converted 50 of them to `QueryState` — each
+ * the tree on 2026-09-02. PR 3 converted 49 of them to `QueryState` — each
  * one read, converted and reviewed screen by screen — and deleted its entry
- * here as it went. The three below are what survived that sweep, and they
- * are here for a different reason than the original 53 were: none of them
- * loads any data at all.
+ * here as it went. The four below are what survived that sweep, and they are
+ * here for different reasons than the original 53 were.
  *
- * Each imports exactly one or two *mutation* hooks from `@/lib/hooks/`, which
- * the detector cannot tell apart from a query export without importing the
- * hooks layer and inspecting its return type — the over-counting the module
- * header already predicts, and calls failing safe. `ClassRoster.tsx` is the
- * clearest case: it renders a class detail it never fetches, reading it from
- * `useClassDetailContext()`, the outlet context its parent layout fills from
- * a query the layout owns and gates. Wrapping any of the three in a
- * `<QueryState>` would mean inventing a query object for a screen that has
- * none, which is not adoption — it is this gate being told what it wants to
- * hear.
+ * Three of them load no data at all. Each imports one or two *mutation*
+ * hooks from `@/lib/hooks/`, which the detector cannot tell apart from a
+ * query export without importing the hooks layer and inspecting its return
+ * type — the over-counting the module header already predicts, and calls
+ * failing safe. `ClassRoster.tsx` is the clearest case: it renders a class
+ * detail it never fetches, reading it from `useClassDetailContext()`, the
+ * outlet context its parent layout fills from a query the layout owns and
+ * gates. Wrapping any of the three in a `<QueryState>` would mean inventing
+ * a query object for a screen that has none, which is not adoption — it is
+ * this gate being told what it wants to hear.
+ *
+ * `VerifyEmail.tsx` is the one that genuinely loads data and still says no,
+ * and it is the more interesting entry. It was converted during the sweep
+ * and then reverted, because the conversion made the screen worse: the
+ * profile read feeds exactly one sentence, whose failure already degraded to
+ * "the email on your account" — complete, true, and actionable — and routing
+ * it through `QueryState` replaced that with a centred error panel about an
+ * address the screen does not need. `QueryState` renders one treatment per
+ * state by design; sometimes the right treatment for a failure is not to
+ * report it. A screen belongs here when using the shared pattern would cost
+ * the reader something, not when nobody got round to it.
  *
  * This list may shrink and must never grow. A NEW screen that loads data must
- * use `QueryState` from the day it is written: the pattern now exists, 50
+ * use `QueryState` from the day it is written: the pattern now exists, 49
  * screens use it, and there is no longer any such thing as a screen that
  * predates it.
  */
@@ -154,6 +164,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
     path: "src/portals/auth/SignupDetails.tsx",
     reason:
       "loads no data: `useRedeemInvite` is a mutation and `signup` comes from `useAuth()`, not the hooks layer",
+  },
+  {
+    path: "src/portals/auth/VerifyEmail.tsx",
+    reason:
+      "loads data, but its one consumer degrades: a failed profile read renders `the email on your account`, a complete sentence, where an error panel would announce a failure the reader does not need to act on",
   },
   {
     path: "src/portals/teacher/screens/ClassRoster.tsx",

@@ -125,6 +125,15 @@ export function Overview() {
         {(overview) => (
           <QueryState
             query={classesQuery}
+            /* The inner state needs its own `srHeading` even though the outer
+               one has it: `QueryState` renders the heading on its skeleton and
+               error branches only, never alongside `children`. So in the state
+               "overview loaded, classes failed" the outer one has already
+               handed off to `children` and contributes no `<h1>` — without
+               this the route would render an error panel and no page heading
+               at all. Only one of the two ever renders, because the inner is
+               reached only once the outer has succeeded. */
+            srHeading="Overview"
             skeleton={<OverviewSkeleton />}
             error={{ heading: "Couldn't load your classes", body: teacherLoadFailureMessage }}
           >

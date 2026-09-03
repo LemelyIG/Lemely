@@ -7,7 +7,6 @@ import type { Session } from "@/lib/auth/storage"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { SkeletonLine } from "@/components/ui/skeleton"
-import { QueryState } from "@/components/ui/query-state"
 import { verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
 import { postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
@@ -226,34 +225,38 @@ function SignedInPending({ session }: { session: Session }) {
         <div className="flex flex-col gap-1.5">
           <h1 className="text-display-lg text-ink">Verify your email</h1>
           {/*
-           * A panel inside a larger screen (this card already has its own
-           * `<h1>` above), so no `srHeading` — the loaded, skeleton and
-           * error renders below all replace only this one line, never the
-           * heading or the rest of the card. No `body` override either: this
-           * screen has no outcome-module sentence written for a profile-read
-           * failure specifically, so the default `describeQueryFailure`
-           * generic answer is the honest one, per `query-state.tsx`'s own
-           * doc for an omitted `body`.
+           * Deliberately NOT routed through `<QueryState>`, and the screen
+           * stays on that gate's allowlist saying so.
+           *
+           * This line is the only thing the profile read feeds, and its
+           * failure already had a designed answer: "the email on your
+           * account" is a complete, true sentence that tells the reader
+           * exactly what to do. The sweep converted this and got a ~200px
+           * centred error panel, under the card's own heading, announcing
+           * that we could not load an email address the screen does not
+           * need — in the slot the resend button has to be visible in. That
+           * is a worse screen than the one it replaced. `QueryState` renders
+           * one treatment per state by design, and the right treatment for
+           * this failure is no error at all.
+           *
+           * The pending skeleton stays: it is the half of the conversion
+           * that was an improvement, and it costs nothing here.
            */}
-          <QueryState
-            query={profile}
-            skeleton={
-              <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
-                <span>Confirm</span>
-                <SkeletonLine announce={false} width="9rem" className="h-4" />
-                <span>to unlock everything Lemely does.</span>
-              </div>
-            }
-            error={{ heading: "We couldn't load your email" }}
-          >
-            {(data) => (
-              <p className="text-body-md text-ink-muted">
-                Confirm{" "}
-                <span className="text-data-md text-ink">{data.email}</span> to unlock everything
-                Lemely does.
-              </p>
-            )}
-          </QueryState>
+          {profile.isPending ? (
+            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
+              <span>Confirm</span>
+              <SkeletonLine announce={false} width="9rem" className="h-4" />
+              <span>to unlock everything Lemely does.</span>
+            </div>
+          ) : (
+            <p className="text-body-md text-ink-muted">
+              Confirm{" "}
+              <span className="text-data-md text-ink">
+                {profile.data?.email ?? "the email on your account"}
+              </span>{" "}
+              to unlock everything Lemely does.
+            </p>
+          )}
         </div>
 
         {/*
