@@ -128,12 +128,40 @@ def test_health_clears_the_failure_flag_when_the_database_answers_but_is_unseede
     assert _failing_health_client(monkeypatch, empty).get("/api/health").status_code == 200
     assert meta._boundary_read_failing is False
 
-    # ...so a different failure arriving afterwards is still reported.
+    # ...so a different failure arriving afterwards is still reported *with its
+    # traceback*. Asserting merely that the line appears would not discriminate:
+    # the per-poll warning emits that same line whether or not the flag is stuck.
+    # Only the `exc_info` record is unique to the transition.
     with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
         client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
         assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
 
-    assert [r for r in caplog.records if "could not read grade boundaries" in r.message]
+    assert [r for r in caplog.records if r.exc_info is not None]
+
+
+def test_health_failure_log_names_the_exception_in_the_message_itself(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exception type must survive into the rendered message.
+
+    `lemely.runtime.logging` bridges stdlib records into structlog with
+    `structlog.get_logger(...).log(levelno, record.getMessage())` -- it drops
+    `record.exc_info` entirely. So a bare `logger.exception` reaches a deployed
+    log as a bare string, and an operator cannot tell an `OperationalError`
+    (database unreachable) from a `TypeError` (corrupt thresholds JSONB). That
+    distinction is the whole reason this record exists, so the repr goes in the
+    message. Asserting on `caplog`'s `exc_info` would bypass the bridge and
+    pass while production stayed empty; this asserts on the rendered text.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client.get("/api/health")
+
+    rendered = [r.getMessage() for r in caplog.records]
+    assert any("ValueError" in m and "corrupt max_mark" in m for m in rendered), rendered
 
 
 def test_stub_routers_are_mounted() -> None:

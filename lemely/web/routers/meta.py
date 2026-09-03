@@ -83,7 +83,7 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
         # successful read, so the failure flag must clear here too.
         _note_boundaries_readable()
         grade_boundaries_loaded = False
-    except Exception:
+    except Exception as exc:
         # The store reads ``component_thresholds`` now, so an unreachable or
         # broken database lands here too. Health must still answer 200: a 500
         # tells an operator only "something is wrong", whereas
@@ -98,10 +98,18 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
         # The traceback goes out once per outage; the one-line warning goes
         # out every poll, so the signal the docs point operators at is always
         # present in a recent log window.
+        #
+        # The exception is repr'd into the *message* rather than left to
+        # ``exc_info`` alone: the app's stdlib-to-structlog bridge
+        # (``lemely.runtime.logging``) forwards only ``record.getMessage()``
+        # and drops ``exc_info``, so a bare ``logger.exception`` reaches a
+        # deployed log as a string with no exception type at all -- and
+        # telling `OperationalError` from a corrupt-JSONB `TypeError` is the
+        # entire point of this record.
         if _boundary_read_failing:
-            logger.warning("health: could not read grade boundaries from the database")
+            logger.warning("health: could not read grade boundaries from the database: %r", exc)
         else:
-            logger.exception("health: could not read grade boundaries from the database")
+            logger.exception("health: could not read grade boundaries from the database: %r", exc)
             _boundary_read_failing = True
         grade_boundaries_loaded = False
     return HealthDTO(

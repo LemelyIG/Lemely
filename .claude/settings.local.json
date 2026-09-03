@@ -1,16 +1,4 @@
 {
-  "permissions": {
-    "allow": [
-      "Bash(cp /home/sico/Lemely/.claude/workflows/accuracy-pr-land.js /tmp/p.mjs)",
-      "Bash(node --check /tmp/p.mjs)",
-      "Bash(cp /home/sico/Lemely/.claude/workflows/accuracy-issue-execute.js /tmp/exec.mjs)",
-      "Bash(node --check /tmp/exec.mjs)",
-      "Bash(echo \"exit=$?\")",
-      "Bash(cp /home/sico/Lemely/.claude/workflows/lemely-audit.js /tmp/audit.mjs)",
-      "Bash(node --check /tmp/audit.mjs)"
-    ]
-  },
-  "enableAllProjectMcpServers": true,
   "enabledMcpjsonServers": [
     "supabase"
   ],
@@ -41,5 +29,6 @@
       }
     ]
   },
-  "description": "Impeccable design detector: immediate-tier checks after Edit/Write/MultiEdit on UI files, full-rule deep pass on Stop."
+  "description": "Impeccable design detector: immediate-tier checks after Edit/Write/MultiEdit on UI files, full-rule deep pass on Stop.",
+  "enableAllProjectMcpServers": true
 }

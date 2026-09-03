@@ -896,6 +896,7 @@ def get_invite_service() -> InviteService:
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
+    get_boundary_store.cache_clear()
     get_history_store.cache_clear()
     get_catalogue_service.cache_clear()
     get_threshold_service.cache_clear()
