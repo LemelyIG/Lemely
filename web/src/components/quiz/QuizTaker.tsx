@@ -6,6 +6,8 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Meter } from "@/components/ui/primitives"
 import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
+import { SkeletonBlock, SkeletonLine } from "@/components/ui/skeleton"
 import { useSaveQuizAnswer, useStudentQuizTake, useSubmitQuiz } from "@/lib/hooks/usePlacementApi"
 import type { StudentQuizQuestion, SubmitQuizResponse } from "@/lib/placementTypes"
 import { ApiError } from "@/lib/api"
@@ -57,6 +59,20 @@ import {
  * server. A failed save is shown per-question, never swallowed, and
  * `dirtyQuestionRefs` drives a resend once the browser reports `online`
  * again — and again, blocking, before any submit.
+ *
+ * Loading/error primitives PR, part D (per-screen sweep, PR 3): the take
+ * query now goes through `<QueryState>`. `current` (`questions[index]`)
+ * stays computed above the render, from the same optional `query.data` the
+ * hooks already read, so the "no questions" fallback lives inside `children`
+ * as a plain `if (!current)` guard rather than through `isEmpty`/`empty` —
+ * that keeps TypeScript's narrowing on `current` intact through the rest of
+ * the closure with no extra assertion needed. `enabled: !!assignmentId` on
+ * `useStudentQuizTake` (`usePlacementApi.ts`) means this can sit at
+ * `fetchStatus: "idle"` if this component were ever mounted with no
+ * `assignmentId` — both call sites (`PlacementTest.tsx`, `PracticeSet.tsx`)
+ * always supply a real one from the route, so `idle` below is a defensive
+ * fallback for a case the product never actually reaches today, not a state
+ * either route's reader will see.
  *
  * No maths renderer (measured: 1/273 stems are LaTeX-shaped, the rest is
  * plain Unicode browsers render natively) — `white-space: pre-line` on the
@@ -151,8 +167,44 @@ export interface QuizTakerProps {
   className?: string
 }
 
+/**
+ * Matches the loaded layout above: a header row (question count + a timer
+ * chip), a progress meter, the question card (two chips, a prompt block, an
+ * answer block), and a pair of nav buttons — replacing the bare "Loading
+ * your test…" text line the pending branch used to render, which occupied
+ * one text row where the loaded screen fills most of the viewport. Composed
+ * from the raw `skeleton.tsx` primitives rather than `loading-shapes.tsx`:
+ * none of that module's shapes (a page header, a card grid, a row list, a
+ * chart panel) match a single question card, so a screen-local composition
+ * is the right call per the conversion brief.
+ */
+function QuizTakerSkeleton() {
+  return (
+    <div role="status" aria-label="Loading" className="flex flex-col gap-5">
+      <div className="flex flex-wrap items-center gap-3">
+        <SkeletonLine announce={false} className="h-3.5" width="8rem" />
+        <div className="flex-1" />
+        <SkeletonLine announce={false} className="h-6 rounded-full" width="5rem" />
+      </div>
+      <SkeletonLine announce={false} className="h-1.5" />
+      <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised px-5 py-[18px]">
+        <div className="flex gap-2">
+          <SkeletonLine announce={false} className="h-6 rounded-full" width="4.5rem" />
+          <SkeletonLine announce={false} className="h-6 rounded-full" width="6rem" />
+        </div>
+        <SkeletonBlock announce={false} className="h-16" />
+        <SkeletonBlock announce={false} className="h-24" />
+      </div>
+      <div className="flex flex-wrap items-center gap-3">
+        <SkeletonLine announce={false} className="h-9 rounded-lg" width="6rem" />
+        <SkeletonLine announce={false} className="h-9 rounded-lg" width="6rem" />
+      </div>
+    </div>
+  )
+}
+
 export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: QuizTakerProps) {
-  const { data, isPending, isError, error } = useStudentQuizTake(assignmentId)
+  const query = useStudentQuizTake(assignmentId)
   const saveAnswer = useSaveQuizAnswer(assignmentId)
   const submitQuiz = useSubmitQuiz(assignmentId)
   const online = useOnlineStatus()
@@ -174,9 +226,9 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   const answerCache = useRef<CachedAnswers>({})
 
   useEffect(() => {
-    if (seeded.current || !data) return
+    if (seeded.current || !query.data) return
     seeded.current = true
-    const server = seedAnswers(data.questions)
+    const server = seedAnswers(query.data.questions)
     const cached = readCachedAnswers(window.localStorage, answerCacheKey(assignmentId))
     answerCache.current = cached ?? {}
     // `mergeAnswers` is the pin: a dirty (unsaved) cached edit beats the
@@ -185,9 +237,9 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     const cachedFlags = readCache<string[]>(storageKey(assignmentId, "flags"))
     if (cachedFlags) setFlagged(new Set(cachedFlags))
     setSeedVersion((v) => v + 1)
-  }, [data, assignmentId])
+  }, [query.data, assignmentId])
 
-  const questions = useMemo(() => data?.questions ?? [], [data])
+  const questions = useMemo(() => query.data?.questions ?? [], [query.data])
   const current: StudentQuizQuestion | undefined = questions[index]
 
   const persistCacheEntry = useCallback(
@@ -399,194 +451,221 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     }
   }
 
-  /* Every branch below carries an `sr-only` h1 rather than a visible one,
-   * because this screen deliberately has no visible page title: the identity
-   * a student needs mid-test is "Question 3 of 10" and the countdown, and a
-   * banner title would push both down the viewport on a 380px phone. The
-   * heading still has to exist — QUALITY-BAR.md requires one h1 per page, and
-   * a screen reader otherwise lands on this screen with nothing to orient by.
-   * P3's ReviewItem/QuizBuilder set the same precedent. */
-  if (isPending) {
-    return (
-      <div className="lm-screen text-body-md text-ink-muted">
-        <h1 className="sr-only">Test in progress</h1>
-        Loading your test…
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    const message =
-      error instanceof ApiError && error.status === 403
-        ? "This test isn't yours to take."
-        : error instanceof ApiError && error.status === 404
-          ? "This test couldn't be found."
-          : studentLoadFailureMessage(error)
-    return (
-      <>
-        <h1 className="sr-only">Test in progress</h1>
-        <ErrorState heading="Couldn't load your test" body={message} className="lm-screen" />
-      </>
-    )
-  }
-
-  if (!current) {
-    return (
-      <>
-        <h1 className="sr-only">Test in progress</h1>
-        <ErrorState heading="This test has no questions" className="lm-screen" />
-      </>
-    )
-  }
-
-  const total = questions.length
-  const remaining = remainingSeconds(data.header.timeLimitMinutes, elapsedSeconds)
-  const timeNearlyUp = remaining !== null && remaining <= 120
-  const kind = answerInputKind(current.questionType, current.mcqOptions)
-  const currentAnswer = answers[current.questionRef] ?? { answerText: current.answerText, workingText: current.workingText }
-  const currentStatus = saveStatus[current.questionRef] ?? "idle"
-  const currentFlagged = flagged.has(current.questionRef)
-  const affiliation = quizAffiliationLabel(data.header.className, data.header.teacherName)
-
+  /* Every branch — skeleton, idle, error, "no questions", and the loaded
+   * render — carries an `sr-only` h1 rather than a visible one, because this
+   * screen deliberately has no visible page title: the identity a student
+   * needs mid-test is "Question 3 of 10" and the countdown, and a banner
+   * title would push both down the viewport on a 380px phone. The heading
+   * still has to exist — QUALITY-BAR.md requires one h1 per page, and a
+   * screen reader otherwise lands on this screen with nothing to orient by.
+   * P3's ReviewItem/QuizBuilder set the same precedent. `QueryState`'s own
+   * `srHeading` supplies it for the skeleton and error branches; the idle
+   * and "no questions" branches supply their own since they render through
+   * `idle`/`children` rather than through `srHeading`, which `QueryState`
+   * only renders ahead of its own skeleton/error output (see that
+   * component's doc comment). */
   return (
     <div className={cn("lm-screen mx-auto flex max-w-[820px] flex-col gap-5", className)}>
-      {/* The real title, not a generic one — this component is composed by
-       * placement now and by practice/assigned quizzes in P4.9/P5, so the
-       * heading names whichever test the student is actually sitting. */}
-      <h1 className="sr-only">{data.header.quizTitle}</h1>
-      <div className="flex flex-wrap items-center gap-3">
-        <div className="flex flex-col gap-0.5">
-          <div className="text-body-sm text-ink-muted">
-            Question {index + 1} of {total}
-          </div>
-          {/* `null` for every placement test (no class, no teacher, D4.6 §3);
-           * populated for a teacher-assigned quiz composing this same
-           * component in P4.9/P5. Never a "—" placeholder for the absent
-           * case — nothing renders here at all. */}
-          {affiliation ? <div className="text-3xs text-ink-faint">{affiliation}</div> : null}
-        </div>
-        <div className="flex-1" />
-        {!online ? (
-          <Chip tone="warn" className="gap-1">
-            <WifiSlash size={12} weight="bold" aria-hidden />
-            Offline. Answers save locally.
-          </Chip>
-        ) : null}
-        <Chip tone={timeNearlyUp ? "warn" : "neutral"} className="font-mono">
-          {remaining !== null ? `${formatDuration(remaining)} left` : `${formatDuration(elapsedSeconds)} elapsed`}
-        </Chip>
-        {/* `min-h-[44px]` below: see the SubjectsStep note — `size="sm"` is
-         * ~31px and this is a phone-primary screen. */}
-        {onExit ? (
-          <Button variant="ghost" size="sm" className="min-h-[44px]" onClick={onExit}>
-            Leave for now
-          </Button>
-        ) : null}
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Test in progress"
+        skeleton={<QuizTakerSkeleton />}
+        // `enabled: !!assignmentId` on `useStudentQuizTake` — see the module
+        // header for why this branch is defensive rather than reachable from
+        // either real call site today.
+        idle={
+          <>
+            <h1 className="sr-only">Test in progress</h1>
+            <ErrorState
+              heading="No test to load"
+              body="This link doesn't include a test to open."
+            />
+          </>
+        }
+        error={{
+          heading: "Couldn't load your test",
+          // Specific copy for the two statuses a student can actually cause
+          // (opening someone else's test, or a stale/removed link) beats
+          // `studentLoadFailureMessage`'s generic 403/404 sentences — kept
+          // unchanged from the pre-conversion branch below.
+          body: (err) =>
+            err instanceof ApiError && err.status === 403
+              ? "This test isn't yours to take."
+              : err instanceof ApiError && err.status === 404
+                ? "This test couldn't be found."
+                : studentLoadFailureMessage(err),
+        }}
+      >
+        {(data) => {
+          // A loaded quiz with zero questions is a genuine, if degenerate,
+          // empty state — see the module header for why this stays a plain
+          // guard inside `children` (keeping `current`'s narrowing intact)
+          // rather than going through `isEmpty`/`empty`.
+          if (!current) {
+            return (
+              <>
+                <h1 className="sr-only">Test in progress</h1>
+                <ErrorState heading="This test has no questions" />
+              </>
+            )
+          }
 
-      <Meter
-        value={((index + 1) / total) * 100}
-        label={`Question ${index + 1} of ${total}`}
-        className="h-1.5"
-      />
+          const total = questions.length
+          const remaining = remainingSeconds(data.header.timeLimitMinutes, elapsedSeconds)
+          const timeNearlyUp = remaining !== null && remaining <= 120
+          const kind = answerInputKind(current.questionType, current.mcqOptions)
+          const currentAnswer = answers[current.questionRef] ?? {
+            answerText: current.answerText,
+            workingText: current.workingText,
+          }
+          const currentStatus = saveStatus[current.questionRef] ?? "idle"
+          const currentFlagged = flagged.has(current.questionRef)
+          const affiliation = quizAffiliationLabel(data.header.className, data.header.teacherName)
 
-      {timeNearlyUp ? (
-        <div className="rounded-lg border border-warn bg-warn-wash px-4 py-2.5 text-body-sm text-warn">
-          Less than 2 minutes left.
-        </div>
-      ) : null}
+          return (
+            <>
+              {/* The real title, not a generic one — this component is composed
+               * by placement now and by practice/assigned quizzes in P4.9/P5,
+               * so the heading names whichever test the student is actually
+               * sitting. */}
+              <h1 className="sr-only">{data.header.quizTitle}</h1>
+              <div className="flex flex-wrap items-center gap-3">
+                <div className="flex flex-col gap-0.5">
+                  <div className="text-body-sm text-ink-muted">
+                    Question {index + 1} of {total}
+                  </div>
+                  {/* `null` for every placement test (no class, no teacher, D4.6 §3);
+                   * populated for a teacher-assigned quiz composing this same
+                   * component in P4.9/P5. Never a "—" placeholder for the absent
+                   * case — nothing renders here at all. */}
+                  {affiliation ? <div className="text-3xs text-ink-faint">{affiliation}</div> : null}
+                </div>
+                <div className="flex-1" />
+                {!online ? (
+                  <Chip tone="warn" className="gap-1">
+                    <WifiSlash size={12} weight="bold" aria-hidden />
+                    Offline. Answers save locally.
+                  </Chip>
+                ) : null}
+                <Chip tone={timeNearlyUp ? "warn" : "neutral"} className="font-mono">
+                  {remaining !== null ? `${formatDuration(remaining)} left` : `${formatDuration(elapsedSeconds)} elapsed`}
+                </Chip>
+                {/* `min-h-[44px]` below: see the SubjectsStep note — `size="sm"` is
+                 * ~31px and this is a phone-primary screen. */}
+                {onExit ? (
+                  <Button variant="ghost" size="sm" className="min-h-[44px]" onClick={onExit}>
+                    Leave for now
+                  </Button>
+                ) : null}
+              </div>
 
-      <Card>
-        <CardBody className="flex flex-col gap-5">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <Chip tone="neutral" className="font-mono">
-                {current.totalMarks} mark{current.totalMarks === 1 ? "" : "s"}
-              </Chip>
-              <Chip tone={current.topic ? "accent" : "neutral"}>
-                {formatQuestionTopic(current.topic)}
-              </Chip>
-            </div>
-            <button
-              type="button"
-              onClick={() => toggleFlag(current.questionRef)}
-              aria-pressed={currentFlagged}
-              className={cn(
-                // `min-h-[44px]` per QUALITY-BAR.md:40, the same idiom the rest
-                // of the library uses. This is a phone-primary control used
-                // mid-exam — "come back to this question" — so a missed tap
-                // costs the student the question. Padding alone left it ~30px:
-                // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
-                // automated gate flagged it.
-                "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-body-sm transition-colors cursor-pointer",
-                "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                currentFlagged ? "bg-warn-wash text-warn" : "text-ink-faint hover:bg-paper-sunk",
+              <Meter
+                value={((index + 1) / total) * 100}
+                label={`Question ${index + 1} of ${total}`}
+                className="h-1.5"
+              />
+
+              {timeNearlyUp ? (
+                <div className="rounded-lg border border-warn bg-warn-wash px-4 py-2.5 text-body-sm text-warn">
+                  Less than 2 minutes left.
+                </div>
+              ) : null}
+
+              <Card>
+                <CardBody className="flex flex-col gap-5">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <Chip tone="neutral" className="font-mono">
+                        {current.totalMarks} mark{current.totalMarks === 1 ? "" : "s"}
+                      </Chip>
+                      <Chip tone={current.topic ? "accent" : "neutral"}>
+                        {formatQuestionTopic(current.topic)}
+                      </Chip>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => toggleFlag(current.questionRef)}
+                      aria-pressed={currentFlagged}
+                      className={cn(
+                        // `min-h-[44px]` per QUALITY-BAR.md:40, the same idiom the rest
+                        // of the library uses. This is a phone-primary control used
+                        // mid-exam — "come back to this question" — so a missed tap
+                        // costs the student the question. Padding alone left it ~30px:
+                        // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
+                        // automated gate flagged it.
+                        "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-body-sm transition-colors cursor-pointer",
+                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                        currentFlagged ? "bg-warn-wash text-warn" : "text-ink-faint hover:bg-paper-sunk",
+                      )}
+                    >
+                      <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
+                      {currentFlagged ? "Flagged for review" : "Flag for review"}
+                    </button>
+                  </div>
+
+                  <p className="whitespace-pre-line text-body-lg leading-relaxed text-ink">
+                    {current.prompt}
+                  </p>
+
+                  <AnswerInput
+                    kind={kind}
+                    question={current}
+                    value={currentAnswer}
+                    onAnswerText={(v) => updateAnswer(current.questionRef, "answerText", v)}
+                    onWorkingText={(v) => updateAnswer(current.questionRef, "workingText", v)}
+                  />
+
+                  <SaveIndicator status={currentStatus} online={online} />
+                </CardBody>
+              </Card>
+
+              {confirmingSubmit ? (
+                <Card className="border-warn">
+                  <CardBody className="flex flex-col gap-3">
+                    <div className="text-body-md font-medium text-ink">
+                      You have {unansweredCount} unanswered question{unansweredCount === 1 ? "" : "s"}.
+                    </div>
+                    <p className="text-body-sm text-ink-muted">
+                      You can still go back and answer them, or submit as-is.
+                    </p>
+                    {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
+                    <div className="flex flex-wrap gap-3">
+                      <Button variant="secondary" onClick={() => setConfirmingSubmit(false)}>
+                        Go back
+                      </Button>
+                      <Button variant="accent" disabled={submitQuiz.isPending} onClick={() => void handleSubmit()}>
+                        {submitQuiz.isPending ? "Submitting…" : "Submit anyway"}
+                      </Button>
+                    </div>
+                  </CardBody>
+                </Card>
+              ) : (
+                <div className="flex flex-wrap items-center gap-3">
+                  <Button
+                    variant="secondary"
+                    disabled={index === 0}
+                    onClick={() => setIndex((i) => clampQuestionIndex(i - 1, total))}
+                  >
+                    Previous
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    disabled={index === total - 1}
+                    onClick={() => setIndex((i) => clampQuestionIndex(i + 1, total))}
+                  >
+                    Next
+                  </Button>
+                  <div className="flex-1" />
+                  {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
+                  <Button variant="accent" disabled={submitQuiz.isPending} onClick={requestSubmit}>
+                    {submitQuiz.isPending ? "Submitting…" : "Submit test"}
+                  </Button>
+                </div>
               )}
-            >
-              <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
-              {currentFlagged ? "Flagged for review" : "Flag for review"}
-            </button>
-          </div>
-
-          <p className="whitespace-pre-line text-body-lg leading-relaxed text-ink">
-            {current.prompt}
-          </p>
-
-          <AnswerInput
-            kind={kind}
-            question={current}
-            value={currentAnswer}
-            onAnswerText={(v) => updateAnswer(current.questionRef, "answerText", v)}
-            onWorkingText={(v) => updateAnswer(current.questionRef, "workingText", v)}
-          />
-
-          <SaveIndicator status={currentStatus} online={online} />
-        </CardBody>
-      </Card>
-
-      {confirmingSubmit ? (
-        <Card className="border-warn">
-          <CardBody className="flex flex-col gap-3">
-            <div className="text-body-md font-medium text-ink">
-              You have {unansweredCount} unanswered question{unansweredCount === 1 ? "" : "s"}.
-            </div>
-            <p className="text-body-sm text-ink-muted">
-              You can still go back and answer them, or submit as-is.
-            </p>
-            {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
-            <div className="flex flex-wrap gap-3">
-              <Button variant="secondary" onClick={() => setConfirmingSubmit(false)}>
-                Go back
-              </Button>
-              <Button variant="accent" disabled={submitQuiz.isPending} onClick={() => void handleSubmit()}>
-                {submitQuiz.isPending ? "Submitting…" : "Submit anyway"}
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-      ) : (
-        <div className="flex flex-wrap items-center gap-3">
-          <Button
-            variant="secondary"
-            disabled={index === 0}
-            onClick={() => setIndex((i) => clampQuestionIndex(i - 1, total))}
-          >
-            Previous
-          </Button>
-          <Button
-            variant="secondary"
-            disabled={index === total - 1}
-            onClick={() => setIndex((i) => clampQuestionIndex(i + 1, total))}
-          >
-            Next
-          </Button>
-          <div className="flex-1" />
-          {submitError ? <p className="text-body-sm text-err">{submitError}</p> : null}
-          <Button variant="accent" disabled={submitQuiz.isPending} onClick={requestSubmit}>
-            {submitQuiz.isPending ? "Submitting…" : "Submit test"}
-          </Button>
-        </div>
-      )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

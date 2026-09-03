@@ -2,9 +2,10 @@
 import { useNavigate, Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { QueryState } from "@/components/ui/query-state"
 import {
   PageHeaderSkeleton,
   ListSkeleton,
@@ -15,7 +16,7 @@ import { teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import { StatCard } from "../components/StatCard"
 import { Avatar } from "@/components/ui/avatar"
 import { useTeacherOverview, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
-import type { RecentActivity } from "@/lib/teacherTypes"
+import type { ClassSummary, Overview as OverviewDTO, RecentActivity } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
@@ -73,56 +74,92 @@ const ORIGIN_LABEL: Record<RecentActivity["origin"], string> = {
   custom_paper: "Custom paper",
 }
 
+// P3.3: skeleton matching the real layout (header, "Needs you" list, class
+// card grid, activity list) rather than one line of "Loading overview…"
+// text. See the same note on the student Overview: the old line reserved a
+// single text row for a screen that renders four stacked regions, so the
+// page jumped every time data landed. Shared between the two nested
+// `QueryState`s below (see the comment on `Overview()` for why there are
+// two) so a reader sees the exact same shape while either query is still in
+// flight, matching the old `overviewQuery.isPending || classesQuery.isPending`
+// branch's behaviour of showing one full skeleton regardless of which query
+// is the one still pending.
+function OverviewSkeleton() {
+  return (
+    <>
+      <PageHeaderSkeleton />
+      <ListSkeleton rows={3} />
+      <CardGridSkeleton count={3} />
+      <ListSkeleton rows={4} avatar />
+    </>
+  )
+}
+
 export function Overview() {
   const navigate = useNavigate()
   const overviewQuery = useTeacherOverview()
   const classesQuery = useTeacherClasses()
 
-  // P3.3: skeleton matching the real layout (header, "Needs you" list, class
-  // card grid, activity list) rather than one line of "Loading overview…"
-  // text. See the same note on the student Overview: the old line reserved a
-  // single text row for a screen that renders four stacked regions, so the
-  // page jumped every time data landed.
-  if (overviewQuery.isPending || classesQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-8 min-w-0">
-        <h1 className="sr-only">Overview</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={3} />
-        <CardGridSkeleton count={3} />
-        <ListSkeleton rows={4} avatar />
-      </div>
-    )
-  }
+  return (
+    <div className="lm-screen flex flex-col gap-8 min-w-0">
+      {/*
+       * Two independent queries feed this screen, and almost nothing below
+       * reads from only one of them — the first-run check needs
+       * `classes.length` (from `classesQuery`) AND `recentActivity.length`
+       * (from `overviewQuery`), and the loaded render interleaves both
+       * throughout. A single merged `{status, data, error, refetch}` object
+       * would force one error heading for two genuinely different failures,
+       * which the PR3 brief calls out as a reason to prefer nesting instead.
+       * So this nests one `QueryState` per query: the outer one owns
+       * `overviewQuery`'s own specific heading and refetch, and once it
+       * resolves, the inner one owns `classesQuery`'s. Both show the same
+       * full-page skeleton (`OverviewSkeleton`) so there is no partial
+       * reveal — see that component's own comment for why.
+       */}
+      <QueryState
+        query={overviewQuery}
+        srHeading="Overview"
+        skeleton={<OverviewSkeleton />}
+        error={{ heading: "Couldn't load the overview", body: teacherLoadFailureMessage }}
+      >
+        {(overview) => (
+          <QueryState
+            query={classesQuery}
+            /* The inner state needs its own `srHeading` even though the outer
+               one has it: `QueryState` renders the heading on its skeleton and
+               error branches only, never alongside `children`. So in the state
+               "overview loaded, classes failed" the outer one has already
+               handed off to `children` and contributes no `<h1>` — without
+               this the route would render an error panel and no page heading
+               at all. Only one of the two ever renders, because the inner is
+               reached only once the outer has succeeded. */
+            srHeading="Overview"
+            skeleton={<OverviewSkeleton />}
+            error={{ heading: "Couldn't load your classes", body: teacherLoadFailureMessage }}
+          >
+            {(classList) => (
+              <OverviewLoaded navigate={navigate} overview={overview} classes={classList.classes} />
+            )}
+          </QueryState>
+        )}
+      </QueryState>
+    </div>
+  )
+}
 
-  if (overviewQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-8 min-w-0">
-        <h1 className="sr-only">Overview</h1>
-        <ErrorState
-          heading="Couldn't load the overview"
-          body={teacherLoadFailureMessage(overviewQuery.error)}
-          action={{ label: "Retry", onClick: () => overviewQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  if (classesQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-8 min-w-0">
-        <h1 className="sr-only">Overview</h1>
-        <ErrorState
-          heading="Couldn't load your classes"
-          body={teacherLoadFailureMessage(classesQuery.error)}
-          action={{ label: "Retry", onClick: () => classesQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const { stats, atRisk, recentActivity } = overviewQuery.data
-  const classes = classesQuery.data.classes
+/** The screen's real render, once both queries have resolved. Split out from
+ * `Overview()` so the nested `QueryState` above reads as the data-loading
+ * shell it is, rather than burying this much render logic two closures deep. */
+function OverviewLoaded({
+  navigate,
+  overview,
+  classes,
+}: {
+  navigate: ReturnType<typeof useNavigate>
+  overview: OverviewDTO
+  classes: ClassSummary[]
+}) {
+  const { stats, atRisk, recentActivity } = overview
   const papersGraded = stats.find((s) => s.key === "Papers graded")
   const needsEyes = stats.find((s) => s.key === "Need your eyes")
   const needsEyesCount = needsEyes ? Number(needsEyes.value) : null
@@ -154,7 +191,7 @@ export function Overview() {
    */
   if (classes.length === 0 && recentActivity.length === 0) {
     return (
-      <div className="lm-screen flex flex-col gap-8 min-w-0">
+      <>
         <div>
           <div className="text-eyebrow text-ink-faint">
             {today}
@@ -190,12 +227,12 @@ export function Overview() {
           ]}
           footnote="These panels stay empty until there is real work in them. Nothing on this dashboard is filled in with sample data."
         />
-      </div>
+      </>
     )
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-8 min-w-0">
+    <>
       <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
         <div>
           {/*
@@ -451,6 +488,6 @@ export function Overview() {
           Add a class
         </Button>
       </div>
-    </div>
+    </>
   )
 }

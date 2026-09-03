@@ -4,8 +4,9 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Button } from "@/components/ui/button"
 import { Textarea } from "@/components/ui/textarea"
 import { Eyebrow } from "@/components/ui/primitives"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Modal } from "@/components/ui/modal"
 import { activationDecisionFailureMessage, adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useActivationQueue, useDecideActivation } from "@/lib/hooks/useAdminApi"
@@ -36,7 +37,7 @@ import { formatAdminDate } from "../data"
  * asks for a reload, rather than inviting a retry that cannot succeed.
  */
 export function Activations() {
-  const { data, isPending, isError, error } = useActivationQueue()
+  const query = useActivationQueue()
   const [deciding, setDeciding] = useState<{ row: PendingActivation; activate: boolean } | null>(
     null,
   )
@@ -52,34 +53,36 @@ export function Activations() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={3} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load the queue"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.pending.length === 0 ? (
-        <EmptyState
-          marginalia="nothing waiting"
-          heading="The queue is empty"
-          body="Every subscription that has been requested has been decided. New requests appear here as they arrive, oldest first."
-        />
-      ) : (
-        <div className="flex flex-col gap-3">
-          {data.pending.map((row) => (
-            <QueueRow
-              key={row.subscriptionId}
-              row={row}
-              onDecide={(activate) => setDeciding({ row, activate })}
-            />
-          ))}
-        </div>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={3} />
+          </>
+        }
+        error={{ heading: "We couldn't load the queue", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.pending.length === 0}
+        empty={
+          <EmptyState
+            marginalia="nothing waiting"
+            heading="The queue is empty"
+            body="Every subscription that has been requested has been decided. New requests appear here as they arrive, oldest first."
+          />
+        }
+      >
+        {(data) => (
+          <div className="flex flex-col gap-3">
+            {data.pending.map((row) => (
+              <QueueRow
+                key={row.subscriptionId}
+                row={row}
+                onDecide={(activate) => setDeciding({ row, activate })}
+              />
+            ))}
+          </div>
+        )}
+      </QueryState>
 
       {deciding ? (
         <DecisionDialog

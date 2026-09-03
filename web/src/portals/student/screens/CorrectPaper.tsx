@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { FileDrop } from "@/components/ui/file-drop"
 import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import { QueryState } from "@/components/ui/query-state"
 import { CameraCapture } from "@/components/CameraCapture"
 import {
   advanceStage,
@@ -18,6 +19,7 @@ import {
   correctionFailureMessage,
   STREAM_ENDED_WITHOUT_RESULT,
 } from "@/lib/correctionOutcome"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   runCorrection,
   uploadScan,
@@ -26,7 +28,7 @@ import {
 } from "@/lib/hooks/useStudentApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
-import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
+import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
 /** Which source the student is using to produce `scanFile`. */
@@ -227,6 +229,52 @@ function SourceToggle({
           </button>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * The "a run this tab is not streaming" prose panel — a recovered run (mid-
+ * flight or stopped) that this tab did not itself drive. Reads its own phase
+ * from `run` rather than trusting a caller's already-computed one, so the
+ * transitional render (see `CorrectPaper`'s `skeleton` below, which passes
+ * `active.data` before `stranded`'s own poll has answered) and the settled
+ * one agree by construction rather than by two call sites staying in sync.
+ *
+ * Renders as prose and NOT as the stage list, because the stage list is a
+ * claim about which step the pipeline reached and this reader has no such
+ * information: the SSE frames went to a bus with no replay, and the tab that
+ * was reading them is gone. Ticking stages off from a status word would be
+ * the invented progress S-14 rules out.
+ */
+function StrandedRunPanel({ run, onRetry }: { run: UploadRun; onRetry: () => void }) {
+  const phase = runPhase(run)
+  const waiting = phase === "waiting"
+  const stopped = phase === "stopped"
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-pretty text-body-sm text-ink-muted">
+        {waiting
+          ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
+          : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
+      </p>
+      {run.filename ? (
+        <p className="text-body-sm text-ink">
+          <span className="text-ink-muted">Paper</span>{" "}
+          <span className="break-words">{run.filename}</span>
+        </p>
+      ) : null}
+      {stopped ? (
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<ArrowClockwise size={16} />}
+          onClick={onRetry}
+          className="self-start"
+        >
+          Start marking again
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -585,38 +633,44 @@ export function CorrectPaper() {
             </div>
 
             {strandedRun ? (
-              /*
-               * A run this tab is not streaming. It renders as prose and NOT as
-               * the stage list, because the stage list is a claim about which
-               * step the pipeline reached and this reader has no such
-               * information: the SSE frames went to a bus with no replay, and
-               * the tab that was reading them is gone. Ticking stages off from
-               * a status word would be the invented progress S-14 rules out.
-               */
-              <div className="flex flex-col gap-3">
-                <p className="text-pretty text-body-sm text-ink-muted">
-                  {waitingOnServer
-                    ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
-                    : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
-                </p>
-                {strandedRun.filename ? (
-                  <p className="text-body-sm text-ink">
-                    <span className="text-ink-muted">Paper</span>{" "}
-                    <span className="break-words">{strandedRun.filename}</span>
-                  </p>
-                ) : null}
-                {strandedStopped ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<ArrowClockwise size={16} />}
-                    onClick={runPipeline}
-                    className="self-start"
-                  >
-                    Start marking again
-                  </Button>
-                ) : null}
-              </div>
+              <QueryState
+                query={stranded}
+                /*
+                 * `useUploadRun` is `enabled: !!paperId` (see that hook), so
+                 * with no `strandedId` it sits at `pending`/`fetchStatus:
+                 * "idle"` forever — the `idle` trap `query-state.tsx`'s own
+                 * header names. Unreachable here in practice: this branch
+                 * only renders when `strandedRun` is truthy, which (see its
+                 * definition above) only happens when `strandedId` is set —
+                 * and that is exactly what enables `stranded`. `null` rather
+                 * than inventing a state nothing can put the screen into.
+                 */
+                idle={null}
+                /*
+                 * While the fresh poll for THIS `strandedId` is in flight,
+                 * `active.data` already names the same run (`strandedRun`
+                 * falls back to it above, and this branch cannot be reached
+                 * unless it is set) — shown instead of a shimmer skeleton,
+                 * exactly as the pre-`QueryState` code did by falling back to
+                 * it (`stranded.data ?? active.data`).
+                 */
+                skeleton={<StrandedRunPanel run={active.data!} onRetry={runPipeline} />}
+                error={{
+                  /*
+                   * NEW: before this conversion a failed poll here fell back
+                   * silently to `active.data` with no error shown and no way
+                   * to retry beyond a full page reload — the poll's own
+                   * `refetchInterval` kept firing, but a query that has
+                   * settled into `status: "error"` needs a manual `refetch`
+                   * to leave it, which nothing here ever called. `refetch`
+                   * on `QueryState`'s retry button is that manual kick.
+                   */
+                  heading: "Couldn't check on this run",
+                  body: studentLoadFailureMessage,
+                }}
+              >
+                {(run) => <StrandedRunPanel run={run} onRetry={runPipeline} />}
+              </QueryState>
             ) : (
               <ProcessingState
                 stages={stages}

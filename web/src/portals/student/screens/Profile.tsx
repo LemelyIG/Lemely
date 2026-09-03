@@ -6,7 +6,7 @@ import { Chip } from "@/components/ui/chip"
 import { Button } from "@/components/ui/button"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { BarChart } from "@/components/ui/lazy-chart"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Celebrate, CountUp, MilestoneSticker } from "@/components/ui/celebration"
 import { Fire, Snowflake } from "@phosphor-icons/react"
@@ -416,45 +416,59 @@ export function Profile() {
         </p>
       </header>
 
-      {xp.isError ? (
-        <ErrorState
-          heading="Your XP could not be loaded"
-          body="This is a connection problem. Your XP and streak are safe, and nothing has been lost."
-          marginalia="Nothing you earned is lost"
-          action={{ label: "Try again", onClick: () => void xp.refetch() }}
-        />
-      ) : xp.isPending || !xp.data ? (
-        <TrainingLogSkeleton />
-      ) : (
-        <>
-          <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
-            <LevelCard profile={xp.data} />
-            <StreakCard profile={xp.data} />
-          </div>
+      {/*
+       * No `srHeading` here: this screen's own `<h1>{name}</h1>` above
+       * already renders unconditionally, outside this `QueryState` — see the
+       * header above — so a landmark exists in every one of `xp`'s states
+       * with nothing extra needed.
+       *
+       * `me` (`useProfile`) is deliberately left unconverted: it is a
+       * secondary query feeding only the header's `name`, already degrades
+       * gracefully (`name` falls back to the email's local part, then to
+       * "Your profile"), and is not a hand-rolled pending/error branch to
+       * begin with. `xp` is this screen's primary query and the one that
+       * was hand-rolling its own branches, so it is the one converted here.
+       */}
+      <QueryState
+        query={xp}
+        skeleton={<TrainingLogSkeleton />}
+        error={{
+          heading: "Your XP could not be loaded",
+          body: "This is a connection problem. Your XP and streak are safe, and nothing has been lost.",
+          marginalia: "Nothing you earned is lost",
+        }}
+      >
+        {(data) => (
+          <>
+            <div className="grid grid-cols-2 gap-4 max-[900px]:grid-cols-1">
+              <LevelCard profile={data} />
+              <StreakCard profile={data} />
+            </div>
 
-          <section className="flex flex-col gap-3" aria-labelledby="s31-week">
-            <h2 id="s31-week" className="text-display-sm text-ink">
-              This week, by source
-            </h2>
-            <Card>
-              <CardBody>
-                <WeekPanel profile={xp.data} />
-              </CardBody>
-            </Card>
-          </section>
+            <section className="flex flex-col gap-3" aria-labelledby="s31-week">
+              <h2 id="s31-week" className="text-display-sm text-ink">
+                This week, by source
+              </h2>
+              <Card>
+                <CardBody>
+                  <WeekPanel profile={data} />
+                </CardBody>
+              </Card>
+            </section>
 
-          <section className="flex flex-col gap-3" aria-labelledby="s31-calendar">
-            <h2 id="s31-calendar" className="text-display-sm text-ink">
-              The last four weeks
-            </h2>
-            <Card>
-              <CardBody>
-                <CalendarPanel profile={xp.data} />
-              </CardBody>
-            </Card>
-          </section>
-        </>
-      )}
+            <section className="flex flex-col gap-3" aria-labelledby="s31-calendar">
+              <h2 id="s31-calendar" className="text-display-sm text-ink">
+                The last four weeks
+              </h2>
+              <Card>
+                <CardBody>
+                  <CalendarPanel profile={data} />
+                </CardBody>
+              </Card>
+            </section>
+          </>
+        )}
+      </QueryState>
 
       <div className="flex flex-wrap gap-2">
         <Button

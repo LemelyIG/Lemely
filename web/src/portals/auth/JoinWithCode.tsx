@@ -5,8 +5,8 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { ErrorState } from "@/components/ui/state-views"
 import { SkeletonLine } from "@/components/ui/skeleton"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
 import {
@@ -143,51 +143,6 @@ function PreviewLoadingStep() {
   )
 }
 
-/** The preview-lookup failure panel — "invalid code" and "expired code" both
- * land here (see the module docstring for why that is one panel, not a gap).
- * `previewErrorCopy` decides whether the way forward is a fresh code or a
- * retry of the same one. */
-function PreviewErrorStep({
-  error,
-  onDifferentCode,
-  onRetry,
-}: {
-  error: unknown
-  onDifferentCode: () => void
-  onRetry: () => void
-}) {
-  const copy = previewErrorCopy(error)
-  return (
-    <>
-      {/*
-       * `ErrorState`'s own `heading` renders as a styled `<div>`, not an
-       * `<h1>` (`state-views.tsx`) - correct for its usual job of sitting
-       * inside a page that already has one (a portal's nav shell, a section
-       * header). This screen has no such shell: when this branch is what's
-       * on screen, `ErrorState`'s panel *is* the entire page. An `sr-only`
-       * `<h1>` gives a screen-reader user the page-level landmark
-       * QUALITY-BAR's "one h1 per page" rule asks for without touching that
-       * component's established visual contract, which every other caller
-       * still relies on.
-       */}
-      <h1 className="sr-only">{copy.heading}</h1>
-      <ErrorState
-        heading={copy.heading}
-        body={
-          error instanceof ApiError && error.status === 404
-            ? "We couldn't find an invite for that code. Check it and try again."
-            : "We couldn't look up that invite just now. Check your connection and try again."
-        }
-        action={{
-          label: copy.actionLabel,
-          onClick: copy.retryable ? onRetry : onDifferentCode,
-        }}
-        className="px-0 py-2"
-      />
-    </>
-  )
-}
-
 /**
  * The resolved preview — what §G-08 calls "a preview of what they're
  * joining", plus the confirm action. `isSignedIn` alone decides which of
@@ -320,8 +275,55 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
     )
   }
 
+  // What the preview failure means right now — recomputed every render off
+  // `preview.error`, so it stays current without needing to live inside a
+  // ref or effect. Also used (harmlessly) when there is no error yet:
+  // `previewErrorCopy(null)` resolves to its generic, retryable branch, and
+  // nothing reads `errorCopy` unless `preview.status === "error"` anyway.
+  const errorCopy = previewErrorCopy(preview.error)
+
+  /*
+   * `<QueryState>`'s error action always calls `query.refetch()` (see that
+   * component's own contract in `query-state.tsx`) — there is no prop to
+   * point it at a different handler. This screen genuinely needs that: an
+   * invalid or expired code (404) never becomes valid on a second identical
+   * request (`previewErrorCopy`'s own docstring), so its action has to send
+   * the reader back to code entry rather than repeat the same failing
+   * lookup, while a network or server failure is worth retrying as-is.
+   * Wrapping `refetch` on the query object handed to `<QueryState>` routes
+   * the one real click target to the right place without `query-state.tsx`
+   * needing an overridable retry callback it does not have. This is still a
+   * single real query passed through, not two merged into one pseudo-query.
+   */
+  const previewForQueryState: QueryStateQuery<InvitePreview> = {
+    /*
+     * `isFetching`, not just `status`. The pre-conversion screen checked
+     * `preview.isFetching` *ahead* of its error branch, so pressing "Try
+     * again" put the loading step back on screen while the lookup ran.
+     * `QueryState` switches on `status`, which react-query leaves at
+     * `"error"` throughout a background refetch — so without this the retry
+     * button changed nothing at all for a whole round trip, and nothing ever
+     * again if the retry also failed. A button that does not visibly do
+     * anything reads as broken, which is worse than the failure it is
+     * offering to fix.
+     */
+    status: preview.isFetching ? "pending" : preview.status,
+    data: preview.data,
+    error: preview.error,
+    fetchStatus: preview.fetchStatus,
+    refetch: () => (errorCopy.retryable ? preview.refetch() : goBackToEntry()),
+  }
+
   let body: ReactNode
   if (activeCode.length === 0) {
+    // The lookup query is `enabled: false` for an empty code (`useInvitesApi.
+    // ts`), so it sits at `status: "pending", fetchStatus: "idle"` forever —
+    // exactly the case `<QueryState>`'s own `idle` prop exists for. Rather
+    // than route that through `idle` (which would also need this same
+    // component's landmark heading, and `CodeEntryStep` already renders its
+    // own visible `<h1>`), this branch stays a plain conditional outside
+    // `<QueryState>` entirely, matching the screen's original structure: the
+    // query is never consulted while there is no code to look up.
     body = (
       <CodeEntryStep
         code={codeInput}
@@ -329,29 +331,33 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
         onSubmit={handleSubmitCode}
       />
     )
-  } else if (preview.isFetching) {
-    body = <PreviewLoadingStep />
-  } else if (preview.isSuccess) {
-    body = (
-      <InvitePreviewStep
-        preview={preview.data}
-        isSignedIn={session !== null}
-        isRedeeming={redeem.isPending}
-        redeemError={redeem.isError ? redeem.error : null}
-        onConfirmSignedOut={confirmSignedOut}
-        onConfirmSignedIn={confirmSignedIn}
-        onDifferentCode={goBackToEntry}
-      />
-    )
   } else {
-    // preview.isError, or (unreachably, since `enabled` is tied to the same
-    // `activeCode.length === 0` check above) still pending with no data yet.
     body = (
-      <PreviewErrorStep
-        error={preview.error}
-        onDifferentCode={goBackToEntry}
-        onRetry={() => void preview.refetch()}
-      />
+      <QueryState
+        query={previewForQueryState}
+        srHeading="Join with an invite code"
+        skeleton={<PreviewLoadingStep />}
+        error={{
+          heading: errorCopy.heading,
+          retryLabel: errorCopy.actionLabel,
+          body: (err) =>
+            err instanceof ApiError && err.status === 404
+              ? "We couldn't find an invite for that code. Check it and try again."
+              : "We couldn't look up that invite just now. Check your connection and try again.",
+        }}
+      >
+        {(data) => (
+          <InvitePreviewStep
+            preview={data}
+            isSignedIn={session !== null}
+            isRedeeming={redeem.isPending}
+            redeemError={redeem.isError ? redeem.error : null}
+            onConfirmSignedOut={confirmSignedOut}
+            onConfirmSignedIn={confirmSignedIn}
+            onDifferentCode={goBackToEntry}
+          />
+        )}
+      </QueryState>
     )
   }
 

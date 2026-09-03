@@ -203,6 +203,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/routers/reference.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/invites.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_invites.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/client_errors.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/jobs.py" = ["ANN401"]
 "lemely/web/deps.py" = ["ANN401"]
 # SQLAlchemy 2.0 ORM models resolve Mapped[...] annotations at runtime, so the
@@ -304,6 +305,7 @@ module = [
   "lemely.web.schemas_student_classes",
   "lemely.web.schemas_xp",
   "lemely.web.schemas_invites",
+  "lemely.web.schemas_client_errors",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",

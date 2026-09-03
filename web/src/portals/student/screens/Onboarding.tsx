@@ -5,7 +5,9 @@ import { Stepper } from "@/components/ui/stepper"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { usePlacementAvailabilities } from "@/lib/hooks/usePlacementApi"
 import { subjectFor, targetGradesFor, tierForPapers } from "@/lib/reference"
-import { studentSaveFailureMessage } from "@/lib/studentOutcome"
+import { QueryState } from "@/components/ui/query-state"
+import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
   useCompleteOnboarding,
   usePatchStudentProfile,
@@ -67,13 +69,31 @@ import { QuestionnaireStep } from "./onboarding/QuestionnaireStep"
  * their first day could be shown a camelCase key. `lib/studentOutcome.ts` owns
  * the wording now, and its first sentence answers the question they actually
  * have: nothing you typed has been lost.
+ *
+ * ── Loading/error primitives PR, part D ─────────────────────────────────────
+ *
+ * `useStudentProfile()` — the read that seeds this wizard from an existing
+ * profile — had no pending or error branch at all: a failed fetch left
+ * `existing` `undefined` and the seeding effect below silently did nothing,
+ * so a returning student could reach a blank, unseeded wizard with no
+ * indication their earlier answers had failed to load. Finishing from that
+ * state would `PUT` an empty enrolment list over their real one (the route
+ * is a full replace; see `usePutEnrolments`'s own docstring family). The
+ * wizard body is now gated behind `<QueryState>` on that query — a skeleton
+ * while it loads, a real error state with a retry if it fails — so the form
+ * only ever renders once seeding has actually run, or failed visibly enough
+ * to retry rather than silently submit over real data. The step-advancing
+ * mutations below (`patchProfile`, `putEnrolments`, `putConfidenceRatings`,
+ * `completeOnboarding`) are untouched: their `isPending`/error handling is
+ * about saving a step, not about loading the page, and stays exactly as it
+ * was.
  */
 
 type WizardStep = "subjects" | "questionnaire"
 
 export function Onboarding() {
   const navigate = useNavigate()
-  const { data: existing } = useStudentProfile()
+  const profileQuery = useStudentProfile()
   const { data: reference, isLoading: referenceLoading, isError: referenceError, refetch } = useReference()
   const patchProfile = usePatchStudentProfile()
   const putEnrolments = usePutEnrolments()
@@ -92,6 +112,7 @@ export function Onboarding() {
 
   const seeded = useRef(false)
   useEffect(() => {
+    const existing = profileQuery.data
     // `reference` is load-bearing, not decorative: the filter below drops any
     // enrolment whose subject is not in the catalogue, so seeding against an
     // empty catalogue would drop *every* saved enrolment and the student would
@@ -124,7 +145,7 @@ export function Onboarding() {
       weeklyStudyHours: existing.profile.weeklyStudyHours ?? undefined,
       gradeLevel: existing.profile.gradeLevel ?? undefined,
     })
-  }, [existing, reference])
+  }, [profileQuery.data, reference])
 
   const questionnaireSteps = buildQuestionnaireSteps(Object.keys(drafts))
 
@@ -295,6 +316,10 @@ export function Onboarding() {
 
   return (
     <div className="lm-screen mx-auto flex w-full max-w-190 flex-col gap-6">
+      {/* The stepper is chrome, not data: it reflects local wizard state
+          (`wizardStep`) that exists independent of `profileQuery`, so it
+          stays outside `QueryState` and renders in every state rather than
+          popping in only once the profile read resolves. */}
       <Stepper
         steps={[
           { id: 1, label: "Subjects" },
@@ -306,53 +331,76 @@ export function Onboarding() {
         disabled
       />
 
-      {wizardStep === "subjects" ? (
-        <SubjectsStep
-          subjects={reference?.subjects ?? []}
-          sessionMonths={reference?.sessionMonths ?? []}
-          targetGrades={(code) =>
-            targetGradesFor(
-              reference,
-              code,
-              tierForPapers(subjectFor(reference, code), [...(drafts[code]?.papers ?? [])]),
-            )
-          }
-          loading={referenceLoading}
-          loadError={referenceError}
-          onRetry={() => void refetch()}
-          drafts={drafts}
-          onToggleSubject={toggleSubject}
-          onTogglePaper={togglePaper}
-          onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
-          onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
-          onSessionYear={(code, year) => updateDraft(code, { sessionYear: year })}
-          onContinue={handleSubjectsContinue}
-          saving={putEnrolments.isPending}
-          error={error}
-        />
-      ) : (
-        <QuestionnaireStep
-          reference={reference}
-          steps={questionnaireSteps}
-          stepIndex={questionnaireIndex}
-          onBack={() => goToStep(questionnaireIndex - 1)}
-          onSkip={skipCurrent}
-          onClear={clearCurrent}
-          onContinue={advance}
-          onFinish={handleFinish}
-          answers={answers}
-          onSchoolName={(v) => setAnswers((prev) => ({ ...prev, schoolName: v }))}
-          onExternalLessons={(v) => setAnswers((prev) => ({ ...prev, hasExternalLessons: v }))}
-          onWeeklyHours={(v) => setAnswers((prev) => ({ ...prev, weeklyStudyHours: v }))}
-          onGradeLevel={(v) => setAnswers((prev) => ({ ...prev, gradeLevel: v }))}
-          confidenceBySubject={confidenceBySubject}
-          onConfidence={setConfidence}
-          placementChoice={placementChoice}
-          onPlacementChoice={setPlacementChoice}
-          saving={saving}
-          error={error}
-        />
-      )}
+      <QueryState
+        query={profileQuery}
+        srHeading="Onboarding"
+        /* The loaded render is a grid of per-subject cards, so a two-line
+           page header alone would hand the reader a ~60px placeholder and
+           then jump the page several hundred pixels when it resolves — the
+           CLS this whole sweep exists to stop (DESIGN.md §12), and a shift
+           this screen did not have before, since it used to render the
+           wizard immediately. */
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={4} />
+          </>
+        }
+        error={{
+          heading: "We couldn't load your profile",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {() =>
+          wizardStep === "subjects" ? (
+            <SubjectsStep
+              subjects={reference?.subjects ?? []}
+              sessionMonths={reference?.sessionMonths ?? []}
+              targetGrades={(code) =>
+                targetGradesFor(
+                  reference,
+                  code,
+                  tierForPapers(subjectFor(reference, code), [...(drafts[code]?.papers ?? [])]),
+                )
+              }
+              loading={referenceLoading}
+              loadError={referenceError}
+              onRetry={() => void refetch()}
+              drafts={drafts}
+              onToggleSubject={toggleSubject}
+              onTogglePaper={togglePaper}
+              onTargetGrade={(code, grade) => updateDraft(code, { targetGrade: grade })}
+              onSessionMonth={(code, month) => updateDraft(code, { sessionMonth: month })}
+              onSessionYear={(code, year) => updateDraft(code, { sessionYear: year })}
+              onContinue={handleSubjectsContinue}
+              saving={putEnrolments.isPending}
+              error={error}
+            />
+          ) : (
+            <QuestionnaireStep
+              reference={reference}
+              steps={questionnaireSteps}
+              stepIndex={questionnaireIndex}
+              onBack={() => goToStep(questionnaireIndex - 1)}
+              onSkip={skipCurrent}
+              onClear={clearCurrent}
+              onContinue={advance}
+              onFinish={handleFinish}
+              answers={answers}
+              onSchoolName={(v) => setAnswers((prev) => ({ ...prev, schoolName: v }))}
+              onExternalLessons={(v) => setAnswers((prev) => ({ ...prev, hasExternalLessons: v }))}
+              onWeeklyHours={(v) => setAnswers((prev) => ({ ...prev, weeklyStudyHours: v }))}
+              onGradeLevel={(v) => setAnswers((prev) => ({ ...prev, gradeLevel: v }))}
+              confidenceBySubject={confidenceBySubject}
+              onConfidence={setConfidence}
+              placementChoice={placementChoice}
+              onPlacementChoice={setPlacementChoice}
+              saving={saving}
+              error={error}
+            />
+          )
+        }
+      </QueryState>
     </div>
   )
 }

@@ -3,8 +3,9 @@ import { CircleNotch } from "@phosphor-icons/react"
 import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { usePlacementResult } from "@/lib/hooks/usePlacementApi"
@@ -63,143 +64,150 @@ function topicSeverity(accuracy: number): "minor" | "moderate" | "significant" {
 export function PlacementResult() {
   const navigate = useNavigate()
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
-  const { data, isPending, isError, error, refetch } = usePlacementResult(assignmentId)
-  const subjectName = useSubjectName(data?.subjectCode ?? "")
-
-  /* `sr-only` h1 per branch, as in PlacementInvite — see the note there.
-   * Deliberately worded "starting picture", never "result" or "score": S-05
-   * is a baseline, and the heading a screen reader announces first should not
-   * imply a grade the rest of the screen then walks back. */
-  if (isPending) {
-    return (
-      <div className="lm-screen mx-auto flex w-full max-w-180 flex-col gap-6">
-        <h1 className="sr-only">Your placement starting picture</h1>
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (isError || !data) {
-    return (
-      <>
-        <h1 className="sr-only">Your placement starting picture</h1>
-        <ErrorState
-          heading="We couldn't load your starting picture"
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => void refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-  const view = placementResultView(data)
-
-  if (view.kind === "unmarked") {
-    return (
-      <div className="lm-screen mx-auto flex w-full max-w-140 flex-col items-center gap-4 py-16 text-center">
-        {/* A spinner, not a skeleton, and deliberately: the marking has not
-            finished, so there is no shape to reserve. `animate-spin` is a
-            transform, which is the only thing §9.2 permits. */}
-        <CircleNotch size={28} className="animate-spin text-ink-faint" aria-hidden="true" />
-        <h1 className="text-body-lg font-medium text-ink">
-          Marking your {subjectName} placement test
-        </h1>
-        <p className="max-w-[55ch] text-body-md text-ink-muted">
-          This usually only takes a moment. This page will update on its own, so there is no need
-          to refresh.
-        </p>
-        <Button variant="ghost" onClick={() => navigate("/student")}>
-          Come back to this later
-        </Button>
-      </div>
-    )
-  }
-
-  const { strongest, weakest, showWorkingLevel } = view
+  const query = usePlacementResult(assignmentId)
+  const subjectName = useSubjectName(query.data?.subjectCode ?? "")
 
   return (
     <div className="lm-screen mx-auto flex w-full max-w-180 flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-display-md text-ink">Your {subjectName} starting picture</h1>
-        <p className="max-w-[65ch] text-body-md text-ink-muted">
-          This is a baseline, not a grade. It is a snapshot of where you're starting from, so your
-          study plan can target what actually needs work. It gets more accurate the more you
-          practise.
-        </p>
-      </div>
+      <QueryState
+        query={query}
+        /* Deliberately worded "starting picture", never "result" or "score":
+         * S-05 is a baseline, and the heading a screen reader announces
+         * first should not imply a grade the rest of the screen then walks
+         * back. */
+        srHeading="Your placement starting picture"
+        skeleton={<PanelSkeleton />}
+        /* `usePlacementResult` disables itself (`enabled: !!assignmentId`)
+           rather than fetching an empty id — reachable only from a malformed
+           link missing its assignment segment. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to show"
+            heading="No test selected"
+            body="This link is missing which placement test to show. Go back and open your result from the dashboard."
+            action={{ label: "Back to dashboard", onClick: () => navigate("/student") }}
+          />
+        }
+        error={{
+          heading: "We couldn't load your starting picture",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          const view = placementResultView(data)
 
-      {!showWorkingLevel ? (
-        // `info`, not the accent border it used to carry: this is a fact about
-        // how wide the sample was, and on this palette accent reads as alarm.
-        <Card className="border-info bg-info-wash">
-          <CardBody>
-            <p className="max-w-[65ch] text-body-sm text-ink-muted">
-              This test covered a narrow slice of the syllabus, so we're not estimating a working
-              level from it yet. Your strongest and weakest topics are below. A wider sample, from
-              practice and future papers, will sharpen this.
-            </p>
-          </CardBody>
-        </Card>
-      ) : null}
-
-      <div className="grid grid-cols-1 gap-5 min-[720px]:grid-cols-2">
-        <Card>
-          <CardBody className="flex flex-col gap-3">
-            <div className="text-eyebrow text-ink-faint">Strongest topics</div>
-            {strongest.length === 0 ? (
-              <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
-            ) : (
-              <div className="flex flex-col gap-2">
-                {strongest.map((t) => (
-                  <WeaknessChip
-                    key={t.topic}
-                    variant="list"
-                    topic={t.topic}
-                    severity="minor"
-                    meta={`${Math.round(t.accuracy * 100)}% accuracy`}
-                  />
-                ))}
+          if (view.kind === "unmarked") {
+            return (
+              <div className="mx-auto flex w-full max-w-140 flex-col items-center gap-4 py-16 text-center">
+                {/* A spinner, not a skeleton, and deliberately: the marking
+                    has not finished, so there is no shape to reserve.
+                    `animate-spin` is a transform, which is the only thing
+                    §9.2 permits. */}
+                <CircleNotch size={28} className="animate-spin text-ink-faint" aria-hidden="true" />
+                <h1 className="text-body-lg font-medium text-ink">
+                  Marking your {subjectName} placement test
+                </h1>
+                <p className="max-w-[55ch] text-body-md text-ink-muted">
+                  This usually only takes a moment. This page will update on its own, so there is
+                  no need to refresh.
+                </p>
+                <Button variant="ghost" onClick={() => navigate("/student")}>
+                  Come back to this later
+                </Button>
               </div>
-            )}
-          </CardBody>
-        </Card>
+            )
+          }
 
-        <Card>
-          <CardBody className="flex flex-col gap-3">
-            <div className="text-eyebrow text-ink-faint">Weakest topics</div>
-            {weakest.length === 0 ? (
-              <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
-            ) : (
+          const { strongest, weakest, showWorkingLevel } = view
+
+          return (
+            <>
               <div className="flex flex-col gap-2">
-                {weakest.map((t) => (
-                  <WeaknessChip
-                    key={t.topic}
-                    variant="list"
-                    topic={t.topic}
-                    severity={topicSeverity(t.accuracy)}
-                    meta={`${Math.round(t.accuracy * 100)}% accuracy · ${t.lostMarks} of ${t.maximumMarks} marks lost`}
-                  />
-                ))}
+                <h1 className="text-display-md text-ink">Your {subjectName} starting picture</h1>
+                <p className="max-w-[65ch] text-body-md text-ink-muted">
+                  This is a baseline, not a grade. It is a snapshot of where you're starting from,
+                  so your study plan can target what actually needs work. It gets more accurate
+                  the more you practise.
+                </p>
               </div>
-            )}
-          </CardBody>
-        </Card>
-      </div>
 
-      <div className="flex flex-wrap gap-3">
-        {/* Subject-scoped since the build's P4.10 — `data.subjectCode` is the
-            subject this placement was actually taken in. */}
-        <Button
-          variant="accent"
-          size="lg"
-          onClick={() => navigate(`/student/plan/${data.subjectCode}`)}
-        >
-          See your study plan
-        </Button>
-        <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>
-          Back to dashboard
-        </Button>
-      </div>
+              {!showWorkingLevel ? (
+                // `info`, not the accent border it used to carry: this is a fact
+                // about how wide the sample was, and on this palette accent
+                // reads as alarm.
+                <Card className="border-info bg-info-wash">
+                  <CardBody>
+                    <p className="max-w-[65ch] text-body-sm text-ink-muted">
+                      This test covered a narrow slice of the syllabus, so we're not estimating a
+                      working level from it yet. Your strongest and weakest topics are below. A
+                      wider sample, from practice and future papers, will sharpen this.
+                    </p>
+                  </CardBody>
+                </Card>
+              ) : null}
+
+              <div className="grid grid-cols-1 gap-5 min-[720px]:grid-cols-2">
+                <Card>
+                  <CardBody className="flex flex-col gap-3">
+                    <div className="text-eyebrow text-ink-faint">Strongest topics</div>
+                    {strongest.length === 0 ? (
+                      <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {strongest.map((t) => (
+                          <WeaknessChip
+                            key={t.topic}
+                            variant="list"
+                            topic={t.topic}
+                            severity="minor"
+                            meta={`${Math.round(t.accuracy * 100)}% accuracy`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+
+                <Card>
+                  <CardBody className="flex flex-col gap-3">
+                    <div className="text-eyebrow text-ink-faint">Weakest topics</div>
+                    {weakest.length === 0 ? (
+                      <p className="text-body-sm text-ink-faint">Not enough data yet.</p>
+                    ) : (
+                      <div className="flex flex-col gap-2">
+                        {weakest.map((t) => (
+                          <WeaknessChip
+                            key={t.topic}
+                            variant="list"
+                            topic={t.topic}
+                            severity={topicSeverity(t.accuracy)}
+                            meta={`${Math.round(t.accuracy * 100)}% accuracy · ${t.lostMarks} of ${t.maximumMarks} marks lost`}
+                          />
+                        ))}
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+              </div>
+
+              <div className="flex flex-wrap gap-3">
+                {/* Subject-scoped since the build's P4.10 — `data.subjectCode`
+                    is the subject this placement was actually taken in. */}
+                <Button
+                  variant="accent"
+                  size="lg"
+                  onClick={() => navigate(`/student/plan/${data.subjectCode}`)}
+                >
+                  See your study plan
+                </Button>
+                <Button variant="ghost" size="lg" onClick={() => navigate("/student")}>
+                  Back to dashboard
+                </Button>
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/processing-state"
 import { cn } from "@/lib/utils"
 import { CardGridSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
@@ -295,313 +296,323 @@ export function Grading() {
     setSchemeFile(e.target.files?.[0] ?? null)
   }
 
-  if (papersQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-5">
-        <CardGridSkeleton count={6} />
-      </div>
-    )
-  }
-
-  if (papersQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-5">
-        <div className="text-body-lg text-accent-ink">
-          Couldn't load papers: {teacherLoadFailureMessage(papersQuery.error)}
-        </div>
-      </div>
-    )
-  }
-
-  // `papers` is already bound above (the default-selection needs it before the
-  // pending/error early-returns, where `papersQuery.data` may not exist yet).
-  const { tabs } = papersQuery.data
-  const filtered = filterPapers(papers, tab)
-
-  const allCount = Number(tabs.find((t) => t.id === "all")?.count ?? "0")
-  const gradedCount = Number(tabs.find((t) => t.id === "graded")?.count ?? "0")
-  const reviewCount = Number(tabs.find((t) => t.id === "review")?.count ?? "0")
-  const processingCount = Number(tabs.find((t) => t.id === "processing")?.count ?? "0")
-  const progress = allCount > 0 ? gradedCount / allCount : 0
-  const dash = `${(CIRC * progress).toFixed(1)} ${CIRC.toFixed(1)}`
-
   const detail = paperDetailQuery.data
   const detectedFields = detail?.metadata ?? []
   const hasRunStarted = stages.some((s) => s.status !== "pending")
 
   return (
     <div className="lm-screen flex flex-col gap-5">
-      <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
-        <div>
-          <div className="text-eyebrow text-ink-faint">
-            Grading console
-          </div>
-          {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
-              on this route the moment P3.10 chunk b added it to the audit
-              registry, and QUALITY-BAR.md requires one h1 per page. */}
-          <h1 className="text-display-md mt-1.5">
-            Grading {papers.length} paper{papers.length === 1 ? "" : "s"}
-          </h1>
-        </div>
-        <div className="flex-1" />
-        <Button variant="ink" onClick={() => navigate("/teacher/review")}>
-          Open review queue <ForwardArrow />
-        </Button>
-      </div>
+      <QueryState
+        query={papersQuery}
+        srHeading="Grading console"
+        skeleton={<CardGridSkeleton count={6} />}
+        error={{
+          heading: "Couldn't load papers",
+          body: teacherLoadFailureMessage,
+        }}
+      >
+        {({ tabs }) => {
+          const filtered = filterPapers(papers, tab)
 
-      <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
-        {/* Left column */}
-        <div className="flex flex-col gap-4">
-          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
-            <div className="text-eyebrow text-ink-faint">
-              Detected
-            </div>
-            {!activePaperId ? (
-              <div className="text-body-md text-ink-muted mt-[18px]">
-                Upload a scan to see detected fields.
+          const allCount = Number(tabs.find((t) => t.id === "all")?.count ?? "0")
+          const gradedCount = Number(tabs.find((t) => t.id === "graded")?.count ?? "0")
+          const reviewCount = Number(tabs.find((t) => t.id === "review")?.count ?? "0")
+          const processingCount = Number(tabs.find((t) => t.id === "processing")?.count ?? "0")
+          const progress = allCount > 0 ? gradedCount / allCount : 0
+          const dash = `${(CIRC * progress).toFixed(1)} ${CIRC.toFixed(1)}`
+
+          return (
+            <>
+              <div className="flex items-end gap-[18px] pb-[18px] border-b border-rule flex-wrap gap-y-2.5">
+                <div>
+                  <div className="text-eyebrow text-ink-faint">
+                    Grading console
+                  </div>
+                  {/* A real h1, not a styled div: axe's `page-has-heading-one` fired
+                      on this route the moment P3.10 chunk b added it to the audit
+                      registry, and QUALITY-BAR.md requires one h1 per page. */}
+                  <h1 className="text-display-md mt-1.5">
+                    Grading {papers.length} paper{papers.length === 1 ? "" : "s"}
+                  </h1>
+                </div>
+                <div className="flex-1" />
+                <Button variant="ink" onClick={() => navigate("/teacher/review")}>
+                  Open review queue <ForwardArrow />
+                </Button>
               </div>
-            ) : detectedFields.length === 0 ? (
-              // Detection is the first phase of the server-side run, so an
-              // in-flight paper genuinely has no answer yet — say which of the
-              // two it is rather than reporting "none" for both.
-              <div className="text-body-md text-ink-muted mt-[18px]">
-                {detail && (detail.kind === "queued" || detail.kind === "processing")
-                  ? "Reading this scan's exam details…"
-                  : "No metadata detected for this paper."}
-              </div>
-            ) : (
-              <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
-                {detectedFields.map((d) => (
-                  <div key={d.key}>
+
+              <div className="grid grid-cols-1 xl:grid-cols-[340px_1fr] gap-6 items-start">
+                {/* Left column */}
+                <div className="flex flex-col gap-4">
+                  <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
                     <div className="text-eyebrow text-ink-faint">
-                      {d.key}
+                      Detected
                     </div>
-                    <div className="text-data-md text-ink mt-1">{d.value}</div>
+                    {!activePaperId ? (
+                      <div className="text-body-md text-ink-muted mt-[18px]">
+                        Upload a scan to see detected fields.
+                      </div>
+                    ) : detectedFields.length === 0 ? (
+                      // Detection is the first phase of the server-side run, so an
+                      // in-flight paper genuinely has no answer yet — say which of the
+                      // two it is rather than reporting "none" for both.
+                      <div className="text-body-md text-ink-muted mt-[18px]">
+                        {detail && (detail.kind === "queued" || detail.kind === "processing")
+                          ? "Reading this scan's exam details…"
+                          : "No metadata detected for this paper."}
+                      </div>
+                    ) : (
+                      <div className="grid grid-cols-2 gap-x-[14px] gap-y-4 mt-[18px]">
+                        {detectedFields.map((d) => (
+                          <div key={d.key}>
+                            <div className="text-eyebrow text-ink-faint">
+                              {d.key}
+                            </div>
+                            <div className="text-data-md text-ink mt-1">{d.value}</div>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                ))}
-              </div>
-            )}
-          </div>
 
-          <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
-            <svg
-              viewBox="0 0 100 100"
-              className="w-[92px] h-[92px] flex-none -rotate-90"
-            >
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                fill="none"
-                stroke="var(--border)"
-                strokeWidth="10"
-              />
-              <circle
-                cx="50"
-                cy="50"
-                r="42"
-                fill="none"
-                stroke="var(--accent)"
-                strokeWidth="10"
-                strokeLinecap="round"
-                strokeDasharray={dash}
-              />
-            </svg>
-            <div className="flex-1">
-              <div className="text-display-sm text-ink">Auto-grading</div>
-              {processingCount > 0 ? (
-                <div className="text-data-sm text-ink-faint mt-[5px]">
-                  {processingCount} processing
-                </div>
-              ) : null}
-              <div className="flex gap-[22px] mt-[14px]">
-                <div>
-                  <div className="text-display-sm">{gradedCount}</div>
-                  <div className="text-data-sm text-ink-faint mt-[3px]">
-                    AUTO-CONFIRMED
-                  </div>
-                </div>
-                <div>
-                  <div className="text-display-sm text-err">
-                    {reviewCount}
-                  </div>
-                  <div className="text-data-sm text-ink-faint mt-[3px]">
-                    NEED REVIEW
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
-            <div className="text-eyebrow text-ink-faint mb-[14px]">
-              Pipeline
-            </div>
-            {!activePaperId ? (
-              <div className="text-body-md text-ink-muted">Upload a scan to see its pipeline.</div>
-            ) : paperDetailQuery.isPending ? (
-              <div className="text-body-md text-ink-muted">Loading…</div>
-            ) : paperDetailQuery.isError ? (
-              <div className="text-body-md text-accent-ink">
-                Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
-              </div>
-            ) : detail ? (
-              <>
-                {detail.pipeline.map((p) => (
-                  <div key={p.label} className="flex items-center gap-3 py-[9px]">
-                    <span className="flex-none">
-                      <StageGlyph status={PIPE_STATUS[p.state]} />
-                    </span>
-                    <span
-                      className={cn(
-                        "flex-1 text-body-lg",
-                        p.state === "idle" ? "text-ink-faint" : "text-ink",
-                      )}
+                  <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
+                    <svg
+                      viewBox="0 0 100 100"
+                      className="w-[92px] h-[92px] flex-none -rotate-90"
                     >
-                      {p.label}
-                    </span>
-                    <span className="text-data-sm text-ink-faint">{p.count}</span>
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="42"
+                        fill="none"
+                        stroke="var(--border)"
+                        strokeWidth="10"
+                      />
+                      <circle
+                        cx="50"
+                        cy="50"
+                        r="42"
+                        fill="none"
+                        stroke="var(--accent)"
+                        strokeWidth="10"
+                        strokeLinecap="round"
+                        strokeDasharray={dash}
+                      />
+                    </svg>
+                    <div className="flex-1">
+                      <div className="text-display-sm text-ink">Auto-grading</div>
+                      {processingCount > 0 ? (
+                        <div className="text-data-sm text-ink-faint mt-[5px]">
+                          {processingCount} processing
+                        </div>
+                      ) : null}
+                      <div className="flex gap-[22px] mt-[14px]">
+                        <div>
+                          <div className="text-display-sm">{gradedCount}</div>
+                          <div className="text-data-sm text-ink-faint mt-[3px]">
+                            AUTO-CONFIRMED
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-display-sm text-err">
+                            {reviewCount}
+                          </div>
+                          <div className="text-data-sm text-ink-faint mt-[3px]">
+                            NEED REVIEW
+                          </div>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                ))}
-                {detail.kind === "queued" ? (
-                  <div className="text-body-md text-ink-muted mt-2">
-                    Waiting for the marking worker.
+
+                  <div className="bg-paper-raised border border-rule rounded-lg px-5 py-[18px]">
+                    <div className="text-eyebrow text-ink-faint mb-[14px]">
+                      Pipeline
+                    </div>
+                    {/*
+                     * `paperDetailQuery` stays hand-rolled rather than going
+                     * through its own nested `<QueryState>`: it is one query
+                     * read by two panels (Detected above, Pipeline here) with
+                     * two different pending/error treatments — Detected has no
+                     * error branch of its own at all, since a failed detail
+                     * fetch is already reported here — so wrapping only this
+                     * panel would split one query's state across a converted
+                     * and an unconverted render for no gain. It is also
+                     * genuinely independent of `papersQuery` above: the grid
+                     * and tabs render fully without it. `!activePaperId` here
+                     * is this panel's own idle case (`usePaperDetail`'s
+                     * `enabled: !!paperId`), handled by hand for the same
+                     * reason.
+                     */}
+                    {!activePaperId ? (
+                      <div className="text-body-md text-ink-muted">Upload a scan to see its pipeline.</div>
+                    ) : paperDetailQuery.isPending ? (
+                      <div className="text-body-md text-ink-muted">Loading…</div>
+                    ) : paperDetailQuery.isError ? (
+                      <div className="text-body-md text-accent-ink">
+                        Couldn't load pipeline: {teacherLoadFailureMessage(paperDetailQuery.error)}
+                      </div>
+                    ) : detail ? (
+                      <>
+                        {detail.pipeline.map((p) => (
+                          <div key={p.label} className="flex items-center gap-3 py-[9px]">
+                            <span className="flex-none">
+                              <StageGlyph status={PIPE_STATUS[p.state]} />
+                            </span>
+                            <span
+                              className={cn(
+                                "flex-1 text-body-lg",
+                                p.state === "idle" ? "text-ink-faint" : "text-ink",
+                              )}
+                            >
+                              {p.label}
+                            </span>
+                            <span className="text-data-sm text-ink-faint">{p.count}</span>
+                          </div>
+                        ))}
+                        {detail.kind === "queued" ? (
+                          <div className="text-body-md text-ink-muted mt-2">
+                            Waiting for the marking worker.
+                          </div>
+                        ) : null}
+                        {detail.error ? (
+                          // The specific reason, from the server — never a generic
+                          // "something went wrong". A paper that produced no marks has
+                          // to say why, or the teacher has nothing to act on.
+                          <div className="mt-3 pt-3 border-t border-rule flex flex-col gap-2.5 items-start">
+                            <div className="text-body-md text-err">{detail.error}</div>
+                            <Button
+                              variant="ink"
+                              size="sm"
+                              disabled={regrade.isPending}
+                              onClick={() => regrade.mutate(detail.id)}
+                            >
+                              {regrade.isPending ? "Queueing…" : "Try again"}
+                            </Button>
+                            {regrade.isError ? (
+                              <div className="text-body-md text-err">
+                                Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
+                              </div>
+                            ) : null}
+                          </div>
+                        ) : null}
+                      </>
+                    ) : null}
                   </div>
-                ) : null}
-                {detail.error ? (
-                  // The specific reason, from the server — never a generic
-                  // "something went wrong". A paper that produced no marks has
-                  // to say why, or the teacher has nothing to act on.
-                  <div className="mt-3 pt-3 border-t border-rule flex flex-col gap-2.5 items-start">
-                    <div className="text-body-md text-err">{detail.error}</div>
+
+                  <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
+                    <div className="text-body-md font-medium">Upload a scan</div>
+                    <div>
+                      <label
+                        htmlFor="grading-scan-file"
+                        className="text-body-sm font-medium block mb-1.5"
+                      >
+                        Scanned paper
+                      </label>
+                      <input
+                        id="grading-scan-file"
+                        type="file"
+                        accept="application/pdf,image/*"
+                        disabled={uploading}
+                        onChange={handleScanChange}
+                        className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                      />
+                    </div>
+                    <div>
+                      <label
+                        htmlFor="grading-scheme-file"
+                        className="text-body-sm font-medium block mb-1.5"
+                      >
+                        Mark scheme (optional)
+                      </label>
+                      <input
+                        id="grading-scheme-file"
+                        type="file"
+                        accept="application/pdf,image/*"
+                        disabled={uploading}
+                        onChange={handleSchemeChange}
+                        className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                      />
+                      {!schemeFile ? (
+                        <div className="text-data-sm text-ink-faint mt-1.5">
+                          Attach a mark scheme unless you've already uploaded one for this
+                          paper — without either, there is nothing to mark against.
+                        </div>
+                      ) : null}
+                    </div>
                     <Button
                       variant="ink"
                       size="sm"
-                      disabled={regrade.isPending}
-                      onClick={() => regrade.mutate(detail.id)}
+                      onClick={handleUpload}
+                      disabled={uploading || !scanFile}
                     >
-                      {regrade.isPending ? "Queueing…" : "Try again"}
+                      {uploading ? "Uploading…" : "Upload & grade"}
                     </Button>
-                    {regrade.isError ? (
-                      <div className="text-body-md text-err">
-                        Couldn't re-queue: {teacherMutationFailureMessage(regrade.error)}
-                      </div>
+                    {/* Hidden until an upload has actually been attempted: a pending row
+                        sitting under an empty file input would be a promise, not a
+                        report. Errors surface on the stage that failed, so there is no
+                        separate error line here to contradict it. */}
+                    {hasRunStarted ? (
+                      <>
+                        <ProcessingState stages={stages} className="border-t border-rule pt-4" />
+                        {stages.every((s) => s.status === "done") ? (
+                          <div className="text-body-md text-ink-muted">
+                            Marking runs on the server, so it keeps going if you close this
+                            page. Progress is in Pipeline above.
+                          </div>
+                        ) : null}
+                      </>
                     ) : null}
                   </div>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-
-          <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
-            <div className="text-body-md font-medium">Upload a scan</div>
-            <div>
-              <label
-                htmlFor="grading-scan-file"
-                className="text-body-sm font-medium block mb-1.5"
-              >
-                Scanned paper
-              </label>
-              <input
-                id="grading-scan-file"
-                type="file"
-                accept="application/pdf,image/*"
-                disabled={uploading}
-                onChange={handleScanChange}
-                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
-              />
-            </div>
-            <div>
-              <label
-                htmlFor="grading-scheme-file"
-                className="text-body-sm font-medium block mb-1.5"
-              >
-                Mark scheme (optional)
-              </label>
-              <input
-                id="grading-scheme-file"
-                type="file"
-                accept="application/pdf,image/*"
-                disabled={uploading}
-                onChange={handleSchemeChange}
-                className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
-              />
-              {!schemeFile ? (
-                <div className="text-data-sm text-ink-faint mt-1.5">
-                  Attach a mark scheme unless you've already uploaded one for this
-                  paper — without either, there is nothing to mark against.
                 </div>
-              ) : null}
-            </div>
-            <Button
-              variant="ink"
-              size="sm"
-              onClick={handleUpload}
-              disabled={uploading || !scanFile}
-            >
-              {uploading ? "Uploading…" : "Upload & grade"}
-            </Button>
-            {/* Hidden until an upload has actually been attempted: a pending row
-                sitting under an empty file input would be a promise, not a
-                report. Errors surface on the stage that failed, so there is no
-                separate error line here to contradict it. */}
-            {hasRunStarted ? (
-              <>
-                <ProcessingState stages={stages} className="border-t border-rule pt-4" />
-                {stages.every((s) => s.status === "done") ? (
-                  <div className="text-body-md text-ink-muted">
-                    Marking runs on the server, so it keeps going if you close this
-                    page. Progress is in Pipeline above.
+
+                {/* Right column: tabs + papers */}
+                <div className="flex flex-col gap-4">
+                  <div className="flex items-center gap-[14px] flex-wrap">
+                    <div className="flex gap-1 bg-paper-sunk p-1 rounded-md">
+                      {tabs.map((t) => {
+                        const on = tab === t.id
+                        return (
+                          <button
+                            key={t.id}
+                            onClick={() => setTab(t.id)}
+                            className={cn(
+                              "border-0 cursor-pointer text-body-md px-[14px] py-2 rounded-lg",
+                              on
+                                ? "bg-paper-raised text-ink font-medium shadow-sm"
+                                : "bg-transparent text-ink-muted font-normal",
+                            )}
+                          >
+                            {t.label}{" "}
+                            <span
+                              className={cn(
+                                "text-data-sm",
+                                on ? "text-accent-ink" : "text-ink-faint",
+                              )}
+                            >
+                              {t.count}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
                   </div>
-                ) : null}
-              </>
-            ) : null}
-          </div>
-        </div>
 
-        {/* Right column: tabs + papers */}
-        <div className="flex flex-col gap-4">
-          <div className="flex items-center gap-[14px] flex-wrap">
-            <div className="flex gap-1 bg-paper-sunk p-1 rounded-md">
-              {tabs.map((t) => {
-                const on = tab === t.id
-                return (
-                  <button
-                    key={t.id}
-                    onClick={() => setTab(t.id)}
-                    className={cn(
-                      "border-0 cursor-pointer text-body-md px-[14px] py-2 rounded-lg",
-                      on
-                        ? "bg-paper-raised text-ink font-medium shadow-sm"
-                        : "bg-transparent text-ink-muted font-normal",
+                  <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {filtered.length === 0 ? (
+                      <div className="text-body-md text-ink-muted">No papers in this view yet.</div>
+                    ) : (
+                      filtered.map((p) => (
+                        <PaperCard key={p.id} paper={p} onOpen={() => setSelectedPaperId(p.id)} />
+                      ))
                     )}
-                  >
-                    {t.label}{" "}
-                    <span
-                      className={cn(
-                        "text-data-sm",
-                        on ? "text-accent-ink" : "text-ink-faint",
-                      )}
-                    >
-                      {t.count}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {filtered.length === 0 ? (
-              <div className="text-body-md text-ink-muted">No papers in this view yet.</div>
-            ) : (
-              filtered.map((p) => (
-                <PaperCard key={p.id} paper={p} onOpen={() => setSelectedPaperId(p.id)} />
-              ))
-            )}
-          </div>
-        </div>
-      </div>
+                  </div>
+                </div>
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

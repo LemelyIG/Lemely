@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react"
 import { ComponentSection, Group, StateCell, slug } from "./harness"
 import { Button } from "@/components/ui/button"
@@ -17,15 +17,21 @@ import { ProgressBar } from "@/components/ui/progress-bar"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"
 import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/components/ui/skeleton"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
-import { ToastProvider, useToast } from "@/components/ui/toast"
-import { ErrorState } from "@/components/ui/error-state"
+import { ToastCard, ToastProvider, useToast } from "@/components/ui/toast"
+import { EmptyState, ErrorState, RouteFallback } from "@/components/ui/state-views"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
+import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink } from "@/components/ui/skip-link"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { FullPageState } from "@/portals/misc/FullPageState"
+import { OfflineBannerView } from "@/components/ui/offline-banner"
+import { RECONNECTED_TOAST, UPDATED_TOAST } from "@/components/recovery-effects"
 
 /**
  * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
@@ -150,6 +156,19 @@ function StateGrid({
 }
 
 /** Toast needs to be triggered, so it lives behind a button inside the provider. */
+/**
+ * Pin `RouteFallback` to one loading tier. Its two tiers are staged purely by
+ * the `--loading-tier-*` tokens (the delays on `.lm-tier-skeleton` and
+ * `.lm-tier-slow` in index.css), so a wrapper that overrides those tokens
+ * shows a tier at once (`0s`) or holds it off for the life of the page
+ * (`9999s`) without the component needing a preview-only prop. `HELD` is
+ * not `infinite`: an animation-delay has no such keyword.
+ */
+const HELD = "9999s"
+function tierStyle(skeleton: string, slow: string): CSSProperties {
+  return { "--loading-tier-skeleton": skeleton, "--loading-tier-slow": slow } as CSSProperties
+}
+
 function ToastDemo() {
   const { toast } = useToast()
   return (
@@ -247,6 +266,72 @@ function ModalDemo() {
       </Modal>
     </>
   )
+}
+
+/**
+ * `QueryState`'s demo payload: one row list, small enough to read in a
+ * 260px-wide cell. `data.rows` is what `isEmpty`/`empty` and the loaded
+ * render below both key off, the same as a real screen's DTO would be.
+ */
+interface QueryStateDemoData {
+  rows: { id: string; label: string }[]
+}
+
+/** The loaded render every `QueryState` demo cell shares, so the cells below
+ * differ only in `query`, which is the thing being demonstrated. */
+function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
+  return (
+    <ul className="flex w-full flex-col gap-1.5">
+      {rows.map((row) => (
+        <li key={row.id} className="text-body-sm text-ink">
+          {row.label}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * Five hand-built `QueryStateQuery` objects, one per cell below. Hand-built
+ * rather than a real `useQuery()` call because a live query cannot be forced
+ * into "pending forever", "pending and idle" or "failed with a 503" on
+ * demand for a static preview page, and `QueryState`'s whole point is that a
+ * hand-built object satisfies the same structural type a real query result
+ * does, with no cast.
+ */
+const QUERY_STATE_DEMO: Record<
+  "pending" | "idle" | "error" | "empty" | "success",
+  QueryStateQuery<QueryStateDemoData>
+> = {
+  pending: { status: "pending", data: undefined, error: null, refetch: () => undefined },
+  // `enabled: false`'s own resting state: `fetchStatus: "idle"` alongside
+  // `status: "pending"`, which is what makes `QueryState` render `idle`
+  // instead of `skeleton` — see that prop's doc comment.
+  idle: {
+    status: "pending",
+    fetchStatus: "idle",
+    data: undefined,
+    error: null,
+    refetch: () => undefined,
+  },
+  error: {
+    status: "error",
+    data: undefined,
+    error: new ApiError(503, "503 Service Unavailable"),
+    refetch: () => undefined,
+  },
+  empty: { status: "success", data: { rows: [] }, error: null, refetch: () => undefined },
+  success: {
+    status: "success",
+    data: {
+      rows: [
+        { id: "1", label: "0625_w24_qp_41" },
+        { id: "2", label: "0625_s23_qp_22" },
+      ],
+    },
+    error: null,
+    refetch: () => undefined,
+  },
 }
 
 export function App() {
@@ -721,15 +806,148 @@ function AppBody() {
 
           <ComponentSection
             name="ErrorState"
-            summary="Active voice, names what happened and what to do, and offers a retry. The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same presentation."
+            summary="Active voice, names what happened and what to do, and offers a retry. Amber by default (PRODUCT.md's accessibility section: avoid red-heavy error states). The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same full-panel presentation. Loading/error primitives PR, part A merged the kit-only red variant that used to live here (title/message/onRetry) into this component; compact below is what survived that merge."
           >
             <StateCell state="error" provenance="prop">
               <div className="w-full">
                 <ErrorState
-                  title="We couldn't load your papers"
-                  message="The connection dropped partway through. Your work is safe."
-                  onRetry={() => undefined}
+                  heading="We couldn't load your papers"
+                  body="The connection dropped partway through. Your work is safe."
+                  action={{ label: "Try again", onClick: () => undefined }}
                 />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="Compact: a small inline slot for a single field or table cell, not a whole panel. Retry renders as an underlined text button."
+            >
+              <div className="w-full">
+                <ErrorState
+                  compact
+                  heading="Couldn't save this answer"
+                  body="Check your connection and try again."
+                  action={{ label: "Retry", onClick: () => undefined }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="QueryState"
+            summary="Loading/error primitives PR, part A. Takes a react-query result and renders the matching skeleton, error or empty view without every screen composing that switch by hand; see student Overview.tsx for the reference conversion. The cells below use hand-built query objects rather than a live query, so every state is reachable on demand."
+          >
+            <StateCell state="loading" provenance="prop" note="Skeleton is caller-supplied, from loading-shapes.tsx">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.pending}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.body omitted, so it falls back to describeQueryFailure(query.error) — here a fake 503"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.secondaryAction: a second way out, for a failure a retry cannot fix. A detail route opened with a bad id retries into the same failure every time."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{
+                    heading: "Couldn't load the demo panel",
+                    secondaryAction: { label: "Back to the list", onClick: () => {} },
+                  }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.compact: the inline treatment, for a failure that is one line inside a page that still works. Shown beside the full panel above for scale."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel", compact: true }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="An enabled: false query: status pending, fetchStatus idle. Renders the idle prop, not a skeleton that would never resolve on its own."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.idle}
+                  skeleton={<PanelSkeleton />}
+                  idle={
+                    <EmptyState
+                      heading="Pick a class to see this panel"
+                      body="This loads once a class is selected above."
+                    />
+                  }
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="isEmpty true and an empty prop supplied, so it wins over children"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.empty}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                  isEmpty={(data) => data.rows.length === 0}
+                  empty={
+                    <EmptyState
+                      heading="Nothing here yet"
+                      body="Rows appear here once the demo panel has something to show."
+                    />
+                  }
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell state="success" provenance="prop">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.success}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
               </div>
             </StateCell>
           </ComponentSection>
@@ -881,6 +1099,200 @@ function AppBody() {
                     },
                   ]}
                 />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part A1. Nine full-page states, one `ComponentSection` each,
+            all shown in the PORTAL frame: the standalone frame is
+            `min-h-screen` and would blow out the grid this page lays cells
+            out in. `NotFound`/`PortalNotFound` (and every future caller) pick
+            `frame="standalone"` at the real top-level routes; the frame prop
+            itself is exercised nowhere here, on purpose, since a screenshot
+            of a full viewport is not a state cell. */}
+        <Group title="Full-page states">
+          <ComponentSection
+            name="Not found"
+            summary="`not-found`. What `NotFound`/`PortalNotFound` render for a genuinely unmatched path. Amber/neutral tone throughout this family, never red (DESIGN.md's accessibility guidance)."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="not-found" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Crash"
+            summary="`crash`. What `NotFound` renders when `useRouteError` returns something other than a 404 Response, i.e. a render actually threw. Primary goes home, secondary reloads."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="crash" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline"
+            summary="No primary action — there is nothing to navigate to while offline — and the waiting line pulses to show the page is still listening, not stalled. `onRetry` is supplied here only so the secondary Try again control has something to render; the real caller wires it to whatever check brought the reader here."
+          >
+            <StateCell state="error" provenance="prop" note="The waiting line is role=status, polite, not alert">
+              <div className="w-full">
+                <FullPageState variant="offline" frame="portal" onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="New version"
+            summary="`new-version`. A stale build caught by the chunk-load guard: reload picks up the new one and nothing typed is lost, so this is the one variant that gets straight to a single reload action with no secondary."
+          >
+            <StateCell state="default" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="new-version" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Session ended"
+            summary="`session-ended`. `returnTo` (omitted here) carries the reader back to where they were once they sign back in, via `/login?next=...`."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="session-ended" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="No access"
+            summary="`no-access`. A signed-in reader on the wrong role's route. Home is role-aware (`portalPathForRole`), so this always offers somewhere the reader can actually go, never the page they were just refused."
+          >
+            <StateCell state="error" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="no-access" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Service trouble"
+            summary="`service-trouble`. `health` is optional and caller-supplied (no polling happens in this component); omitted, the status row simply does not render. Both reachable statuses shown below; `unknown` renders the same row with a neutral rule-coloured dot."
+          >
+            <StateCell state="error" provenance="prop" note="health.status = 'not-responding'">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "not-responding", checkedSecondsAgo: 12 }}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="health.status = 'responding' — the service answered, but this page still failed to load">
+              <div className="w-full">
+                <FullPageState
+                  variant="service-trouble"
+                  frame="portal"
+                  onRetry={() => undefined}
+                  health={{ status: "responding", checkedSecondsAgo: 3 }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Too many requests"
+            summary="`too-many-requests`. `retryAfterSeconds` is caller-owned countdown state, re-rendered every second; this component only formats it and disables the retry control while it is still above zero. No timer runs inside it."
+          >
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=42 — retry disabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={42}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+            <StateCell state="error" provenance="prop" note="retryAfterSeconds=0 — retry enabled">
+              <div className="w-full">
+                <FullPageState
+                  variant="too-many-requests"
+                  frame="portal"
+                  retryAfterSeconds={0}
+                  onRetry={() => undefined}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Slow load"
+            summary="`slow-load`. Copy-only — no `DoodleKind` of its own — for a page that is taking unusually long rather than one that has actually failed. Renders the animated `Mark` (§9.2's one documented stroke-dashoffset exception) instead of a `Doodle`."
+          >
+            <StateCell state="loading" provenance="prop">
+              <div className="w-full">
+                <FullPageState variant="slow-load" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part D. The loading tiers and the two recovery surfaces. Each
+            tier is pinned with `tierStyle` rather than waited for, since a
+            preview cell that changes on its own after five seconds is not a
+            state cell. The banner and the toasts are their presentational
+            halves: `OfflineBannerView` (no `useOnlineStatus`) and `ToastCard`
+            (no timer, no provider), fed the very copy `RecoveryEffects` fires. */}
+        <Group title="Loading and recovery">
+          <ComponentSection
+            name="Loading tiers"
+            summary="`RouteFallback`, the Suspense fallback around every portal Outlet and lazy screen. Paper only for the first 200 ms, then the layout skeleton, then after 5 s the slow-load state paints over it. Both thresholds are the `--loading-tier-skeleton` and `--loading-tier-slow` tokens; the pre-mount shell in index.html stages on the same two numbers."
+          >
+            <StateCell state="loading" provenance="prop" note="Tier 1, 0 to 200 ms: paper only">
+              <div className="min-h-40 w-full" style={tierStyle(HELD, HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 2, 200 ms to 5 s: layout skeleton">
+              <div className="w-full" style={tierStyle("0s", HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 3, after 5 s: slow load">
+              <div className="w-full" style={tierStyle("0s", "0s")}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline banner"
+            summary="`OfflineBanner`, mounted inside every portal layout's main. A page that already has content keeps it and gets this strip above it while the browser is offline; the page refetches by itself on reconnect. Polite status, amber and neutral, never red."
+          >
+            <StateCell state="error" provenance="prop" note="OfflineBannerView, the hookless half">
+              <div className="w-full">
+                <OfflineBannerView onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Recovery toasts"
+            summary="The two announcements `RecoveryEffects` fires: on the offline-to-online transition after every errored query refetches, and once on the first render after the stale-chunk guard reloaded the page for a new build. Rendered here as `ToastCard`, the toast's markup without its auto-dismiss clock."
+          >
+            <StateCell state="success" provenance="prop" note="After a reconnect">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...RECONNECTED_TOAST} onDismiss={() => undefined} />
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="After a stale-chunk reload">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...UPDATED_TOAST} onDismiss={() => undefined} />
               </div>
             </StateCell>
           </ComponentSection>

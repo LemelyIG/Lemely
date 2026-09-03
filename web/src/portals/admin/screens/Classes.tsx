@@ -5,8 +5,9 @@ import { Eyebrow } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 
@@ -42,7 +43,7 @@ import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
  * half of D1.6, and it is deliberately not padded out with a disabled button.
  */
 export function Classes() {
-  const { data, isPending, isError, error } = useTeacherClasses()
+  const query = useTeacherClasses()
 
   return (
     <div className="flex flex-col gap-6">
@@ -54,104 +55,106 @@ export function Classes() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={5} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your classes"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.classes.length === 0 ? (
-        <EmptyState
-          marginalia="no classes on the register"
-          heading="No classes yet"
-          body="Your teachers create their own classes. Once one does, it appears here with its roll and how the class is doing."
-        />
-      ) : (
-        <Table>
-          <THead>
-            <tr>
-              <TH>Class</TH>
-              <TH>Subject</TH>
-              <TH numeric>Students</TH>
-              {/* Named exactly what it is. It is the mean of each student's
-                  latest paper percentage, and it is emphatically not a class
-                  predicted grade: averaging letter grades invents precision
-                  the data does not support (D3.12). */}
-              <TH numeric>Average mark</TH>
-              <TH numeric>At risk</TH>
-            </tr>
-          </THead>
-          <TBody>
-            {data.classes.map((schoolClass) => (
-              <TR key={schoolClass.id}>
-                <TD>
-                  {/* A real link, not a row click handler: a class detail page
-                      is a destination, and a destination is an anchor. */}
-                  {/* `data-wraps-content-title` opts this out of §6.1's
-                      two-line-clickable-text rule, deliberately and narrowly:
-                      the label is a class name the school typed, so the only
-                      alternatives to wrapping are truncating it or letting it
-                      overflow, and both cost the reader information the product
-                      does not own. See scripts/adapt_audit.mjs. */}
-                  <Link
-                    to={`/teacher/classes/${schoolClass.id}`}
-                    data-wraps-content-title
-                    className="text-body-sm text-accent-ink hover:underline"
-                  >
-                    {schoolClass.label}
-                  </Link>
-                </TD>
-                <TD>
-                  {schoolClass.subjectCode ? (
-                    // A bare syllabus code, so the tone comes from
-                    // `subjectToneForCode` rather than `SubjectTag`'s
-                    // name-based lookup, which would fall back to "other" for
-                    // every class in the school.
-                    <div className="flex items-center gap-2">
-                      <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
-                        {schoolClass.subjectName ?? schoolClass.subjectCode}
-                      </Badge>
-                      {/* Omitted when the name has resolved to the code
-                          itself — a class's `subjectCode` is free text a
-                          teacher typed, so most classes hit the det
-                          registry's default profile (name === code, see
-                          `subjectIdentifier`'s docstring) and this element
-                          would otherwise print the same code twice. */}
-                      {(schoolClass.subjectName ?? schoolClass.subjectCode) !== schoolClass.subjectCode ? (
-                        <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
-                      ) : null}
-                    </div>
-                  ) : (
-                    <span className="text-body-sm text-ink-faint">Not set</span>
-                  )}
-                </TD>
-                <TD numeric>{schoolClass.studentCount}</TD>
-                <TD numeric>
-                  {schoolClass.average === null ? (
-                    // Never 0%. An empty class and a class that scored nothing
-                    // are different facts, and one of them is not a mark.
-                    <span className="text-body-sm text-ink-faint">No papers yet</span>
-                  ) : (
-                    `${Math.round(schoolClass.average)}%`
-                  )}
-                </TD>
-                <TD numeric>
-                  {schoolClass.atRiskCount === null ? (
-                    <span className="text-body-sm text-ink-faint">Unknown</span>
-                  ) : (
-                    schoolClass.atRiskCount
-                  )}
-                </TD>
-              </TR>
-            ))}
-          </TBody>
-        </Table>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{ heading: "We couldn't load your classes", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.classes.length === 0}
+        empty={
+          <EmptyState
+            marginalia="no classes on the register"
+            heading="No classes yet"
+            body="Your teachers create their own classes. Once one does, it appears here with its roll and how the class is doing."
+          />
+        }
+      >
+        {(data) => (
+          <Table>
+            <THead>
+              <tr>
+                <TH>Class</TH>
+                <TH>Subject</TH>
+                <TH numeric>Students</TH>
+                {/* Named exactly what it is. It is the mean of each student's
+                    latest paper percentage, and it is emphatically not a class
+                    predicted grade: averaging letter grades invents precision
+                    the data does not support (D3.12). */}
+                <TH numeric>Average mark</TH>
+                <TH numeric>At risk</TH>
+              </tr>
+            </THead>
+            <TBody>
+              {data.classes.map((schoolClass) => (
+                <TR key={schoolClass.id}>
+                  <TD>
+                    {/* A real link, not a row click handler: a class detail page
+                        is a destination, and a destination is an anchor. */}
+                    {/* `data-wraps-content-title` opts this out of §6.1's
+                        two-line-clickable-text rule, deliberately and narrowly:
+                        the label is a class name the school typed, so the only
+                        alternatives to wrapping are truncating it or letting it
+                        overflow, and both cost the reader information the product
+                        does not own. See scripts/adapt_audit.mjs. */}
+                    <Link
+                      to={`/teacher/classes/${schoolClass.id}`}
+                      data-wraps-content-title
+                      className="text-body-sm text-accent-ink hover:underline"
+                    >
+                      {schoolClass.label}
+                    </Link>
+                  </TD>
+                  <TD>
+                    {schoolClass.subjectCode ? (
+                      // A bare syllabus code, so the tone comes from
+                      // `subjectToneForCode` rather than `SubjectTag`'s
+                      // name-based lookup, which would fall back to "other" for
+                      // every class in the school.
+                      <div className="flex items-center gap-2">
+                        <Badge tone={subjectToneForCode(schoolClass.subjectCode)}>
+                          {schoolClass.subjectName ?? schoolClass.subjectCode}
+                        </Badge>
+                        {/* Omitted when the name has resolved to the code
+                            itself — a class's `subjectCode` is free text a
+                            teacher typed, so most classes hit the det
+                            registry's default profile (name === code, see
+                            `subjectIdentifier`'s docstring) and this element
+                            would otherwise print the same code twice. */}
+                        {(schoolClass.subjectName ?? schoolClass.subjectCode) !== schoolClass.subjectCode ? (
+                          <span className="text-data-sm text-ink-faint">{schoolClass.subjectCode}</span>
+                        ) : null}
+                      </div>
+                    ) : (
+                      <span className="text-body-sm text-ink-faint">Not set</span>
+                    )}
+                  </TD>
+                  <TD numeric>{schoolClass.studentCount}</TD>
+                  <TD numeric>
+                    {schoolClass.average === null ? (
+                      // Never 0%. An empty class and a class that scored nothing
+                      // are different facts, and one of them is not a mark.
+                      <span className="text-body-sm text-ink-faint">No papers yet</span>
+                    ) : (
+                      `${Math.round(schoolClass.average)}%`
+                    )}
+                  </TD>
+                  <TD numeric>
+                    {schoolClass.atRiskCount === null ? (
+                      <span className="text-body-sm text-ink-faint">Unknown</span>
+                    ) : (
+                      schoolClass.atRiskCount
+                    )}
+                  </TD>
+                </TR>
+              ))}
+            </TBody>
+          </Table>
+        )}
+      </QueryState>
 
       <Card>
         <CardBody className="flex flex-col gap-2">

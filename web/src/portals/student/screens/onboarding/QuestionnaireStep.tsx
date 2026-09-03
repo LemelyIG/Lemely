@@ -8,6 +8,7 @@ import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
 import type { ReferenceData } from "@/lib/referenceTypes"
 import { usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { QueryState } from "@/components/ui/query-state"
 import { unavailableMessage } from "../placement/placementData"
 import {
   CONFIDENCE_MAX,
@@ -182,48 +183,60 @@ function PlacementChoiceRow({
   onSelect: () => void
 }) {
   const subjectName = useSubjectName(subjectCode)
-  const { data, isPending } = usePlacementAvailability(subjectCode)
-
-  if (isPending || !data) {
-    return (
-      <div className="flex flex-col gap-1 rounded-lg border border-rule p-4">
-        <span className="text-body-md font-medium text-ink">{subjectName}</span>
-        <span className="text-body-sm text-ink-faint">Checking availability…</span>
-      </div>
-    )
-  }
-
-  if (!data.available) {
-    const message = unavailableMessage(data.reason)
-    return (
-      <div
-        className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-sunk p-4 opacity-70"
-        aria-disabled="true"
-      >
-        <span className="text-body-md font-medium text-ink">{subjectName}</span>
-        <span className="text-body-sm text-ink-muted">{message.heading}</span>
-      </div>
-    )
-  }
+  const query = usePlacementAvailability(subjectCode)
 
   return (
-    <button
-      type="button"
-      aria-pressed={selected}
-      onClick={onSelect}
-      className={`flex flex-col gap-1 rounded-lg border p-4 text-start transition-colors ${
-        selected
-          ? "border-accent bg-paper-raised"
-          : "border-rule bg-paper-raised hover:border-rule-strong"
-      }`}
+    <QueryState
+      query={query}
+      skeleton={
+        <div className="flex flex-col gap-1 rounded-lg border border-rule p-4">
+          <span className="text-body-md font-medium text-ink">{subjectName}</span>
+          <span className="text-body-sm text-ink-faint">Checking availability…</span>
+        </div>
+      }
+      // Inline (`compact`), not the full centred panel: this is one row among
+      // several placement-choice candidates, not a page-sized failure — same
+      // reasoning as the practice generator's preview line.
+      error={{
+        heading: `Couldn't check ${subjectName}'s availability`,
+        compact: true,
+      }}
     >
-      <span className="text-body-md font-medium text-ink">{subjectName}</span>
-      <span className="text-body-sm text-ink-muted">
-        {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · about{" "}
-        {Math.round(data.estimatedMinutes)} minute
-        {Math.round(data.estimatedMinutes) === 1 ? "" : "s"}
-      </span>
-    </button>
+      {(data) => {
+        if (!data.available) {
+          const message = unavailableMessage(data.reason)
+          return (
+            <div
+              className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-sunk p-4 opacity-70"
+              aria-disabled="true"
+            >
+              <span className="text-body-md font-medium text-ink">{subjectName}</span>
+              <span className="text-body-sm text-ink-muted">{message.heading}</span>
+            </div>
+          )
+        }
+
+        return (
+          <button
+            type="button"
+            aria-pressed={selected}
+            onClick={onSelect}
+            className={`flex flex-col gap-1 rounded-lg border p-4 text-start transition-colors ${
+              selected
+                ? "border-accent bg-paper-raised"
+                : "border-rule bg-paper-raised hover:border-rule-strong"
+            }`}
+          >
+            <span className="text-body-md font-medium text-ink">{subjectName}</span>
+            <span className="text-body-sm text-ink-muted">
+              {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · about{" "}
+              {Math.round(data.estimatedMinutes)} minute
+              {Math.round(data.estimatedMinutes) === 1 ? "" : "s"}
+            </span>
+          </button>
+        )
+      }}
+    </QueryState>
   )
 }
 

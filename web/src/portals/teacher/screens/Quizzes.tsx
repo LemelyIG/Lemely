@@ -4,9 +4,10 @@ import { Link, useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip, type ChipProps } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { Input } from "@/components/ui/input"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
@@ -151,38 +152,6 @@ export function Quizzes() {
   const [title, setTitle] = useState("")
   const [subjectCode, setSubjectCode] = useState("")
 
-  if (quizzesQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-5 min-w-0">
-        <h1 className="sr-only">AI quizzes</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={5} />
-      </div>
-    )
-  }
-
-  if (quizzesQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-5 min-w-0">
-        <h1 className="sr-only">AI quizzes</h1>
-        <ErrorState
-          heading="Couldn't load your quizzes"
-          body={teacherLoadFailureMessage(quizzesQuery.error)}
-          action={{ label: "Retry", onClick: () => quizzesQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const quizzes = quizzesQuery.data.quizzes
-  const term = search.trim().toLowerCase()
-  const filtered = term
-    ? quizzes.filter(
-        (q) => q.title.toLowerCase().includes(term) || q.subjectCode.toLowerCase().includes(term),
-      )
-    : quizzes
-  const sorted = [...filtered].sort((a, b) => compareQuizzes(a, b, sortColumn, sortDir, vocabularies))
-
   function toggleSort(column: SortColumn) {
     if (column === sortColumn) {
       setSortDir((d) => (d === 1 ? -1 : 1))
@@ -209,169 +178,208 @@ export function Quizzes() {
 
   return (
     <div className="lm-screen flex flex-col gap-5 min-w-0">
-      <div className="flex items-end gap-[18px] pb-5 border-b border-rule flex-wrap gap-y-3">
-        <div>
-          <div className="text-eyebrow text-ink-faint">
-            {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
-          </div>
-          <h1 className="text-display-lg text-ink mt-1.5">AI quizzes</h1>
-        </div>
-        <div className="flex-1" />
-        {/* The kit's `<Input>`, which requires a label by type rather than by
-            convention — §12 bans placeholder-as-label and the kit enforces it
-            at the prop signature. `labelClassName="sr-only"` keeps this one
-            visually hidden, which is the right call for a search field beside
-            a heading that names what is being searched, and is different from
-            having no label at all. */}
-        <Input
-          type="search"
-          label="Search quizzes"
-          labelClassName="sr-only"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          placeholder="Search quizzes or subjects…"
-          wrapperClassName="w-[240px]"
-        />
-        <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
-          {showCreate ? "Cancel" : "+ New quiz"}
-        </Button>
-      </div>
+      <QueryState
+        query={quizzesQuery}
+        srHeading="AI quizzes"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{
+          heading: "Couldn't load your quizzes",
+          body: teacherLoadFailureMessage,
+        }}
+      >
+        {({ quizzes }) => {
+          const term = search.trim().toLowerCase()
+          const filtered = term
+            ? quizzes.filter(
+                (q) => q.title.toLowerCase().includes(term) || q.subjectCode.toLowerCase().includes(term),
+              )
+            : quizzes
+          const sorted = [...filtered].sort((a, b) =>
+            compareQuizzes(a, b, sortColumn, sortDir, vocabularies),
+          )
 
-      {showCreate ? (
-        <form
-          onSubmit={handleCreate}
-          className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-wrap items-end gap-3"
-        >
-          <Input
-            required
-            label="Quiz title"
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Y11 Thermal physics catch-up"
-            wrapperClassName="flex-1 min-w-[220px]"
-          />
-          <Input
-            required
-            label="Subject code"
-            value={subjectCode}
-            onChange={(e) => setSubjectCode(e.target.value)}
-            placeholder="e.g. 0625"
-            wrapperClassName="w-[160px]"
-          />
-          <Button type="submit" variant="ink" disabled={createQuiz.isPending}>
-            {createQuiz.isPending ? "Creating…" : "Create draft"}
-          </Button>
-          {createQuiz.isError ? (
-            <div className="text-body-sm text-err w-full">
-              Couldn't create the quiz: {teacherMutationFailureMessage(createQuiz.error)}
-            </div>
-          ) : null}
-        </form>
-      ) : null}
+          return (
+            <>
+              <div className="flex items-end gap-[18px] pb-5 border-b border-rule flex-wrap gap-y-3">
+                <div>
+                  <div className="text-eyebrow text-ink-faint">
+                    {quizzes.length} quiz{quizzes.length === 1 ? "" : "zes"}
+                  </div>
+                  <h1 className="text-display-lg text-ink mt-1.5">AI quizzes</h1>
+                </div>
+                <div className="flex-1" />
+                {/* The kit's `<Input>`, which requires a label by type rather than by
+                    convention — §12 bans placeholder-as-label and the kit enforces it
+                    at the prop signature. `labelClassName="sr-only"` keeps this one
+                    visually hidden, which is the right call for a search field beside
+                    a heading that names what is being searched, and is different from
+                    having no label at all. */}
+                <Input
+                  type="search"
+                  label="Search quizzes"
+                  labelClassName="sr-only"
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search quizzes or subjects…"
+                  wrapperClassName="w-[240px]"
+                />
+                <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
+                  {showCreate ? "Cancel" : "+ New quiz"}
+                </Button>
+              </div>
 
-      {quizzes.length === 0 ? (
-        <EmptyState
-          heading="No quizzes yet"
-          body="A quiz is a set of past-paper or AI-generated questions targeted at a grade, assigned to a class, and auto-marked when students submit it. Start one below. You can save it as a draft at any step and come back later."
-          action={{ label: "Create a quiz", onClick: () => setShowCreate(true) }}
-        />
-      ) : (
-        <div
-          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-          tabIndex={0}
-          role="region"
-          aria-label="Your quizzes, scrollable horizontally"
-        >
-          <table className="w-full text-body-md border-collapse">
-            <caption className="sr-only">Your quizzes, sortable by every column</caption>
-            <thead>
-              <tr className="bg-paper-sunk border-b border-rule">
-                {COLUMNS.map((col) => {
-                  const active = col.key === sortColumn
-                  return (
-                    <th
-                      key={col.key}
-                      scope="col"
-                      aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-start px-6 py-2.5"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.key)}
-                        // `whitespace-nowrap` (P6.1): "Target grade" is two
-                        // words in an uppercase eyebrow inside a table header
-                        // cell, and it broke across two lines at every width
-                        // from 320 to 768 — a two-line clickable target, and on
-                        // a sort control the second line looks like a separate
-                        // header. The column can be wider; the label cannot
-                        // break.
-                        className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                      >
-                        {col.label}
-                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                      </button>
-                    </th>
-                  )
-                })}
-                <th scope="col" className="px-6 py-2.5">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.length === 0 ? (
-                <tr>
-                  <td colSpan={COLUMNS.length + 1} className="px-6 py-6 text-ink-muted text-body-md">
-                    No quizzes match "{search}".
-                  </td>
-                </tr>
+              {showCreate ? (
+                <form
+                  onSubmit={handleCreate}
+                  className="bg-paper-raised border border-rule rounded-lg p-6 flex flex-wrap items-end gap-3"
+                >
+                  <Input
+                    required
+                    label="Quiz title"
+                    value={title}
+                    onChange={(e) => setTitle(e.target.value)}
+                    placeholder="e.g. Y11 Thermal physics catch-up"
+                    wrapperClassName="flex-1 min-w-[220px]"
+                  />
+                  <Input
+                    required
+                    label="Subject code"
+                    value={subjectCode}
+                    onChange={(e) => setSubjectCode(e.target.value)}
+                    placeholder="e.g. 0625"
+                    wrapperClassName="w-[160px]"
+                  />
+                  <Button type="submit" variant="ink" disabled={createQuiz.isPending}>
+                    {createQuiz.isPending ? "Creating…" : "Create draft"}
+                  </Button>
+                  {createQuiz.isError ? (
+                    <div className="text-body-sm text-err w-full">
+                      Couldn't create the quiz: {teacherMutationFailureMessage(createQuiz.error)}
+                    </div>
+                  ) : null}
+                </form>
+              ) : null}
+
+              {/*
+               * Empty state stays inside `children` rather than
+               * `QueryState`'s `isEmpty`/`empty`: the header (count, search,
+               * "+ New quiz") and the create form above must render
+               * identically whether or not the list is empty, and `empty` is
+               * one fixed `ReactNode` — duplicating that markup risks the two
+               * copies drifting apart.
+               */}
+              {quizzes.length === 0 ? (
+                <EmptyState
+                  heading="No quizzes yet"
+                  body="A quiz is a set of past-paper or AI-generated questions targeted at a grade, assigned to a class, and auto-marked when students submit it. Start one below. You can save it as a draft at any step and come back later."
+                  action={{ label: "Create a quiz", onClick: () => setShowCreate(true) }}
+                />
               ) : (
-                sorted.map((q) => (
-                  <tr key={q.id} className="border-b border-rule last:border-b-0">
-                    <td className="px-6 py-3.5">
-                      {/* Opts out of §6.1's two-line-clickable rule: a quiz
-                          title is the teacher's own words, and truncating it in
-                          the one column that identifies the row would be worse
-                          than letting it wrap. See scripts/adapt_audit.mjs. */}
-                      <Link
-                        to={`/teacher/quizzes/${q.id}`}
-                        data-wraps-content-title
-                        className="text-ink hover:underline"
-                      >
-                        {q.title}
-                      </Link>
-                      {q.status === "draft" ? (
-                        <div className="text-body-sm text-ink-faint mt-1">
-                          Step {q.builderStep} of 6
-                        </div>
-                      ) : null}
-                    </td>
-                    <td className="px-6 py-3.5 text-data-sm text-ink-faint">
-                      {q.subjectCode}
-                    </td>
-                    <td className="px-6 py-3.5">
-                      <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
-                    </td>
-                    <td className="px-6 py-3.5 text-data-md text-ink">{q.questionCount}</td>
-                    <td className="px-6 py-3.5">
-                      {q.targetGrade ? (
-                        <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
+                <div
+                  className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Your quizzes, scrollable horizontally"
+                >
+                  <table className="w-full text-body-md border-collapse">
+                    <caption className="sr-only">Your quizzes, sortable by every column</caption>
+                    <thead>
+                      <tr className="bg-paper-sunk border-b border-rule">
+                        {COLUMNS.map((col) => {
+                          const active = col.key === sortColumn
+                          return (
+                            <th
+                              key={col.key}
+                              scope="col"
+                              aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                              className="text-start px-6 py-2.5"
+                            >
+                              <button
+                                type="button"
+                                onClick={() => toggleSort(col.key)}
+                                // `whitespace-nowrap` (P6.1): "Target grade" is two
+                                // words in an uppercase eyebrow inside a table header
+                                // cell, and it broke across two lines at every width
+                                // from 320 to 768 — a two-line clickable target, and on
+                                // a sort control the second line looks like a separate
+                                // header. The column can be wider; the label cannot
+                                // break.
+                                className="inline-flex items-center gap-1 whitespace-nowrap text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                              >
+                                {col.label}
+                                {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                              </button>
+                            </th>
+                          )
+                        })}
+                        <th scope="col" className="px-6 py-2.5">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {sorted.length === 0 ? (
+                        <tr>
+                          <td colSpan={COLUMNS.length + 1} className="px-6 py-6 text-ink-muted text-body-md">
+                            No quizzes match "{search}".
+                          </td>
+                        </tr>
                       ) : (
-                        <span className="text-body-sm text-ink-faint">Not set</span>
+                        sorted.map((q) => (
+                          <tr key={q.id} className="border-b border-rule last:border-b-0">
+                            <td className="px-6 py-3.5">
+                              {/* Opts out of §6.1's two-line-clickable rule: a quiz
+                                  title is the teacher's own words, and truncating it in
+                                  the one column that identifies the row would be worse
+                                  than letting it wrap. See scripts/adapt_audit.mjs. */}
+                              <Link
+                                to={`/teacher/quizzes/${q.id}`}
+                                data-wraps-content-title
+                                className="text-ink hover:underline"
+                              >
+                                {q.title}
+                              </Link>
+                              {q.status === "draft" ? (
+                                <div className="text-body-sm text-ink-faint mt-1">
+                                  Step {q.builderStep} of 6
+                                </div>
+                              ) : null}
+                            </td>
+                            <td className="px-6 py-3.5 text-data-sm text-ink-faint">
+                              {q.subjectCode}
+                            </td>
+                            <td className="px-6 py-3.5">
+                              <Chip tone={statusTone(q.status)}>{statusLabel(q.status)}</Chip>
+                            </td>
+                            <td className="px-6 py-3.5 text-data-md text-ink">{q.questionCount}</td>
+                            <td className="px-6 py-3.5">
+                              {q.targetGrade ? (
+                                <GradeBadge grade={q.targetGrade} size="inline" basis="target" />
+                              ) : (
+                                <span className="text-body-sm text-ink-faint">Not set</span>
+                              )}
+                            </td>
+                            <td className="px-6 py-3.5 text-end whitespace-nowrap">
+                              <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
+                                <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
+                              </Button>
+                            </td>
+                          </tr>
+                        ))
                       )}
-                    </td>
-                    <td className="px-6 py-3.5 text-end whitespace-nowrap">
-                      <Button size="sm" variant="secondary" onClick={() => navigate(`/teacher/quizzes/${q.id}`)}>
-                        <>{q.status === "draft" ? "Continue" : "Open"} <ForwardArrow /></>
-                      </Button>
-                    </td>
-                  </tr>
-                ))
+                    </tbody>
+                  </table>
+                </div>
               )}
-            </tbody>
-          </table>
-        </div>
-      )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

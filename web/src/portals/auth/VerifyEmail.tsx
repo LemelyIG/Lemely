@@ -224,6 +224,24 @@ function SignedInPending({ session }: { session: Session }) {
       <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
         <div className="flex flex-col gap-1.5">
           <h1 className="text-display-lg text-ink">Verify your email</h1>
+          {/*
+           * Deliberately NOT routed through `<QueryState>`, and the screen
+           * stays on that gate's allowlist saying so.
+           *
+           * This line is the only thing the profile read feeds, and its
+           * failure already had a designed answer: "the email on your
+           * account" is a complete, true sentence that tells the reader
+           * exactly what to do. The sweep converted this and got a ~200px
+           * centred error panel, under the card's own heading, announcing
+           * that we could not load an email address the screen does not
+           * need — in the slot the resend button has to be visible in. That
+           * is a worse screen than the one it replaced. `QueryState` renders
+           * one treatment per state by design, and the right treatment for
+           * this failure is no error at all.
+           *
+           * The pending skeleton stays: it is the half of the conversion
+           * that was an improvement, and it costs nothing here.
+           */}
           {profile.isPending ? (
             <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
               <span>Confirm</span>

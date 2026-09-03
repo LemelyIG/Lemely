@@ -6,7 +6,8 @@ import { Card, CardBody } from "@/components/ui/card"
 import { Kbd } from "@/components/ui/kbd"
 import { PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ProgressBar } from "@/components/ui/progress-bar"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade, ReviewResultDTO } from "@/lib/flashcardTypes"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
@@ -127,31 +128,53 @@ export function FlashcardReview() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, revealed, finished])
 
-  if (dueQuery.isPending && !sessionCards) {
+  /*
+   * `dueQuery`'s pending/error states only matter before the snapshot above
+   * has ever run — once `sessionCards` is set, this screen deliberately
+   * stops looking at `dueQuery.status` at all (see the snapshot comment):
+   * `useReviewCard`'s own `onSuccess` invalidates the due-session query, and
+   * a background refetch of it failing mid-session must not blank out the
+   * card the student is looking at. `<QueryState>` renders its `children`
+   * whenever `status === "success"`, which would fire on every one of those
+   * background refetches too — so rather than let `<QueryState>` own the
+   * whole render (which would reintroduce exactly that bug), it is scoped to
+   * this one `!sessionCards` gate, matching what the two branches it
+   * replaces already did by hand.
+   *
+   * The `children` callback below can still be invoked once, on the very
+   * render where `dueQuery` first succeeds — but by then the snapshot effect
+   * above has already called `setSessionCards` earlier in that same
+   * function call, and React restarts a component synchronously when it
+   * sees a state update during render, discarding whatever that render
+   * would have returned. So this function exists only to satisfy
+   * `<QueryState>`'s contract; nothing it returns is ever the render a
+   * reader sees, because the next (real) pass has `sessionCards` set and
+   * exits through this `if` before `<QueryState>` is even constructed.
+   */
+  if (!sessionCards) {
     return (
       <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">Flashcard review for {subjectName}</h1>
-        <PageHeaderSkeleton />
-        <PanelSkeleton bodyClassName="h-40" />
+        <QueryState
+          query={dueQuery}
+          srHeading={`Flashcard review for ${subjectName}`}
+          skeleton={
+            <>
+              <PageHeaderSkeleton />
+              <PanelSkeleton bodyClassName="h-40" />
+            </>
+          }
+          error={{
+            heading: "Couldn't load your due cards",
+            body: studentLoadFailureMessage,
+          }}
+        >
+          {() => null}
+        </QueryState>
       </div>
     )
   }
 
-  if (dueQuery.isError && !sessionCards) {
-    return (
-      <>
-        <h1 className="sr-only">Flashcard review for {subjectName}</h1>
-        <ErrorState
-          heading="Couldn't load your due cards"
-          body={studentLoadFailureMessage(dueQuery.error)}
-          action={{ label: "Try again", onClick: () => void dueQuery.refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  if (!sessionCards || sessionCards.length === 0) {
+  if (sessionCards.length === 0) {
     return (
       <>
         <h1 className="sr-only">Flashcard review for {subjectName}</h1>

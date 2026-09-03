@@ -147,6 +147,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/auth/password-reset/request"): PUBLIC,
     ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
+    # PR 1 chunk C: the browser error-report sink. Deliberately unauthenticated
+    # — a signed-out login-page crash must still be reportable, and the route
+    # is rate-limited + size-capped instead (see its own module docstring).
+    ("POST", "/api/client-errors"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
@@ -480,8 +484,8 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     assert len(ROUTES) == len(EXPECTED)
     # 8 auth entrypoints (the original 5 + issue #10's verify-email,
     # password-reset/request, password-reset/confirm) + /api/health + invite
-    # preview.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 10
+    # preview + PR 1 chunk C's client-error sink.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 11
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20
