@@ -124,93 +124,46 @@ function usesQueryState(source: string): boolean {
 }
 
 /*
- * Every screen already converted to `QueryState` as of this PR, seeded by
- * actually running the detector above against the tree on 2026-09-02 — not
- * guessed and not copied from a design doc — with `Overview.tsx` excluded
- * on purpose (see module header). A later PR ("the per-screen sweep") is
- * where these get converted one at a time; each conversion deletes its own
- * entry here rather than the whole list being cleared in one sitting, for
- * the same reason `hallmarkStamp.test.ts` refuses to back-fill 33 stamps at
- * once: a conversion nobody reviewed screen-by-screen is not a conversion,
- * it is this gate lying about the state of the product.
+ * What is left after the per-screen sweep (PR 3).
  *
- * This list may shrink and must never grow. A NEW screen that loads data
- * must use `QueryState` from the day it is written — it has no excuse to
- * land here, because unlike the 53 below it was never hand-rolling its own
- * pending/error branches to begin with.
+ * This list was seeded at 53 entries by running the detector above against
+ * the tree on 2026-09-02. PR 3 converted 50 of them to `QueryState` — each
+ * one read, converted and reviewed screen by screen — and deleted its entry
+ * here as it went. The three below are what survived that sweep, and they
+ * are here for a different reason than the original 53 were: none of them
+ * loads any data at all.
+ *
+ * Each imports exactly one or two *mutation* hooks from `@/lib/hooks/`, which
+ * the detector cannot tell apart from a query export without importing the
+ * hooks layer and inspecting its return type — the over-counting the module
+ * header already predicts, and calls failing safe. `ClassRoster.tsx` is the
+ * clearest case: it renders a class detail it never fetches, reading it from
+ * `useClassDetailContext()`, the outlet context its parent layout fills from
+ * a query the layout owns and gates. Wrapping any of the three in a
+ * `<QueryState>` would mean inventing a query object for a screen that has
+ * none, which is not adoption — it is this gate being told what it wants to
+ * hear.
+ *
+ * This list may shrink and must never grow. A NEW screen that loads data must
+ * use `QueryState` from the day it is written: the pattern now exists, 50
+ * screens use it, and there is no longer any such thing as a screen that
+ * predates it.
  */
 const ALLOWLIST: { path: string; reason: string }[] = [
   {
-    path: "src/components/quiz/QuizTaker.tsx",
-    reason: "shared quiz-taking surface, converted in the per-screen sweep (PR 3)",
-  },
-  { path: "src/portals/admin/screens/Activations.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/Classes.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/PipelineHealth.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/PlatformConsole.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/SchoolDashboard.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/Schools.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/Seats.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/admin/screens/Teachers.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  {
-    path: "src/portals/auth/JoinWithCode.tsx",
-    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
-  },
-  {
     path: "src/portals/auth/SignupDetails.tsx",
-    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+    reason:
+      "loads no data: `useRedeemInvite` is a mutation and `signup` comes from `useAuth()`, not the hooks layer",
   },
   {
-    path: "src/portals/auth/VerifyEmail.tsx",
-    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
-  },
-  { path: "src/portals/parent/screens/ChildOverview.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/parent/screens/Children.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/parent/screens/SubjectDetail.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/parent/screens/Weaknesses.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  {
-    path: "src/portals/settings/DeviceSettings.tsx",
-    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+    path: "src/portals/teacher/screens/ClassRoster.tsx",
+    reason:
+      "loads no data: renders the class detail from `useClassDetailContext()`, which its parent layout fetches and gates; imports only the enrol/remove mutations",
   },
   {
-    path: "src/portals/settings/NotificationSettings.tsx",
-    reason: "route-level surface outside portals/**/screens, converted in the per-screen sweep (PR 3)",
+    path: "src/portals/teacher/screens/CreateFirstClass.tsx",
+    reason: "loads no data: `useCreateClass` is a mutation and the screen is a form",
   },
-  { path: "src/portals/student/screens/Announcements.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/CorrectPaper.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Friends.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Notifications.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Onboarding.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/PaperResult.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Parents.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Profile.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Standings.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/Subject.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/flashcards/FlashcardDecks.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/flashcards/FlashcardReview.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/placement/PlacementInvite.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/placement/PlacementResult.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/practice/PracticeGenerator.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/practice/PracticePrint.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/practice/PracticeResult.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/studyplan/StudyPlanSession.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/student/screens/studyplan/StudyPlanWeek.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Announcements.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/AtRiskList.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/ClassAnalytics.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/ClassDetail.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/ClassRoster.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Classes.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/CreateFirstClass.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Grading.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/MarkSchemes.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Overview.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/QuizBuilder.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/QuizResults.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Quizzes.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/Review.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/ReviewItem.tsx", reason: "converted in the per-screen sweep (PR 3)" },
-  { path: "src/portals/teacher/screens/StudentDetail.tsx", reason: "converted in the per-screen sweep (PR 3)" },
 ]
 
 const ALLOWLISTED_PATHS = new Set(ALLOWLIST.map((entry) => entry.path))
