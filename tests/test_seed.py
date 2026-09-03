@@ -23,15 +23,15 @@ import pytest
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.seed import (
+    CATALOGUE_SUBJECTS,
     DEMO_ACCOUNTS,
     DEMO_PARENT,
     DEMO_PASSWORD,
-    DEMO_SUBJECTS,
     SeedError,
     create_demo_accounts,
-    subjects_to_insert,
+    subjects_to_upsert,
 )
 from lemely.runtime.config import Settings
 from tests.auth_fakes import FakeGoTrueBackend, FakeUserMirror
@@ -77,22 +77,35 @@ def _service(
 # ---------------------------------------------------------------------------
 
 
-class TestSubjectsToInsert:
-    def test_inserts_every_subject_into_an_empty_database(self) -> None:
-        assert subjects_to_insert(set()) == list(DEMO_SUBJECTS)
+class TestSubjectsToUpsert:
+    def test_upserts_every_subject_into_an_empty_database(self) -> None:
+        assert subjects_to_upsert(set()) == list(CATALOGUE_SUBJECTS)
 
-    def test_inserts_nothing_when_all_present(self) -> None:
-        assert subjects_to_insert({s.code for s in DEMO_SUBJECTS}) == []
+    def test_upserts_every_subject_even_when_all_present(self) -> None:
+        assert subjects_to_upsert({s.code for s in CATALOGUE_SUBJECTS}) == list(CATALOGUE_SUBJECTS)
 
-    def test_inserts_only_the_missing_ones(self) -> None:
-        missing = subjects_to_insert({"0625"})
-        assert [s.code for s in missing] == ["0580", "0606"]
+    def test_upserts_every_subject_regardless_of_which_are_missing(self) -> None:
+        assert [s.code for s in subjects_to_upsert({"0625"})] == ["0580", "0606", "0625"]
 
     def test_reference_subjects_are_the_three_the_product_supports(self) -> None:
         # The corpus, the accuracy harness and the syllabus taxonomy are all
         # 0580/0606/0625; a fourth code here would be a claim of support that
         # nothing else in the build backs.
-        assert {s.code for s in DEMO_SUBJECTS} == {"0580", "0606", "0625"}
+        assert {s.code for s in CATALOGUE_SUBJECTS} == {"0580", "0606", "0625"}
+
+
+def test_catalogue_subjects_carry_their_qualification_level() -> None:
+    """0580, 0606 and 0625 are IGCSE syllabuses. The level belongs to the
+    subject (spec D10), not to a question the wizard asks the student."""
+    assert {s.code for s in CATALOGUE_SUBJECTS} == {"0580", "0606", "0625"}
+    assert all(s.qualification_level is QualificationLevel.igcse for s in CATALOGUE_SUBJECTS)
+
+
+def test_reseeding_corrects_a_changed_name_rather_than_skipping_it() -> None:
+    """Insert-if-absent was right when the seeder was the only writer. It is
+    not now: the migration also writes these rows, so a seeder that skips an
+    existing row can never correct one that drifted."""
+    assert subjects_to_upsert({"0580"}) == list(CATALOGUE_SUBJECTS)
 
 
 # ---------------------------------------------------------------------------
