@@ -2,6 +2,7 @@
 import { Link } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole, loginPathForRole } from "@/lib/auth/RequireAuth"
+import { peekExpiredRole } from "@/lib/auth/storage"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { Doodle } from "@/components/ui/doodle"
@@ -184,11 +185,14 @@ export function FullPageStateBody({
   const { session } = useAuth()
   const home = session ? portalPathForRole(session.role) : "/login"
   const homeLabel = session ? "Go to your dashboard" : "Go to sign in"
-  // A live session's own role wins when there is one; `expiredRole` only
-  // matters on `session-ended`, the one variant that can reach this with
-  // `session === null` and still have a role to resolve from (see the
-  // module note above).
-  const signIn = loginPathForRole(session ? session.role : expiredRole)
+  // A live session's own role wins when there is one. With none, the role
+  // of the session that just expired decides between the email form and the
+  // parent's phone sign-in: passed in by `SessionEnded` (which consumed the
+  // flag), or read off the still-pending flag for a caller that did not (a
+  // route-level 401 reaching `route-error.tsx`, a `RequireAuth` no-access
+  // screen rendered mid-expiry). `peekExpiredRole` is a plain read of a
+  // module value, never a consume, so it is safe in a render body.
+  const signIn = loginPathForRole(session ? session.role : (expiredRole ?? peekExpiredRole()))
   const retryDisabled = typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
   const ctx = { home, homeLabel, signIn, returnTo, onRetry, retryDisabled }
 

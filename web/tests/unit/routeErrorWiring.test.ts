@@ -162,3 +162,20 @@ describe("route-error.tsx wiring (Finding 14)", () => {
     expect(body).toContain("setStuck(false)")
   })
 })
+
+describe("error-boundary.tsx — the portal path's reporter applies the same chunk-error exclusion", () => {
+  const boundary = stripComments(
+    readFileSync(join(ROOT, "src/components/ui/error-boundary.tsx"), "utf8"),
+  )
+
+  it("componentDidCatch checks isChunkLoadError before reportClientError", () => {
+    const catchAt = boundary.indexOf("componentDidCatch(")
+    expect(catchAt).toBeGreaterThan(-1)
+    const body = boundary.slice(catchAt, boundary.indexOf("\n  }\n", catchAt))
+    const guardAt = body.indexOf("isChunkLoadError(error)")
+    const reportAt = body.indexOf("reportClientError(")
+    expect(guardAt).toBeGreaterThan(-1)
+    expect(reportAt).toBeGreaterThan(guardAt)
+    expect(body).toMatch(/if \(!isChunkLoadError\(error\)\) \{\s*reportClientError\(/)
+  })
+})

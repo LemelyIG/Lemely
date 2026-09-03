@@ -55,11 +55,10 @@ describe("markSessionExpired / peekSessionExpired / peekExpiredRole / takeSessio
     expect(peekExpiredRole()).toBe("parent")
   })
 
-  it("marks the flag with no role when the caller has none — api.ts's call shape", () => {
-    // `role` is optional precisely so this still compiles and behaves as it
-    // did before this fix: `lib/api.ts`'s silent-refresh-refusal path calls
-    // `markSessionExpired()` bare (out of this PR's file scope to change —
-    // see `storage.ts`'s own `expiredRole` doc comment).
+  it("marks the flag with no role when a caller has none", () => {
+    // `role` is optional so a caller with no role in hand still compiles;
+    // both real call sites today (`RequireAuth.tsx`, `api.ts`) do pass it,
+    // and this pins the fallback the next caller would get.
     markSessionExpired()
     expect(peekSessionExpired()).toBe(true)
     expect(peekExpiredRole()).toBeUndefined()

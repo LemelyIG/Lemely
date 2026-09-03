@@ -98,3 +98,17 @@ describe("mainContainsOfflineBanner — the detector itself, on literals (not re
     expect(mainContainsOfflineBanner(missing)).toBe(false)
   })
 })
+
+describe("OfflineBannerView — Try again is a control only when there is something for it to do", () => {
+  it("renders the button only when onRetry is supplied", () => {
+    const stripped = stripComments(sourceOf("src/components/ui/offline-banner.tsx"))
+    const viewAt = stripped.indexOf("export function OfflineBannerView")
+    expect(viewAt).toBeGreaterThan(-1)
+    const view = stripped.slice(viewAt)
+    // Exactly one <button> in the view, and it sits inside an `onRetry ?`
+    // conditional that renders `null` otherwise — a dead, focusable "Try
+    // again" is worse than none (the rule `FullPageState.tsx` states).
+    expect(view.split("<button").length - 1).toBe(1)
+    expect(view).toMatch(/\{onRetry\s*\?\s*\(?\s*<button[\s\S]*?<\/button>\s*\)?\s*:\s*null\s*\}/)
+  })
+})

@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { isRouteErrorResponse, useLocation, useRouteError } from "react-router-dom"
 import { FullPageState } from "@/portals/misc/FullPageState"
 import { classifyRouteError, type RouteFailure } from "@/lib/routeError"
@@ -74,10 +74,9 @@ function reload(): void {
  * a strictly worse outcome than doing nothing. Unlike `PortalErrorFallback`
  * below, the standalone frame has no `reset()` to re-render in place with
  * either — it is the router's `errorElement`, not an `ErrorBoundary` — so
- * the honest choice here is to omit the action and let `useOnlineStatus` do
- * the recovering: the instant the browser reports `online`, this component
- * re-renders and `classifyRouteError` reclassifies away from `offline` on
- * its own, with no button needed.
+ * the honest choice here is to omit the action and let the `online` event
+ * do the recovering (`useRecoverWhenBackOnline` below), with no button
+ * needed.
  */
 function standaloneOnRetry(variant: RouteFailure["variant"]): (() => void) | undefined {
   if (variant === "offline") return undefined
@@ -140,22 +139,66 @@ const RELOAD_ESCAPE_HATCH_MS = 2000
 function useReloadInProgress(failure: RouteFailure, error: unknown): boolean {
   const [stuck, setStuck] = useState(false)
 
+  // Latched per `error`, not re-derived on every render: `failure.reloading`
+  // comes from `canReloadChunkError`, and the effect below spends that guard
+  // the moment it runs, so a re-derived value would flip to `false` on the
+  // very next incidental re-render (an `online` event, a parent update) and
+  // swap the paper screen for the "reload needed" one long before the escape
+  // hatch below has had its say. Reset only when a different error arrives —
+  // React's documented "adjust state when a prop changes" shape.
+  const [latched, setLatched] = useState({ error, reloading: failure.reloading === true })
+  if (latched.error !== error) {
+    setLatched({ error, reloading: failure.reloading === true })
+  }
+  const reloading = latched.error === error ? latched.reloading : failure.reloading === true
+
   useEffect(() => {
     setStuck(false)
-    if (!failure.reloading) return undefined
+    if (!reloading) return undefined
 
     handleChunkError(error)
 
     const timer = window.setTimeout(() => setStuck(true), RELOAD_ESCAPE_HATCH_MS)
     return () => window.clearTimeout(timer)
-    // `error` and `failure.reloading` are the two things that matter: a
-    // fresh error (or a fresh classification landing on `reloading` again)
-    // is a fresh reload attempt to time-box, nothing else here should
-    // restart it.
+    // `error` and the latched `reloading` are the two things that matter: a
+    // fresh error is a fresh reload attempt to time-box, nothing else here
+    // should restart it.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [error, failure.reloading])
+  }, [error, reloading])
 
-  return failure.reloading === true && !stuck
+  return reloading && !stuck
+}
+
+/**
+ * Recover the `offline` screen by itself the moment the browser reports
+ * `online` again, so the copy's promise ("It will carry on by itself as soon
+ * as you're back online") is true for both ways a reader lands there. A
+ * chunk-load failure recovers through reclassification alone (`online` flips
+ * it to a guarded reload); an `ApiError` with status 0 would otherwise
+ * reclassify to `service-trouble` and wait for a click, so this runs
+ * `recover` for it — `reset` in the portal frame (the boundary tries the
+ * screen again, its queries refetch on mount), a reload in the standalone
+ * frame, where a reload is safe precisely because the browser just said it
+ * is online. Skipped while a guarded reload is already under way, so the
+ * two paths never race each other to `location.reload()`.
+ */
+function useRecoverWhenBackOnline(
+  variant: RouteFailure["variant"],
+  online: boolean,
+  reloading: boolean,
+  recover: () => void,
+): void {
+  const sawOffline = useRef(false)
+  useEffect(() => {
+    if (variant === "offline") {
+      sawOffline.current = true
+      return
+    }
+    if (sawOffline.current && online && !reloading) {
+      sawOffline.current = false
+      recover()
+    }
+  }, [variant, online, reloading, recover])
 }
 
 /** `service-trouble` alone needs the health poll (`useServiceHealth` fires a
@@ -228,6 +271,7 @@ export function RouteErrorScreen() {
   })
 
   const reloading = useReloadInProgress(failure, error)
+  useRecoverWhenBackOnline(failure.variant, online, reloading, reload)
 
   // Called unconditionally regardless of `failure.variant` — rules of hooks —
   // and simply not read unless the variant is `too-many-requests`. Reseeded
@@ -276,6 +320,7 @@ export function PortalErrorFallback({ error, reset }: { error: Error; reset: () 
   })
 
   const reloading = useReloadInProgress(failure, error)
+  useRecoverWhenBackOnline(failure.variant, online, reloading, reset)
 
   const countdown = useCountdown(failure.retryAfterSeconds ?? 0)
 

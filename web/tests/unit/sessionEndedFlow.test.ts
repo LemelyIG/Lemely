@@ -26,8 +26,13 @@ describe("FullPageState.tsx — sign-in resolves through loginPathForRole", () =
     expect(stripped).toMatch(/import\s*\{[^}]*loginPathForRole[^}]*\}\s*from\s*"@\/lib\/auth\/RequireAuth"/)
   })
 
-  it("resolves the sign-in target from the live session's role, falling back to expiredRole", () => {
-    expect(stripped).toContain("loginPathForRole(session ? session.role : expiredRole)")
+  it("resolves the sign-in target from the live session's role, then expiredRole, then the pending flag", () => {
+    // The third fallback (`peekExpiredRole`) covers a caller that never
+    // consumed the flag: a route-level 401 reaching `route-error.tsx`.
+    expect(stripped).toContain(
+      "loginPathForRole(session ? session.role : (expiredRole ?? peekExpiredRole()))",
+    )
+    expect(stripped).toMatch(/import\s*\{[^}]*peekExpiredRole[^}]*\}\s*from\s*"@\/lib\/auth\/storage"/)
   })
 
   it("appends ?next= to the resolved sign-in path through withNext, not a hand-built string", () => {

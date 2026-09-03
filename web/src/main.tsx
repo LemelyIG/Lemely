@@ -60,7 +60,7 @@ window.addEventListener("unhandledrejection", (event) => {
  * latest version" toast that announces a reload this guard caused.
  */
 installStaleChunkReload({
-  guard: new StaleChunkGuard(window.localStorage),
+  guard: new StaleChunkGuard(window.localStorage, { perTab: window.sessionStorage }),
   buildId: currentBuildId(),
   reload: () => window.location.reload(),
 })

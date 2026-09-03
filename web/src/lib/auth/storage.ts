@@ -110,11 +110,12 @@ let expiredSignal = false
  * The role of the session that just expired, alongside `expiredSignal`.
  *
  * `undefined` either because nothing has expired, or because the caller did
- * not pass one — `role` is an optional parameter on `markSessionExpired`
- * precisely so a caller with no role in hand (or, as of this fix, one this
- * PR's scope did not touch — `api.ts`'s silent-refresh-refusal call site
- * still calls it bare; see that call site for why) keeps compiling and
- * behaving exactly as before. `loginPathForRole` treats an unknown role the
+ * not pass one — `role` is an optional parameter on `markSessionExpired` so
+ * a caller with no role in hand still compiles and behaves as before. Both
+ * real call sites today do pass it (`RequireAuth.tsx` from the stranded
+ * session, `api.ts` from the session a refused refresh is about to clear),
+ * so `undefined` here means "nothing expired" in practice; the fallback
+ * exists for the next caller. `loginPathForRole` treats an unknown role the
  * same as any other it does not recognise: the email+password form, which is
  * the only sign-in screen a reader can always use regardless of which role
  * they were.

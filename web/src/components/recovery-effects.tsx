@@ -77,13 +77,15 @@ function findErroredActiveQueries(queryClient: QueryClient): Query[] {
  * moment anything imports this file, including `recoveryEffects.test.ts`
  * importing `shouldAnnounceReconnect` under vitest's `node` environment,
  * where `window` does not exist. `main.tsx`'s own `installStaleChunkReload`
- * call constructs a separate `StaleChunkGuard` instance, which is fine: both
- * wrap the same real `window.localStorage`, so they agree on state without
+ * call constructs a separate `StaleChunkGuard` instance, which is fine: the
+ * guard keeps no state of its own, only what it reads from and writes to
+ * the two storages, and both instances wrap the same real
+ * `window.localStorage` and `window.sessionStorage`, so they agree without
  * needing to be the same object.
  */
 let guard: StaleChunkGuard | null = null
 function getGuard(): StaleChunkGuard {
-  guard ??= new StaleChunkGuard(window.localStorage)
+  guard ??= new StaleChunkGuard(window.localStorage, { perTab: window.sessionStorage })
   return guard
 }
 
@@ -95,6 +97,29 @@ export const RECONNECTED_TOAST: ToastOptions = {
   title: "Reconnected",
   description: "Anything that failed to load has been fetched again.",
   variant: "success",
+}
+
+/** The reconnect toast when the refetch only partly succeeded: the
+ * connection is back, but at least one of the queries that had failed
+ * failed again, so "has been fetched again" would be false for it. */
+export const RECONNECTED_PARTIAL_TOAST: ToastOptions = {
+  title: "Reconnected",
+  description: "Some of what failed to load could not be fetched again yet.",
+  variant: "info",
+}
+
+/**
+ * Which toast, if any, the reconnect refetch has earned once it settles.
+ * `refetchQueries` resolves whether or not the refetches themselves
+ * succeeded, so the count of queries that are no longer in error is what
+ * decides between claiming a full recovery, a partial one, or nothing at
+ * all (every refetch failed again: the reader is not better off, and a
+ * "Reconnected" toast would only contradict the error states still on
+ * screen). Pure, so `recoveryEffects.test.ts` can pin every branch.
+ */
+export function reconnectToastFor(erroredCount: number, recoveredCount: number): ToastOptions | null {
+  if (erroredCount <= 0 || recoveredCount <= 0) return null
+  return recoveredCount >= erroredCount ? RECONNECTED_TOAST : RECONNECTED_PARTIAL_TOAST
 }
 
 export const UPDATED_TOAST: ToastOptions = {
@@ -125,8 +150,16 @@ export function RecoveryEffects() {
         // reader navigated away, or reconnected again before the first
         // refetch finished) — nothing here is otherwise wrong with a toast
         // resolving late, but there is no component left for it to be about.
-        if (!cancelled) toast(RECONNECTED_TOAST)
+        if (cancelled) return
+        const recovered = errored.filter((query) => query.state.status !== "error").length
+        const announcement = reconnectToastFor(errored.length, recovered)
+        if (announcement) toast(announcement)
       })
+      // `refetchQueries` does not reject for a failed refetch (that lands in
+      // the query's own error state, counted above), but a rejection from
+      // anywhere else must not reach `main.tsx`'s `unhandledrejection`
+      // listener as a client-error report about a toast.
+      .catch(() => undefined)
     return () => {
       cancelled = true
     }

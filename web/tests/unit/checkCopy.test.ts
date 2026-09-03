@@ -266,3 +266,37 @@ describe("proseSpans", () => {
     expect(spans.some((s: string) => s.includes("!"))).toBe(false)
   })
 })
+
+describe("text on either side of an interpolation is still copy (verification residual)", () => {
+  it.each([
+    ["<p>Great news! {confident} of {total}</p>"],
+    ["<p>{count} paper{count === 1 ? \"\" : \"s\"} marked! Nice</p>"],
+    ["<p>\n  You got {score} right!\n</p>"],
+    ["<p>Done {fn({ a: 1 })}! Nested braces</p>"],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it("does not read a non-null assertion inside an interpolation as punctuation", () => {
+    expect(findBangs("<p>{value!}</p>")).toHaveLength(0)
+    expect(findBangs("<p>Score {value!} today</p>")).toHaveLength(0)
+  })
+})
+
+describe("aria attributes: spoken ones are copy, referential ones are not", () => {
+  it.each([
+    ['<button aria-label="Close this!" />'],
+    ['<input aria-description="Type your answer!" />'],
+    ['<span aria-roledescription="Slide!" />'],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it.each([
+    ['<div aria-labelledby="heading-one!" />'],
+    ['<div aria-controls="panel! one" />'],
+    ['<div aria-describedby="note! x" />'],
+  ])("allows %s", (source) => {
+    expect(findBangs(source)).toHaveLength(0)
+  })
+})

@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest"
-import { shouldAnnounceReconnect, shouldRefetchOnReconnect } from "@/components/recovery-effects"
+import {
+  RECONNECTED_PARTIAL_TOAST,
+  RECONNECTED_TOAST,
+  reconnectToastFor,
+  shouldAnnounceReconnect, shouldRefetchOnReconnect } from "@/components/recovery-effects"
 
 /*
  * PR 2 part C (recovery effects), pinned.
@@ -40,5 +44,24 @@ describe("shouldRefetchOnReconnect (SHOULD-FIX 12)", () => {
 
   it("skips both the refetch and the toast when nothing active is currently errored", () => {
     expect(shouldRefetchOnReconnect(0)).toBe(false)
+  })
+})
+
+describe("reconnectToastFor — what the settled refetch has earned", () => {
+  it("claims a full recovery only when every errored query left its error state", () => {
+    expect(reconnectToastFor(3, 3)).toBe(RECONNECTED_TOAST)
+  })
+
+  it("claims a partial recovery when some are still in error", () => {
+    expect(reconnectToastFor(3, 1)).toBe(RECONNECTED_PARTIAL_TOAST)
+  })
+
+  it("says nothing when every refetch failed again, or there was nothing to refetch", () => {
+    expect(reconnectToastFor(3, 0)).toBeNull()
+    expect(reconnectToastFor(0, 0)).toBeNull()
+  })
+
+  it("never says 'has been fetched again' unless that is true of all of them", () => {
+    expect(RECONNECTED_PARTIAL_TOAST.description).not.toContain("has been fetched again")
   })
 })

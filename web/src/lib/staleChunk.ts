@@ -86,6 +86,25 @@ const RELOAD_KEY = "lemely:stale-chunk-reload"
 const NOTICE_KEY = "lemely:stale-chunk-notice"
 
 /**
+ * The dev build id's own guard key: the wall-clock time (ms) of the last
+ * reload attempted for `DEV_BUILD_ID`, kept in the per-tab storage (see the
+ * constructor) rather than under `RELOAD_KEY`. A cooldown, not a once-ever
+ * flag, because `vite dev` never changes its build id, so "already reloaded
+ * for this id" can never be reset the way a real deploy resets it.
+ */
+const DEV_RELOAD_KEY = "lemely:stale-chunk-reload-dev"
+
+/**
+ * How long after one dev reload the next is refused. A genuinely broken
+ * lazy module under `vite dev` (a syntax error, a renamed file) fails again
+ * within milliseconds of the reload landing, so a fail-reload-fail chain is
+ * cut on its second link; a later, unrelated dev chunk failure minutes on
+ * still gets its own reload. Only `DEV_BUILD_ID` is bounded this way — a
+ * real build id is bounded by `RELOAD_KEY`, once per id, with no cooldown.
+ */
+const DEV_RELOAD_COOLDOWN_MS = 30_000
+
+/**
  * `currentBuildId()` (`clientErrors.ts`) falls back to this literal outside
  * a real deploy (`vite dev`, and any other environment `__LEMELY_BUILD_ID__`
  * never gets defined in). Every such session shares the same "build id"
@@ -107,7 +126,8 @@ const DEV_BUILD_ID = "dev"
  *    the entire loop guard: a build that is still broken after reloading
  *    (a real bug, not a stale deploy) must fail through to the "new
  *    version" screen instead of reloading forever. Never written for
- *    `DEV_BUILD_ID` — see `reloadedThisLoad` below.
+ *    `DEV_BUILD_ID`, which is bounded by `DEV_RELOAD_KEY` in the per-tab
+ *    storage instead — see `canReload` below.
  *  - `NOTICE_KEY` holds the *stale* build id `tryReload` reloaded away
  *    from, so `consumeReloadNotice` can tell a genuine recovery (the app
  *    is now running a different build than the one that failed) apart from
@@ -127,32 +147,38 @@ export class StaleChunkGuard {
   private readonly storage: ChunkGuardStorage
 
   /**
-   * The in-memory half of the `DEV_BUILD_ID` special case: `vite dev` never
-   * changes build ids across a reload, so persisted storage can never tell
-   * "already reloaded once this load" apart from "already reloaded once,
-   * ever, on this origin" for that id. Scoped to this instance (which lives
-   * exactly as long as one real page load — a reload creates a fresh JS
-   * context and a fresh `StaleChunkGuard`), so it resets exactly when a
-   * genuine new load should get a fresh chance, and never survives a reload
-   * to block the next one the way a persisted key would.
+   * Where `DEV_RELOAD_KEY` lives: `window.sessionStorage` in the real app
+   * (`main.tsx`, `recovery-effects.tsx`), which survives a reload — so a
+   * fail-reload-fail chain in `vite dev` is still cut — but dies with the
+   * tab, so it can never poison a browser profile the way the pre-fix
+   * `localStorage` write did. Defaults to `storage` itself when a caller
+   * (or a test) does not supply one.
    */
-  private reloadedThisLoad = false
+  private readonly perTab: ChunkGuardStorage
 
-  constructor(storage: ChunkGuardStorage) {
+  /** Injectable clock for the dev cooldown, so a test can move time. */
+  private readonly now: () => number
+
+  constructor(
+    storage: ChunkGuardStorage,
+    options: { perTab?: ChunkGuardStorage; now?: () => number } = {},
+  ) {
     this.storage = storage
+    this.perTab = options.perTab ?? storage
+    this.now = options.now ?? Date.now
   }
 
-  private read(key: string): string | null {
+  private read(key: string, store: ChunkGuardStorage = this.storage): string | null {
     try {
-      return this.storage.getItem(key)
+      return store.getItem(key)
     } catch {
       return null
     }
   }
 
-  private write(key: string, value: string): void {
+  private write(key: string, value: string, store: ChunkGuardStorage = this.storage): void {
     try {
-      this.storage.setItem(key, value)
+      store.setItem(key, value)
     } catch {
       // Swallowed — see the class doc above.
     }
@@ -166,6 +192,18 @@ export class StaleChunkGuard {
     }
   }
 
+  /** Is the dev cooldown still running? `true` while a dev reload attempted
+   * less than `DEV_RELOAD_COOLDOWN_MS` ago is recorded in the per-tab
+   * storage; an unreadable or malformed value counts as "no recent reload",
+   * the same degrade-to-no-guard rule every other read here follows. */
+  private devCoolingDown(): boolean {
+    const raw = this.read(DEV_RELOAD_KEY, this.perTab)
+    if (raw === null) return false
+    const last = Number(raw)
+    if (!Number.isFinite(last)) return false
+    return this.now() - last < DEV_RELOAD_COOLDOWN_MS
+  }
+
   /**
    * Would `tryReload(buildId)` reload right now? A pure read with no side
    * effect — safe to call from a render body (`classifyRouteError`,
@@ -173,13 +211,14 @@ export class StaleChunkGuard {
    * itself, which writes storage and is meant to be followed by an actual
    * `location.reload()`, is not.
    *
-   * `DEV_BUILD_ID` is always eligible by persisted-storage standards (see
-   * the class doc above for why persisting it at all would be a one-way
-   * trip) — bounded instead by `reloadedThisLoad`, so a dev session still
-   * cannot reload more than once per real page load.
+   * `DEV_BUILD_ID` never consults `RELOAD_KEY` (see the class doc above for
+   * why persisting it there would be a one-way trip) — it is bounded by the
+   * `DEV_RELOAD_COOLDOWN_MS` cooldown in the per-tab storage instead, which
+   * survives the reload it guards against (so a fail-reload-fail chain stops
+   * on its second link) and dies with the tab.
    */
   canReload(buildId: string): boolean {
-    if (buildId === DEV_BUILD_ID) return !this.reloadedThisLoad
+    if (buildId === DEV_BUILD_ID) return !this.devCoolingDown()
     return this.read(RELOAD_KEY) !== buildId
   }
 
@@ -195,7 +234,7 @@ export class StaleChunkGuard {
   tryReload(buildId: string): boolean {
     if (!this.canReload(buildId)) return false
     if (buildId === DEV_BUILD_ID) {
-      this.reloadedThisLoad = true
+      this.write(DEV_RELOAD_KEY, String(this.now()), this.perTab)
     } else {
       this.write(RELOAD_KEY, buildId)
     }

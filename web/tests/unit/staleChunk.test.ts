@@ -141,41 +141,63 @@ describe("StaleChunkGuard.canReload", () => {
 })
 
 describe('StaleChunkGuard and the "dev" build id (SHOULD-FIX 8)', () => {
-  it("is not permanently poisoned by a single reload — the same guard can reload for \"dev\" again once bounded per instance is respected", () => {
-    // Before the fix, `tryReload("dev")` behaved exactly like any other
-    // build id: it wrote RELOAD_KEY = "dev" to storage and every later call
-    // on that origin — including a fresh page load in a fresh `vite dev`
-    // session, since the id never changes — read that same key back and
-    // refused forever.
-    const storage = fakeStorage()
-    const guard = new StaleChunkGuard(storage)
-    expect(guard.tryReload("dev")).toBe(true)
+  // `vite dev` never changes its build id, so "reloaded once for this id"
+  // can never be reset by a deploy the way a real id's `RELOAD_KEY` is.
+  // The dev id is bounded by a per-tab cooldown instead: one reload, then
+  // none for `DEV_RELOAD_COOLDOWN_MS` (30 s), tracked in the per-tab storage
+  // so it survives the reload it guards against and dies with the tab.
+  const DEV_KEY = "lemely:stale-chunk-reload-dev"
+  const clock = (start: number) => {
+    let t = start
+    return { now: () => t, advance: (ms: number) => (t += ms) }
+  }
 
-    // The bound is per guard instance ("this page load"), not per persisted
-    // key: a fresh instance over the SAME storage (simulating the reload
-    // that just happened landing on a fresh JS context) is allowed again.
-    const guardAfterReload = new StaleChunkGuard(storage)
-    expect(guardAfterReload.canReload("dev")).toBe(true)
-    expect(guardAfterReload.tryReload("dev")).toBe(true)
+  it("cuts a fail-reload-fail chain on its second link — a fresh instance over the same per-tab storage is refused inside the cooldown", () => {
+    const perTab = fakeStorage()
+    const time = clock(1_000)
+    const beforeReload = new StaleChunkGuard(fakeStorage(), { perTab, now: time.now })
+    expect(beforeReload.tryReload("dev")).toBe(true)
+
+    // The reload lands: a fresh JS context, a fresh guard, the same tab.
+    time.advance(400)
+    const afterReload = new StaleChunkGuard(fakeStorage(), { perTab, now: time.now })
+    expect(afterReload.canReload("dev")).toBe(false)
+    expect(afterReload.tryReload("dev")).toBe(false)
   })
 
-  it("is still bounded to once per page load — a second dev chunk failure on the SAME instance is refused", () => {
-    const guard = new StaleChunkGuard(fakeStorage())
+  it("allows a later, unrelated dev chunk failure its own reload once the cooldown has passed", () => {
+    const perTab = fakeStorage()
+    const time = clock(1_000)
+    const guard = new StaleChunkGuard(fakeStorage(), { perTab, now: time.now })
     expect(guard.tryReload("dev")).toBe(true)
-    expect(guard.tryReload("dev")).toBe(false)
+    time.advance(29_999)
     expect(guard.canReload("dev")).toBe(false)
+    time.advance(1)
+    expect(guard.canReload("dev")).toBe(true)
+    expect(guard.tryReload("dev")).toBe(true)
   })
 
-  it("never persists RELOAD_KEY for the dev build id, unlike a real build id", () => {
+  it("keeps the dev bound in the per-tab storage, never under RELOAD_KEY in the persistent one", () => {
     const storage = fakeStorage()
-    const guard = new StaleChunkGuard(storage)
+    const perTab = fakeStorage()
+    const guard = new StaleChunkGuard(storage, { perTab, now: () => 5_000 })
     expect(guard.tryReload("dev")).toBe(true)
-    // A guard reading the same storage for a REAL build id must not see
-    // itself as already-spent because of the dev reload above — proof that
-    // RELOAD_KEY was never written to "dev" in the first place.
+    expect(perTab.getItem(DEV_KEY)).toBe("5000")
+    expect(storage.getItem(DEV_KEY)).toBeNull()
+    expect(storage.getItem("lemely:stale-chunk-reload")).toBeNull()
+    // A guard reading the same persistent storage for a REAL build id must
+    // not see itself as already spent because of the dev reload above.
     const otherGuard = new StaleChunkGuard(storage)
     expect(otherGuard.canReload("build-a")).toBe(true)
     expect(otherGuard.tryReload("build-a")).toBe(true)
+  })
+
+  it("falls back to the persistent storage for the dev bound when no per-tab storage is supplied", () => {
+    const storage = fakeStorage()
+    const guard = new StaleChunkGuard(storage, { now: () => 5_000 })
+    expect(guard.tryReload("dev")).toBe(true)
+    expect(storage.getItem(DEV_KEY)).toBe("5000")
+    expect(guard.canReload("dev")).toBe(false)
   })
 
   it("recovers from storage that was already poisoned by the pre-fix behaviour", () => {
@@ -184,9 +206,18 @@ describe('StaleChunkGuard and the "dev" build id (SHOULD-FIX 8)', () => {
     // guard must not defer to that stale value for the dev id at all.
     const storage = fakeStorage()
     storage.setItem("lemely:stale-chunk-reload", "dev")
-    const guard = new StaleChunkGuard(storage)
+    const guard = new StaleChunkGuard(storage, { perTab: fakeStorage(), now: () => 1 })
     expect(guard.canReload("dev")).toBe(true)
     expect(guard.tryReload("dev")).toBe(true)
+  })
+
+  it("treats a malformed or throwing per-tab value as no recent reload", () => {
+    const perTab = fakeStorage()
+    perTab.setItem(DEV_KEY, "not-a-number")
+    expect(new StaleChunkGuard(fakeStorage(), { perTab, now: () => 1 }).canReload("dev")).toBe(true)
+    const throwing = new StaleChunkGuard(fakeStorage(), { perTab: fakeStorage({ throwing: true }), now: () => 1 })
+    expect(throwing.canReload("dev")).toBe(true)
+    expect(throwing.tryReload("dev")).toBe(true)
   })
 })
 

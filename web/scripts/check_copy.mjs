@@ -49,11 +49,16 @@
  *     so a template literal that itself spans multiple lines is NOT
  *     covered, same limitation `stripComments` already has for `//`. A
  *     string that is a `className`/`class`/`href`/`src`/`style`/`aria-*`/
- *     `id` attribute's value, or that looks like a shell command
- *     (`"grep -v '! ' file"`), is excluded: neither is prose, however much
- *     it may contain a `!` shaped like punctuation.
- *   - A JSX text node — the text directly between `>` and `<`, excluding a
- *     `{...}` expression child — IS covered whether it sits on one line or
+ *     `id` attribute's value, or of any `aria-*` attribute that names an
+ *     element rather than describing it (`aria-labelledby`, `aria-controls`;
+ *     `aria-label`, `aria-description`, `aria-placeholder`,
+ *     `aria-roledescription` and `aria-valuetext` are prose a screen reader
+ *     speaks, and stay covered), or that looks like a shell command
+ *     (`"grep -v '! ' file"`), is excluded: none of those is prose, however
+ *     much it may contain a `!` shaped like punctuation.
+ *   - A JSX text node — the text directly between `>` and `<`, with any
+ *     `{...}` expression child blanked out but the text on either side of it
+ *     kept — IS covered whether it sits on one line or
  *     prettier has wrapped it across several, e.g.
  *     `<p>\n  Nice work!\n</p>`. The whole comment-stripped file is scanned
  *     for these, not one line at a time, specifically so a wrapped text
@@ -242,7 +247,8 @@ export const EXCLAMATION_ALLOWLIST = []
  * the router, not a sentence a reader sees. Checked against the text on the
  * line immediately before a candidate string literal's opening quote.
  */
-const ATTRIBUTE_VALUE = /\b(?:className|class|href|src|style|id|aria-[\w-]+)\s*=\s*$/i
+const ATTRIBUTE_VALUE =
+  /\b(?:className|class|href|src|style|id|aria-(?!label\b|description\b|placeholder\b|roledescription\b|valuetext\b)[\w-]+)\s*=\s*$/i
 
 /**
  * Does this string look like a shell command / flag list rather than prose?
@@ -408,8 +414,14 @@ function lineForOffset(lineStarts, offset) {
  */
 export function jsxTextSpans(strippedSource) {
   const spans = []
-  for (const match of strippedSource.matchAll(/>([^<>{}]*)</gs)) {
-    const text = match[1]
+  for (const match of strippedSource.matchAll(/>([^<>]*)</gs)) {
+    // A `{...}` expression child is code, not copy, but the text on either
+    // side of it is still the same text node (`Great news! {n} of {total}`),
+    // so the interpolation is blanked in place rather than the whole node
+    // being skipped. Nested braces (`{fn({ a: 1 })}`) are blanked from the
+    // inside out; an unbalanced `{` is left alone and simply never counts as
+    // sentence punctuation on its own.
+    const text = blankBraces(match[1])
     if (text.trim() === "" || !/[A-Za-z]/.test(text)) continue
 
     const openIndex = match.index
@@ -426,6 +438,18 @@ export function jsxTextSpans(strippedSource) {
     spans.push({ start: openIndex + 1, text })
   }
   return spans
+}
+
+/** Replace every balanced `{...}` group in `text` with spaces of the same
+ * length, innermost first, so offsets into `text` are unchanged. */
+function blankBraces(text) {
+  let out = text
+  let previous
+  do {
+    previous = out
+    out = out.replace(/\{[^{}]*\}/g, (match) => " ".repeat(match.length))
+  } while (out !== previous)
+  return out
 }
 
 /** Does `span` contain a `!` that reads as sentence punctuation? See the
