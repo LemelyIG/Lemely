@@ -38,6 +38,11 @@ class ComponentThreshold(TimestampMixin, Base):
             name="uq_component_thresholds_identity",
         ),
         sa.Index("ix_component_thresholds_lookup", "board", "subject_code", "session_year"),
+        #: Every percentage divides by ``max_mark``
+        #: (:func:`lemely.io.grade_boundaries._percentages`); zero raises and a
+        #: negative value produces a nonsensical, grade-inflating percentage.
+        #: Added in ``0026_component_max_mark_positive``.
+        sa.CheckConstraint("max_mark > 0", name="ck_component_thresholds_max_mark_positive"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

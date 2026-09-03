@@ -88,17 +88,34 @@ def _grade_value(value: str, line: str) -> int | None:
         return None
 
 
-def _grade_thresholds(grades: list[str], values: list[str], line: str) -> dict[str, int]:
+def _grade_thresholds(
+    grades: list[str], values: list[str], line: str
+) -> tuple[dict[str, int], bool]:
     """Zip a header's grades against a row's values.
 
-    Not-applicable cells are dropped rather than raised or stored as a sentinel.
+    Not-applicable cells (a recognised dash/"N/A" marker) are dropped rather
+    than raised or stored as a sentinel — that is a real, intentional absence
+    ("not applicable at this tier").
+
+    Returns ``(thresholds, had_unrecognised_cell)``. The second element is
+    True when at least one cell was neither a parseable integer nor a
+    recognised not-applicable marker — i.e. ``_grade_value`` fell through to
+    its "unrecognised glyph" branch and logged a warning. That case must stay
+    distinguishable from a genuine dash: a garbled cell is a parse failure the
+    ingest cannot silently trust, while a dash is Cambridge's own statement
+    that the grade does not apply.
     """
     thresholds: dict[str, int] = {}
+    had_unrecognised_cell = False
     for grade, value in zip(grades, values, strict=True):
         parsed = _grade_value(value, line)
         if parsed is not None:
             thresholds[grade] = parsed
-    return thresholds
+            continue
+        stripped = value.strip()
+        if stripped not in _NOT_APPLICABLE and stripped.upper() != "N/A":
+            had_unrecognised_cell = True
+    return thresholds, had_unrecognised_cell
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,6 +126,12 @@ class ParsedComponent:
     paper_variant: int
     max_mark: int
     thresholds: dict[str, int]
+    #: True when at least one grade cell in this row was neither a parseable
+    #: integer nor a recognised not-applicable marker (dash/"N/A"). The
+    #: ingest must not treat such a row as verified: a dropped, garbled cell
+    #: is invisible in ``thresholds`` alone and would otherwise be
+    #: indistinguishable from a grade Cambridge genuinely does not publish.
+    has_unrecognised_cell: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -176,11 +199,12 @@ def _parse_option_row(
         logger.warning("threshold PDF: option row has a non-numeric max mark, skipping: %r", line)
         return None
 
+    option_thresholds, _ = _grade_thresholds(option_grades, value_tokens, line)
     return ParsedOption(
         option_code=code,
         component_numbers=[int(t) for t in component_tokens],
         max_mark_after_weighting=int(max_mark_token) if max_mark_token is not None else None,
-        thresholds=_grade_thresholds(option_grades, value_tokens, line),
+        thresholds=option_thresholds,
     )
 
 
@@ -238,12 +262,16 @@ def parse_threshold_pdf(pdf_bytes: bytes) -> tuple[list[ParsedComponent], list[P
                     line,
                 )
                 continue
+            component_thresholds, had_unrecognised_cell = _grade_thresholds(
+                component_grades, rest, line
+            )
             components.append(
                 ParsedComponent(
                     paper_number=int(number_variant[0]),
                     paper_variant=int(number_variant[1]) if len(number_variant) > 1 else 0,
                     max_mark=max_mark,
-                    thresholds=_grade_thresholds(component_grades, rest, line),
+                    thresholds=component_thresholds,
+                    has_unrecognised_cell=had_unrecognised_cell,
                 )
             )
             continue

@@ -69,9 +69,10 @@ def test_a_grade_the_document_does_not_publish_is_dropped() -> None:
             thresholds={"A": 53, "B": 38, "C": 22, "D": 16, "E": 10},
         )
     ]
-    thresholds, verified = verify_row(row, parsed)
+    thresholds, verified, max_mark = verify_row(row, parsed)
     assert thresholds == {"A": 53, "B": 38, "C": 22, "D": 16, "E": 10}
     assert verified is True
+    assert max_mark == 80
 
 
 def test_the_document_wins_when_a_value_differs() -> None:
@@ -79,28 +80,46 @@ def test_the_document_wins_when_a_value_differs() -> None:
     parsed = [
         ParsedComponent(paper_number=1, paper_variant=1, max_mark=80, thresholds={"A": 53, "B": 38})
     ]
-    thresholds, verified = verify_row(row, parsed)
+    thresholds, verified, max_mark = verify_row(row, parsed)
     assert thresholds["B"] == 38
     assert verified is True
+    assert max_mark == 80
+
+
+def test_the_documents_max_mark_wins_when_it_differs_from_ciegts() -> None:
+    """Finding C2: every percentage divides by ``max_mark``, so a "verified"
+    row citing Cambridge for its thresholds but keeping ciegt's own
+    (unconfirmed) ``max_mark`` would misattribute the one number scaling the
+    whole grade ladder. ``row.max_mark`` (from ``_row``) is 80; the document
+    disagrees and must win."""
+    row = _row({"A": 53})
+    parsed = [ParsedComponent(paper_number=1, paper_variant=1, max_mark=75, thresholds={"A": 53})]
+    thresholds, verified, max_mark = verify_row(row, parsed)
+    assert verified is True
+    assert max_mark == 75
+    assert thresholds == {"A": 53}
 
 
 def test_without_a_document_only_impossible_values_are_dropped() -> None:
     """The fallback for a session whose PDF is missing or watermark-mangled.
     A threshold of zero raw marks is not a published boundary; a threshold of
     four is not obviously wrong, so it survives -- which is exactly why the
-    row is marked unverified rather than trusted."""
+    row is marked unverified rather than trusted. The unverified row keeps
+    ciegt's own max_mark since the document was never read for it."""
     row = _row({"A": 53, "E": 10, "F": 4, "G": 0})
-    thresholds, verified = verify_row(row, None)
+    thresholds, verified, max_mark = verify_row(row, None)
     assert thresholds == {"A": 53, "E": 10, "F": 4}
     assert verified is False
+    assert max_mark == row.max_mark
 
 
 def test_a_component_missing_from_the_document_is_unverified_not_deleted() -> None:
     row = _row({"A": 53})
     parsed = [ParsedComponent(paper_number=9, paper_variant=9, max_mark=80, thresholds={"A": 1})]
-    thresholds, verified = verify_row(row, parsed)
+    thresholds, verified, max_mark = verify_row(row, parsed)
     assert thresholds == {"A": 53}
     assert verified is False
+    assert max_mark == row.max_mark
 
 
 def test_a_formulaic_looking_threshold_is_kept_when_the_document_publishes_it() -> None:
@@ -114,9 +133,47 @@ def test_a_formulaic_looking_threshold_is_kept_when_the_document_publishes_it() 
             paper_number=1, paper_variant=1, max_mark=80, thresholds={"E": 21, "F": 15, "G": 9}
         )
     ]
-    thresholds, verified = verify_row(row, parsed)
+    thresholds, verified, max_mark = verify_row(row, parsed)
     assert thresholds == {"E": 21, "F": 15, "G": 9}
     assert verified is True
+    assert max_mark == 80
+
+
+def test_an_empty_official_parse_is_unverified_not_stored_verified() -> None:
+    """Finding C3: a component that matches by (paper_number, paper_variant)
+    but whose thresholds parsed empty (every grade cell unreadable) must not
+    be stored ``verified=True`` -- that would have Cambridge cited for a row
+    that decides nothing, and downstream a 95% candidate would resolve
+    against an empty boundary map."""
+    row = _row({"A": 53, "B": 38})
+    parsed = [ParsedComponent(paper_number=1, paper_variant=1, max_mark=80, thresholds={})]
+    thresholds, verified, max_mark = verify_row(row, parsed)
+    assert verified is False
+    assert max_mark == row.max_mark
+    # Falls back to the weak ">0 raw marks" filter over ciegt's own values.
+    assert thresholds == {"A": 53, "B": 38}
+
+
+def test_a_component_with_an_unrecognised_cell_is_unverified() -> None:
+    """A component the document names and even parses *some* real values
+    for, but with one glyph the parser could not classify as either a value
+    or a not-applicable marker, must stay unverified -- a partial, garbled
+    read is worse than no read, because it is invisible in the thresholds
+    dict alone."""
+    row = _row({"A": 53, "B": 38, "C": 22})
+    parsed = [
+        ParsedComponent(
+            paper_number=1,
+            paper_variant=1,
+            max_mark=80,
+            thresholds={"B": 38, "C": 22},
+            has_unrecognised_cell=True,
+        )
+    ]
+    thresholds, verified, max_mark = verify_row(row, parsed)
+    assert verified is False
+    assert max_mark == row.max_mark
+    assert thresholds == {"A": 53, "B": 38, "C": 22}
 
 
 # ---------------------------------------------------------------------------
@@ -334,3 +391,25 @@ def test_source_url_names_the_document_actually_read(
         assert unverified.source_url == ciegt_page_url(subject_code)
         assert "papacambridge" not in unverified.source_url
         assert "pastpapers" not in unverified.source_url
+
+
+def test_a_non_positive_max_mark_is_rejected_by_the_database(pg_engine: sa.Engine) -> None:
+    """Finding C3: ``ck_component_thresholds_max_mark_positive`` is the
+    backstop against a non-positive ``max_mark`` ever being stored, regardless
+    of which code path writes the row -- ``_percentages`` divides by it for
+    every graded paper."""
+    with pytest.raises(sa.exc.IntegrityError), Session(pg_engine) as session, session.begin():
+        session.add(
+            ComponentThreshold(
+                board="caie",
+                subject_code="0625",
+                session_month=SessionMonth.may_june,
+                session_year=2024,
+                paper_number=1,
+                paper_variant=1,
+                max_mark=0,
+                thresholds={"A": 1},
+                verified=True,
+                source_url="https://example.invalid/gt.pdf",
+            )
+        )

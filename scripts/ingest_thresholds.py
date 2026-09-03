@@ -65,24 +65,41 @@ class IngestReport:
 
 def verify_row(
     row: ComponentRow, parsed: list[ParsedComponent] | None
-) -> tuple[dict[str, int], bool]:
-    """Return ``(thresholds, verified)`` for one ciegt row.
+) -> tuple[dict[str, int], bool, int]:
+    """Return ``(thresholds, verified, max_mark)`` for one ciegt row.
 
-    With a document: keep only grades it publishes for this component, taking
-    the document's value wherever the two differ. Without one (missing PDF, or
-    a pre-2014 watermark that defeats text extraction): drop only thresholds at
-    or below zero raw marks, which is not a boundary any document publishes,
-    and mark the row unverified.
+    With a document that both names this component and parsed it reliably:
+    keep only grades it publishes, taking the document's value wherever the
+    two differ, and take the document's ``max_mark`` too. Every percentage
+    divides by ``max_mark`` (:func:`lemely.io.grade_boundaries._percentages`),
+    so it is exactly as much a claim about "what Cambridge published" as any
+    grade threshold is -- a verified row that kept ciegt's ``max_mark`` would
+    cite Cambridge for a number Cambridge was never checked against.
 
-    The rule is deliberately "does the official document publish this grade",
-    never "does this number look derived". Cambridge's own 2012 document
-    states that G is set as many marks below the F threshold as the E
-    threshold is above it -- Cambridge derives G by formula itself, so a
-    formulaic-looking value is not evidence of fabrication. Only the
-    document's own silence on a grade is.
+    Without a document (missing PDF, or a pre-2014 watermark that defeats text
+    extraction), or with one that says nothing about this specific component:
+    drop only thresholds at or below zero raw marks, which is not a boundary
+    any document publishes, keep ciegt's own ``max_mark``, and mark the row
+    unverified.
+
+    A document that *does* name this component but could not be reliably
+    parsed -- its thresholds came out empty, or at least one grade cell was an
+    unrecognised glyph rather than a real value or a recognised
+    not-applicable marker -- is treated the same way: unverified, not
+    verified. An empty or partially-garbled parse stored as verified is worse
+    than no parse at all, because it is invisible: a dropped "A" cell would
+    silently cap every Extended candidate at B while still claiming Cambridge
+    as its source.
+
+    The rule for which grades survive a verified row is deliberately "does the
+    official document publish this grade", never "does this number look
+    derived". Cambridge's own 2012 document states that G is set as many marks
+    below the F threshold as the E threshold is above it -- Cambridge derives
+    G by formula itself, so a formulaic-looking value is not evidence of
+    fabrication. Only the document's own silence on a grade is.
     """
     if parsed is None:
-        return {g: v for g, v in row.thresholds.items() if v > 0}, False
+        return {g: v for g, v in row.thresholds.items() if v > 0}, False, row.max_mark
 
     official = next(
         (
@@ -96,9 +113,28 @@ def verify_row(
         # The document was readable but says nothing about this component.
         # Keeping the row unverified is honest; deleting it would lose coverage
         # over a parsing gap.
-        return {g: v for g, v in row.thresholds.items() if v > 0}, False
+        return {g: v for g, v in row.thresholds.items() if v > 0}, False, row.max_mark
 
-    return dict(official.thresholds), True
+    if not official.thresholds or official.has_unrecognised_cell:
+        logger.warning(
+            "threshold.verify.unreliable_parse",
+            paper_number=row.paper_number,
+            paper_variant=row.paper_variant,
+            empty=not official.thresholds,
+            has_unrecognised_cell=official.has_unrecognised_cell,
+        )
+        return {g: v for g, v in row.thresholds.items() if v > 0}, False, row.max_mark
+
+    if official.max_mark != row.max_mark:
+        logger.warning(
+            "threshold.verify.max_mark_mismatch",
+            paper_number=row.paper_number,
+            paper_variant=row.paper_variant,
+            document_max_mark=official.max_mark,
+            ciegt_max_mark=row.max_mark,
+        )
+
+    return dict(official.thresholds), True, official.max_mark
 
 
 def _fetch_pdf(url: str) -> bytes | None:
@@ -139,7 +175,7 @@ def ingest(
 
             with sessionmaker() as session, session.begin():  # type: ignore[union-attr]
                 for row in session_rows:
-                    thresholds, verified = verify_row(row, parsed)
+                    thresholds, verified, max_mark = verify_row(row, parsed)
                     report.grades_dropped += len(row.thresholds) - len(thresholds)
                     report.components_written += 1
                     report.components_verified += int(verified)
@@ -159,7 +195,7 @@ def ingest(
                             session_year=row.session_year,
                             paper_number=row.paper_number,
                             paper_variant=row.paper_variant,
-                            max_mark=row.max_mark,
+                            max_mark=max_mark,
                             thresholds=thresholds,
                             verified=verified,
                             source_url=component_source_url,
@@ -169,7 +205,7 @@ def ingest(
                             set_={
                                 "thresholds": thresholds,
                                 "verified": verified,
-                                "max_mark": row.max_mark,
+                                "max_mark": max_mark,
                                 "source_url": component_source_url,
                             },
                         )
