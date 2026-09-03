@@ -50,6 +50,12 @@ def _connect_args(cfg: DatabaseSettings) -> dict[str, object]:
     indefinitely. Bounding that needs a read deadline libpq does not expose.
     It is a narrower shape than the packet-drop case and is called out here so
     the next reader does not assume the pooled path is fully bounded.
+
+    ``tcp_user_timeout`` needs libpq >= 12 and a platform with
+    ``TCP_USER_TIMEOUT``; where the socket option is missing (macOS, Windows)
+    libpq ignores it rather than failing the connect, so a developer on such a
+    machine loses the bound but not the connection. CI and the deploy target
+    are both Linux, which is where the bound has to hold.
     """
     if not cfg.url.startswith("postgres"):
         return {}
