@@ -85,6 +85,7 @@ export function Onboarding() {
     Record<string, Record<string, number>>
   >({})
   const [questionnaireIndex, setQuestionnaireIndex] = useState(0)
+  const [placementChoice, setPlacementChoice] = useState<string | undefined>(undefined)
   const [error, setError] = useState<string | null>(null)
 
   const seeded = useRef(false)
@@ -207,6 +208,7 @@ export function Onboarding() {
     else if (step?.kind === "weeklyHours")
       setAnswers((prev) => ({ ...prev, weeklyStudyHours: undefined }))
     else if (step?.kind === "gradeLevel") setAnswers((prev) => ({ ...prev, gradeLevel: undefined }))
+    else if (step?.kind === "placementChoice") setPlacementChoice(undefined)
   }
 
   /**
@@ -242,13 +244,18 @@ export function Onboarding() {
         }
       }
       await completeOnboarding.mutateAsync()
-      // S-02 -> S-03 (UI spec): the placement invite is per subject, so this
-      // sends the student to the first subject they enrolled in, in the
-      // order S-01 presented them. A student who selected nothing has no
-      // subject to invite them into a placement test for — S-06 directly.
-      // See `placementInviteSubject` for why this is not `Object.keys(...)[0]`.
-      const firstSubject = placementInviteSubject(Object.keys(drafts), reference?.subjects ?? [])
-      navigate(firstSubject ? `/student/placement/${firstSubject}` : "/student")
+      // S-02 -> S-03 (UI spec): the placement invite is per subject. When
+      // the student answered the placement-choice question (>= 2 enrolled
+      // subjects), that answer wins outright — it exists precisely to
+      // remove the dependency on catalogue order. Otherwise (one subject,
+      // or the choice was skipped) fall back to the first subject in
+      // catalogue order, same as before this question existed. A student
+      // who selected nothing has no subject to invite them into a
+      // placement test for — S-06 directly. See `placementInviteSubject`
+      // for why the fallback is not `Object.keys(...)[0]`.
+      const targetSubject =
+        placementChoice ?? placementInviteSubject(Object.keys(drafts), reference?.subjects ?? [])
+      navigate(targetSubject ? `/student/placement/${targetSubject}` : "/student")
     } catch (err) {
       setError(studentSaveFailureMessage(err))
     }
@@ -314,6 +321,8 @@ export function Onboarding() {
           onGradeLevel={(v) => setAnswers((prev) => ({ ...prev, gradeLevel: v }))}
           confidenceBySubject={confidenceBySubject}
           onConfidence={setConfidence}
+          placementChoice={placementChoice}
+          onPlacementChoice={setPlacementChoice}
           saving={saving}
           error={error}
         />

@@ -140,6 +140,7 @@ export type QuestionnaireStepKind =
   | "weeklyHours"
   | "gradeLevel"
   | "confidence"
+  | "placementChoice"
 
 export interface QuestionnaireStepDef {
   id: string
@@ -151,8 +152,8 @@ export interface QuestionnaireStepDef {
 /**
  * The ordered S-02 question sequence: 4 fixed scalar questions, then one
  * confidence step per subject the student selected in S-01 (in S-01's
- * selection order). Every step is independently skippable — this only
- * decides *order*, not which are required.
+ * selection order), then — only when there is a real choice to make — which
+ * subject to be placed in.
  *
  * Target grade is deliberately NOT re-asked here even though the UI spec's
  * S-02 "Contains" prose lists "target grades per subject" alongside it: the
@@ -162,6 +163,14 @@ export interface QuestionnaireStepDef {
  * `targetGrade` per enrolment — there is no second slot for an S-02 answer
  * to write to. Asking twice would either silently overwrite S-01's answer or
  * be a dead question; both are worse than resolving the overlap once, here.
+ *
+ * The trailing `placementChoice` step exists because catalogue order is
+ * `code` order (spec D3), and 0580 sorts first while having no placement
+ * questions at all (`lemely/core/placement.py`). Routing by position would
+ * send a multi-subject student to an "unavailable" panel instead of a real
+ * test. Asking removes the dependency on catalogue order entirely. One
+ * enrolled subject means no question: there is nothing to choose, so the
+ * step is omitted (`placementInviteSubject` picks the only candidate).
  */
 export function buildQuestionnaireSteps(subjectCodes: string[]): QuestionnaireStepDef[] {
   return [
@@ -174,6 +183,9 @@ export function buildQuestionnaireSteps(subjectCodes: string[]): QuestionnaireSt
       kind: "confidence" as const,
       subjectCode,
     })),
+    ...(subjectCodes.length > 1
+      ? [{ id: "placementChoice", kind: "placementChoice" as const }]
+      : []),
   ]
 }
 

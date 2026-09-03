@@ -221,8 +221,9 @@ describe("buildQuestionnaireSteps / clampStepIndex — step navigation", () => {
 
   it("adds one confidence step per subject, in S-01 selection order", () => {
     const steps = buildQuestionnaireSteps(["0580", "0606", "0625"])
-    expect(steps).toHaveLength(7)
-    expect(steps.slice(4).map((s) => s.subjectCode)).toEqual(["0580", "0606", "0625"])
+    // 4 fixed + 3 confidence + 1 placementChoice (>1 subject enrolled).
+    expect(steps).toHaveLength(8)
+    expect(steps.slice(4, 7).map((s) => s.subjectCode)).toEqual(["0580", "0606", "0625"])
   })
 
   it("a student who enrolled in nothing still gets the 4 fixed steps", () => {
@@ -243,5 +244,29 @@ describe("buildQuestionnaireSteps / clampStepIndex — step navigation", () => {
 
   it("clamps to 0 for an empty step sequence rather than going negative", () => {
     expect(clampStepIndex(0, 0)).toBe(0)
+  })
+})
+
+describe("buildQuestionnaireSteps — placement choice", () => {
+  it("appends a placement-choice step when the student enrolled in more than one subject", () => {
+    const steps = buildQuestionnaireSteps(["0580", "0625"])
+    expect(steps[steps.length - 1]).toEqual({ id: "placementChoice", kind: "placementChoice" })
+  })
+
+  it("does not ask when there is only one subject to choose from", () => {
+    // A question with one possible answer is not a question.
+    const steps = buildQuestionnaireSteps(["0625"])
+    expect(steps.some((s) => s.kind === "placementChoice")).toBe(false)
+  })
+
+  it("does not ask when the student enrolled in nothing", () => {
+    expect(buildQuestionnaireSteps([]).some((s) => s.kind === "placementChoice")).toBe(false)
+  })
+
+  it("keeps the confidence steps before the choice", () => {
+    const steps = buildQuestionnaireSteps(["0580", "0625"])
+    const lastConfidence = steps.map((s) => s.kind).lastIndexOf("confidence")
+    const choice = steps.map((s) => s.kind).indexOf("placementChoice")
+    expect(choice).toBeGreaterThan(lastConfidence)
   })
 })

@@ -6,6 +6,9 @@ import { Meter } from "@/components/ui/primitives"
 import { Slider } from "@/components/ui/slider"
 import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
 import type { ReferenceData } from "@/lib/referenceTypes"
+import { usePlacementAvailability } from "@/lib/hooks/usePlacementApi"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { unavailableMessage } from "../placement/placementData"
 import {
   CONFIDENCE_MAX,
   CONFIDENCE_MIN,
@@ -157,6 +160,73 @@ function QuestionShell({ question, children }: { question: string; children: Rea
   )
 }
 
+/**
+ * One row of the `placementChoice` question — its own component, not a
+ * `.map()` callback, because it calls `usePlacementAvailability` and
+ * `useSubjectName`, and a hook may never run inside `.map()`, a callback, a
+ * condition, or after an early return (Hooks rule; every row renders
+ * unconditionally, so every row's hooks run unconditionally too).
+ *
+ * A subject whose availability reports `available: false` renders its real
+ * reason (`unavailableMessage`, the same copy S-03 shows) and is not
+ * selectable — the student sees *why* rather than picking a dead end and
+ * hitting a wall on the next screen.
+ */
+function PlacementChoiceRow({
+  subjectCode,
+  selected,
+  onSelect,
+}: {
+  subjectCode: string
+  selected: boolean
+  onSelect: () => void
+}) {
+  const subjectName = useSubjectName(subjectCode)
+  const { data, isPending } = usePlacementAvailability(subjectCode)
+
+  if (isPending || !data) {
+    return (
+      <div className="flex flex-col gap-1 rounded-lg border border-rule p-4">
+        <span className="text-body-md font-medium text-ink">{subjectName}</span>
+        <span className="text-body-sm text-ink-faint">Checking availability…</span>
+      </div>
+    )
+  }
+
+  if (!data.available) {
+    const message = unavailableMessage(data.reason)
+    return (
+      <div
+        className="flex flex-col gap-1 rounded-lg border border-rule bg-paper-sunk p-4 opacity-70"
+        aria-disabled="true"
+      >
+        <span className="text-body-md font-medium text-ink">{subjectName}</span>
+        <span className="text-body-sm text-ink-muted">{message.heading}</span>
+      </div>
+    )
+  }
+
+  return (
+    <button
+      type="button"
+      aria-pressed={selected}
+      onClick={onSelect}
+      className={`flex flex-col gap-1 rounded-lg border p-4 text-start transition-colors ${
+        selected
+          ? "border-accent bg-paper-raised"
+          : "border-rule bg-paper-raised hover:border-rule-strong"
+      }`}
+    >
+      <span className="text-body-md font-medium text-ink">{subjectName}</span>
+      <span className="text-body-sm text-ink-muted">
+        {data.questionCount} question{data.questionCount === 1 ? "" : "s"} · about{" "}
+        {Math.round(data.estimatedMinutes)} minute
+        {Math.round(data.estimatedMinutes) === 1 ? "" : "s"}
+      </span>
+    </button>
+  )
+}
+
 export interface QuestionnaireStepProps {
   reference: ReferenceData | undefined
   steps: QuestionnaireStepDef[]
@@ -176,6 +246,10 @@ export interface QuestionnaireStepProps {
   onGradeLevel: (value: string) => void
   confidenceBySubject: Record<string, Partial<Record<string, number>>>
   onConfidence: (subjectCode: string, topic: string, rating: number) => void
+  /** The chosen subject code for `kind === "placementChoice"`, or
+   * `undefined` when unanswered — same skip semantics as every other step. */
+  placementChoice?: string
+  onPlacementChoice: (subjectCode: string) => void
   saving: boolean
   error: string | null
 }
@@ -196,6 +270,8 @@ export function QuestionnaireStep({
   onGradeLevel,
   confidenceBySubject,
   onConfidence,
+  placementChoice,
+  onPlacementChoice,
   saving,
   error,
 }: QuestionnaireStepProps) {
@@ -282,7 +358,7 @@ export function QuestionnaireStep({
         />
       </QuestionShell>
     )
-  } else {
+  } else if (step.kind === "confidence") {
     const subject = subjectFor(reference, step.subjectCode ?? "")
     const topics = confidenceTopicsFor(subject)
     const ratings = (step.subjectCode ? confidenceBySubject[step.subjectCode] : undefined) ?? {}
@@ -307,6 +383,29 @@ export function QuestionnaireStep({
             />
           ))}
         </Card>
+      </QuestionShell>
+    )
+  } else {
+    // "placementChoice" — one row per subject the student enrolled in
+    // (S-01's selection order, read off the confidence steps that precede
+    // this one). Every row is its own component so its per-subject
+    // availability hook runs unconditionally (see `PlacementChoiceRow`).
+    const enrolledCodes = steps
+      .filter((s) => s.kind === "confidence" && s.subjectCode)
+      .map((s) => s.subjectCode as string)
+    answered = placementChoice !== undefined
+    body = (
+      <QuestionShell question="Which subject would you like to be placed in first?">
+        <div className="flex flex-col gap-3">
+          {enrolledCodes.map((code) => (
+            <PlacementChoiceRow
+              key={code}
+              subjectCode={code}
+              selected={placementChoice === code}
+              onSelect={() => onPlacementChoice(code)}
+            />
+          ))}
+        </div>
       </QuestionShell>
     )
   }
