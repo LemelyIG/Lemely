@@ -11,6 +11,18 @@ import { tokenHex } from "./vite/brandTokens.ts"
 
 // https://vite.dev/config/
 export default defineConfig({
+  // PR 1B (client error reporting): stamps every build with a short id so a
+  // `POST /api/client-errors` report can be traced back to the code that
+  // produced it. `GITHUB_SHA` is set by every GitHub Actions run (`deploy.yml`
+  // builds with `npm run build`); sliced to 12 chars, the same short-SHA length
+  // `git rev-parse --short` and GitHub's own commit UI use. Locally, where no
+  // CI env var exists, this is always `"dev"` — good enough to see in a report
+  // that it came from a developer machine rather than a real deploy, and
+  // exactly the fallback `src/lib/clientErrors.ts` also uses when the define
+  // below hasn't run at all (vitest's separate config never sees it).
+  define: {
+    __LEMELY_BUILD_ID__: JSON.stringify((process.env.GITHUB_SHA ?? "dev").slice(0, 12)),
+  },
   plugins: [
     react(),
     tailwindcss(),

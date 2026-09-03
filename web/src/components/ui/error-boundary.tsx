@@ -1,6 +1,8 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { Component, type ErrorInfo, type ReactNode } from "react"
 import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
+import { reportClientError } from "@/lib/clientErrors"
 
 /*
  * Real React error boundary. The Phase 1 audit found none anywhere in the
@@ -19,6 +21,26 @@ import { Button } from "@/components/ui/button"
  *
  * Copy voice matches `error-state.tsx`: active voice, plain, no blame, no
  * exclamation marks, no em-dashes, sentence case.
+ *
+ * PR 1B places this component: every portal layout now wraps its `<Outlet/>`
+ * in one (`portals/*\/index.tsx`, inside the layout's existing `<Suspense>`),
+ * so a caught render error stays scoped to the content slot instead of
+ * unmounting the sidebar/header/nav around it, and instead of falling all
+ * the way out to the router's top-level `errorElement`
+ * (`portals/misc/NotFound.tsx`), which used to be the only thing standing
+ * between a single broken widget and a reader losing the whole portal chrome.
+ * See the placement comment in each `index.tsx` for why an `Outlet`
+ * specifically, and `routes.tsx`'s own long-standing note ("Phase 4 places
+ * those as it rebuilds each surface") that this finally answers.
+ *
+ * Reporting is now unconditional, not opt-in. `componentDidCatch` always
+ * calls `reportClientError` (`@/lib/clientErrors`) before anything else, so
+ * every catch reaches the `POST /api/client-errors` backend regardless of
+ * which caller mounted this boundary or whether it remembered to wire
+ * logging. `onError` below is therefore additive now, not the logging hook
+ * it used to be: a caller still gets it for local UI reaction (closing a
+ * modal the crashed content was inside, say), but it is no longer the only
+ * way a caught error is recorded.
  */
 
 export interface ErrorBoundaryProps {
@@ -33,9 +55,10 @@ export interface ErrorBoundaryProps {
   fallback?: (error: Error, reset: () => void) => ReactNode
   /**
    * Called with the error and React's component-stack info whenever the
-   * boundary catches something, for logging. No default: this component
-   * does not assume a logging backend exists, so a caught error is silent
-   * unless the caller wires this up.
+   * boundary catches something, in addition to the unconditional
+   * `reportClientError` call `componentDidCatch` always makes now (see the
+   * module doc above). Optional, and purely for a caller's own local
+   * reaction — this is no longer the only path an error reaches a log by.
    */
   onError?: (error: Error, info: ErrorInfo) => void
   /**
@@ -44,6 +67,17 @@ export interface ErrorBoundaryProps {
    * what broke instead of a bare generic string. Defaults to "This section".
    */
   label?: string
+  /**
+   * When this value changes between renders, a caught error is cleared
+   * automatically (see `componentDidUpdate`), the same effect as calling
+   * `reset()` by hand. Exists so a boundary wrapping a router `<Outlet/>`
+   * does not stay crashed after the reader navigates away: a portal layout
+   * passes `location.pathname`, so a crash on `/student/board` clears the
+   * instant the route changes to `/student/friends`, rather than showing
+   * the stale fallback panel over the new screen until something else
+   * happens to unmount the boundary.
+   */
+  resetKey?: unknown
 }
 
 interface ErrorBoundaryState {
@@ -58,7 +92,28 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
+    // Unconditional: see the module doc above for why this is no longer
+    // gated behind the caller supplying `onError`.
+    reportClientError({ error, kind: "render", componentStack: info.componentStack })
     this.props.onError?.(error, info)
+  }
+
+  /**
+   * `resetKey` changing is the navigation-recovery path described on the
+   * prop itself. Compared with `Object.is`, matching how React itself
+   * compares hook dependencies — `resetKey` is typed `unknown` so a caller
+   * can hand it any primitive (a pathname, an id) without this component
+   * caring which, and `Object.is` is what tells two primitives apart
+   * correctly without needing a deep-equality helper. Plain `!==` does not:
+   * `NaN !== NaN` is `true`, so a caller passing something that can be
+   * `NaN` (a parsed id that failed to parse, say) would see `resetKey`
+   * compare as "changed" on every render — an infinite reset loop, since
+   * `reset()` triggers a re-render that runs this same comparison again.
+   */
+  componentDidUpdate(prevProps: ErrorBoundaryProps): void {
+    if (this.state.error !== null && !Object.is(prevProps.resetKey, this.props.resetKey)) {
+      this.reset()
+    }
   }
 
   /** Clears the caught error and lets React attempt to render `children`

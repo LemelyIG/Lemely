@@ -17,10 +17,13 @@ import { ProgressBar } from "@/components/ui/progress-bar"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"
 import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/components/ui/skeleton"
+import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
 import { ToastProvider, useToast } from "@/components/ui/toast"
-import { ErrorState } from "@/components/ui/error-state"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
+import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
@@ -247,6 +250,72 @@ function ModalDemo() {
       </Modal>
     </>
   )
+}
+
+/**
+ * `QueryState`'s demo payload: one row list, small enough to read in a
+ * 260px-wide cell. `data.rows` is what `isEmpty`/`empty` and the loaded
+ * render below both key off, the same as a real screen's DTO would be.
+ */
+interface QueryStateDemoData {
+  rows: { id: string; label: string }[]
+}
+
+/** The loaded render every `QueryState` demo cell shares, so the cells below
+ * differ only in `query`, which is the thing being demonstrated. */
+function QueryStateDemoPanel({ rows }: { rows: QueryStateDemoData["rows"] }) {
+  return (
+    <ul className="flex w-full flex-col gap-1.5">
+      {rows.map((row) => (
+        <li key={row.id} className="text-body-sm text-ink">
+          {row.label}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+/**
+ * Five hand-built `QueryStateQuery` objects, one per cell below. Hand-built
+ * rather than a real `useQuery()` call because a live query cannot be forced
+ * into "pending forever", "pending and idle" or "failed with a 503" on
+ * demand for a static preview page, and `QueryState`'s whole point is that a
+ * hand-built object satisfies the same structural type a real query result
+ * does, with no cast.
+ */
+const QUERY_STATE_DEMO: Record<
+  "pending" | "idle" | "error" | "empty" | "success",
+  QueryStateQuery<QueryStateDemoData>
+> = {
+  pending: { status: "pending", data: undefined, error: null, refetch: () => undefined },
+  // `enabled: false`'s own resting state: `fetchStatus: "idle"` alongside
+  // `status: "pending"`, which is what makes `QueryState` render `idle`
+  // instead of `skeleton` — see that prop's doc comment.
+  idle: {
+    status: "pending",
+    fetchStatus: "idle",
+    data: undefined,
+    error: null,
+    refetch: () => undefined,
+  },
+  error: {
+    status: "error",
+    data: undefined,
+    error: new ApiError(503, "503 Service Unavailable"),
+    refetch: () => undefined,
+  },
+  empty: { status: "success", data: { rows: [] }, error: null, refetch: () => undefined },
+  success: {
+    status: "success",
+    data: {
+      rows: [
+        { id: "1", label: "0625_w24_qp_41" },
+        { id: "2", label: "0625_s23_qp_22" },
+      ],
+    },
+    error: null,
+    refetch: () => undefined,
+  },
 }
 
 export function App() {
@@ -721,15 +790,115 @@ function AppBody() {
 
           <ComponentSection
             name="ErrorState"
-            summary="Active voice, names what happened and what to do, and offers a retry. The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same presentation."
+            summary="Active voice, names what happened and what to do, and offers a retry. Amber by default (PRODUCT.md's accessibility section: avoid red-heavy error states). The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same full-panel presentation. Loading/error primitives PR, part A merged the kit-only red variant that used to live here (title/message/onRetry) into this component; compact below is what survived that merge."
           >
             <StateCell state="error" provenance="prop">
               <div className="w-full">
                 <ErrorState
-                  title="We couldn't load your papers"
-                  message="The connection dropped partway through. Your work is safe."
-                  onRetry={() => undefined}
+                  heading="We couldn't load your papers"
+                  body="The connection dropped partway through. Your work is safe."
+                  action={{ label: "Try again", onClick: () => undefined }}
                 />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="Compact: a small inline slot for a single field or table cell, not a whole panel. Retry renders as an underlined text button."
+            >
+              <div className="w-full">
+                <ErrorState
+                  compact
+                  heading="Couldn't save this answer"
+                  body="Check your connection and try again."
+                  action={{ label: "Retry", onClick: () => undefined }}
+                />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="QueryState"
+            summary="Loading/error primitives PR, part A. Takes a react-query result and renders the matching skeleton, error or empty view without every screen composing that switch by hand; see student Overview.tsx for the reference conversion. The cells below use hand-built query objects rather than a live query, so every state is reachable on demand."
+          >
+            <StateCell state="loading" provenance="prop" note="Skeleton is caller-supplied, from loading-shapes.tsx">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.pending}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.body omitted, so it falls back to describeQueryFailure(query.error) — here a fake 503"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="An enabled: false query: status pending, fetchStatus idle. Renders the idle prop, not a skeleton that would never resolve on its own."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.idle}
+                  skeleton={<PanelSkeleton />}
+                  idle={
+                    <EmptyState
+                      heading="Pick a class to see this panel"
+                      body="This loads once a class is selected above."
+                    />
+                  }
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="isEmpty true and an empty prop supplied, so it wins over children"
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.empty}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                  isEmpty={(data) => data.rows.length === 0}
+                  empty={
+                    <EmptyState
+                      heading="Nothing here yet"
+                      body="Rows appear here once the demo panel has something to show."
+                    />
+                  }
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell state="success" provenance="prop">
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.success}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel" }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
               </div>
             </StateCell>
           </ComponentSection>
