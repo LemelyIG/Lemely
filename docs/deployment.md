@@ -265,6 +265,14 @@ Run once per environment, after migrations and before any grading traffic:
 python scripts/ingest_thresholds.py
 ```
 
+Or from CI, which is the same script with the environment's `SUPABASE_DB_URL`
+already to hand: Actions tab → **deploy** → Run workflow → pick the environment
+and tick **"Also ingest CAIE grade thresholds"**. That job is dispatch-only and
+off by default, and it asserts afterwards that at least one *verified* row
+landed — the script itself exits 0 even when every document was unreadable
+(`verified=0`), so the exit code alone is not evidence the environment can
+grade.
+
 It targets the three subjects this build supports (`--subjects 0580 0606 0625` is
 the default) and reads `LEMELY_DATABASE__URL` the same way Alembic does. It makes
 real HTTP requests to ciegt.pooruli.com and pastpapers.papacambridge.com (one
