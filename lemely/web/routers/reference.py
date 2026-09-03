@@ -11,7 +11,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends
 
-from lemely.core.difficulty import _BANDS
+from lemely.core.difficulty import DIFFICULTY_BANDS
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.models.enums import SESSION_MONTH_LABELS, QualificationLevel
 from lemely.db.threshold_repo import ThresholdService
@@ -87,5 +87,5 @@ def get_reference(
             LabelledValueDTO(value=month.value, label=label)
             for month, label in SESSION_MONTH_LABELS.items()
         ],
-        difficultyBands=list(_BANDS),
+        difficultyBands=list(DIFFICULTY_BANDS),
     )

@@ -287,3 +287,22 @@ def test_option_row_with_a_junk_grade_cell_does_not_raise() -> None:
     assert option is not None
     assert "A*" not in option.thresholds
     assert option.thresholds["A"] == 106
+    # A dropped-because-unreadable cell must be distinguishable from a
+    # dropped-because-not-applicable one. Option thresholds are what the
+    # target-grade ladder is built from, so a silent drop removes a grade a
+    # student could have picked.
+    assert option.parse_incomplete is True
+
+
+def test_a_not_applicable_option_cell_is_not_flagged_as_incomplete() -> None:
+    """An en-dash is a real absence ("not applicable at this tier"), not a
+    parse failure, and must leave `parse_incomplete` False -- otherwise every
+    Core option row would be flagged and the signal would mean nothing."""
+    from lemely.io.threshold_pdf import _parse_option_row
+
+    option = _parse_option_row(
+        "BX 21, 41, 51 \u2013 106 84 62 50 38 26 14", _GRADES_8, has_max_mark_column=False
+    )
+    assert option is not None
+    assert "A*" not in option.thresholds
+    assert option.parse_incomplete is False

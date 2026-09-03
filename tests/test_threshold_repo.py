@@ -20,9 +20,15 @@ if TYPE_CHECKING:
 
 
 def _option(
-    code: str, option: str, components: list[int], thresholds: dict[str, int]
+    code: str,
+    option: str,
+    components: list[int],
+    thresholds: dict[str, int],
+    *,
+    parse_incomplete: bool = False,
 ) -> OptionThreshold:
     return OptionThreshold(
+        parse_incomplete=parse_incomplete,
         subject_code=code,
         session_month=SessionMonth.may_june,
         session_year=2024,
@@ -146,3 +152,35 @@ def test_a_genuinely_untiered_subjects_option_does_not_warn(
     with caplog.at_level(logging.WARNING, logger="lemely.db.threshold_repo"):
         ThresholdService(migrated_sessionmaker).target_vocabularies()
     assert not any("0606" in r.getMessage() for r in caplog.records)
+
+
+def test_an_incomplete_option_row_still_contributes_but_is_reported(
+    migrated_sessionmaker: sessionmaker[Session],
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A row with an unreadable cell is counted, not excluded.
+
+    `target_vocabularies` unions across every session on record, so a grade
+    lost from one row is normally restored by another. Excluding flagged rows
+    would shrink that union and make the loss the flag exists to catch MORE
+    likely, so they still contribute -- and the operator gets a warning naming
+    them instead.
+    """
+    with migrated_sessionmaker.begin() as s:
+        s.add(
+            _option(
+                "0580",
+                "BX",
+                [21, 41],
+                {"A": 125, "B": 98, "C": 72},
+                parse_incomplete=True,
+            )
+        )
+    service = ThresholdService(migrated_sessionmaker)
+
+    with caplog.at_level(logging.WARNING, logger="lemely.db.threshold_repo"):
+        vocabularies = service.target_vocabularies()
+
+    extended = next(v for v in vocabularies if v.subject_code == "0580" and v.tier == "extended")
+    assert "A" in extended.grades, "the flagged row must still contribute its grades"
+    assert any("unreadable grade cell" in r.getMessage() for r in caplog.records)

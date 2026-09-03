@@ -71,6 +71,14 @@ class ThresholdService:
         }
 
         grades_by_key: dict[tuple[str, str | None], set[str]] = {}
+        # Rows whose parse dropped a grade cell it could not read. They still
+        # contribute: this is a UNION across every session on record, so a
+        # garbled cell in one row is normally covered by the same grade
+        # appearing in another. EXCLUDING them would shrink the union and make
+        # the very loss the flag exists to catch more likely -- a bad row only
+        # costs a grade when it is the sole source, and dropping the row
+        # guarantees that. So they are counted and reported instead.
+        incomplete_by_key: dict[tuple[str, str | None], list[str]] = {}
         for option in options:
             tiers = {
                 tier_by_paper.get((option.subject_code, number // 10 or number))
@@ -88,7 +96,12 @@ class ThresholdService:
             # Extended wins a mixed option: a candidate sitting any Extended
             # component is an Extended candidate.
             tier = "extended" if "extended" in tiers else ("core" if "core" in tiers else None)
-            grades_by_key.setdefault((option.subject_code, tier), set()).update(option.thresholds)
+            key = (option.subject_code, tier)
+            grades_by_key.setdefault(key, set()).update(option.thresholds)
+            if option.parse_incomplete:
+                incomplete_by_key.setdefault(key, []).append(
+                    f"{option.session_month.value} {option.session_year} {option.option_code}"
+                )
 
         vocabularies = []
         for (code, tier), grades in sorted(
@@ -100,6 +113,18 @@ class ThresholdService:
                     "target vocabulary: subject %s has option thresholds but no catalogue"
                     " entry, qualification level will be unknown",
                     code,
+                )
+            incomplete = incomplete_by_key.get((code, tier), [])
+            if incomplete:
+                logger.warning(
+                    "target vocabulary: %s/%s was built from %d option row(s) with an"
+                    " unreadable grade cell (%s); the ladder shown to students may be"
+                    " missing a grade. Re-run scripts/ingest_thresholds.py, and query"
+                    " option_thresholds WHERE parse_incomplete to see the full set.",
+                    code,
+                    tier or "untiered",
+                    len(incomplete),
+                    ", ".join(sorted(incomplete)[:5]),
                 )
             level = subject.qualification_level if subject else None
             vocabularies.append(

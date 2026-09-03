@@ -223,6 +223,7 @@ def ingest(
                             component_numbers=option.component_numbers,
                             max_mark_after_weighting=option.max_mark_after_weighting,
                             thresholds=option.thresholds,
+                            parse_incomplete=option.parse_incomplete,
                             source_url=url,
                         )
                         .on_conflict_do_update(
@@ -231,6 +232,7 @@ def ingest(
                                 "thresholds": option.thresholds,
                                 "component_numbers": option.component_numbers,
                                 "max_mark_after_weighting": option.max_mark_after_weighting,
+                                "parse_incomplete": option.parse_incomplete,
                             },
                         )
                     )

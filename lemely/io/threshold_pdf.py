@@ -142,6 +142,10 @@ class ParsedOption:
     component_numbers: list[int]
     max_mark_after_weighting: int | None
     thresholds: dict[str, int]
+    #: True when a grade cell was present but unreadable, so `thresholds` is
+    #: narrower than the document. Distinct from a recognised "not applicable"
+    #: marker, which is a real absence and does not set this.
+    parse_incomplete: bool = False
 
 
 def _text(pdf_bytes: bytes) -> str:
@@ -199,12 +203,13 @@ def _parse_option_row(
         logger.warning("threshold PDF: option row has a non-numeric max mark, skipping: %r", line)
         return None
 
-    option_thresholds, _ = _grade_thresholds(option_grades, value_tokens, line)
+    option_thresholds, had_unrecognised_cell = _grade_thresholds(option_grades, value_tokens, line)
     return ParsedOption(
         option_code=code,
         component_numbers=[int(t) for t in component_tokens],
         max_mark_after_weighting=int(max_mark_token) if max_mark_token is not None else None,
         thresholds=option_thresholds,
+        parse_incomplete=had_unrecognised_cell,
     )
 
 

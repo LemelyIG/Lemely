@@ -110,4 +110,17 @@ class OptionThreshold(TimestampMixin, Base):
     #: Nullable: the pre-2020 layout omits this column entirely.
     max_mark_after_weighting: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     thresholds: Mapped[dict[str, int]] = mapped_column(JSONB, nullable=False)
+    #: True when at least one grade cell in this row could not be read.
+    #:
+    #: An unreadable cell is dropped from ``thresholds``, which makes it
+    #: indistinguishable from a genuine "not applicable at this tier" absence.
+    #: Components express the same doubt by going ``verified=False``; options
+    #: have no such column, because unlike components they are never written
+    #: from the ciegt fallback -- every option row did come from the Cambridge
+    #: document. This flag records the narrower doubt: the right document was
+    #: read, but not all of it. It exists so a garbled cell leaves a queryable
+    #: trace rather than only a line in the ingest log.
+    parse_incomplete: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
     source_url: Mapped[str] = mapped_column(sa.String, nullable=False)

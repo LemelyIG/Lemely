@@ -61,6 +61,17 @@ function mergeLadders(a: readonly string[], b: readonly string[]): string[] {
       // Both heads appear later in the other sequence — a genuine ordering
       // conflict between two served vocabularies, which real Cambridge data
       // should never produce. Emit `a`'s head first rather than stall.
+      //
+      // Warn rather than trust the "should never" quietly: if it does happen
+      // (a bad ingest, a future subject whose grades really are ordered
+      // differently) the ladder is silently misordered in the UI, and a
+      // misordered ladder is the kind of wrong that looks plausible. This
+      // turns it into something a developer can actually see.
+      console.warn(
+        `mergeLadders: ordering conflict between served vocabularies at "${a[i]}" and "${b[j]}" — ` +
+          `emitting "${a[i]}" first; the resulting grade ladder may be misordered.`,
+        { a, b },
+      )
       result.push(a[i])
       i++
     }
