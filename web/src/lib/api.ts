@@ -140,8 +140,9 @@ async function performRefresh(): Promise<RefreshOutcome> {
  *
  * Resolves to the new token, or `null` when we still don't have one. If the
  * server actively refused, the session is cleared and flagged as expired here,
- * so `AuthContext` hears about it and `RequireAuth` moves the user to the login
- * screen with an explanation instead of leaving them inside a dead portal.
+ * so `AuthContext` hears about it and `RequireAuth` moves the user to the
+ * session-ended screen, which offers the sign-in for their role and carries
+ * the page they were on, instead of leaving them inside a dead portal.
  */
 async function refreshSession(): Promise<string | null> {
   refreshInFlight ??= performRefresh().finally(() => {
@@ -150,8 +151,12 @@ async function refreshSession(): Promise<string | null> {
   const outcome = await refreshInFlight
   if (outcome.status === "renewed") return outcome.accessToken
   if (outcome.status === "refused") {
+    // Read the role before clearing: `SessionEnded` sends a parent back to
+    // `/login/parent`, not the email form, and only the dying session knows
+    // which one this reader was.
+    const role = getSession()?.role
     clearSession()
-    markSessionExpired()
+    markSessionExpired(role)
   }
   return null
 }

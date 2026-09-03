@@ -3,7 +3,7 @@ import { useState } from "react"
 import { useSearchParams } from "react-router-dom"
 import { FullPageState } from "./FullPageState"
 import { safeNextPath } from "@/lib/nextPath"
-import { takeSessionExpired } from "@/lib/auth/storage"
+import { peekExpiredRole, takeSessionExpired } from "@/lib/auth/storage"
 
 /*
  * PR 2 part A2 · `/session-ended`, the destination `RequireAuth` sends a dead
@@ -40,16 +40,24 @@ import { takeSessionExpired } from "@/lib/auth/storage"
  * And this screen had no way to know *which* role had expired, so its own
  * `sign-in` action could only ever point a parent at the password form they
  * cannot use (SHOULD-FIX 3, `loginPathForRole`). Reading the flag here on
- * mount — the same `takeSessionExpired` `Login.tsx` reads, consumed at most
- * once between the two screens — fixes both: it picks up the role
- * `markSessionExpired` recorded and hands it to `FullPageState` as
- * `expiredRole`, since `useAuth()`'s own `session` is `null` by the time this
- * renders and has no role left to read it from directly.
+ * mount fixes both: `peekExpiredRole()` first, since `takeSessionExpired`
+ * clears the role together with the boolean flag it returns (see both
+ * functions' own doc comments in `storage.ts` — `takeSessionExpired` itself
+ * keeps its existing `boolean` return, unchanged, for `Login.tsx`'s sake),
+ * then `takeSessionExpired()` to actually consume the flag so a later
+ * remount of either screen does not show the notice twice for the same
+ * expiry. The role goes to `FullPageState` as `expiredRole`, since
+ * `useAuth()`'s own `session` is `null` by the time this renders and has no
+ * role left to read it from directly.
  */
 export function SessionEnded() {
   const [searchParams] = useSearchParams()
   const next = safeNextPath(searchParams.get("next"))
-  const [{ role }] = useState(() => takeSessionExpired())
+  const [role] = useState(() => {
+    const expiredRole = peekExpiredRole()
+    takeSessionExpired()
+    return expiredRole
+  })
 
   return (
     <FullPageState

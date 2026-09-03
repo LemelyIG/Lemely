@@ -160,14 +160,6 @@
         display: grid;
         grid-template-columns: 1fr;
       }
-      @media (min-width: 820px) {
-        #root[data-shell="portal"] .lm-shell-tier2 {
-          grid-template-columns: 246px 1fr;
-        }
-        .lm-shell-sidebar {
-          display: flex;
-        }
-      }
 
       .lm-shell-sidebar {
         display: none;
@@ -176,6 +168,23 @@
         padding: 24px 20px;
         background: %LEMELY_COLOR_PAPER_SUNK%;
         border-right: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      /* The media query has to come AFTER `.lm-shell-sidebar`'s own base
+         rule above, not before it: both declare `display` at equal
+         (single-class) specificity, and a later rule in source order beats
+         an earlier one at equal specificity regardless of which is nested in
+         a matching `@media` block. Declared the other way round once, by
+         mistake, and `display: flex` here was silently overridden back to
+         `none` at every width — caught by `shell_shot_f1.mjs`'s `1280px`
+         run reporting `sidebarDisplay: "none"` on `/student`, not by reading
+         the rule. */
+      @media (min-width: 820px) {
+        #root[data-shell="portal"] .lm-shell-tier2 {
+          grid-template-columns: 246px 1fr;
+        }
+        .lm-shell-sidebar {
+          display: flex;
+        }
       }
       .lm-shell-brand {
         display: flex;

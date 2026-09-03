@@ -392,7 +392,7 @@ export function ParentLogin() {
   // rather than via `/session-ended`, which already consumed the flag —
   // gets told so, the same way `Login.tsx` already does for the
   // email+password form.
-  const [{ expired }] = useState(() => takeSessionExpired())
+  const [expired] = useState(() => takeSessionExpired())
 
   const [dial, setDial] = useState<string>(COUNTRIES[0].dial)
   const [phone, setPhone] = useState("")

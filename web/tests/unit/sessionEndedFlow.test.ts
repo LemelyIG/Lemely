@@ -47,8 +47,13 @@ describe("FullPageState.tsx — sign-in resolves through loginPathForRole", () =
 describe("SessionEnded.tsx — consumes the expiry flag once, on mount", () => {
   const stripped = stripComments(sourceOf("src/portals/misc/SessionEnded.tsx"))
 
-  it("reads takeSessionExpired via a useState initializer (mount-only, consuming)", () => {
-    expect(stripped).toMatch(/useState\(\(\)\s*=>\s*takeSessionExpired\(\)\)/)
+  it("reads the role via peekExpiredRole inside a useState initializer, before consuming", () => {
+    // Order matters: `takeSessionExpired` clears the role together with the
+    // boolean flag (`storage.ts`'s own doc comment), so the role must be
+    // read first, in the same initializer, or it is already gone.
+    expect(stripped).toMatch(
+      /useState\(\(\)\s*=>\s*\{\s*const expiredRole = peekExpiredRole\(\)\s*takeSessionExpired\(\)\s*return expiredRole\s*\}\)/,
+    )
   })
 
   it("passes the role it read down to FullPageState as expiredRole", () => {

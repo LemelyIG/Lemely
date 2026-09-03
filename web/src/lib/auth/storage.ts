@@ -129,40 +129,56 @@ export function markSessionExpired(role?: string): void {
   expiredRole = role
 }
 
-/** `takeSessionExpired`/`peekSessionExpired`'s shared read shape: whether a
- * session just expired, and the role it belonged to (if known). */
-export interface SessionExpiry {
-  expired: boolean
-  role: string | undefined
-}
-
-/** Read and clear the expiry flag (and the role recorded alongside it), so
- * the notice shows once. */
-export function takeSessionExpired(): SessionExpiry {
-  const expiry: SessionExpiry = { expired: expiredSignal, role: expiredRole }
+/**
+ * Read and clear the expiry flag, so the notice shows once.
+ *
+ * Returns a bare `boolean`, unchanged by this fix — `tests/unit/
+ * sessionRefresh.test.ts` (P6, predates this PR, out of its file scope)
+ * asserts this exact return type directly, and `Login.tsx` only ever needed
+ * the boolean in the first place: the email+password form is the same
+ * screen regardless of which role expired. `role` is consumed alongside it
+ * (below) whether or not a caller reads it first, so a `takeSessionExpired`
+ * with no matching `peekExpiredRole` call still leaves nothing stale behind.
+ */
+export function takeSessionExpired(): boolean {
+  const expired = expiredSignal
   expiredSignal = false
   expiredRole = undefined
-  return expiry
+  return expired
 }
 
 /**
- * Read the expiry flag (and role) without clearing it.
+ * Read the expiry flag without clearing it.
  *
- * Two readers need two different reads of the same bit. `SessionEnded` and
- * `Login.tsx` both want `takeSessionExpired`: each reads once on mount to
- * pick up the role and decide whether to show the notice, and must consume
- * the flag so a later remount (its own, or the other screen's, whichever a
- * reader reaches second) does not show it a second time for the same
- * expiry. `RequireAuth` cannot use that same consuming read — it renders on
- * every navigation inside a guarded subtree, not once, and it is asking a
- * different question ("did `api.ts`'s silent refresh just get refused,
- * mid-session, on this very render?") than either screen's "show the notice
- * now, on the screen built to say so". Taking the flag there would clear it
- * before the reader ever reaches `/session-ended` or `/login` to see it —
- * `peekSessionExpired` lets `RequireAuth` route a dead session to
- * `/session-ended` without deciding, on its behalf, that the flag has been
- * shown.
+ * Two readers need two different reads of the same bit. `Login.tsx` and
+ * `SessionEnded` both want `takeSessionExpired`: each reads once on mount to
+ * decide whether to show the notice, and must consume the flag so a later
+ * remount (its own, or the other screen's, whichever a reader reaches
+ * second) does not show it a second time for the same expiry. `RequireAuth`
+ * cannot use that same consuming read — it renders on every navigation
+ * inside a guarded subtree, not once, and it is asking a different question
+ * ("did `api.ts`'s silent refresh just get refused, mid-session, on this
+ * very render?") than either screen's "show the notice now, on the screen
+ * built to say so". Taking the flag there would clear it before the reader
+ * ever reaches `/session-ended` or `/login` to see it — `peekSessionExpired`
+ * lets `RequireAuth` route a dead session to `/session-ended` without
+ * deciding, on its behalf, that the flag has been shown.
  */
 export function peekSessionExpired(): boolean {
   return expiredSignal
+}
+
+/**
+ * Read the role recorded alongside the expiry flag, without clearing it.
+ *
+ * `SessionEnded` is the one caller (SHOULD-FIX 3): it needs the role a dead
+ * session belonged to so `FullPageStateBody`'s `sign-in` action can resolve
+ * through `loginPathForRole` even though `useAuth()`'s own `session` is
+ * already `null` by the time it renders. Called *before*
+ * `takeSessionExpired` in that same mount, not after — `takeSessionExpired`
+ * clears `expiredRole` together with the boolean flag (see its own doc
+ * comment), so a peek taken afterwards would always read `undefined`.
+ */
+export function peekExpiredRole(): string | undefined {
+  return expiredRole
 }
