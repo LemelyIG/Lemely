@@ -252,11 +252,24 @@ describe("buildClientErrorReport", () => {
     )
 
     it("redacts only the sensitive keys, leaving the rest of the query intact", () => {
+      // `next` is one of the sensitive keys (PR 2 nit, below) precisely
+      // because it can itself carry a credential-bearing path — see that
+      // fixture for the case that matters. `state` stays untouched here to
+      // pin that the redaction is per-key, not "blank the whole query".
       const route = redactRoute("/auth/callback?state=xyz&code=abc123&next=%2Fstudent")
       const params = new URLSearchParams(route.split("?")[1])
       expect(params.get("state")).toBe("xyz")
       expect(params.get("code")).toBe("redacted")
-      expect(params.get("next")).toBe("/student")
+      expect(params.get("next")).toBe("redacted")
+    })
+
+    it("redacts a next query param (PR 2 nit, adversarial review)", () => {
+      // `?next=` (`lib/nextPath.ts`) is a same-origin *path*, and that path
+      // can itself be `/reset/<token>` or `/verify-email/<token>` — a report
+      // from `/login?next=/reset/<real-token>` must not write that token to
+      // Cloud Logging through the query string.
+      const route = redactRoute("/login?next=%2Freset%2Fa1b2c3d4e5f6g7h8i9j0")
+      expect(route).toBe("/login?next=redacted")
     })
 
     it("redacts more than one sensitive key in the same query string", () => {
@@ -313,8 +326,16 @@ describe("buildClientErrorReport", () => {
       })
 
       it("redacts both a path segment and a query key on the same route", () => {
+        const route = redactRoute("/reset/a1b2c3d4e5f6g7h8i9j0?state=xyz")
+        expect(route).toBe("/reset/redacted?state=xyz")
+      })
+
+      it("redacts a path segment and a next query param together", () => {
+        // The realistic shape of the fixture above the describe block:
+        // `/reset/:token` redacted by the path rule, `?next=` redacted by
+        // the query-key rule, on the same route.
         const route = redactRoute("/reset/a1b2c3d4e5f6g7h8i9j0?next=%2Flogin")
-        expect(route).toBe("/reset/redacted?next=%2Flogin")
+        expect(route).toBe("/reset/redacted?next=redacted")
       })
 
       it("end to end via buildClientErrorReport: a reset token in the path is redacted", () => {

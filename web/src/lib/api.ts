@@ -1,6 +1,7 @@
 import type { ActivityEvent } from "./types"
 import { clearSession, getSession, markSessionExpired, setSession } from "./auth/storage"
 import { isTokenExpired } from "./auth/jwt"
+import { parseRetryAfter } from "./routeError"
 
 /*
  * Typed API client. Frontend-first this run: request() hits the FastAPI backend
@@ -26,10 +27,21 @@ export class ApiError extends Error {
    * `undefined` when the body wasn't JSON or carried no `detail` key.
    */
   detail?: unknown
-  constructor(status: number, message: string, detail?: unknown) {
+  /**
+   * Seconds to wait before retrying, parsed from a 429 (or 503)'s
+   * `Retry-After` header via `parseRetryAfter` (`lib/routeError.ts`) — the
+   * live countdown `RouteErrorScreen`/`PortalErrorFallback` show for
+   * `too-many-requests` comes from here. `undefined` when the response
+   * carried no such header, or a fourth argument was never passed (every
+   * `ApiError` constructed outside `request()`/`streamActivity()`, and every
+   * test in this codebase that builds one by hand).
+   */
+  retryAfter?: number
+  constructor(status: number, message: string, detail?: unknown, retryAfter?: number) {
     super(message)
     this.status = status
     this.detail = detail
+    this.retryAfter = retryAfter
   }
 }
 
@@ -128,8 +140,9 @@ async function performRefresh(): Promise<RefreshOutcome> {
  *
  * Resolves to the new token, or `null` when we still don't have one. If the
  * server actively refused, the session is cleared and flagged as expired here,
- * so `AuthContext` hears about it and `RequireAuth` moves the user to the login
- * screen with an explanation instead of leaving them inside a dead portal.
+ * so `AuthContext` hears about it and `RequireAuth` moves the user to the
+ * session-ended screen, which offers the sign-in for their role and carries
+ * the page they were on, instead of leaving them inside a dead portal.
  */
 async function refreshSession(): Promise<string | null> {
   refreshInFlight ??= performRefresh().finally(() => {
@@ -138,8 +151,12 @@ async function refreshSession(): Promise<string | null> {
   const outcome = await refreshInFlight
   if (outcome.status === "renewed") return outcome.accessToken
   if (outcome.status === "refused") {
+    // Read the role before clearing: `SessionEnded` sends a parent back to
+    // `/login/parent`, not the email form, and only the dying session knows
+    // which one this reader was.
+    const role = getSession()?.role
     clearSession()
-    markSessionExpired()
+    markSessionExpired(role)
   }
   return null
 }
@@ -224,7 +241,11 @@ export async function request<T>(
       } catch {
         // Body wasn't JSON (or empty) — keep the generic status text.
       }
-      throw new ApiError(res.status, message, detail)
+      // `Retry-After` matters here specifically because this is the one path
+      // a 429 or a 503 from every ordinary API call comes through — see the
+      // field's own doc on `ApiError` above.
+      const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
+      throw new ApiError(res.status, message, detail, retryAfter ?? undefined)
     }
     // A 204 (e.g. `DELETE /classes/{id}`) has no body — `res.json()` would
     // throw on the empty string. `T` is `void` at every such call site.
@@ -325,7 +346,8 @@ export async function* streamActivity(
     } catch {
       // Body wasn't JSON — keep the generic status text.
     }
-    throw new ApiError(res.status, message, detail)
+    const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
+    throw new ApiError(res.status, message, detail, retryAfter ?? undefined)
   }
   if (!res.body) return
   const reader = res.body.getReader()
