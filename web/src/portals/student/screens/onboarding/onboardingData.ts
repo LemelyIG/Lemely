@@ -54,6 +54,33 @@ export function placementInviteSubject(
   return subjects.find((subject) => enrolled.has(subject.code))?.code ?? null
 }
 
+/**
+ * The subject to route a *skipped* placement-choice question to: the first
+ * enrolled subject, in enrolment order, that actually has placement
+ * questions — falling back to `null` (the caller falls through to
+ * `placementInviteSubject`'s catalogue-order default) only when none of
+ * the enrolled subjects have any.
+ *
+ * Skip is meant to mean "no opinion", not "silently apply the ordering
+ * default this whole question exists to remove". A skip is one tap versus
+ * reading two availability cards to choose, so it is the majority path for
+ * a multi-subject student — its default carries real weight, and cannot be
+ * catalogue order (0580 sorts first and has zero placement questions,
+ * `core/placement.py`) without reintroducing the exact dead end this
+ * question was built to avoid.
+ *
+ * `available` is keyed by subject code; a code missing from the map (its
+ * availability query hasn't resolved, or failed) is treated the same as
+ * "not known to be available" — this function only ever routes to a
+ * subject it can affirmatively confirm has questions, never guesses.
+ */
+export function firstAvailablePlacementSubject(
+  enrolledCodes: readonly string[],
+  available: ReadonlyMap<string, boolean>,
+): string | null {
+  return enrolledCodes.find((code) => available.get(code) === true) ?? null
+}
+
 // ── S-01 subject/paper/target selection ─────────────────────────────────
 
 export interface SubjectDraft {

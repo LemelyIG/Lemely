@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Stepper } from "@/components/ui/stepper"
 import { useReference } from "@/lib/hooks/useReferenceApi"
+import { usePlacementAvailabilities } from "@/lib/hooks/usePlacementApi"
 import { subjectFor, targetGradesFor, tierForPapers } from "@/lib/reference"
 import { studentSaveFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -18,6 +19,7 @@ import {
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  firstAvailablePlacementSubject,
   placementInviteSubject,
   toggleInSet,
   type QuestionnaireAnswers,
@@ -125,6 +127,16 @@ export function Onboarding() {
   }, [existing, reference])
 
   const questionnaireSteps = buildQuestionnaireSteps(Object.keys(drafts))
+
+  // Availability for every enrolled subject, fetched only once S-02 is
+  // reached (no point racing S-01's subject picks). `usePlacementAvailabilities`
+  // is a single hook call regardless of how many codes are passed — see its
+  // doc comment for why a `.map()` of `usePlacementAvailability` calls would
+  // not be safe here. Feeds `firstAvailablePlacementSubject` below: the
+  // placement-choice skip path must prefer a subject that actually has
+  // questions, not silently fall back to catalogue order.
+  const enrolledForAvailability = wizardStep === "questionnaire" ? Object.keys(drafts) : []
+  const placementAvailabilities = usePlacementAvailabilities(enrolledForAvailability)
 
   function toggleSubject(code: string) {
     setDrafts((prev) => {
@@ -247,14 +259,28 @@ export function Onboarding() {
       // S-02 -> S-03 (UI spec): the placement invite is per subject. When
       // the student answered the placement-choice question (>= 2 enrolled
       // subjects), that answer wins outright — it exists precisely to
-      // remove the dependency on catalogue order. Otherwise (one subject,
-      // or the choice was skipped) fall back to the first subject in
-      // catalogue order, same as before this question existed. A student
-      // who selected nothing has no subject to invite them into a
-      // placement test for — S-06 directly. See `placementInviteSubject`
-      // for why the fallback is not `Object.keys(...)[0]`.
-      const targetSubject =
-        placementChoice ?? placementInviteSubject(Object.keys(drafts), reference?.subjects ?? [])
+      // remove the dependency on catalogue order.
+      //
+      // When the choice was skipped (or never asked, one subject), the
+      // fallback is NOT catalogue order directly: skip is one tap versus
+      // reading two availability cards, so it is the majority path for a
+      // multi-subject student, and catalogue order would silently reroute
+      // most of them straight back into the 0580 dead end this question
+      // exists to avoid. `firstAvailablePlacementSubject` prefers the
+      // first enrolled subject (enrolment order) that this screen already
+      // confirmed has questions; only when none of them do — genuinely
+      // nothing better to route to — does catalogue order via
+      // `placementInviteSubject` apply. A student who selected nothing has
+      // no subject to invite them into a placement test for — S-06
+      // directly.
+      const enrolledCodes = Object.keys(drafts)
+      const availableByCode = new Map(
+        enrolledCodes.map((code, i) => [code, placementAvailabilities[i]?.data?.available === true]),
+      )
+      const skipFallback =
+        firstAvailablePlacementSubject(enrolledCodes, availableByCode) ??
+        placementInviteSubject(enrolledCodes, reference?.subjects ?? [])
+      const targetSubject = placementChoice ?? skipFallback
       navigate(targetSubject ? `/student/placement/${targetSubject}` : "/student")
     } catch (err) {
       setError(studentSaveFailureMessage(err))

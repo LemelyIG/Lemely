@@ -6,6 +6,7 @@ import {
   buildProfilePatchPayload,
   buildQuestionnaireSteps,
   clampStepIndex,
+  firstAvailablePlacementSubject,
   placementInviteSubject,
   toggleInSet,
   type QuestionnaireAnswers,
@@ -268,5 +269,45 @@ describe("buildQuestionnaireSteps — placement choice", () => {
     const lastConfidence = steps.map((s) => s.kind).lastIndexOf("confidence")
     const choice = steps.map((s) => s.kind).indexOf("placementChoice")
     expect(choice).toBeGreaterThan(lastConfidence)
+  })
+})
+
+describe("firstAvailablePlacementSubject — the placement-choice SKIP path", () => {
+  it("routes to the first enrolled subject that is actually available, even when an earlier one (catalogue order) is not", () => {
+    // The finding this function exists to fix: 0580 sorts first and has no
+    // placement questions. A skipper must not land there when 0625, also
+    // enrolled, does have a real test.
+    const available = new Map([
+      ["0580", false],
+      ["0625", true],
+    ])
+    expect(firstAvailablePlacementSubject(["0580", "0625"], available)).toBe("0625")
+  })
+
+  it("respects enrolment order among subjects that are all available", () => {
+    const available = new Map([
+      ["0606", true],
+      ["0625", true],
+    ])
+    expect(firstAvailablePlacementSubject(["0606", "0625"], available)).toBe("0606")
+  })
+
+  it("returns null — never a guess — when no enrolled subject is known to be available", () => {
+    const available = new Map([
+      ["0580", false],
+      ["0606", false],
+    ])
+    expect(firstAvailablePlacementSubject(["0580", "0606"], available)).toBeNull()
+  })
+
+  it("treats a subject missing from the availability map as not known to be available, not as available", () => {
+    // The query for it hasn't resolved yet (or failed) — this function
+    // never routes to a subject it cannot affirmatively confirm has
+    // questions.
+    expect(firstAvailablePlacementSubject(["0580"], new Map())).toBeNull()
+  })
+
+  it("returns null for no enrolled subjects", () => {
+    expect(firstAvailablePlacementSubject([], new Map([["0625", true]]))).toBeNull()
   })
 })
