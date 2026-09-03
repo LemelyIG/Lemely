@@ -14,6 +14,8 @@ import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 
 /*
  * Class detail — roster (T-03). Reads `classDetail.students` from
@@ -65,15 +67,17 @@ import { SortArrow } from "@/components/ui/inline-arrow"
 
 type SortColumn = "name" | "paperCount" | "mark" | "grade" | "delta" | "atRisk" | "lastActiveAt"
 
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
-
 function markPercent(mark: string): number | null {
   const [awarded, max] = mark.split("/").map(Number)
   if (!mark || Number.isNaN(awarded) || !max) return null
   return (awarded / max) * 100
 }
 
-function valueFor(s: StudentRow, column: SortColumn): string | number | null {
+/** `vocabulary` is the class's own subject's grades — every row in one
+ * roster shares the one class, so unlike `Quizzes.tsx` there is no
+ * cross-subject ambiguity here. `[]` while `/api/reference` is loading, so
+ * `gradeRank` ranks every student equally rather than scrambling the table. */
+function valueFor(s: StudentRow, column: SortColumn, vocabulary: readonly string[]): string | number | null {
   switch (column) {
     case "name":
       return s.name
@@ -81,10 +85,8 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
       return s.paperCount
     case "mark":
       return markPercent(s.mark)
-    case "grade": {
-      const idx = GRADE_ORDER.indexOf(s.grade)
-      return idx === -1 ? null : idx
-    }
+    case "grade":
+      return s.grade ? gradeRank(s.grade, vocabulary) : null
     case "delta":
       return s.delta
     case "atRisk":
@@ -94,9 +96,15 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
   }
 }
 
-function compareStudents(a: StudentRow, b: StudentRow, column: SortColumn, dir: 1 | -1): number {
-  const av = valueFor(a, column)
-  const bv = valueFor(b, column)
+function compareStudents(
+  a: StudentRow,
+  b: StudentRow,
+  column: SortColumn,
+  dir: 1 | -1,
+  vocabulary: readonly string[],
+): number {
+  const av = valueFor(a, column, vocabulary)
+  const bv = valueFor(b, column, vocabulary)
   if (av == null && bv == null) return 0
   if (av == null) return 1
   if (bv == null) return -1
@@ -208,13 +216,20 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
 export function ClassRoster() {
   const { classDetail, classId } = useClassDetailContext()
   const removeStudent = useRemoveStudent(classId)
+  const referenceQuery = useReference()
+  const vocabulary = classDetail.subjectCode
+    ? widestVocabularyFor(
+        referenceQuery.data?.targetGradeVocabularies ?? [],
+        classDetail.subjectCode,
+      )
+    : []
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("name")
   const [sortDir, setSortDir] = useState<1 | -1>(1)
   const [showAdd, setShowAdd] = useState(false)
 
   const sorted = [...classDetail.students].sort((a, b) =>
-    compareStudents(a, b, sortColumn, sortDir),
+    compareStudents(a, b, sortColumn, sortDir, vocabulary),
   )
 
   function toggleSort(column: SortColumn) {

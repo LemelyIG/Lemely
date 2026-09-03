@@ -13,7 +13,13 @@ import { cn } from "@/lib/utils"
  * relying on hover or color alone.
  */
 
-export type Grade = "A*" | "A" | "B" | "C" | "D" | "E" | "F" | "G" | "U"
+/*
+ * The vocabulary is data now, served per subject and tier by
+ * `GET /api/reference` — see `lib/types.ts`'s `Grade` for why this widened to
+ * `string` rather than staying a fixed union that omitted grades some
+ * subjects genuinely award.
+ */
+export type Grade = string
 export type GradeBand = "top" | "mid" | "borderline" | "fail"
 export type GradeBadgeSize = "hero" | "medium" | "inline"
 /*

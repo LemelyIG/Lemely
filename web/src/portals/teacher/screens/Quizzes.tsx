@@ -12,6 +12,8 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { useCreateQuiz, useTeacherQuizzes } from "@/lib/hooks/useTeacherApi"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 import type { QuizSummary } from "@/lib/teacherTypes"
 import { ForwardArrow, SortArrow } from "@/components/ui/inline-arrow"
 
@@ -83,9 +85,18 @@ export function statusTone(status: string): NonNullable<ChipProps["tone"]> {
 
 type SortColumn = "title" | "subjectCode" | "status" | "questionCount" | "targetGrade"
 
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
-
-function valueFor(q: QuizSummary, column: SortColumn): string | number | null {
+/**
+ * A quiz's target grade is ranked against its own subject's vocabulary — the
+ * list this screen spans quizzes across many subjects, so there is no single
+ * vocabulary to sort the whole "Target grade" column against. `vocabularies`
+ * is `useReference().data?.targetGradeVocabularies ?? []` while loading, so
+ * every quiz ranks equally (stable order) until the catalogue arrives.
+ */
+function valueFor(
+  q: QuizSummary,
+  column: SortColumn,
+  vocabularies: readonly { subjectCode: string; grades: readonly string[] }[],
+): string | number | null {
   switch (column) {
     case "title":
       return q.title
@@ -95,16 +106,22 @@ function valueFor(q: QuizSummary, column: SortColumn): string | number | null {
       return q.status
     case "questionCount":
       return q.questionCount
-    case "targetGrade": {
-      const idx = q.targetGrade ? GRADE_ORDER.indexOf(q.targetGrade) : -1
-      return idx === -1 ? null : idx
-    }
+    case "targetGrade":
+      return q.targetGrade
+        ? gradeRank(q.targetGrade, widestVocabularyFor(vocabularies, q.subjectCode))
+        : null
   }
 }
 
-function compareQuizzes(a: QuizSummary, b: QuizSummary, column: SortColumn, dir: 1 | -1): number {
-  const av = valueFor(a, column)
-  const bv = valueFor(b, column)
+function compareQuizzes(
+  a: QuizSummary,
+  b: QuizSummary,
+  column: SortColumn,
+  dir: 1 | -1,
+  vocabularies: readonly { subjectCode: string; grades: readonly string[] }[],
+): number {
+  const av = valueFor(a, column, vocabularies)
+  const bv = valueFor(b, column, vocabularies)
   if (av == null && bv == null) return 0
   if (av == null) return 1
   if (bv == null) return -1
@@ -124,6 +141,8 @@ export function Quizzes() {
   const navigate = useNavigate()
   const quizzesQuery = useTeacherQuizzes()
   const createQuiz = useCreateQuiz()
+  const referenceQuery = useReference()
+  const vocabularies = referenceQuery.data?.targetGradeVocabularies ?? []
 
   const [search, setSearch] = useState("")
   const [sortColumn, setSortColumn] = useState<SortColumn>("title")
@@ -162,7 +181,7 @@ export function Quizzes() {
         (q) => q.title.toLowerCase().includes(term) || q.subjectCode.toLowerCase().includes(term),
       )
     : quizzes
-  const sorted = [...filtered].sort((a, b) => compareQuizzes(a, b, sortColumn, sortDir))
+  const sorted = [...filtered].sort((a, b) => compareQuizzes(a, b, sortColumn, sortDir, vocabularies))
 
   function toggleSort(column: SortColumn) {
     if (column === sortColumn) {

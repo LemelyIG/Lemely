@@ -16,7 +16,8 @@ import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
-import type { Grade } from "@/lib/types"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { widestVocabularyFor } from "@/lib/grades"
 import {
   useCreateQuizAssignment,
   useDeleteQuizAssignment,
@@ -122,10 +123,6 @@ const STEPS: StepperStep[] = [
   { id: 5, label: "Preview & edit" },
   { id: 6, label: "Assign" },
 ]
-
-const GRADES: Grade[] = ["A*", "A", "B", "C", "D", "E", "U"]
-
-const BAND_ORDER = ["foundation", "standard", "challenge"] as const
 
 /** A stand-in count used only to preview the difficulty mix at step 3,
  * before step 4 has ever set a real `requestedCount` — `allocate_difficulty`
@@ -450,6 +447,16 @@ function StepDifficulty({
     requestedCount: previewCount,
     targetGrade: grade,
   })
+  const referenceQuery = useReference()
+  // The quiz carries no tier, so this ranks against the widest vocabulary
+  // `/api/reference` serves for the subject — see `lib/grades.ts`'s
+  // `widestVocabularyFor` doc for why that is a real served array, not one
+  // assembled here.
+  const grades = widestVocabularyFor(
+    referenceQuery.data?.targetGradeVocabularies ?? [],
+    quiz.subjectCode,
+  )
+  const bands = referenceQuery.data?.difficultyBands ?? []
 
   return (
     <div className="flex flex-col gap-5 max-w-[620px]">
@@ -467,7 +474,7 @@ function StepDifficulty({
           aria-label="Target grade"
           className="flex flex-wrap gap-1 bg-paper-sunk p-[5px] rounded-md w-fit"
         >
-          {GRADES.map((g) => {
+          {grades.map((g) => {
             const on = grade === g
             return (
               <button
@@ -519,7 +526,7 @@ function StepDifficulty({
           </div>
         ) : (
           <div className="flex flex-col gap-2.5">
-            {BAND_ORDER.map((band) => {
+            {bands.map((band) => {
               const value = poolCountQuery.data.byBand[band] ?? 0
               const total = poolCountQuery.data.requested
               return (

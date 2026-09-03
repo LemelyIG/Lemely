@@ -87,7 +87,7 @@ const GRADE_BAND_TOKEN: Record<string, string> = {
  * Grade distribution (`gradeDistribution`), as a horizontal bar per grade.
  *
  * **The empty test is "every count is zero", not "no rows".** `grade_distribution`
- * returns *every* rung of `GRADE_ORDER` with zero counts included, precisely so
+ * returns *every* rung of the subject's grade ladder with zero counts included, precisely so
  * a frontend never has to infer "nobody on a B" from a missing key — which
  * means `length === 0` is unreachable and a class with nothing marked yet drew
  * a full ladder of empty tracks with a 0 beside each. That is a blank chart
@@ -117,7 +117,7 @@ function GradeDistributionPanel({
       <BarChart
         /*
          * Reversed, because Nivo lays a horizontal bar chart out from the
-         * bottom up and `GRADE_ORDER` runs highest-first. Unreversed, the
+         * bottom up and the served ladder runs highest-first. Unreversed, the
          * ladder rendered with A* at the floor and U at the ceiling — upside
          * down against every other place a teacher meets these grades, and
          * against the way the ladder is spoken.

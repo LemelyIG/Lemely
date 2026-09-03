@@ -598,7 +598,7 @@ export interface AtRiskListEntry {
  * Response for `GET /teacher/at-risk` (mirrors `AtRiskListDTO`, T-06).
  * **Already sorted server-side by severity** before this ever reaches the
  * client — `_at_risk_severity_key` in `lemely/web/routers/teacher.py`: flag
- * count descending, then worst (furthest-down-`GRADE_ORDER`) grade first.
+ * count descending, then worst (furthest-down-the-grade-ladder) grade first.
  * The screen mirrors this identical two-key ordering client-side only so its
  * "Severity" column stays re-sortable after a teacher sorts by something
  * else and clicks back — it is a UI convention matching the backend's own

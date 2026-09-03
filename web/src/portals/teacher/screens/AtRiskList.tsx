@@ -21,6 +21,8 @@ import {
 } from "@/lib/hooks/useTeacherApi"
 import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { gradeRank, widestVocabulary } from "@/lib/grades"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 
 /*
  * At-risk list (T-06). `GET /teacher/at-risk?reason=&acknowledged=`
@@ -42,7 +44,7 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  * definition, not a client-invented score.** The list already arrives
  * severity-sorted — `_at_risk_severity_key` in
  * `lemely/web/routers/teacher.py`: flag count descending, then worst
- * (furthest-down-`GRADE_ORDER`) grade first. `compareEntries` below
+ * (furthest-down-the-grade-ladder) grade first. `compareEntries` below
  * reproduces that identical two-key ordering only so the "Severity" column
  * stays re-sortable after a teacher sorts by Student/Class/Grade and clicks
  * back — see its comment. This is presented to the teacher only as a sort
@@ -68,8 +70,6 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  *    renders as a real inline mutation error, not swallowed.
  */
 
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
-
 const REASON_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "declining_trend", label: "Declining trend" },
@@ -85,12 +85,22 @@ const ACK_OPTIONS: { value: string; label: string }[] = [
 
 type SortColumn = "name" | "className" | "grade" | "severity"
 
+/*
+ * `AtRiskListEntryDTO` carries no subject or tier per row — this list spans
+ * every class the caller teaches, so there is no single served vocabulary to
+ * key a row's grade on the way `ClassRoster.tsx` (one class, one subject)
+ * can. Ranking against the single widest vocabulary `/api/reference` serves
+ * (`widestVocabulary` in `lib/grades.ts`) is the honest fallback here: every
+ * subject's grades are a subsequence of the same Cambridge ladder, so the
+ * fullest served array places any real grade in its correct relative
+ * position without this screen inventing one of its own.
+ */
 /** Mirrors the backend's own `_grade_severity_rank` (teacher.py) exactly: an
  * unrecognised or empty grade (a student with only quiz activity) ranks as
  * the mildest possible rather than sorting as "worse than a real U". */
-function gradeSeverityRank(grade: string): number {
-  const idx = GRADE_ORDER.indexOf(grade)
-  return idx === -1 ? -1 : idx
+function gradeSeverityRank(grade: string, vocabulary: readonly string[]): number {
+  if (!grade) return -1
+  return gradeRank(grade, vocabulary)
 }
 
 function compareEntries(
@@ -98,6 +108,7 @@ function compareEntries(
   b: AtRiskListEntry,
   column: SortColumn,
   dir: 1 | -1,
+  vocabulary: readonly string[],
 ): number {
   if (column === "severity") {
     // Reproduces `_at_risk_severity_key` exactly: flag count first, worst
@@ -107,10 +118,10 @@ function compareEntries(
     // first"; same judgment call `ClassRoster.tsx`'s grade column already
     // documents for the same reason (a ladder position isn't a plain number).
     if (a.flags.length !== b.flags.length) return (b.flags.length - a.flags.length) * dir
-    return (gradeSeverityRank(b.grade) - gradeSeverityRank(a.grade)) * dir
+    return (gradeSeverityRank(b.grade, vocabulary) - gradeSeverityRank(a.grade, vocabulary)) * dir
   }
   if (column === "grade") {
-    return (gradeSeverityRank(a.grade) - gradeSeverityRank(b.grade)) * dir
+    return (gradeSeverityRank(a.grade, vocabulary) - gradeSeverityRank(b.grade, vocabulary)) * dir
   }
   const av = column === "name" ? a.displayName : a.className
   const bv = column === "name" ? b.displayName : b.className
@@ -251,6 +262,8 @@ export function AtRiskList() {
     reason: reason || undefined,
     acknowledged: acknowledged === "" ? undefined : acknowledged === "true",
   })
+  const referenceQuery = useReference()
+  const vocabulary = widestVocabulary(referenceQuery.data?.targetGradeVocabularies ?? [])
 
   function toggleSort(column: SortColumn) {
     if (column === sortColumn) {
@@ -290,7 +303,7 @@ export function AtRiskList() {
   }
 
   const students = [...listQuery.data.students].sort((a, b) =>
-    compareEntries(a, b, sortColumn, sortDir),
+    compareEntries(a, b, sortColumn, sortDir, vocabulary),
   )
   const filtersActive = reason !== "" || acknowledged !== ""
 

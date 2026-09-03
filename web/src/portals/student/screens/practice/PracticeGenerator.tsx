@@ -10,7 +10,7 @@ import { Slider } from "@/components/ui/slider"
 import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import type { CreatePracticeResponse, PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
-import { useSubjectName } from "@/lib/hooks/useReferenceApi"
+import { useReference, useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   groupTopicsBySyllabusGroup,
@@ -31,12 +31,12 @@ import {
  * locally.
  */
 
-const DIFFICULTY_BANDS = ["foundation", "standard", "challenge"] as const
-
 export function PracticeGenerator() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
   const subjectName = useSubjectName(subjectCode)
+  const referenceQuery = useReference()
+  const availableDifficultyBands = referenceQuery.data?.difficultyBands ?? []
 
   const topicsQuery = usePracticeTopics(subjectCode)
   const createPractice = useCreatePractice()
@@ -274,7 +274,7 @@ export function PracticeGenerator() {
         <CardBody className="flex flex-col gap-3">
           <h2 className="text-eyebrow text-ink-faint">Difficulty</h2>
           <div className="flex flex-wrap gap-2">
-            {DIFFICULTY_BANDS.map((band) => {
+            {availableDifficultyBands.map((band) => {
               const active = difficultyBands.has(band)
               return (
                 <Button
