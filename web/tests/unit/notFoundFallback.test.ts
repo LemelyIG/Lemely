@@ -128,22 +128,63 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
   })
 
   /*
-   * Two `<main>` elements on one page is the failure this split prevents, so
-   * the source is checked as well as the route table: `PortalNotFound` must
-   * not grow a frame later. Read as text because the landmark only exists once
-   * the component renders, and rendering it needs a router and a jsdom this
-   * suite deliberately does not have.
+   * Two `<main>` elements on one page is the failure this split prevents.
+   * `PortalNotFound` (`portals/misc/NotFound.tsx`) itself is now just
+   * `<FullPageState variant="not-found" frame="portal" />` — the frame it
+   * renders, `<SkipLink>`/`<main>` included or not, lives in
+   * `FullPageState.tsx` (PR 2 part A1), so that is the source this checks:
+   * the branch `FullPageState` takes for `frame !== "standalone"` must not
+   * grow a second `<main>`, a second `<SkipLink>`, or a second element
+   * carrying `MAIN_CONTENT_ID` — those three belong to the `standalone`
+   * branch alone. Read as text, same reasoning as before: the landmark only
+   * exists once the component renders, and rendering it needs a router and a
+   * jsdom this suite deliberately does not have.
    */
   it("PortalNotFound renders no frame of its own", () => {
-    const source = sourceOf("src/portals/misc/NotFound.tsx")
-    const start = source.indexOf("export function PortalNotFound")
-    const end = source.indexOf("function NotFoundBody")
-    expect(start).toBeGreaterThan(-1)
-    expect(end).toBeGreaterThan(start)
-    const body = source.slice(start, end)
-    expect(body).not.toContain("<main")
-    expect(body).not.toContain("SkipLink")
-    expect(body).not.toContain("MAIN_CONTENT_ID")
+    const source = sourceOf("src/portals/misc/FullPageState.tsx")
+    const fnStart = source.indexOf("export function FullPageState(")
+    expect(fnStart).toBeGreaterThan(-1)
+
+    // The standalone branch owns `<SkipLink>`/`<main>`/`MAIN_CONTENT_ID` on
+    // purpose (it is the frame a route reached outside any portal needs).
+    // Its `if` block closes on its own line at this function's indent depth
+    // (`  }`), which is the boundary between it and the unconditional
+    // `return` below it that answers every other `frame` value, `"portal"`
+    // included.
+    const standaloneIf = source.indexOf('if (frame === "standalone")', fnStart)
+    expect(standaloneIf).toBeGreaterThan(fnStart)
+    const standaloneClose = source.indexOf("\n  }\n", standaloneIf)
+    expect(standaloneClose).toBeGreaterThan(standaloneIf)
+
+    const functionEnd = source.indexOf("\n}\n", standaloneClose)
+    const portalBranch = source.slice(
+      standaloneClose,
+      functionEnd === -1 ? source.length : functionEnd,
+    )
+    expect(portalBranch).not.toContain("<main")
+    expect(portalBranch).not.toContain("SkipLink")
+    expect(portalBranch).not.toContain("MAIN_CONTENT_ID")
+  })
+
+  /*
+   * PR 2 part A2 · every top-level route now catches a render failure through
+   * the same screen. Before this, `errorElement` held the bare `NotFound`
+   * component directly, and every non-404 failure (a stale build, a dropped
+   * session, a rate limit, the marking service down) fell back to the one
+   * generic "something went wrong at our end" reading. `RouteErrorScreen`
+   * (`components/route-error.tsx`) reaches that same 404/crash split by way
+   * of `classifyRouteError`, plus the rest of the table `routes.tsx`'s own
+   * module note describes — this pins that every route actually got the new
+   * `errorElement`, not just some of them.
+   */
+  it("gives every top-level route the same RouteErrorScreen errorElement — PR 2 part A2", () => {
+    expect(appRoutes.length).toBeGreaterThan(0)
+    for (const route of appRoutes) {
+      expect(
+        containsComponent(route.errorElement, "RouteErrorScreen"),
+        `route ${String(route.path)} does not use RouteErrorScreen as its errorElement`,
+      ).toBe(true)
+    }
   })
 })
 

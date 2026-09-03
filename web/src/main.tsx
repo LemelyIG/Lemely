@@ -6,7 +6,10 @@ import { queryClient } from "./lib/queryClient"
 import { AuthProvider } from "./lib/auth/AuthContext"
 import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
-import { reportClientError } from "./lib/clientErrors"
+import { currentBuildId, reportClientError } from "./lib/clientErrors"
+import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
+import { RecoveryEffects } from "./components/recovery-effects"
+import { ToastProvider } from "./components/ui/toast"
 import "./index.css"
 
 // The page half of the push handshake (D5.15 §2). Registered once at startup,
@@ -45,11 +48,35 @@ window.addEventListener("unhandledrejection", (event) => {
   reportClientError({ error: event.reason, kind: "rejection" })
 })
 
+/*
+ * PR 2 part C (stale-chunk recovery): every portal screen is a lazy
+ * `import()` (see the `P6.1b` notes in `portals/*\/index.tsx`), so a deploy
+ * that lands while this tab still has the previous build open leaves this
+ * tab's chunk URLs pointing at assets the CDN no longer serves. Installed
+ * here, next to the error listeners above, for the same reason they are:
+ * `vite:preloadError` can fire before any screen has mounted. See
+ * `lib/staleChunk.ts` for the reload-at-most-once-per-build guard this
+ * wires up, and `components/recovery-effects.tsx` for the "Updated to the
+ * latest version" toast that announces a reload this guard caused.
+ */
+installStaleChunkReload({
+  guard: new StaleChunkGuard(window.localStorage, { perTab: window.sessionStorage }),
+  buildId: currentBuildId(),
+  reload: () => window.location.reload(),
+})
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        <RouterProvider router={router} />
+        <ToastProvider>
+          {/* Mounted once, above the router, so both of its effects (the
+              offline→online query refetch + "Reconnected" toast, and the
+              post-reload "Updated" toast) run for the app's whole lifetime
+              rather than only while some particular screen is mounted. */}
+          <RecoveryEffects />
+          <RouterProvider router={router} />
+        </ToastProvider>
       </AuthProvider>
     </QueryClientProvider>
   </StrictMode>,

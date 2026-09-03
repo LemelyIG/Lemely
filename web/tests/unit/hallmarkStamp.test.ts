@@ -91,7 +91,6 @@ const UNSTAMPED_KIT = [
   "src/components/ui/table.tsx",
   "src/components/ui/tabs.tsx",
   "src/components/ui/textarea.tsx",
-  "src/components/ui/toast.tsx",
   "src/components/ui/trend-sparkline.tsx",
   "src/components/ui/weakness-chip.tsx",
 ]

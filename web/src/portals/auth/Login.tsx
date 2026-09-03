@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
-import { Link, useNavigate } from "react-router-dom"
+import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input"
 import { ApiError } from "@/lib/api"
 import { isDeviceLimitChallenge, type DeviceLimitChallenge } from "@/lib/deviceTypes"
 import { takeSessionExpired } from "@/lib/auth/storage"
+import { safeNextPath } from "@/lib/nextPath"
 import { signInFailureMessage } from "@/lib/authOutcome"
 import { cn } from "@/lib/utils"
 import { DeviceLimitNotice } from "./DeviceLimitNotice"
@@ -115,20 +116,31 @@ const LINK_CLASS =
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const [searchParams] = useSearchParams()
+  // PR 2 part A2: where a dead session (`RequireAuth`) or `/session-ended`'s
+  // own "Sign in again" link carried the reader from. Re-validated here with
+  // the same allowlist those two apply — a `?next=` is exactly as untrusted
+  // arriving at this component as anywhere else it is read from a URL.
+  const next = safeNextPath(searchParams.get("next"))
   const [email, setEmail] = useState("")
   const [password, setPassword] = useState("")
   const [challenge, setChallenge] = useState<DeviceLimitChallenge | null>(null)
   // Read once, on mount, and cleared by the read: landing here after a session
   // expired should say so. Being silently returned to a login screen reads as
   // the app having lost your work, which is the impression the old behaviour
-  // gave once it stopped showing raw 401 text.
+  // gave once it stopped showing raw 401 text. `SessionEnded` reads the same
+  // flag the same way, so whichever of the two screens a reader actually
+  // reaches shows the notice — never both, since the read consumes it.
   const [expired] = useState(() => takeSessionExpired())
 
   const signIn = (confirmDeviceEviction: boolean) => {
     login.mutate(
       { email, password, confirmDeviceEviction },
       {
-        onSuccess: (result) => navigate(portalPathForRole(result.role), { replace: true }),
+        // `next` wins over the role-derived portal home whenever it is
+        // present — a reader who was bounced off a specific page wants back
+        // to that page, not to their dashboard's index.
+        onSuccess: (result) => navigate(next ?? portalPathForRole(result.role), { replace: true }),
         // A 409 is not a failed login: the password was right and nothing has
         // been signed out yet. Anything else stays an ordinary error message.
         onError: (error) => {

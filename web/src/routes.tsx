@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react"
 import { RouteFallback } from "@/components/ui/state-views"
 import type { RouteObject } from "react-router-dom"
-import { Navigate } from "react-router-dom"
+import { Navigate, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
+import { safeNextPath } from "@/lib/nextPath"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -22,6 +23,20 @@ import type { PageMeta } from "@/lib/meta/documentMeta"
  * It is a small screen, and it is the one worth carrying in the entry bundle.
  */
 import { NotFound } from "@/portals/misc/NotFound"
+/*
+ * PR 2 part A2. Static for the identical reason `NotFound` above is: this is
+ * the router's `errorElement`, so a lazy import of it would have to fetch a
+ * chunk from the same origin a chunk-load failure has already shown cannot be
+ * trusted — including the failure this exact screen exists to classify as
+ * `new-version` and recover from.
+ */
+import { RouteErrorScreen } from "@/components/route-error"
+/*
+ * `/session-ended` (below) is where `RequireAuth` sends a dead session before
+ * it has rendered a single portal chunk — the same reasoning, and the same
+ * "static, not lazy" answer, as the two imports above.
+ */
+import { SessionEnded } from "@/portals/misc/SessionEnded"
 
 /*
  * One role-based app. The Teacher (teal), Student (terracotta) and Parent
@@ -161,6 +176,23 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
   return children
 }
 
+/**
+ * Guards `/session-ended` against a reader who already has a live session
+ * (adversarial review NIT, PR 2). Not `LoginRoute` reused verbatim: that one
+ * always lands a signed-in visitor on their portal root, but `/session-ended`
+ * can carry its own validated `?next=`, and a signed-in reader who followed
+ * one here should land on what it names instead of being sent to the root
+ * regardless — `next` was where they were headed before whatever routed them
+ * through this screen.
+ */
+function SessionEndedRoute({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth()
+  const [searchParams] = useSearchParams()
+  if (!session) return children
+  const next = safeNextPath(searchParams.get("next"))
+  return <Navigate to={next ?? portalPathForRole(session.role)} replace />
+}
+
 /*
  * P3.1 (DECISION D1.4) · error handling at the route level.
  *
@@ -177,8 +209,18 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
  * rest of the page keeps working, and Phase 4 places those as it rebuilds each
  * surface. This is the backstop for everything that escapes them, including
  * errors thrown by a route's own element before any inner boundary mounts.
+ *
+ * PR 2 part A2: the element itself is now `RouteErrorScreen`
+ * (`components/route-error.tsx`), not the bare `NotFound` this constant used
+ * to hold directly. `NotFound` still answers the identical "no error, or a
+ * real 404" reading it always did — `RouteErrorScreen` reaches it by way of
+ * `classifyRouteError`'s `not-found` variant — but every *other* row of that
+ * classification table (offline, a stale build, a dropped session, a rate
+ * limit, the marking service down) now renders through the same
+ * `errorElement` too, instead of the generic "something went wrong at our
+ * end" every non-404 used to fall back to regardless of what actually failed.
  */
-const errorElement = <NotFound />
+const errorElement = <RouteErrorScreen />
 
 /*
  * The route table, exported as a plain value.
@@ -245,7 +287,7 @@ export const appRoutes: RouteObject[] = [
       description:
         "Sign in to Lemely to mark a past paper, review a class, or follow a child's progress.",
     } satisfies PageMeta,
-    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" />}><Login /></Suspense></LoginRoute>,
+    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}><Login /></Suspense></LoginRoute>,
   },
   // G-05. A separate route rather than a tab on /login: the parent flow shares
   // no field with email/password, and the spec's whole framing for it is
@@ -276,10 +318,37 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <ParentLogin />
         </Suspense>
       </LoginRoute>
+    ),
+  },
+  /*
+   * PR 2 part A2 · `/session-ended`. `RequireAuth` sends a dead session here
+   * (`lib/auth/RequireAuth.tsx`) instead of straight to `/login`, carrying
+   * `?next=` so a successful sign-in returns the reader to what they were
+   * doing. Not wrapped in `LoginRoute`: unlike the nine below, nothing here
+   * mints a session, so there is no session-creating flow to protect a
+   * signed-in visitor from re-entering by mistake.
+   *
+   * It is wrapped in `SessionEndedRoute`, though (adversarial review NIT) —
+   * a *different* problem `LoginRoute` also exists for, just not the one its
+   * own docstring is about. `RequireAuth` always clears a session before it
+   * redirects here, so in the ordinary flow nobody with a live session ever
+   * reaches this URL. A stale bookmark or a link followed after signing back
+   * in some other way is the exception, and for that reader "Your session
+   * ended" is simply false — they have one. `SessionEndedRoute` sends them on
+   * instead of rendering the screen.
+   */
+  {
+    path: "/session-ended",
+    errorElement,
+    handle: { title: "Your session ended" } satisfies PageMeta,
+    element: (
+      <SessionEndedRoute>
+        <SessionEnded />
+      </SessionEndedRoute>
     ),
   },
   /*
@@ -311,7 +380,7 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <SignupRoleSelect />
         </Suspense>
       </LoginRoute>
@@ -352,7 +421,7 @@ export const appRoutes: RouteObject[] = [
         "Create a Lemely student account, upload a past paper, and see exactly what to study next.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <SignupDetails role="student" />
       </Suspense>
     ),
@@ -368,7 +437,7 @@ export const appRoutes: RouteObject[] = [
         "Create a Lemely teacher account and mark past papers faster, with partial credit worked out for you.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <SignupDetails role="teacher" />
       </Suspense>
     ),
@@ -394,7 +463,7 @@ export const appRoutes: RouteObject[] = [
         "Check whether a Lemely account's email address is verified. Everything except marking a paper stays open in the meantime.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <VerifyEmail />
       </Suspense>
     ),
@@ -413,7 +482,7 @@ export const appRoutes: RouteObject[] = [
         "Confirm a Lemely account's email address from a verification link, then continue into the app.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <VerifyEmail />
       </Suspense>
     ),
@@ -432,7 +501,7 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <PasswordResetRequest />
         </Suspense>
       </LoginRoute>
@@ -451,7 +520,7 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <PasswordResetConfirm />
         </Suspense>
       </LoginRoute>
@@ -476,7 +545,7 @@ export const appRoutes: RouteObject[] = [
         "Enter an invite code from your school to see what it joins, before you redeem it or sign up to claim it.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -494,7 +563,7 @@ export const appRoutes: RouteObject[] = [
       description: "Preview the class an invite code joins, then redeem it or sign up to claim it.",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" />}>
+      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -508,7 +577,7 @@ export const appRoutes: RouteObject[] = [
     handle: { title: "Your devices" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <DeviceSettings />
         </Suspense>
       </RequireAuth>
@@ -528,7 +597,7 @@ export const appRoutes: RouteObject[] = [
     handle: { title: "Notification settings" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" />}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
           <NotificationSettings />
         </Suspense>
       </RequireAuth>
