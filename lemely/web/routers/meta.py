@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
+from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_boundary_store, get_settings
 from lemely.web.schemas import HealthDTO
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -32,6 +36,13 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
         get_boundary_store()
         grade_boundaries_loaded = True
     except EmptyGradeBoundaryStoreError:
+        grade_boundaries_loaded = False
+    except SQLAlchemyError:
+        # The store reads ``component_thresholds`` now, so an unreachable or
+        # broken database lands here too. Health must still answer 200: a 500
+        # tells an operator only "something is wrong", whereas
+        # ``gradeBoundariesLoaded: false`` plus the logged exception names it.
+        logger.exception("health: could not read grade boundaries from the database")
         grade_boundaries_loaded = False
     return HealthDTO(
         apiKeyConfigured=settings.gemini_api_key is not None,

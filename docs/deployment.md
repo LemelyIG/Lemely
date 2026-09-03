@@ -274,6 +274,16 @@ not from inside a network-isolated container. It is safe to re-run: every write 
 an `ON CONFLICT DO UPDATE` keyed on the row's identity, so a second run updates in
 place rather than duplicating.
 
+> **A database ingested before migration `0026` must re-run this once.** Until
+> `0026_component_max_mark_positive` landed, the ingest marked a row `verified`
+> after checking only its threshold *values* against the PDF — the row's
+> `max_mark` came from ciegt's transcription and was never verified, while the
+> row cites the Cambridge PDF as its source. Because every grade is a
+> percentage of `max_mark`, a wrong denominator moves every boundary on that
+> paper. The fix is prospective only: it changes what future ingests accept, not
+> what is already stored. Re-running `scripts/ingest_thresholds.py` re-verifies
+> and updates every row in place.
+
 **Verify it worked** with `GET /api/health` — `gradeBoundariesLoaded: true` means at
 least one verified row exists; `false` means ingest either has not run or failed
 partway (check the run's own printed report: `components=… verified=… options=… `).

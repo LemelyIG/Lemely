@@ -173,6 +173,12 @@ def _load(session: Session) -> _ReferenceTuple:
     for row in session.scalars(sa.select(ComponentThreshold)):
         if not row.verified:
             continue
+        if not row.thresholds:
+            # A verified row with an empty threshold map contributes nothing but
+            # an empty ``exact`` entry, which would shadow the paper's usable
+            # subject default and return a grade set of {} as ``boundary_source
+            # ="exact"``. Skip it so the fallback chain runs instead.
+            continue
         pct = _percentages(row.thresholds, row.max_mark)
         code = _SESSION_CODE_BY_MONTH[row.session_month]
         year_suffix = row.session_year % 100

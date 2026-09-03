@@ -371,3 +371,37 @@ def test_a_database_with_only_unverified_rows_also_refuses_to_grade(
     )
     with pytest.raises(EmptyGradeBoundaryStoreError):
         GradeBoundaryStore(sessionmaker=migrated_sessionmaker)
+
+
+def test_a_verified_row_with_no_thresholds_does_not_shadow_the_fallback(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A verified row whose `thresholds` map is empty carries no boundaries.
+
+    Admitting it would write an empty dict into `exact` under that paper's
+    key, and the exact rung wins the fallback chain -- so the paper would
+    resolve with `boundary_source="exact"` and no grades at all, instead of
+    falling through to the subject default that can actually answer.
+    """
+    invalidate_reference_cache()
+    _add_row(migrated_sessionmaker, thresholds={}, verified=True)
+    _add_row(
+        migrated_sessionmaker,
+        session_year=2023,
+        thresholds={"C": 20, "D": 18, "E": 16},
+        verified=True,
+    )
+    store = GradeBoundaryStore(sessionmaker=migrated_sessionmaker)
+
+    boundaries, source = store.resolve(
+        ExamMetadata(
+            subject_code="0625",
+            session_month="May/June",
+            session_year=2024,
+            paper_number=1,
+            paper_variant=2,
+        )
+    )
+
+    assert source == "subject_default"
+    assert set(boundaries) == {"C", "D", "E"}

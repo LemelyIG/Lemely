@@ -6,9 +6,11 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from lemely.core.schemas import (
     ConfidenceBand,
@@ -32,6 +34,24 @@ def test_health_returns_ok() -> None:
     assert body["status"] == "ok"
     assert "apiKeyConfigured" in body
     assert isinstance(body["apiKeyConfigured"], bool)
+
+
+def test_health_survives_an_unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A database failure reports gradeBoundariesLoaded=false, not a 500.
+
+    ``gradeBoundariesLoaded`` is computed by reading ``component_thresholds``,
+    so the endpoint gained a database dependency it did not have before. A
+    health check that 500s when the database is down tells an operator only
+    "something is wrong"; the flag names which half is broken.
+    """
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(OperationalError("SELECT 1", {}, Exception("down"))),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
 
 
 def test_stub_routers_are_mounted() -> None:
