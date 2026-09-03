@@ -7,8 +7,9 @@ import { Modal } from "@/components/ui/modal"
 import { Badge } from "@/components/ui/badge"
 import { Eyebrow } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   adminLoadFailureMessage,
   adminMutationFailureMessage,
@@ -65,7 +66,7 @@ import type { SchoolSummary } from "@/lib/adminTypes"
  * fix even though it also contains both numbers.
  */
 export function Schools() {
-  const { data, isPending, isError, error } = useSchools()
+  const query = useSchools()
 
   return (
     <div className="flex flex-col gap-6">
@@ -79,31 +80,35 @@ export function Schools() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={5} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load the schools list"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <CreateSchoolPanel />
-          {data.schools.length === 0 ? (
-            <EmptyState
-              marginalia="an empty campus"
-              heading="No schools yet"
-              body="Create one above. Once it has a seat quota, add a school_admin to run it."
-            />
-          ) : (
-            <SchoolsTable schools={data.schools} />
-          )}
-        </>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{ heading: "We couldn't load the schools list", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            {/* The "no schools yet" empty view stays inside `children` rather
+                than going through `isEmpty`/`empty`: `CreateSchoolPanel` must
+                render alongside the empty state (it is the way out of it), and
+                `empty` renders in place of `children` entirely. */}
+            <CreateSchoolPanel />
+            {data.schools.length === 0 ? (
+              <EmptyState
+                marginalia="an empty campus"
+                heading="No schools yet"
+                body="Create one above. Once it has a seat quota, add a school_admin to run it."
+              />
+            ) : (
+              <SchoolsTable schools={data.schools} />
+            )}
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

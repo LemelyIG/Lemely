@@ -2,7 +2,7 @@
 import { Link, Navigate } from "react-router-dom"
 import { CaretRight, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { useChildren } from "@/lib/hooks/useParentApi"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { parentLoadFailureMessage } from "@/lib/parentOutcome"
 import { relativeTime } from "@/lib/utils"
@@ -172,55 +172,56 @@ function NoChildrenLinked() {
 }
 
 export function Children() {
-  const { data, isPending, isError, error } = useChildren()
-
-  if (isPending) {
-    // Skeletons, not a line of text (§12): the shape below is the heading plus
-    // the card list this screen resolves to, so nothing jumps when it arrives.
-    return (
-      <div className="flex flex-col gap-6">
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={2} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <ErrorState
-        heading="We couldn't load your children"
-        body={parentLoadFailureMessage(error)}
-        action={{ label: "Try again", onClick: () => window.location.reload() }}
-      />
-    )
-  }
-
-  const children = data.children
-
-  // Spec: one child → skip this screen entirely. `replace` so the browser back
-  // button returns to where the parent actually came from rather than bouncing
-  // through a list they never saw.
-  if (children.length === 1) {
-    return <Navigate to={`/parent/children/${children[0].childId}`} replace />
-  }
-
-  if (children.length === 0) {
-    return <NoChildrenLinked />
-  }
+  const query = useChildren()
 
   return (
     <div className="flex flex-col gap-6">
-      <div className="margin-rule flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">Your children</h1>
-        <p className="text-body-md text-ink-muted">
-          Tap a name to see how they're doing.
-        </p>
-      </div>
-      <div className="flex flex-col gap-3">
-        {children.map((child) => (
-          <ChildCard key={child.childId} child={child} />
-        ))}
-      </div>
+      <QueryState
+        query={query}
+        srHeading="Your children"
+        // Skeletons, not a line of text (§12): the shape below is the heading plus
+        // the card list this screen resolves to, so nothing jumps when it arrives.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={2} />
+          </>
+        }
+        error={{ heading: "We couldn't load your children", body: parentLoadFailureMessage }}
+      >
+        {(data) => {
+          const children = data.children
+
+          // Spec: one child → skip this screen entirely. `replace` so the browser
+          // back button returns to where the parent actually came from rather than
+          // bouncing through a list they never saw. Stays inside `children` rather
+          // than `QueryState`'s `isEmpty`/`empty` (which only cover a single empty
+          // treatment): this screen branches three ways on the loaded payload —
+          // redirect, the no-children explainer, or the list — and only the last
+          // is this component's own render.
+          if (children.length === 1) {
+            return <Navigate to={`/parent/children/${children[0].childId}`} replace />
+          }
+
+          if (children.length === 0) {
+            return <NoChildrenLinked />
+          }
+
+          return (
+            <>
+              <div className="margin-rule flex flex-col gap-1">
+                <h1 className="text-display-lg text-ink">Your children</h1>
+                <p className="text-body-md text-ink-muted">Tap a name to see how they're doing.</p>
+              </div>
+              <div className="flex flex-col gap-3">
+                {children.map((child) => (
+                  <ChildCard key={child.childId} child={child} />
+                ))}
+              </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

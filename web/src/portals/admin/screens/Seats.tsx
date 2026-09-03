@@ -5,8 +5,9 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { Table, TBody, TD, TH, THead, TR } from "@/components/ui/table"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Textarea } from "@/components/ui/textarea"
 import { Badge } from "@/components/ui/badge"
@@ -78,7 +79,7 @@ import { formatAdminDate } from "../data"
  * as `useInviteStudent`, so it shares that mutation's `atQuota` gate.
  */
 export function Seats() {
-  const { data, isPending, isError, error } = useSeatUsage()
+  const query = useSeatUsage()
 
   return (
     <div className="flex flex-col gap-6">
@@ -90,25 +91,25 @@ export function Seats() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <ListSkeleton rows={5} avatar />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your seats"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.schools.length === 0 ? (
-        <EmptyState
-          heading="No school is assigned to you"
-          body="This account holds no school membership, so there are no seats to manage."
-        />
-      ) : (
-        data.schools.map((school) => <SchoolSeats key={school.schoolId} school={school} />)
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} avatar />
+          </>
+        }
+        error={{ heading: "We couldn't load your seats", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.schools.length === 0}
+        empty={
+          <EmptyState
+            heading="No school is assigned to you"
+            body="This account holds no school membership, so there are no seats to manage."
+          />
+        }
+      >
+        {(data) => data.schools.map((school) => <SchoolSeats key={school.schoolId} school={school} />)}
+      </QueryState>
     </div>
   )
 }

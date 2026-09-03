@@ -7,6 +7,7 @@ import type { Session } from "@/lib/auth/storage"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { SkeletonLine } from "@/components/ui/skeleton"
+import { QueryState } from "@/components/ui/query-state"
 import { verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
 import { postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
@@ -224,21 +225,35 @@ function SignedInPending({ session }: { session: Session }) {
       <div className="flex flex-col gap-5 rounded-lg border border-rule bg-paper-raised p-8">
         <div className="flex flex-col gap-1.5">
           <h1 className="text-display-lg text-ink">Verify your email</h1>
-          {profile.isPending ? (
-            <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
-              <span>Confirm</span>
-              <SkeletonLine announce={false} width="9rem" className="h-4" />
-              <span>to unlock everything Lemely does.</span>
-            </div>
-          ) : (
-            <p className="text-body-md text-ink-muted">
-              Confirm{" "}
-              <span className="text-data-md text-ink">
-                {profile.data?.email ?? "the email on your account"}
-              </span>{" "}
-              to unlock everything Lemely does.
-            </p>
-          )}
+          {/*
+           * A panel inside a larger screen (this card already has its own
+           * `<h1>` above), so no `srHeading` — the loaded, skeleton and
+           * error renders below all replace only this one line, never the
+           * heading or the rest of the card. No `body` override either: this
+           * screen has no outcome-module sentence written for a profile-read
+           * failure specifically, so the default `describeQueryFailure`
+           * generic answer is the honest one, per `query-state.tsx`'s own
+           * doc for an omitted `body`.
+           */}
+          <QueryState
+            query={profile}
+            skeleton={
+              <div className="flex flex-wrap items-center gap-1.5 text-body-md text-ink-muted">
+                <span>Confirm</span>
+                <SkeletonLine announce={false} width="9rem" className="h-4" />
+                <span>to unlock everything Lemely does.</span>
+              </div>
+            }
+            error={{ heading: "We couldn't load your email" }}
+          >
+            {(data) => (
+              <p className="text-body-md text-ink-muted">
+                Confirm{" "}
+                <span className="text-data-md text-ink">{data.email}</span> to unlock everything
+                Lemely does.
+              </p>
+            )}
+          </QueryState>
         </div>
 
         {/*
