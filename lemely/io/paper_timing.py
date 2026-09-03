@@ -59,8 +59,11 @@ def load_paper_timings(
 ) -> dict[tuple[str, str], dict[int, PaperTiming]]:
     """Every timing, keyed ``(board, subject_code)`` → ``paper_number``.
 
-    Cached per process: the catalogue changes only when the ingest or seeder
-    runs, and both call :func:`invalidate_reference_cache`.
+    Cached per process: call :func:`invalidate_reference_cache` after
+    anything that writes ``syllabus_papers`` (currently only migration 0024's
+    one-time insert, which runs before this process is up). Neither the
+    seeder nor any other runtime path writes this table today, so neither
+    calls the invalidator — doing so would be a no-op dressed up as caution.
     """
     global _cache
     with _lock:

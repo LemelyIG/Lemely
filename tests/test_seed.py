@@ -1,28 +1,35 @@
-"""Hermetic tests for the demo/reference seeder (P6.10).
+"""Tests for the demo/reference seeder (P6.10).
 
-No Postgres and no GoTrue: every test drives the real
+Mostly hermetic: every demo-account test drives the real
 :class:`~lemely.auth.service.AuthService` through the same in-memory fakes
 ``test_auth_service.py`` uses, so what is exercised here is the seeder's own
 logic — idempotency, role fidelity, and the two recovery paths — rather than a
-mock of it.
+mock of it. The seeding *decisions* for reference data live in the pure
+:func:`subjects_to_upsert`, tested hermetically below.
 
-The DB-touching halves (``seed_reference_data``/``seed_demo_accounts``) are thin
-wrappers that open a session and delegate to the functions tested below; the
-seeding *decisions* all live in the pure/injected layer on purpose, because a
-seeder whose correctness can only be checked against a live stack is a seeder
-nobody checks.
+One test is deliberately not hermetic:
+``test_seed_reference_data_corrects_a_drifted_row`` calls
+:func:`seed_reference_data` itself against a throwaway, migrated Postgres
+(:func:`~tests.conftest.migrated_sessionmaker`) — a seeder whose
+corrective-upsert behaviour can only be checked against a live stack is a
+seeder nobody checks, and the pure function alone cannot prove a session
+write actually corrects a drifted row.
 """
 
 from __future__ import annotations
 
+import os
 import random
 from datetime import UTC, datetime
 
 import pytest
+import sqlalchemy as sa
+from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
+from lemely.db.models.academic import Subject
 from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.seed import (
     CATALOGUE_SUBJECTS,
@@ -31,8 +38,10 @@ from lemely.db.seed import (
     DEMO_PASSWORD,
     SeedError,
     create_demo_accounts,
+    seed_reference_data,
     subjects_to_upsert,
 )
+from lemely.db.session import dispose_engine
 from lemely.runtime.config import Settings
 from tests.auth_fakes import FakeGoTrueBackend, FakeUserMirror
 
@@ -101,11 +110,45 @@ def test_catalogue_subjects_carry_their_qualification_level() -> None:
     assert all(s.qualification_level is QualificationLevel.igcse for s in CATALOGUE_SUBJECTS)
 
 
-def test_reseeding_corrects_a_changed_name_rather_than_skipping_it() -> None:
+def test_seed_reference_data_corrects_a_drifted_row(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """Insert-if-absent was right when the seeder was the only writer. It is
-    not now: the migration also writes these rows, so a seeder that skips an
-    existing row can never correct one that drifted."""
-    assert subjects_to_upsert({"0580"}) == list(CATALOGUE_SUBJECTS)
+    not now: migration 0024 also writes these rows, so a seeder that skips an
+    existing row can never correct one that drifted.
+
+    This is the one test in the file that actually calls
+    :func:`seed_reference_data` against a database — a throwaway Postgres
+    with migration 0024 applied (:func:`~tests.conftest.migrated_sessionmaker`),
+    never the live dev database. It mutates ``0580``'s ``name`` and ``active``
+    away from what :data:`CATALOGUE_SUBJECTS` declares, re-runs the seeder,
+    and asserts both came back — the corrective-upsert behaviour the pure
+    :func:`subjects_to_upsert` tests above cannot demonstrate on their own,
+    since nothing ever writes their return value to a session there.
+    """
+    engine = migrated_sessionmaker.kw["bind"]
+    rendered_url = engine.url.render_as_string(hide_password=False)
+    previous_db_url = os.environ.get("LEMELY_DATABASE__URL")
+    os.environ["LEMELY_DATABASE__URL"] = rendered_url
+
+    with migrated_sessionmaker.begin() as session:
+        subject = session.scalars(sa.select(Subject).where(Subject.code == "0580")).one()
+        subject.name = "Drifted Name"
+        subject.active = False
+
+    try:
+        seed_reference_data()
+    finally:
+        if previous_db_url is None:
+            os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            os.environ["LEMELY_DATABASE__URL"] = previous_db_url
+        dispose_engine()
+
+    with migrated_sessionmaker() as session:
+        subject = session.scalars(sa.select(Subject).where(Subject.code == "0580")).one()
+        assert subject.name == "Mathematics"
+        assert subject.active is True
 
 
 # ---------------------------------------------------------------------------

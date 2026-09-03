@@ -42,7 +42,7 @@ from lemely.auth.sms import MockSmsProvider
 from lemely.db.models.academic import Subject
 from lemely.db.models.enums import ExamBoard, QualificationLevel, Role
 from lemely.db.session import session_scope
-from lemely.io import paper_timing, syllabus_topics
+from lemely.io import syllabus_topics
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError, LemelyError
 
@@ -320,14 +320,15 @@ def seed_reference_data(settings: Settings | None = None) -> int:
     does not declare (``syllabus_version``, ``source_url``) are left
     untouched.
 
-    Invalidates the process-level reference caches
-    (:mod:`lemely.io.paper_timing`, :mod:`lemely.io.syllabus_topics`) so a
-    long-lived process that seeded does not keep serving what it cached
-    before this run corrected the rows underneath it.
-    :mod:`lemely.io.grade_boundaries` also carries a cache, but it is keyed
-    off ``component_thresholds`` (Task 12's ingest), a table this function
-    never writes to — invalidating it here would be a no-op dressed up as
-    caution, so it is deliberately left alone.
+    Invalidates :mod:`lemely.io.syllabus_topics`'s process cache — its loader
+    queries ``Subject``, the exact table this upserts — so a long-lived
+    process that seeded does not keep serving a subject list it cached before
+    this run corrected the rows underneath it.
+    :mod:`lemely.io.paper_timing` and :mod:`lemely.io.grade_boundaries` also
+    carry process caches, but both are keyed off tables this function never
+    writes to (``syllabus_papers``, ``component_thresholds`` respectively) —
+    invalidating either here would be a no-op dressed up as caution, so both
+    are deliberately left alone.
     """
     settings = settings or load_settings()
     with session_scope(settings) as session:
@@ -356,7 +357,6 @@ def seed_reference_data(settings: Settings | None = None) -> int:
                 subject.name = spec.name
                 subject.qualification_level = spec.qualification_level
                 subject.active = True
-    paper_timing.invalidate_reference_cache()
     syllabus_topics.invalidate_reference_cache()
     return added
 
