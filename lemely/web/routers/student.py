@@ -234,10 +234,18 @@ def _subjects(
     marks the boundaries were never drawn for. A subject the student has only
     quizzed produces no row, which is honest: they have no standing in it yet.
     """
-    boundary_store = GradeBoundaryStore()
     by_code: dict[str, list[PaperRecord]] = {}
     for record in grade_bearing(history.records):
         by_code.setdefault(record.metadata.subject_code, []).append(record)
+
+    # Built after the grouping, and only when the grouping found something.
+    # `GradeBoundaryStore()` reads `component_thresholds` eagerly and raises
+    # `EmptyGradeBoundaryStoreError` against an un-ingested table, so building
+    # it first made a student with no papers — who resolves no grade at all —
+    # depend on a table their screen never reads.
+    if not by_code:
+        return []
+    boundary_store = GradeBoundaryStore()
 
     rows: list[SubjectRowDTO] = []
     for code, records in sorted(by_code.items()):
