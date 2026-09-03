@@ -414,16 +414,20 @@ class IntegritySettings(BaseModel):
 
 
 class StorageSettings(BaseModel):
-    """Supabase Storage settings for the student self-mark upload path (P2.5).
+    """Object storage for every upload the web app keeps (spec 2026-09-03, DS7/DS12).
 
-    Overrides via ``lemely.toml`` under the ``[storage]`` section or
-    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
-    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    ``backend`` selects the implementation ``lemely.web.deps.get_storage_backend``
+    builds: ``local`` (the default — files under ``paths.output_dir/storage``,
+    for dev, compose and CI) or ``gcs`` (Google Cloud Storage via the official
+    SDK, authenticated with application-default credentials — the Cloud Run
+    runtime service account in production). ``bucket`` is the real bucket name
+    for ``gcs`` and a directory name for ``local``. Overrides via ``[storage]``
+    in ``lemely.toml`` or ``LEMELY_STORAGE__*`` env vars.
     """
 
     model_config = ConfigDict(extra="forbid")
+    backend: Literal["local", "gcs"] = "local"
     bucket: str = "uploads"
-    signed_url_ttl_seconds: int = Field(default=3600, ge=1)
 
 
 class PushSettings(BaseModel):

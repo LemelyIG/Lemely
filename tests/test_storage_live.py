@@ -64,15 +64,8 @@ def test_live_upload_download_roundtrip(live_backend: HttpStorageBackend) -> Non
     live_backend.upload(settings.storage.bucket, object_path, payload, "application/pdf")
     try:
         assert live_backend.download(settings.storage.bucket, object_path) == payload
-
-        signed_url = live_backend.create_signed_url(
-            settings.storage.bucket, object_path, settings.storage.signed_url_ttl_seconds
-        )
-        assert signed_url.startswith("http")
     finally:
-        # No delete endpoint wired (not needed by the app); live-test objects
-        # are namespaced under live-test/ so they never collide with real data.
-        pass
+        live_backend.delete(settings.storage.bucket, object_path)
 
 
 def test_live_download_missing_object_raises_not_found(

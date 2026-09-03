@@ -1,4 +1,4 @@
-"""Supabase Storage backend seam (P2.5).
+"""Object storage seam.
 
 The student self-mark upload path stores scans (and optional mark-scheme
 siblings) in Supabase Storage rather than on local disk. :class:`StorageBackend`
@@ -10,7 +10,7 @@ client authenticated with the service-role key, raising
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING, Protocol
 
 import httpx
 
@@ -60,7 +60,7 @@ class StorageObjectNotFoundError(KeyError):
 
 
 class StorageBackend(Protocol):
-    """Upload, download, and signed-URL operations against object storage."""
+    """Upload, download, and delete operations against object storage."""
 
     def upload(
         self,
@@ -76,8 +76,8 @@ class StorageBackend(Protocol):
         """Return the bytes stored at ``object_path`` in ``bucket``."""
         ...
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
-        """Return a time-limited signed URL for ``object_path`` in ``bucket``."""
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Remove ``object_path`` from ``bucket``. A missing object is not an error."""
         ...
 
 
@@ -151,33 +151,26 @@ class HttpStorageBackend:
             )
         return response.content
 
-    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
-        """Create a signed URL for ``{bucket}/{object_path}`` (service-role key)."""
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Delete ``{bucket}/{object_path}`` (service-role key); a missing object is fine."""
         service_key = self._service_key()
         try:
-            response = httpx.post(
-                f"{self._base_url}/storage/v1/object/sign/{bucket}/{object_path}",
-                json={"expiresIn": expires_in},
+            response = httpx.delete(
+                f"{self._base_url}/storage/v1/object/{bucket}/{object_path}",
                 headers={
                     "Authorization": f"Bearer {service_key}",
                     "apikey": service_key,
                 },
-                timeout=_TIMEOUT_SECONDS,
+                timeout=_TRANSFER_TIMEOUT_SECONDS,
             )
         except httpx.HTTPError as exc:
-            raise ExternalServiceError(f"Storage sign request failed: {exc}") from exc
+            raise ExternalServiceError(f"Storage delete request failed: {exc}") from exc
+        if response.status_code == 404 or _is_missing_key(response):
+            return
         if response.status_code >= 300:
             raise ExternalServiceError(
-                f"Storage sign failed ({response.status_code}): {response.text}"
+                f"Storage delete failed ({response.status_code}): {response.text}"
             )
-        body = cast("dict[str, object]", response.json())
-        try:
-            signed_url = str(body["signedURL"])
-        except KeyError as exc:
-            raise ExternalServiceError(f"Malformed Storage sign response: {exc}") from exc
-        if signed_url.startswith("/"):
-            return f"{self._base_url}{signed_url}"
-        return signed_url
 
 
 __all__ = ["HttpStorageBackend", "StorageBackend", "StorageObjectNotFoundError"]
