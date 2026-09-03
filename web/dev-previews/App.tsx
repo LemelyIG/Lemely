@@ -864,6 +864,39 @@ function AppBody() {
               </div>
             </StateCell>
             <StateCell
+              state="error"
+              provenance="prop"
+              note="error.secondaryAction: a second way out, for a failure a retry cannot fix. A detail route opened with a bad id retries into the same failure every time."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{
+                    heading: "Couldn't load the demo panel",
+                    secondaryAction: { label: "Back to the list", onClick: () => {} },
+                  }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="error.compact: the inline treatment, for a failure that is one line inside a page that still works. Shown beside the full panel above for scale."
+            >
+              <div className="w-full">
+                <QueryState<QueryStateDemoData>
+                  query={QUERY_STATE_DEMO.error}
+                  skeleton={<PanelSkeleton />}
+                  error={{ heading: "Couldn't load the demo panel", compact: true }}
+                >
+                  {(data) => <QueryStateDemoPanel rows={data.rows} />}
+                </QueryState>
+              </div>
+            </StateCell>
+            <StateCell
               state="loading"
               provenance="prop"
               note="An enabled: false query: status pending, fetchStatus idle. Renders the idle prop, not a skeleton that would never resolve on its own."
