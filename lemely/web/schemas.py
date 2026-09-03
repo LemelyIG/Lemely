@@ -67,12 +67,15 @@ class HealthDTO(ApiModel):
 
     status: Literal["ok"] = "ok"
     apiKeyConfigured: bool
-    #: False on a fresh/unseeded database with no verified grade-boundary
-    #: rows -- ``GradeBoundaryStore`` refuses to grade against invented
-    #: numbers in that state (see ``lemely.io.grade_boundaries``), and this
-    #: field is the operational signal for it: ``/api/health`` stays 200 so
-    #: the check itself never crashes, but a deploy can poll this to catch
-    #: "migrations ran, ingest never did" before a student sees a wrong grade.
+    #: False when grade boundaries cannot be read, for either of two reasons:
+    #: a fresh/unseeded database with no verified grade-boundary rows (where
+    #: ``GradeBoundaryStore`` refuses to grade against invented numbers -- see
+    #: ``lemely.io.grade_boundaries``), or a database that could not be reached
+    #: or queried at all. ``/api/health`` stays 200 in both cases so the check
+    #: itself never crashes; the backend log discriminates them, since only the
+    #: second writes ``health: could not read grade boundaries from the
+    #: database``. A deploy can poll this to catch "migrations ran, ingest
+    #: never did" before a student sees a wrong grade.
     gradeBoundariesLoaded: bool
 
 

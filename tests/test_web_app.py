@@ -44,9 +44,29 @@ def test_health_survives_an_unreachable_database(monkeypatch: pytest.MonkeyPatch
     health check that 500s when the database is down tells an operator only
     "something is wrong"; the flag names which half is broken.
     """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
     monkeypatch.setattr(
         "lemely.web.routers.meta.get_boundary_store",
         lambda: (_ for _ in ()).throw(OperationalError("SELECT 1", {}, Exception("down"))),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def test_health_survives_a_corrupt_threshold_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-SQLAlchemy failure inside the store must degrade, not 500.
+
+    ``_percentages`` raises ``ValueError`` on a non-positive ``max_mark`` and
+    would raise ``TypeError`` on a non-numeric value inside the ``thresholds``
+    JSONB. Neither is a ``SQLAlchemyError``, and a corrupt row must not be able
+    to take the health endpoint down.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(ValueError("max_mark must be positive")),
     )
     response = TestClient(create_app()).get("/api/health")
 

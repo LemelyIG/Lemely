@@ -274,19 +274,25 @@ not from inside a network-isolated container. It is safe to re-run: every write 
 an `ON CONFLICT DO UPDATE` keyed on the row's identity, so a second run updates in
 place rather than duplicating.
 
-> **A database ingested before migration `0026` must re-run this once.** Until
-> `0026_component_max_mark_positive` landed, the ingest marked a row `verified`
-> after checking only its threshold *values* against the PDF — the row's
-> `max_mark` came from ciegt's transcription and was never verified, while the
-> row cites the Cambridge PDF as its source. Because every grade is a
-> percentage of `max_mark`, a wrong denominator moves every boundary on that
-> paper. The fix is prospective only: it changes what future ingests accept, not
-> what is already stored. Re-running `scripts/ingest_thresholds.py` re-verifies
-> and updates every row in place.
+> **Any database ingested by a build older than this release must re-run this
+> once.** Earlier builds marked a row `verified` after checking only its
+> threshold *values* against the PDF — the row's `max_mark` came from ciegt's
+> transcription and was never verified, while the row cites the Cambridge PDF as
+> its source. Because every grade is a percentage of `max_mark`, a wrong
+> denominator moves every boundary on that paper. The fix lives in
+> `scripts/ingest_thresholds.py::verify_row`, **not** in a migration, so
+> `alembic_version` cannot tell you whether a given database is affected —
+> `alembic upgrade head` does not repair the stored rows. Count the exposure with
+> `SELECT count(*) FROM component_thresholds WHERE verified;`: every one of those
+> rows was verified under the old rule until the ingest is re-run. Re-running
+> `scripts/ingest_thresholds.py` re-verifies and updates every row in place.
 
 **Verify it worked** with `GET /api/health` — `gradeBoundariesLoaded: true` means at
-least one verified row exists; `false` means ingest either has not run or failed
-partway (check the run's own printed report: `components=… verified=… options=… `).
+least one verified row exists. `false` has three causes, and the backend log
+distinguishes them: a line reading `health: could not read grade boundaries from
+the database` means the **database is unreachable**, not that ingest is missing;
+without it, ingest either has not run or failed partway (check the run's own
+printed report: `components=… verified=… options=… `).
 
 This is not wired into `docs/ci-cd.md`'s `deploy.yml` pipeline (deliberately left
 alone here — see that doc's own notes on this gap). Until it is, treat this as a
@@ -422,6 +428,8 @@ replaces it).
 [ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --
     migrations create component_thresholds/option_thresholds empty; grading
     stays refused (GradeBoundaryStore raises) until this has run
+[ ] Upgrading an EXISTING database, not creating one: ingest_thresholds.py
+    re-run so every verified row's max_mark is checked against the PDF (§3.5)
 [ ] Backend pinned to max 1 instance
 [ ] Volume mounted at /app/.lemely-cache so the $8 spend ledger survives
 [ ] web/nginx.conf proxy_pass repointed if the host has no Compose DNS

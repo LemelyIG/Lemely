@@ -27,6 +27,19 @@ _sessionmaker: sessionmaker[Session] | None = None
 _engine_url: str | None = None
 
 
+def _connect_args(cfg: DatabaseSettings) -> dict[str, object]:
+    """Driver-specific connect keywords.
+
+    ``connect_timeout`` is a libpq parameter, so it is passed only for the
+    Postgres dialects that understand it -- another driver would reject the
+    unknown keyword at connect time. See :class:`DatabaseSettings` for why an
+    unbounded connect is the wrong default for a server process.
+    """
+    if not cfg.url.startswith("postgres"):
+        return {}
+    return {"connect_timeout": cfg.connect_timeout_seconds}
+
+
 def _build_engine(cfg: DatabaseSettings) -> Engine:
     return create_engine(
         cfg.url,
@@ -34,6 +47,8 @@ def _build_engine(cfg: DatabaseSettings) -> Engine:
         pool_size=cfg.pool_size,
         max_overflow=cfg.max_overflow,
         pool_pre_ping=cfg.pool_pre_ping,
+        pool_timeout=cfg.pool_timeout_seconds,
+        connect_args=_connect_args(cfg),
         future=True,
     )
 

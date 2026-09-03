@@ -70,6 +70,11 @@ echo = false
 pool_size = 5
 max_overflow = 10
 pool_pre_ping = true
+# Bound how long a connect may block. libpq's own connect_timeout default is
+# unlimited, which lets a dropped-packet outage (firewall/security-group
+# change) hang every request instead of failing them.
+connect_timeout_seconds = 5
+pool_timeout_seconds = 5
 
 [supabase]
 # Local Supabase Auth (GoTrue). Defaults are the well-known local-dev

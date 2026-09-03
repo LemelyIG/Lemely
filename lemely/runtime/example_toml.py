@@ -91,6 +91,11 @@ def render_example_toml() -> str:
     lines.append(f"pool_size = {s.database.pool_size}")
     lines.append(f"max_overflow = {s.database.max_overflow}")
     lines.append(f"pool_pre_ping = {str(s.database.pool_pre_ping).lower()}")
+    lines.append("# Bound how long a connect may block. libpq's own connect_timeout default is")
+    lines.append("# unlimited, which lets a dropped-packet outage (firewall/security-group")
+    lines.append("# change) hang every request instead of failing them.")
+    lines.append(f"connect_timeout_seconds = {s.database.connect_timeout_seconds}")
+    lines.append(f"pool_timeout_seconds = {s.database.pool_timeout_seconds}")
     lines.append("")
 
     lines.append("[supabase]")

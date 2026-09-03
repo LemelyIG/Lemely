@@ -308,6 +308,17 @@ class DatabaseSettings(BaseModel):
     pool_size: int = Field(default=5, ge=1)
     max_overflow: int = Field(default=10, ge=0)
     pool_pre_ping: bool = True
+    # Seconds libpq waits for a TCP connection before giving up. Its own
+    # default is unlimited, which is the wrong failure mode for a server: a
+    # firewall or security-group change that *drops* packets (rather than
+    # refusing them) leaves every connect blocked on the OS TCP timeout, and
+    # because FastAPI runs sync routes in a bounded threadpool, a polled route
+    # like ``GET /api/health`` exhausts that pool and takes the whole app down
+    # with it. Bounding it turns the hang into a catchable OperationalError.
+    connect_timeout_seconds: int = Field(default=5, ge=1)
+    # Seconds to wait for a free slot in the QueuePool (SQLAlchemy's own
+    # default is 30). Same reasoning: fail fast rather than pile up.
+    pool_timeout_seconds: int = Field(default=5, ge=1)
 
 
 class SupabaseSettings(BaseModel):

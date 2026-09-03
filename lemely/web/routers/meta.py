@@ -6,7 +6,6 @@ import logging
 from typing import Annotated
 
 from fastapi import APIRouter, Depends
-from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
@@ -16,6 +15,13 @@ from lemely.web.schemas import HealthDTO
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
+
+#: Whether the last boundary read failed. Health is probe traffic -- a liveness
+#: check polling every few seconds against a down database would otherwise emit
+#: one full traceback per poll, indefinitely. The traceback is worth having
+#: once, so it is logged on the transition into failure and again on recovery;
+#: the polls in between are silent.
+_boundary_read_failing = False
 
 
 @router.get("/health", response_model=HealthDTO)
@@ -31,18 +37,35 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
     exact gap — so an operator (or a deploy step's own smoke test) can see
     "migrations ran, ``scripts/ingest_thresholds.py`` never did" before a
     student is graded against nothing.
+
+    ``false`` therefore has two causes, and only the backend log separates
+    them: an unreachable or unqueryable database logs ``health: could not read
+    grade boundaries from the database``, a missing ingest does not.
     """
+    global _boundary_read_failing
     try:
         get_boundary_store()
         grade_boundaries_loaded = True
+        if _boundary_read_failing:
+            logger.info("health: grade boundaries readable again")
+            _boundary_read_failing = False
     except EmptyGradeBoundaryStoreError:
         grade_boundaries_loaded = False
-    except SQLAlchemyError:
+    except Exception:
         # The store reads ``component_thresholds`` now, so an unreachable or
         # broken database lands here too. Health must still answer 200: a 500
         # tells an operator only "something is wrong", whereas
         # ``gradeBoundariesLoaded: false`` plus the logged exception names it.
-        logger.exception("health: could not read grade boundaries from the database")
+        #
+        # Deliberately broader than SQLAlchemyError. ``_percentages`` raises
+        # ValueError on a non-positive max_mark and would raise TypeError on a
+        # non-numeric value inside the ``thresholds`` JSONB, and neither is a
+        # SQLAlchemyError -- a corrupt payload must degrade this endpoint to
+        # "false", not take it down. Nothing here is recovered from or
+        # rethrown, so a swallowed programming error still reaches the log.
+        if not _boundary_read_failing:
+            logger.exception("health: could not read grade boundaries from the database")
+            _boundary_read_failing = True
         grade_boundaries_loaded = False
     return HealthDTO(
         apiKeyConfigured=settings.gemini_api_key is not None,
