@@ -8,6 +8,7 @@ layout returns zero options for every older session and does so silently.
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,20 @@ import pytest
 from lemely.io.threshold_pdf import parse_threshold_pdf
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+def _reenable_logger() -> None:
+    """The full suite's ``migrated_sessionmaker`` fixture (used elsewhere,
+    e.g. ``tests/test_threshold_repo.py``) runs ``alembic upgrade head``, and
+    Alembic's ``env.py`` calls ``logging.config.fileConfig``, which (per its
+    default ``disable_existing_loggers=True``) disables every
+    already-instantiated logger not named in ``alembic.ini`` — including this
+    module's, created at import time. That disables it for the rest of the
+    process, so a later, unrelated test in this file loses its warning
+    silently rather than failing loudly. Undo it before capturing; production
+    never runs migrations in-process this way, so this is a test-only
+    wrinkle. Mirrors ``tests/test_threshold_repo.py``'s ``_reenable_logger``."""
+    logging.getLogger("lemely.io.threshold_pdf").disabled = False
 
 
 @pytest.fixture(scope="module")
@@ -200,6 +215,7 @@ def test_a_too_short_option_row_is_dropped_with_a_warning(
     enough tokens for the active header must not disappear silently."""
     from lemely.io.threshold_pdf import _parse_option_row
 
+    _reenable_logger()
     with caplog.at_level("WARNING", logger="lemely.io.threshold_pdf"):
         option = _parse_option_row("AX 40 130 106 84", _GRADES_8, has_max_mark_column=False)
     assert option is None
@@ -252,6 +268,7 @@ def test_an_unrecognised_grade_cell_is_omitted_and_logged_rather_than_raised(
     and the drop is logged so it stays visible rather than silent."""
     from lemely.io.threshold_pdf import _grade_value
 
+    _reenable_logger()
     with caplog.at_level("WARNING", logger="lemely.io.threshold_pdf"):
         value = _grade_value("??", "Component 11 40 ?? 21 18 16 15 14 13")
     assert value is None
