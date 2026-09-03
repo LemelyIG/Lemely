@@ -274,7 +274,12 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
  *      developer remembering to keep this component quiet: `role="status"`
  *      plus a visually hidden "Loading" is present from the first frame, so a
  *      screen-reader user hears something immediately even while sighted
- *      readers see nothing.
+ *      readers see nothing. Both `.lm-tier-skeleton` and `.lm-tier-slow`
+ *      (tiers 2 and 3) also carry `visibility: hidden` until their own delay
+ *      elapses (the `lm-appear` keyframe in index.css), so tier 3's heading
+ *      and reload button are genuinely absent from the accessibility tree
+ *      and the tab order during this window, not merely invisible —
+ *      `opacity: 0` alone removes neither.
  *   2. `--loading-tier-skeleton` to `--loading-tier-slow` (5s): a skeleton
  *      matching the layout being waited for.
  *   3. after `--loading-tier-slow`: the brand mark drawing itself, "Still
@@ -296,7 +301,7 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
  *     every dashboard opens with — `PageHeaderSkeleton`, a three-row
  *     `ListSkeleton`, a two-up row of `PanelSkeleton`s — the same geometry
  *     `Overview.tsx` composes by hand for its own real loading state.
- *   - `"standalone"` is the fourteen top-level routes in `routes.tsx`: sign-in,
+ *   - `"standalone"` is the top-level routes in `routes.tsx`: sign-in,
  *     sign-up, verify-email, reset, join, settings. No tier-2 skeleton at
  *     all — these are small forms with no chrome to promise, and a sidebar
  *     skeleton there would promise structure that never arrives. The

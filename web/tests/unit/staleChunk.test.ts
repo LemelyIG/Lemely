@@ -120,6 +120,76 @@ describe("StaleChunkGuard.tryReload", () => {
   })
 })
 
+describe("StaleChunkGuard.canReload", () => {
+  it("agrees with tryReload's own guard decision without writing anything", () => {
+    const storage = fakeStorage()
+    const guard = new StaleChunkGuard(storage)
+    expect(guard.canReload("build-a")).toBe(true)
+    // A pure read: calling it repeatedly must never itself consume the guard.
+    expect(guard.canReload("build-a")).toBe(true)
+    expect(guard.canReload("build-a")).toBe(true)
+
+    expect(guard.tryReload("build-a")).toBe(true)
+    expect(guard.canReload("build-a")).toBe(false)
+    expect(guard.canReload("build-a")).toBe(false)
+  })
+
+  it("treats a throwing storage as unset, same as tryReload", () => {
+    const guard = new StaleChunkGuard(fakeStorage({ throwing: true }))
+    expect(guard.canReload("build-a")).toBe(true)
+  })
+})
+
+describe('StaleChunkGuard and the "dev" build id (SHOULD-FIX 8)', () => {
+  it("is not permanently poisoned by a single reload — the same guard can reload for \"dev\" again once bounded per instance is respected", () => {
+    // Before the fix, `tryReload("dev")` behaved exactly like any other
+    // build id: it wrote RELOAD_KEY = "dev" to storage and every later call
+    // on that origin — including a fresh page load in a fresh `vite dev`
+    // session, since the id never changes — read that same key back and
+    // refused forever.
+    const storage = fakeStorage()
+    const guard = new StaleChunkGuard(storage)
+    expect(guard.tryReload("dev")).toBe(true)
+
+    // The bound is per guard instance ("this page load"), not per persisted
+    // key: a fresh instance over the SAME storage (simulating the reload
+    // that just happened landing on a fresh JS context) is allowed again.
+    const guardAfterReload = new StaleChunkGuard(storage)
+    expect(guardAfterReload.canReload("dev")).toBe(true)
+    expect(guardAfterReload.tryReload("dev")).toBe(true)
+  })
+
+  it("is still bounded to once per page load — a second dev chunk failure on the SAME instance is refused", () => {
+    const guard = new StaleChunkGuard(fakeStorage())
+    expect(guard.tryReload("dev")).toBe(true)
+    expect(guard.tryReload("dev")).toBe(false)
+    expect(guard.canReload("dev")).toBe(false)
+  })
+
+  it("never persists RELOAD_KEY for the dev build id, unlike a real build id", () => {
+    const storage = fakeStorage()
+    const guard = new StaleChunkGuard(storage)
+    expect(guard.tryReload("dev")).toBe(true)
+    // A guard reading the same storage for a REAL build id must not see
+    // itself as already-spent because of the dev reload above — proof that
+    // RELOAD_KEY was never written to "dev" in the first place.
+    const otherGuard = new StaleChunkGuard(storage)
+    expect(otherGuard.canReload("build-a")).toBe(true)
+    expect(otherGuard.tryReload("build-a")).toBe(true)
+  })
+
+  it("recovers from storage that was already poisoned by the pre-fix behaviour", () => {
+    // Simulates a browser profile that hit the old bug and has
+    // RELOAD_KEY = "dev" sitting in real localStorage already — the fixed
+    // guard must not defer to that stale value for the dev id at all.
+    const storage = fakeStorage()
+    storage.setItem("lemely:stale-chunk-reload", "dev")
+    const guard = new StaleChunkGuard(storage)
+    expect(guard.canReload("dev")).toBe(true)
+    expect(guard.tryReload("dev")).toBe(true)
+  })
+})
+
 describe("StaleChunkGuard.consumeReloadNotice", () => {
   it("returns false when no reload is pending", () => {
     const guard = new StaleChunkGuard(fakeStorage())
@@ -146,5 +216,33 @@ describe("StaleChunkGuard.consumeReloadNotice", () => {
   it("treats a throwing storage as unset — never throws, always reports nothing pending", () => {
     const guard = new StaleChunkGuard(fakeStorage({ throwing: true }))
     expect(guard.consumeReloadNotice("build-a")).toBe(false)
+  })
+
+  describe("SHOULD-FIX 8: clears the reload guard on a confirmed recovery", () => {
+    it("clears RELOAD_KEY once the build id has genuinely changed, so a later distinct failure isn't blocked by stale state", () => {
+      const storage = fakeStorage()
+      const guard = new StaleChunkGuard(storage)
+      expect(guard.tryReload("build-a")).toBe(true)
+      expect(guard.canReload("build-a")).toBe(false) // still guarded, pre-recovery
+
+      expect(guard.consumeReloadNotice("build-b")).toBe(true) // recovered: build-a -> build-b
+
+      // A fresh guard instance over the same storage (a later page load) is
+      // no longer blocked for build-a — the recovery cleared it.
+      const later = new StaleChunkGuard(storage)
+      expect(later.canReload("build-a")).toBe(true)
+    })
+
+    it("leaves RELOAD_KEY alone when the reload did NOT recover (same build id both times)", () => {
+      const storage = fakeStorage()
+      const guard = new StaleChunkGuard(storage)
+      expect(guard.tryReload("build-a")).toBe(true)
+      expect(guard.consumeReloadNotice("build-a")).toBe(false) // not recovered
+
+      // build-a is still guarded — a still-broken build must keep failing
+      // through to the "new version" screen, not loop.
+      const later = new StaleChunkGuard(storage)
+      expect(later.canReload("build-a")).toBe(false)
+    })
   })
 })

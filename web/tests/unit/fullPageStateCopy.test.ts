@@ -95,6 +95,30 @@ describe("FULL_PAGE_STATE_COPY", () => {
   })
 })
 
+describe("new-version copy (SHOULD-FIX 7): describes the observation, not an asserted deploy", () => {
+  const copy = FULL_PAGE_STATE_COPY["new-version"]
+
+  it("does not claim a new version is ready or that a deploy happened", () => {
+    // `navigator.onLine` (what `routeError.ts` gates this variant on) reads
+    // `true` behind a captive portal and on flaky wifi, not only after a
+    // real deploy — asserting "a new version of Lemely is ready" for every
+    // such failure would often be a guess dressed up as a fact.
+    expect(copy.heading.toLowerCase()).not.toContain("new version")
+    expect(copy.heading.toLowerCase()).not.toContain("ready")
+    expect(copy.body.toLowerCase()).not.toMatch(/\bwas built for an older version\b/)
+  })
+
+  it("still names reloading as the fix, honestly framed as a maybe for the deploy part", () => {
+    expect(copy.body.toLowerCase()).toContain("reload")
+    expect(copy.body.toLowerCase()).toMatch(/\bif\b.*\bupdated\b/)
+  })
+
+  it("keeps the single reload action and no second action", () => {
+    expect(copy.primary).toBe("reload")
+    expect(copy.secondary).toBeNull()
+  })
+})
+
 describe("FULL_PAGE_STATE_VARIANTS", () => {
   it("covers every key of FULL_PAGE_STATE_COPY exactly once", () => {
     const keys = Object.keys(FULL_PAGE_STATE_COPY).sort()

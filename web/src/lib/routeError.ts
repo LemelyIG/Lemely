@@ -18,11 +18,19 @@ import type { FullPageStateVariant } from "@/portals/misc/fullPageStateCopy"
  * a test can hand this function a plain object shaped like a `Response`
  * error rather than a real router error boundary.
  *
- * `attemptReload` is `handleChunkError` in production, injected for the same
- * reason: `handleChunkError` reaches into `staleChunk.ts`'s module-level
- * `installed` state and the real `window.location.reload`, and a unit test
- * needs to observe "was a reload attempted" as a plain boolean return rather
- * than a real page navigation.
+ * `canReload` is `canReloadChunkError` in production, injected for the same
+ * reason: it reaches into `staleChunk.ts`'s module-level `installed` state,
+ * and a unit test needs to observe "would a reload be attempted" as a plain
+ * boolean return. It is deliberately the *pure* predicate
+ * (`StaleChunkGuard.canReload`, a storage read) rather than `handleChunkError`
+ * (a storage write plus a real `location.reload()`): this function runs in a
+ * render body, so calling it must never itself be the reload — the caller
+ * (`RouteErrorScreen`/`PortalErrorFallback` in `components/route-error.tsx`)
+ * performs the actual `handleChunkError` call from a `useEffect` keyed on the
+ * error, once classification has already decided a reload is warranted. Two
+ * calls to `classifyRouteError` with the same `error` are guaranteed to
+ * return the same `RouteFailure` as a result — see `routeError.test.ts`'s
+ * purity assertions.
  */
 
 /** The outcome of classifying a route-level failure: which `FullPageState`
@@ -35,10 +43,15 @@ export interface RouteFailure {
    * none. */
   retryAfterSeconds?: number
   /**
-   * A guarded reload is already under way (`attemptReload` returned `true`).
-   * The caller must render nothing but paper — the tab is about to reload
-   * out from under whatever it paints, so there is no honest "new version"
-   * copy to show for the instant before that happens.
+   * The guard would reload for this build right now (`canReload` returned
+   * `true`) — the caller should attempt the real reload (from a
+   * `useEffect`, never from render) and render nothing but paper while it
+   * does, since the tab is about to reload out from under whatever it
+   * paints and there is no honest "new version" copy to show for the
+   * instant before that happens. Purely a classification of *intent*: this
+   * flag does not mean a reload has happened, or even been attempted yet —
+   * `classifyRouteError` never attempts one itself (see the module doc
+   * above).
    */
   reloading?: boolean
 }
@@ -68,7 +81,7 @@ export function classifyRouteError(
   error: unknown,
   ctx: {
     online: boolean
-    attemptReload: (error: unknown) => boolean
+    canReload: (error: unknown) => boolean
     isNotFoundResponse: (error: unknown) => boolean
   },
 ): RouteFailure {
@@ -78,7 +91,7 @@ export function classifyRouteError(
 
   if (isChunkLoadError(error)) {
     if (!ctx.online) return { variant: "offline" }
-    if (ctx.attemptReload(error)) return { variant: "new-version", reloading: true }
+    if (ctx.canReload(error)) return { variant: "new-version", reloading: true }
     return { variant: "new-version" }
   }
 
@@ -109,6 +122,33 @@ function isDeltaSeconds(trimmed: string): boolean {
 }
 
 /**
+ * True for a string that *looks* like a delta-seconds value but failed
+ * `isDeltaSeconds` because of a sign or a decimal point (`"-5"`, `"+30"`,
+ * `"5.5"`) — RFC 9110's delta-seconds form is unsigned digits only, so none
+ * of these are ever a legal `Retry-After`. They must be rejected here,
+ * before ever reaching `new Date()`: V8's legacy (non-ISO) date parser
+ * accepts several of them as some other, unrelated date — `new Date("-5")`
+ * is "Tue May 01 2001" and `new Date("5.5")` is "Sat May 05 2001" on this
+ * engine, neither of which is `Invalid Date`, so without this check they
+ * would silently produce a real (bogus) countdown instead of the `null`
+ * "no usable information" this function should return for them.
+ */
+function looksLikeMalformedDelta(trimmed: string): boolean {
+  return /^[+-]\d+$|^[+-]?\d+\.\d+$/.test(trimmed)
+}
+
+/**
+ * Upper bound on the seconds this function ever returns. `Retry-After` is
+ * meant to be a short, human-scale wait — RFC 9110 gives no ceiling, so a
+ * malicious or malformed value (`Retry-After: 99999999999999999999`) would
+ * otherwise disable the 429 screen's only action (and `useCountdown`'s
+ * timer) for effectively forever. An hour is generous enough for any real
+ * rate-limit response this app's backend sends, and short enough that a
+ * reader is never trapped on a dead retry button.
+ */
+const MAX_RETRY_AFTER_SECONDS = 3600
+
+/**
  * Parse a `Retry-After` header value into a whole number of seconds to wait,
  * measured from `now`.
  *
@@ -118,8 +158,9 @@ function isDeltaSeconds(trimmed: string): boolean {
  * `DEFAULT_RETRY_AFTER_SECONDS` above) rather than this function inventing
  * one, since only the caller knows what "no information" should mean for it.
  *
- * Never negative: a date in the past (clock skew, or a server naming a
- * moment that has already arrived) clamps to `0` rather than counting up.
+ * Clamped to `[0, MAX_RETRY_AFTER_SECONDS]`: never negative (a date in the
+ * past — clock skew, or a server naming a moment that has already arrived —
+ * clamps to `0` rather than counting up), and never above the ceiling above.
  */
 export function parseRetryAfter(header: string | null, now: Date): number | null {
   if (header === null) return null
@@ -128,13 +169,16 @@ export function parseRetryAfter(header: string | null, now: Date): number | null
 
   if (isDeltaSeconds(trimmed)) {
     const seconds = Number(trimmed)
-    return Number.isFinite(seconds) ? Math.max(0, Math.round(seconds)) : null
+    if (!Number.isFinite(seconds)) return null
+    return Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, Math.round(seconds)))
   }
+
+  if (looksLikeMalformedDelta(trimmed)) return null
 
   const target = new Date(trimmed)
   const targetMs = target.getTime()
   if (Number.isNaN(targetMs)) return null
 
   const deltaSeconds = Math.round((targetMs - now.getTime()) / 1000)
-  return Math.max(0, deltaSeconds)
+  return Math.min(MAX_RETRY_AFTER_SECONDS, Math.max(0, deltaSeconds))
 }

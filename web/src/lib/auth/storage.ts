@@ -76,10 +76,25 @@ export function setSession(session: Session): void {
   notify(session)
 }
 
-/** Drop the persisted session (logout). */
+/**
+ * Drop the persisted session.
+ *
+ * Covers both a deliberate sign-out and `RequireAuth`/`api.ts` dropping a
+ * dead one — but only a deliberate sign-out reaches here with the expiry
+ * flag still unset. A dropped-dead session always calls `markSessionExpired`
+ * in the same breath as this (see both call sites), so clearing the flag
+ * here is never in tension with recording it: whichever of the two runs
+ * second is what the flag ends up saying. Without this, a reader who signs
+ * out, then later opens a portal URL directly, would still see "you were
+ * signed out to keep your account safe" — a stale flag from an expiry that
+ * may have happened tabs or days earlier, describing a sign-out that this
+ * reader chose themselves (SHOULD-FIX 4).
+ */
 export function clearSession(): void {
   localStorage.removeItem(SESSION_KEY)
   notify(null)
+  expiredSignal = false
+  expiredRole = undefined
 }
 
 /*
@@ -91,31 +106,60 @@ export function clearSession(): void {
  */
 let expiredSignal = false
 
-/** Record that the session ended by expiry (called when a refresh is refused). */
-export function markSessionExpired(): void {
+/**
+ * The role of the session that just expired, alongside `expiredSignal`.
+ *
+ * `undefined` either because nothing has expired, or because the caller did
+ * not pass one — `role` is an optional parameter on `markSessionExpired`
+ * precisely so a caller with no role in hand (or, as of this fix, one this
+ * PR's scope did not touch — `api.ts`'s silent-refresh-refusal call site
+ * still calls it bare; see that call site for why) keeps compiling and
+ * behaving exactly as before. `loginPathForRole` treats an unknown role the
+ * same as any other it does not recognise: the email+password form, which is
+ * the only sign-in screen a reader can always use regardless of which role
+ * they were.
+ */
+let expiredRole: string | undefined
+
+/** Record that the session ended by expiry (called when a refresh is
+ * refused, or when `RequireAuth` finds a stranded session on mount), and
+ * which role it belonged to when the caller knows it. */
+export function markSessionExpired(role?: string): void {
   expiredSignal = true
+  expiredRole = role
 }
 
-/** Read and clear the expiry flag, so the notice shows once. */
-export function takeSessionExpired(): boolean {
-  const expired = expiredSignal
+/** `takeSessionExpired`/`peekSessionExpired`'s shared read shape: whether a
+ * session just expired, and the role it belonged to (if known). */
+export interface SessionExpiry {
+  expired: boolean
+  role: string | undefined
+}
+
+/** Read and clear the expiry flag (and the role recorded alongside it), so
+ * the notice shows once. */
+export function takeSessionExpired(): SessionExpiry {
+  const expiry: SessionExpiry = { expired: expiredSignal, role: expiredRole }
   expiredSignal = false
-  return expired
+  expiredRole = undefined
+  return expiry
 }
 
 /**
- * Read the expiry flag without clearing it.
+ * Read the expiry flag (and role) without clearing it.
  *
- * Two readers need two different reads of the same bit. `Login.tsx` wants
- * `takeSessionExpired`: it reads once on mount to decide whether to show
- * "Your session expired", and must consume the flag so a later remount does
- * not show the notice a second time for the same expiry. `RequireAuth`
- * cannot use that same consuming read — it renders on every navigation
- * inside a guarded subtree, not once, and it is asking a different question
- * ("did `api.ts`'s silent refresh just get refused, mid-session, on this
- * very render?") than Login's "should I show the notice right now". Taking
- * the flag there would clear it before the reader ever reaches `/login` to
- * see it — `peekSessionExpired` lets `RequireAuth` route a dead session to
+ * Two readers need two different reads of the same bit. `SessionEnded` and
+ * `Login.tsx` both want `takeSessionExpired`: each reads once on mount to
+ * pick up the role and decide whether to show the notice, and must consume
+ * the flag so a later remount (its own, or the other screen's, whichever a
+ * reader reaches second) does not show it a second time for the same
+ * expiry. `RequireAuth` cannot use that same consuming read — it renders on
+ * every navigation inside a guarded subtree, not once, and it is asking a
+ * different question ("did `api.ts`'s silent refresh just get refused,
+ * mid-session, on this very render?") than either screen's "show the notice
+ * now, on the screen built to say so". Taking the flag there would clear it
+ * before the reader ever reaches `/session-ended` or `/login` to see it —
+ * `peekSessionExpired` lets `RequireAuth` route a dead session to
  * `/session-ended` without deciding, on its behalf, that the flag has been
  * shown.
  */

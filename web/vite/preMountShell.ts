@@ -39,6 +39,18 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  * substituting while the build still succeeds. The failure has to be loud at
  * build time, because nothing that renders this file (a browser painting
  * before any JS has run) is in a position to report it.
+ *
+ * `fillPreMountShell` also asserts, as its last step, that no
+ * `%LEMELY_COLOR_..._%` or `%LEMELY_LOADING_TIER_..._%`-shaped placeholder
+ * (this plugin's two families) survives the substitutions above — the
+ * mirror-image failure to the one this section describes: a NEW placeholder
+ * typed into index.html with no corresponding entry added to
+ * `COLOR_PLACEHOLDERS`/`DURATION_PLACEHOLDERS` here would otherwise pass
+ * every per-placeholder check (there is nothing to find it missing) and ship
+ * as literal text in the page. Scoped to those two prefixes rather than every
+ * `%LEMELY_..._%` in the document, so it does not misreport
+ * `themeColor.ts`'s own `%LEMELY_THEME_COLOR%` (resolved by a separate
+ * plugin) as this one's failure to resolve.
  */
 
 const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
@@ -118,6 +130,32 @@ export function fillPreMountShell(html: string): string {
       )
     }
     out = out.replaceAll(placeholder, value)
+  }
+
+  // Every KNOWN placeholder above is checked for presence before it is
+  // replaced, which catches one gone missing. It does not catch the mirror
+  // failure: a NEW `%LEMELY_COLOR_..._%` or `%LEMELY_LOADING_TIER_..._%`
+  // placeholder added to index.html's markup with no matching entry in
+  // COLOR_PLACEHOLDERS/DURATION_PLACEHOLDERS above, which would sail through
+  // every check above untouched and ship as literal text in the rendered
+  // page — a browser painting `%LEMELY_COLOR_FOO%` where a colour belongs, on
+  // the one screen no test that renders the real app ever exercises. This is
+  // the backstop: after every known substitution has run, nothing shaped
+  // like one of THIS plugin's two placeholder families may remain.
+  //
+  // Scoped to those two prefixes, not every `%LEMELY_..._%` in the document:
+  // `themeColor.ts` owns a third placeholder, `%LEMELY_THEME_COLOR%`, on the
+  // same `<meta name="theme-color">` line, resolved by its own plugin in its
+  // own build step — a bare `%LEMELY_[A-Z_]+%` sweep here would misreport
+  // that one as this plugin's failure to resolve.
+  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER)_[A-Z_]+%/g)
+  if (leftover) {
+    throw new Error(
+      `preMountShell: index.html still contains unresolved placeholder(s) after every known ` +
+        `substitution ran: ${[...new Set(leftover)].join(", ")}. Add an entry to ` +
+        "COLOR_PLACEHOLDERS or DURATION_PLACEHOLDERS in web/vite/preMountShell.ts, or remove " +
+        "the placeholder from index.html if it is no longer needed.",
+    )
   }
 
   return out

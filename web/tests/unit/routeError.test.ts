@@ -6,11 +6,13 @@ import { classifyRouteError, parseRetryAfter, type RouteFailure } from "@/lib/ro
  * PR 2 part A2 · `classifyRouteError`, pinned row by row against the
  * approved classification table.
  *
- * `isNotFoundResponse` and `attemptReload` are injected exactly as
+ * `isNotFoundResponse` and `canReload` are injected exactly as
  * `routeError.ts`'s own module doc explains: this suite never imports
  * `react-router-dom` or touches `window`, so a "thrown 404 Response" here is
- * a plain object the injected predicate recognises, and "a reload is under
- * way" is whatever the injected `attemptReload` mock returns.
+ * a plain object the injected predicate recognises, and "a reload would
+ * happen" is whatever the injected `canReload` mock returns — a pure
+ * predicate, never a real reload, which is the whole point pinned by the
+ * "classification is pure" block below (SHOULD-FIX 5).
  */
 
 /** A stand-in for `isRouteErrorResponse(e) && e.status === 404`, matching a
@@ -30,11 +32,11 @@ const SERVER_ERROR_RESPONSE = { __routerErrorResponse: true, status: 500 }
 
 function classify(
   error: unknown,
-  opts: { online?: boolean; attemptReload?: (error: unknown) => boolean } = {},
+  opts: { online?: boolean; canReload?: (error: unknown) => boolean } = {},
 ): RouteFailure {
   return classifyRouteError(error, {
     online: opts.online ?? true,
-    attemptReload: opts.attemptReload ?? (() => false),
+    canReload: opts.canReload ?? (() => false),
     isNotFoundResponse,
   })
 }
@@ -56,24 +58,50 @@ describe("classifyRouteError", () => {
   describe("a chunk-load error", () => {
     const chunkError = new TypeError("Failed to fetch dynamically imported module: https://x/y.js")
 
-    it("classifies as offline when the browser itself is offline, without attempting a reload", () => {
-      const attemptReload = vi.fn(() => true)
-      const result = classify(chunkError, { online: false, attemptReload })
+    it("classifies as offline when the browser itself is offline, without consulting canReload", () => {
+      const canReload = vi.fn(() => true)
+      const result = classify(chunkError, { online: false, canReload })
       expect(result).toEqual({ variant: "offline" })
-      expect(attemptReload).not.toHaveBeenCalled()
+      expect(canReload).not.toHaveBeenCalled()
     })
 
     it("classifies as new-version with reloading:true when a guarded reload is under way", () => {
-      const attemptReload = vi.fn(() => true)
-      const result = classify(chunkError, { online: true, attemptReload })
+      const canReload = vi.fn(() => true)
+      const result = classify(chunkError, { online: true, canReload })
       expect(result).toEqual({ variant: "new-version", reloading: true })
-      expect(attemptReload).toHaveBeenCalledWith(chunkError)
+      expect(canReload).toHaveBeenCalledWith(chunkError)
     })
 
     it("classifies as new-version with no reloading flag when the guard declines (already spent)", () => {
-      const attemptReload = vi.fn(() => false)
-      const result = classify(chunkError, { online: true, attemptReload })
+      const canReload = vi.fn(() => false)
+      const result = classify(chunkError, { online: true, canReload })
       expect(result).toEqual({ variant: "new-version" })
+    })
+  })
+
+  describe("purity (SHOULD-FIX 5)", () => {
+    const chunkError = new TypeError("Failed to fetch dynamically imported module: https://x/y.js")
+
+    it("calling classify twice with the same error and a stable canReload yields the same result", () => {
+      const canReload = () => true
+      const first = classify(chunkError, { online: true, canReload })
+      const second = classify(chunkError, { online: true, canReload })
+      expect(first).toEqual(second)
+      expect(first).toEqual({ variant: "new-version", reloading: true })
+    })
+
+    it("never calls anything beyond the injected canReload predicate — no reload is performed by classification itself", () => {
+      // `canReload` here only ever returns a boolean; if `classifyRouteError`
+      // reached past it for a real reload (`location.reload`, storage
+      // writes), this test has no `window`/`localStorage` to catch it with —
+      // which is exactly the point: this suite runs under plain Node
+      // (`vitest.config.ts`, D3.20), so classification calling anything
+      // side-effecting here would throw a ReferenceError, not silently
+      // succeed.
+      const canReload = vi.fn(() => true)
+      expect(() => classify(chunkError, { online: true, canReload })).not.toThrow()
+      expect(() => classify(chunkError, { online: true, canReload })).not.toThrow()
+      expect(canReload).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -164,9 +192,38 @@ describe("parseRetryAfter", () => {
   })
 
   it("never returns a negative number for a negative delta-seconds string", () => {
-    // "-30" fails the delta-seconds digit match and falls through to the
-    // date parser, which also rejects it — both paths land on null, not a
-    // negative number.
+    // "-30" is rejected explicitly by `looksLikeMalformedDelta`, not merely
+    // because it happens to fail the date parser too (see the next block —
+    // some signed/decimal strings do NOT fail the date parser, which is
+    // exactly why the explicit rejection exists).
     expect(parseRetryAfter("-30", now)).toBeNull()
+  })
+
+  describe("SHOULD-FIX 10: signed/non-integer deltas V8's legacy date parser mis-accepts", () => {
+    // V8's Date constructor treats several signed/decimal digit strings as
+    // legacy-format dates rather than rejecting them outright — e.g.
+    // `new Date("-5")` is a real (if bogus) instant, not `Invalid Date`. A
+    // parser that only rejected `isDeltaSeconds`-shaped strings and then
+    // fell through to `new Date()` would silently turn these into wrong,
+    // nonzero countdowns instead of the "no usable information" `null` they
+    // should produce. This is NOT "the date parser rejects negatives in
+    // general" (it doesn't; see the HTTP-date-shaped case below) — it is
+    // this module explicitly refusing anything sign- or decimal-shaped
+    // before `new Date()` ever sees it.
+    it.each(["-5", "5.5", "+30"])("returns null for %s rather than a bogus date-parsed value", (raw) => {
+      expect(parseRetryAfter(raw, now)).toBeNull()
+    })
+
+    it("returns null for exponential-notation garbage (1e3)", () => {
+      expect(parseRetryAfter("1e3", now)).toBeNull()
+    })
+  })
+
+  it("clamps an enormous delta-seconds value to the 3600s ceiling", () => {
+    expect(parseRetryAfter("99999999999999999999", now)).toBe(3600)
+  })
+
+  it("clamps an enormous HTTP-date-derived delta to the same 3600s ceiling", () => {
+    expect(parseRetryAfter("Wed, 02 Sep 2286 12:00:00 GMT", now)).toBe(3600)
   })
 })

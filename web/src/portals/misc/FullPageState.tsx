@@ -1,12 +1,13 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import { Link } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { portalPathForRole, loginPathForRole } from "@/lib/auth/RequireAuth"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { Doodle } from "@/components/ui/doodle"
 import { Mark } from "@/components/ui/mark"
 import { cn } from "@/lib/utils"
+import { withNext } from "@/lib/nextPath"
 import {
   ACTION_LABEL,
   FULL_PAGE_STATE_COPY,
@@ -40,6 +41,16 @@ import {
  * kicker and body as one indistinguishable block on top of whatever the
  * caller already announced getting here.
  *
+ * **`sign-in` resolves through `loginPathForRole`, not a bare `/login`**
+ * (SHOULD-FIX 3, PR 2 adversarial review). A parent whose session expired
+ * used to land on the email+password form here regardless — no field on it
+ * is one they can fill in, since parents authenticate by phone OTP at
+ * `/login/parent`. With a live session, the role to resolve is
+ * `session.role`; the one variant this action fires from with `session ===
+ * null` is `session-ended`, where `SessionEnded` passes `expiredRole` down
+ * from `takeSessionExpired()` — the role of the session that just died,
+ * recorded by `markSessionExpired` at the moment it did.
+ *
  * The three variant "extras" (offline's waiting line, service-trouble's
  * health row, too-many-requests' countdown) are the one place this component
  * is not pure presentation: it reads `health`/`retryAfterSeconds` and formats
@@ -68,6 +79,15 @@ export interface FullPageStateProps {
   health?: { status: "unknown" | "responding" | "not-responding"; checkedSecondsAgo: number | null }
   /** Where `sign-in` should return to after a successful login. */
   returnTo?: string
+  /**
+   * The role of the session that just expired, when this state was reached
+   * because of one and `useAuth()`'s own `session` is already `null` — the
+   * `session-ended` variant's only caller, `SessionEnded`, is the one place
+   * that has this (from `takeSessionExpired()`) and passes it down. Ignored
+   * by every other variant, and by `session-ended` itself whenever a live
+   * `session` is present to resolve `sign-in` from instead.
+   */
+  expiredRole?: string
 }
 
 const HEALTH_DOT: Record<"unknown" | "responding" | "not-responding", string> = {
@@ -98,6 +118,7 @@ function renderAction(
   ctx: {
     home: string
     homeLabel: string
+    signIn: string
     returnTo?: string
     onRetry?: () => void
     retryDisabled: boolean
@@ -113,7 +134,12 @@ function renderAction(
     )
   }
   if (action === "sign-in") {
-    const to = ctx.returnTo ? `/login?next=${encodeURIComponent(ctx.returnTo)}` : "/login"
+    // `ctx.signIn` is already `loginPathForRole`'s answer (`/login` or
+    // `/login/parent`) — `withNext` only has to append `?next=`, the same
+    // allowlisted append every other `?next=` carrier in this app uses
+    // (`RequireAuth`, `SessionEnded`), rather than this one control building
+    // its own query string by hand as it used to.
+    const to = withNext(ctx.signIn, ctx.returnTo ?? null)
     return (
       <Link key="sign-in" to={to} className={linkClass}>
         {ACTION_LABEL["sign-in"]}
@@ -152,13 +178,19 @@ export function FullPageStateBody({
   retryAfterSeconds,
   health,
   returnTo,
+  expiredRole,
 }: Omit<FullPageStateProps, "frame">) {
   const copy = FULL_PAGE_STATE_COPY[variant]
   const { session } = useAuth()
   const home = session ? portalPathForRole(session.role) : "/login"
   const homeLabel = session ? "Go to your dashboard" : "Go to sign in"
+  // A live session's own role wins when there is one; `expiredRole` only
+  // matters on `session-ended`, the one variant that can reach this with
+  // `session === null` and still have a role to resolve from (see the
+  // module note above).
+  const signIn = loginPathForRole(session ? session.role : expiredRole)
   const retryDisabled = typeof retryAfterSeconds === "number" && retryAfterSeconds > 0
-  const ctx = { home, homeLabel, returnTo, onRetry, retryDisabled }
+  const ctx = { home, homeLabel, signIn, returnTo, onRetry, retryDisabled }
 
   return (
     <>
@@ -219,7 +251,15 @@ export function FullPageStateBody({
   )
 }
 
-export function FullPageState({ variant, frame, onRetry, retryAfterSeconds, health, returnTo }: FullPageStateProps) {
+export function FullPageState({
+  variant,
+  frame,
+  onRetry,
+  retryAfterSeconds,
+  health,
+  returnTo,
+  expiredRole,
+}: FullPageStateProps) {
   const body = (
     <FullPageStateBody
       variant={variant}
@@ -227,6 +267,7 @@ export function FullPageState({ variant, frame, onRetry, retryAfterSeconds, heal
       retryAfterSeconds={retryAfterSeconds}
       health={health}
       returnTo={returnTo}
+      expiredRole={expiredRole}
     />
   )
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { shouldAnnounceReconnect } from "@/components/recovery-effects"
+import { shouldAnnounceReconnect, shouldRefetchOnReconnect } from "@/components/recovery-effects"
 
 /*
  * PR 2 part C (recovery effects), pinned.
@@ -8,8 +8,11 @@ import { shouldAnnounceReconnect } from "@/components/recovery-effects"
  * reading `useQueryClient`/`useToast`/`useOnlineStatus` — none of that is
  * reachable under this suite's DOM-less Node environment
  * (`vitest.config.ts`, D3.20). What is reachable, and what actually decides
- * whether the "Reconnected" toast + refetch fire, is the one pure function
- * the component is built around: `shouldAnnounceReconnect`.
+ * whether the "Reconnected" toast + refetch fire, are the two pure functions
+ * the component is built around: `shouldAnnounceReconnect` (is this a
+ * reconnect at all) and `shouldRefetchOnReconnect` (SHOULD-FIX 12: is there
+ * actually anything to refetch, and therefore anything honest to toast
+ * about).
  */
 describe("shouldAnnounceReconnect", () => {
   it("announces on the offline-to-online transition", () => {
@@ -26,5 +29,16 @@ describe("shouldAnnounceReconnect", () => {
 
   it("does not announce while already offline", () => {
     expect(shouldAnnounceReconnect(false, false)).toBe(false)
+  })
+})
+
+describe("shouldRefetchOnReconnect (SHOULD-FIX 12)", () => {
+  it("refetches (and, once that resolves, toasts) when at least one active query errored", () => {
+    expect(shouldRefetchOnReconnect(1)).toBe(true)
+    expect(shouldRefetchOnReconnect(5)).toBe(true)
+  })
+
+  it("skips both the refetch and the toast when nothing active is currently errored", () => {
+    expect(shouldRefetchOnReconnect(0)).toBe(false)
   })
 })

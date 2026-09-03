@@ -201,6 +201,57 @@ describe("exclamation marks in code are not findings", () => {
   })
 })
 
+/*
+ * Adversarial review SHOULD-FIX 9: `proseSpans` only ever matched a JSX text
+ * node when `>` and `<` sat on the same line, so prettier-wrapped copy (the
+ * dominant shape in this codebase) was invisible to the gate. These pin the
+ * fix: a wrapped text node is now found via the whole-file `jsxTextSpans`
+ * pass, and the FPs that reproduced alongside it (a bare comparison read as
+ * markup, and two non-prose strings) are excluded.
+ */
+describe("wrapped JSX text nodes (SHOULD-FIX 9)", () => {
+  it("flags a multi-line JSX text node with words before the exclamation mark", () => {
+    const source = ["<p>", "  You're offline! Answers save locally.", "</p>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(2)
+  })
+
+  it("flags a JSX text node that is the exclamation-marked sentence entirely", () => {
+    const source = ["<p>", "  Nice work!", "</p>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(2)
+  })
+
+  it("flags a wrapped-line text node with the open and close tags on other lines", () => {
+    const source = ["<Empty", '  title="Done"', ">", "  Nice work!", "</Empty>"].join("\n")
+    const findings = findBangs(source)
+    expect(findings).toHaveLength(1)
+    expect(findings[0].line).toBe(4)
+  })
+
+  it("does not report a wrapped JSX text node twice", () => {
+    // The per-line pass and the whole-file pass can both see a node that
+    // happens to fit on one line; the merge must not double-count it.
+    expect(findBangs("<p>Nice work!</p>")).toHaveLength(1)
+  })
+})
+
+describe("false positives found alongside SHOULD-FIX 9", () => {
+  it("does not read a bare comparison as a JSX text node", () => {
+    expect(findBangs("if (a > 0 && ! b && c < 3) {}")).toHaveLength(0)
+  })
+
+  it("does not treat a shell-command string as prose", () => {
+    expect(findBangs("const cmd = \"grep -v '! ' file\"")).toHaveLength(0)
+  })
+
+  it("does not treat a className value as prose", () => {
+    expect(findBangs('className="flex ! mt-0"')).toHaveLength(0)
+  })
+})
+
 describe("proseSpans", () => {
   it("extracts a quoted string literal's contents", () => {
     expect(proseSpans('const msg = "Reconnected!"')).toContain("Reconnected!")

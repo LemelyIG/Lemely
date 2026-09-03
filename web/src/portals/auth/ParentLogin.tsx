@@ -7,6 +7,7 @@ import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { Button } from "@/components/ui/button"
 import { otpRequestFailureMessage, otpVerifyFailureMessage } from "@/lib/authOutcome"
 import { safeNextPath } from "@/lib/nextPath"
+import { takeSessionExpired } from "@/lib/auth/storage"
 import { AuthFrame } from "./Login"
 
 /*
@@ -94,6 +95,7 @@ function PhoneStep({
   onSubmit,
   isPending,
   error,
+  expired,
 }: {
   dial: string
   setDial: (value: string) => void
@@ -102,6 +104,11 @@ function PhoneStep({
   onSubmit: () => void
   isPending: boolean
   error: string | null
+  /** SHOULD-FIX 3 (adversarial review, PR 2). Same read as `Login.tsx`'s own
+   * `expired`, and the same reasoning for it: a parent who lands here after
+   * a dead session should be told so, not left to wonder why they are being
+   * asked to sign in again with no explanation. */
+  expired: boolean
 }) {
   // Client-side validity is deliberately loose — a length floor, not a
   // per-country regex. The point is to catch an obvious typo before spending a
@@ -120,9 +127,18 @@ function PhoneStep({
     <form onSubmit={handleSubmit} className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <h1 className="text-display-lg text-ink">Check on your child</h1>
-        <p className="text-body-md text-ink-muted">
-          Enter your phone number and we'll text you a code. No password to remember.
-        </p>
+        {expired ? (
+          // Same status treatment as `Login.tsx`'s own expiry notice: a
+          // fact, not an error, so `role="status"` announces it without
+          // interrupting.
+          <p role="status" className="text-body-md text-ink-muted">
+            Your session expired. Please sign in again.
+          </p>
+        ) : (
+          <p className="text-body-md text-ink-muted">
+            Enter your phone number and we'll text you a code. No password to remember.
+          </p>
+        )}
       </div>
 
       <div className="flex flex-col gap-2">
@@ -370,6 +386,13 @@ export function ParentLogin() {
   // handler — see that component's comment for why it is re-validated here
   // rather than trusted from whichever screen sent this reader on.
   const next = safeNextPath(searchParams.get("next"))
+  // SHOULD-FIX 3 (adversarial review, PR 2): the same flag `Login.tsx` reads,
+  // consumed at most once between the two screens (`storage.ts`'s own doc).
+  // A parent whose session died and who reaches this screen directly —
+  // rather than via `/session-ended`, which already consumed the flag —
+  // gets told so, the same way `Login.tsx` already does for the
+  // email+password form.
+  const [{ expired }] = useState(() => takeSessionExpired())
 
   const [dial, setDial] = useState<string>(COUNTRIES[0].dial)
   const [phone, setPhone] = useState("")
@@ -457,6 +480,7 @@ export function ParentLogin() {
               onSubmit={() => send(toE164(dial, phone))}
               isPending={requestOtp.isPending}
               error={requestError}
+              expired={expired}
             />
           ) : (
             <CodeStep

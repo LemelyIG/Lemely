@@ -90,6 +90,14 @@
       (and its `prefers-reduced-motion` rule) has not loaded yet at the point
       this paints, so the reduced-motion handling for the shell's own motion is
       duplicated here, scoped to the shell's own classes only.
+
+      This shell depends on the repo shipping no Content-Security-Policy
+      today: this inline `<style>` block needs `style-src 'unsafe-inline'`
+      (or a nonce/hash), the inline `<script>` further down that sets
+      `data-shell="portal"` and the inline `onclick="location.reload()"` on
+      the tier 3 reload button both need the same of `script-src`. A future
+      CSP has to grant those, move this markup to external files, or attach
+      a nonce/hash to each, before `script-src`/`style-src` can be tightened.
     -->
     <style>
       html,
@@ -135,15 +143,34 @@
       .lm-shell-tier2 {
         display: none;
         opacity: 0;
+        visibility: hidden;
         animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SKELETON% both;
       }
+      /* Mobile-first: a portal path gets tier 2's header/content skeleton
+         in a single column, with no sidebar column reserved for it. The real
+         portal shell (`src/portals/student/index.tsx`'s `<Sidebar>`, mirrored
+         by the teacher/parent portals) renders its `<aside>` only from
+         `min-[820px]:flex` upward and swaps in a drawer below that; a fixed
+         246px column here on a 375px phone painted a sidebar that never
+         arrives and left ~129px for the content well, and at 320px tier 3's
+         96px mark overflowed the viewport outright. The two-column layout
+         and the sidebar itself both move into the `min-width: 820px` query
+         below, to match. */
       #root[data-shell="portal"] .lm-shell-tier2 {
         display: grid;
-        grid-template-columns: 246px 1fr;
+        grid-template-columns: 1fr;
+      }
+      @media (min-width: 820px) {
+        #root[data-shell="portal"] .lm-shell-tier2 {
+          grid-template-columns: 246px 1fr;
+        }
+        .lm-shell-sidebar {
+          display: flex;
+        }
       }
 
       .lm-shell-sidebar {
-        display: flex;
+        display: none;
         flex-direction: column;
         gap: 28px;
         padding: 24px 20px;
@@ -352,23 +379,43 @@
         text-align: center;
         background: %LEMELY_COLOR_PAPER%;
         opacity: 0;
+        visibility: hidden;
         animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SLOW% both;
       }
-      /* Inset tier 3 by the sidebar's width and the header's height (both
-         read off `.lm-shell-tier2`'s own layout above) so it only paints the
-         content well; the sidebar and header stay tier 2's, showing through
-         the margin this creates. */
+      /* Inset tier 3 by the header's height at every width, and by the
+         sidebar's width from `min-width: 820px` up, matching the real portal
+         shell: the top bar (`Header` in `src/portals/student/index.tsx`)
+         renders on every width, but the `<aside>` sidebar only exists from
+         820px, same threshold as `.lm-shell-tier2` above. Below 820px tier 3
+         is inset by the header alone, so it never claims 246px of a content
+         well that has no sidebar beside it. */
       #root[data-shell="portal"] .lm-shell-tier3 {
-        margin-left: 246px;
         margin-top: 68px;
         min-height: calc(100vh - 68px);
       }
+      @media (min-width: 820px) {
+        #root[data-shell="portal"] .lm-shell-tier3 {
+          margin-left: 246px;
+        }
+      }
+      /* `visibility` rides along with `opacity` here for the same reason, and
+         under the same §9.2 exemption, as `index.css`'s `lm-appear` keyframe:
+         it is a discrete, non-interpolated property, so animating it is a
+         step, not motion, and it is what actually removes tier 3's heading
+         and reload button from the accessibility tree and the tab order
+         before `%LEMELY_LOADING_TIER_SLOW%` elapses — `opacity: 0` alone does
+         neither, and this whole block sits inside a `role="status"` live
+         region. See `index.css`'s longer comment on `lm-appear` for the full
+         reasoning; duplicated here only because this shell cannot reference
+         that stylesheet before it has loaded. */
       @keyframes lm-shell-appear {
         from {
           opacity: 0;
+          visibility: hidden;
         }
         to {
           opacity: 1;
+          visibility: visible;
         }
       }
       .lm-shell-mark {

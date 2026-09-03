@@ -128,8 +128,10 @@ export function Login() {
   // Read once, on mount, and cleared by the read: landing here after a session
   // expired should say so. Being silently returned to a login screen reads as
   // the app having lost your work, which is the impression the old behaviour
-  // gave once it stopped showing raw 401 text.
-  const [expired] = useState(() => takeSessionExpired())
+  // gave once it stopped showing raw 401 text. `SessionEnded` reads the same
+  // flag the same way, so whichever of the two screens a reader actually
+  // reaches shows the notice — never both, since the read consumes it.
+  const [{ expired }] = useState(() => takeSessionExpired())
 
   const signIn = (confirmDeviceEviction: boolean) => {
     login.mutate(

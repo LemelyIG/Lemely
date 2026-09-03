@@ -33,6 +33,12 @@ import { useOnlineStatus } from "@/lib/online"
  * browser's online state: `OfflineBannerView` is the markup, with no hook,
  * and is what the dev-preview kit renders; `OfflineBanner` is the one the
  * four portal layouts mount, and is the view gated on `useOnlineStatus`.
+ *
+ * "Try again" renders only when a caller actually supplies `onRetry` — the
+ * same rule `FullPageState.tsx`'s own `renderAction` states for its retry
+ * action ("a retry button that does nothing is worse than no button"). This
+ * banner's whole design leans on recovery being automatic, so a caller with
+ * nothing better to wire is entirely expected, not a caller that forgot.
  */
 
 export function OfflineBannerView({ onRetry }: { onRetry?: () => void }) {
@@ -46,13 +52,15 @@ export function OfflineBannerView({ onRetry }: { onRetry?: () => void }) {
         <span className="font-medium">You're offline.</span> Showing what loaded last. This page
         will refresh by itself when you're back online.
       </p>
-      <button
-        type="button"
-        onClick={onRetry}
-        className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover"
-      >
-        Try again
-      </button>
+      {onRetry ? (
+        <button
+          type="button"
+          onClick={onRetry}
+          className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover"
+        >
+          Try again
+        </button>
+      ) : null}
     </div>
   )
 }

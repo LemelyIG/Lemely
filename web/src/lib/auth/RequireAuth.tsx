@@ -75,6 +75,32 @@ export function portalPathForRole(role: string): string {
   return "/teacher"
 }
 
+/**
+ * The sign-in screen a role uses.
+ *
+ * Only `parent` differs: parents authenticate by phone + OTP at
+ * `/login/parent` (G-05), not with a password, so sending one to `/login`
+ * puts them in front of a form with no field they can fill in. Every other
+ * role — and an unknown or absent one, `undefined` included — uses the
+ * email+password form at `/login`. That undefined case is not a hole: a
+ * reader with no session and no recorded expiry (`RequireAuth`'s own
+ * `!session` branch, `FullPageStateBody` outside `session-ended`) was never
+ * some particular role to begin with, and `/login` is the one sign-in
+ * screen every role can always use, so it is the honest default rather than
+ * a guess.
+ *
+ * SHOULD-FIX 3 (adversarial review, PR 2): a parent whose session expired
+ * used to land on this same `/login` regardless of role, unconditionally,
+ * because nothing upstream of it tracked which role had just been signed
+ * out. `markSessionExpired`/`SessionEnded` now carry that role forward so
+ * `FullPageStateBody`'s `sign-in` action can resolve through this function
+ * instead.
+ */
+export function loginPathForRole(role: string | undefined): string {
+  if (role === "parent") return "/login/parent"
+  return "/login"
+}
+
 export function RequireAuth({
   allowedRoles,
   children,
@@ -85,7 +111,13 @@ export function RequireAuth({
   const { session } = useAuth()
   const location = useLocation()
   const currentPath = location.pathname + location.search
-  const stranded = session !== null && !isSessionRecoverable(session)
+  // The role of a session that is present but no longer usable, or `null`
+  // when this session is fine or absent — doubles as the old `stranded`
+  // boolean (`strandedRole !== null`) while also giving the effect below a
+  // role to hand `markSessionExpired`, which `stranded` on its own could
+  // not: TS does not narrow `session` inside the effect closure just because
+  // a same-render boolean derived from it happens to be true (SHOULD-FIX 3).
+  const strandedRole = session !== null && !isSessionRecoverable(session) ? session.role : null
 
   // Drop the dead session rather than merely navigating away from it: left in
   // localStorage it would strand the user again on the next reload, and the
@@ -93,18 +125,19 @@ export function RequireAuth({
   // ordinary sign-out. Clearing it also notifies `AuthContext`, so the redirect
   // below settles onto the plain `!session` case.
   useEffect(() => {
-    if (stranded) {
+    if (strandedRole !== null) {
       clearSession()
-      markSessionExpired()
+      markSessionExpired(strandedRole)
     }
-  }, [stranded])
+  }, [strandedRole])
 
-  // `stranded` and `!session && peekSessionExpired()` both land on the same
-  // screen for the same reason: either way, a session that was working a
-  // moment ago just ended without the reader doing anything, and that is a
-  // different — kinder — story than "you are not signed in", which is what
-  // `!session` alone means for a reader who never had a session this visit.
-  if (stranded || (!session && peekSessionExpired())) {
+  // `strandedRole !== null` and `!session && peekSessionExpired()` both land
+  // on the same screen for the same reason: either way, a session that was
+  // working a moment ago just ended without the reader doing anything, and
+  // that is a different — kinder — story than "you are not signed in",
+  // which is what `!session` alone means for a reader who never had a
+  // session this visit.
+  if (strandedRole !== null || (!session && peekSessionExpired())) {
     return <Navigate to={withNext("/session-ended", currentPath)} replace />
   }
   if (!session) {

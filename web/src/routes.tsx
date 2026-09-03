@@ -1,7 +1,7 @@
 import { lazy, Suspense } from "react"
 import { RouteFallback } from "@/components/ui/state-views"
 import type { RouteObject } from "react-router-dom"
-import { Navigate } from "react-router-dom"
+import { Navigate, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
@@ -11,6 +11,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { RequireAuth, portalPathForRole } from "@/lib/auth/RequireAuth"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
+import { safeNextPath } from "@/lib/nextPath"
 /*
  * P3.1 (DECISION D1.4). Deliberately a static import, unlike every screen in
  * this file, which are all `React.lazy`.
@@ -175,6 +176,23 @@ function LoginRoute({ children }: { children: React.ReactNode }) {
   return children
 }
 
+/**
+ * Guards `/session-ended` against a reader who already has a live session
+ * (adversarial review NIT, PR 2). Not `LoginRoute` reused verbatim: that one
+ * always lands a signed-in visitor on their portal root, but `/session-ended`
+ * can carry its own validated `?next=`, and a signed-in reader who followed
+ * one here should land on what it names instead of being sent to the root
+ * regardless — `next` was where they were headed before whatever routed them
+ * through this screen.
+ */
+function SessionEndedRoute({ children }: { children: React.ReactNode }) {
+  const { session } = useAuth()
+  const [searchParams] = useSearchParams()
+  if (!session) return children
+  const next = safeNextPath(searchParams.get("next"))
+  return <Navigate to={next ?? portalPathForRole(session.role)} replace />
+}
+
 /*
  * P3.1 (DECISION D1.4) · error handling at the route level.
  *
@@ -311,15 +329,27 @@ export const appRoutes: RouteObject[] = [
    * (`lib/auth/RequireAuth.tsx`) instead of straight to `/login`, carrying
    * `?next=` so a successful sign-in returns the reader to what they were
    * doing. Not wrapped in `LoginRoute`: unlike the nine below, nothing here
-   * mints a session or needs protecting from one — a signed-in visitor who
-   * lands on this URL directly just sees the same informational screen a
-   * signed-out one would.
+   * mints a session, so there is no session-creating flow to protect a
+   * signed-in visitor from re-entering by mistake.
+   *
+   * It is wrapped in `SessionEndedRoute`, though (adversarial review NIT) —
+   * a *different* problem `LoginRoute` also exists for, just not the one its
+   * own docstring is about. `RequireAuth` always clears a session before it
+   * redirects here, so in the ordinary flow nobody with a live session ever
+   * reaches this URL. A stale bookmark or a link followed after signing back
+   * in some other way is the exception, and for that reader "Your session
+   * ended" is simply false — they have one. `SessionEndedRoute` sends them on
+   * instead of rendering the screen.
    */
   {
     path: "/session-ended",
     errorElement,
     handle: { title: "Your session ended" } satisfies PageMeta,
-    element: <SessionEnded />,
+    element: (
+      <SessionEndedRoute>
+        <SessionEnded />
+      </SessionEndedRoute>
+    ),
   },
   /*
    * ────────────────────────────────────────────────────────────────────────

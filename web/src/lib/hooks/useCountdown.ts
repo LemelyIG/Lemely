@@ -13,6 +13,18 @@ import { useEffect, useState } from "react"
  */
 
 /**
+ * One tick of the countdown: `remaining` seconds after one more second has
+ * passed, clamped so it can never go negative. Extracted as a pure export so
+ * `useCountdown.test.ts` can pin the hook's actual arithmetic under plain
+ * Node — the hook around it is otherwise all effect (a `setTimeout` and two
+ * `useState`s), unreachable in this suite's DOM-less environment (see that
+ * test file's header for what it can and cannot cover as a result).
+ */
+export function nextCountdownTick(remaining: number): number {
+  return Math.max(0, remaining - 1)
+}
+
+/**
  * Count down from `initialSeconds` to `0`, ticking once per second, and
  * return the seconds remaining.
  *
@@ -32,7 +44,7 @@ export function useCountdown(initialSeconds: number): number {
   useEffect(() => {
     if (remaining <= 0) return
     const timer = window.setTimeout(() => {
-      setRemaining((prev) => Math.max(0, prev - 1))
+      setRemaining(nextCountdownTick)
     }, 1000)
     return () => window.clearTimeout(timer)
   }, [remaining])

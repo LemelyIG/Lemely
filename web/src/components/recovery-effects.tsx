@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useEffect, useRef } from "react"
-import { useQueryClient } from "@tanstack/react-query"
+import { useQueryClient, type Query, type QueryClient } from "@tanstack/react-query"
 import { currentBuildId } from "@/lib/clientErrors"
 import { useOnlineStatus } from "@/lib/online"
 import { StaleChunkGuard } from "@/lib/staleChunk"
@@ -17,12 +17,19 @@ import { useToast, type ToastOptions } from "@/components/ui/toast"
  *
  * (a) Reconnect: the moment the browser goes offline→online, every *active*
  * query currently sitting in an error state refetches itself, followed by a
- * "Reconnected" toast — a reader never has to notice a page is stale and
- * manually refresh it. `type: "active"` deliberately excludes background
- * (unmounted, cached) queries: refetching those on every reconnect would
- * spend Gemini-backed and ordinary API budget on screens nobody is looking
- * at, for a promise ("this page will refresh by itself") this design only
- * makes about pages that are open.
+ * "Reconnected" toast once that refetch has actually finished — a reader
+ * never has to notice a page is stale and manually refresh it. `type:
+ * "active"` deliberately excludes background (unmounted, cached) queries:
+ * refetching those on every reconnect would spend Gemini-backed and ordinary
+ * API budget on screens nobody is looking at, for a promise ("this page will
+ * refresh by itself") this design only makes about pages that are open.
+ *
+ * The toast is awaited, not fired the instant reconnect is detected: its
+ * copy ("has been fetched again") is past tense, and firing it before
+ * `refetchQueries` resolves would make that a guess, not a report. It is
+ * also skipped outright when nothing was actually errored and active at the
+ * moment of reconnect — a reader with nothing stale to fix gets silence
+ * instead of a toast announcing a refetch that never happened.
  *
  * (b) Update notice: on mount, ask the stale-chunk guard (`lib/staleChunk.ts`)
  * whether this load is the other side of a reload it caused. If so, an
@@ -38,6 +45,30 @@ import { useToast, type ToastOptions } from "@/components/ui/toast"
  */
 export function shouldAnnounceReconnect(prev: boolean, next: boolean): boolean {
   return !prev && next
+}
+
+/**
+ * Given how many active, errored queries a reconnect found, should this
+ * effect refetch (and, once that resolves, toast) at all? Exported and pure
+ * for the same reason as `shouldAnnounceReconnect` above — this is the
+ * second half of "skip the toast when nothing was refetched", pinned
+ * directly rather than only through the component's wiring.
+ */
+export function shouldRefetchOnReconnect(erroredActiveQueryCount: number): boolean {
+  return erroredActiveQueryCount > 0
+}
+
+/** The one predicate both the count and the refetch itself filter by, kept
+ * as a single function so the two can never quietly drift apart. */
+function isErroredActiveQuery(query: Query): boolean {
+  return query.state.status === "error"
+}
+
+/** The active, errored queries a reconnect should refetch, read straight
+ * from the cache (no network call) so the component can decide whether
+ * there is anything to do at all before it does it. */
+function findErroredActiveQueries(queryClient: QueryClient): Query[] {
+  return queryClient.getQueryCache().findAll({ type: "active", predicate: isErroredActiveQuery })
 }
 
 /*
@@ -79,14 +110,26 @@ export function RecoveryEffects() {
   const wasOnline = useRef(online)
 
   useEffect(() => {
-    if (shouldAnnounceReconnect(wasOnline.current, online)) {
-      void queryClient.refetchQueries({
-        type: "active",
-        predicate: (query) => query.state.status === "error",
-      })
-      toast(RECONNECTED_TOAST)
-    }
+    const justReconnected = shouldAnnounceReconnect(wasOnline.current, online)
     wasOnline.current = online
+    if (!justReconnected) return undefined
+
+    const errored = findErroredActiveQueries(queryClient)
+    if (!shouldRefetchOnReconnect(errored.length)) return undefined
+
+    let cancelled = false
+    void queryClient
+      .refetchQueries({ type: "active", predicate: isErroredActiveQuery })
+      .then(() => {
+        // Guards a toast firing after this effect's own cleanup ran (the
+        // reader navigated away, or reconnected again before the first
+        // refetch finished) — nothing here is otherwise wrong with a toast
+        // resolving late, but there is no component left for it to be about.
+        if (!cancelled) toast(RECONNECTED_TOAST)
+      })
+    return () => {
+      cancelled = true
+    }
   }, [online, queryClient, toast])
 
   useEffect(() => {

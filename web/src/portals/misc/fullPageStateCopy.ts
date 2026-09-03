@@ -69,9 +69,16 @@ export const FULL_PAGE_STATE_COPY: Record<FullPageStateVariant, FullPageStateCop
     secondary: "retry",
   },
   "new-version": {
-    kicker: "Update",
-    heading: "A new version of Lemely is ready",
-    body: "This page was built for an older version, so it couldn't load. Reloading picks up the new one. Nothing you've done is lost.",
+    // A chunk fetch failure only means the browser could not load a piece of
+    // this page — not that a deploy actually happened. `navigator.onLine`
+    // (the signal `routeError.ts` gates this variant on) reads `true` behind
+    // a captive portal and on flaky wifi, so asserting "a new version is
+    // ready" here would often be a guess dressed up as a fact. This copy
+    // describes what was actually observed and names reloading as the fix,
+    // without claiming to know why loading failed.
+    kicker: "Reload needed",
+    heading: "This page couldn't finish loading",
+    body: "Reloading usually fixes it. If Lemely was just updated, the reload picks up the new version, and nothing you typed is lost.",
     primary: "reload",
     secondary: null,
   },

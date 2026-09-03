@@ -184,12 +184,13 @@
   --dur-celebrate: 900ms;
 
   /* ── §12 Loading tiers (PR 2 part B) ────────────────────────────────────
-     Every full-page wait has three tiers. Tier 1, 0 to this file's implicit
-     zero: warm paper only, nothing visible (a `role="status"` "Loading"
-     announcement stays, visually hidden). Tier 2, 0 to --loading-tier-skeleton:
-     a skeleton matching the layout being waited for. Tier 3, after
-     --loading-tier-slow: the brand mark drawing itself, "Still loading", and a
-     reload button. Both thresholds are tokens so `vite/preMountShell.ts` can
+     Every full-page wait has three tiers. Tier 1, 0 to --loading-tier-skeleton:
+     warm paper only, nothing visible (a `role="status"` "Loading" announcement
+     stays, visually hidden). Tier 2, --loading-tier-skeleton to
+     --loading-tier-slow: a skeleton matching the layout being waited for.
+     Tier 3, after --loading-tier-slow: the brand mark drawing itself, "Still
+     loading", and a reload button. Both thresholds are tokens so
+     `vite/preMountShell.ts` can
      read them out of this file rather than a second, driftable copy — the
      pre-mount shell in index.html stages on the same two numbers `RouteFallback`
      does. See the `.lm-tier-*` classes below for the mechanism. */
@@ -1167,19 +1168,36 @@ body {
    `prefers-reduced-motion`: `--loading-tier-skeleton` and
    `--loading-tier-slow` still gate when tier 2 and tier 3 become visible,
    only the (already instantaneous) opacity fade itself is affected, which is
-   not observable. Opacity only, per §9.2. */
+   not observable.
+
+   `visibility` rides along with `opacity` here, and that is NOT a second
+   motion property alongside it under §9.2's "animate only transform and
+   opacity" rule: `visibility` cannot be interpolated (it is a discrete,
+   keyword-only property — the UA snaps it to whichever keyframe's value is
+   current, it never tweens), so animating it produces a step, not motion.
+   It has to ride along because `opacity: 0` alone does not remove an element
+   from the accessibility tree or the tab order — only `visibility: hidden`
+   does — and both `.lm-tier-skeleton` and `.lm-tier-slow` sit inside a
+   `role="status"` live region. Without this, `RouteFallback`'s tier 3
+   ("Still loading… Reload the page") was reachable by Tab and announced by a
+   screen reader on every route transition, for the first 5s of every load,
+   never having been visible on screen at all. */
 @keyframes lm-appear {
   from {
     opacity: 0;
+    visibility: hidden;
   }
   to {
     opacity: 1;
+    visibility: visible;
   }
 }
 .lm-tier-skeleton {
+  visibility: hidden;
   animation: lm-appear 0s var(--loading-tier-skeleton) both;
 }
 .lm-tier-slow {
+  visibility: hidden;
   animation: lm-appear 0s var(--loading-tier-slow) both;
 }
 

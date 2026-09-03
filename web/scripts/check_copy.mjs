@@ -34,11 +34,35 @@
  * text node (the same two places rule 1 restricts itself to, for the same
  * reason: those are the only places a `!` is copy rather than code), and even
  * there it only counts a `!` that reads as sentence punctuation: one directly
- * followed by the string's closing quote, whitespace, `<` (a JSX text node
- * ending flush against the next tag), or the end of the line. That excludes
- * `!==` inside an example string, a literal `"!important"` CSS override, and
- * `!!x` written out as prose about code, all of which are followed by a
- * character (`=`, a letter) no real "Wait!" or "Reconnected!" ever is.
+ * followed by the string's closing quote, whitespace (including a line break
+ * inside a wrapped JSX text node), `<` (a JSX text node ending flush against
+ * the next tag), or the end of the line. That excludes `!==` inside an
+ * example string, a literal `"!important"` CSS override, and `!!x` written
+ * out as prose about code, all of which are followed by a character (`=`, a
+ * letter) no real "Wait!" or "Reconnected!" ever is.
+ *
+ * What "inside a string literal or a JSX text node" covers, precisely,
+ * because it is two different scans stitched together (`proseSpans` /
+ * `jsxTextSpans`, both below) rather than one:
+ *
+ *   - A quoted string literal (`"`, `'`, or `` ` ``) is scanned per line —
+ *     so a template literal that itself spans multiple lines is NOT
+ *     covered, same limitation `stripComments` already has for `//`. A
+ *     string that is a `className`/`class`/`href`/`src`/`style`/`aria-*`/
+ *     `id` attribute's value, or that looks like a shell command
+ *     (`"grep -v '! ' file"`), is excluded: neither is prose, however much
+ *     it may contain a `!` shaped like punctuation.
+ *   - A JSX text node — the text directly between `>` and `<`, excluding a
+ *     `{...}` expression child — IS covered whether it sits on one line or
+ *     prettier has wrapped it across several, e.g.
+ *     `<p>\n  Nice work!\n</p>`. The whole comment-stripped file is scanned
+ *     for these, not one line at a time, specifically so a wrapped text
+ *     node (the dominant shape of copy in this codebase) is not invisible
+ *     to the gate. A `>`/`<` pair only counts as a text node's boundaries
+ *     when the `>` is immediately preceded by a tag-like character
+ *     (`[A-Za-z0-9_"'}/]`) and the `<` is immediately followed by `/` or a
+ *     letter — so a bare comparison like `a > 0 && ! b && c < 3` is never
+ *     mistaken for markup.
  *
  * Deliberately NOT attempted: detecting passive voice for the mission's
  * separate "active voice errors" rule. That is a judgement about grammar a
@@ -213,6 +237,25 @@ export function findEmDashes(source) {
 export const EXCLAMATION_ALLOWLIST = []
 
 /**
+ * A JSX-attribute name whose *value* is markup/config, never prose — a
+ * `className=`/`style=`/`href=`/`aria-*` string is data for the browser or
+ * the router, not a sentence a reader sees. Checked against the text on the
+ * line immediately before a candidate string literal's opening quote.
+ */
+const ATTRIBUTE_VALUE = /\b(?:className|class|href|src|style|id|aria-[\w-]+)\s*=\s*$/i
+
+/**
+ * Does this string look like a shell command / flag list rather than prose?
+ * A cheap shape test, not a parser: a hyphen immediately followed by a
+ * letter, itself preceded by start-of-string, whitespace, or a quote (` -v`,
+ * `--verbose`, `'-x'`). Prose almost never puts a bare letter right after a
+ * hyphen like that; a CLI example string constantly does.
+ */
+function looksLikeShellFlags(text) {
+  return /(?:^|[\s"'])-{1,2}[A-Za-z]/.test(text)
+}
+
+/**
  * One line's worth of "prose spans": the character ranges that are either
  * the inside of a quoted string literal, or a JSX text node sitting directly
  * between `>` and `<`. Only characters inside one of these count as copy for
@@ -221,9 +264,13 @@ export const EXCLAMATION_ALLOWLIST = []
  *
  * Line-based, like `stripComments` and `findEmDashes` above: it does not
  * parse, so a template literal that spans multiple lines is invisible to it.
- * That trades completeness for a checker whose output can be trusted one
- * line at a time, the same trade this file's header already makes for `//`
- * inside a string truncating a line early.
+ * (A JSX text node that spans multiple lines is NOT invisible: see
+ * `jsxTextSpans` below, which `findExclamationMarks` runs over the whole
+ * file separately from this per-line function, precisely because prettier
+ * wraps most real copy in this codebase onto its own line between an open
+ * and a close tag.) That trades completeness for a checker whose output can
+ * be trusted one line at a time, the same trade this file's header already
+ * makes for `//` inside a string truncating a line early.
  *
  * A backtick literal's `${...}` interpolations are blanked (not treated as
  * prose) before scanning: `${value!}`'s non-null assertion is code sitting
@@ -232,21 +279,184 @@ export const EXCLAMATION_ALLOWLIST = []
  * the same shape of limitation as the multi-line one above: a nested brace
  * inside an interpolation can hide a real `!` from this function, never
  * invent one, so the safe direction of error.
+ *
+ * Two guards keep this from reading code as copy:
+ *
+ *  - A quoted span that is a `className`/`href`/`style`/`aria-*`/... value,
+ *    or that looks like a shell command (`"grep -v '! ' file"`), is not
+ *    prose and is skipped. Both are shapes, not a parse, so both can be
+ *    fooled by a deliberately adversarial literal; neither can be fooled by
+ *    ordinary code, which is the bar this file's header sets throughout.
+ *  - A `>`...`<` JSX span only counts when the `>` is immediately preceded
+ *    by a tag-like character (`[A-Za-z0-9_"'}/]` — a tag name, an
+ *    attribute's closing quote, `}` closing an attribute expression, or `/`
+ *    of a self-closing tag) and the `<` is immediately followed by `/` or a
+ *    letter (a closing tag or the next element). A comparison operator's
+ *    `>` is preceded by whitespace and its `<` is followed by whitespace or
+ *    a digit, so `if (a > 0 && ! b && c < 3)` no longer reads as a JSX text
+ *    node.
  */
 export function proseSpans(line) {
   const blankInterpolations = (inner) =>
     inner.replace(/\$\{[^{}]*\}/g, (match) => " ".repeat(match.length))
 
   const spans = []
+  const consumed = [] // [start, end) ranges already claimed by a string literal
   for (const re of [/"(?:[^"\\]|\\.)*"/g, /'(?:[^'\\]|\\.)*'/g, /`(?:[^`\\]|\\.)*`/g]) {
     for (const match of line.matchAll(re)) {
-      spans.push(blankInterpolations(match[0].slice(1, -1)))
+      const start = match.index
+      const end = start + match[0].length
+      // A quote character of one kind sitting inside a literal of another
+      // kind (`"grep -v '! ' file"`) is not a second, nested string literal —
+      // it is just a character. Without this, the inner `'! '` would be
+      // matched a second time as its own (bogus) single-quoted span.
+      //
+      // Only a match FULLY nested inside an already-consumed range is
+      // dropped, not any overlap: a backtick literal containing a double
+      // quote (`` `She said "hi"` ``) matches `"hi"` first (this loop tries
+      // `"`, then `'`, then `` ` ``, in that order) and the backtick match
+      // that follows CONTAINS that smaller range rather than sitting inside
+      // it, so it is kept — the template literal's prose is not lost to
+      // reject a match that is not actually a duplicate.
+      if (consumed.some(([cs, ce]) => start >= cs && end <= ce)) continue
+      consumed.push([start, end])
+
+      const inner = match[0].slice(1, -1)
+      if (!/[A-Za-z]/.test(inner)) continue
+      if (ATTRIBUTE_VALUE.test(line.slice(0, start))) continue
+      if (looksLikeShellFlags(inner)) continue
+
+      spans.push(blankInterpolations(inner))
     }
   }
   for (const match of line.matchAll(/>([^<>{]*)</g)) {
-    spans.push(match[1])
+    const text = match[1]
+    if (text.trim() === "" || !/[A-Za-z]/.test(text)) continue
+    const before = line[match.index - 1]
+    if (before === undefined || !/[A-Za-z0-9_"'}/]/.test(before)) continue
+    const after = line[match.index + 1 + text.length + 1]
+    if (after === undefined || !/[/A-Za-z]/.test(after)) continue
+    spans.push(text)
   }
   return spans
+}
+
+/**
+ * Absolute character offsets of every line break in `source`, offset 0
+ * included as the start of line 1. Built once per file so `lineForOffset`
+ * below can turn an absolute offset from `jsxTextSpans` into a 1-based line
+ * number by binary search instead of a linear rescan per offset.
+ */
+function lineStartOffsets(source) {
+  const offsets = [0]
+  for (let i = 0; i < source.length; i += 1) {
+    if (source[i] === "\n") offsets.push(i + 1)
+  }
+  return offsets
+}
+
+/** 1-based line number containing absolute character offset `offset`. */
+function lineForOffset(lineStarts, offset) {
+  let lo = 0
+  let hi = lineStarts.length - 1
+  while (lo < hi) {
+    const mid = Math.ceil((lo + hi) / 2)
+    if (lineStarts[mid] <= offset) lo = mid
+    else hi = mid - 1
+  }
+  return lo + 1
+}
+
+/**
+ * Every JSX text node in the WHOLE (comment-stripped) file, as
+ * `{start, text}` where `start` is the absolute offset of `text`'s first
+ * character. Unlike `proseSpans`, this is not line-based, which is the
+ * point of it: prettier wraps the dominant shape of copy in this codebase
+ * onto its own line —
+ *
+ *   <p>
+ *     Nice work!
+ *   </p>
+ *
+ * — and a line-at-a-time `>`...`<` match never sees it, because neither the
+ * `>` nor the `<` is on the line with the text. Scanning the whole file with
+ * the `s` flag closes that gap: the text-node match can cross newlines, and
+ * `findExclamationMarks` below maps each finding's offset back to the real
+ * line via `lineForOffset`.
+ *
+ * `[^<>{}]*` excludes `}` as well as `{` (the per-line `proseSpans` only
+ * excludes `{`) so an expression child like `<p>{count} left</p>` does not
+ * pull `{count}` into the span, and a stray `}` from a wrapped expression
+ * a few lines up can't extend a match past where its own children end.
+ *
+ * Same tag-like guard as `proseSpans`'s JSX arm on the `>` — a bare
+ * comparison such as `a > 0 && c < 3` must not read as markup just because
+ * this function no longer confines itself to one line to find it — with one
+ * addition this function needs and the per-line one does not: prettier
+ * commonly wraps a multi-prop opening tag as
+ *
+ *   <Empty
+ *     title="Done"
+ *   >
+ *
+ * putting the closing `>` alone on its own line, preceded by a newline (or
+ * indentation) rather than a tag-like character. A `>` that is the first
+ * non-whitespace thing on its physical line is accepted on that basis alone
+ * — real code does not leave a bare comparison operator dangling as the
+ * only thing on a line, so this cannot readmit the `a > 0` shape above,
+ * which always has its operand immediately to the left on the same line.
+ */
+export function jsxTextSpans(strippedSource) {
+  const spans = []
+  for (const match of strippedSource.matchAll(/>([^<>{}]*)</gs)) {
+    const text = match[1]
+    if (text.trim() === "" || !/[A-Za-z]/.test(text)) continue
+
+    const openIndex = match.index
+    const lineStart = strippedSource.lastIndexOf("\n", openIndex - 1) + 1
+    const standaloneOnLine = strippedSource.slice(lineStart, openIndex).trim() === ""
+    const before = strippedSource[openIndex - 1]
+    const beforeOk = standaloneOnLine || (before !== undefined && /[A-Za-z0-9_"'}/]/.test(before))
+    if (!beforeOk) continue
+
+    const closeIndex = openIndex + 1 + text.length
+    const after = strippedSource[closeIndex + 1]
+    if (after === undefined || !/[/A-Za-z]/.test(after)) continue
+
+    spans.push({ start: openIndex + 1, text })
+  }
+  return spans
+}
+
+/** Does `span` contain a `!` that reads as sentence punctuation? See the
+ * per-condition breakdown on `findExclamationMarks` below; shared by its
+ * per-line pass (over `proseSpans`) and its whole-file pass (over
+ * `jsxTextSpans`) so both apply exactly the same rule. */
+function hasProseBang(span) {
+  for (let i = 0; i < span.length; i += 1) {
+    if (span[i] !== "!") continue
+    const next = span[i + 1]
+    if (next === undefined || /\s/.test(next)) return true
+  }
+  return false
+}
+
+/**
+ * Absolute offsets, within `span` starting at `spanStart`, of every `!` in
+ * `span` that reads as sentence punctuation by the same rule as
+ * `hasProseBang`. Used for `jsxTextSpans` results, where a span can hold
+ * more than one line and each qualifying `!` needs its own real line number
+ * (whitespace after `!` includes `\n`, so a `!` at the end of a wrapped line
+ * still counts, exactly as it should).
+ */
+function proseBangOffsets(span, spanStart) {
+  const offsets = []
+  for (let i = 0; i < span.length; i += 1) {
+    if (span[i] !== "!") continue
+    const next = span[i + 1]
+    if (next === undefined || /\s/.test(next)) offsets.push(spanStart + i)
+  }
+  return offsets
 }
 
 /**
@@ -256,9 +466,12 @@ export function proseSpans(line) {
  * than trusted, one finding per line.
  *
  * A `!` counts only when both of these hold:
- *   1. it sits inside a `proseSpans` range (a string literal's contents or a
- *      JSX text node) — never bare code, so `!isValid`, `!==`, `!!x` and a
- *      TypeScript non-null `x!` are never even examined.
+ *   1. it sits inside a prose span — a string literal's contents
+ *      (`proseSpans`, minus attribute-value and shell-command-shaped
+ *      strings) or a JSX text node (`proseSpans` for a single-line one,
+ *      `jsxTextSpans` for one prettier has wrapped across several lines) —
+ *      never bare code, so `!isValid`, `!==`, `!!x` and a TypeScript
+ *      non-null `x!` are never even examined.
  *   2. the character right after it, within that same span, is the end of
  *      the span (i.e. the original string's closing quote or the `<` that
  *      ended the JSX text node) or whitespace — the shape sentence
@@ -266,24 +479,36 @@ export function proseSpans(line) {
  *      CSS-in-JS literal, and `!!x` written out in prose about code all fail
  *      this: the character after their `!` is `=` or a letter, never one a
  *      real "Wait!" or "Reconnected!" is followed by.
+ *
+ * Two passes over the same comment-stripped source, merged into one set of
+ * line numbers (so a JSX text node caught by both the per-line and the
+ * whole-file pass reports once, not twice):
+ *
+ *   - per line, via `proseSpans` — string literals, and a JSX text node that
+ *     sits entirely on one line;
+ *   - over the whole file, via `jsxTextSpans` — a JSX text node prettier has
+ *     wrapped onto its own line(s), which never has a `>` or `<` on the same
+ *     line as the text itself and so is invisible to the first pass.
  */
 export function findExclamationMarks(source) {
-  const findings = []
-  const lines = stripComments(source).split("\n")
+  const stripped = stripComments(source)
+  const lines = stripped.split("\n")
+  const flaggedLines = new Set()
 
   lines.forEach((line, lineIndex) => {
-    const found = proseSpans(line).some((span) => {
-      for (let i = 0; i < span.length; i += 1) {
-        if (span[i] !== "!") continue
-        const next = span[i + 1]
-        if (next === undefined || /\s/.test(next)) return true
-      }
-      return false
-    })
-    if (found) findings.push({ line: lineIndex + 1, text: line.trim().slice(0, 120) })
+    if (proseSpans(line).some(hasProseBang)) flaggedLines.add(lineIndex + 1)
   })
 
-  return findings
+  const lineStarts = lineStartOffsets(stripped)
+  for (const { start, text } of jsxTextSpans(stripped)) {
+    for (const offset of proseBangOffsets(text, start)) {
+      flaggedLines.add(lineForOffset(lineStarts, offset))
+    }
+  }
+
+  return [...flaggedLines]
+    .sort((a, b) => a - b)
+    .map((lineNum) => ({ line: lineNum, text: lines[lineNum - 1].trim().slice(0, 120) }))
 }
 
 /*

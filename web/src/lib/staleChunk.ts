@@ -86,6 +86,17 @@ const RELOAD_KEY = "lemely:stale-chunk-reload"
 const NOTICE_KEY = "lemely:stale-chunk-notice"
 
 /**
+ * `currentBuildId()` (`clientErrors.ts`) falls back to this literal outside
+ * a real deploy (`vite dev`, and any other environment `__LEMELY_BUILD_ID__`
+ * never gets defined in). Every such session shares the same "build id"
+ * forever, so persisting it under `RELOAD_KEY` the way a real build id is
+ * persisted would poison the guard for the rest of that browser profile's
+ * life on that origin after the first reload — see `tryReload`/`canReload`
+ * below for the fix.
+ */
+const DEV_BUILD_ID = "dev"
+
+/**
  * The reload-at-most-once-per-build guard, backed by injected storage so it
  * is testable under vitest's node environment with no real
  * `localStorage` (see `vitest.config.ts`, D3.20).
@@ -95,7 +106,8 @@ const NOTICE_KEY = "lemely:stale-chunk-notice"
  *    for. `tryReload` refuses a second attempt for the same id — that is
  *    the entire loop guard: a build that is still broken after reloading
  *    (a real bug, not a stale deploy) must fail through to the "new
- *    version" screen instead of reloading forever.
+ *    version" screen instead of reloading forever. Never written for
+ *    `DEV_BUILD_ID` — see `reloadedThisLoad` below.
  *  - `NOTICE_KEY` holds the *stale* build id `tryReload` reloaded away
  *    from, so `consumeReloadNotice` can tell a genuine recovery (the app
  *    is now running a different build than the one that failed) apart from
@@ -113,6 +125,18 @@ const NOTICE_KEY = "lemely:stale-chunk-notice"
  */
 export class StaleChunkGuard {
   private readonly storage: ChunkGuardStorage
+
+  /**
+   * The in-memory half of the `DEV_BUILD_ID` special case: `vite dev` never
+   * changes build ids across a reload, so persisted storage can never tell
+   * "already reloaded once this load" apart from "already reloaded once,
+   * ever, on this origin" for that id. Scoped to this instance (which lives
+   * exactly as long as one real page load — a reload creates a fresh JS
+   * context and a fresh `StaleChunkGuard`), so it resets exactly when a
+   * genuine new load should get a fresh chance, and never survives a reload
+   * to block the next one the way a persisted key would.
+   */
+  private reloadedThisLoad = false
 
   constructor(storage: ChunkGuardStorage) {
     this.storage = storage
@@ -143,15 +167,38 @@ export class StaleChunkGuard {
   }
 
   /**
+   * Would `tryReload(buildId)` reload right now? A pure read with no side
+   * effect — safe to call from a render body (`classifyRouteError`,
+   * `lib/routeError.ts`, injects this as `canReload`) where `tryReload`
+   * itself, which writes storage and is meant to be followed by an actual
+   * `location.reload()`, is not.
+   *
+   * `DEV_BUILD_ID` is always eligible by persisted-storage standards (see
+   * the class doc above for why persisting it at all would be a one-way
+   * trip) — bounded instead by `reloadedThisLoad`, so a dev session still
+   * cannot reload more than once per real page load.
+   */
+  canReload(buildId: string): boolean {
+    if (buildId === DEV_BUILD_ID) return !this.reloadedThisLoad
+    return this.read(RELOAD_KEY) !== buildId
+  }
+
+  /**
    * Should a chunk-load failure on `buildId` trigger a reload right now?
    * `true` at most once per distinct `buildId` — a second call with the
    * same id (this build is still broken after the one reload it already
    * got) returns `false`, so the caller can fall through to a "new
-   * version" screen instead of looping.
+   * version" screen instead of looping. Delegates the decision to
+   * `canReload`; the two must never disagree, since a caller checks one
+   * (in render) and calls the other (in an effect) for the same outcome.
    */
   tryReload(buildId: string): boolean {
-    if (this.read(RELOAD_KEY) === buildId) return false
-    this.write(RELOAD_KEY, buildId)
+    if (!this.canReload(buildId)) return false
+    if (buildId === DEV_BUILD_ID) {
+      this.reloadedThisLoad = true
+    } else {
+      this.write(RELOAD_KEY, buildId)
+    }
     this.write(NOTICE_KEY, buildId)
     return true
   }
@@ -174,12 +221,20 @@ export class StaleChunkGuard {
    * be false in that case, so this returns `false` instead, while still
    * consuming the pending notice so it cannot fire late once a real new
    * build does eventually load.
+   *
+   * A confirmed recovery (the changed-id case) also clears `RELOAD_KEY`:
+   * the build that failed is gone for good now that a newer one has
+   * loaded, so there is nothing left for that key to guard against, and
+   * leaving it set would only ever cost a future, unrelated chunk failure
+   * that happens to reuse the same id (unlikely, but free to rule out).
    */
   consumeReloadNotice(buildId: string): boolean {
     const pendingFor = this.read(NOTICE_KEY)
     if (pendingFor === null) return false
     this.clear(NOTICE_KEY)
-    return pendingFor !== buildId
+    const recovered = pendingFor !== buildId
+    if (recovered) this.clear(RELOAD_KEY)
+    return recovered
   }
 }
 
@@ -240,6 +295,11 @@ export function installStaleChunkReload(opts: {
  * has no safe way to reload without the real `reload` callback, and a
  * classifier returning `false` is the correct answer to "was a reload
  * triggered" when none was.
+ *
+ * This function writes storage and calls `installed.reload()` — a real
+ * side effect. `route-error.tsx` calls it from a `useEffect`, never from a
+ * render body; `canReloadChunkError` below is the render-safe counterpart
+ * that answers the same question without doing either.
  */
 export function handleChunkError(error: unknown): boolean {
   if (!isChunkLoadError(error)) return false
@@ -247,4 +307,20 @@ export function handleChunkError(error: unknown): boolean {
   if (!installed.guard.tryReload(installed.buildId)) return false
   installed.reload()
   return true
+}
+
+/**
+ * Would `handleChunkError(error)` trigger a reload right now? Same question,
+ * asked without writing storage or reloading anything — a pure predicate a
+ * render body can call safely, unlike `handleChunkError` itself (see its own
+ * doc above). `route-error.tsx` injects this as `classifyRouteError`'s
+ * `canReload` so classification stays pure: calling it twice with the same
+ * `error` is guaranteed to answer the same way, which `handleChunkError`
+ * cannot promise (its second call for the same build always answers `false`,
+ * having already spent the guard's one reload on the first).
+ */
+export function canReloadChunkError(error: unknown): boolean {
+  if (!isChunkLoadError(error)) return false
+  if (installed === null) return false
+  return installed.guard.canReload(installed.buildId)
 }
