@@ -4,10 +4,11 @@ import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
 import { confidenceTierFor } from "@/lib/markingConfidence"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
@@ -247,372 +248,381 @@ export function Review() {
     })
   }
 
-  if (queueQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Review queue</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={6} avatar />
-      </div>
-    )
-  }
-
-  if (queueQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Review queue</h1>
-        <ErrorState
-          heading="Couldn't load the review queue"
-          body={teacherLoadFailureMessage(queueQuery.error)}
-          action={{ label: "Retry", onClick: () => queueQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const items = queueQuery.data.items
-  const filterQsString = searchParams.toString()
-  const filtersActive = classId !== "" || reason !== "" || minAgeHours !== ""
-  const selectableItems = selectableOf(items)
-  const allSelected = selectableItems.length > 0 && selectableItems.every((i) => selected.has(i.itemId))
-
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <div className="text-eyebrow text-ink-faint">
-          The teacher's core recurring task
-        </div>
-        <h1 className="text-display-md mt-1">Review queue</h1>
-        <p className="text-body-md text-ink-muted mt-1 max-w-[560px] text-pretty">
-          Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
-          trivially fine ones. Open anything that needs a real look.
-        </p>
-      </div>
+      <QueryState
+        query={queueQuery}
+        srHeading="Review queue"
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={6} avatar />
+          </>
+        }
+        error={{
+          heading: "Couldn't load the review queue",
+          body: teacherLoadFailureMessage,
+        }}
+      >
+        {({ items }) => {
+          const filterQsString = searchParams.toString()
+          const filtersActive = classId !== "" || reason !== "" || minAgeHours !== ""
+          const selectableItems = selectableOf(items)
+          const allSelected =
+            selectableItems.length > 0 && selectableItems.every((i) => selected.has(i.itemId))
 
-      <div className="flex items-end gap-4 flex-wrap">
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Class
-          <select
-            value={classId}
-            onChange={(e) => updateFilter("class_id", e.target.value)}
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring min-w-[170px]"
-          >
-            <option value="">All classes</option>
-            {(classesQuery.data?.classes ?? []).map((c) => (
-              <option key={c.id} value={c.id}>
-                {c.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Reason
-          <select
-            value={reason}
-            onChange={(e) => updateFilter("reason", e.target.value)}
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          >
-            {REASON_FILTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Waiting at least
-          <select
-            value={minAgeHours}
-            onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          >
-            {AGE_FILTER_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.label}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-
-      {items.length === 0 ? (
-        <EmptyState
-          heading={filtersActive ? "No matches for these filters" : "Nothing waiting for review"}
-          body={
-            filtersActive
-              ? "No open review item matches the current class/reason/age filters."
-              : "Every mark is either confident or already resolved. Nothing needs your eyes right now."
-          }
-          action={
-            filtersActive
-              ? { label: "Clear filters", onClick: () => setSearchParams({}, { replace: true }) }
-              : undefined
-          }
-        />
-      ) : (
-        <>
-          <div className="flex items-center gap-3 flex-wrap">
-            <Checkbox
-              checked={allSelected}
-              disabled={selectableItems.length === 0}
-              onChange={() => toggleSelectAll(items)}
-              aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
-              label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
-            />
-            <Button
-              variant="ink"
-              size="sm"
-              disabled={selected.size === 0 || bulkApprove.isPending}
-              onClick={() => handleBulkApprove(items)}
-            >
-              {bulkApprove.isPending
-                ? "Approving…"
-                : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
-            </Button>
-            <span className="text-body-sm text-ink-faint">
-              Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
-              selectable here. Open one to look at it properly.
-            </span>
-          </div>
-
-          {bulkApprove.isError ? (
-            <div role="alert" className="text-body-sm text-err">
-              Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
-            </div>
-          ) : null}
-
-          {bulkResult ? (
-            <div
-              role="status"
-              className="border border-rule rounded-md p-4 bg-paper-sunk flex flex-col gap-2"
-            >
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-body-md font-medium">
-                  Approved {bulkResult.approved.length} item
-                  {bulkResult.approved.length === 1 ? "" : "s"}
-                  {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+                <div className="text-eyebrow text-ink-faint">
+                  The teacher's core recurring task
                 </div>
-                <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
-                  Dismiss
-                </Button>
+                <h1 className="text-display-md mt-1">Review queue</h1>
+                <p className="text-body-md text-ink-muted mt-1 max-w-[560px] text-pretty">
+                  Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
+                  trivially fine ones. Open anything that needs a real look.
+                </p>
               </div>
-              {bulkResult.skipped.length > 0 ? (
-                <ul className="flex flex-col gap-1 text-body-sm text-ink-muted m-0 ps-4 list-disc">
-                  {bulkResult.skipped.map((s) => {
-                    const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
-                    return (
-                      <li key={s.itemId}>
-                        {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
-                        {": "}
-                        {SKIP_REASON_LABEL[s.reason] ?? s.reason}
-                      </li>
-                    )
-                  })}
-                </ul>
-              ) : null}
-            </div>
-          ) : null}
 
-          <div
-            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-            tabIndex={0}
-            role="region"
-            aria-label="Review queue, scrollable horizontally"
-          >
-            <table className="w-full text-body-md border-collapse">
-              <caption className="sr-only">
-                Review queue, oldest-waiting item first, which is the priority order the server already
-                returns this list in
-              </caption>
-              <thead>
-                <tr className="bg-paper-sunk border-b border-rule">
-                  <th scope="col" className="px-[16px] py-[10px]">
-                    <span className="sr-only">Select</span>
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+              <div className="flex items-end gap-4 flex-wrap">
+                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
+                  Class
+                  <select
+                    value={classId}
+                    onChange={(e) => updateFilter("class_id", e.target.value)}
+                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring min-w-[170px]"
                   >
-                    Student
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                    <option value="">All classes</option>
+                    {(classesQuery.data?.classes ?? []).map((c) => (
+                      <option key={c.id} value={c.id}>
+                        {c.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
+                  Reason
+                  <select
+                    value={reason}
+                    onChange={(e) => updateFilter("reason", e.target.value)}
+                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                   >
-                    Paper
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                    {REASON_FILTER_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
+                  Waiting at least
+                  <select
+                    value={minAgeHours}
+                    onChange={(e) => updateFilter("min_age_hours", e.target.value)}
+                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                   >
-                    Question
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                  >
-                    Why it's here
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                  >
-                    Waiting
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint whitespace-nowrap"
-                  >
-                    AI mark
-                  </th>
-                  <th
-                    scope="col"
-                    className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                  >
-                    Confidence
-                  </th>
-                  <th scope="col" className="px-[16px] py-[10px]">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((item) => (
-                  <tr key={item.itemId} className="border-b border-rule last:border-b-0 align-top">
-                    <td className="px-[16px] py-[13px]">
-                      <Checkbox
-                        checked={selected.has(item.itemId)}
-                        disabled={isIntegrityReason(item.reason)}
-                        onChange={() => toggleSelected(item.itemId)}
-                        title={
-                          isIntegrityReason(item.reason)
-                            ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
-                            : undefined
-                        }
-                        aria-label={
-                          isIntegrityReason(item.reason)
-                            ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
-                            : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
-                        }
-                      />
-                    </td>
-                    <td className="px-[16px] py-[13px]">
-                      <div className="flex items-center gap-2.5 min-w-0">
-                        <Avatar name={item.studentDisplayName} size="sm" />
-                        {/* P6.2's long-content pass. `min-w-0` alone could not
-                            make the `truncate` below fire, and this is the
-                            first capture that ever rendered a name long enough
-                            to show it: the table is `w-full` with the default
-                            `table-layout: auto`, so a long name grows its own
-                            cell, drags the table past the card, and the text is
-                            CLIPPED by the `overflow-x-auto` wrapper rather than
-                            ellipsised. The rule was correct and unreachable —
-                            present, resolving, and unable to fire, which no
-                            gate in this build can see.
+                    {AGE_FILTER_OPTIONS.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
 
-                            What the capture showed is worse than a missing
-                            ellipsis, and it is why this is bounded rather than
-                            left to scroll: at 1440, one long name widened the
-                            student column by ~170px and pushed the per-row
-                            "Review →" button off the right edge of the card.
-                            The action every row exists for became unreachable
-                            without horizontal scrolling, on a desktop screen
-                            with room to spare, because of one student's name.
+              {/*
+               * The empty branch stays inside `children` rather than going
+               * through `QueryState`'s own `isEmpty`/`empty`: the header and
+               * the three filter controls above must render identically in
+               * both the empty and non-empty cases (so a teacher can clear a
+               * filter that zeroed the list), and `empty` is a single fixed
+               * `ReactNode` — hoisting just the `EmptyState` there would mean
+               * keeping two copies of that filter markup (one in `children`,
+               * one in `empty`) in sync by hand, which is the exact kind of
+               * per-screen drift this PR exists to close.
+               */}
+              {items.length === 0 ? (
+                <EmptyState
+                  heading={filtersActive ? "No matches for these filters" : "Nothing waiting for review"}
+                  body={
+                    filtersActive
+                      ? "No open review item matches the current class/reason/age filters."
+                      : "Every mark is either confident or already resolved. Nothing needs your eyes right now."
+                  }
+                  action={
+                    filtersActive
+                      ? { label: "Clear filters", onClick: () => setSearchParams({}, { replace: true }) }
+                      : undefined
+                  }
+                />
+              ) : (
+                <>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <Checkbox
+                      checked={allSelected}
+                      disabled={selectableItems.length === 0}
+                      onChange={() => toggleSelectAll(items)}
+                      aria-label={allSelected ? "Deselect all selectable items" : "Select all selectable items"}
+                      label={selected.size > 0 ? `${selected.size} selected` : "Select all"}
+                    />
+                    <Button
+                      variant="ink"
+                      size="sm"
+                      disabled={selected.size === 0 || bulkApprove.isPending}
+                      onClick={() => handleBulkApprove(items)}
+                    >
+                      {bulkApprove.isPending
+                        ? "Approving…"
+                        : `Bulk-approve${selected.size > 0 ? ` (${selected.size})` : ""}`}
+                    </Button>
+                    <span className="text-body-sm text-ink-faint">
+                      Accepts each selected mark exactly as Lemely awarded it. Integrity flags aren't
+                      selectable here. Open one to look at it properly.
+                    </span>
+                  </div>
 
-                            A character measure rather than a pixel width, for
-                            the same reason `CorrectPaper`'s `max-w-[60ch]` is
-                            one: it is a count of glyphs, not a spacing value,
-                            so it is out of scope for the 4px scale. 20ch is
-                            about the column's own natural width, so it is a
-                            `max` that ordinary names never reach and long ones
-                            cannot exceed. 30ch was tried first and did not
-                            bind — it truncated the name and the table still
-                            grew. */}
-                        <div className="min-w-0 max-w-[20ch]">
-                          {/* Two stacked links to two different destinations,
-                              so both need §6.1's floor, not just the primary
-                              one. `min-h-11` with flex centring rather than the
-                              `py-[11px]` this used to carry: 21.7px of line
-                              plus 22px of padding is 43.7px, which fails the
-                              floor by a third of a pixel and reported as "44"
-                              until the gate started printing tenths. Hand-tuned
-                              padding cannot be right for both rungs anyway,
-                              because they have different line-heights.
+                  {bulkApprove.isError ? (
+                    <div role="alert" className="text-body-sm text-err">
+                      Couldn't bulk-approve: {teacherMutationFailureMessage(bulkApprove.error)}
+                    </div>
+                  ) : null}
 
-                              `truncate` moves to an inner span: on a flex
-                              container the text is an anonymous flex item and
-                              text-overflow has nothing to apply to, so the
-                              ellipsis would silently stop working. */}
-                          <Link
-                            to={`/teacher/students/${item.studentId}`}
-                            className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
-                          >
-                            <span className="truncate">{item.studentDisplayName}</span>
-                          </Link>
-                          <Link
-                            to={`/teacher/classes/${item.classId}`}
-                            className="flex items-center text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline pointer-coarse:min-h-11"
-                          >
-                            <span className="truncate">{item.className}</span>
-                          </Link>
+                  {bulkResult ? (
+                    <div
+                      role="status"
+                      className="border border-rule rounded-md p-4 bg-paper-sunk flex flex-col gap-2"
+                    >
+                      <div className="flex items-center justify-between gap-3">
+                        <div className="text-body-md font-medium">
+                          Approved {bulkResult.approved.length} item
+                          {bulkResult.approved.length === 1 ? "" : "s"}
+                          {bulkResult.skipped.length > 0 ? ` · skipped ${bulkResult.skipped.length}` : "."}
                         </div>
+                        <Button variant="ghost" size="sm" onClick={() => setBulkResult(null)}>
+                          Dismiss
+                        </Button>
                       </div>
-                    </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
-                      {paperIdentityLabel(item)}
-                    </td>
-                    <td className="px-[16px] py-[13px] text-data-sm whitespace-nowrap">
-                      {item.questionId ?? "—"}
-                    </td>
-                    <td className="px-[16px] py-[13px]">
-                      <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
-                        {reasonLabel(item.reason)}
-                      </Chip>
-                    </td>
-                    <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
-                      {relativeTime(item.createdAt)}
-                    </td>
-                    {/* The confidence gets its own column rather than sitting
-                        unlabelled under the mark. Stacked, a tone-coloured
-                        "85%" read as a second figure about the *mark* — the
-                        same shape as surface 4's unlabelled rank column, where
-                        a coloured number beside another number invited the two
-                        to be read as a pair. A percentage under "2/3" is
-                        especially open to being read as a score. */}
-                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                      <div className="text-data-sm text-ink">
-                        {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
-                      </div>
-                    </td>
-                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                      {item.confidenceScore != null ? (
-                        <Chip tone={confidenceTone(item.confidenceScore)}>
-                          {Math.round(item.confidenceScore * 100)}%
-                        </Chip>
-                      ) : (
-                        <span className="text-body-sm text-ink-faint">–</span>
-                      )}
-                    </td>
-                    <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                      <Button
-                        size="sm"
-                        variant="secondary"
-                        onClick={() =>
-                          navigate(
-                            `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
-                          )
-                        }
-                      >
-                        Review <ForwardArrow />
-                      </Button>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </>
-      )}
+                      {bulkResult.skipped.length > 0 ? (
+                        <ul className="flex flex-col gap-1 text-body-sm text-ink-muted m-0 ps-4 list-disc">
+                          {bulkResult.skipped.map((s) => {
+                            const row = snapshotRef.current.find((r) => r.itemId === s.itemId)
+                            return (
+                              <li key={s.itemId}>
+                                {row ? `${row.studentDisplayName} — ${questionLabel(row)}` : s.itemId}
+                                {": "}
+                                {SKIP_REASON_LABEL[s.reason] ?? s.reason}
+                              </li>
+                            )
+                          })}
+                        </ul>
+                      ) : null}
+                    </div>
+                  ) : null}
+
+                  <div
+                    className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                    tabIndex={0}
+                    role="region"
+                    aria-label="Review queue, scrollable horizontally"
+                  >
+                    <table className="w-full text-body-md border-collapse">
+                      <caption className="sr-only">
+                        Review queue, oldest-waiting item first, which is the priority order the server already
+                        returns this list in
+                      </caption>
+                      <thead>
+                        <tr className="bg-paper-sunk border-b border-rule">
+                          <th scope="col" className="px-[16px] py-[10px]">
+                            <span className="sr-only">Select</span>
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Student
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Paper
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Question
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Why it's here
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Waiting
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint whitespace-nowrap"
+                          >
+                            AI mark
+                          </th>
+                          <th
+                            scope="col"
+                            className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
+                          >
+                            Confidence
+                          </th>
+                          <th scope="col" className="px-[16px] py-[10px]">
+                            <span className="sr-only">Actions</span>
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {items.map((item) => (
+                          <tr key={item.itemId} className="border-b border-rule last:border-b-0 align-top">
+                            <td className="px-[16px] py-[13px]">
+                              <Checkbox
+                                checked={selected.has(item.itemId)}
+                                disabled={isIntegrityReason(item.reason)}
+                                onChange={() => toggleSelected(item.itemId)}
+                                title={
+                                  isIntegrityReason(item.reason)
+                                    ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
+                                    : undefined
+                                }
+                                aria-label={
+                                  isIntegrityReason(item.reason)
+                                    ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
+                                    : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
+                                }
+                              />
+                            </td>
+                            <td className="px-[16px] py-[13px]">
+                              <div className="flex items-center gap-2.5 min-w-0">
+                                <Avatar name={item.studentDisplayName} size="sm" />
+                                {/* P6.2's long-content pass. `min-w-0` alone could not
+                                    make the `truncate` below fire, and this is the
+                                    first capture that ever rendered a name long enough
+                                    to show it: the table is `w-full` with the default
+                                    `table-layout: auto`, so a long name grows its own
+                                    cell, drags the table past the card, and the text is
+                                    CLIPPED by the `overflow-x-auto` wrapper rather than
+                                    ellipsised. The rule was correct and unreachable —
+                                    present, resolving, and unable to fire, which no
+                                    gate in this build can see.
+
+                                    What the capture showed is worse than a missing
+                                    ellipsis, and it is why this is bounded rather than
+                                    left to scroll: at 1440, one long name widened the
+                                    student column by ~170px and pushed the per-row
+                                    "Review →" button off the right edge of the card.
+                                    The action every row exists for became unreachable
+                                    without horizontal scrolling, on a desktop screen
+                                    with room to spare, because of one student's name.
+
+                                    A character measure rather than a pixel width, for
+                                    the same reason `CorrectPaper`'s `max-w-[60ch]` is
+                                    one: it is a count of glyphs, not a spacing value,
+                                    so it is out of scope for the 4px scale. 20ch is
+                                    about the column's own natural width, so it is a
+                                    `max` that ordinary names never reach and long ones
+                                    cannot exceed. 30ch was tried first and did not
+                                    bind — it truncated the name and the table still
+                                    grew. */}
+                                <div className="min-w-0 max-w-[20ch]">
+                                  {/* Two stacked links to two different destinations,
+                                      so both need §6.1's floor, not just the primary
+                                      one. `min-h-11` with flex centring rather than the
+                                      `py-[11px]` this used to carry: 21.7px of line
+                                      plus 22px of padding is 43.7px, which fails the
+                                      floor by a third of a pixel and reported as "44"
+                                      until the gate started printing tenths. Hand-tuned
+                                      padding cannot be right for both rungs anyway,
+                                      because they have different line-heights.
+
+                                      `truncate` moves to an inner span: on a flex
+                                      container the text is an anonymous flex item and
+                                      text-overflow has nothing to apply to, so the
+                                      ellipsis would silently stop working. */}
+                                  <Link
+                                    to={`/teacher/students/${item.studentId}`}
+                                    className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
+                                  >
+                                    <span className="truncate">{item.studentDisplayName}</span>
+                                  </Link>
+                                  <Link
+                                    to={`/teacher/classes/${item.classId}`}
+                                    className="flex items-center text-body-sm text-ink-faint transition-colors hover:text-ink hover:underline pointer-coarse:min-h-11"
+                                  >
+                                    <span className="truncate">{item.className}</span>
+                                  </Link>
+                                </div>
+                              </div>
+                            </td>
+                            <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
+                              {paperIdentityLabel(item)}
+                            </td>
+                            <td className="px-[16px] py-[13px] text-data-sm whitespace-nowrap">
+                              {item.questionId ?? "—"}
+                            </td>
+                            <td className="px-[16px] py-[13px]">
+                              <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                                {reasonLabel(item.reason)}
+                              </Chip>
+                            </td>
+                            <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
+                              {relativeTime(item.createdAt)}
+                            </td>
+                            {/* The confidence gets its own column rather than sitting
+                                unlabelled under the mark. Stacked, a tone-coloured
+                                "85%" read as a second figure about the *mark* — the
+                                same shape as surface 4's unlabelled rank column, where
+                                a coloured number beside another number invited the two
+                                to be read as a pair. A percentage under "2/3" is
+                                especially open to being read as a score. */}
+                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
+                              <div className="text-data-sm text-ink">
+                                {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
+                              </div>
+                            </td>
+                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
+                              {item.confidenceScore != null ? (
+                                <Chip tone={confidenceTone(item.confidenceScore)}>
+                                  {Math.round(item.confidenceScore * 100)}%
+                                </Chip>
+                              ) : (
+                                <span className="text-body-sm text-ink-faint">–</span>
+                              )}
+                            </td>
+                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
+                              <Button
+                                size="sm"
+                                variant="secondary"
+                                onClick={() =>
+                                  navigate(
+                                    `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
+                                  )
+                                }
+                              >
+                                Review <ForwardArrow />
+                              </Button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </>
+              )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

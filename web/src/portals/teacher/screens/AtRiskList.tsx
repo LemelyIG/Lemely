@@ -4,7 +4,8 @@ import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { cn, relativeTime } from "@/lib/utils"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -261,187 +262,182 @@ export function AtRiskList() {
     }
   }
 
-  if (listQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">At-risk students</h1>
-        {/* A skeleton matching the header-plus-table this screen renders,
-            rather than one line of text where four regions are about to
-            appear. §12: loading states match the layout they replace so
-            nothing shifts. The rows carry an avatar because every row of this
-            table starts with one. */}
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={5} avatar />
-      </div>
-    )
-  }
-
-  if (listQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">At-risk students</h1>
-        <ErrorState
-          heading="Couldn't load the at-risk list"
-          body={teacherLoadFailureMessage(listQuery.error)}
-          action={{ label: "Retry", onClick: () => listQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const students = [...listQuery.data.students].sort((a, b) =>
-    compareEntries(a, b, sortColumn, sortDir),
-  )
-  const filtersActive = reason !== "" || acknowledged !== ""
-
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <div className="text-eyebrow text-ink-faint">
-          Flagged by trajectory, not by one bad day
-        </div>
-        <h1 className="text-display-lg text-ink mt-1">At-risk students</h1>
-      </div>
+      <QueryState
+        query={listQuery}
+        srHeading="At-risk students"
+        // A skeleton matching the header-plus-table this screen renders,
+        // rather than one line of text where four regions are about to
+        // appear. §12: loading states match the layout they replace so
+        // nothing shifts. The rows carry an avatar because every row of this
+        // table starts with one.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} avatar />
+          </>
+        }
+        error={{ heading: "Couldn't load the at-risk list", body: teacherLoadFailureMessage }}
+      >
+        {(list) => {
+          const students = [...list.students].sort((a, b) =>
+            compareEntries(a, b, sortColumn, sortDir),
+          )
+          const filtersActive = reason !== "" || acknowledged !== ""
 
-      {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
-          carried `outline-accent`, which §3.9 gives to brand rather than to
-          focus, and neither had the disabled or error states the kit control
-          implements — §9 gate 4 wants all eight on every interactive component
-          a surface touches. It is still a native `<select>` underneath; see
-          its docstring for why that is deliberate. */}
-      <div className="flex items-end gap-4 flex-wrap">
-        <Select
-          label="Reason"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          wrapperClassName="w-[220px]"
-        >
-          {REASON_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-        <Select
-          label="Acknowledged"
-          value={acknowledged}
-          onChange={(e) => setAcknowledged(e.target.value)}
-          wrapperClassName="w-[220px]"
-        >
-          {ACK_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-      </div>
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+              <div className="text-eyebrow text-ink-faint">
+                Flagged by trajectory, not by one bad day
+              </div>
+              <h1 className="text-display-lg text-ink mt-1">At-risk students</h1>
+            </div>
 
-      {students.length === 0 ? (
-        <EmptyState
-          heading={filtersActive ? "No matches for these filters" : "Nothing flagged right now"}
-          body={
-            filtersActive
-              ? "No flagged student matches the current reason/acknowledged filters."
-              : "No students across your classes are currently flagged as at risk. Good news."
-          }
-          action={
-            filtersActive
-              ? {
-                  label: "Clear filters",
-                  onClick: () => {
-                    setReason("")
-                    setAcknowledged("")
-                  },
+            {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
+                carried `outline-accent`, which §3.9 gives to brand rather than to
+                focus, and neither had the disabled or error states the kit control
+                implements — §9 gate 4 wants all eight on every interactive component
+                a surface touches. It is still a native `<select>` underneath; see
+                its docstring for why that is deliberate. */}
+            <div className="flex items-end gap-4 flex-wrap">
+              <Select
+                label="Reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                wrapperClassName="w-[220px]"
+              >
+                {REASON_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Acknowledged"
+                value={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.value)}
+                wrapperClassName="w-[220px]"
+              >
+                {ACK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {students.length === 0 ? (
+              <EmptyState
+                heading={filtersActive ? "No matches for these filters" : "Nothing flagged right now"}
+                body={
+                  filtersActive
+                    ? "No flagged student matches the current reason/acknowledged filters."
+                    : "No students across your classes are currently flagged as at risk. Good news."
                 }
-              : undefined
-          }
-        />
-      ) : (
-        <div
-          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-          tabIndex={0}
-          role="region"
-          aria-label="At-risk students, scrollable horizontally"
-        >
-          <table className="w-full text-body-md border-collapse">
-            <caption className="sr-only">
-              Flagged students across your classes, sortable by every column. Severity mirrors
-              the order this list already arrives in from the server: most flags, then worst
-              grade, first.
-            </caption>
-            <thead>
-              <tr className="bg-paper-sunk border-b border-rule">
-                {COLUMNS.map((col) => {
-                  const active = col.key === sortColumn
-                  return (
-                    <th
-                      key={col.key}
-                      scope="col"
-                      aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-start px-4 py-2.5 align-bottom"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                      >
-                        {col.label}
-                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                      </button>
-                    </th>
-                  )
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((s) => (
-                <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={s.displayName} size="sm" />
-                      <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
-                        {s.displayName}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <Link
-                      to={`/teacher/classes/${s.classId}`}
-                      className="text-ink-muted transition-colors hover:text-ink hover:underline"
-                    >
-                      {s.className}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    {s.grade ? (
-                      // `AtRiskListEntryDTO.grade` is the student's latest
-                      // recorded grade — the same underlying value as
-                      // `StudentRowDTO.grade` (T-03) and
-                      // `SubjectPredictionDTO.predictedGrade` (T-05), both of
-                      // which render `basis="predicted"` for exactly this
-                      // reason (their own docstrings: "the same domain
-                      // notion... already uses for its below-target rule").
-                      // Matching that here, not `"achieved"` — the same
-                      // value must never read differently on two screens.
-                      <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                    ) : (
-                      <span className="text-body-sm text-ink-faint">No paper grade yet</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
-                      {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <FlagsCell studentId={s.studentId} flags={s.flags} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                action={
+                  filtersActive
+                    ? {
+                        label: "Clear filters",
+                        onClick: () => {
+                          setReason("")
+                          setAcknowledged("")
+                        },
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <div
+                className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                tabIndex={0}
+                role="region"
+                aria-label="At-risk students, scrollable horizontally"
+              >
+                <table className="w-full text-body-md border-collapse">
+                  <caption className="sr-only">
+                    Flagged students across your classes, sortable by every column. Severity mirrors
+                    the order this list already arrives in from the server: most flags, then worst
+                    grade, first.
+                  </caption>
+                  <thead>
+                    <tr className="bg-paper-sunk border-b border-rule">
+                      {COLUMNS.map((col) => {
+                        const active = col.key === sortColumn
+                        return (
+                          <th
+                            key={col.key}
+                            scope="col"
+                            aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                            className="text-start px-4 py-2.5 align-bottom"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(col.key)}
+                              className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                            >
+                              {col.label}
+                              {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                            </button>
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((s) => (
+                      <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={s.displayName} size="sm" />
+                            <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
+                              {s.displayName}
+                            </Link>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <Link
+                            to={`/teacher/classes/${s.classId}`}
+                            className="text-ink-muted transition-colors hover:text-ink hover:underline"
+                          >
+                            {s.className}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {s.grade ? (
+                            // `AtRiskListEntryDTO.grade` is the student's latest
+                            // recorded grade — the same underlying value as
+                            // `StudentRowDTO.grade` (T-03) and
+                            // `SubjectPredictionDTO.predictedGrade` (T-05), both of
+                            // which render `basis="predicted"` for exactly this
+                            // reason (their own docstrings: "the same domain
+                            // notion... already uses for its below-target rule").
+                            // Matching that here, not `"achieved"` — the same
+                            // value must never read differently on two screens.
+                            <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                          ) : (
+                            <span className="text-body-sm text-ink-faint">No paper grade yet</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
+                            {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <FlagsCell studentId={s.studentId} flags={s.flags} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }
