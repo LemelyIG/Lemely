@@ -778,7 +778,7 @@ export interface BulkApproveResponse {
  * included ones as the quiz, removed ones only in a separate "removed"
  * list, never silently drop them from existence and never present them as
  * part of the live quiz either. `difficulty` is a `Band` value
- * (`"foundation"` / `"standard"` / `"challenge"`) — a plain string on the
+ * (`foundation` / `standard` / `challenge`) — a plain string on the
  * wire like every other enum-backed field in this file.
  */
 export interface QuizQuestion {
