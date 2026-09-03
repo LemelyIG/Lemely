@@ -76,6 +76,9 @@ class HealthDTO(ApiModel):
     #: second writes ``health: could not read grade boundaries from the
     #: database``. A deploy can poll this to catch "migrations ran, ingest
     #: never did" before a student sees a wrong grade.
+    #:
+    #: Scope: the store is cached, so this reflects the state at first load.
+    #: A database that fails *after* boundaries loaded leaves this ``true``.
     gradeBoundariesLoaded: bool
 
 

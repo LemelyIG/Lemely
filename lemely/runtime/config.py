@@ -315,7 +315,9 @@ class DatabaseSettings(BaseModel):
     # because FastAPI runs sync routes in a bounded threadpool, a polled route
     # like ``GET /api/health`` exhausts that pool and takes the whole app down
     # with it. Bounding it turns the hang into a catchable OperationalError.
-    connect_timeout_seconds: int = Field(default=5, ge=1)
+    # Floor is 2, not 1: libpq silently raises any smaller value to 2, so a
+    # `1` here would quietly not mean what it says (measured: 1 -> 2.1s).
+    connect_timeout_seconds: int = Field(default=5, ge=2)
     # Seconds to wait for a free slot in the QueuePool (SQLAlchemy's own
     # default is 30). Same reasoning: fail fast rather than pile up.
     pool_timeout_seconds: int = Field(default=5, ge=1)

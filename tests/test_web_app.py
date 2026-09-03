@@ -6,6 +6,8 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import logging
+
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -18,8 +20,10 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
 )
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
+from lemely.web.routers import meta
 from lemely.web.schemas import correction_to_dto, question_to_dto
 from lemely.web.sse import bus_event_stream
 
@@ -72,6 +76,64 @@ def test_health_survives_a_corrupt_threshold_payload(monkeypatch: pytest.MonkeyP
 
     assert response.status_code == 200
     assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def _failing_health_client(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> TestClient:
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(exc),
+    )
+    return TestClient(create_app())
+
+
+def test_health_logs_one_traceback_per_outage_but_a_line_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Health is probe traffic, so the traceback must not repeat per poll.
+
+    But the one-line warning must, because `docs/deployment.md` tells an
+    operator to look for that line to tell "database unreachable" apart from
+    "ingest never ran". Suppressing it entirely would delete the signal the
+    docs point at for anyone who starts reading logs mid-outage.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, OperationalError("SELECT 1", {}, Exception()))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        for _ in range(4):
+            assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    unreadable = [r for r in caplog.records if "could not read grade boundaries" in r.message]
+    assert len(unreadable) == 4, "the discriminating log line must appear on every failing poll"
+    with_traceback = [r for r in unreadable if r.exc_info is not None]
+    assert len(with_traceback) == 1, "the traceback must be logged once per outage, not per poll"
+
+
+def test_health_clears_the_failure_flag_when_the_database_answers_but_is_unseeded(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An `EmptyGradeBoundaryStoreError` is a *successful* read.
+
+    The database answered; it just has no verified rows. If that path does not
+    clear the failure flag, an outage that recovers into a not-yet-ingested
+    database leaves the flag stuck `True` -- and a later, genuinely different
+    failure is then never logged at all. The operator sees
+    `gradeBoundariesLoaded: false` with no log line and, following the docs,
+    concludes "ingest never ran" while the database is in fact unreadable.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", True)
+    empty = EmptyGradeBoundaryStoreError("no verified rows")
+    assert _failing_health_client(monkeypatch, empty).get("/api/health").status_code == 200
+    assert meta._boundary_read_failing is False
+
+    # ...so a different failure arriving afterwards is still reported.
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+        assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    assert [r for r in caplog.records if "could not read grade boundaries" in r.message]
 
 
 def test_stub_routers_are_mounted() -> None:

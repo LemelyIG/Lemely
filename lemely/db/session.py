@@ -30,14 +30,37 @@ _engine_url: str | None = None
 def _connect_args(cfg: DatabaseSettings) -> dict[str, object]:
     """Driver-specific connect keywords.
 
-    ``connect_timeout`` is a libpq parameter, so it is passed only for the
-    Postgres dialects that understand it -- another driver would reject the
-    unknown keyword at connect time. See :class:`DatabaseSettings` for why an
+    These are all libpq parameters, so they are passed only for the Postgres
+    dialects that understand them -- another driver would reject the unknown
+    keywords at connect time. See :class:`DatabaseSettings` for why an
     unbounded connect is the wrong default for a server process.
+
+    ``connect_timeout`` bounds *establishment only*. With ``pool_pre_ping``
+    on, every checkout of an already-open pooled connection first issues
+    ``SELECT 1``, and that is a read on an established socket -- a different
+    failure to bound. The keepalive keywords cover it for the outage this is
+    actually written for: when a firewall or security-group change starts
+    dropping packets, the peer stops ACKing, and ``tcp_user_timeout`` fails
+    the socket after that many milliseconds instead of letting the kernel
+    retry for minutes.
+
+    What this does **not** cover: a middlebox that completes the handshake,
+    ACKs at the TCP layer, and then never relays anything. The kernel sees a
+    healthy link, so no client-side timeout fires and a pre-ping blocks
+    indefinitely. Bounding that needs a read deadline libpq does not expose.
+    It is a narrower shape than the packet-drop case and is called out here so
+    the next reader does not assume the pooled path is fully bounded.
     """
     if not cfg.url.startswith("postgres"):
         return {}
-    return {"connect_timeout": cfg.connect_timeout_seconds}
+    return {
+        "connect_timeout": cfg.connect_timeout_seconds,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 5,
+        "keepalives_count": 3,
+        "tcp_user_timeout": cfg.connect_timeout_seconds * 1000,
+    }
 
 
 def _build_engine(cfg: DatabaseSettings) -> Engine:

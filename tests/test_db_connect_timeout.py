@@ -24,6 +24,7 @@ from __future__ import annotations
 import time
 
 import pytest
+from pydantic import ValidationError
 from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.db.session import _build_engine, _connect_args
@@ -46,6 +47,14 @@ def test_connect_to_a_blackholed_host_fails_fast_rather_than_hanging() -> None:
     # Generous headroom over the 2s setting -- the assertion is "bounded",
     # not "precise". Without connect_timeout this runs into the minutes.
     assert elapsed < 15, f"connect blocked for {elapsed:.1f}s; connect_timeout is not being applied"
+    # ...and a lower bound, because the whole test rests on 10.255.255.1 being
+    # *blackholed here*. On a runner that returns an instant ENETUNREACH the
+    # upper bound would pass while proving nothing, which is exactly the
+    # vacuous-test trap this file exists to avoid. Fail loudly instead.
+    assert elapsed > 1.0, (
+        f"connect failed in {elapsed:.2f}s -- the address was refused, not blackholed, "
+        "so this test is not exercising connect_timeout on this machine"
+    )
 
 
 def test_connect_timeout_is_only_passed_to_postgres_drivers() -> None:
@@ -55,6 +64,21 @@ def test_connect_timeout_is_only_passed_to_postgres_drivers() -> None:
     must not be attached to a non-Postgres URL.
     """
     assert _connect_args(DatabaseSettings(url="postgresql+psycopg://u:p@h/d")) == {
-        "connect_timeout": 5
+        "connect_timeout": 5,
+        "keepalives": 1,
+        "keepalives_idle": 30,
+        "keepalives_interval": 5,
+        "keepalives_count": 3,
+        "tcp_user_timeout": 5000,
     }
     assert _connect_args(DatabaseSettings(url="sqlite:///:memory:")) == {}
+
+
+def test_connect_timeout_floor_matches_what_libpq_will_honour() -> None:
+    """libpq silently raises any ``connect_timeout`` below 2 to 2.
+
+    Measured: a setting of 1 still takes ~2.1s. Accepting 1 would let a
+    ``lemely.toml`` say something the driver does not do, so the floor is 2.
+    """
+    with pytest.raises(ValidationError):
+        DatabaseSettings(connect_timeout_seconds=1)

@@ -288,11 +288,18 @@ place rather than duplicating.
 > `scripts/ingest_thresholds.py` re-verifies and updates every row in place.
 
 **Verify it worked** with `GET /api/health` — `gradeBoundariesLoaded: true` means at
-least one verified row exists. `false` has three causes, and the backend log
+least one verified row exists. `false` has two causes, and the backend log
 distinguishes them: a line reading `health: could not read grade boundaries from
-the database` means the **database is unreachable**, not that ingest is missing;
+the database` means the **database could not be read**, not that ingest is missing;
 without it, ingest either has not run or failed partway (check the run's own
-printed report: `components=… verified=… options=… `).
+printed report: `components=… verified=… options=… `). That line is written on
+**every** failing poll, so it is present in any recent log window, not only at the
+moment the outage began.
+
+> Scope: the boundary store is cached for the life of the process, so this flag
+> reports the state at **first load**. A database that becomes unreachable *after*
+> boundaries have loaded leaves `gradeBoundariesLoaded: true` — this is a deploy-time
+> readiness signal, not a live database monitor.
 
 This is not wired into `docs/ci-cd.md`'s `deploy.yml` pipeline (deliberately left
 alone here — see that doc's own notes on this gap). Until it is, treat this as a
