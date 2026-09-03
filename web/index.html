@@ -97,6 +97,13 @@
         margin: 0;
         padding: 0;
       }
+      /* Border-box for every shell box: `.lm-shell-sidebar`'s 24px vertical
+         padding would otherwise add to its `min-height: 100vh` grid cell and
+         push the footer row (`margin-top: auto`) below the fold. */
+      .lm-shell,
+      .lm-shell * {
+        box-sizing: border-box;
+      }
       body {
         background: %LEMELY_COLOR_PAPER%;
       }

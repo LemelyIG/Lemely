@@ -129,8 +129,6 @@ function ToastItem({
   onDismiss: (id: string) => void
 }) {
   const duration = record.duration ?? DEFAULT_DURATION
-  const meta = variantMeta[record.variant ?? "default"]
-  const Glyph = meta.icon
 
   const remainingRef = useRef(duration)
   const startedAtRef = useRef<number>(Date.now())
@@ -172,13 +170,50 @@ function ToastItem({
   }
 
   return (
+    <ToastCard
+      title={record.title}
+      description={record.description}
+      variant={record.variant}
+      onDismiss={() => onDismiss(record.id)}
+      onPause={handlePause}
+      onResume={handleResume}
+    />
+  )
+}
+
+/**
+ * The toast's markup on its own: no timer, no provider, no portal. `ToastItem`
+ * above owns the auto-dismiss clock and renders this; the dev-preview kit
+ * renders it directly so a toast's copy can be looked at without firing one.
+ * `onPause`/`onResume` are the hover/focus hooks that clock needs; a static
+ * render simply leaves them off.
+ */
+export function ToastCard({
+  title,
+  description,
+  variant = "default",
+  onDismiss,
+  onPause,
+  onResume,
+}: {
+  title: string
+  description?: string
+  variant?: ToastVariant
+  onDismiss: () => void
+  onPause?: () => void
+  onResume?: () => void
+}) {
+  const meta = variantMeta[variant]
+  const Glyph = meta.icon
+
+  return (
     <div
       role="status"
       aria-live="polite"
-      onMouseEnter={handlePause}
-      onMouseLeave={handleResume}
-      onFocus={handlePause}
-      onBlur={handleResume}
+      onMouseEnter={onPause}
+      onMouseLeave={onResume}
+      onFocus={onPause}
+      onBlur={onResume}
       className={cn(
         "pointer-events-auto flex items-start gap-2.5 rounded-lg border border-rule bg-paper-raised p-3.5 shadow-[var(--shadow-float)]",
         "motion-safe:animate-[lm-in_var(--dur-base)_var(--ease-spring)_both]",
@@ -190,14 +225,14 @@ function ToastItem({
         aria-hidden="true"
       />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-        <p className="text-body-sm font-medium text-ink">{record.title}</p>
-        {record.description ? (
-          <p className="text-body-sm text-ink-muted">{record.description}</p>
+        <p className="text-body-sm font-medium text-ink">{title}</p>
+        {description ? (
+          <p className="text-body-sm text-ink-muted">{description}</p>
         ) : null}
       </div>
       <button
         type="button"
-        onClick={() => onDismiss(record.id)}
+        onClick={onDismiss}
         aria-label="Dismiss notification"
         className={cn(
           "-me-1 -mt-1 flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-ink-faint transition-colors",

@@ -4,7 +4,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { currentBuildId } from "@/lib/clientErrors"
 import { useOnlineStatus } from "@/lib/online"
 import { StaleChunkGuard } from "@/lib/staleChunk"
-import { useToast } from "@/components/ui/toast"
+import { useToast, type ToastOptions } from "@/components/ui/toast"
 
 /*
  * PR 2 part C · the two "recovery is automatic and announced" effects
@@ -56,6 +56,22 @@ function getGuard(): StaleChunkGuard {
   return guard
 }
 
+/**
+ * The two announcements, as data, so the dev-preview kit can render the same
+ * copy `RecoveryEffects` fires without faking a reconnect or a reload.
+ */
+export const RECONNECTED_TOAST: ToastOptions = {
+  title: "Reconnected",
+  description: "Anything that failed to load has been fetched again.",
+  variant: "success",
+}
+
+export const UPDATED_TOAST: ToastOptions = {
+  title: "Updated to the latest version",
+  description: "Lemely reloaded to pick up a new release. Nothing you did was lost.",
+  variant: "info",
+}
+
 export function RecoveryEffects() {
   const queryClient = useQueryClient()
   const { toast } = useToast()
@@ -68,22 +84,14 @@ export function RecoveryEffects() {
         type: "active",
         predicate: (query) => query.state.status === "error",
       })
-      toast({
-        title: "Reconnected",
-        description: "Anything that failed to load has been fetched again.",
-        variant: "success",
-      })
+      toast(RECONNECTED_TOAST)
     }
     wasOnline.current = online
   }, [online, queryClient, toast])
 
   useEffect(() => {
     if (getGuard().consumeReloadNotice(currentBuildId())) {
-      toast({
-        title: "Updated to the latest version",
-        description: "Lemely reloaded to pick up a new release. Nothing you did was lost.",
-        variant: "info",
-      })
+      toast(UPDATED_TOAST)
     }
     // Runs once on mount only — a reload notice, by definition, is only ever
     // pending on the render right after the reload that set it.

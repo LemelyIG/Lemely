@@ -1,7 +1,14 @@
 import { describe, expect, it } from "vitest"
 
-// @ts-expect-error — plain .mjs gate script, no type declarations by design.
-import { findEmDashes, isPlaceholder, isRange, stripComments } from "../../scripts/check_copy.mjs"
+import {
+  findEmDashes,
+  findExclamationMarks,
+  isPlaceholder,
+  isRange,
+  proseSpans,
+  stripComments,
+  // @ts-expect-error — plain .mjs gate script, no type declarations by design.
+} from "../../scripts/check_copy.mjs"
 
 /*
  * P3.3 · the copy gate's own classifier.
@@ -144,5 +151,67 @@ describe("placeholder arms widened by P4.5", () => {
 
   it("does not exempt a lone dash that has words on the same line", () => {
     expect(find("  Nothing here — try again")).toHaveLength(1)
+  })
+})
+
+/*
+ * P5.x · exclamation marks (REDESIGN-MISSION §3.2 item 10, DESIGN.md §12).
+ *
+ * Same shape of test as the em-dash suite above: pin what the rule must
+ * catch, and — more importantly — what it must leave alone, since `!` is an
+ * ordinary operator character constantly present in real code (`!==`,
+ * `!isValid`, `!!value`, a non-null assertion, a regex class, `!important`).
+ */
+const findBangs = (source: string) => findExclamationMarks(source) as { line: number; text: string }[]
+
+describe("exclamation marks in UI copy are findings", () => {
+  it.each([
+    ['<p>Nice work!</p>'],
+    ['const msg = "Reconnected!"'],
+    ['<Empty body="You are all caught up!" />'],
+    ["<p>Wait!</p>"],
+  ])("flags %s", (source) => {
+    expect(findBangs(source)).toHaveLength(1)
+  })
+
+  it("reports one finding per line, not one per character", () => {
+    expect(findBangs('<p>Wow! Great! Amazing!</p>')).toHaveLength(1)
+  })
+
+  it("finds nothing in copy that already obeys the rule", () => {
+    expect(findBangs("<p>Nice work.</p>")).toHaveLength(0)
+  })
+})
+
+describe("exclamation marks in code are not findings", () => {
+  it.each([
+    ["if (!isValid) return"],
+    ["const ready = !!value"],
+    ["const label = value!"],
+    ['const re = /[!?]/'],
+    ['const css = "font-weight: bold !important;"'],
+    ["// don't forget this!"],
+    ["/* remember! */"],
+  ])("allows %s", (source) => {
+    expect(findBangs(source)).toHaveLength(0)
+  })
+
+  it("does not flag a non-null assertion inside a template interpolation", () => {
+    expect(findBangs('const msg = `Score: ${value!}`')).toHaveLength(0)
+  })
+})
+
+describe("proseSpans", () => {
+  it("extracts a quoted string literal's contents", () => {
+    expect(proseSpans('const msg = "Reconnected!"')).toContain("Reconnected!")
+  })
+
+  it("extracts a JSX text node's contents", () => {
+    expect(proseSpans("<p>Nice work!</p>")).toContain("Nice work!")
+  })
+
+  it("blanks a simple template interpolation rather than exposing it as prose", () => {
+    const spans = proseSpans('const msg = `Score: ${value!}`')
+    expect(spans.some((s: string) => s.includes("!"))).toBe(false)
   })
 })

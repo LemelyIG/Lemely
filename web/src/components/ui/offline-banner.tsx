@@ -28,12 +28,14 @@ import { useOnlineStatus } from "@/lib/online"
  * margin wrapper would still occupy layout (an empty margined `<div>`) on
  * every render where there is nothing to space. Baking the margin in here
  * means "no banner" is genuinely zero footprint.
+ *
+ * Split in two so the strip itself can be looked at without faking the
+ * browser's online state: `OfflineBannerView` is the markup, with no hook,
+ * and is what the dev-preview kit renders; `OfflineBanner` is the one the
+ * four portal layouts mount, and is the view gated on `useOnlineStatus`.
  */
 
-export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
-  const online = useOnlineStatus()
-  if (online) return null
-
+export function OfflineBannerView({ onRetry }: { onRetry?: () => void }) {
   return (
     <div
       role="status"
@@ -53,4 +55,10 @@ export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
       </button>
     </div>
   )
+}
+
+export function OfflineBanner({ onRetry }: { onRetry?: () => void }) {
+  const online = useOnlineStatus()
+  if (online) return null
+  return <OfflineBannerView onRetry={onRetry} />
 }

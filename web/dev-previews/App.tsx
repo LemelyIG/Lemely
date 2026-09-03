@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, type CSSProperties } from "react"
 import { MagnifyingGlass, Plus } from "@phosphor-icons/react"
 import { ComponentSection, Group, StateCell, slug } from "./harness"
 import { Button } from "@/components/ui/button"
@@ -20,8 +20,8 @@ import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/com
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
-import { ToastProvider, useToast } from "@/components/ui/toast"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { ToastCard, ToastProvider, useToast } from "@/components/ui/toast"
+import { EmptyState, ErrorState, RouteFallback } from "@/components/ui/state-views"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
@@ -30,6 +30,8 @@ import { NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink } from "@/components/ui/skip-link"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { FullPageState } from "@/portals/misc/FullPageState"
+import { OfflineBannerView } from "@/components/ui/offline-banner"
+import { RECONNECTED_TOAST, UPDATED_TOAST } from "@/components/recovery-effects"
 
 /**
  * The component-kit preview page (REDESIGN-MISSION §5 Phase 2.6).
@@ -154,6 +156,19 @@ function StateGrid({
 }
 
 /** Toast needs to be triggered, so it lives behind a button inside the provider. */
+/**
+ * Pin `RouteFallback` to one loading tier. Its two tiers are staged purely by
+ * the `--loading-tier-*` tokens (the delays on `.lm-tier-skeleton` and
+ * `.lm-tier-slow` in index.css), so a wrapper that overrides those tokens
+ * shows a tier at once (`0s`) or holds it off for the life of the page
+ * (`9999s`) without the component needing a preview-only prop. `HELD` is
+ * not `infinite`: an animation-delay has no such keyword.
+ */
+const HELD = "9999s"
+function tierStyle(skeleton: string, slow: string): CSSProperties {
+  return { "--loading-tier-skeleton": skeleton, "--loading-tier-slow": slow } as CSSProperties
+}
+
 function ToastDemo() {
   const { toast } = useToast()
   return (
@@ -1189,6 +1204,62 @@ function AppBody() {
             <StateCell state="loading" provenance="prop">
               <div className="w-full">
                 <FullPageState variant="slow-load" frame="portal" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+        </Group>
+
+        {/* PR 2 part D. The loading tiers and the two recovery surfaces. Each
+            tier is pinned with `tierStyle` rather than waited for, since a
+            preview cell that changes on its own after five seconds is not a
+            state cell. The banner and the toasts are their presentational
+            halves: `OfflineBannerView` (no `useOnlineStatus`) and `ToastCard`
+            (no timer, no provider), fed the very copy `RecoveryEffects` fires. */}
+        <Group title="Loading and recovery">
+          <ComponentSection
+            name="Loading tiers"
+            summary="`RouteFallback`, the Suspense fallback around every portal Outlet and lazy screen. Paper only for the first 200 ms, then the layout skeleton, then after 5 s the slow-load state paints over it. Both thresholds are the `--loading-tier-skeleton` and `--loading-tier-slow` tokens; the pre-mount shell in index.html stages on the same two numbers."
+          >
+            <StateCell state="loading" provenance="prop" note="Tier 1, 0 to 200 ms: paper only">
+              <div className="min-h-40 w-full" style={tierStyle(HELD, HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 2, 200 ms to 5 s: layout skeleton">
+              <div className="w-full" style={tierStyle("0s", HELD)}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+            <StateCell state="loading" provenance="prop" note="Tier 3, after 5 s: slow load">
+              <div className="w-full" style={tierStyle("0s", "0s")}>
+                <RouteFallback frame="content" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Offline banner"
+            summary="`OfflineBanner`, mounted inside every portal layout's main. A page that already has content keeps it and gets this strip above it while the browser is offline; the page refetches by itself on reconnect. Polite status, amber and neutral, never red."
+          >
+            <StateCell state="error" provenance="prop" note="OfflineBannerView, the hookless half">
+              <div className="w-full">
+                <OfflineBannerView onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Recovery toasts"
+            summary="The two announcements `RecoveryEffects` fires: on the offline-to-online transition after every errored query refetches, and once on the first render after the stale-chunk guard reloaded the page for a new build. Rendered here as `ToastCard`, the toast's markup without its auto-dismiss clock."
+          >
+            <StateCell state="success" provenance="prop" note="After a reconnect">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...RECONNECTED_TOAST} onDismiss={() => undefined} />
+              </div>
+            </StateCell>
+            <StateCell state="default" provenance="prop" note="After a stale-chunk reload">
+              <div className="flex w-full max-w-sm flex-col gap-2">
+                <ToastCard {...UPDATED_TOAST} onDismiss={() => undefined} />
               </div>
             </StateCell>
           </ComponentSection>
