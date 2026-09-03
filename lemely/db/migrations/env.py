@@ -22,7 +22,15 @@ from lemely.runtime.config import load_settings
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    # `disable_existing_loggers=False` is deliberate, and differs from the
+    # stock Alembic template. The default is True, which disables every logger
+    # created before this line -- so anything that runs a migration in-process
+    # (the test suite does, via `command.upgrade`) silently switches off the
+    # application's own logging for the rest of that process. That cost three
+    # health-endpoint tests an afternoon: they passed alone and failed in the
+    # full suite, because by then a migration had run and
+    # `lemely.web.routers.meta` was disabled.
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 # Ensure every model module is imported so Base.metadata is complete.
 import_all_models()
