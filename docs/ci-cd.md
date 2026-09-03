@@ -327,3 +327,13 @@ regressions this pipeline introduced, just not solved by it:
 - Everything else in `docs/deployment.md` §5 (single-replica constraint, no
   scheduler, `/api/teacher/overview`'s N+1) is unchanged by this pipeline —
   it deploys the app as-is, it doesn't fix it.
+- **The `migrate` job runs `alembic upgrade head` only — it does not run
+  `scripts/ingest_thresholds.py`** (`docs/deployment.md` §3.5). Migrations
+  create `component_thresholds`/`option_thresholds` empty; grading stays
+  refused (`GradeBoundaryStore` raises `EmptyGradeBoundaryStoreError` rather
+  than invent boundaries) until someone runs the ingest script by hand
+  against the target database, same as any other manual one-time step this
+  pipeline doesn't yet automate. `GET /api/health`'s `gradeBoundariesLoaded`
+  field is the way to confirm it before declaring a fresh environment ready.
+  Deliberately not wired into `deploy.yml` here — adding an ingest step to
+  the pipeline is a deploy-pipeline decision, not a doc change.

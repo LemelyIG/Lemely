@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from lemely.core.schemas import ExamMetadata
-from lemely.io.grade_boundaries import _make_key, raw_to_percentage
+from lemely.io.grade_boundaries import _make_key, _percentages, raw_to_percentage
 
 # ── _make_key ──────────────────────────────────────────────────────────────
 
@@ -71,3 +71,26 @@ class TestRawToPercentage:
     def test_multiple_grades(self) -> None:
         result = raw_to_percentage({"A": 80, "B": 70, "C": 60}, 100)
         assert result == pytest.approx({"A": 80.0, "B": 70.0, "C": 60.0})
+
+
+# ── _percentages ─────────────────────────────────────────────────────────
+
+
+class TestPercentages:
+    """Finding C3: `_percentages` (the read-path helper `_load` uses to build
+    the exact/default maps) did not guard non-positive `max_mark`, unlike
+    `raw_to_percentage`. A zero raised `ZeroDivisionError` deep inside
+    `_load` instead of a clear error; a negative value silently produced a
+    grade-inflating percentage (`_percentages({"A": 24}, -1) ==
+    {"A": -2400.0}`)."""
+
+    def test_zero_max_mark_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_mark"):
+            _percentages({"A": 24}, 0)
+
+    def test_negative_max_mark_raises(self) -> None:
+        with pytest.raises(ValueError, match="max_mark"):
+            _percentages({"A": 24}, -1)
+
+    def test_basic_conversion(self) -> None:
+        assert _percentages({"A": 69}, 80) == {"A": 86.25}

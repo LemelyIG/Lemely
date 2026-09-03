@@ -25,6 +25,7 @@ import sqlalchemy as sa
 from lemely.db.models.enums import SessionMonth
 from lemely.db.models.thresholds import ComponentThreshold
 from lemely.db.session import get_sessionmaker
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -62,14 +63,6 @@ BoundarySource = Literal["exact", "subject_default", "global_default"]
 _lock = threading.Lock()
 _ReferenceTuple = tuple[dict[str, dict[str, float]], dict[str, dict[str, float]], dict[str, float]]
 _cache: _ReferenceTuple | None = None
-
-_FALLBACK_GLOBAL: dict[str, float] = {
-    "A": 80.0,
-    "B": 70.0,
-    "C": 60.0,
-    "D": 50.0,
-    "E": 40.0,
-}
 
 
 def invalidate_reference_cache() -> None:
@@ -123,7 +116,16 @@ def _percentages(thresholds: dict[str, int], max_mark: int) -> dict[str, float]:
 
     Derived at read time, never stored, so every stored number stays one a
     human can check against the PDF.
+
+    Raises:
+        ValueError: When ``max_mark`` is not positive. A zero divides by zero;
+            a negative value produces a nonsensical (and, for a negative raw
+            mark ratio, grade-inflating) percentage. ``raw_to_percentage``
+            already guards this for its own callers; this is the same guard
+            for the read path that builds the exact/default maps.
     """
+    if max_mark <= 0:
+        raise ValueError(f"max_mark must be positive, got {max_mark}")
     return {grade: round((mark / max_mark) * 100.0, 2) for grade, mark in thresholds.items()}
 
 
@@ -155,6 +157,13 @@ def _load(session: Session) -> _ReferenceTuple:
     most recent session's rows only; the threshold VALUE for each grade in that
     set is still averaged across every verified row that carries it, across
     all years — only the vocabulary is year-scoped, not the arithmetic.
+
+    Raises:
+        EmptyGradeBoundaryStoreError: When zero verified rows exist at all — a
+            fresh or unseeded database. Inventing a global default here (as an
+            earlier version of this store did) would grade every paper against
+            numbers Cambridge never published; refusing to grade is the
+            correct failure mode instead.
     """
     exact: dict[str, dict[str, float]] = {}
     by_paper: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
@@ -190,11 +199,13 @@ def _load(session: Session) -> _ReferenceTuple:
         }
         for (subject, paper_number), grades in by_paper.items()
     }
-    global_default = (
-        {g: round(mean(v), 2) for g, v in everything.items()}
-        if everything
-        else dict(_FALLBACK_GLOBAL)
-    )
+    if not everything:
+        raise EmptyGradeBoundaryStoreError(
+            "component_thresholds has no verified rows — refusing to grade against "
+            "invented boundaries. Run `python scripts/ingest_thresholds.py` to ingest "
+            "and verify CAIE grade thresholds before grading any paper."
+        )
+    global_default = {g: round(mean(v), 2) for g, v in everything.items()}
     return exact, subject_defaults, global_default
 
 

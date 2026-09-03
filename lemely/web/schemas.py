@@ -67,6 +67,13 @@ class HealthDTO(ApiModel):
 
     status: Literal["ok"] = "ok"
     apiKeyConfigured: bool
+    #: False on a fresh/unseeded database with no verified grade-boundary
+    #: rows -- ``GradeBoundaryStore`` refuses to grade against invented
+    #: numbers in that state (see ``lemely.io.grade_boundaries``), and this
+    #: field is the operational signal for it: ``/api/health`` stays 200 so
+    #: the check itself never crashes, but a deploy can poll this to catch
+    #: "migrations ran, ingest never did" before a student sees a wrong grade.
+    gradeBoundariesLoaded: bool
 
 
 def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:

@@ -15,6 +15,7 @@ from lemely.core.schemas import ExamMetadata
 from lemely.db.models.enums import SessionMonth
 from lemely.db.models.thresholds import ComponentThreshold
 from lemely.io.grade_boundaries import GradeBoundaryStore, invalidate_reference_cache
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -146,7 +147,19 @@ def _add_row(
 def test_a_paper_whose_only_row_is_unverified_does_not_resolve_as_exact(
     migrated_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """An unverified row must not answer for its own paper -- but the store
+    must still be constructible, so a verified row elsewhere (a different
+    subject entirely) keeps the global-default rung reachable. C1's "the
+    store refuses to grade with zero verified rows anywhere" is covered
+    separately, by the dedicated fresh-database tests below.
+    """
     invalidate_reference_cache()
+    _add_row(
+        migrated_sessionmaker,
+        subject_code="9998",
+        thresholds={"X": 1},
+        verified=True,
+    )
     _add_row(
         migrated_sessionmaker,
         thresholds={"C": 20, "D": 18, "E": 16},
@@ -325,3 +338,36 @@ def test_0625_s24_paper_2_1_still_resolves_exact_at_60_percent(
     )
     assert source == "exact"
     assert boundaries["A"] == 60.0
+
+
+# ── C1: a fresh/unseeded database must refuse to grade, not invent ─────────
+
+
+def test_a_fresh_database_with_no_verified_rows_refuses_to_grade(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """`migrated_sessionmaker` runs migrations only -- no ingest has run, so
+    `component_thresholds` is empty. Constructing the store must raise rather
+    than silently building a global default out of invented numbers (the
+    deleted `_FALLBACK_GLOBAL`): a Core paper (capped at C) graded against a
+    fabricated A/80% boundary is a wrong grade shown to a real student."""
+    invalidate_reference_cache()
+    with pytest.raises(EmptyGradeBoundaryStoreError, match="ingest_thresholds"):
+        GradeBoundaryStore(sessionmaker=migrated_sessionmaker)
+
+
+def test_a_database_with_only_unverified_rows_also_refuses_to_grade(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An unverified row does not count toward the global default (see
+    `_load`'s docstring) -- a database seeded only with unverified rows is,
+    for grading purposes, indistinguishable from an empty one and must fail
+    the same way."""
+    invalidate_reference_cache()
+    _add_row(
+        migrated_sessionmaker,
+        thresholds={"C": 20, "D": 18, "E": 16},
+        verified=False,
+    )
+    with pytest.raises(EmptyGradeBoundaryStoreError):
+        GradeBoundaryStore(sessionmaker=migrated_sessionmaker)
