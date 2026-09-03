@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import type { ReactNode } from "react"
-import { ErrorState } from "@/components/ui/state-views"
+import { ErrorState, type StateViewAction } from "@/components/ui/state-views"
 import { describeQueryFailure } from "@/lib/queryFailure"
 
 /*
@@ -119,6 +119,17 @@ export interface QueryStateErrorProps {
   body?: string | ((error: unknown) => string)
   retryLabel?: string
   marginalia?: string
+  /** A second, non-retry way out of the failure, rendered beside the retry —
+   * `ErrorState` has carried this slot all along and `QueryStateErrorProps`
+   * simply did not model it. The per-screen sweep (PR 3) is what surfaced
+   * that: `teacher/screens/ClassDetail.tsx` and `StudentDetail.tsx` both
+   * offered "Back to classes" / "Go back" beside their retry before
+   * conversion, and without this prop converting them would have quietly
+   * deleted the only control on the screen that still worked when the retry
+   * did not. A detail route reached with a bad id retries into the same
+   * failure forever; the way out of that is a link elsewhere, not a
+   * fourth press of "Try again". */
+  secondaryAction?: StateViewAction
 }
 
 export interface QueryStateProps<T> {
@@ -208,6 +219,7 @@ export function QueryState<T>({
           body={body}
           marginalia={error.marginalia}
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
+          secondaryAction={error.secondaryAction}
         />
       </>
     )
@@ -238,6 +250,7 @@ export function QueryState<T>({
           body={describeQueryFailure(undefined)}
           marginalia={error.marginalia}
           action={{ label: error.retryLabel ?? "Try again", onClick: () => query.refetch() }}
+          secondaryAction={error.secondaryAction}
         />
       </>
     )
