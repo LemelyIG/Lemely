@@ -448,10 +448,11 @@ function StepDifficulty({
     targetGrade: grade,
   })
   const referenceQuery = useReference()
-  // The quiz carries no tier, so this ranks against the widest vocabulary
-  // `/api/reference` serves for the subject — see `lib/grades.ts`'s
-  // `widestVocabularyFor` doc for why that is a real served array, not one
-  // assembled here.
+  // The quiz carries no tier, so the target-grade radios offer the union of
+  // every grade this subject's tiers serve — a Core 0580 quiz still needs F
+  // and G offered even though 0580 Extended's own vocabulary omits them. See
+  // `lib/grades.ts`'s `widestVocabularyFor` doc for why a union, not the
+  // single longest served tier.
   const grades = widestVocabularyFor(
     referenceQuery.data?.targetGradeVocabularies ?? [],
     quiz.subjectCode,

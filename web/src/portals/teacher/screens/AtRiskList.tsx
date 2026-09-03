@@ -89,11 +89,13 @@ type SortColumn = "name" | "className" | "grade" | "severity"
  * `AtRiskListEntryDTO` carries no subject or tier per row — this list spans
  * every class the caller teaches, so there is no single served vocabulary to
  * key a row's grade on the way `ClassRoster.tsx` (one class, one subject)
- * can. Ranking against the single widest vocabulary `/api/reference` serves
- * (`widestVocabulary` in `lib/grades.ts`) is the honest fallback here: every
- * subject's grades are a subsequence of the same Cambridge ladder, so the
- * fullest served array places any real grade in its correct relative
- * position without this screen inventing one of its own.
+ * can. `widestVocabulary` (`lib/grades.ts`) unions every grade any subject's
+ * catalogue entry serves, in ladder order — not the single longest served
+ * array. Picking the longest one would only be *accidentally* complete
+ * (today 0625 happens to serve the full 9-grade ladder; that's a fact about
+ * the current catalogue, not a guarantee another subject won't be added
+ * with a grade no single served list covers), so the union is what makes
+ * this correct by construction.
  */
 /** Mirrors the backend's own `_grade_severity_rank` (teacher.py) exactly: an
  * unrecognised or empty grade (a student with only quiz activity) ranks as
