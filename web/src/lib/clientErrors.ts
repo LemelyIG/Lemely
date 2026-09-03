@@ -58,8 +58,20 @@ const USER_AGENT_LIMIT = 500
  * flows in this app use (`/login?code=...`-style OAuth-ish redirects). The
  * credential-bearing routes this app actually mounts — `/reset/:token`,
  * `/verify-email/:token`, `/join/:code` — put the value in the *path*, not
- * the query, which is what the path-segment redaction below exists for. */
-const SENSITIVE_QUERY_KEYS = new Set(["token", "code", "access_token", "refresh_token"])
+ * the query, which is what the path-segment redaction below exists for.
+ *
+ * `next` (PR 2 · nit, adversarial review): `lib/nextPath.ts`'s `?next=`
+ * carrier is itself a same-origin *path*, and that path can be
+ * `/reset/<token>` or `/verify-email/<token>` — one of the very credentials
+ * this set exists to keep out of a log. `RequireAuth`/`SessionEnded`/`Login`
+ * all put a raw, unredacted path there, so a render crash on
+ * `/login?next=/reset/<token>` would otherwise write a live password-reset
+ * token to Cloud Logging through the query string instead of the path this
+ * module already guards. Redacting it here loses nothing worth keeping: the
+ * value only ever steers a post-login redirect, and grouping crash reports
+ * by route never needed to know which path it pointed at, only that a
+ * `next` was present. */
+const SENSITIVE_QUERY_KEYS = new Set(["token", "code", "access_token", "refresh_token", "next"])
 
 /** Path segments that are immediately followed, in this app's routes
  * (`routes.tsx`), by a credential: a password-reset token, an email-verify
@@ -339,8 +351,13 @@ const throttle = new ReportThrottle()
  * the unit-test runner the identifier is real at the type level but does
  * not exist at runtime, and a bare reference would throw a `ReferenceError`
  * before a single assertion ran.
+ *
+ * Exported as of PR 2 part C: `lib/staleChunk.ts`'s reload guard and
+ * `components/recovery-effects.tsx`'s "Updated" toast both need the exact
+ * same build identity this module already computes, so they import it
+ * rather than re-deriving the `__LEMELY_BUILD_ID__` guard a second time.
  */
-function currentBuildId(): string {
+export function currentBuildId(): string {
   return typeof __LEMELY_BUILD_ID__ === "string" ? __LEMELY_BUILD_ID__ : "dev"
 }
 

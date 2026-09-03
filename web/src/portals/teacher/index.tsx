@@ -1,6 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
+import { useQueryClient } from "@tanstack/react-query"
+import { OfflineBanner } from "@/components/ui/offline-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
@@ -17,6 +19,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -404,6 +407,7 @@ export function teacherFirstClassRedirect(
 function TeacherLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
+  const queryClient = useQueryClient()
 
   /*
    * The wiring for `teacherFirstClassRedirect` above. Reads the same query
@@ -462,6 +466,17 @@ function TeacherLayout() {
           tabIndex={-1}
           className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
+          {/* PR 2 part C: offline recovery banner, above the Suspense/
+              ErrorBoundary content it sits over — it renders nothing while
+              online, so its own `mb-6` is the only spacing this adds. */}
+          <OfflineBanner
+            onRetry={() =>
+              void queryClient.refetchQueries({
+                type: "active",
+                predicate: (query) => query.state.status === "error",
+              })
+            }
+          />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for this portal: a render crash in one
@@ -471,7 +486,11 @@ function TeacherLayout() {
                 render throw both land in this boundary.
                 `resetKey={location.pathname}` clears a caught error on
                 navigation. */}
-            <ErrorBoundary label="This page" resetKey={location.pathname}>
+            <ErrorBoundary
+              label="This page"
+              resetKey={location.pathname}
+              fallback={portalErrorFallback}
+            >
               <Outlet />
             </ErrorBoundary>
           </Suspense>

@@ -3,6 +3,7 @@ import { Component, type ErrorInfo, type ReactNode } from "react"
 import { ArrowClockwise, WarningCircle } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { reportClientError } from "@/lib/clientErrors"
+import { isChunkLoadError } from "@/lib/staleChunk"
 
 /*
  * Real React error boundary. The Phase 1 audit found none anywhere in the
@@ -92,9 +93,17 @@ export class ErrorBoundary extends Component<ErrorBoundaryProps, ErrorBoundarySt
   }
 
   componentDidCatch(error: Error, info: ErrorInfo): void {
-    // Unconditional: see the module doc above for why this is no longer
-    // gated behind the caller supplying `onError`.
-    reportClientError({ error, kind: "render", componentStack: info.componentStack })
+    // Not gated behind the caller supplying `onError` (see the module doc
+    // above), but skipped for one category: a failed lazy `import()` after a
+    // deploy replaced the chunk under an open tab. That is a stale tab, not
+    // a code defect, and the fallback this boundary renders next
+    // (`PortalErrorFallback`) already reloads it away or offers a reload of
+    // its own — reporting it would cost one `POST /api/client-errors` per
+    // open tab per deploy in the channel built to surface real crashes.
+    // `route-error.tsx`'s own reporter applies the same exclusion.
+    if (!isChunkLoadError(error)) {
+      reportClientError({ error, kind: "render", componentStack: info.componentStack })
+    }
     this.props.onError?.(error, info)
   }
 

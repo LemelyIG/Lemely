@@ -2,12 +2,15 @@
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useEffect, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
+import { OfflineBanner } from "@/components/ui/offline-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -627,6 +630,7 @@ export function studentOnboardingRedirect(
 function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
+  const queryClient = useQueryClient()
 
   /*
    * The wiring for `studentOnboardingRedirect` above: `useStudentProfile()`
@@ -697,6 +701,17 @@ function StudentLayout() {
           tabIndex={-1}
           className="flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
+          {/* PR 2 part C: offline recovery banner, above the Suspense/
+              ErrorBoundary content it sits over — it renders nothing while
+              online, so its own `mb-6` is the only spacing this adds. */}
+          <OfflineBanner
+            onRetry={() =>
+              void queryClient.refetchQueries({
+                type: "active",
+                predicate: (query) => query.state.status === "error",
+              })
+            }
+          />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils the note above ("Phase 4 places those as it
                 rebuilds each surface", `routes.tsx`): a render crash in one
@@ -708,7 +723,11 @@ function StudentLayout() {
                 `resetKey={location.pathname}` clears a caught error on
                 navigation — a crash on `/student/board` must not still be
                 showing once the reader is on `/student/friends`. */}
-            <ErrorBoundary label="This page" resetKey={location.pathname}>
+            <ErrorBoundary
+              label="This page"
+              resetKey={location.pathname}
+              fallback={portalErrorFallback}
+            >
               <Outlet />
             </ErrorBoundary>
           </Suspense>

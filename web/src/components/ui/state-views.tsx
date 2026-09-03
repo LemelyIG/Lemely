@@ -3,6 +3,8 @@ import type { HTMLAttributes, ReactNode } from "react"
 import { Tray, WarningCircle, WifiSlash, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { PageHeaderSkeleton, ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
 
 /*
  * C-11 · Empty / error / offline state family (G-15, S-06 first-run, S-09
@@ -259,33 +261,113 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
 }
 
 /*
- * Route-chunk fallback (P6.1b). Deliberately NOT a `StateView`: those three are
- * terminal answers about the *data* ("there is nothing here", "this failed"),
- * with an icon, a heading and actions. This is a sub-second gap while a lazy
- * route chunk downloads, and dressing that up as a full panel makes a fast
- * navigation flash a heading the reader never needed to read.
+ * Route-chunk fallback (P6.1b -> PR 2 part B, the tier system). Deliberately
+ * NOT a `StateView`: those three are terminal answers about the *data* ("there
+ * is nothing here", "this failed"), with an icon, a heading and actions. This
+ * is a wait for a lazy route chunk, which can be anywhere from imperceptible
+ * to genuinely stuck, and DESIGN.md §12 gives it three tiers rather than one
+ * "Loading…" line:
+ *
+ *   1. 0 to `--loading-tier-skeleton` (200ms): nothing visible. The old
+ *      reasoning here — "a sub-second gap should not flash a heading" — still
+ *      holds, and is now enforced by the delay itself rather than by a
+ *      developer remembering to keep this component quiet: `role="status"`
+ *      plus a visually hidden "Loading" is present from the first frame, so a
+ *      screen-reader user hears something immediately even while sighted
+ *      readers see nothing. Both `.lm-tier-skeleton` and `.lm-tier-slow`
+ *      (tiers 2 and 3) also carry `visibility: hidden` until their own delay
+ *      elapses (the `lm-appear` keyframe in index.css), so tier 3's heading
+ *      and reload button are genuinely absent from the accessibility tree
+ *      and the tab order during this window, not merely invisible —
+ *      `opacity: 0` alone removes neither.
+ *   2. `--loading-tier-skeleton` to `--loading-tier-slow` (5s): a skeleton
+ *      matching the layout being waited for.
+ *   3. after `--loading-tier-slow`: the brand mark drawing itself, "Still
+ *      loading", and a reload button (`FullPageState`/`FullPageStateBody`,
+ *      `variant="slow-load"`) — the point at which "still on its way" stops
+ *      being the honest read and "tell the reader, offer a way out" starts.
+ *
+ * Both delays are CSS (`.lm-tier-skeleton`/`.lm-tier-slow` in index.css), not
+ * a JS timer: see that file's comment for the zero-duration-animation-plus-
+ * delay trick, which is also what stages the pre-mount shell in index.html
+ * before this component's own JS has even downloaded.
+ *
+ * `frame` replaces the old bare `className`-only signature: the two shapes of
+ * call site need genuinely different tier-2 content, not just different
+ * spacing.
+ *   - `"content"` (default) is the portal-boundary case this component always
+ *     handled: a lazy screen loading inside an already-painted sidebar and
+ *     header. Its tier-2 skeleton is the generic content-well shape almost
+ *     every dashboard opens with — `PageHeaderSkeleton`, a three-row
+ *     `ListSkeleton`, a two-up row of `PanelSkeleton`s — the same geometry
+ *     `Overview.tsx` composes by hand for its own real loading state.
+ *   - `"standalone"` is the top-level routes in `routes.tsx`: sign-in,
+ *     sign-up, verify-email, reset, join, settings. No tier-2 skeleton at
+ *     all — these are small forms with no chrome to promise, and a sidebar
+ *     skeleton there would promise structure that never arrives. The
+ *     pre-mount shell already covered the very first paint for these paths
+ *     too (as "paper only", since they are not portal paths — see
+ *     `preMountShell.ts`), so there is nothing tier 2 needs to add.
  *
  * It lives here rather than being redeclared in each router file because
  * Phase 2.5 fixed the rule that cross-cutting UI is composed from this library,
  * not re-invented per call site — four verbatim copies is how a "loading" state
  * drifts into four slightly different ones.
  *
- * `role="status"` (an aria-live polite region) rather than silence: without it
- * a screen-reader user navigating to a lazily-loaded route hears nothing at all
- * between activating the link and the screen arriving.
+ * Tier 2 and tier 3 occupy the same CSS grid cell (`col-start-1 row-start-1`)
+ * rather than each running its own exit animation: `.lm-tier-slow`'s child
+ * carries a `bg-paper`, so once it fades in at 5s it simply paints over
+ * whatever tier 2 rendered underneath, in source order. That is one keyframe
+ * (`lm-appear`, shared by both classes) instead of two, and no coordination
+ * needed between a tier arriving and a previous one leaving — the simpler of
+ * the two mechanisms DESIGN.md's brief allows, chosen over a second
+ * `lm-vanish` keyframe for that reason.
  *
- * `className` exists because the call sites genuinely differ: the portal
- * boundaries render inside a padded content area and on dense surfaces
- * (`text-dense-lg`), while the top-level routes in `App.tsx` have no layout
- * around them and supply their own padding. That is one component with a
- * documented override, not four components — `cn` is tailwind-merge-backed and
- * knows our type-scale classes are font-sizes, so a passed `text-*` correctly
- * replaces the default rather than stacking with it.
+ * `className` still exists for the call sites that pass their own spacing
+ * (`p-8`, dense-surface type). It lands on the outer `role="status"` grid, so
+ * on `frame="standalone"` — where tier 2 renders nothing — it is mostly
+ * padding around tier 3's own `FullPageState`, which already manages its own
+ * `min-h-screen` layout; kept anyway so every existing call site keeps
+ * compiling with no other change than the new `frame` prop.
  */
-export function RouteFallback({ className }: { className?: string }) {
+export function RouteFallback({
+  className,
+  frame = "content",
+}: {
+  className?: string
+  frame?: "content" | "standalone"
+}) {
   return (
-    <div role="status" className={cn("text-body-md text-ink-muted", className)}>
-      Loading…
+    <div role="status" className={cn("grid", className)}>
+      <span className="sr-only">Loading</span>
+      <div
+        aria-hidden="true"
+        className="lm-tier-skeleton col-start-1 row-start-1 flex flex-col gap-8"
+      >
+        {frame === "content" ? (
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={3} />
+            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+              <PanelSkeleton />
+              <PanelSkeleton />
+            </div>
+          </>
+        ) : null}
+      </div>
+      <div className="lm-tier-slow col-start-1 row-start-1 bg-paper">
+        {frame === "content" ? (
+          // `FullPageStateBody` has no `frame` prop — it is the frameless
+          // content `FullPageState`'s own `frame="portal"` branch wraps in
+          // exactly this container; reproduced here rather than adding a
+          // `frame` prop to a component another PR owns.
+          <div className="mx-auto flex w-full max-w-md flex-col items-center justify-center gap-6 py-12 text-center">
+            <FullPageStateBody variant="slow-load" />
+          </div>
+        ) : (
+          <FullPageState variant="slow-load" frame="standalone" />
+        )}
+      </div>
     </div>
   )
 }
