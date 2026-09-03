@@ -233,6 +233,69 @@ def test_a_core_papers_fallback_map_has_no_grade_absent_from_core_rows(
     assert set(boundaries) <= {"C", "D", "E", "F", "G"}
 
 
+# ── A paper's default grade SET comes from its most recent session ─────────
+
+
+def test_a_papers_older_grades_do_not_leak_into_a_default_its_recent_rows_lack(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """0625 paper 1 pattern: an old syllabus cycle carried a B for this paper
+    number, but every recent session is Core-only and publishes no B. The
+    default's grade SET must come from the most recent session's rows only —
+    threshold VALUES may still be averaged across years for the grades that
+    survive, but a grade absent from the current cycle must not reappear just
+    because an older cycle once had it.
+    """
+    # Old cycle (2014): this paper number was not Core-only and carried a B.
+    _add_row(
+        migrated_sessionmaker,
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_year=2014,
+        thresholds={"A": 31, "B": 27, "C": 24, "D": 21, "E": 18, "F": 15, "G": 12},
+        verified=True,
+    )
+    # Current cycle (2023, 2024): Core-only, C-G, no A or B.
+    _add_row(
+        migrated_sessionmaker,
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_year=2023,
+        thresholds={"C": 25, "D": 22, "E": 19, "F": 16, "G": 13},
+        verified=True,
+    )
+    _add_row(
+        migrated_sessionmaker,
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_year=2024,
+        thresholds={"C": 26, "D": 23, "E": 20, "F": 17, "G": 14},
+        verified=True,
+    )
+    store = GradeBoundaryStore(sessionmaker=migrated_sessionmaker)
+    # A different variant/year misses the exact key and falls to subject_default.
+    boundaries, source = store.resolve(
+        ExamMetadata(
+            subject_code="0625",
+            session_month="May/June",
+            session_year=2099,
+            paper_number=1,
+            paper_variant=9,
+        )
+    )
+    assert source == "subject_default"
+    assert "A" not in boundaries
+    assert "B" not in boundaries
+    assert set(boundaries) == {"C", "D", "E", "F", "G"}
+    # The surviving grades' values are still averaged across every row that
+    # carries them, including 2014's: (24+25+26)/3/40 → 62.5%. Only the
+    # vocabulary is year-scoped, not the arithmetic.
+    assert boundaries["C"] == round((24 / 40 * 100 + 25 / 40 * 100 + 26 / 40 * 100) / 3, 2)
+
+
 # ── Re-verify the real exact case still works ───────────────────────────────
 
 

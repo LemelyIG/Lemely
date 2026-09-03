@@ -47,6 +47,16 @@ _SESSION_CODE_BY_MONTH: dict[SessionMonth, str] = {
     SessionMonth.specimen: "sp",
 }
 
+# Chronological order of sessions within a calendar year, for finding "the most
+# recent session" a paper number was examined in. Specimen carries no real
+# session and is never the most recent (see `_load`).
+_MONTH_ORDER: dict[SessionMonth, int] = {
+    SessionMonth.feb_mar: 0,
+    SessionMonth.may_june: 1,
+    SessionMonth.oct_nov: 2,
+    SessionMonth.specimen: -1,
+}
+
 BoundarySource = Literal["exact", "subject_default", "global_default"]
 
 _lock = threading.Lock()
@@ -135,9 +145,21 @@ def _load(session: Session) -> _ReferenceTuple:
     (Core C-G, Extended A*-G) — grouping by subject alone would let an
     Extended paper's A/B boundaries leak into a Core paper's fallback, which a
     Core candidate can never be awarded.
+
+    Which GRADES a paper number's default may offer is a structural fact about
+    the *current* syllabus, not something to average across two decades: CAIE
+    has renumbered/retiered papers, so a given (subject, paper_number) can mean
+    something different in 2014 than it does today (0625 paper 1 carried a B
+    threshold only in 2014-2015, and is Core-only, C-G, every other year on
+    record). The grade SET for a paper's default is therefore taken from its
+    most recent session's rows only; the threshold VALUE for each grade in that
+    set is still averaged across every verified row that carries it, across
+    all years — only the vocabulary is year-scoped, not the arithmetic.
     """
     exact: dict[str, dict[str, float]] = {}
     by_paper: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    latest_session: dict[tuple[str, int], tuple[int, int]] = {}
+    latest_grades: dict[tuple[str, int], set[str]] = defaultdict(set)
     everything: dict[str, list[float]] = defaultdict(list)
     for row in session.scalars(sa.select(ComponentThreshold)):
         if not row.verified:
@@ -147,11 +169,25 @@ def _load(session: Session) -> _ReferenceTuple:
         year_suffix = row.session_year % 100
         key = f"{row.subject_code}_{code}{year_suffix:02d}_p{row.paper_number}{row.paper_variant}"
         exact[key] = pct
+
+        paper_key = (row.subject_code, row.paper_number)
+        session_key = (row.session_year, _MONTH_ORDER[row.session_month])
         for grade, value in pct.items():
-            by_paper[(row.subject_code, row.paper_number)][grade].append(value)
+            by_paper[paper_key][grade].append(value)
             everything[grade].append(value)
+        current_latest = latest_session.get(paper_key)
+        if current_latest is None or session_key > current_latest:
+            latest_session[paper_key] = session_key
+            latest_grades[paper_key] = set(pct)
+        elif session_key == current_latest:
+            latest_grades[paper_key] |= set(pct)
+
     subject_defaults = {
-        f"{subject}_p{paper_number}": {g: round(mean(v), 2) for g, v in grades.items()}
+        f"{subject}_p{paper_number}": {
+            g: round(mean(v), 2)
+            for g, v in grades.items()
+            if g in latest_grades[(subject, paper_number)]
+        }
         for (subject, paper_number), grades in by_paper.items()
     }
     global_default = (
