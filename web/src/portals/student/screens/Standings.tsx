@@ -7,6 +7,7 @@ import { Button } from "@/components/ui/button"
 import { Eyebrow } from "@/components/ui/primitives"
 import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { CountUp } from "@/components/ui/celebration"
 import { Fire } from "@phosphor-icons/react"
 import {
@@ -15,6 +16,7 @@ import {
 } from "@/lib/hooks/useLeaderboardApi"
 import { usePatchStudentProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
 import { useStandings } from "@/lib/hooks/useStudentApi"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import type {
   Leaderboard,
   LeaderboardRow,
@@ -284,6 +286,16 @@ function BoardBody({
  * for students who find ranking stressful", so it is not buried in a settings
  * screen two navigations away (D5.14 §4).
  */
+/*
+ * This screen's own `useStudentProfile()` call below (for the subjects/basis
+ * row) goes through `<QueryState>`; this one deliberately does not. `isError`
+ * returning nothing here is not an omission `<QueryState>` would fix — it is
+ * the specific, load-bearing decision the comment below explains ("no control
+ * at all rather than a control defaulted to visible"), and `<QueryState>`'s
+ * `error` slot always renders a visible `ErrorState`, which is exactly the
+ * "guess and show something" this control must not do on a failed read of a
+ * public-facing toggle.
+ */
 function OptOutControl() {
   const { data, isPending, isError } = useStudentProfile()
   const patch = usePatchStudentProfile()
@@ -421,11 +433,6 @@ export function Standings() {
 
   const board = useLeaderboard({ scope, basis, classId: effectiveClassId })
 
-  // The basis options are the student's own declared subjects, not a global
-  // catalogue: a board for a subject they do not sit is noise they cannot act
-  // on (D5.14 §4's reasoning applied to the second selector).
-  const subjects = profile.data?.enrolments.map((e) => e.subjectCode) ?? []
-
   return (
     <div className="flex flex-col gap-8">
       <header className="flex flex-col gap-1">
@@ -489,28 +496,56 @@ export function Standings() {
             `invisible` tab holds one row's height while the read is in
             flight. It collapses to nothing once we know there are no subjects,
             which is correct — that is an answer, not a wait. */}
-        {profile.isPending ? (
-          <div className="flex flex-wrap gap-2" aria-hidden="true" inert>
-            <TabButton active={false} onClick={() => {}}>
-              <span className="invisible">All subjects</span>
-            </TabButton>
-          </div>
-        ) : subjects.length > 0 ? (
-          <div className="flex flex-wrap gap-2" role="group" aria-label="XP basis">
-            <TabButton active={basis === "total"} onClick={() => setBasis("total")}>
-              All subjects
-            </TabButton>
-            {subjects.map((code) => (
-              <TabButton
-                key={code}
-                active={basis === code}
-                onClick={() => setBasis(code)}
-              >
-                {code}
+        <QueryState
+          query={profile}
+          skeleton={
+            <div className="flex flex-wrap gap-2" aria-hidden="true" inert>
+              <TabButton active={false} onClick={() => {}}>
+                <span className="invisible">All subjects</span>
               </TabButton>
-            ))}
-          </div>
-        ) : null}
+            </div>
+          }
+          /*
+           * NEW: a failed profile read used to fall through to `subjects = []`
+           * with nothing said about it — indistinguishable on screen from a
+           * student who genuinely has no declared subjects. `isEmpty` below
+           * still renders nothing for that real, successful case (an empty
+           * fragment, not `empty` left unset — see its own comment); this
+           * `error` slot is what now tells the difference on a real failure.
+           */
+          error={{ heading: "Couldn't load your subjects", body: studentLoadFailureMessage }}
+          isEmpty={(data) => data.enrolments.length === 0}
+          // Explicit empty fragment, not left unset: `QueryState` falls
+          // through an unset `empty` to `children(data)`, which here would
+          // render the "All subjects" tab alone with nothing beside it — the
+          // pre-conversion code rendered nothing at all when there were no
+          // subjects to pick between, and this keeps that.
+          empty={<></>}
+        >
+          {(data) => {
+            // The basis options are the student's own declared subjects, not
+            // a global catalogue: a board for a subject they do not sit is
+            // noise they cannot act on (D5.14 §4's reasoning applied to the
+            // second selector).
+            const subjects = data.enrolments.map((e) => e.subjectCode)
+            return (
+              <div className="flex flex-wrap gap-2" role="group" aria-label="XP basis">
+                <TabButton active={basis === "total"} onClick={() => setBasis("total")}>
+                  All subjects
+                </TabButton>
+                {subjects.map((code) => (
+                  <TabButton
+                    key={code}
+                    active={basis === code}
+                    onClick={() => setBasis(code)}
+                  >
+                    {code}
+                  </TabButton>
+                ))}
+              </div>
+            )
+          }}
+        </QueryState>
 
         <Card>
           {/* P6.7 — a floor on the board's height, applied in every state
@@ -526,32 +561,61 @@ export function Standings() {
               the Friends/Class/School/Everyone tabs, which is the same defect
               seen by a person instead of by Lighthouse. */}
           <CardBody className="min-h-96">
-            {scope === "class" && classList.length === 0 && !classes.isPending ? (
-              <EmptyState
-                marginalia="No class join code yet"
-                heading="You are not in a class yet"
-                body="Class boards rank you against your classmates. Ask your teacher for a join code, or try the friends board."
-              />
-            ) : board.isError ? (
-              <ErrorState
-                heading="The board could not be loaded"
-                body="This is a connection problem, not an empty board. Your classmates' XP is still there."
-                action={{ label: "Try again", onClick: () => void board.refetch() }}
-              />
-            ) : board.isPending || !board.data ? (
-              /* P4.4 — was a line of text where a ranked list arrives. The
-                 `min-h-96` floor above already stopped the page from jumping,
-                 but a floor only reserves the space; it does not tell the
-                 reader what is coming. Six rows with a monogram is the board's
-                 own geometry, and `border-0` because it is already inside the
-                 card's frame. */
-              <ListSkeleton rows={6} avatar className="border-0 bg-transparent" />
-            ) : (
-              <BoardBody
-                board={board.data}
-                scope={scope}
-              />
-            )}
+            <QueryState
+              query={board}
+              /*
+               * `useLeaderboard` disables itself when `scope === "class"` and
+               * there is no class id (`enabled: !needsClass ||
+               * Boolean(classId)` — see that hook), which parks it at
+               * `pending`/`fetchStatus: "idle"` forever rather than fetching
+               * and failing — the `idle` trap `query-state.tsx`'s own header
+               * names. That state is reached in exactly two situations here,
+               * which read differently to a student: `classes` (this
+               * student's own class list, used to derive `effectiveClassId`
+               * above) is still loading, in which case the board's own
+               * skeleton is the honest thing to show — a decision is coming,
+               * not "no class" — or `classes` has settled and genuinely came
+               * back empty (or failed), which is the real "not in a class
+               * yet" case this Card already carried before this conversion.
+               */
+              idle={
+                classes.isPending ? (
+                  <ListSkeleton rows={6} avatar className="border-0 bg-transparent" />
+                ) : classes.isError ? (
+                  // NEW: before this conversion a failed `classes` read
+                  // collapsed into the same "not in a class yet" copy as a
+                  // genuinely empty class list — a fetch failure and a real
+                  // fact about the student's account read as one sentence.
+                  // Distinguished here, with its own retry.
+                  <ErrorState
+                    heading="Couldn't load your classes"
+                    body={studentLoadFailureMessage(classes.error)}
+                    action={{ label: "Try again", onClick: () => void classes.refetch() }}
+                  />
+                ) : (
+                  <EmptyState
+                    marginalia="No class join code yet"
+                    heading="You are not in a class yet"
+                    body="Class boards rank you against your classmates. Ask your teacher for a join code, or try the friends board."
+                  />
+                )
+              }
+              skeleton={
+                /* P4.4 — was a line of text where a ranked list arrives. The
+                   `min-h-96` floor above already stopped the page from jumping,
+                   but a floor only reserves the space; it does not tell the
+                   reader what is coming. Six rows with a monogram is the board's
+                   own geometry, and `border-0` because it is already inside the
+                   card's frame. */
+                <ListSkeleton rows={6} avatar className="border-0 bg-transparent" />
+              }
+              error={{
+                heading: "The board could not be loaded",
+                body: "This is a connection problem, not an empty board. Your classmates' XP is still there.",
+              }}
+            >
+              {(data) => <BoardBody board={data} scope={scope} />}
+            </QueryState>
           </CardBody>
         </Card>
 
@@ -574,62 +638,62 @@ export function Standings() {
         </h2>
         <Card>
           <CardBody>
-            {standings.isError ? (
-              <ErrorState
-                heading="Subject standings could not be loaded"
-                body="A connection problem. Nothing has changed about your subjects."
-                action={{
-                  label: "Try again",
-                  onClick: () => void standings.refetch(),
-                }}
-              />
-            ) : standings.isPending || !standings.data ? (
-              <ListSkeleton rows={3} className="border-0 bg-transparent" />
-            ) : standings.data.subjectRanks.length === 0 ? (
-              <EmptyState
-                marginalia="Nothing marked yet"
-                heading="No subjects ranked yet"
-                body="Correct a paper and your subjects appear here."
-              />
-            ) : (
-              /* P4.4 — the rank column had no label. A bare tone-coloured "3"
-                 at the end of a row that already ends in "9 papers" is not
-                 self-describing: the two adjacent figures invited being read
-                 as a pair, and nothing said the second was a position. A
-                 header row costs one line and answers it, and the per-row
-                 `sr-only` gives the same answer to a screen reader, which
-                 cannot see the column at all. */
-              <div className="flex flex-col gap-2.5">
-                <div
-                  aria-hidden="true"
-                  className="flex items-center gap-3 border-b border-rule pb-1.5 text-eyebrow text-ink-faint"
-                >
-                  <span className="w-11 flex-none">Code</span>
-                  <span className="min-w-0 flex-1">Subject</span>
-                  <span>Marked</span>
-                  <span className="w-10 flex-none text-end">Rank</span>
-                </div>
-                {standings.data.subjectRanks.map((s) => (
-                  <div key={s.code} className="flex items-center gap-3">
-                    <span className="w-11 flex-none text-data-sm text-ink-faint">
-                      {s.code}
-                    </span>
-                    <span className="min-w-0 flex-1 truncate text-body-md text-ink">
-                      {s.name}
-                    </span>
-                    <span className="text-body-sm text-ink-faint">
-                      {s.papers} papers
-                    </span>
-                    <span
-                      className={`w-10 flex-none text-end text-data-md ${vizText(s.color)}`}
-                    >
-                      <span className="sr-only">Rank </span>
-                      {s.rank}
-                    </span>
+            <QueryState
+              query={standings}
+              skeleton={<ListSkeleton rows={3} className="border-0 bg-transparent" />}
+              error={{
+                heading: "Subject standings could not be loaded",
+                body: "A connection problem. Nothing has changed about your subjects.",
+              }}
+              isEmpty={(data) => data.subjectRanks.length === 0}
+              empty={
+                <EmptyState
+                  marginalia="Nothing marked yet"
+                  heading="No subjects ranked yet"
+                  body="Correct a paper and your subjects appear here."
+                />
+              }
+            >
+              {(data) => (
+                /* P4.4 — the rank column had no label. A bare tone-coloured "3"
+                   at the end of a row that already ends in "9 papers" is not
+                   self-describing: the two adjacent figures invited being read
+                   as a pair, and nothing said the second was a position. A
+                   header row costs one line and answers it, and the per-row
+                   `sr-only` gives the same answer to a screen reader, which
+                   cannot see the column at all. */
+                <div className="flex flex-col gap-2.5">
+                  <div
+                    aria-hidden="true"
+                    className="flex items-center gap-3 border-b border-rule pb-1.5 text-eyebrow text-ink-faint"
+                  >
+                    <span className="w-11 flex-none">Code</span>
+                    <span className="min-w-0 flex-1">Subject</span>
+                    <span>Marked</span>
+                    <span className="w-10 flex-none text-end">Rank</span>
                   </div>
-                ))}
-              </div>
-            )}
+                  {data.subjectRanks.map((s) => (
+                    <div key={s.code} className="flex items-center gap-3">
+                      <span className="w-11 flex-none text-data-sm text-ink-faint">
+                        {s.code}
+                      </span>
+                      <span className="min-w-0 flex-1 truncate text-body-md text-ink">
+                        {s.name}
+                      </span>
+                      <span className="text-body-sm text-ink-faint">
+                        {s.papers} papers
+                      </span>
+                      <span
+                        className={`w-10 flex-none text-end text-data-md ${vizText(s.color)}`}
+                      >
+                        <span className="sr-only">Rank </span>
+                        {s.rank}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </QueryState>
           </CardBody>
         </Card>
       </section>

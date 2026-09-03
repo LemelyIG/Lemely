@@ -3,8 +3,9 @@ import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { Eyebrow } from "@/components/ui/primitives"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
 import {
   useMarkAllNotificationsRead,
@@ -202,81 +203,89 @@ function InboxHeading() {
 }
 
 export function Notifications() {
-  const { data, isPending, isError, refetch } = useNotifications()
+  const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
 
-  if (isPending) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <ListSkeleton rows={3} />
-      </div>
-    )
-  }
-
-  if (isError) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <ErrorState
-          heading="Notifications could not be loaded"
-          // An empty inbox and a failed fetch look identical if this lies, and
-          // the difference matters: one means nothing has happened, the other
-          // means something may have and we cannot show it.
-          body="This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost."
-          action={{ label: "Try again", onClick: () => void refetch() }}
-        />
-      </div>
-    )
-  }
-
-  if (data.notifications.length === 0) {
-    return (
-      <div className="flex flex-col gap-4">
-        <InboxHeading />
-        <EmptyState
-          heading="Nothing yet"
-          body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
-        />
-      </div>
-    )
-  }
-
-  const unreadCount = data.notifications.filter((n) => n.readAt === null).length
-
   return (
-    <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end justify-between gap-3">
-        <InboxHeading />
-        <div className="flex items-center gap-3">
-          {/* The inbox is where a reader notices they are getting too much or
-              too little, so it is where the settings for that belong. Until the
-              portal navs grow an entry (P5.9 chunk D), this is also the only
-              route to G-12 for a student. */}
-          <Link
-            to="/settings/notifications"
-            className="text-body-sm text-accent-ink hover:underline"
-          >
-            Notification settings
-          </Link>
-          {unreadCount > 0 ? (
-            <Button
-              variant="ghost"
-              size="sm"
-              onClick={() => markAll.mutate()}
-              disabled={markAll.isPending}
-            >
-              Mark all as read
-            </Button>
-          ) : null}
+    <QueryState
+      query={query}
+      /*
+       * `InboxHeading`'s own doc comment insists it render in every state —
+       * that requirement was driven by the axe `page-has-heading-one`
+       * violation the empty state shipped with, and it stays true for the
+       * skeleton and empty renders below, which are plain `ReactNode`s this
+       * component fully controls. The `error` slot is the one exception:
+       * `QueryState`'s `error` prop is a fixed `{heading, body}` shape
+       * rendered as `ErrorState`, with no room to compose a heading above
+       * it, so the error branch relies on `srHeading` instead — a sr-only
+       * "Notifications" `<h1>`, giving the same accessibility guarantee
+       * (a heading exists in the tree) that `Overview.tsx`, the reference
+       * conversion, already relies on for its own error branch.
+       */
+      srHeading="Notifications"
+      skeleton={
+        <div className="flex flex-col gap-4">
+          <InboxHeading />
+          <ListSkeleton rows={3} />
         </div>
-      </div>
+      }
+      error={{
+        heading: "Notifications could not be loaded",
+        // An empty inbox and a failed fetch look identical if this lies, and
+        // the difference matters: one means nothing has happened, the other
+        // means something may have and we cannot show it.
+        body: "This is a connection problem on our side. You may well have notifications waiting, and nothing has been lost.",
+      }}
+      isEmpty={(data) => data.notifications.length === 0}
+      empty={
+        <div className="flex flex-col gap-4">
+          <InboxHeading />
+          <EmptyState
+            heading="Nothing yet"
+            body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
+          />
+        </div>
+      }
+    >
+      {(data) => {
+        const unreadCount = data.notifications.filter((n) => n.readAt === null).length
 
-      <div className="flex flex-col gap-3">
-        {data.notifications.map((notification) => (
-          <NotificationRow key={notification.notificationId} notification={notification} />
-        ))}
-      </div>
-    </div>
+        return (
+          <div className="flex flex-col gap-4">
+            <div className="flex flex-wrap items-end justify-between gap-3">
+              <InboxHeading />
+              <div className="flex items-center gap-3">
+                {/* The inbox is where a reader notices they are getting too
+                    much or too little, so it is where the settings for that
+                    belong. Until the portal navs grow an entry (P5.9 chunk
+                    D), this is also the only route to G-12 for a student. */}
+                <Link
+                  to="/settings/notifications"
+                  className="text-body-sm text-accent-ink hover:underline"
+                >
+                  Notification settings
+                </Link>
+                {unreadCount > 0 ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => markAll.mutate()}
+                    disabled={markAll.isPending}
+                  >
+                    Mark all as read
+                  </Button>
+                ) : null}
+              </div>
+            </div>
+
+            <div className="flex flex-col gap-3">
+              {data.notifications.map((notification) => (
+                <NotificationRow key={notification.notificationId} notification={notification} />
+              ))}
+            </div>
+          </div>
+        )
+      }}
+    </QueryState>
   )
 }

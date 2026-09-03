@@ -5,7 +5,8 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { Slider } from "@/components/ui/slider"
 import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
@@ -75,6 +76,15 @@ export function PracticeGenerator() {
     difficultyBands: [...difficultyBands],
     source: null,
   }
+  // Independent of `topicsQuery` below and left hand-rolled rather than
+  // nested in its own `<QueryState>`: it drives a single inline line of live
+  // feedback ("Checking what matches…" / a one-line failure) beside the
+  // filter controls, not a panel-sized loading/error treatment.
+  // `QueryState`'s `error` always renders the full centred `ErrorState`
+  // panel, which would visually balloon this filter-adjacent line into a
+  // page-sized block every time a preview refetch fails — exactly the
+  // layout shift §12 exists to prevent, just introduced by the wrapper
+  // rather than avoided by it.
   const previewQuery = usePracticePreview(filters)
 
   function toggleTopic(topic: string) {
@@ -115,240 +125,267 @@ export function PracticeGenerator() {
     }
   }
 
-  if (topicsQuery.isPending) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">Practice for {subjectName}</h1>
-        <PageHeaderSkeleton />
-        <PanelSkeleton />
-        <ListSkeleton rows={4} />
-      </div>
-    )
-  }
-
-  if (topicsQuery.isError || !topicsQuery.data) {
-    return (
-      <>
-        <h1 className="sr-only">Practice for {subjectName}</h1>
-        <ErrorState
-          heading="Couldn't load practice topics"
-          body={studentLoadFailureMessage(topicsQuery.error)}
-          action={{ label: "Try again", onClick: () => void topicsQuery.refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  if (created) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-display-lg text-ink">
-            Your {subjectName} practice set is ready
-          </h1>
-          <p className="lm-prose text-body-lg text-ink-muted">
-            <span className="text-data-md text-ink">{created.questionCount}</span> question
-            {created.questionCount === 1 ? "" : "s"}
-            {created.reason === "insufficient_pool"
-              ? `, fewer than the ${created.requestedCount} you asked for, since that's all that matched.`
-              : ", ready to go."}
-          </p>
-        </div>
-        <div className="flex flex-wrap gap-3">
-          <Button
-            variant="accent"
-            size="lg"
-            onClick={() => navigate(`/student/practice/set/${created.assignmentId}`)}
-          >
-            Start now
-          </Button>
-          <Button
-            variant="secondary"
-            size="lg"
-            onClick={() => navigate(`/student/practice/print/${created.assignmentId}`)}
-          >
-            Print instead
-          </Button>
-        </div>
-      </div>
-    )
-  }
-
-  const groups = groupTopicsBySyllabusGroup(topicsQuery.data.topics)
-  const untopicedCount = topicsQuery.data.untopicedCount
-  const effectivePreview = raceUnavailable ?? previewQuery.data ?? null
-  const view = effectivePreview ? practiceAvailabilityView(effectivePreview) : null
-
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-display-lg text-ink">Practice for {subjectName}</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
-          Build a set of real past-paper questions from the topics and difficulty you choose.
-        </p>
-      </div>
-
-      <Card>
-        <CardBody className="flex flex-col gap-3">
-          <label className="text-label text-ink" htmlFor="practice-count">
-            Number of questions: <span className="text-data-md text-ink">{count}</span>
-          </label>
-          <Slider
-            id="practice-count"
-            value={count}
-            onValueChange={setCount}
-            min={5}
-            max={30}
-            step={5}
-            aria-label="Number of practice questions"
+      <QueryState
+        query={topicsQuery}
+        srHeading={`Practice for ${subjectName}`}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <PanelSkeleton />
+            <ListSkeleton rows={4} />
+          </>
+        }
+        /* `usePracticeTopics` disables itself (`enabled: !!subjectCode`)
+           rather than fetching an empty subject code — reachable only from a
+           malformed link missing its subject segment. */
+        idle={
+          <EmptyState
+            marginalia="Nothing to build from"
+            heading="No subject selected"
+            body="This link is missing which subject to practise. Go back and open practice from a subject's own page."
+            action={{ label: "Back to dashboard", onClick: () => navigate("/student") }}
           />
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardBody className="flex flex-col gap-3">
-          <Checkbox
-            label="Weak topics only"
-            checked={weakTopicsOnly}
-            onChange={(e) => {
-              setRaceUnavailable(null)
-              setWeakTopicsOnly(e.target.checked)
-            }}
-          />
-          <p className="text-body-sm text-ink-faint">
-            Draws only from topics recorded as weak for you. Your topic selection below is ignored
-            while this is on.
-          </p>
-        </CardBody>
-      </Card>
-
-      {/* No card-wide dim while `weakTopicsOnly` is on: `opacity-50` here also
-          dimmed this card's "Topics" heading and its two explanatory
-          paragraphs, measuring 2.28:1 (serious axe violation, P4.9 chunk C).
-          The disabled affordance now comes from C-14 Checkbox's own
-          `has-disabled:` rule, which the `<fieldset disabled>` below drives —
-          so only the genuinely-inactive controls dim, and the prose that
-          explains *why* they are inactive stays readable. */}
-      <Card>
-        <CardBody className="flex flex-col gap-5">
-          <h2 className="text-eyebrow text-ink-faint">Topics</h2>
-          {groups.length === 0 ? (
-            <p className="text-body-sm text-ink-faint">No servable topics for this subject yet.</p>
-          ) : (
-            <fieldset disabled={weakTopicsOnly} className="flex flex-col gap-5">
-              <legend className="sr-only">Choose topics to practise</legend>
-              {groups.map((group) => (
-                <div key={group.syllabusGroup} className="flex flex-col gap-2">
-                  <h3 className="text-label text-ink">{group.syllabusGroup}</h3>
-                  <div className="flex flex-col gap-1.5 ps-1">
-                    {group.topics.map((t) => (
-                      <Checkbox
-                        key={t.topic}
-                        label={`${t.topic} (${t.availableCount})`}
-                        checked={selectedTopics.has(t.topic)}
-                        onChange={() => toggleTopic(t.topic)}
-                      />
-                    ))}
-                  </div>
-                </div>
-              ))}
-            </fieldset>
-          )}
-          {droppedWeakTopics.length > 0 ? (
-            <p className="text-body-sm text-ink-faint">
-              {droppedWeakTopics.length === 1 ? "One of your weak topics" : `${droppedWeakTopics.length} of your weak topics`}{" "}
-              ({droppedWeakTopics.join(", ")}) {droppedWeakTopics.length === 1 ? "isn't" : "aren't"} in
-              the question bank for this subject yet, so {droppedWeakTopics.length === 1 ? "it wasn't" : "they weren't"} pre-selected.
-            </p>
-          ) : null}
-          {untopicedCount > 0 ? (
-            <p className="text-body-sm text-ink-faint">
-              {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic. {untopicedCount === 1 ? "It's" : "They're"} included automatically when no topic filter is set.
-            </p>
-          ) : null}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardBody className="flex flex-col gap-3">
-          <h2 className="text-eyebrow text-ink-faint">Difficulty</h2>
-          <div className="flex flex-wrap gap-2">
-            {DIFFICULTY_BANDS.map((band) => {
-              const active = difficultyBands.has(band)
-              return (
-                <Button
-                  key={band}
-                  type="button"
-                  variant={active ? "accent" : "secondary"}
-                  size="sm"
-                  aria-pressed={active}
-                  onClick={() => toggleBand(band)}
-                >
-                  {band[0].toUpperCase() + band.slice(1)}
-                </Button>
-              )
-            })}
-          </div>
-          <p className="text-body-sm text-ink-faint">No bands selected means no filter on difficulty.</p>
-        </CardBody>
-      </Card>
-
-      {view ? (
-        <Card className={view.kind === "unavailable" ? "border-warn" : undefined}>
-          <CardBody className="flex flex-col gap-3">
-            {view.kind === "unavailable" ? (
-              (() => {
-                const msg = practiceUnavailableMessage(view.reason)
-                return (
-                  <>
-                    <h2 className="text-display-sm text-ink">{msg.heading}</h2>
-                    <p className="text-body-md text-ink-muted">{msg.body}</p>
-                  </>
-                )
-              })()
-            ) : view.kind === "shortfall" ? (
+        }
+        error={{
+          heading: "Couldn't load practice topics",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(data) => {
+          if (created) {
+            return (
               <>
-                <h2 className="text-display-sm text-ink">
-                  Only {view.availableCount} of {view.requestedCount} requested questions match
-                </h2>
-                <p className="text-body-md text-ink-muted">
-                  You can still create a shorter set with what's available, or broaden your topic
-                  or difficulty selection to reach the full count.
-                </p>
+                <div className="flex flex-col gap-2">
+                  <h1 className="text-display-lg text-ink">
+                    Your {subjectName} practice set is ready
+                  </h1>
+                  <p className="lm-prose text-body-lg text-ink-muted">
+                    <span className="text-data-md text-ink">{created.questionCount}</span>{" "}
+                    question
+                    {created.questionCount === 1 ? "" : "s"}
+                    {created.reason === "insufficient_pool"
+                      ? `, fewer than the ${created.requestedCount} you asked for, since that's all that matched.`
+                      : ", ready to go."}
+                  </p>
+                </div>
+                <div className="flex flex-wrap gap-3">
+                  <Button
+                    variant="accent"
+                    size="lg"
+                    onClick={() => navigate(`/student/practice/set/${created.assignmentId}`)}
+                  >
+                    Start now
+                  </Button>
+                  <Button
+                    variant="secondary"
+                    size="lg"
+                    onClick={() => navigate(`/student/practice/print/${created.assignmentId}`)}
+                  >
+                    Print instead
+                  </Button>
+                </div>
               </>
-            ) : (
-              <h2 className="text-display-sm text-ink">
-                {view.availableCount} question{view.availableCount === 1 ? "" : "s"} match, ready
-                to create
-              </h2>
-            )}
+            )
+          }
 
-            {createPractice.isError && !raceUnavailable ? (
-              <p className="text-body-sm text-err">We couldn't create this set. Try again.</p>
-            ) : null}
+          const groups = groupTopicsBySyllabusGroup(data.topics)
+          const untopicedCount = data.untopicedCount
+          const effectivePreview = raceUnavailable ?? previewQuery.data ?? null
+          const view = effectivePreview ? practiceAvailabilityView(effectivePreview) : null
 
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="accent"
-                size="lg"
-                disabled={view.kind === "unavailable" || createPractice.isPending}
-                onClick={() => void handleCreate()}
-              >
-                {createPractice.isPending
-                  ? "Creating…"
-                  : view.kind === "shortfall"
-                    ? `Create anyway (${view.availableCount})`
-                    : "Create practice set"}
-              </Button>
-            </div>
-          </CardBody>
-        </Card>
-      ) : previewQuery.isPending ? (
-        <p className="text-body-sm text-ink-faint">Checking what matches…</p>
-      ) : previewQuery.isError ? (
-        <p className="text-body-sm text-err">We couldn't check availability. Try changing a filter.</p>
-      ) : null}
+          return (
+            <>
+              <div className="flex flex-col gap-2">
+                <h1 className="text-display-lg text-ink">Practice for {subjectName}</h1>
+                <p className="lm-prose text-body-lg text-ink-muted">
+                  Build a set of real past-paper questions from the topics and difficulty you
+                  choose.
+                </p>
+              </div>
+
+              <Card>
+                <CardBody className="flex flex-col gap-3">
+                  <label className="text-label text-ink" htmlFor="practice-count">
+                    Number of questions: <span className="text-data-md text-ink">{count}</span>
+                  </label>
+                  <Slider
+                    id="practice-count"
+                    value={count}
+                    onValueChange={setCount}
+                    min={5}
+                    max={30}
+                    step={5}
+                    aria-label="Number of practice questions"
+                  />
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardBody className="flex flex-col gap-3">
+                  <Checkbox
+                    label="Weak topics only"
+                    checked={weakTopicsOnly}
+                    onChange={(e) => {
+                      setRaceUnavailable(null)
+                      setWeakTopicsOnly(e.target.checked)
+                    }}
+                  />
+                  <p className="text-body-sm text-ink-faint">
+                    Draws only from topics recorded as weak for you. Your topic selection below is
+                    ignored while this is on.
+                  </p>
+                </CardBody>
+              </Card>
+
+              {/* No card-wide dim while `weakTopicsOnly` is on: `opacity-50`
+                  here also dimmed this card's "Topics" heading and its two
+                  explanatory paragraphs, measuring 2.28:1 (serious axe
+                  violation, P4.9 chunk C). The disabled affordance now comes
+                  from C-14 Checkbox's own `has-disabled:` rule, which the
+                  `<fieldset disabled>` below drives — so only the
+                  genuinely-inactive controls dim, and the prose that
+                  explains *why* they are inactive stays readable. */}
+              <Card>
+                <CardBody className="flex flex-col gap-5">
+                  <h2 className="text-eyebrow text-ink-faint">Topics</h2>
+                  {groups.length === 0 ? (
+                    <p className="text-body-sm text-ink-faint">
+                      No servable topics for this subject yet.
+                    </p>
+                  ) : (
+                    <fieldset disabled={weakTopicsOnly} className="flex flex-col gap-5">
+                      <legend className="sr-only">Choose topics to practise</legend>
+                      {groups.map((group) => (
+                        <div key={group.syllabusGroup} className="flex flex-col gap-2">
+                          <h3 className="text-label text-ink">{group.syllabusGroup}</h3>
+                          <div className="flex flex-col gap-1.5 ps-1">
+                            {group.topics.map((t) => (
+                              <Checkbox
+                                key={t.topic}
+                                label={`${t.topic} (${t.availableCount})`}
+                                checked={selectedTopics.has(t.topic)}
+                                onChange={() => toggleTopic(t.topic)}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      ))}
+                    </fieldset>
+                  )}
+                  {droppedWeakTopics.length > 0 ? (
+                    <p className="text-body-sm text-ink-faint">
+                      {droppedWeakTopics.length === 1
+                        ? "One of your weak topics"
+                        : `${droppedWeakTopics.length} of your weak topics`}{" "}
+                      ({droppedWeakTopics.join(", ")}){" "}
+                      {droppedWeakTopics.length === 1 ? "isn't" : "aren't"} in the question bank
+                      for this subject yet, so{" "}
+                      {droppedWeakTopics.length === 1 ? "it wasn't" : "they weren't"} pre-selected.
+                    </p>
+                  ) : null}
+                  {untopicedCount > 0 ? (
+                    <p className="text-body-sm text-ink-faint">
+                      {untopicedCount} more question{untopicedCount === 1 ? "" : "s"} in the bank{" "}
+                      {untopicedCount === 1 ? "isn't" : "aren't"} tagged to a topic.{" "}
+                      {untopicedCount === 1 ? "It's" : "They're"} included automatically when no
+                      topic filter is set.
+                    </p>
+                  ) : null}
+                </CardBody>
+              </Card>
+
+              <Card>
+                <CardBody className="flex flex-col gap-3">
+                  <h2 className="text-eyebrow text-ink-faint">Difficulty</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {DIFFICULTY_BANDS.map((band) => {
+                      const active = difficultyBands.has(band)
+                      return (
+                        <Button
+                          key={band}
+                          type="button"
+                          variant={active ? "accent" : "secondary"}
+                          size="sm"
+                          aria-pressed={active}
+                          onClick={() => toggleBand(band)}
+                        >
+                          {band[0].toUpperCase() + band.slice(1)}
+                        </Button>
+                      )
+                    })}
+                  </div>
+                  <p className="text-body-sm text-ink-faint">
+                    No bands selected means no filter on difficulty.
+                  </p>
+                </CardBody>
+              </Card>
+
+              {view ? (
+                <Card className={view.kind === "unavailable" ? "border-warn" : undefined}>
+                  <CardBody className="flex flex-col gap-3">
+                    {view.kind === "unavailable" ? (
+                      (() => {
+                        const msg = practiceUnavailableMessage(view.reason)
+                        return (
+                          <>
+                            <h2 className="text-display-sm text-ink">{msg.heading}</h2>
+                            <p className="text-body-md text-ink-muted">{msg.body}</p>
+                          </>
+                        )
+                      })()
+                    ) : view.kind === "shortfall" ? (
+                      <>
+                        <h2 className="text-display-sm text-ink">
+                          Only {view.availableCount} of {view.requestedCount} requested questions
+                          match
+                        </h2>
+                        <p className="text-body-md text-ink-muted">
+                          You can still create a shorter set with what's available, or broaden
+                          your topic or difficulty selection to reach the full count.
+                        </p>
+                      </>
+                    ) : (
+                      <h2 className="text-display-sm text-ink">
+                        {view.availableCount} question{view.availableCount === 1 ? "" : "s"}{" "}
+                        match, ready to create
+                      </h2>
+                    )}
+
+                    {createPractice.isError && !raceUnavailable ? (
+                      <p className="text-body-sm text-err">
+                        We couldn't create this set. Try again.
+                      </p>
+                    ) : null}
+
+                    <div className="flex flex-wrap gap-3">
+                      <Button
+                        variant="accent"
+                        size="lg"
+                        disabled={view.kind === "unavailable" || createPractice.isPending}
+                        onClick={() => void handleCreate()}
+                      >
+                        {createPractice.isPending
+                          ? "Creating…"
+                          : view.kind === "shortfall"
+                            ? `Create anyway (${view.availableCount})`
+                            : "Create practice set"}
+                      </Button>
+                    </div>
+                  </CardBody>
+                </Card>
+              ) : previewQuery.isPending ? (
+                <p className="text-body-sm text-ink-faint">Checking what matches…</p>
+              ) : previewQuery.isError ? (
+                <p className="text-body-sm text-err">
+                  We couldn't check availability. Try changing a filter.
+                </p>
+              ) : null}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }
