@@ -11,6 +11,7 @@ import { buttonVariants } from "@/components/ui/button"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -724,6 +725,11 @@ function StudentLayout() {
               })
             }
           />
+          {/* Below the offline strip on purpose: connectivity is the transient,
+              self-healing message and belongs on top, while this is a standing fact
+              about the account. Renders nothing, and no margin either, unless the
+              profile has resolved and says the address is unverified. */}
+          <VerifyEmailBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils the note above ("Phase 4 places those as it
                 rebuilds each surface", `routes.tsx`): a render crash in one

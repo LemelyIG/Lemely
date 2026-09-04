@@ -9,11 +9,21 @@
  * Response for `GET /api/me/profile` (mirrors `ProfileDTO`). `displayName` is
  * nullable — a caller who never set one — and must be rendered as an honest
  * absence (e.g. the email's local part, or the role), never a fabricated name.
+ * `emailVerified` is D7.5's gate condition, read by the verify-email banner.
  */
 export interface Profile {
   displayName: string | null
   email: string
   role: string
+  /**
+   * `users.email_verified_at is not None`, published by `ProfileDTO` for the
+   * verify-email banner. Required, not optional: the pipeline deploys the
+   * backend before the frontend (`deploy-frontend` declares
+   * `needs: [resolve-env, deploy-backend]` in `.github/workflows/deploy.yml`),
+   * so a client that reads this field is never published against a server
+   * that does not serve it.
+   */
+  emailVerified: boolean
 }
 
 // ── Student onboarding profile (P4.3 chunk B, D4.5 / P4.8 chunk A) ─────────

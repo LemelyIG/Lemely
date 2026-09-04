@@ -3,6 +3,7 @@ import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
@@ -479,6 +480,11 @@ function TeacherLayout() {
               })
             }
           />
+          {/* Below the offline strip on purpose: connectivity is the transient,
+              self-healing message and belongs on top, while this is a standing fact
+              about the account. Renders nothing, and no margin either, unless the
+              profile has resolved and says the address is unverified. */}
+          <VerifyEmailBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for this portal: a render crash in one

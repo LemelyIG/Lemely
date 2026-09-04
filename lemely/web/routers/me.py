@@ -208,7 +208,12 @@ def get_profile(
     user = mirror.get_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")
-    return ProfileDTO(displayName=user.display_name, email=user.email, role=user.role.value)
+    return ProfileDTO(
+        displayName=user.display_name,
+        email=user.email,
+        role=user.role.value,
+        emailVerified=user.email_verified_at is not None,
+    )
 
 
 # ---------------------------------------------------------------------------
