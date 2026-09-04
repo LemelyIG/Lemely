@@ -180,6 +180,21 @@ class SchemeCorpusRepository:
                 existing.provenance = provenance
             return existing.id
 
+    def get_source_document(self, scheme_id: uuid.UUID) -> str | None:
+        """Return the currently-stored object key for ``scheme_id``'s PDF, or ``None``.
+
+        Read-only counterpart to :meth:`set_source_document`. ``store`` reuses
+        the same ``scheme_id`` when a paper identity is already in the corpus
+        (insert-or-replace), so a re-upload's caller must read the *previous*
+        key here before uploading the new PDF and calling
+        ``set_source_document`` with the new one — otherwise a same-filename
+        re-upload collides with a create-only backend, and a different-filename
+        re-upload orphans the old object forever (spec §4.1).
+        """
+        with self._sm() as session:
+            row = session.get(MarkSchemeRecord, scheme_id)
+            return None if row is None else row.source_document
+
     def set_source_document(self, scheme_id: uuid.UUID, key: str) -> None:
         """Record the uploaded PDF's object key. A silent no-op for an unknown id."""
         with self._sm.begin() as session:

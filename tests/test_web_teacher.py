@@ -1672,6 +1672,98 @@ def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
     assert storage_backend._objects == {}
 
 
+def _patch_parser_to_return(monkeypatch: pytest.MonkeyPatch, scheme: MarkScheme) -> None:
+    """Make ``upload_scheme``'s lazy ``DeterministicMarkSchemeParser`` import return ``scheme``.
+
+    Isolates the re-upload tests below from the real parser (and the real
+    filename-derived paper identity it would extract), so "the same paper" is
+    guaranteed by construction rather than by picking real PDF bytes/filenames
+    that happen to parse identically.
+    """
+
+    class _FakeParser:
+        def __init__(self, *, cfg: object) -> None: ...
+
+        def __call__(self, pdf_path: object) -> MarkScheme:
+            return scheme
+
+    monkeypatch.setattr("lemely.io.det.DeterministicMarkSchemeParser", _FakeParser)
+
+
+def test_reupload_same_filename_replaces_the_stored_pdf_without_error(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Re-uploading a scheme for an already-corpus'd paper reuses its scheme_id.
+
+    ``store`` is insert-or-replace, keyed on paper identity (not on upload),
+    so a second upload of the *same* paper — same client filename this time —
+    produces the identical object key as the first. A create-only backend
+    (real GCS, and the faithful fake) refuses to overwrite that key in place;
+    the route must delete the stale object before writing the new one, or the
+    second upload fails even though nothing about the request is wrong.
+    """
+    _patch_parser_to_return(monkeypatch, _scheme())
+
+    first = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("same.pdf", b"%PDF-1.4 v1", "application/pdf")},
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("same.pdf", b"%PDF-1.4 v2", "application/pdf")},
+    )
+    assert second.status_code == 200
+
+    rows = corpus_repo.list_rows()
+    assert len(rows) == 1  # insert-or-replace: one paper, one row, not two.
+    key = (settings.storage.bucket, f"schemes/{rows[0].id}/same.pdf")
+    assert list(storage_backend._objects) == [key]
+    assert storage_backend._objects[key] == b"%PDF-1.4 v2"
+
+
+def test_reupload_different_filename_does_not_orphan_the_old_pdf(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A corrected re-upload under a new filename must not leave the old object behind.
+
+    Same scheme_id as the previous test (insert-or-replace on paper identity)
+    but a *different* client filename this time, so the new object key
+    differs from the old one — the create-only collision from the sibling
+    test above does not fire here, but without an explicit delete the old
+    key is a permanent orphan: nothing else in the app ever points at it or
+    cleans it up.
+    """
+    _patch_parser_to_return(monkeypatch, _scheme())
+
+    first = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("original.pdf", b"%PDF-1.4 v1", "application/pdf")},
+    )
+    assert first.status_code == 200
+    second = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("corrected.pdf", b"%PDF-1.4 v2", "application/pdf")},
+    )
+    assert second.status_code == 200
+
+    rows = corpus_repo.list_rows()
+    assert len(rows) == 1
+    old_key = (settings.storage.bucket, f"schemes/{rows[0].id}/original.pdf")
+    new_key = (settings.storage.bucket, f"schemes/{rows[0].id}/corrected.pdf")
+    assert old_key not in storage_backend._objects, "the old PDF was orphaned, not cleaned up"
+    assert list(storage_backend._objects) == [new_key]
+    assert storage_backend._objects[new_key] == b"%PDF-1.4 v2"
+
+
 # ---------------------------------------------------------------------------
 # AI quizzes.
 # ---------------------------------------------------------------------------

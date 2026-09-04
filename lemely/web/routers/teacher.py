@@ -1013,6 +1013,15 @@ async def upload_scheme(
     object storage at ``schemes/{mark_scheme_id}/{safe_name}`` (spec §4.1).
     Parse failures surface as a 422, and so does a subject with no bundled
     syllabus taxonomy — see :meth:`SchemeCorpusRepository.store`.
+
+    A re-upload for a paper identity already in the corpus reuses that paper's
+    ``mark_scheme_id`` (``store`` is insert-or-replace), so the *object key*
+    can collide with — or, on a different client filename, silently orphan —
+    whatever this scheme's PDF was uploaded as last time. The previous key,
+    if any, is deleted before the new one is written: on a same-filename
+    re-upload this is what makes the new ``storage.upload`` succeed at all
+    against a create-only backend (spec §4.1); on a different-filename
+    re-upload it is what stops the old object being orphaned forever.
     """
     from lemely.io.det import DeterministicMarkSchemeParser
 
@@ -1038,8 +1047,23 @@ async def upload_scheme(
                 "cannot file this scheme."
             ),
         )
+    # `corpus.store` above has already committed the new parsed payload under
+    # `scheme_id` — the database is authoritative from this point on. A
+    # failure in either storage call below must not look like a silent
+    # success, and `set_source_document` (which would make the row claim the
+    # new key holds this content) must not run unless the upload actually
+    # landed it.
     key = f"schemes/{scheme_id}/{filename}"
-    storage.upload(settings.storage.bucket, key, pdf_bytes, scheme_pdf.content_type)
+    previous_key = corpus.get_source_document(scheme_id)
+    try:
+        if previous_key is not None:
+            storage.delete(settings.storage.bucket, previous_key)
+        storage.upload(settings.storage.bucket, key, pdf_bytes, scheme_pdf.content_type)
+    except Exception as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Storing the mark scheme PDF failed: {exc}",
+        ) from exc
     corpus.set_source_document(scheme_id, key)
     return _scheme_row_dto(next(r for r in corpus.list_rows() if r.id == scheme_id))
 
