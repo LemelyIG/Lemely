@@ -30,6 +30,7 @@ import {
   useActiveUpload,
   useUploadRun,
 } from "@/lib/hooks/useStudentApi"
+import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
@@ -563,10 +564,20 @@ export function CorrectPaper() {
    * single-stream. The form goes read-only rather than disappearing, so the
    * student can still see what is being marked.
    */
+  /*
+   * D7.5's gate, read before the run rather than after the refusal.
+   * `undefined` (profile pending, or errored) counts as allowed: the app does
+   * not know, and a verified student must not watch a dead button through a
+   * page load. If it guesses wrong the run is refused, and
+   * `correctionFailureMessage` now words that refusal properly.
+   */
+  const profile = useProfile()
+  const emailVerified = profile.data?.emailVerified !== false
   const canStart = canStartRun({
     phase,
     hasScan: Boolean(scanFile),
     hasUploadedPaper: retryable,
+    emailVerified,
   })
   const busy = running || waitingOnServer
 
