@@ -9,7 +9,7 @@ import { QueryState } from "@/components/ui/query-state"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { usePlacementResult } from "@/lib/hooks/usePlacementApi"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { placementResultView } from "./placementData"
 
 /*
@@ -65,6 +65,7 @@ export function PlacementResult() {
   const navigate = useNavigate()
   const { assignmentId = "" } = useParams<{ assignmentId: string }>()
   const query = usePlacementResult(assignmentId)
+  const subjectName = useSubjectName(query.data?.subjectCode ?? "")
 
   return (
     <div className="lm-screen mx-auto flex w-full max-w-180 flex-col gap-6">
@@ -93,8 +94,6 @@ export function PlacementResult() {
         }}
       >
         {(data) => {
-          const subjectName =
-            SUPPORTED_SUBJECTS.find((s) => s.code === data.subjectCode)?.name ?? data.subjectCode
           const view = placementResultView(data)
 
           if (view.kind === "unmarked") {

@@ -23,7 +23,7 @@ import {
   useGenerateDeck,
 } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, DeckOrigin, GenerateDeckResponseDTO } from "@/lib/flashcardTypes"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   cardSourceLabel,
@@ -300,7 +300,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
 export function FlashcardDecks() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const decksQuery = useFlashcardDecks(subjectCode)
   const dueQuery = useDueSession(subjectCode)

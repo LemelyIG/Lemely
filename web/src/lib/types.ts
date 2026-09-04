@@ -9,7 +9,14 @@ export type PortalId = "teacher" | "student"
 /** How a question was marked — the mock's 🔢 / 🤖 / ❓ legend. */
 export type MarkerSource = "deterministic" | "ai" | "missing"
 
-export type Grade = "A*" | "A" | "B" | "C" | "D" | "E" | "U"
+/*
+ * The vocabulary is data now, served per subject and tier by
+ * `GET /api/reference` (`ReferenceData.targetGradeVocabularies`) — 0580 Core
+ * publishes C-G with no A*, 0625 publishes A*-G, and a hardcoded union misled
+ * both ways. `web/src/lib/grades.ts`'s `gradeRank` ranks a grade against the
+ * served vocabulary in hand rather than a fixed union.
+ */
+export type Grade = string
 
 /** Semantic tone used by <Chip> and status colours across both portals. */
 export type Tone = "ok" | "warn" | "err" | "neutral" | "accent"

@@ -17,6 +17,7 @@ import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
@@ -252,7 +253,13 @@ function SubjectNavGroup({
   touch?: boolean
 }) {
   const Glyph = subjectIcon(subject.code)
-  const { secondary } = subjectIdentifier(subject.name, subject.code, subject.qualificationLevel)
+  const { data: reference } = useReference()
+  const { secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
+    subject.name,
+    subject.code,
+    subject.qualificationLevel,
+  )
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-1">

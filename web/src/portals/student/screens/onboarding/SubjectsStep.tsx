@@ -5,21 +5,17 @@ import { Card } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Select } from "@/components/ui/select"
+import type { CatalogueSubject, LabelledValue } from "@/lib/referenceTypes"
 import { cn } from "@/lib/utils"
-import {
-  GRADE_ORDER,
-  QUALIFICATION_LEVELS,
-  SESSION_MONTHS,
-  SUPPORTED_SUBJECTS,
-  type SubjectDraft,
-} from "./onboardingData"
+import type { SubjectDraft } from "./onboardingData"
 
 /*
- * S-01 · Onboarding step 1: subjects. Qualification level selector, then a
- * card per supported subject (multi-select) that expands in place to
- * capture papers + target grade + target session once selected — exactly
- * the UI spec's "Interactions" line ("Multi-select; each selected subject
- * expands to capture papers and target grade").
+ * S-01 · Onboarding step 1: subjects. A card per fetched catalogue subject
+ * (multi-select) that expands in place to capture papers + target grade +
+ * target session once selected — exactly the UI spec's "Interactions" line
+ * ("Multi-select; each selected subject expands to capture papers and
+ * target grade"). Qualification level is no longer asked here (D10): the
+ * subject carries its own (0580/0606/0625 are all IGCSE syllabuses).
  *
  * ── P4.10, the Study Notebook pass ────────────────────────────────────────
  *
@@ -47,11 +43,14 @@ import {
  */
 
 export interface SubjectsStepProps {
-  qualificationLevel: string | null
-  onQualificationLevel: (value: string) => void
+  subjects: CatalogueSubject[]
+  sessionMonths: LabelledValue[]
+  targetGrades: (code: string) => string[]
+  loading: boolean
+  loadError: boolean
+  onRetry: () => void
   drafts: Record<string, SubjectDraft>
   onToggleSubject: (code: string) => void
-  onSubjectQualificationLevel: (code: string, value: string | null) => void
   onTogglePaper: (code: string, paper: number) => void
   onTargetGrade: (code: string, grade: string | null) => void
   onSessionMonth: (code: string, month: string | null) => void
@@ -62,11 +61,14 @@ export interface SubjectsStepProps {
 }
 
 export function SubjectsStep({
-  qualificationLevel,
-  onQualificationLevel,
+  subjects,
+  sessionMonths,
+  targetGrades,
+  loading,
+  loadError,
+  onRetry,
   drafts,
   onToggleSubject,
-  onSubjectQualificationLevel,
   onTogglePaper,
   onTargetGrade,
   onSessionMonth,
@@ -87,156 +89,138 @@ export function SubjectsStep({
         </p>
       </div>
 
-      <Card className="flex flex-col gap-3 p-5">
-        <div className="text-body-sm font-medium text-ink">Qualification level</div>
-        <div className="flex flex-wrap gap-2" role="group" aria-label="Qualification level">
-          {QUALIFICATION_LEVELS.map((level) => {
-            const active = qualificationLevel === level.value
+      {loadError ? (
+        <Card className="flex flex-col items-start gap-3 p-5">
+          <p role="alert" className="text-body-md text-ink">
+            We couldn't load the subject list. Nothing you've entered has been lost.
+          </p>
+          <Button type="button" variant="secondary" size="sm" className="min-h-11" onClick={onRetry}>
+            Try again
+          </Button>
+        </Card>
+      ) : loading ? (
+        // A skeleton rather than a spinner: the shape of what is coming is
+        // known (a stack of subject cards), so showing it avoids the layout
+        // shift a spinner guarantees.
+        <div className="flex flex-col gap-4" aria-busy="true" aria-live="polite">
+          <span className="sr-only">Loading subjects</span>
+          {[0, 1, 2].map((i) => (
+            <Card key={i} className="h-20 animate-pulse bg-paper-sunk" />
+          ))}
+        </div>
+      ) : (
+        <div className="flex flex-col gap-4">
+          {subjects.map((subject) => {
+            const draft = drafts[subject.code]
+            const selected = Boolean(draft)
             return (
-              <Button
-                key={level.value}
-                type="button"
-                variant={active ? "accent" : "secondary"}
-                size="sm"
-                // `Button size="sm"` computes to ~31px tall (12.5px text +
-                // `py-2`), under QUALITY-BAR.md:40's 44px floor. Raised at the
-                // call site rather than in the variant, because `sm` is used on
-                // dense teacher surfaces where 44px would break the layout —
-                // changing the shared variant is a cross-portal decision, not a
-                // P4.8 one.
-                className="min-h-11"
-                aria-pressed={active}
-                onClick={() => onQualificationLevel(level.value)}
+              <Card
+                key={subject.code}
+                className={cn("overflow-hidden", selected && "border-accent")}
               >
-                {level.label}
-              </Button>
+                <button
+                  type="button"
+                  aria-pressed={selected}
+                  onClick={() => onToggleSubject(subject.code)}
+                  className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                >
+                  <span
+                    aria-hidden="true"
+                    className={cn(
+                      "flex h-6 w-6 flex-none items-center justify-center rounded-sm border",
+                      selected
+                        ? "border-accent bg-accent text-accent-on"
+                        : "border-rule bg-paper-raised",
+                    )}
+                  >
+                    {selected ? <Check weight="bold" className="h-3.5 w-3.5" /> : null}
+                  </span>
+                  <span className="min-w-0 flex-1">
+                    <span className="block text-body-lg font-medium text-ink">{subject.name}</span>
+                    {/* The data face: a syllabus code is an identifier, and
+                        `data-sm` names the mono face itself rather than pairing
+                        `font-mono` with a size rung. */}
+                    <span className="block text-data-sm text-ink-faint">{subject.code}</span>
+                  </span>
+                </button>
+
+                {selected && draft ? (
+                  <div className="flex flex-col gap-5 border-t border-rule p-5">
+                    <div className="flex flex-col gap-2">
+                      <div className="text-body-sm font-medium text-ink">Papers you'll sit</div>
+                      <div className="flex flex-wrap gap-x-5 gap-y-2.5">
+                        {subject.papers.map((paper) => (
+                          <Checkbox
+                            key={paper.number}
+                            label={`Paper ${paper.number}: ${paper.name}`}
+                            checked={draft.papers.has(paper.number)}
+                            onChange={() => onTogglePaper(subject.code, paper.number)}
+                          />
+                        ))}
+                      </div>
+                    </div>
+
+                    <div className="flex flex-wrap gap-4">
+                      <Select
+                        label="Target grade"
+                        value={draft.targetGrade ?? ""}
+                        onChange={(event) => onTargetGrade(subject.code, event.target.value || null)}
+                        wrapperClassName="w-44"
+                      >
+                        <option value="">Not decided yet</option>
+                        {targetGrades(subject.code).map((grade) => (
+                          <option key={grade} value={grade}>
+                            {grade}
+                          </option>
+                        ))}
+                      </Select>
+
+                      <Select
+                        label="Target session"
+                        value={draft.sessionMonth ?? ""}
+                        onChange={(event) => onSessionMonth(subject.code, event.target.value || null)}
+                        wrapperClassName="w-44"
+                      >
+                        <option value="">Not decided yet</option>
+                        {sessionMonths.map((month) => (
+                          <option key={month.value} value={month.value}>
+                            {month.label}
+                          </option>
+                        ))}
+                      </Select>
+
+                      <Input
+                        label="Year"
+                        type="number"
+                        inputMode="numeric"
+                        // A genuine format hint, not a label substitute — `Input`
+                        // refuses the latter by construction (§12).
+                        placeholder="e.g. 2027"
+                        value={draft.sessionYear ?? ""}
+                        onChange={(event) =>
+                          onSessionYear(
+                            subject.code,
+                            event.target.value ? Number(event.target.value) : null,
+                          )
+                        }
+                        wrapperClassName="w-32"
+                      />
+                    </div>
+                  </div>
+                ) : null}
+              </Card>
             )
           })}
         </div>
-      </Card>
-
-      <div className="flex flex-col gap-4">
-        {SUPPORTED_SUBJECTS.map((subject) => {
-          const draft = drafts[subject.code]
-          const selected = Boolean(draft)
-          return (
-            <Card key={subject.code} className={cn("overflow-hidden", selected && "border-accent")}>
-              <button
-                type="button"
-                aria-pressed={selected}
-                onClick={() => onToggleSubject(subject.code)}
-                className="flex min-h-11 w-full cursor-pointer items-center gap-3 p-5 text-start transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              >
-                <span
-                  aria-hidden="true"
-                  className={cn(
-                    "flex h-6 w-6 flex-none items-center justify-center rounded-sm border",
-                    selected
-                      ? "border-accent bg-accent text-accent-on"
-                      : "border-rule bg-paper-raised",
-                  )}
-                >
-                  {selected ? <Check weight="bold" className="h-3.5 w-3.5" /> : null}
-                </span>
-                <span className="min-w-0 flex-1">
-                  <span className="block text-body-lg font-medium text-ink">{subject.name}</span>
-                  {/* The data face: a syllabus code is an identifier, and
-                      `data-sm` names the mono face itself rather than pairing
-                      `font-mono` with a size rung. */}
-                  <span className="block text-data-sm text-ink-faint">{subject.code}</span>
-                </span>
-              </button>
-
-              {selected && draft ? (
-                <div className="flex flex-col gap-5 border-t border-rule p-5">
-                  <div className="flex flex-col gap-2">
-                    <div className="text-body-sm font-medium text-ink">Papers you'll sit</div>
-                    <div className="flex flex-wrap gap-x-5 gap-y-2.5">
-                      {subject.papers.map((paper) => (
-                        <Checkbox
-                          key={paper.number}
-                          label={`Paper ${paper.number}: ${paper.name}`}
-                          checked={draft.papers.has(paper.number)}
-                          onChange={() => onTogglePaper(subject.code, paper.number)}
-                        />
-                      ))}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-wrap gap-4">
-                    <Select
-                      label="Qualification level"
-                      value={draft.qualificationLevel ?? ""}
-                      onChange={(event) =>
-                        onSubjectQualificationLevel(subject.code, event.target.value || null)
-                      }
-                      wrapperClassName="w-44"
-                    >
-                      <option value="">Not decided yet</option>
-                      {QUALIFICATION_LEVELS.map((level) => (
-                        <option key={level.value} value={level.value}>
-                          {level.label}
-                        </option>
-                      ))}
-                    </Select>
-
-                    <Select
-                      label="Target grade"
-                      value={draft.targetGrade ?? ""}
-                      onChange={(event) => onTargetGrade(subject.code, event.target.value || null)}
-                      wrapperClassName="w-44"
-                    >
-                      <option value="">Not decided yet</option>
-                      {GRADE_ORDER.map((grade) => (
-                        <option key={grade} value={grade}>
-                          {grade}
-                        </option>
-                      ))}
-                    </Select>
-
-                    <Select
-                      label="Target session"
-                      value={draft.sessionMonth ?? ""}
-                      onChange={(event) => onSessionMonth(subject.code, event.target.value || null)}
-                      wrapperClassName="w-44"
-                    >
-                      <option value="">Not decided yet</option>
-                      {SESSION_MONTHS.map((month) => (
-                        <option key={month.value} value={month.value}>
-                          {month.label}
-                        </option>
-                      ))}
-                    </Select>
-
-                    <Input
-                      label="Year"
-                      type="number"
-                      inputMode="numeric"
-                      // A genuine format hint, not a label substitute — `Input`
-                      // refuses the latter by construction (§12).
-                      placeholder="e.g. 2027"
-                      value={draft.sessionYear ?? ""}
-                      onChange={(event) =>
-                        onSessionYear(
-                          subject.code,
-                          event.target.value ? Number(event.target.value) : null,
-                        )
-                      }
-                      wrapperClassName="w-32"
-                    />
-                  </div>
-                </div>
-              ) : null}
-            </Card>
-          )
-        })}
-      </div>
+      )}
 
       <div className="flex items-start gap-2.5 rounded-lg bg-paper-sunk px-4 py-3">
         <Info size={16} className="mt-0.5 flex-none text-ink-faint" aria-hidden="true" />
         <p className="text-pretty text-body-sm text-ink-muted">
-          More subjects are coming. Mathematics 0580, Additional Mathematics 0606 and Physics
-          0625 are the ones we can mark and build study plans for today.
+          More subjects are coming.{" "}
+          {subjects.length > 0
+            ? `${subjects.map((s) => s.name).join(", ")} ${subjects.length === 1 ? "is the one" : "are the ones"} we can mark and build study plans for today.`
+            : ""}
         </p>
       </div>
 

@@ -33,6 +33,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_repo import ClassService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
@@ -59,6 +60,7 @@ from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
@@ -91,6 +93,22 @@ def get_history_store() -> HistoryStoreProtocol:
     in-tmp JSON store double without touching Postgres.
     """
     return DbHistoryStore(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_catalogue_service() -> CatalogueService:
+    """The syllabus catalogue reader, bound to the process sessionmaker."""
+    return CatalogueService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_threshold_service() -> ThresholdService:
+    """The grade-threshold reader, bound to the process sessionmaker.
+
+    Derives `/api/reference`'s `targetGradeVocabularies` from the ingested
+    `option_thresholds` rows (see `ThresholdService.target_vocabularies`).
+    """
+    return ThresholdService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -274,10 +292,11 @@ def get_platform_admin_service() -> PlatformAdminService:
 def get_boundary_store() -> GradeBoundaryStore:
     """Return the process-wide :class:`GradeBoundaryStore` singleton.
 
-    Cached because construction parses the bundled JSON, and X-03 reads only its
-    two key counts. Other routers construct their own inline (``student.py``,
-    ``parent.py``) because they resolve boundaries per request against
-    per-request metadata; those call sites are deliberately left alone.
+    Cached because construction queries every row of ``component_thresholds``,
+    and X-03 reads only its two key counts. Other routers construct their own
+    inline (``student.py``, ``parent.py``) because they resolve boundaries per
+    request against per-request metadata; those call sites are deliberately
+    left alone.
     """
     return GradeBoundaryStore()
 
@@ -945,7 +964,10 @@ def get_client_error_limiters() -> ClientErrorLimiters:
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
+    get_boundary_store.cache_clear()
     get_history_store.cache_clear()
+    get_catalogue_service.cache_clear()
+    get_threshold_service.cache_clear()
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()

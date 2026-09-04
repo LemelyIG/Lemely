@@ -147,6 +147,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # Prompts __init__ re-exports everything; F403 and F401 are intentional.
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
+"lemely/io/ciegt.py" = ["ANN401"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
 # Unicode lookalikes are the entire subject matter here: the module maps Adobe
@@ -199,6 +200,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/routers/study_plan.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/flashcards.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/exam_calendar.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/reference.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/invites.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_invites.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/client_errors.py" = ["TC001", "TC002", "TC003"]
@@ -265,6 +267,7 @@ module = [
   "lemely.io.answer_extraction",
   "lemely.io.correction_ai",
   "lemely.io.subject",
+  "lemely.io.ciegt",
   "lemely.app.gradio_callbacks",
   "lemely.io.det.metadata",
   "lemely.io.det.tables",
@@ -294,6 +297,7 @@ module = [
   "lemely.web.schemas_exam_calendar",
   "lemely.web.schemas_notifications",
   "lemely.web.schemas_student_profile",
+  "lemely.web.schemas_reference",
   "lemely.web.schemas_study_plan",
   "lemely.web.schemas_leaderboard",
   "lemely.web.schemas_friends",

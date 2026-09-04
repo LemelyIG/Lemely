@@ -14,9 +14,9 @@ per-question duration column and there will not be one — nothing could
 populate it except a guess, and a guess in a column acquires the authority of
 a fact (the laundering D4.4 §5 refused for low-confidence topics). Instead a
 question's estimate is ``total_marks * rate(its paper)`` where the rate is
-``duration_minutes / total_marks`` **computed** from
-``lemely/data/paper_timing.json``, whose two numbers are transcribed from the
-syllabus. A question whose paper has no timing entry is *ineligible*, not
+``duration_minutes / total_marks`` **computed** from the ``syllabus_papers``
+table (:mod:`lemely.io.paper_timing`), whose two numbers are transcribed from
+the syllabus. A question whose paper has no timing entry is *ineligible*, not
 estimated from a subject average — an average across papers is a guess wearing
 a measurement's clothes.
 

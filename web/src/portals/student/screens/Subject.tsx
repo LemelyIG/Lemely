@@ -7,6 +7,7 @@ import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-sh
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useSubject } from "@/lib/hooks/useStudentApi"
 import { cn } from "@/lib/utils"
 import { vizText } from "../components/colors"
@@ -58,6 +59,7 @@ export function Subject() {
   // carry `idle` for the same hook shape, and silence here would read as an
   // oversight rather than a checked decision.
   const query = useSubject(code ?? "")
+  const { data: reference } = useReference()
 
   /*
    * A 404 here is not a failure: it is a subject with no corrected papers yet,
@@ -101,6 +103,7 @@ export function Subject() {
         {(data) => {
           const { header: subjectHeader, papersBreakdown, topicMap, paperHistory } = data
           const { primary, secondary } = subjectIdentifier(
+            reference?.qualificationLevels,
             subjectHeader.name,
             subjectHeader.code,
             subjectHeader.qualificationLevel,

@@ -12,7 +12,7 @@ import {
 } from "@/lib/hooks/useStudyPlanApi"
 import type { StudyPlanSessionDTO, StudyPlanWeekDTO } from "@/lib/studyPlanTypes"
 import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import {
   activityLabel,
   formatDayHeading,
@@ -205,7 +205,7 @@ function SessionRow({
 export function StudyPlanWeek() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const planQuery = useCurrentStudyPlan(subjectCode)
   const rebuild = useRebuildStudyPlan()

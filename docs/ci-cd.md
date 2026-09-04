@@ -42,6 +42,7 @@ doesn't.
 | Push to `develop` | staging | Automatic, no approval |
 | Push to `main` | production | Pauses for one manual approval (see below) |
 | Manual run (Actions tab → "deploy" → Run workflow) | your choice | Redeploy either environment on demand — no new commit needed. Good for prototyping/iteration or re-running a flaky step. |
+| Manual run with **"Also ingest CAIE grade thresholds"** ticked | your choice | Additionally runs `scripts/ingest_thresholds.py` against that environment's database (`docs/deployment.md` §3.5). Off by default and never on a push: it fetches from two small third-party hosts. Required once per environment before any grading works. |
 
 Both environments are fully separate resources top to bottom: their own
 Supabase project, their own Cloud Run service, their own Worker/domain. A
@@ -327,3 +328,13 @@ regressions this pipeline introduced, just not solved by it:
 - Everything else in `docs/deployment.md` §5 (single-replica constraint, no
   scheduler, `/api/teacher/overview`'s N+1) is unchanged by this pipeline —
   it deploys the app as-is, it doesn't fix it.
+- **The `migrate` job runs `alembic upgrade head` only — it does not run
+  `scripts/ingest_thresholds.py`** (`docs/deployment.md` §3.5). Migrations
+  create `component_thresholds`/`option_thresholds` empty; grading stays
+  refused (`GradeBoundaryStore` raises `EmptyGradeBoundaryStoreError` rather
+  than invent boundaries) until someone runs the ingest script by hand
+  against the target database, same as any other manual one-time step this
+  pipeline doesn't yet automate. `GET /api/health`'s `gradeBoundariesLoaded`
+  field is the way to confirm it before declaring a fresh environment ready.
+  Deliberately not wired into `deploy.yml` here — adding an ingest step to
+  the pipeline is a deploy-pipeline decision, not a doc change.

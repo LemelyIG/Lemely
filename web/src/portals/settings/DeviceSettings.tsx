@@ -130,19 +130,18 @@ export function DeviceSettings() {
 
         {/* No `srHeading`: `SettingsFrame` already renders this page's own
             `<h1>` unconditionally, above this section, in every query state —
-            an sr-only heading here would duplicate it. */}
-        /*
-         * One behaviour changed here and is worth naming. The pre-conversion
-         * branches were sibling expressions, not exclusive ones, so a refetch
-         * that failed *after* a successful load showed the error panel and
-         * kept the list below it. `QueryState` is exclusive by design, so the
-         * list goes. That is the honest reading: react-query moves `status`
-         * to `"error"` on a failed refetch, and what is on screen at that
-         * point is data we can no longer vouch for — after a revoke, a device
-         * that is gone may still be listed, which is the one thing this
-         * screen must not imply. A retry is a better offer than stale rows
-         * presented as current.
-         */
+            an sr-only heading here would duplicate it.
+
+            One behaviour changed here and is worth naming. The pre-conversion
+            branches were sibling expressions, not exclusive ones, so a refetch
+            that failed *after* a successful load showed the error panel and
+            kept the list below it. `QueryState` is exclusive by design, so the
+            list goes. That is the honest reading: react-query moves `status`
+            to `"error"` on a failed refetch, and what is on screen at that
+            point is data we can no longer vouch for — after a revoke, a device
+            that is gone may still be listed, which is the one thing this
+            screen must not imply. A retry is a better offer than stale rows
+            presented as current. */}
         <QueryState
           query={devices}
           skeleton={<ListSkeleton rows={3} />}

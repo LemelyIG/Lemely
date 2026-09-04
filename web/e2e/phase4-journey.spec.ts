@@ -78,7 +78,9 @@ async function toggleSubjectOnce(page: Page, name: RegExp): Promise<void> {
   await expect(chip).toHaveAttribute("aria-pressed", "true")
 }
 
-test("S-01/S-02 · a new student onboards through the real UI", async ({ page }) => {
+test("S-01/S-02 · a new student onboards through the real UI, then chooses which subject to be placed in", async ({
+  page,
+}) => {
   const seed = readSeed()
   const errors = watchConsole(page)
   const student = seed.placement.students.unonboarded
@@ -90,7 +92,13 @@ test("S-01/S-02 · a new student onboards through the real UI", async ({ page })
   await page.goto("/student/onboard")
   await expect(page.getByText("What are you studying?")).toBeVisible({ timeout: 15_000 })
 
+  // Two subjects, not one — a single-subject enrolment must never render
+  // the placement-choice step (Task 17: "a question with one possible
+  // answer is not a question"). Physics (0625) has a viable placement
+  // bank; Additional Mathematics (0606) does not, so the choice below
+  // actually has consequences, not just a UI toggle.
   await toggleSubjectOnce(page, /Physics/i)
+  await toggleSubjectOnce(page, /Additional Mathematics/i)
   await page.getByRole("button", { name: /^continue$/i }).click()
 
   // S-02. Only reachable by actually completing S-01 (trap 3).
@@ -108,6 +116,31 @@ test("S-01/S-02 · a new student onboards through the real UI", async ({ page })
   await page.getByRole("button", { name: /^skip$/i }).click()
   await expect(page.getByText(/hours can you study each week/)).toBeVisible({ timeout: 15_000 })
   await expect(page.getByText("Not set").first()).toBeVisible()
+  await page.getByRole("button", { name: /^skip$/i }).click()
+  await expect(page.getByText(/year or grade level/)).toBeVisible({ timeout: 15_000 })
+  await page.getByRole("button", { name: /^skip$/i }).click()
+
+  // One confidence step per enrolled subject (S-01's selection order).
+  await expect(page.getByText(/How confident do you feel/)).toBeVisible({ timeout: 15_000 })
+  await page.getByRole("button", { name: /^skip$/i }).click()
+  await expect(page.getByText(/How confident do you feel/)).toBeVisible({ timeout: 15_000 })
+  await page.getByRole("button", { name: /^skip$/i }).click()
+
+  // The placement-choice step — reached only because two subjects were
+  // enrolled. Pick Physics, the one with a real placement bank.
+  await expect(
+    page.getByText("Which subject would you like to be placed in first?"),
+  ).toBeVisible({ timeout: 15_000 })
+  const physicsRow = page.getByRole("button", { name: /Physics/i })
+  await expect(physicsRow).toBeVisible({ timeout: 15_000 })
+  await physicsRow.click()
+  await page.getByRole("button", { name: /^finish$/i }).click()
+
+  // S-02 -> S-03 for the *chosen* subject, not the catalogue-order first
+  // one (0580/0606 sort before 0625 and have no placement bank — the whole
+  // reason this question exists).
+  await expect(page).toHaveURL(/\/student\/placement\/0625$/, { timeout: 15_000 })
+  await expect(page.getByText("Get a real starting picture")).toBeVisible({ timeout: 15_000 })
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

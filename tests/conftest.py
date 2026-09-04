@@ -27,6 +27,8 @@ from lemely.runtime.config import Settings
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
+    from sqlalchemy.orm import Session, sessionmaker
+
 
 @pytest.fixture(scope="session", autouse=True)
 def _disable_dotenv_file() -> Iterator[None]:
@@ -231,3 +233,72 @@ def _disable_ambient_toml() -> Iterator[None]:
         yield
     finally:
         config_module._discover_toml = original  # type: ignore[assignment]
+
+
+@pytest.fixture
+def migrated_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    """A throwaway Postgres database with `alembic upgrade head` applied.
+
+    Distinct from the `pg_sessionmaker` fixtures in the router tests, which use
+    `Base.metadata.create_all` and therefore never execute a migration's data
+    steps. Anything asserting what a migration *inserted* needs this one.
+    """
+    import os as _os
+    import uuid as _uuid
+
+    import sqlalchemy as sa
+    from alembic import command
+    from alembic.config import Config
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+    from sqlalchemy.orm import sessionmaker
+
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        pytest.skip("local Postgres not reachable")
+
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_mig_{_uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+    url = make_url(base_url).set(database=dbname)
+
+    cfg = Config("alembic.ini")
+    rendered_url = url.render_as_string(hide_password=False)
+    cfg.set_main_option("sqlalchemy.url", rendered_url)
+    # `lemely/db/migrations/env.py` deliberately re-derives the URL from
+    # `load_settings().database.url` rather than trusting whatever
+    # `alembic.ini`/the Config object carries, so that migrations run with the
+    # same env > .env > lemely.toml > default precedence as the app
+    # (`env.py`'s own docstring). That means the `sqlalchemy.url` set above is
+    # never actually read — `command.upgrade` would silently migrate the real
+    # dev database instead of this throwaway one. Route through the same
+    # env-var Settings reads (`LEMELY_DATABASE__URL`) so `load_settings()`
+    # resolves to the throwaway database too.
+    previous_db_url = _os.environ.get("LEMELY_DATABASE__URL")
+    _os.environ["LEMELY_DATABASE__URL"] = rendered_url
+    try:
+        command.upgrade(cfg, "head")
+    finally:
+        if previous_db_url is None:
+            _os.environ.pop("LEMELY_DATABASE__URL", None)
+        else:
+            _os.environ["LEMELY_DATABASE__URL"] = previous_db_url
+
+    engine = create_engine(url)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
