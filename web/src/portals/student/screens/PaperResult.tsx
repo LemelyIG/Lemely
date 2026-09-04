@@ -380,6 +380,29 @@ export function PaperResult() {
         {(data) => (
           <>
             <ResultHeader res={data} />
+            {/*
+             * PR 4 investigation (deferred audit item): checked whether
+             * `ResultDTO` — `data` here — actually carries per-question rows
+             * before touching this. It does not, and not by omission: every
+             * `GET /student/result/{paper_id}` response builds `theory=[]`
+             * unconditionally (`routers/student.py::student_result`, whose
+             * own docstring calls it "structurally empty" — history rows
+             * persist totals, weak-areas and metadata only, never the
+             * per-question answers/mark-scheme points theory marking used).
+             * `theory` is also the wrong shape for this list regardless:
+             * `TheoryQuestionDTO` (`conf`/`confColor`/`points`/`markOk`, all
+             * pre-bucketed presentation fields) is not `QuestionResult`
+             * (`confidence`/`awardedMarks`/`reviewReason`, the raw fields
+             * `QuestionList`/`confidenceTierFor` read) — passing it through
+             * would need a second, speculative mapping for data that never
+             * arrives today. `questions={[]}` is therefore the honest
+             * literal, not a stand-in for `data.theory`: it renders
+             * `QuestionList`'s own "No per-question detail for this paper"
+             * empty state, which is the true state of every history-sourced
+             * result right now. Revisit this once the backend actually
+             * populates per-question history detail — the live path just
+             * above already proves `QuestionList` can render it real.
+             */}
             <QuestionList questions={[]} />
           </>
         )}

@@ -5,7 +5,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { request, streamActivity } from "@/lib/api"
+import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
 import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
@@ -119,21 +119,24 @@ export function useStandings(): UseQueryResult<Standings, Error> {
  *
  * Builds multipart `FormData` with the exact field names FastAPI's
  * `student_upload` expects (`scan`, `mark_scheme` — the Python parameter
- * names). Goes through `request()`, which now skips the JSON content-type
- * for a `FormData` body (see `lib/api.ts::authHeaders`) so the browser can
- * set its own multipart boundary.
+ * names). Goes through `uploadWithProgress()` (PR 4 of the loading/error
+ * programme), not `request()` — `fetch` cannot report upload progress, and a
+ * phone photo of a paper can be several megabytes on a bad connection, so
+ * `CorrectPaper` needs `onProgress` to show the transfer moving instead of
+ * sitting on "Marking…" with nothing on screen changing until it lands.
+ * `uploadWithProgress` reproduces every other behaviour `request()` has —
+ * auth header, pre-emptive refresh, one-shot 401 replay, `detail`
+ * extraction, `Retry-After` — see its own doc comment in `lib/api.ts`.
  */
 export async function uploadScan(
   scan: File,
   markScheme?: File,
+  options?: { onProgress?: (progress: UploadProgress) => void; signal?: AbortSignal },
 ): Promise<StudentUploadResponse> {
   const form = new FormData()
   form.append("scan", scan)
   if (markScheme) form.append("mark_scheme", markScheme)
-  return request<StudentUploadResponse>("/student/uploads", {
-    method: "POST",
-    body: form,
-  })
+  return uploadWithProgress<StudentUploadResponse>("/student/uploads", form, options)
 }
 
 /**

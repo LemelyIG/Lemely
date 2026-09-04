@@ -177,6 +177,41 @@ async function tokenForRequest(): Promise<string | undefined> {
   return session.accessToken
 }
 
+/**
+ * Turn a failed response's body text into the `{message, detail}` pair
+ * FastAPI's `{"detail": ...}` convention decodes to.
+ *
+ * Shared by `request()`, `streamActivity()` and `uploadWithProgress()` so
+ * there is exactly one place that knows this shape instead of three that can
+ * quietly drift apart — see `request()`'s own comment below for the full
+ * story of why the `detail` handling looks the way it does. A non-empty
+ * string `detail` becomes `message` verbatim; a structured `detail` (e.g.
+ * placement's 409 `PlacementAvailabilityDTO`) is preserved in the return
+ * value for `ApiError.detail` but left out of `message`, which falls back to
+ * `${status} ${statusText}` — the same fallback a body that isn't JSON, or
+ * isn't present at all, gets.
+ */
+function parseErrorBody(
+  status: number,
+  statusText: string,
+  bodyText: string,
+): { message: string; detail?: unknown } {
+  let message = `${status} ${statusText}`
+  let detail: unknown
+  try {
+    const body: unknown = JSON.parse(bodyText)
+    if (body && typeof body === "object" && "detail" in body) {
+      detail = (body as { detail: unknown }).detail
+      if (typeof detail === "string" && detail.length > 0) {
+        message = detail
+      }
+    }
+  } catch {
+    // Body wasn't JSON (or empty) — keep the generic status text.
+  }
+  return { message, detail }
+}
+
 export async function request<T>(
   path: string,
   init?: RequestInit,
@@ -223,24 +258,7 @@ export async function request<T>(
       // real backend detail thrown away, not just here. Falls back to the
       // status text when the body isn't JSON or carries no `detail` string
       // (e.g. a 204, or a non-FastAPI failure upstream).
-      let message = `${res.status} ${res.statusText}`
-      let detail: unknown
-      try {
-        const body: unknown = await res.clone().json()
-        if (body && typeof body === "object" && "detail" in body) {
-          detail = (body as { detail: unknown }).detail
-          if (typeof detail === "string" && detail.length > 0) {
-            message = detail
-          } else if (detail !== undefined && detail !== null) {
-            // A structured detail (e.g. placement's 409 `PlacementAvailabilityDTO`)
-            // — no human-readable string to show verbatim, but callers that
-            // care read `ApiError.detail` directly rather than parsing this.
-            message = `${res.status} ${res.statusText}`
-          }
-        }
-      } catch {
-        // Body wasn't JSON (or empty) — keep the generic status text.
-      }
+      const { message, detail } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
       // `Retry-After` matters here specifically because this is the one path
       // a 429 or a 503 from every ordinary API call comes through — see the
       // field's own doc on `ApiError` above.
@@ -335,17 +353,7 @@ export async function* streamActivity(
    * `ApiError.detail` must get the same shape from all three.
    */
   if (!res.ok) {
-    let message = `${res.status} ${res.statusText}`
-    let detail: unknown
-    try {
-      const body: unknown = await res.clone().json()
-      if (body && typeof body === "object" && "detail" in body) {
-        detail = (body as { detail: unknown }).detail
-        if (typeof detail === "string" && detail.length > 0) message = detail
-      }
-    } catch {
-      // Body wasn't JSON — keep the generic status text.
-    }
+    const { message, detail } = parseErrorBody(res.status, res.statusText, await res.clone().text().catch(() => ""))
     const retryAfter = parseRetryAfter(res.headers.get("Retry-After"), new Date())
     throw new ApiError(res.status, message, detail, retryAfter ?? undefined)
   }
@@ -371,4 +379,199 @@ export async function* streamActivity(
       }
     }
   }
+}
+
+/**
+ * Bytes moved so far and, when the browser can tell us, the total.
+ *
+ * `total` is `undefined` — never a guess — when the upload is not
+ * length-computable (`ProgressEvent.lengthComputable === false`, which
+ * happens for a chunked or otherwise size-unknown transfer). A caller that
+ * wants a percentage divides `loaded / total` itself and has to handle that
+ * `undefined` case; inventing a fake total here would let it render a bar
+ * that lies.
+ */
+export interface UploadProgress {
+  loaded: number
+  total: number | undefined
+}
+
+/** What `sendXhr` resolves to: shaped like the pieces of a `fetch` `Response`
+ * that `parseErrorBody`/`JSON.parse` and the success path below actually
+ * need, so both can be written once and shared with `request()`. */
+interface XhrOutcome {
+  status: number
+  statusText: string
+  text: string
+  getHeader: (name: string) => string | null
+}
+
+/**
+ * One XHR round trip for `uploadWithProgress`, wrapped in a promise.
+ *
+ * Not `request()`'s `fetch`-based `send` helper, because none of this exists
+ * on `fetch`: `xhr.upload.onprogress` is the entire reason this transport is
+ * XHR at all (see the module this is called from). Everything else here is
+ * XHR's more awkward way of getting the same things `fetch` gives `request()`
+ * for free — a settled promise, response text, and header lookup — so the
+ * caller (`uploadWithProgress`) can build the same `ApiError` shape from
+ * either transport.
+ */
+function sendXhr(
+  path: string,
+  form: FormData,
+  token: string | undefined,
+  onProgress: ((progress: UploadProgress) => void) | undefined,
+  signal: AbortSignal | undefined,
+): Promise<XhrOutcome> {
+  return new Promise((resolve, reject) => {
+    // Handle a signal that arrived pre-aborted (the caller cancelled before
+    // this ever got to run) without opening a connection at all.
+    if (signal?.aborted) {
+      reject(new DOMException("Upload cancelled", "AbortError"))
+      return
+    }
+
+    const xhr = new XMLHttpRequest()
+    xhr.open("POST", `${BASE}${path}`)
+    // FormData body, so no `Content-Type` here — `authHeaders`'s `isFormData`
+    // branch omits it and the browser sets its own multipart boundary. See
+    // that function's doc comment; the rule is the same one `request()`
+    // follows for a `FormData` body, just applied through `setRequestHeader`
+    // instead of a fetch `headers` object.
+    const headers = authHeaders(true, token) as Record<string, string>
+    for (const [key, value] of Object.entries(headers)) {
+      xhr.setRequestHeader(key, value)
+    }
+
+    const onAbort = (): void => xhr.abort()
+    signal?.addEventListener("abort", onAbort)
+    const cleanup = (): void => signal?.removeEventListener("abort", onAbort)
+
+    xhr.upload.onprogress = (event) => {
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.lengthComputable ? event.total : undefined,
+      })
+    }
+    // `upload.onprogress` is not guaranteed to deliver one last event at
+    // exactly 100% — a browser can coalesce the tail of the transfer into the
+    // response phase instead of reporting it as progress. Firing a final
+    // progress callback here explicitly means the bar always reaches full
+    // once the browser itself says the upload is done, rather than
+    // occasionally sitting a few points short while FastAPI is already
+    // writing the reply.
+    xhr.upload.onload = (event) => {
+      onProgress?.({
+        loaded: event.loaded,
+        total: event.lengthComputable ? event.total : undefined,
+      })
+    }
+
+    xhr.onload = () => {
+      cleanup()
+      resolve({
+        status: xhr.status,
+        statusText: xhr.statusText,
+        text: xhr.responseText,
+        getHeader: (name) => xhr.getResponseHeader(name),
+      })
+    }
+    xhr.onerror = () => {
+      cleanup()
+      // Mirrors the shape a dropped `fetch` produces downstream: `request()`'s
+      // outer `catch` wraps a non-`ApiError` rejection as
+      // `ApiError(0, String(err))`, and status 0 is this codebase's spelling
+      // of "no response reached the server at all" —
+      // `describeQueryFailure`/`studentLoadFailureMessage` (and
+      // `classifyRouteError`) all key off exactly that status, so a dropped
+      // upload must not read as a worse or different failure than any other
+      // dropped request in the app.
+      reject(new ApiError(0, "Failed to fetch"))
+    }
+    xhr.onabort = () => {
+      cleanup()
+      reject(new DOMException("Upload cancelled", "AbortError"))
+    }
+
+    // `send()` can throw synchronously (a malformed URL, a blocked scheme).
+    // The `Promise` constructor turns that into a rejection on its own, but
+    // it would leave the abort listener attached to the caller's signal and
+    // the `xhr` alive with it, so the cleanup has to be explicit here.
+    try {
+      xhr.send(form)
+    } catch (err) {
+      cleanup()
+      reject(err)
+    }
+  })
+}
+
+/**
+ * POST multipart `FormData` via `XMLHttpRequest`, reporting upload progress
+ * through `onProgress` as it goes. Everything else about this call is meant
+ * to be indistinguishable from `request()` — same base URL, same auth
+ * header, same pre-emptive refresh, same one-shot 401 replay, same `detail`
+ * extraction, same `Retry-After` handling, same network-failure shape — see
+ * `sendXhr` above for the parts XHR does differently to get there. The one
+ * thing `request()` cannot offer at all is `onProgress`: `fetch` has no way
+ * to report bytes sent for a request body, so `CorrectPaper.tsx`'s paper
+ * upload — often several megabytes over a slow connection — used to sit
+ * with nothing on screen moving until the whole thing landed.
+ */
+export async function uploadWithProgress<T>(
+  path: string,
+  form: FormData,
+  options?: { onProgress?: (progress: UploadProgress) => void; signal?: AbortSignal },
+): Promise<T> {
+  const { onProgress, signal } = options ?? {}
+
+  try {
+    return await uploadOnce<T>(path, form, onProgress, signal)
+  } catch (err) {
+    // The same normalisation `request()` does at its own catch, and for the
+    // same reason: without it a 2xx whose body is not JSON — a captive portal
+    // or a misconfigured proxy answering `200 text/html` — throws a bare
+    // `SyntaxError`, which `correctionFailureMessage` falls through to its
+    // "any Error with a message" branch and prints verbatim. The student is
+    // then shown `Unexpected token '<', "<!DOCTYPE "... is not valid JSON`
+    // in the marking panel, which is exactly the engine wording
+    // `correctionOutcome.ts`'s own header exists to keep off this screen.
+    // An unguarded `res.json()` inside `refreshSession` reaches here the same
+    // way.
+    //
+    // `AbortError` is deliberately let through as itself: a cancel is not a
+    // failure, and a caller needs to tell the two apart.
+    if (err instanceof ApiError) throw err
+    if (err instanceof DOMException && err.name === "AbortError") throw err
+    throw new ApiError(0, String(err))
+  }
+}
+
+/** One `uploadWithProgress` attempt, unwrapped — see its caller for why the
+ * normalisation lives one frame out. */
+async function uploadOnce<T>(
+  path: string,
+  form: FormData,
+  onProgress: ((progress: UploadProgress) => void) | undefined,
+  signal: AbortSignal | undefined,
+): Promise<T> {
+  let result = await sendXhr(path, form, await tokenForRequest(), onProgress, signal)
+  if (result.status === 401) {
+    // Same replay-once rule as `request()` (see its own comment): safe here
+    // because a `FormData` body is fully buffered by the browser before
+    // `xhr.send()` even starts uploading it, so sending it a second time on a
+    // renewed token reads it from the same buffer rather than needing the
+    // original `File`s to still be around.
+    const renewed = await refreshSession()
+    if (renewed) result = await sendXhr(path, form, renewed, onProgress, signal)
+  }
+  if (result.status < 200 || result.status >= 300) {
+    const { message, detail } = parseErrorBody(result.status, result.statusText, result.text)
+    const retryAfter = parseRetryAfter(result.getHeader("Retry-After"), new Date())
+    throw new ApiError(result.status, message, detail, retryAfter ?? undefined)
+  }
+  // Same 204 special-case as `request()` — `JSON.parse("")` would throw.
+  if (result.status === 204) return undefined as T
+  return JSON.parse(result.text) as T
 }

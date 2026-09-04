@@ -28,9 +28,26 @@ export type ProcessingStageStatus = "pending" | "active" | "done" | "error"
 
 export interface ProcessingStageProgress {
   current: number
-  total: number
-  /** e.g. "question" → renders "Question 7 of 21". Defaults to "item". */
+  /**
+   * Undefined exactly when the wire couldn't tell us a total (a request that
+   * isn't length-computable, e.g. an upload over a connection that never
+   * reports `Content-Length` framing) — not a value to fill in on its behalf.
+   * `StageProgressBar` reads this as the indeterminate case: a running label
+   * with no bar and no percentage, since a bar implies a known endpoint this
+   * reading does not have.
+   */
+  total?: number
+  /** e.g. "question" → renders "Question 7 of 21". Defaults to "item".
+   * Ignored when `label` is set. */
   unit?: string
+  /**
+   * A preformatted replacement for the "{Unit} {current} of {total}" text —
+   * e.g. `"3.2 MB of 8.1 MB"` for the upload stage, where the wire unit is
+   * bytes and the default phrasing would read "Byte 3355443 of 8493465". The
+   * bar itself still runs off `current`/`total` unchanged; only the text row
+   * above it is replaced.
+   */
+  label?: string
 }
 
 export interface ProcessingStage {
@@ -41,7 +58,8 @@ export interface ProcessingStage {
   detail?: string
   /** Required by product rule when status === "error" — no generic fallback is rendered if omitted. */
   errorMessage?: string
-  /** Marking stage: per-question counter. */
+  /** A real counter for the stage currently running — the marking stage's
+   * per-question count, or the upload stage's bytes moved. */
   progress?: ProcessingStageProgress
 }
 
@@ -151,18 +169,42 @@ function phaseKicker(
   return `Phase ${index + 1}`
 }
 
-/* Real per-question counter only, per S-14: this reads `stage.progress` —
- * which `frameProgress` in `pipelineStages.ts` only ever populates from an
- * actual `index`/`total` on the wire — and renders nothing when it is
- * undefined. It never estimates a percentage from stage position, elapsed
- * time, or anything else that isn't the number the backend sent. */
+/* Real progress only, per S-14 — never estimated. Two wire sources feed
+ * `stage.progress`: `frameProgress` in `pipelineStages.ts`, which only ever
+ * populates it from an actual `index`/`total` the backend sent, and the
+ * upload stage's own `xhr.upload.onprogress` bytes (`CorrectPaper.tsx`'s
+ * `uploadStageProgress`). Both are genuine wire signal, not a derived guess,
+ * which is what this component actually enforces — it is agnostic about
+ * *which* real counter it is handed. It never estimates a percentage from
+ * stage position, elapsed time, or anything else that isn't a number the
+ * wire actually reported.
+ *
+ * Two things render nothing rather than a fabricated fact: this whole
+ * component is skipped by its caller when `stage.progress` itself is
+ * undefined (no counter has arrived yet), and below, a `progress.total` of
+ * `undefined` renders the label alone with no bar and no percentage — the
+ * indeterminate case, where the wire has bytes moved but no total to measure
+ * them against. A bar or a percentage would claim a known endpoint that
+ * reading does not have. */
 function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
+  const unit = capitalize(progress.unit ?? "item")
+
+  if (progress.total === undefined) {
+    return (
+      <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
+        <span className="text-data-sm text-ink-muted">
+          {progress.label ?? `${unit} ${progress.current}`}
+        </span>
+      </div>
+    )
+  }
+
   const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
   return (
     <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
       <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
         <span className="text-ink-muted">
-          {capitalize(progress.unit ?? "item")} {progress.current} of {progress.total}
+          {progress.label ?? `${unit} ${progress.current} of ${progress.total}`}
         </span>
         <span className="flex-none text-accent-ink">{pct}%</span>
       </div>
