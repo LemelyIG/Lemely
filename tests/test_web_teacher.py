@@ -19,6 +19,7 @@ import threading
 import time
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
@@ -49,6 +50,7 @@ from lemely.db.models import TeacherPaper, User
 from lemely.db.models.enums import DifficultySource, QuestionDifficulty, QuestionSource, Role
 from lemely.db.models.quizzes import QuestionBank
 from lemely.db.question_bank_repo import QuestionBankService
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
 from lemely.io.gemini import GeminiClient
 from lemely.io.history_store import HistoryStore
@@ -62,6 +64,7 @@ from lemely.web.deps import (
     get_gemini_client,
     get_history_store,
     get_question_bank_service,
+    get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_teacher_paper_repo,
@@ -71,7 +74,12 @@ from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
+
+# A real, deterministically-parseable CAIE mark scheme PDF (0625 Physics),
+# already used across the suite as the canonical "real, parseable scheme"
+# fixture (see e.g. tests/test_cli.py's REAL_MARK_SCHEME, the pre-parsed JSON
+# sibling of this same PDF).
+_REAL_SCHEME_PDF = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.pdf")
 
 # ---------------------------------------------------------------------------
 # Fixtures.
@@ -143,9 +151,26 @@ def paper_repo(pg_sessionmaker: sessionmaker[Session]) -> TeacherPaperRepository
 
 
 @pytest.fixture
+def corpus_repo(pg_sessionmaker: sessionmaker[Session]) -> SchemeCorpusRepository:
+    """A :class:`SchemeCorpusRepository` bound to the same throwaway database (spec §4.3)."""
+    return SchemeCorpusRepository(pg_sessionmaker)
+
+
+@pytest.fixture
 def storage_backend() -> FakeStorageBackend:
     """An in-memory :class:`StorageBackend` double — no network, no local disk."""
     return FakeStorageBackend()
+
+
+@pytest.fixture
+def scheme_pdf_bytes() -> bytes:
+    """Bytes of a real, deterministically-parseable CAIE mark scheme (0625, Physics).
+
+    ``0625`` is a bundled syllabus (see ``lemely.io.syllabus_topics``), so a
+    scheme parsed from this file always has somewhere to file under —
+    ``SchemeCorpusRepository.store`` never returns ``None`` for it.
+    """
+    return _REAL_SCHEME_PDF.read_bytes()
 
 
 @pytest.fixture
@@ -155,6 +180,7 @@ def client(
     gemini_client: MagicMock,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
+    corpus_repo: SchemeCorpusRepository,
     teacher_user: uuid.UUID,
 ) -> Iterator[TestClient]:
     """A TestClient with the shared singletons — repo and storage included — overridden."""
@@ -164,6 +190,7 @@ def client(
     app.dependency_overrides[get_gemini_client] = lambda: gemini_client
     app.dependency_overrides[get_teacher_paper_repo] = lambda: paper_repo
     app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    app.dependency_overrides[get_scheme_corpus_repo] = lambda: corpus_repo
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=str(teacher_user), role="teacher"
     )
@@ -553,6 +580,7 @@ def test_detection_failure_is_recorded_without_failing_the_upload(
     gemini_client: MagicMock,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
+    corpus_repo: SchemeCorpusRepository,
     teacher_user: uuid.UUID,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -580,7 +608,13 @@ def test_detection_failure_is_recorded_without_failing_the_upload(
     bus.subscribe(EventType.WARNING, _capture)
     try:
         with _key_client(
-            settings, history_store, gemini_client, paper_repo, storage_backend, teacher_user
+            settings,
+            history_store,
+            gemini_client,
+            paper_repo,
+            storage_backend,
+            corpus_repo,
+            teacher_user,
         ) as local:
             resp = local.post(
                 "/api/papers/upload", files={"scan": ("scan.pdf", b"%PDF-1.4", "application/pdf")}
@@ -755,6 +789,7 @@ def _key_client(
     gemini_client: MagicMock,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
+    corpus_repo: SchemeCorpusRepository,
     teacher_user: uuid.UUID,
 ) -> Iterator[TestClient]:
     """A ``client`` whose settings carry an API key, so detection actually runs.
@@ -770,6 +805,7 @@ def _key_client(
     app.dependency_overrides[get_gemini_client] = lambda: gemini_client
     app.dependency_overrides[get_teacher_paper_repo] = lambda: paper_repo
     app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    app.dependency_overrides[get_scheme_corpus_repo] = lambda: corpus_repo
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=str(teacher_user), role="teacher"
     )
@@ -785,6 +821,7 @@ def test_upload_does_not_wait_on_metadata_detection(
     gemini_client: MagicMock,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
+    corpus_repo: SchemeCorpusRepository,
     teacher_user: uuid.UUID,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -811,7 +848,13 @@ def test_upload_does_not_wait_on_metadata_detection(
     monkeypatch.setattr(teacher, "ScanMetadataExtractor", _SlowExtractor)
 
     with _key_client(
-        settings, history_store, gemini_client, paper_repo, storage_backend, teacher_user
+        settings,
+        history_store,
+        gemini_client,
+        paper_repo,
+        storage_backend,
+        corpus_repo,
+        teacher_user,
     ) as local:
         started = time.monotonic()
         paper_id = _upload(local, scheme=False)
@@ -1292,6 +1335,7 @@ def test_card_name_is_the_detected_paper_label(
     gemini_client: MagicMock,
     paper_repo: TeacherPaperRepository,
     storage_backend: FakeStorageBackend,
+    corpus_repo: SchemeCorpusRepository,
     teacher_user: uuid.UUID,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1316,7 +1360,13 @@ def test_card_name_is_the_detected_paper_label(
     monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: None)
 
     with _key_client(
-        settings, history_store, gemini_client, paper_repo, storage_backend, teacher_user
+        settings,
+        history_store,
+        gemini_client,
+        paper_repo,
+        storage_backend,
+        corpus_repo,
+        teacher_user,
     ) as local:
         paper_id = _upload(local, scheme=False)
         _settle(paper_repo, paper_id)
@@ -1503,17 +1553,75 @@ def test_grading_queue_flags_low_confidence(
 # ---------------------------------------------------------------------------
 
 
-def test_schemes_empty(client: TestClient) -> None:
-    """No parsed schemes on disk → empty list with zeroed parsed/failed stats."""
+def test_schemes_empty(client: TestClient, corpus_repo: SchemeCorpusRepository) -> None:
+    """No stored schemes in the corpus → empty list with a zeroed "Parsed" stat.
+
+    The old "Failed" card is gone (spec §4.3): nothing on disk can fail to
+    load any more, so only "Parsed" is emitted.
+    """
     body = client.get("/api/schemes").json()
     assert body["schemes"] == []
+    assert [s["key"] for s in body["stats"]] == ["Parsed"]
+    assert body["stats"][0]["value"] == "0"
+
+
+def test_upload_scheme_persists_row_and_pdf(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    scheme_pdf_bytes: bytes,
+) -> None:
+    """A real scheme upload lands as a ``mark_schemes`` row plus a stored PDF (spec §4.3).
+
+    Pins the object key exactly: ``schemes/{mark_scheme_id}/{safe_name}``
+    (spec §4.1), keyed on the server-generated scheme id, never the client
+    filename alone.
+    """
+    resp = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("0625_s23_ms_11.pdf", scheme_pdf_bytes, "application/pdf")},
+    )
+    assert resp.status_code == 200
+    rows = corpus_repo.list_rows()
+    assert len(rows) == 1 and rows[0].doc == "0625_s23_ms_11.pdf"
+    keys = [k for (_b, k) in storage_backend._objects]
+    assert keys == [f"schemes/{rows[0].id}/0625_s23_ms_11.pdf"]
+    listing = client.get("/api/schemes").json()
+    assert [s["key"] for s in listing["stats"]] == ["Parsed"]
+    assert listing["stats"][0]["value"] == "1"
+
+
+def test_schemes_lists_corpus_rows_with_data_backed_fields(
+    client: TestClient, corpus_repo: SchemeCorpusRepository
+) -> None:
+    """A stored corpus row is surfaced with data-backed row fields, not on-disk JSON."""
+    corpus_repo.store(_scheme(), provenance="teacher_upload:deterministic")
+
+    body = client.get("/api/schemes").json()
+    assert len(body["schemes"]) == 1
+    row = body["schemes"][0]
+    # `_scheme()` (this module's builder, above) is Paper 3 Variant 1, May/June 2020.
+    assert row["paper"] == "Paper 3 V1"
+    assert row["session"] == "May/June 2020"
+    assert row["maxMarks"] == 2
+    assert row["questionCount"] == 1
+    assert row["status"] == "parsed"
     stats = {s["key"]: s["value"] for s in body["stats"]}
-    assert stats["Parsed"] == "0"
-    assert stats["Failed"] == "0"
+    assert stats["Parsed"] == "1"
 
 
-def test_schemes_lists_parsed(client: TestClient, settings: Settings) -> None:
-    """A parsed MarkScheme JSON on disk is surfaced with data-backed row fields."""
+def test_upload_unknown_subject_scheme_is_422_and_stores_nothing(
+    client: TestClient,
+    corpus_repo: SchemeCorpusRepository,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A subject with no bundled syllabus taxonomy is a 422, not a silently-lost upload.
+
+    ``SchemeCorpusRepository.store`` returns ``None`` for this case rather
+    than raising; the route must turn that into a 422 and must not upload the
+    PDF to storage on that path.
+    """
     from lemely.core.loose_schemas import (
         AnswerPoint,
         MarkScheme,
@@ -1525,16 +1633,16 @@ def test_schemes_lists_parsed(client: TestClient, settings: Settings) -> None:
         SessionMonth,
     )
 
-    scheme = MarkScheme(
+    bogus_scheme = MarkScheme(
         metadata=MarkSchemeMetadata(
-            subject="Physics",
-            subject_code="0625",
-            paper_number=3,
+            subject="Unknown Subject",
+            subject_code="9999",
+            paper_number=1,
             paper_variant=1,
             session_month=SessionMonth.MAY_JUNE,
-            session_year=2020,
+            session_year=2024,
             paper_type=PaperType.THEORY_CORE,
-            maximum_mark=80,
+            maximum_mark=2,
             scheme_format=SchemeFormat.POINT_BASED,
         ),
         questions=[
@@ -1546,23 +1654,22 @@ def test_schemes_lists_parsed(client: TestClient, settings: Settings) -> None:
             )
         ],
     )
-    schemes_dir = settings.paths.output_dir / "schemes"
-    schemes_dir.mkdir(parents=True, exist_ok=True)
-    (schemes_dir / "0625_s20_ms_31.json").write_text(
-        scheme.model_dump_json(indent=2), encoding="utf-8"
-    )
 
-    body = client.get("/api/schemes").json()
-    assert len(body["schemes"]) == 1
-    row = body["schemes"][0]
-    assert row["doc"] == "0625_s20_ms_31.json"
-    assert row["paper"] == "Paper 3 V1"
-    assert row["session"] == "May/June 2020"
-    assert row["maxMarks"] == 80
-    assert row["questionCount"] == 1
-    assert row["status"] == "parsed"
-    stats = {s["key"]: s["value"] for s in body["stats"]}
-    assert stats["Parsed"] == "1"
+    class _FakeParser:
+        def __init__(self, *, cfg: object) -> None: ...
+
+        def __call__(self, pdf_path: object) -> MarkScheme:
+            return bogus_scheme
+
+    monkeypatch.setattr("lemely.io.det.DeterministicMarkSchemeParser", _FakeParser)
+
+    resp = client.post(
+        "/api/schemes",
+        files={"scheme_pdf": ("nine.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert corpus_repo.list_rows() == []
+    assert storage_backend._objects == {}
 
 
 # ---------------------------------------------------------------------------

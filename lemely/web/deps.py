@@ -52,6 +52,7 @@ from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
@@ -129,6 +130,12 @@ def get_teacher_paper_repo() -> TeacherPaperRepository:
         get_sessionmaker(settings),
         stale_after=timedelta(seconds=settings.grading.stale_run_after_seconds),
     )
+
+
+@lru_cache(maxsize=1)
+def get_scheme_corpus_repo() -> SchemeCorpusRepository:
+    """Return the process-wide :class:`SchemeCorpusRepository` singleton (spec §4.3)."""
+    return SchemeCorpusRepository(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -899,6 +906,7 @@ def reset_singletons() -> None:
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
     get_teacher_paper_repo.cache_clear()
+    get_scheme_corpus_repo.cache_clear()
     get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()

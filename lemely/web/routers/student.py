@@ -54,6 +54,7 @@ from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
 from lemely.db.upload_repo import StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
@@ -73,6 +74,7 @@ from lemely.web.deps import (
     get_notification_service,
     get_parent_link_service,
     get_push_transport,
+    get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_student_profile_service,
@@ -736,71 +738,42 @@ def student_upload_run(
 # ── Correct a paper (SSE self-mark) ───────────────────────────────────────────
 
 
-def _metadata_matches(scheme_meta: object, detected: ExamMetadata) -> bool:
-    """Return True when a stored scheme's metadata matches the detected paper.
-
-    Compares subject_code / paper_number / paper_variant always, and the session
-    (month + year) only when the scan detected one — a scan without a resolved
-    session should still match a scheme for the same paper.
-    """
-    if getattr(scheme_meta, "subject_code", None) != detected.subject_code:
-        return False
-    if getattr(scheme_meta, "paper_number", None) != detected.paper_number:
-        return False
-    if getattr(scheme_meta, "paper_variant", None) != detected.paper_variant:
-        return False
-    if detected.session_year is not None:
-        return bool(getattr(scheme_meta, "session_year", None) == detected.session_year)
-    return True
-
-
 def resolve_mark_scheme(
-    scan_path: Path,
+    sibling_scheme: Path | None,
+    corpus: SchemeCorpusRepository,
     settings: Settings,
     gemini_client: GeminiClient,
     *,
-    metadata: ExamMetadata | None = None,
+    metadata: ExamMetadata | None,
 ) -> MarkScheme | None:
-    """Resolve a mark scheme for a scan: sibling PDF first, then scheme corpus.
+    """Resolve a mark scheme: sibling PDF first, then the corpus by detected metadata.
 
-    Preference order:
+    Preference order (spec §4.3 — shared by both portals):
 
-    1. A ``mark_scheme.pdf`` sitting next to the scan (uploaded with it) — parsed
-       via the deterministic parser with a Gemini fallback.
-    2. When ``metadata`` was detected, a parsed scheme JSON in
-       ``output_dir/schemes`` whose metadata matches the detected paper.
+    1. ``sibling_scheme``, when given: a mark-scheme PDF uploaded alongside the
+       scan, parsed via :class:`ChainedMarkSchemeParser` (deterministic first,
+       Gemini fallback on a parse failure). A scheme handed to this call
+       explicitly always wins over the corpus, whatever the corpus holds for
+       the same paper.
+    2. Otherwise, when ``metadata`` was detected, the parsed scheme corpus
+       (:meth:`SchemeCorpusRepository.find_for`) — a query keyed on the exact
+       detected paper identity, never a free-text/fuzzy match, so a near-miss
+       returns ``None`` rather than a different paper's scheme.
 
     Returns ``None`` when neither source yields a scheme (the caller then warns
     and marks the upload failed rather than inventing marks).
     """
-    sibling = scan_path.parent / "mark_scheme.pdf"
-    if sibling.exists():
+    if sibling_scheme is not None:
         from lemely.io.det import DeterministicMarkSchemeParser
 
         parser = ChainedMarkSchemeParser(
             DeterministicMarkSchemeParser(cfg=settings.det_parser),
             GeminiMarkSchemeParser(gemini_client),
         )
-        return parser(sibling)
-
+        return parser(sibling_scheme)
     if metadata is None:
         return None
-
-    import json
-
-    from pydantic import ValidationError
-
-    schemes_dir = settings.paths.output_dir / "schemes"
-    if not schemes_dir.exists():
-        return None
-    for path in sorted(schemes_dir.glob("*.json")):
-        try:
-            scheme = MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
-        except (ValidationError, json.JSONDecodeError, OSError):
-            continue
-        if _metadata_matches(scheme.metadata, metadata):
-            return scheme
-    return None
+    return corpus.find_for(metadata)
 
 
 def _alert_teachers_and_parents(
@@ -894,6 +867,7 @@ def student_correct(
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
     settings: Annotated[Settings, Depends(get_settings)],
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
     xp_service: Annotated[XpService, Depends(get_xp_service)],
     notification_service: Annotated[NotificationService, Depends(get_notification_service)],
     push_transport: Annotated[NotificationTransport, Depends(get_push_transport)],
@@ -964,6 +938,7 @@ def student_correct(
                 # A sibling mark_scheme.pdf, if the student uploaded one, lives
                 # next to the scan under the same object-key prefix.
                 scheme_object_path = f"{Path(owned.storage_path).parent.as_posix()}/mark_scheme.pdf"
+                sibling_scheme: Path | None = None
                 try:
                     scheme_bytes = storage_backend.download(
                         settings.storage.bucket, scheme_object_path
@@ -971,7 +946,8 @@ def student_correct(
                 except StorageObjectNotFoundError:
                     pass
                 else:
-                    (tmp_path / "mark_scheme.pdf").write_bytes(scheme_bytes)
+                    sibling_scheme = tmp_path / "mark_scheme.pdf"
+                    sibling_scheme.write_bytes(scheme_bytes)
 
                 metadata: ExamMetadata | None = None
                 if settings.gemini_api_key is not None:
@@ -985,7 +961,7 @@ def student_correct(
                         )
 
                 mark_scheme = resolve_mark_scheme(
-                    scan_path, settings, gemini_client, metadata=metadata
+                    sibling_scheme, corpus, settings, gemini_client, metadata=metadata
                 )
                 if mark_scheme is None:
                     bus.publish(

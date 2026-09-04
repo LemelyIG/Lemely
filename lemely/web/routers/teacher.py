@@ -20,7 +20,6 @@ route and a restart loses nothing mid-run.
 # dependency injection. (The per-file-ignore in pyproject.toml handles this.)
 from __future__ import annotations
 
-import json
 import queue
 import tempfile
 import threading
@@ -33,7 +32,6 @@ from typing import TYPE_CHECKING, Annotated, Literal
 import anyio
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, Response, UploadFile
-from pydantic import ValidationError
 
 from lemely.core.analytics import (
     aggregate_weaknesses_from_history,
@@ -59,7 +57,6 @@ from lemely.core.history import (
     is_paper,
     latest_grade_bearing,
 )
-from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
@@ -73,12 +70,13 @@ from lemely.db.at_risk_repo import (
 )
 from lemely.db.class_repo import ClassService, RosterEntry
 from lemely.db.history_repo import parse_user_id
-from lemely.db.models.enums import QuestionSource, Role, UploadStatus
+from lemely.db.models.enums import SESSION_MONTH_LABELS, QuestionSource, Role, UploadStatus
 from lemely.db.question_bank_repo import (
     QuestionBankRow,
     QuestionBankService,
     generated_questions_to_bank_rows,
 )
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository, SchemeCorpusRow
 from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
 
 if TYPE_CHECKING:
@@ -101,6 +99,7 @@ from lemely.web.deps import (
     get_history_store,
     get_question_bank_service,
     get_review_service,
+    get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_student_profile_service,
@@ -149,11 +148,7 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
-from lemely.web.upload_utils import (
-    check_upload_cap,
-    safe_upload_name,
-    write_upload_capped,
-)
+from lemely.web.upload_utils import check_upload_cap, safe_upload_name
 
 log = structlog.get_logger(__name__)
 
@@ -379,7 +374,7 @@ def _run_grading_job(
     storage: StorageBackend,
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
-    corpus: object | None = None,
+    corpus: SchemeCorpusRepository,
 ) -> None:
     """Detect, resolve, extract and mark one paper on this instance's pool. Never raises.
 
@@ -389,14 +384,9 @@ def _run_grading_job(
     makes is written to the row, not to process memory, so any instance's
     ``GET /papers/{id}`` sees it — including one that never ran this job.
 
-    ``corpus`` is a placeholder for the scheme-corpus repository Task 8 adds
-    (spec §4.3): threaded through and always ``None`` in this task, unused by
-    ``resolve_mark_scheme``, which still takes today's scan-path signature.
-    Typed ``object | None`` rather than the forward name of a class that does
-    not exist yet in this codebase — mypy strict resolves a forward reference
-    to an undefined name even under ``from __future__ import annotations``,
-    so naming the real type here would fail the type-check gate before Task 8
-    can create it. Task 8 both adds the class and narrows this parameter.
+    ``corpus`` is the scheme-corpus repository (spec §4.3): the fallback
+    ``resolve_mark_scheme`` (shared with the student portal) consults when no
+    scheme was attached alongside this scan.
 
     Failures are recorded on the row rather than raised: the caller is a pool
     worker with nobody to catch them, and every polling route reads
@@ -421,12 +411,11 @@ def _run_grading_job(
             tmp_dir = Path(tmp)
             scan_dest = tmp_dir / Path(row.storage_path).name
             scan_path = _download_to(storage, settings.storage.bucket, row.storage_path, scan_dest)
+            sibling: Path | None = None
             if row.scheme_storage_path is not None:
-                # Downloaded for its side effect only: `resolve_mark_scheme`
-                # (today's signature) finds an attached scheme by looking for
-                # a sibling file called exactly `mark_scheme.pdf` next to the
-                # scan — this is where that sibling lands.
-                _download_to(
+                # A scheme attached alongside the scan on upload — always
+                # preferred by `resolve_mark_scheme` over a corpus lookup.
+                sibling = _download_to(
                     storage,
                     settings.storage.bucket,
                     row.scheme_storage_path,
@@ -451,13 +440,8 @@ def _run_grading_job(
                     )
 
             repo.set_stage(paper_id, "scheme")
-            # Today's resolver signature: it looks for `mark_scheme.pdf` beside
-            # `scan_path`, which is exactly where the sibling above was
-            # downloaded. Task 8 switches this call to the corpus-backed
-            # signature (spec §4.3), which is why `corpus` is already a
-            # parameter here despite going unused until then.
             scheme = row.mark_scheme or resolve_mark_scheme(
-                scan_path, settings, gemini_client, metadata=metadata
+                sibling, corpus, settings, gemini_client, metadata=metadata
             )
             if scheme is None:
                 repo.fail(
@@ -500,6 +484,7 @@ def _start_run_if_claimed(
     storage: StorageBackend,
     history_store: HistoryStoreProtocol,
     gemini_client: GeminiClient,
+    corpus: SchemeCorpusRepository,
 ) -> bool:
     """Claim the run on the row; if this instance won, submit it to the local pool.
 
@@ -512,7 +497,7 @@ def _start_run_if_claimed(
     if not repo.claim_run(paper_id):
         return False
     _grading_pool.submit(
-        _run_grading_job, paper_id, settings, repo, storage, history_store, gemini_client, None
+        _run_grading_job, paper_id, settings, repo, storage, history_store, gemini_client, corpus
     )
     return True
 
@@ -691,6 +676,7 @@ async def upload_paper(
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
 ) -> UploadResponseDTO:
@@ -748,7 +734,7 @@ async def upload_paper(
     )
     # Marking starts here, not when a browser asks for it. A teacher who
     # uploads and immediately closes the tab still gets a graded paper.
-    _start_run_if_claimed(paper_id, settings, repo, storage, history_store, gemini_client)
+    _start_run_if_claimed(paper_id, settings, repo, storage, history_store, gemini_client, corpus)
     return UploadResponseDTO(jobId=str(paper_id), paperId=str(paper_id), detected=[])
 
 
@@ -819,6 +805,7 @@ def regrade_paper(
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
     gemini_client: Annotated[GeminiClient, Depends(get_gemini_client)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
 ) -> dict[str, str]:
     """Queue a paper for (re-)grading and return immediately.
 
@@ -832,7 +819,7 @@ def regrade_paper(
     the console keeps polling for the outcome.
     """
     row = _require_paper(repo, auth, paper_id)
-    _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client)
+    _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client, corpus)
     return {"paperId": paper_id, "status": "processing"}
 
 
@@ -982,98 +969,79 @@ def grading_queue(
 # ---------------------------------------------------------------------------
 
 
-def _schemes_dir(settings: Settings) -> Path:
-    """Return (creating) the directory holding parsed mark-scheme JSON files."""
-    schemes_dir = settings.paths.output_dir / "schemes"
-    schemes_dir.mkdir(parents=True, exist_ok=True)
-    return schemes_dir
-
-
-def _load_scheme(path: Path) -> MarkScheme | None:
-    """Load a parsed :class:`MarkScheme` JSON file, or ``None`` if invalid."""
-    try:
-        return MarkScheme.model_validate(json.loads(path.read_text(encoding="utf-8")))
-    except (ValidationError, json.JSONDecodeError, OSError):
-        return None
-
-
-def _scheme_row(path: Path, scheme: MarkScheme) -> SchemeRowDTO:
-    """Build a :class:`SchemeRowDTO` from a parsed mark scheme on disk."""
-    meta = scheme.metadata
+def _scheme_row_dto(row: SchemeCorpusRow) -> SchemeRowDTO:
+    """Build a :class:`SchemeRowDTO` from a corpus row (spec §4.3)."""
     return SchemeRowDTO(
-        doc=path.name,
-        paper=f"Paper {meta.paper_number} V{meta.paper_variant}",
-        session=_session_label(meta.session_month, meta.session_year),
-        maxMarks=meta.maximum_mark,
-        questionCount=len(scheme.all_questions_flat()),
+        doc=row.doc,
+        paper=f"Paper {row.paper_number} V{row.paper_variant}",
+        session=_session_label(SESSION_MONTH_LABELS[row.session_month], row.session_year),
+        maxMarks=row.maximum_mark,
+        questionCount=row.question_count,
         status="parsed",
     )
 
 
 @router.get("/schemes", response_model=SchemeListDTO)
 def list_schemes(
-    settings: Annotated[Settings, Depends(get_settings)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
 ) -> SchemeListDTO:
-    """Return parsed mark schemes plus computed stats (parsed / pending / failed)."""
-    schemes_dir = _schemes_dir(settings)
-    rows: list[SchemeRowDTO] = []
-    failed = 0
-    for path in sorted(schemes_dir.glob("*.json")):
-        scheme = _load_scheme(path)
-        if scheme is None:
-            failed += 1
-            continue
-        rows.append(_scheme_row(path, scheme))
-    # Only stats backed by real, computed data are emitted (D1.12 acceptance-review
-    # honesty fix M2): "Parsed"/"Failed" come from the on-disk scan above. The former
-    # "Pending" (PDFs awaiting parse) and "Your own" (per-teacher uploaded) cards were
-    # hardcoded "0" — there is no upload-queue or per-teacher scheme ownership model in
-    # Phase 1, so surfacing them as live counts misrepresented the feature. They return
-    # when the backing data exists (upload queue + teacher↔scheme ownership, Phase 2/3).
-    stats = [
-        StatCardDTO(key="Parsed", value=str(len(rows)), unit="schemes"),
-        StatCardDTO(
-            key="Failed",
-            value=str(failed),
-            unit="",
-            valueTone="err" if failed else "t1",
-        ),
-    ]
-    return SchemeListDTO(schemes=rows, stats=stats)
+    """Return parsed mark schemes from the corpus plus computed stats (spec §4.3).
+
+    The "Failed" stat card — which used to count unreadable JSON files on
+    disk — is gone: a row here is a ``mark_schemes`` record, and nothing on
+    disk can fail to load any more.
+    """
+    rows = corpus.list_rows()
+    return SchemeListDTO(
+        schemes=[_scheme_row_dto(r) for r in rows],
+        stats=[StatCardDTO(key="Parsed", value=str(len(rows)), unit="schemes")],
+    )
 
 
 @router.post("/schemes", response_model=SchemeRowDTO)
 async def upload_scheme(
     settings: Annotated[Settings, Depends(get_settings)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+    corpus: Annotated[SchemeCorpusRepository, Depends(get_scheme_corpus_repo)],
     scheme_pdf: Annotated[UploadFile, File()],
 ) -> SchemeRowDTO:
-    """Parse an uploaded CAIE mark-scheme PDF deterministically and persist it.
+    """Parse an uploaded CAIE mark-scheme PDF deterministically and persist it (spec §4.3).
 
     Uses :class:`DeterministicMarkSchemeParser` (no Gemini call). On success the
-    parsed :class:`MarkScheme` JSON is written to ``output_dir/schemes`` and the
-    resulting row is returned. Parse failures surface as a 422.
+    parsed scheme replaces the ``mark_schemes`` row for its paper (``store`` is
+    insert-or-replace, keyed on paper identity) and the PDF itself lands in
+    object storage at ``schemes/{mark_scheme_id}/{safe_name}`` (spec §4.1).
+    Parse failures surface as a 422, and so does a subject with no bundled
+    syllabus taxonomy — see :meth:`SchemeCorpusRepository.store`.
     """
     from lemely.io.det import DeterministicMarkSchemeParser
 
-    schemes_dir = _schemes_dir(settings)
+    pdf_bytes = await scheme_pdf.read()
+    check_upload_cap(pdf_bytes, max_bytes=_MAX_UPLOAD_BYTES)
     # Sanitise the client filename to a basename before joining — the raw value
     # must never be trusted as a path (traversal into ``../`` etc.).
     filename = _safe_upload_name(scheme_pdf.filename, "scheme.pdf")
-    pdf_path = schemes_dir / filename
-    # `_write_upload_capped` was a thin wrapper the papers section also used to
-    # read `_MAX_UPLOAD_BYTES` at call time; now that this is its only caller,
-    # this calls the shared helper directly instead of keeping a one-caller
-    # indirection around.
-    write_upload_capped(await scheme_pdf.read(), pdf_path, max_bytes=_MAX_UPLOAD_BYTES)
+    with tempfile.TemporaryDirectory() as tmp:
+        pdf_path = Path(tmp) / filename
+        pdf_path.write_bytes(pdf_bytes)
+        try:
+            scheme = DeterministicMarkSchemeParser(cfg=settings.det_parser)(pdf_path)
+        except Exception as exc:
+            raise HTTPException(status_code=422, detail=f"Mark scheme parse failed: {exc}") from exc
 
-    try:
-        scheme = DeterministicMarkSchemeParser(cfg=settings.det_parser)(pdf_path)
-    except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Mark scheme parse failed: {exc}") from exc
-
-    json_path = pdf_path.with_suffix(".json")
-    json_path.write_text(scheme.model_dump_json(indent=2), encoding="utf-8")
-    return _scheme_row(json_path, scheme)
+    scheme_id = corpus.store(scheme, provenance="teacher_upload:deterministic")
+    if scheme_id is None:
+        raise HTTPException(
+            status_code=422,
+            detail=(
+                f"No bundled syllabus for subject {scheme.metadata.subject_code}; "
+                "cannot file this scheme."
+            ),
+        )
+    key = f"schemes/{scheme_id}/{filename}"
+    storage.upload(settings.storage.bucket, key, pdf_bytes, scheme_pdf.content_type)
+    corpus.set_source_document(scheme_id, key)
+    return _scheme_row_dto(next(r for r in corpus.list_rows() if r.id == scheme_id))
 
 
 # ---------------------------------------------------------------------------

@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import uuid
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, cast
 from unittest.mock import MagicMock
 
@@ -26,13 +27,14 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+from lemely.core.schemas import ExamMetadata, ExtractedAnswer, ExtractedAnswers
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, QuestionResult
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
@@ -42,18 +44,19 @@ from lemely.web.deps import (
     get_attempt_repo,
     get_auth_context,
     get_gemini_client,
+    get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
     get_user_mirror,
 )
 from lemely.web.routers import student
+from lemely.web.routers.student import resolve_mark_scheme
 from lemely.web.upload_utils import check_upload_cap
 from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
 
 # ---------------------------------------------------------------------------
@@ -198,10 +201,76 @@ def _extracted() -> ExtractedAnswers:
     )
 
 
+def _scheme(
+    *,
+    subject: str = "0625",
+    paper: int = 1,
+    variant: int = 1,
+    month: str = "May/June",
+    year: int | None = 2023,
+) -> MarkScheme:
+    """A minimal, real two-question :class:`MarkScheme` for one paper identity.
+
+    Mirrors ``tests/test_scheme_corpus_repo.py``'s ``_scheme()``, parameterised
+    the same way, for the resolver tests below that need the corpus stocked
+    with a real, storable scheme.
+    """
+    from lemely.core.loose_schemas import (
+        AnswerPoint,
+        MarkSchemeMetadata,
+        PaperType,
+        Question,
+        QuestionType,
+        SchemeFormat,
+    )
+    from lemely.core.loose_schemas import SessionMonth as SchemeSessionMonth
+
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=subject,
+            paper_number=paper,
+            paper_variant=variant,
+            session_month=SchemeSessionMonth(month),
+            session_year=year,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=4,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            Question(
+                id="1",
+                marks=2,
+                type=QuestionType.RECALL,
+                answer_points=[AnswerPoint(id="p1", point="correct", marks=2)],
+            ),
+            Question(
+                id="2",
+                marks=2,
+                type=QuestionType.RECALL,
+                answer_points=[AnswerPoint(id="p1", point="correct", marks=2)],
+            ),
+        ],
+    )
+
+
+@pytest.fixture
+def gemini_client() -> MagicMock:
+    """A mocked GeminiClient — never makes network calls."""
+    return MagicMock(spec=GeminiClient)
+
+
+@pytest.fixture
+def corpus_repo(pg_sessionmaker: sessionmaker[Session]) -> SchemeCorpusRepository:
+    """A :class:`SchemeCorpusRepository` bound to the same throwaway database (spec §4.3)."""
+    return SchemeCorpusRepository(pg_sessionmaker)
+
+
 @pytest.fixture
 def client(
     settings: Settings,
     pg_sessionmaker: sessionmaker[Session],
+    corpus_repo: SchemeCorpusRepository,
     monkeypatch: pytest.MonkeyPatch,
 ) -> Iterator[tuple[TestClient, str, StudentUploadRepository]]:
     """A TestClient wired to real repos over a throwaway DB, Gemini mocked.
@@ -224,6 +293,7 @@ def client(
     app.dependency_overrides[get_attempt_repo] = lambda: attempt_repo
     app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
     app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    app.dependency_overrides[get_scheme_corpus_repo] = lambda: corpus_repo
     app.dependency_overrides[get_auth_context] = lambda: AuthContext(
         user_id=student_id, role="student"
     )
@@ -701,3 +771,97 @@ def test_teacher_role_forbidden(
     )
     assert upload.status_code == 403
     app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# resolve_mark_scheme (spec §4.3) — the shared resolver both portals call.
+#
+# These call the function directly (no HTTP client): the ``client`` fixture
+# above monkeypatches ``resolve_mark_scheme`` away entirely so the SSE tests
+# above stay deterministic and offline, which means those tests prove nothing
+# about the resolver itself. These do.
+# ---------------------------------------------------------------------------
+
+_REAL_SCHEME_PDF = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.pdf")
+"""A real, deterministically-parseable CAIE scheme (0625 Physics, paper 1
+variant 2, Feb/Mar 2020) — used below as the sibling PDF, deliberately a
+*different* paper identity from the corpus row the same test seeds, so a
+resolver that read from the wrong source would return the wrong paper."""
+
+
+def test_resolver_prefers_sibling_then_corpus(
+    tmp_path: Path,
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+) -> None:
+    corpus_repo.store(_scheme(), provenance="t")
+    meta = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_month="May/June",
+        session_year=2023,
+    )
+    resolved = resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=meta)
+    assert resolved is not None
+    assert resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=None) is None
+
+
+def test_resolver_sibling_wins_over_a_matching_corpus_scheme(
+    tmp_path: Path,
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+) -> None:
+    """A sibling scheme always wins, even when the corpus holds one for the exact same paper.
+
+    Getting the preference order backwards would silently grade a student's
+    work against a different scheme than the one they (or their teacher)
+    actually attached — the wrong-scheme risk the resolver exists to avoid.
+    """
+    corpus_repo.store(_scheme(paper=1, variant=1, month="May/June", year=2023), provenance="t")
+    meta = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_month="May/June",
+        session_year=2023,
+    )
+
+    sibling = tmp_path / "mark_scheme.pdf"
+    sibling.write_bytes(_REAL_SCHEME_PDF.read_bytes())
+
+    resolved = resolve_mark_scheme(sibling, corpus_repo, settings, gemini_client, metadata=meta)
+    assert resolved is not None
+    # The sibling is a real, *different* paper (variant 2, 40 marks, 40
+    # questions) from the corpus row stored above (variant 1, 4 marks, 2
+    # questions). If the corpus had won instead of the sibling, these would
+    # read the corpus row's numbers instead.
+    assert resolved.metadata.paper_variant == 2
+    assert resolved.metadata.maximum_mark == 40
+    assert len(resolved.questions) == 40
+
+
+def test_resolver_corpus_near_miss_returns_none_not_a_different_papers_scheme(
+    corpus_repo: SchemeCorpusRepository,
+    settings: Settings,
+    gemini_client: MagicMock,
+) -> None:
+    """A detected paper the corpus does not hold must resolve to ``None``.
+
+    The corpus has a scheme for paper 1; the caller detected paper 2. A
+    resolver that fell back to "closest match" here would silently mark a
+    student's paper-2 work against paper 1's scheme.
+    """
+    corpus_repo.store(_scheme(paper=1, variant=1), provenance="t")
+    near_miss = ExamMetadata(
+        subject_code="0625",
+        paper_number=2,
+        paper_variant=1,
+        session_month="May/June",
+        session_year=2023,
+    )
+    assert (
+        resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=near_miss) is None
+    )
