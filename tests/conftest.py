@@ -262,9 +262,17 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
     - 0625 paper 1 is Core-tier only (C-G, no A/B) on every recent session --
       see `lemely.io.grade_boundaries._load`'s own docstring and
       `test_web_parent.py::test_a_core_paper_has_no_reachable_grade_above_its_own_ceiling`.
-    - 0625 paper 2 variant 2, May/June 2020 carries an A boundary -- the exact
-      session `test_student_correct.py::_mcq_scheme_extended` resolves, whose
-      docstring explains why paper 1 (Core, capped at C) cannot stand in for it.
+    - 0625 paper 2's subject-default carries an A boundary (Extended, examined
+      every session) -- what `test_student_correct.py::_mcq_scheme_extended`
+      needs (paper 1, Core, is capped at C and has no A boundary at all -- see
+      that fixture's own docstring), and what
+      `test_web_parent.py::test_subject_detail_reports_the_distance_to_the_next_grade_up`
+      needs a B boundary from. Deliberately seeded at a *different*
+      session/variant than either test's default query (May/June 2020, paper
+      variant 2) so both resolve via `subject_default`, not `exact` --
+      `test_web_student.py::test_result_is_data_backed_with_empty_theory`
+      pins that its own May/June 2020 paper-2 query has no exact-match row
+      and reports the neutral "dash" provenance, not a fabricated "check".
     - `component_thresholds` never carries A* -- see
       `lemely.db.models.thresholds.ComponentThreshold`'s docstring ("Grade A*
       does not exist at this level").
@@ -331,13 +339,13 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
                 ComponentThreshold(
                     subject_code="0625",
                     session_month=SessionMonth.may_june,
-                    session_year=2020,
+                    session_year=2019,
                     paper_number=2,
-                    paper_variant=2,
-                    max_mark=40,
-                    thresholds={"A": 30, "B": 26, "C": 22, "D": 18, "E": 14, "F": 10, "G": 6},
+                    paper_variant=1,
+                    max_mark=50,
+                    thresholds={"A": 35, "B": 29, "C": 25, "D": 21, "E": 17, "F": 13, "G": 9},
                     verified=True,
-                    source_url="https://example.invalid/test-fixture/0625_s20_p22.pdf",
+                    source_url="https://example.invalid/test-fixture/0625_s19_p21.pdf",
                 ),
                 ComponentThreshold(
                     subject_code="0000",
