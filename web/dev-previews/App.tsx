@@ -34,6 +34,7 @@ import { SkipLink } from "@/components/ui/skip-link"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { FullPageState } from "@/portals/misc/FullPageState"
 import { OfflineBannerView } from "@/components/ui/offline-banner"
+import { VerifyEmailBannerView } from "@/components/ui/verify-email-banner"
 import { RECONNECTED_TOAST, UPDATED_TOAST } from "@/components/recovery-effects"
 
 /**
@@ -1383,6 +1384,26 @@ function AppBody() {
             <StateCell state="error" provenance="prop" note="OfflineBannerView, the hookless half">
               <div className="w-full">
                 <OfflineBannerView onRetry={() => undefined} />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="Verify-email banner"
+            summary="`VerifyEmailBanner`, mounted inside every portal layout's main below the offline strip. Shown only once the profile has resolved and says the address is unverified, so a pending or failed profile shows nothing rather than accusing a reader of something the app has not established. Dismissible for the session everywhere except `/student/correct`, where the dismiss control is absent and the marking button is disabled beneath it."
+          >
+            <StateCell state="error" provenance="prop" note="VerifyEmailBannerView, dismissible">
+              <div className="w-full">
+                <VerifyEmailBannerView onDismiss={() => undefined} />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="VerifyEmailBannerView, pinned on /student/correct"
+            >
+              <div className="w-full">
+                <VerifyEmailBannerView />
               </div>
             </StateCell>
           </ComponentSection>
