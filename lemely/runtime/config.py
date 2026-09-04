@@ -476,6 +476,56 @@ class PushSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0)
 
 
+class EmailSettings(BaseModel):
+    """Transactional-email credentials for the account-lifecycle mails (D7.7).
+
+    Overrides via ``lemely.toml`` under the ``[email]`` section or
+    ``LEMELY_EMAIL__*`` env vars.
+
+    **``api_key`` defaults to ``None`` and that is a supported state, not a
+    misconfiguration**, exactly as :class:`PushSettings` treats its VAPID keys:
+    with no key, ``lemely.web.deps`` wires
+    :class:`~lemely.auth.email.MockEmailProvider` and signup still completes —
+    the link is logged instead of posted. Every developer machine and every CI
+    run is in that state, so treating absence as an error would fail the suite
+    in exactly the environment it runs in.
+
+    **Why Resend and not Cloudflare.** The domain's DNS is on Cloudflare and the
+    SPF/DKIM/DMARC records that authorise this sender live in that zone (see
+    ``docs/email-delivery.md``), but Cloudflare Email Sending is *not available*
+    on the Workers Free plan — only inbound Email Routing is, plus outbound to
+    addresses already verified inside the account, which a stranger signing up
+    never is. Resend's free tier (3,000 mails/month, 100/day) covers the same
+    ground at no cost. The transport is a detail behind
+    :class:`~lemely.auth.email.EmailProvider`; the ``From:`` domain the
+    recipient sees is ``lemelyig.com`` either way.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Resend API key (``re_...``). Absent => the mock provider, see above. Never
+    # commit this. Deployed it arrives from the ``RESEND_API_KEY`` GitHub
+    # Actions environment secret, which ``deploy.yml`` hands to Cloud Run as
+    # ``LEMELY_EMAIL__API_KEY``; locally, export that variable in the shell.
+    api_key: OptionalSecret = None
+    # Envelope sender. Must be on a domain verified with the provider *and*
+    # carrying this sender's SPF/DKIM records in the Cloudflare zone, or mail is
+    # rejected outright rather than merely landing in spam.
+    from_address: str = "noreply@lemelyig.com"
+    # Display name shown beside the address in a recipient's client.
+    from_name: str = "Lemely"
+    # Where a recipient's reply goes. ``None`` means replies return to
+    # ``from_address`` — an unattended mailbox, which is why this is worth
+    # setting to a real inbox once one exists.
+    reply_to: OptionalCredential = None
+    # Per-request timeout. Short on purpose: verification mail is a best-effort
+    # side effect of an already-created account (``AuthService`` rule 4 — see
+    # ``_try_send_verification``), and must never make a signup hang.
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    # Base URL of the Resend REST API. A field rather than a constant purely so
+    # a test can point it at a local stub without monkeypatching the module.
+    api_base_url: str = "https://api.resend.com"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -497,6 +547,7 @@ class Settings(BaseSettings):
     integrity: IntegritySettings = IntegritySettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
+    email: EmailSettings = EmailSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

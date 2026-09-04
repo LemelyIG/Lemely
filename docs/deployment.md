@@ -129,6 +129,7 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `GEMINI_API_KEY` | `None` | To enable marking/extraction at all. Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. |
+| `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and lets the auth routes return it, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live link. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
 | `LEMELY_STORAGE__BUCKET` | `uploads` | Only to use a differently-named bucket. **The bucket must already exist** — nothing in this codebase creates it. |
 | `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | To change the hard spend cap (MISSION §8). |
 | `LEMELY_LOGGING__FORMAT` | `auto` | Set `json` for a log aggregator. |
@@ -438,6 +439,7 @@ replaces it).
 [ ] LEMELY_SUPABASE__JWT_SECRET set to the REAL secret  <-- nothing warns you
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
+[ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
 [ ] Storage bucket "uploads" created by hand
 [ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
 [ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --

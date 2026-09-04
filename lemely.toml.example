@@ -103,3 +103,31 @@ otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+
+[email]
+# Transactional mail for account verification and password reset (D7.7).
+#
+# Leave `api_key` unset and lemely.web.deps wires MockEmailProvider: the link
+# is logged to the `lemely.auth.email` logger instead of sent, and the auth
+# routes keep returning it so a local signup completes with no mail service at
+# all. That is the supported default for development and CI, not a broken
+# state. Setting a key flips both halves at once — mail is really sent, and the
+# routes stop returning the live link, because a real sender makes the inbox
+# the only place a bearer credential belongs.
+#
+# NEVER put the key in this file. `lemely.toml` is gitignored, but the key still
+# does not belong on disk. Deployed, it is the `RESEND_API_KEY` GitHub Actions
+# environment secret, which `deploy.yml` passes to Cloud Run as
+# LEMELY_EMAIL__API_KEY. Locally, export LEMELY_EMAIL__API_KEY in your shell.
+# api_key = "re_..."
+#
+# Must be on a domain verified with the provider AND carrying that sender's
+# SPF/DKIM records in the Cloudflare DNS zone — see docs/email-delivery.md.
+from_address = "noreply@lemelyig.com"
+from_name = "Lemely"
+# Where replies go. Unset means they return to `from_address`, an unattended
+# mailbox; point it at a real inbox once one exists.
+# reply_to = "support@lemelyig.com"
+# Short on purpose: verification mail is a best-effort side effect of an
+# already-created account and must never make a signup hang.
+timeout_seconds = 10.0

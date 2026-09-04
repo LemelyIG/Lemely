@@ -25,8 +25,18 @@ this entry is the user-visible summary.
   invite or platform-admin provisioning. `school_admin` and `platform_admin` remain unobtainable by
   an anonymous caller, unchanged.
 - Email verification, gating exactly one route — submitting a paper for marking — and nothing
-  else; an unverified account can sign in, browse and upload normally *(limited: no configured mail
-  provider actually sends anything in this build — see below)*.
+  else; an unverified account can sign in, browse and upload normally.
+- **Verification and reset mail is really sent**, over Resend, from `noreply@lemelyig.com` —
+  `ResendEmailProvider` behind the existing `EmailProvider` seam. `lemely.web.deps` picks it by
+  the *presence of `[email] api_key`*, never an environment name: with no key the offline mock
+  still logs the link and the routes still return it, so local sign-up works with no mail service
+  running. Configuring a key flips both halves at once — mail sends, and the routes stop handing
+  the live link back through the API, because a verification link is a bearer credential.
+  Cloudflare Email Sending was ruled out: it is unavailable on the Workers Free plan and needs the
+  $5/month Paid plan. DNS for the sending domain still lives in the Cloudflare zone. The key
+  ships the way every other secret does — a `RESEND_API_KEY` Actions environment secret that
+  `deploy.yml` passes to Cloud Run — and leaving it unset keeps the deploy green on the mock. See
+  `docs/email-delivery.md`.
 - Password reset by email link, which revokes every outstanding token **and every signed-in
   device** on success.
 - Redeemable invite codes: a school admin can mint a seat invite, a teacher can mint a class
@@ -52,9 +62,11 @@ this entry is the user-visible summary.
 
 ### Known limitations, stated rather than discovered later
 
-- **No configured provider sends mail.** The email seam (`EmailProvider`, mirroring the existing
-  SMS seam) ships with only an offline mock, exactly like parent phone-OTP. No screen claims a
-  mail was sent.
+- **Transactional mail is capped by a free tier.** Sending runs on Resend's free plan — 3,000
+  mails/month, 100/day — which bounds sign-ups plus resets per day. A send that fails or is
+  throttled is swallowed by design (it must not strand a just-created account, nor break
+  anti-enumeration on reset), so the failure mode is "no mail arrived", never a failed sign-up.
+  It is logged at `ERROR` on `lemely.auth.service`, which is the thing to alert on.
 - **The sign-up/resend/reset-request cooldown is in-process and per-worker** — a real deterrent
   against casual abuse from one process, not a distributed rate limit.
 - **The invite-code *mint* action has no screen yet.** The redemption side (`/join`) is fully

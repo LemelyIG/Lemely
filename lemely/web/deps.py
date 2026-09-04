@@ -21,7 +21,7 @@ from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from lemely.auth.cooldown import CooldownStore
-from lemely.auth.email import MockEmailProvider
+from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.otp import OtpStore
@@ -234,9 +234,28 @@ def get_auth_service() -> AuthService:
         otp_store=otp_store,
         settings=settings,
         device_registry=get_device_registry(),
-        email=MockEmailProvider(),
+        email=_build_email_provider(settings),
         tokens=get_auth_token_service(),
     )
+
+
+def _build_email_provider(settings: Settings) -> EmailProvider:
+    """Return the real email provider when one is configured, else the mock.
+
+    The choice is made by the *presence of a credential*, never by an
+    environment name — the same rule ``lemely.web.push`` applies to VAPID keys.
+    A machine with no ``[email] api_key`` (every developer checkout, every CI
+    run) gets :class:`~lemely.auth.email.MockEmailProvider`, which logs the link
+    and reports ``delivers_out_of_band = False``, so the auth routes keep
+    surfacing the dev link and signup still completes end to end offline.
+
+    Configuring a key flips both halves of that at once: mail is really sent,
+    and ``delivers_out_of_band = True`` stops the routes returning the live link
+    through the API. That coupling is the point — the two must never disagree.
+    """
+    if settings.email.api_key is None:
+        return MockEmailProvider()
+    return ResendEmailProvider(settings.email)
 
 
 class AuthServiceStudentCreator:
