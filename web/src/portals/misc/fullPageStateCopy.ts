@@ -16,9 +16,17 @@ import type { DoodleKind } from "@/components/ui/doodle"
  * not choose wording; it only names, per variant, which of the four fixed
  * actions (`home` / `sign-in` / `reload` / `retry`) go in the primary and
  * secondary slots, and what each of those four is labelled.
+ *
+ * `FullPageStateVariant` used to be `DoodleKind | "slow-load"` — every
+ * `DoodleKind` was a full-page state and vice versa. `state-views.tsx`'s
+ * `kind="empty"` (an in-screen empty state, not a full-page one) now needs
+ * its own `DoodleKind` with no full-page state to match, so it is excluded
+ * below rather than added as a tenth `FULL_PAGE_STATE_COPY` entry.
+ * `<Doodle kind={variant} />` in `FullPageState.tsx` still relies on every
+ * `FullPageStateVariant` being a real `DoodleKind` — that part still holds.
  */
 
-export type FullPageStateVariant = DoodleKind | "slow-load"
+export type FullPageStateVariant = Exclude<DoodleKind, "empty"> | "slow-load"
 
 export type FullPageStateAction = "home" | "sign-in" | "reload" | "retry"
 

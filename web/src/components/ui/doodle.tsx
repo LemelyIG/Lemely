@@ -29,6 +29,7 @@ export type DoodleKind =
   | "no-access"
   | "service-trouble"
   | "too-many-requests"
+  | "empty"
 
 /** One multi-subpath `d` string per kind — the printed hairlines. */
 const HAIRLINES: Record<DoodleKind, string> = {
@@ -40,6 +41,13 @@ const HAIRLINES: Record<DoodleKind, string> = {
   "no-access": "M6 14h108M6 30h34M80 30h34M6 46h34M80 46h34M6 62h58",
   "service-trouble": "M6 14h108M6 30h74M6 46h96M6 62h58",
   "too-many-requests": "M6 14h108M6 30h74M6 46h96M6 62h58",
+  // The standard four-line bed, same as most of the family (v2 — a first
+  // pass shortened this to two lines so the tray would sit in genuinely
+  // blank paper below them, which read as two unrelated objects rather than
+  // a mark made on ruled paper, the family's central conceit. The full bed
+  // plus a smaller accent that actually crosses it, like `too-many-requests`'
+  // hourglass does, is the fix.)
+  empty: "M6 14h108M6 30h74M6 46h96M6 62h58",
 }
 
 /** The handwritten accent overlay, per kind. Every element repeats
@@ -173,6 +181,26 @@ function DoodleAccent({ kind }: { kind: DoodleKind }) {
             strokeWidth="2"
           />
         </>
+      )
+    case "empty":
+      // v2 (design review): the empty tray is the calmest state in the set
+      // — "no papers assigned yet" is a normal fact, not a failure — so it
+      // has to be the *quietest* doodle, not the loudest. A closed,
+      // 52-wide, 22-tall trapezoid was the opposite: it read as a heavy
+      // solid object sitting under the hairlines rather than a light mark
+      // on them. This is three short strokes, open (no closing top edge,
+      // no fill), about the same footprint as `too-many-requests`' hourglass
+      // and `crash`'s squiggle, crossing the two hairlines it overlaps
+      // (y30, y46) exactly the way the rest of the family sits *on* the
+      // ruled page rather than beside it. Left empty on the inside: a
+      // checkmark or a dot here would read as something *in* the tray.
+      return (
+        <path
+          d="M44 30L49 46M76 30L71 46M49 46H71"
+          className="text-accent"
+          stroke="currentColor"
+          strokeWidth="2"
+        />
       )
   }
 }

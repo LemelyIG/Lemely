@@ -3,6 +3,7 @@ import type { HTMLAttributes, ReactNode } from "react"
 import { Tray, WarningCircle, WifiSlash, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
+import { Doodle, type DoodleKind } from "@/components/ui/doodle"
 import { PageHeaderSkeleton, ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
 
@@ -68,6 +69,27 @@ import { FullPageState, FullPageStateBody } from "@/portals/misc/FullPageState"
  * layout box, a much smaller failure than a whole panel refusing to load. The
  * full, centred layout keeps `alert` — that one is always the reader's whole
  * reason for being on the page.
+ *
+ * ── Bringing the full layout onto the canvas's language (in-screen error
+ * states audit) ─────────────────────────────────────────────────────────
+ *
+ * `FullPageState.tsx` (the nine full-page states) was built straight off the
+ * approved canvas: a line-drawn `Doodle`, a mono `text-data-sm text-ink-faint`
+ * kicker, and a `text-display-md text-ink` heading. This file's full
+ * (non-`compact`) layout never adopted that language — it kept the build-era
+ * 48px tone-washed icon circle and a `text-body-lg font-medium` heading — even
+ * though every in-screen empty/error/offline state in the product, including
+ * every `QueryState` error branch, renders through it. The two now match:
+ * `kindDoodle`/`kindKicker` below give every `kind` the same doodle-plus-kicker
+ * defaults `FullPageState`'s nine variants use, so the ~50 existing call sites
+ * pick up the new look without being touched. `icon` still overrides the
+ * doodle when a caller supplies one — kept in its original tone-washed circle,
+ * since a bare override icon floating with no container reads as unfinished,
+ * not as the doodle's deliberate line-drawn absence of one.
+ *
+ * `compact` is unchanged, deliberately: it is the inline one-line treatment
+ * inside cards, tab strips and chart frames, and a 112x64 doodle has no home
+ * there. Only the full centred layout took on the canvas's language.
  */
 
 export type StateViewKind = "empty" | "error" | "offline"
@@ -80,11 +102,21 @@ export interface StateViewAction {
 
 export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
   kind: StateViewKind
-  /** Override the default icon for this kind. */
+  /** Override the default doodle (full layout) or icon (`compact`) for this
+   * kind. In the full layout the override renders inside the old tone-washed
+   * circle rather than bare — see the module header. */
   icon?: ReactNode
-  /** Override the default tone (icon/badge color) for this kind. */
+  /** Override the default tone (icon/badge color) for this kind. Only visible
+   * in `compact`, or in the full layout when `icon` is also supplied — the
+   * doodle itself is always `text-rule`/`text-accent`, not tone-driven. */
   tone?: StateViewTone
-  /** Optional Caveat line above the heading (§12). Decorative: never put
+  /** Mono kicker above the heading in the full layout, mirroring
+   * `FullPageState`'s (`text-data-sm text-ink-faint`) — "Error", "Offline",
+   * "Empty". Defaults per `kind` via `kindKicker`; pass `null` to omit it
+   * entirely rather than "" (an empty string still renders an empty `<p>`).
+   * No effect on `compact`, which has never carried one. */
+  kicker?: string | null
+  /** Optional Caveat line above the kicker (§12). Decorative: never put
    * anything here that the reader would lose by not seeing it (§4.1). */
   marginalia?: string
   heading: string
@@ -103,10 +135,30 @@ export interface StateViewProps extends HTMLAttributes<HTMLDivElement> {
   children?: ReactNode
 }
 
+// `compact`'s icon/tone defaults — unchanged by this pass (see module
+// header). The full layout no longer uses `icon` from here at all; it draws
+// `kindDoodle` instead, unless a caller overrides with the `icon` prop.
 const kindDefaults: Record<StateViewKind, { icon: Icon; tone: StateViewTone }> = {
   empty: { icon: Tray, tone: "neutral" },
   error: { icon: WarningCircle, tone: "warn" },
   offline: { icon: WifiSlash, tone: "neutral" },
+}
+
+// The full layout's doodle + kicker defaults, one pair per `kind` — the
+// crux of not having to touch the ~50 existing call sites. `error` draws
+// `crash` (the generic "something failed" doodle `FullPageState` also uses
+// for its own `crash` variant) rather than a new one, since an in-screen
+// error and a full-page one are the same underlying idea at two sizes.
+const kindDoodle: Record<StateViewKind, DoodleKind> = {
+  empty: "empty",
+  error: "crash",
+  offline: "offline",
+}
+
+const kindKicker: Record<StateViewKind, string> = {
+  empty: "Empty",
+  error: "Error",
+  offline: "Offline",
 }
 
 const toneClasses: Record<StateViewTone, { icon: string; bg: string }> = {
@@ -119,6 +171,7 @@ export function StateView({
   kind,
   icon,
   tone,
+  kicker,
   marginalia,
   heading,
   body,
@@ -133,6 +186,10 @@ export function StateView({
   const resolvedTone = tone ?? defaults.tone
   const toneCls = toneClasses[resolvedTone]
   const Glyph = defaults.icon
+  // `kicker={null}` (explicit) omits the element; `undefined` (the common
+  // case, every call site that has not been touched) falls back to the
+  // kind's default rather than rendering nothing.
+  const resolvedKicker = kicker === null ? null : (kicker ?? kindKicker[kind])
   // `role` is computed from `kind`, not hardcoded per call site, so every
   // error panel in the product is announced the same way without every
   // screen having to remember to ask for it. `{...props}` still spreads after
@@ -204,26 +261,41 @@ export function StateView({
     <div
       role={regionRole}
       className={cn(
-        // `w-full` is load-bearing, not decoration: `max-w-sm` alone leaves the
-        // box its intrinsic 384px, which is wider than the 380px breakpoint the
-        // responsive gate checks, so every state view overflowed on the
-        // narrowest phone.
-        "mx-auto flex w-full max-w-sm flex-col items-center gap-3 px-6 py-12 text-center",
+        // `w-full` is load-bearing, not decoration: `max-w-md` alone leaves the
+        // box its intrinsic 448px, which is wider than the 380px breakpoint the
+        // responsive gate checks, so every state view would overflow on the
+        // narrowest phone. 448px/gap-6 is the canvas's own container spec for
+        // this family (`FullPageState`'s frame uses the same `max-w-md`).
+        "mx-auto flex w-full max-w-md flex-col items-center gap-6 px-6 py-12 text-center",
         className,
       )}
       {...props}
     >
-      <div
-        className={cn(
-          "flex h-12 w-12 items-center justify-center rounded-full",
-          toneCls.bg,
-        )}
-      >
-        {icon ?? <Glyph size={22} className={toneCls.icon} />}
-      </div>
-      <div className="flex flex-col gap-1.5">
+      {icon ? (
+        // Explicit override: kept in the old tone-washed circle, since a
+        // bare Phosphor icon with no container reads as unfinished rather
+        // than as the doodle's deliberate line-drawn absence of one.
+        <div
+          className={cn(
+            "flex h-12 w-12 items-center justify-center rounded-full",
+            toneCls.bg,
+          )}
+        >
+          {icon}
+        </div>
+      ) : (
+        <Doodle kind={kindDoodle[kind]} />
+      )}
+      <div className="flex flex-col gap-2">
         {marginalia ? <p className="text-hand text-ink-muted">{marginalia}</p> : null}
-        <div className="text-body-lg font-medium text-ink">{heading}</div>
+        {resolvedKicker ? <p className="text-data-sm text-ink-faint">{resolvedKicker}</p> : null}
+        {/* A `div`, not `<h1>`: unlike `FullPageState` (always the whole
+         * page), this renders inline inside an already-headinged screen —
+         * `QueryState`'s error branch inside a dashboard section, say — where
+         * a second `<h1>` would be a real landmark regression, not just a
+         * style mismatch. Same visual weight as the canvas's heading, same
+         * non-heading semantics the old `text-body-lg` div already had. */}
+        <div className="text-display-md text-ink">{heading}</div>
         {body ? <p className="text-body-md text-ink-muted">{body}</p> : null}
       </div>
       {action || secondaryAction ? (
