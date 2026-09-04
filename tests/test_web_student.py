@@ -45,6 +45,7 @@ from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -351,6 +352,62 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     assert body["subjects"] == []
     assert body["weakGlobal"] == []
     assert body["momentum"]["points"] == []
+
+
+def test_overview_with_no_papers_never_builds_the_boundary_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A student with nothing to grade must not need grade boundaries at all.
+
+    Regression test for the staging outage: ``_subjects`` built
+    :class:`~lemely.io.grade_boundaries.GradeBoundaryStore` before it looked at
+    the history, and that constructor raises
+    :class:`~lemely.runtime.errors.EmptyGradeBoundaryStoreError` against an
+    un-ingested ``component_thresholds``. So a freshly deployed environment
+    500'd the *first* screen a new student ever sees — the getting-started view,
+    which resolves no grade whatsoever.
+
+    The store is replaced with something that raises on construction rather than
+    asserting on a call count, because the module-level reference cache in
+    ``lemely.io.grade_boundaries`` makes a real construction succeed or fail
+    depending on which tests ran before this one.
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("built the boundary store with nothing to grade")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _refuse)
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: HistoryStore(tmp_path / "empty")
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="nobody", role="student"
+    )
+    response = TestClient(app).get("/api/student/overview")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["subjects"] == []
+
+
+def test_overview_reports_an_un_ingested_boundary_store_as_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An un-ingested threshold table is unavailability, not a bug in the request.
+
+    A student *with* papers genuinely cannot be graded until
+    ``scripts/ingest_thresholds.py`` has run, so refusing is correct (that is
+    what the store's own error is for). Returning a bare 500 told an operator
+    only "something threw"; 503 plus a detail naming the ingest is the same
+    refusal with the cause attached.
+    """
+
+    def _empty(*_args: object, **_kwargs: object) -> None:
+        raise EmptyGradeBoundaryStoreError("component_thresholds has no verified rows")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _empty)
+    response = client.get("/api/student/overview")
+
+    assert response.status_code == 503, response.text
+    assert "ingest_thresholds" in response.json()["detail"]
 
 
 def test_overview_malformed_id_returns_200_not_500(

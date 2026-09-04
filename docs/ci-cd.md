@@ -42,6 +42,7 @@ doesn't.
 | Push to `develop` | staging | Automatic, no approval |
 | Push to `main` | production | Pauses for one manual approval (see below) |
 | Manual run (Actions tab → "deploy" → Run workflow) | your choice | Redeploy either environment on demand — no new commit needed. Good for prototyping/iteration or re-running a flaky step. |
+| Manual run with **"Also ingest CAIE grade thresholds"** ticked | your choice | Additionally runs `scripts/ingest_thresholds.py` against that environment's database (`docs/deployment.md` §3.5). Off by default and never on a push: it fetches from two small third-party hosts. Required once per environment before any grading works. |
 
 Both environments are fully separate resources top to bottom: their own
 Supabase project, their own Cloud Run service, their own Worker/domain. A
