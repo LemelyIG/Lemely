@@ -24,7 +24,9 @@ class TeacherPaper(TimestampMixin, Base):
     """
 
     __tablename__ = "teacher_papers"
-    __table_args__ = (sa.Index("ix_teacher_papers_uploaded_by_created_at", "uploaded_by", "created_at"),)
+    __table_args__ = (
+        sa.Index("ix_teacher_papers_uploaded_by_created_at", "uploaded_by", "created_at"),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
@@ -55,7 +57,9 @@ class TeacherPaper(TimestampMixin, Base):
     mark_scheme_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
     report_json: Mapped[dict | None] = mapped_column(JSONB, nullable=True)  # type: ignore[type-arg]
     error: Mapped[str | None] = mapped_column(sa.String, nullable=True)
-    run_started_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    run_started_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
 
 
 __all__ = ["TeacherPaper"]
