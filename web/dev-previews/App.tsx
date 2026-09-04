@@ -18,11 +18,14 @@ import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"
 import { SkeletonLine, SkeletonBlock, SkeletonCircle, SkeletonText } from "@/components/ui/skeleton"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
+import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import { NETWORK_FAILURE } from "@/lib/correctionOutcome"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
 import { ToastCard, ToastProvider, useToast } from "@/components/ui/toast"
 import { EmptyState, ErrorState, OfflineState, RouteFallback } from "@/components/ui/state-views"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
+import { uploadStageProgress } from "@/lib/uploadProgress"
 import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
@@ -117,6 +120,35 @@ const PREVIEW_FILE = new File(
   "0625_w24_qp_41.pdf",
   { type: "application/pdf" },
 )
+
+/**
+ * The real helper the screen calls, adapted to the two loose numbers these
+ * cells pass rather than reproduced. A preview that formats bytes by its own
+ * copy of the rule stops previewing anything the moment the rule changes,
+ * which is the drift this whole programme has been closing.
+ */
+function uploadPreviewProgress(loaded: number, total: number | undefined): ProcessingStage["progress"] {
+  return uploadStageProgress({ loaded, total })
+}
+
+/**
+ * `CorrectPaper.tsx`'s real four-stage list (`STAGE_ORDER`/`initialStages`),
+ * with `upload` set to whatever the cell wants to show and the three
+ * SSE-driven stages left pending — accurate for every cell here, since none
+ * of them has a stream to have advanced past upload yet.
+ */
+function uploadPreviewStages(
+  uploadStatus: "active" | "error",
+  progress?: ProcessingStage["progress"],
+  errorMessage?: string,
+): ProcessingStage[] {
+  return [
+    { id: "upload", label: "Uploading your scan", status: uploadStatus, progress, errorMessage },
+    { id: "extract", label: "Reading your answers", status: "pending" },
+    { id: "scheme", label: "Fetching the mark scheme", status: "pending" },
+    { id: "mark", label: "Marking your questions", status: "pending" },
+  ]
+}
 
 /**
  * The eight-state grid for one component.
@@ -695,6 +727,45 @@ function AppBody() {
             <StateCell state="loading" provenance="prop" note="Indeterminate">
               <div className="w-full">
                 <ProgressBar indeterminate ariaLabel="Marking in progress" />
+              </div>
+            </StateCell>
+          </ComponentSection>
+
+          <ComponentSection
+            name="ProcessingState — upload stage"
+            summary="PR 4: a fourth stage (C-10, S-14) ahead of the three SSE-driven ones, so the slowest and least-observable part of correcting a paper — the file transfer itself, on a phone, on a bad connection — has something moving on screen before the SSE stream even exists. Real xhr.upload.onprogress bytes only, formatted by the same lib/uploadProgress.ts helper the screen itself calls, so these cells cannot drift from it. The indeterminate cell is the deliberate one: no bar, no percentage, when the browser genuinely cannot report a length — see StageProgressBar's header comment in processing-state.tsx."
+          >
+            <StateCell state="loading" provenance="prop" note="Determinate — a known total, mid-transfer">
+              <div className="w-full">
+                <ProcessingState
+                  stages={uploadPreviewStages(
+                    "active",
+                    uploadPreviewProgress(3_200_000, 8_100_000),
+                  )}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="loading"
+              provenance="prop"
+              note="Indeterminate — xhr.upload couldn't report a length. Bytes moved, no bar, no percentage."
+            >
+              <div className="w-full">
+                <ProcessingState
+                  stages={uploadPreviewStages(
+                    "active",
+                    uploadPreviewProgress(1_200_000, undefined),
+                  )}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="Upload failed before any SSE frame ever existed — the same failActiveStage path a mid-run failure uses"
+            >
+              <div className="w-full">
+                <ProcessingState stages={uploadPreviewStages("error", undefined, NETWORK_FAILURE)} />
               </div>
             </StateCell>
           </ComponentSection>
