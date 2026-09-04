@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpStore
+from lemely.auth.otp import OtpChannel, OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -220,7 +220,7 @@ def test_otp_reuses_existing_parent_row() -> None:
 def _verify_with_current_code(service: AuthService, phone: str) -> object:
     # Brute a small space is unnecessary: read from the store directly.
     store = service._otp_store  # test-only introspection of the injected store
-    challenge = store._challenges[phone]
+    challenge = store._challenges[(OtpChannel.phone, phone)]
     return service.verify_otp(phone, challenge.code)
 
 

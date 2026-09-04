@@ -387,6 +387,13 @@ class AuthSettings(BaseModel):
     # Minimum seconds between successive OTP issues for the same phone. Stops an
     # attacker resetting the attempt counter by re-requesting before lockout.
     otp_min_resend_seconds: int = Field(default=30, ge=0)
+    # Time-to-live for a pending email-channel OTP challenge (spec §4.4), in
+    # seconds — independent of the phone challenge's `otp_ttl_seconds`. Longer
+    # than the phone default: the code sits in an inbox rather than an SMS a
+    # parent is expected to act on within a minute or two. Length, attempt cap
+    # and resend cooldown are shared with the phone code (`otp_length`,
+    # `otp_max_attempts`, `otp_min_resend_seconds`).
+    email_otp_ttl_seconds: int = Field(default=600, ge=60)
     # D7.12: reuses D1.7 item 2's OTP-resend-cooldown mechanism
     # (``lemely.auth.cooldown.CooldownStore``) for the cheapest abuse shape on
     # the two *public, unauthenticated* auth routes that mint an account or

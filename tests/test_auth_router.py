@@ -10,7 +10,7 @@ from datetime import UTC, datetime, timedelta
 import pytest
 from fastapi.testclient import TestClient
 
-from lemely.auth.otp import OtpStore
+from lemely.auth.otp import OtpChannel, OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token, mint_access_token
@@ -161,7 +161,7 @@ def test_otp_request_and_verify(context: tuple[TestClient, AuthService, Settings
     assert resp.json()["status"] == "sent"
 
     # Recover the code from the store (test-only introspection).
-    code = service._otp_store._challenges[phone].code
+    code = service._otp_store._challenges[(OtpChannel.phone, phone)].code
 
     verify = client.post("/api/auth/otp/verify", json={"phone": phone, "code": code})
     assert verify.status_code == 200, verify.text

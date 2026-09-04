@@ -98,6 +98,9 @@ otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the
+# phone code above; length, attempt cap and resend cooldown are shared.
+email_otp_ttl_seconds = 600
 
 [grading]
 # A teacher_papers row stuck in `processing` past this many seconds is a

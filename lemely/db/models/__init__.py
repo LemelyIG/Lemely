@@ -104,6 +104,7 @@ def import_all_models() -> None:
         invites,
         ops,
         orgs,
+        otp_challenges,
         profiles,
         quizzes,
         study_plan,
@@ -111,6 +112,21 @@ def import_all_models() -> None:
         users,
     )
 
+
+# Deliberately *not* in the alphabetised re-export block above, and imported
+# here rather than there. `lemely.auth` eagerly imports `lemely.db.models`
+# (``lemely/auth/__init__.py`` -> ``lemely.auth.mirror`` ->
+# ``from lemely.db.models import User``), and ``otp_challenges`` needs
+# ``lemely.auth.otp.OtpChannel``. Importing it anywhere in that block — before
+# this module has finished binding every name in it, ``User`` included — would
+# recreate exactly that cycle: ``lemely.db.models`` (mid-init) -> otp_challenges
+# -> lemely.auth -> lemely.auth.mirror -> ``lemely.db.models`` (for ``User``,
+# not yet bound) -> ImportError. Placed after this module's own top-level
+# imports are done, `User` already exists by the time this runs. A ruff/isort
+# autofix would otherwise happily sort this back up into that block (verified:
+# it does), which is why it lives here instead, past the point isort will move
+# imports to.
+from lemely.db.models.otp_challenges import OtpChallenge  # noqa: E402
 
 __all__ = [
     "SESSION_MONTH_LABELS",
@@ -146,6 +162,7 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationType",
+    "OtpChallenge",
     "Paper",
     "ParentChildLink",
     "PlanInterval",

@@ -7,7 +7,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpRateLimitError, OtpResult, OtpStore
+from lemely.auth.otp import OtpChannel, OtpRateLimitError, OtpResult, OtpStore
 
 
 class _FrozenClock:
@@ -138,3 +138,21 @@ def test_resend_allowed_once_prior_challenge_expired() -> None:
     clock.advance(61)
     code = store.issue("+800")
     assert store.verify("+800", code) is OtpResult.ok
+
+
+def test_channels_are_independent_and_email_has_its_own_ttl() -> None:
+    clock = _FrozenClock(datetime(2026, 9, 3, tzinfo=UTC))
+    store = OtpStore(
+        clock=clock,
+        rng=random.Random(1),
+        ttl_seconds=300,
+        email_ttl_seconds=600,
+        min_resend_seconds=0,
+    )
+    phone_code = store.issue("+201000000000")
+    email_code = store.issue("a@example.com", channel=OtpChannel.email)
+    wrong_channel = store.verify("a@example.com", phone_code, channel=OtpChannel.email)
+    assert wrong_channel is OtpResult.wrong_code
+    clock.advance(400)
+    assert store.verify("+201000000000", phone_code) is OtpResult.expired
+    assert store.verify("a@example.com", email_code, channel=OtpChannel.email) is OtpResult.ok

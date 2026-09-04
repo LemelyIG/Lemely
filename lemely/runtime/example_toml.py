@@ -124,6 +124,9 @@ def render_example_toml() -> str:
     lines.append(f"otp_max_attempts = {s.auth.otp_max_attempts}")
     lines.append(f"otp_length = {s.auth.otp_length}")
     lines.append(f"otp_min_resend_seconds = {s.auth.otp_min_resend_seconds}")
+    lines.append("# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the")
+    lines.append("# phone code above; length, attempt cap and resend cooldown are shared.")
+    lines.append(f"email_otp_ttl_seconds = {s.auth.email_otp_ttl_seconds}")
     lines.append("")
 
     lines.append("[grading]")
