@@ -269,6 +269,15 @@ jobs:
           # (min-instances=0) and buys headroom against a cold-start spike that
           # the per-minute metric could miss, so it stays.
           flags: --allow-unauthenticated --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          #
+          # LEMELY_EMAIL__API_KEY is deliberately allowed to be empty. An
+          # unset repository secret renders as the empty string, which
+          # `_blank_to_none` in lemely/runtime/config.py maps to None, which
+          # makes `_build_email_provider` wire MockEmailProvider. So this
+          # line is safe to merge before the Resend secret exists: the
+          # deploy succeeds and mail simply is not sent. Adding the secret
+          # and redeploying is the whole switch-on. See
+          # docs/email-delivery.md.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_LOGGING__FORMAT=json
@@ -278,6 +287,7 @@ jobs:
             LEMELY_SUPABASE__SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
             LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            LEMELY_EMAIL__API_KEY=${{ secrets.RESEND_API_KEY }}
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
