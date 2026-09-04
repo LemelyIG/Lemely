@@ -26,12 +26,18 @@ repos:
             reports/
             |\.claude/commands/
             |\.claude/skills/(
-              composition-patterns
+              brandkit
+              |composition-patterns
               |deploy-to-vercel
+              |design-taste-frontend
+              |full-output-enforcement
               |hallmark
+              |high-end-visual-design
+              |minimalist-ui
               |react-best-practices
               |react-native-skills
               |react-view-transitions
+              |redesign-existing-projects
               |ui-refactor
               |ux-heuristics
               |vercel-cli-with-tokens
@@ -46,12 +52,18 @@ repos:
             reports/
             |\.claude/commands/
             |\.claude/skills/(
-              composition-patterns
+              brandkit
+              |composition-patterns
               |deploy-to-vercel
+              |design-taste-frontend
+              |full-output-enforcement
               |hallmark
+              |high-end-visual-design
+              |minimalist-ui
               |react-best-practices
               |react-native-skills
               |react-view-transitions
+              |redesign-existing-projects
               |ui-refactor
               |ux-heuristics
               |vercel-cli-with-tokens
