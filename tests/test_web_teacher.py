@@ -1221,6 +1221,55 @@ def test_regrade_does_not_start_a_second_run_over_one_in_flight(
     assert runs["n"] == 1, "a second marking run was started over one already going"
 
 
+def test_regrade_of_a_graded_paper_does_not_report_the_old_marks_as_final(
+    client: TestClient,
+    paper_repo: TeacherPaperRepository,
+    storage_backend: FakeStorageBackend,
+    teacher_user: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A regrade in flight reads as ``processing``, never as the old ``graded``.
+
+    ``claim_run`` does not clear ``report_json``, so a previously-graded row
+    keeps its old report while ``status`` moves back to ``processing``. If
+    :func:`~lemely.web.routers.teacher._row_kind` looked at the report alone,
+    a client polling mid-regrade would be shown last run's marks as though
+    they were final — the exact "one source of truth, derived at read time"
+    failure spec section 4.2 warns about. Seeding a ``complete`` row and
+    blocking the grader is the only way to reach that window.
+    """
+    from lemely.web.routers import student as student_router
+    from lemely.web.services import grading as grading_service
+
+    release = threading.Event()
+    started = threading.Event()
+
+    def _blocked_extract(*_a: object, **_k: object) -> dict[str, str]:
+        started.set()
+        release.wait(timeout=10)
+        return {"5b": "42"}
+
+    monkeypatch.setattr(student_router, "resolve_mark_scheme", lambda *_a, **_k: _scheme())
+    monkeypatch.setattr(grading_service, "extract_answers", _blocked_extract)
+    monkeypatch.setattr(
+        grading_service, "grade_paper", lambda *_a, **_k: _report(needs_review=False, grade="B")
+    )
+
+    paper_id = _seed_graded_paper(
+        paper_repo, storage_backend, teacher_user, _report(needs_review=False, grade="A")
+    )
+    assert client.get(f"/api/papers/{paper_id}").json()["kind"] == "graded"
+
+    assert client.post(f"/api/papers/{paper_id}/regrade").status_code == 202
+    assert started.wait(timeout=10), "the regrade job never started"
+
+    # The window under test: old report still on the row, status now processing.
+    assert client.get(f"/api/papers/{paper_id}").json()["kind"] == "processing"
+
+    release.set()
+    assert teacher._row_kind(_settle(paper_repo, paper_id)) == "graded"
+
+
 def test_regrade_unknown_paper_404(client: TestClient) -> None:
     """Regrading an unknown paper is a 404 before any work begins.
 
