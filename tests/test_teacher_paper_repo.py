@@ -34,6 +34,16 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    PaperType,
+    Question,
+    QuestionType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import SessionMonth as SchemeSessionMonth
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -145,6 +155,35 @@ def _metadata(subject_code: str = "0625", paper_number: int = 3) -> ExamMetadata
         paper_variant=1,
         session_month="May/June",
         session_year=2020,
+    )
+
+
+def _mark_scheme() -> MarkScheme:
+    """A minimal, real ``MarkScheme``, copied from ``tests/test_web_teacher.py``'s
+
+    ``test_schemes_lists_parsed`` builder — one point-based question, no
+    fabricated shortcuts.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="0625",
+            paper_number=3,
+            paper_variant=1,
+            session_month=SchemeSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=80,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            Question(
+                id="1",
+                marks=2,
+                type=QuestionType.RECALL,
+                answer_points=[AnswerPoint(id="p1", point="correct", marks=2)],
+            )
+        ],
     )
 
 
@@ -267,6 +306,10 @@ def test_visibility_matrix(pg_sessionmaker: sessionmaker[Session]) -> None:
         p3,
     }
     assert repo.get_visible(p3, viewer_id=admin_a, viewer_role=Role.school_admin) is None
+    # The most common real-world denial: a plain teacher, not just a
+    # cross-school admin, cannot see a peer teacher's paper within the same
+    # school — only that teacher's own uploads and their school's admins can.
+    assert repo.get_visible(p2, viewer_id=t1, viewer_role=Role.teacher) is None
     assert repo.get_visible(p1, viewer_id=t1, viewer_role=Role.teacher) is not None
     # The worker reads without a viewer: it is not a person, it is the run.
     assert repo.get(p3) is not None
@@ -287,6 +330,51 @@ def test_progress_and_report_round_trip(pg_sessionmaker: sessionmaker[Session]) 
     row = repo.get_visible(pid, viewer_id=owner, viewer_role=Role.teacher)
     assert row is not None and row.status is UploadStatus.complete
     assert row.report is not None and row.report.correction.awarded_marks == 7
+
+
+def test_metadata_and_mark_scheme_round_trip(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """``set_metadata``/``set_mark_scheme`` each round-trip through their JSONB column.
+
+    ``test_progress_and_report_round_trip`` above exercises ``AccuracyReport``
+    via ``finish()``; ``ExamMetadata`` and ``MarkScheme`` had no coverage at
+    all — this closes that gap directly against ``get()``, the worker's read.
+    """
+    repo = _repo(pg_sessionmaker)
+    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
+    metadata = _metadata()
+    scheme = _mark_scheme()
+
+    repo.set_metadata(pid, metadata)
+    repo.set_mark_scheme(pid, scheme)
+
+    row = repo.get(pid)
+    assert row is not None
+    assert row.metadata == metadata
+    assert row.mark_scheme == scheme
+
+
+def test_set_stage_advances_updated_at_via_onupdate(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """``_update()`` never names ``updated_at`` in its ``.values()`` for any ``set_*``
+
+    method — the whole stale-reclaim mechanism (``TeacherPaperRow.stale``,
+    ``claim_run``'s reclaim window) depends on the column's own
+    ``onupdate=sa.func.now()`` firing on a Core-level ``UPDATE`` rather than
+    only on an ORM attribute-level flush. This isolates exactly that: the
+    other tests that mention ``updated_at`` either set it directly with raw
+    SQL (bypassing ``_update()`` on purpose, to fabricate a stale row) or use
+    a comparison window (900s) far too coarse to tell a real advance from no
+    advance at all.
+    """
+    repo = _repo(pg_sessionmaker)
+    pid = _paper(repo, _user(pg_sessionmaker, Role.teacher))
+    before = repo.get(pid)
+    assert before is not None
+
+    repo.set_stage(pid, "extract")
+
+    after = repo.get(pid)
+    assert after is not None
+    assert after.updated_at > before.updated_at
 
 
 # ---------------------------------------------------------------------------
