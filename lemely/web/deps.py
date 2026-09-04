@@ -63,7 +63,7 @@ from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.storage import HttpStorageBackend, StorageBackend
+from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
@@ -72,6 +72,7 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from lemely.core.history import HistoryStoreProtocol
+    from lemely.io.storage import StorageBackend
 
 
 @lru_cache(maxsize=1)
@@ -122,10 +123,13 @@ def get_student_upload_repo() -> StudentUploadRepository:
 def get_storage_backend() -> StorageBackend:
     """Return the process-wide :class:`StorageBackend` singleton (P2.5).
 
-    Wired with the real HTTP client against Supabase Storage. Tests override
-    this with an in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+    Temporarily wired straight to :class:`GcsStorageBackend` now that the old
+    Supabase Storage client is gone; real backend selection on
+    ``settings.storage.backend`` (local vs gcs) is a later task. Tests
+    override this with an in-memory ``FakeStorageBackend`` double
+    (``tests/storage_fakes.py``).
     """
-    return HttpStorageBackend(get_settings())
+    return GcsStorageBackend()
 
 
 @lru_cache(maxsize=1)
