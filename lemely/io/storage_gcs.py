@@ -80,7 +80,7 @@ class GcsStorageBackend:
                 timeout=_TRANSFER_TIMEOUT_SECONDS
             )
         except NotFound as exc:
-            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
+            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}: {exc}") from exc
         except GoogleAPICallError as exc:
             raise ExternalServiceError(f"Storage download failed: {exc}") from exc
         return data

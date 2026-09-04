@@ -11,7 +11,7 @@ from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
-from google.api_core.exceptions import NotFound, PreconditionFailed
+from google.api_core.exceptions import GoogleAPICallError, NotFound, PreconditionFailed
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud.storage.retry import DEFAULT_RETRY_IF_GENERATION_SPECIFIED
 
@@ -54,10 +54,24 @@ def test_existing_key_is_a_bug_not_an_overwrite() -> None:
         GcsStorageBackend(_client=client).upload("b", "k", b"d", None)
 
 
+def test_upload_generic_api_error_maps_to_external_service_error() -> None:
+    client, blob = _client_with_blob()
+    blob.upload_from_string.side_effect = GoogleAPICallError("boom")
+    with pytest.raises(ExternalServiceError, match="Storage upload failed"):
+        GcsStorageBackend(_client=client).upload("b", "k", b"d", None)
+
+
 def test_download_missing_maps_to_not_found() -> None:
     client, blob = _client_with_blob()
     blob.download_as_bytes.side_effect = NotFound("nope")
-    with pytest.raises(StorageObjectNotFoundError):
+    with pytest.raises(StorageObjectNotFoundError, match="No object at b/k"):
+        GcsStorageBackend(_client=client).download("b", "k")
+
+
+def test_download_generic_api_error_maps_to_external_service_error() -> None:
+    client, blob = _client_with_blob()
+    blob.download_as_bytes.side_effect = GoogleAPICallError("boom")
+    with pytest.raises(ExternalServiceError, match="Storage download failed"):
         GcsStorageBackend(_client=client).download("b", "k")
 
 
@@ -72,6 +86,13 @@ def test_delete_ignores_missing() -> None:
     client, blob = _client_with_blob()
     blob.delete.side_effect = NotFound("gone")
     GcsStorageBackend(_client=client).delete("b", "k")  # must not raise
+
+
+def test_delete_generic_api_error_maps_to_external_service_error() -> None:
+    client, blob = _client_with_blob()
+    blob.delete.side_effect = GoogleAPICallError("boom")
+    with pytest.raises(ExternalServiceError, match="Storage delete failed"):
+        GcsStorageBackend(_client=client).delete("b", "k")
 
 
 def test_credentials_failure_is_deferred_to_first_use(monkeypatch: pytest.MonkeyPatch) -> None:
