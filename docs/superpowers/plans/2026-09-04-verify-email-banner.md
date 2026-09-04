@@ -1024,7 +1024,9 @@ After Task 6, before opening a PR. This cannot be automated here: the unit runne
 
 - [ ] Run `cd web && npm run dev` and sign in as an account with an unverified address. Confirm the banner appears on the student overview with a dismiss control, that dismissing hides it, and that navigating around keeps it hidden.
 - [ ] Navigate to `/student/correct`. Confirm the banner is present with **no** dismiss control even after the dismissal above, and that "Mark this paper" is disabled once a file is chosen.
-- [ ] Reload the tab. Confirm the banner is back on the overview (the dismissal was session-scoped).
+- [ ] Reload the tab. Confirm the dismissal SURVIVES the reload: `sessionStorage` is cleared when
+  the tab closes, not when the page reloads, so the banner staying hidden here is correct and the
+  banner reappearing would be the bug. Open a new tab to see it return.
 - [ ] Verify the address, reload, and confirm the banner is gone everywhere and the marking button works.
 - [ ] Check the four portals render the banner by signing in as a teacher, parent and admin with unverified addresses, or by temporarily returning `emailVerified=False` from the route.
 
