@@ -98,6 +98,7 @@ These upstreams ship plain skills rather than plugins, so they are copied into
 | `composition-patterns`, `deploy-to-vercel`, `react-best-practices`, `react-native-skills`, `react-view-transitions`, `vercel-cli-with-tokens`, `vercel-optimize`, `web-design-guidelines`, `writing-guidelines` | [vercel-labs/agent-skills](https://github.com/vercel-labs/agent-skills) | `063bee9` (2026-08-28) |
 | `ui-refactor`, plus the `/ui-refactor`, `/fix-hierarchy`, `/fix-typography`, `/fix-layout`, `/fix-colors` commands in `.claude/commands/` | [LovroPodobnik/refactoring-ui-skill](https://github.com/LovroPodobnik/refactoring-ui-skill) | `a9e776a` (2026-01-08) |
 | `ux-heuristics` | [wondelai/skills](https://github.com/wondelai/skills/tree/main/ux-heuristics) | `eade5d1` (2026-08-29) |
+| `hallmark` | [nutlope/hallmark](https://github.com/nutlope/hallmark) | `13ac0ec` (2026-08-06) |
 
 The copies are byte-identical to upstream. `.pre-commit-config.yaml` exempts
 them from `trailing-whitespace` and `end-of-file-fixer` so they stay that way

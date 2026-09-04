@@ -28,6 +28,7 @@ repos:
             |\.claude/skills/(
               composition-patterns
               |deploy-to-vercel
+              |hallmark
               |react-best-practices
               |react-native-skills
               |react-view-transitions
@@ -47,6 +48,7 @@ repos:
             |\.claude/skills/(
               composition-patterns
               |deploy-to-vercel
+              |hallmark
               |react-best-practices
               |react-native-skills
               |react-view-transitions
