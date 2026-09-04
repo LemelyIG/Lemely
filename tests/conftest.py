@@ -235,6 +235,147 @@ def _disable_ambient_toml() -> Iterator[None]:
         config_module._discover_toml = original  # type: ignore[assignment]
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _seed_ambient_grade_boundaries() -> Iterator[None]:
+    """Seed `component_thresholds` on the *ambient* database (once, session-wide).
+
+    `GradeBoundaryStore()` (no sessionmaker argument -- used all over the web
+    layer: `review_repo.py`, `student.py`, `parent.py`, `web/services/grading.py`,
+    `app/cli.py`, `web/deps.py`) always resolves against `get_sessionmaker()`,
+    the ambient database from `DatabaseSettings().url` -- never a test's own
+    throwaway `pg_sessionmaker`/`migrated_sessionmaker` database. In CI (and any
+    freshly migrated Postgres) that database's `component_thresholds` starts
+    empty: `python scripts/ingest_thresholds.py` (docs/deployment.md §3.5) is a
+    live scrape against ciegt.pooruli.com plus the official Cambridge PDFs,
+    deliberately NOT run by a migration and unsuitable to run in CI (network
+    dependency, "politeness" pacing, three parallel matrix jobs hammering one
+    small site). Without *something* seeding that database, every code path
+    above raises `EmptyGradeBoundaryStoreError` on its very first call, in any
+    fresh environment -- which is exactly what broke CI on
+    feature/backend-served-reference-data (component_thresholds' own migration)
+    and every branch built on develop since.
+
+    The rows below are clearly-fake fixture data (`example.invalid` source
+    URLs) standing in for that ingest, mirroring facts already documented
+    elsewhere in this codebase so behaviour that depends on them stays correct:
+
+    - 0625 paper 1 is Core-tier only (C-G, no A/B) on every recent session --
+      see `lemely.io.grade_boundaries._load`'s own docstring and
+      `test_web_parent.py::test_a_core_paper_has_no_reachable_grade_above_its_own_ceiling`.
+    - 0625 paper 2 variant 2, May/June 2020 carries an A boundary -- the exact
+      session `test_student_correct.py::_mcq_scheme_extended` resolves, whose
+      docstring explains why paper 1 (Core, capped at C) cannot stand in for it.
+    - `component_thresholds` never carries A* -- see
+      `lemely.db.models.thresholds.ComponentThreshold`'s docstring ("Grade A*
+      does not exist at this level").
+
+    A third, otherwise-unused subject code carries a full A-G range so the
+    global-default rung (every code path that resolves a subject/paper this
+    fixture does not know about) has more than a Core-only vocabulary to draw
+    on.
+
+    Reachability is checked the same way `pg_sessionmaker` fixtures already do
+    across the router test files: unreachable Postgres means every one of
+    those tests already skips on its own, so this fixture just returns without
+    seeding rather than failing collection for the whole session.
+    """
+    import sqlalchemy as sa
+    from sqlalchemy import create_engine
+    from sqlalchemy.engine import make_url
+    from sqlalchemy.exc import OperationalError
+
+    from lemely.db.models.enums import SessionMonth
+    from lemely.db.models.thresholds import ComponentThreshold
+    from lemely.db.session import get_sessionmaker
+    from lemely.io.grade_boundaries import invalidate_reference_cache
+    from lemely.runtime.config import DatabaseSettings
+
+    base_url = DatabaseSettings().url
+    server_url = make_url(base_url).set(database="postgres")
+    try:
+        probe = create_engine(server_url)
+        with probe.connect():
+            pass
+        probe.dispose()
+    except OperationalError:
+        yield
+        return
+
+    sm = get_sessionmaker()
+    seeded_ids: list[object] = []
+    try:
+        with sm() as session:
+            rows = [
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2023,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=40,
+                    thresholds={"C": 25, "D": 22, "E": 19, "F": 16, "G": 13},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s23_p11.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2024,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=40,
+                    thresholds={"C": 26, "D": 23, "E": 20, "F": 17, "G": 14},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s24_p11.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0625",
+                    session_month=SessionMonth.may_june,
+                    session_year=2020,
+                    paper_number=2,
+                    paper_variant=2,
+                    max_mark=40,
+                    thresholds={"A": 30, "B": 26, "C": 22, "D": 18, "E": 14, "F": 10, "G": 6},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0625_s20_p22.pdf",
+                ),
+                ComponentThreshold(
+                    subject_code="0000",
+                    session_month=SessionMonth.may_june,
+                    session_year=2024,
+                    paper_number=1,
+                    paper_variant=1,
+                    max_mark=100,
+                    thresholds={"A": 80, "B": 70, "C": 60, "D": 50, "E": 40, "F": 30, "G": 20},
+                    verified=True,
+                    source_url="https://example.invalid/test-fixture/0000_s24_p11.pdf",
+                ),
+            ]
+            session.add_all(rows)
+            session.commit()
+            seeded_ids = [row.id for row in rows]
+    except sa.exc.SQLAlchemyError:
+        # `component_thresholds` not migrated yet, or some other setup gap --
+        # leave the ambient database untouched and let downstream tests fail
+        # or skip on their own, as they did before this fixture existed.
+        yield
+        return
+
+    invalidate_reference_cache()
+    try:
+        yield
+    finally:
+        try:
+            with sm() as session:
+                session.execute(
+                    sa.delete(ComponentThreshold).where(ComponentThreshold.id.in_(seeded_ids))
+                )
+                session.commit()
+        except sa.exc.SQLAlchemyError:
+            pass
+        invalidate_reference_cache()
+
+
 @pytest.fixture
 def migrated_sessionmaker() -> Iterator[sessionmaker[Session]]:
     """A throwaway Postgres database with `alembic upgrade head` applied.
