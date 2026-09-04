@@ -138,6 +138,58 @@ def _scheme(
     )
 
 
+def _scheme_with_container_question(
+    *,
+    subject: str = "0625",
+    paper: int = 1,
+    variant: int = 1,
+    month: str = "May/June",
+    year: int | None = 2023,
+) -> MarkScheme:
+    """A paper whose only top-level question is a *container* (``marks=0``)
+    wrapping two real sub-parts — mirrors a real CAIE scheme where "3" wraps
+    "3a"/"3b" (``Question.marks`` is documented as "Set to 0 for container
+    questions that only group sub-parts"). ``sum(q.marks for q in
+    scheme.questions)`` reads 0 here; only ``metadata.maximum_mark`` (4)
+    carries the real paper total — the divergence this fixture exists to
+    exercise.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=subject,
+            paper_number=paper,
+            paper_variant=variant,
+            session_month=SchemeSessionMonth(month),
+            session_year=year,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=4,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            Question(
+                id="1",
+                marks=0,
+                type=QuestionType.RECALL,
+                parts=[
+                    Question(
+                        id="1a",
+                        marks=2,
+                        type=QuestionType.RECALL,
+                        answer_points=[AnswerPoint(id="p1", point="correct", marks=2)],
+                    ),
+                    Question(
+                        id="1b",
+                        marks=2,
+                        type=QuestionType.RECALL,
+                        answer_points=[AnswerPoint(id="p1", point="correct", marks=2)],
+                    ),
+                ],
+            )
+        ],
+    )
+
+
 def _find(
     *,
     subject: str = "0625",
@@ -190,6 +242,28 @@ def test_unknown_subject_is_not_stored(pg_sessionmaker: sessionmaker[Session]) -
     assert repo.list_rows() == []
 
 
+def test_store_uses_metadata_maximum_mark_not_a_naive_top_level_sum(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A container top-level question (``marks=0``) must not undercount the paper.
+
+    ``sum(q.marks for q in scheme.questions)`` reads 0 for
+    :func:`_scheme_with_container_question` — the real marks live in the
+    top-level question's ``parts`` — so this pins that the stored (and
+    round-tripped) ``maximum_mark`` is the cover-page total from
+    ``metadata.maximum_mark`` (4), not a re-derived sum that would silently
+    diverge from it on exactly this paper shape.
+    """
+    repo = SchemeCorpusRepository(pg_sessionmaker)
+    sid = repo.store(_scheme_with_container_question(), provenance="x")
+    assert sid is not None
+    rows = repo.list_rows()
+    assert len(rows) == 1
+    assert rows[0].maximum_mark == 4
+    found = repo.find_for(_find())
+    assert found is not None and found.metadata.maximum_mark == 4
+
+
 # ---------------------------------------------------------------------------
 # find_for — near-miss cases. Each of these stores exactly one real scheme and
 # then queries for a paper that differs from it in exactly one dimension; a
@@ -235,6 +309,31 @@ def test_find_for_different_subject_is_a_miss(pg_sessionmaker: sessionmaker[Sess
 def test_find_for_no_stored_scheme_is_none(pg_sessionmaker: sessionmaker[Session]) -> None:
     repo = SchemeCorpusRepository(pg_sessionmaker)
     assert repo.find_for(_find()) is None
+
+
+def test_find_for_fails_closed_on_an_unmapped_session_month(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An unmapped session month must narrow the match to nothing, not drop the filter.
+
+    Unreachable through the normal constructor — ``ExamMetadata.session_month``
+    is a ``Literal`` on a ``StrictModel`` — so this bypasses validation with
+    ``model_construct`` to reach the defensive branch directly. A ``find_for``
+    that instead dropped the month filter here would match on
+    subject/paper/variant alone and could return a scheme from the wrong
+    session — the wrong-scheme outcome this repository must never produce.
+    """
+    repo = SchemeCorpusRepository(pg_sessionmaker)
+    repo.store(_scheme(), provenance="x")
+    bogus = ExamMetadata.model_construct(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=1,
+        session_month="Not/AMonth",  # type: ignore[arg-type]
+        session_year=2023,
+        source_document=None,
+    )
+    assert repo.find_for(bogus) is None
 
 
 # ---------------------------------------------------------------------------

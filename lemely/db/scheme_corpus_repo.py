@@ -157,6 +157,13 @@ class SchemeCorpusRepository:
                 select(MarkSchemeRecord).where(MarkSchemeRecord.paper_id == paper_id)
             ).one_or_none()
             payload = scheme.model_dump(mode="json")
+            # Deliberately the cover-page total, not a re-derived sum:
+            # `Question.marks` is documented as 0 for a container question
+            # that only groups sub-parts (e.g. "3" wrapping "3a"/"3b"), so
+            # `sum(q.marks for q in scheme.questions)` would undercount any
+            # structured paper whose top-level questions are containers.
+            # `metadata.maximum_mark` is the one field in the payload that is
+            # always the real paper total, regardless of question shape.
             maximum = scheme.metadata.maximum_mark
             if existing is None:
                 existing = MarkSchemeRecord(
@@ -201,13 +208,23 @@ class SchemeCorpusRepository:
         matching nothing.
         """
         month = _SESSION_MONTH_BY_LABEL.get(metadata.session_month)
+        if month is None:
+            # Fail closed, not open: dropping the session-month filter here
+            # would let this fall through to whatever else matches on
+            # subject/paper/variant, from a *different* session — exactly
+            # the wrong-scheme outcome this repository must never produce.
+            # Unreachable in practice today (``ExamMetadata.session_month``
+            # is a ``Literal`` on a ``StrictModel``, so every valid value
+            # already has an entry in ``_SESSION_MONTH_BY_LABEL``), but this
+            # is the one place in the module where "match everything" would
+            # be the wrong default if that constraint ever loosened.
+            return None
         conditions = [
             Paper.subject_code == metadata.subject_code,
             Paper.paper_number == metadata.paper_number,
             Paper.paper_variant == metadata.paper_variant,
+            Paper.session_month == month,
         ]
-        if month is not None:
-            conditions.append(Paper.session_month == month)
         if metadata.session_year is not None:
             conditions.append(Paper.session_year == metadata.session_year)
         stmt = (
