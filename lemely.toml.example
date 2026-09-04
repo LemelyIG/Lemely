@@ -121,6 +121,13 @@ otp_min_resend_seconds = 30
 # LEMELY_EMAIL__API_KEY. Locally, export LEMELY_EMAIL__API_KEY in your shell.
 # api_key = "re_..."
 #
+# The origin emailed links are built on. AuthService mints links as frontend
+# routes (`/verify-email/<token>`), which the SPA can navigate to but an inbox
+# cannot resolve — a mail client with no base turns that into
+# `http:///verify-email/<token>`. A real provider joins this origin on first.
+# deploy.yml sets it per environment; this default is the production site.
+app_base_url = "https://lemelyig.com"
+#
 # Must be on a domain verified with the provider AND carrying that sender's
 # SPF/DKIM records in the Cloudflare DNS zone — see docs/email-delivery.md.
 from_address = "noreply@lemelyig.com"

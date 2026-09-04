@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -40,6 +41,32 @@ def _blank_to_none(value: object) -> object:
 OptionalSecret = Annotated[SecretStr | None, BeforeValidator(_blank_to_none)]
 #: The plain-text counterpart, for credential fields that are deliberately not secrets.
 OptionalCredential = Annotated[str | None, BeforeValidator(_blank_to_none)]
+
+
+def _absolute_origin(value: object) -> object:
+    """Require a fully-qualified ``http(s)://host`` origin, trailing slash trimmed.
+
+    A missing scheme or host is the whole reason this validator exists. An
+    origin of ``""`` joined onto the frontend route ``/verify-email/<token>``
+    yields ``http:///verify-email/<token>`` — syntactically a URL, with an
+    empty host, and unreachable. That reached a real inbox once. Rejecting it
+    at settings-load time turns a silently broken link, discoverable only by a
+    recipient clicking it, into a startup failure naming the bad value.
+    """
+    if not isinstance(value, str):
+        return value
+    trimmed = value.strip().rstrip("/")
+    parsed = urlsplit(trimmed)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "must be an absolute origin like https://lemelyig.com "
+            f"(scheme and host both required), got {value!r}"
+        )
+    return trimmed
+
+
+#: An origin that links can be safely joined onto — see :func:`_absolute_origin`.
+AbsoluteOrigin = Annotated[str, BeforeValidator(_absolute_origin)]
 
 
 class GradioSettings(BaseModel):
@@ -507,6 +534,19 @@ class EmailSettings(BaseModel):
     # Actions environment secret, which ``deploy.yml`` hands to Cloud Run as
     # ``LEMELY_EMAIL__API_KEY``; locally, export that variable in the shell.
     api_key: OptionalSecret = None
+    # Public origin of the SPA that the emailed links point at. Required
+    # because AuthService mints links as *frontend routes*, not URLs:
+    # ``_mint_verification_link`` returns ``/verify-email/<token>``, which the
+    # SPA can navigate to directly but which is meaningless in an inbox — a
+    # mail client resolving that root-relative href against no base produced
+    # ``http:///verify-email/<token>``, an unreachable URL with an empty host.
+    # A real provider therefore joins this origin onto the link before sending.
+    # It lives here rather than in ``[auth]`` because the emailed mail is its
+    # only consumer; the dev link returned through the API stays relative,
+    # which is what the SPA wants. ``deploy.yml`` sets it per environment
+    # (staging.lemelyig.com vs lemelyig.com) rather than leaning on this
+    # default, so a misconfigured staging cannot mail production links.
+    app_base_url: AbsoluteOrigin = "https://lemelyig.com"
     # Envelope sender. Must be on a domain verified with the provider *and*
     # carrying this sender's SPF/DKIM records in the Cloudflare zone, or mail is
     # rejected outright rather than merely landing in spam.

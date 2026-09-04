@@ -174,6 +174,38 @@ class SettingsTests(unittest.TestCase):
         assert s.gemini_api_key is not None
         self.assertEqual(s.gemini_api_key.get_secret_value(), " sk-real ")
 
+    def test_email_app_base_url_rejects_an_origin_with_no_host(self) -> None:
+        """The empty-host case is the one that reached a real inbox.
+
+        ``app_base_url = ""`` joined onto ``/verify-email/<token>`` produces
+        ``http:///verify-email/<token>``, which is syntactically a URL and
+        completely unreachable. Failing at settings-load turns that into a
+        startup error naming the value, instead of a broken link nobody sees
+        until a recipient clicks it.
+        """
+        for bad in ("", "lemelyig.com", "https://", "/verify-email"):
+            with (
+                self.subTest(value=bad),
+                TemporaryDirectory() as tmp,
+                _IsolatedEnv(LEMELY_EMAIL__APP_BASE_URL=bad),
+                self.assertRaises(ValidationError),
+            ):
+                load_settings(toml_path=None, cwd=Path(tmp))
+
+    def test_email_app_base_url_accepts_a_real_origin_and_trims_a_trailing_slash(self) -> None:
+        """A trailing slash must not survive into a doubled path separator."""
+        with (
+            _IsolatedEnv(LEMELY_EMAIL__APP_BASE_URL="https://staging.lemelyig.com/"),
+            TemporaryDirectory() as tmp,
+        ):
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.email.app_base_url, "https://staging.lemelyig.com")
+
+    def test_email_app_base_url_defaults_to_the_production_site(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.email.app_base_url, "https://lemelyig.com")
+
     def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
         with TemporaryDirectory() as tmp:
             cwd = Path(tmp) / "cwd"

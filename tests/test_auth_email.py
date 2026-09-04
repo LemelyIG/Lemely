@@ -138,6 +138,64 @@ def test_link_is_html_escaped_in_the_html_part() -> None:
     assert "https://lemelyig.com/v?a=1&b=2" in body["text"]
 
 
+# A frontend route is what AuthService mints; an inbox needs a URL.
+RELATIVE_VERIFY = "/verify-email/abc123"
+RELATIVE_RESET = "/reset/xyz789"
+
+
+def test_a_relative_link_is_made_absolute_before_it_is_sent() -> None:
+    """Regression: the emailed link must never be a bare frontend route.
+
+    ``AuthService._mint_verification_link`` returns ``/verify-email/<token>``
+    — correct for the SPA, meaningless in an inbox. Shipped as-is, a mail
+    client resolved that root-relative href against no base and produced
+    ``http:///verify-email/<token>``: an empty-host URL that no browser can
+    reach, reported from a real inbox. The provider must join the configured
+    origin on first.
+    """
+    provider, seen = _provider(_ok)
+    provider.send_verification("student@example.com", RELATIVE_VERIFY)
+
+    body = json.loads(seen[0].content)
+    expected = "https://lemelyig.com/verify-email/abc123"
+    assert expected in body["text"]
+    assert f'href="{expected}"' in body["html"]
+    # The exact shape of the bug, asserted directly rather than implied.
+    assert "http:///" not in body["html"]
+    assert "http:///" not in body["text"]
+
+
+def test_a_relative_reset_link_is_made_absolute_too() -> None:
+    """The reset mail carries the same defect if only verification is fixed."""
+    provider, seen = _provider(_ok)
+    provider.send_password_reset("student@example.com", RELATIVE_RESET)
+
+    body = json.loads(seen[0].content)
+    assert "https://lemelyig.com/reset/xyz789" in body["text"]
+    assert "http:///" not in body["html"]
+
+
+def test_the_origin_is_configurable_per_environment() -> None:
+    """Staging must mail staging links, not production ones."""
+    provider, seen = _provider(_ok, _settings(app_base_url="https://staging.lemelyig.com"))
+    provider.send_verification("student@example.com", RELATIVE_VERIFY)
+
+    body = json.loads(seen[0].content)
+    assert "https://staging.lemelyig.com/verify-email/abc123" in body["text"]
+    assert "https://lemelyig.com/verify-email" not in body["text"]
+
+
+def test_an_already_absolute_link_is_not_double_prefixed() -> None:
+    """Joining must be idempotent, so a caller that mints full URLs still works."""
+    provider, seen = _provider(_ok)
+    provider.send_verification("student@example.com", VERIFY_LINK)
+
+    body = json.loads(seen[0].content)
+    assert VERIFY_LINK in body["text"]
+    assert "lemelyig.com/https" not in body["text"]
+    assert body["text"].count("https://") == 1
+
+
 def test_rejected_send_raises_with_status_and_body() -> None:
     """ "422" alone never fixed a sender problem; the reason must survive."""
 
