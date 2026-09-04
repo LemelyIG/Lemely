@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -58,3 +59,102 @@ def test_check_storage_local_reports_root(tmp_path: Path) -> None:
     ok, detail = check_storage(settings, no_network=True)
     assert ok is True
     assert detail == str(tmp_path / "storage")
+
+
+def test_check_storage_gcs_adc_failure_is_reported(monkeypatch: pytest.MonkeyPatch) -> None:
+    """No application-default credentials: fails before touching the network."""
+    from lemely.io.storage import check_storage
+    from lemely.runtime.config import Settings
+
+    def _no_adc() -> None:
+        raise OSError("could not find default credentials")
+
+    monkeypatch.setattr("google.auth.default", _no_adc)
+    settings = Settings().model_copy(
+        update={
+            "storage": Settings().storage.model_copy(
+                update={"backend": "gcs", "bucket": "proj-uploads-staging"}
+            )
+        }
+    )
+
+    ok, detail = check_storage(settings, no_network=True)
+
+    assert ok is False
+    assert "application-default credentials" in detail
+
+
+def test_check_storage_gcs_no_network_skips_the_bucket_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``no_network=True`` reports ADC health only — no client is ever built."""
+    from lemely.io.storage import check_storage
+    from lemely.runtime.config import Settings
+
+    monkeypatch.setattr("google.auth.default", lambda: None)
+
+    def _client_must_not_be_built(*_: object, **__: object) -> None:
+        raise AssertionError("no_network must not construct a storage client")
+
+    monkeypatch.setattr("google.cloud.storage.Client", _client_must_not_be_built)
+    settings = Settings().model_copy(
+        update={
+            "storage": Settings().storage.model_copy(
+                update={"backend": "gcs", "bucket": "proj-uploads-staging"}
+            )
+        }
+    )
+
+    ok, detail = check_storage(settings, no_network=True)
+
+    assert ok is True
+    assert "proj-uploads-staging" in detail
+    assert "not probed" in detail
+
+
+def test_check_storage_gcs_bucket_probe_failure_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADC resolves but the bucket read fails: reported with the bucket named."""
+    from lemely.io.storage import check_storage
+    from lemely.runtime.config import Settings
+
+    monkeypatch.setattr("google.auth.default", lambda: None)
+    client = MagicMock()
+    client.get_bucket.side_effect = Exception("403 caller does not have access")
+    monkeypatch.setattr("google.cloud.storage.Client", lambda: client)
+    settings = Settings().model_copy(
+        update={
+            "storage": Settings().storage.model_copy(
+                update={"backend": "gcs", "bucket": "proj-uploads-staging"}
+            )
+        }
+    )
+
+    ok, detail = check_storage(settings, no_network=False)
+
+    assert ok is False
+    assert "proj-uploads-staging" in detail
+
+
+def test_check_storage_gcs_bucket_probe_success(monkeypatch: pytest.MonkeyPatch) -> None:
+    """ADC resolves and the bucket answers: reported as reachable."""
+    from lemely.io.storage import check_storage
+    from lemely.runtime.config import Settings
+
+    monkeypatch.setattr("google.auth.default", lambda: None)
+    client = MagicMock()
+    monkeypatch.setattr("google.cloud.storage.Client", lambda: client)
+    settings = Settings().model_copy(
+        update={
+            "storage": Settings().storage.model_copy(
+                update={"backend": "gcs", "bucket": "proj-uploads-staging"}
+            )
+        }
+    )
+
+    ok, detail = check_storage(settings, no_network=False)
+
+    assert ok is True
+    assert "proj-uploads-staging" in detail
+    client.get_bucket.assert_called_once_with("proj-uploads-staging")

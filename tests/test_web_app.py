@@ -201,12 +201,25 @@ def test_question_to_dto_surfaces_topic() -> None:
 def test_health_reports_storage_backend_without_touching_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """DS12: the health route names the backend and bucket from settings only."""
+    """DS12: the health route names the backend and bucket from settings only,
+    and is structurally forbidden from building a storage backend to do it —
+    Task 19's deploy smoke test relies on health never making a network call.
+    """
     monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
     monkeypatch.setenv("LEMELY_STORAGE__BUCKET", "proj-uploads-staging")
     from lemely.web.deps import reset_singletons
 
     reset_singletons()
+
+    def _must_not_be_called() -> None:
+        raise AssertionError("health must not build a storage backend")
+
+    # meta.py never imports get_storage_backend (checked: it only imports
+    # get_settings), so this is the only name a call from the health route
+    # could resolve through today.
+    monkeypatch.setattr("lemely.web.deps.get_storage_backend", _must_not_be_called)
     body = TestClient(create_app()).get("/api/health").json()
+    monkeypatch.undo()  # restore get_storage_backend so its cache_clear() below works
+
     assert body["storage"] == {"backend": "gcs", "bucket": "proj-uploads-staging"}
     reset_singletons()
