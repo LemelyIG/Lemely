@@ -202,24 +202,50 @@ def test_health_reports_storage_backend_without_touching_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """DS12: the health route names the backend and bucket from settings only,
-    and is structurally forbidden from building a storage backend to do it —
-    Task 19's deploy smoke test relies on health never making a network call.
+    and is structurally forbidden from ever building a storage backend to do
+    it — Task 19's deploy smoke test relies on health never making a network
+    call. Guarded two ways because each covers a hole the other leaves:
+
+    - ``app.dependency_overrides`` (this repo's own convention for this exact
+      dependency — see ``tests/test_web_student.py``): FastAPI resolves
+      ``Depends(...)`` by the callable's identity at *request* time, so this
+      catches a regression shaped like ``student.py``'s own
+      ``Annotated[StorageBackend, Depends(get_storage_backend)]`` — even
+      though that ``Depends(...)`` would have captured the callable back when
+      ``lemely.web.routers.meta`` was first imported, long before this test
+      runs. A same-module-attribute patch (e.g.
+      ``monkeypatch.setattr("lemely.web.deps.get_storage_backend", ...)``)
+      does NOT catch this shape: proven by a live regression injection during
+      review (see the task report).
+    - Patching both backend constructors (``GcsStorageBackend.__init__``,
+      ``LocalFileStorageBackend.__init__``) to raise: catches a direct call
+      through a from-imported name, which dependency_overrides cannot see
+      since that path never goes through FastAPI's ``Depends`` resolution.
     """
     monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
     monkeypatch.setenv("LEMELY_STORAGE__BUCKET", "proj-uploads-staging")
-    from lemely.web.deps import reset_singletons
+    from lemely.web.deps import get_storage_backend, reset_singletons
 
-    reset_singletons()
+    reset_singletons()  # a warm cache would return an instance without constructing one
 
-    def _must_not_be_called() -> None:
+    def _dependency_must_not_be_called() -> None:
         raise AssertionError("health must not build a storage backend")
 
-    # meta.py never imports get_storage_backend (checked: it only imports
-    # get_settings), so this is the only name a call from the health route
-    # could resolve through today.
-    monkeypatch.setattr("lemely.web.deps.get_storage_backend", _must_not_be_called)
-    body = TestClient(create_app()).get("/api/health").json()
-    monkeypatch.undo()  # restore get_storage_backend so its cache_clear() below works
+    def _ctor_must_not_be_called(self: object, *args: object, **kwargs: object) -> None:
+        raise AssertionError("health must not construct a storage backend")
+
+    monkeypatch.setattr(
+        "lemely.io.storage_gcs.GcsStorageBackend.__init__", _ctor_must_not_be_called
+    )
+    monkeypatch.setattr(
+        "lemely.io.storage_local.LocalFileStorageBackend.__init__", _ctor_must_not_be_called
+    )
+
+    app = create_app()
+    app.dependency_overrides[get_storage_backend] = _dependency_must_not_be_called
+    body = TestClient(app).get("/api/health").json()
+    app.dependency_overrides.clear()
+    monkeypatch.undo()  # restore the real constructors so cache_clear() below works
 
     assert body["storage"] == {"backend": "gcs", "bucket": "proj-uploads-staging"}
     reset_singletons()
