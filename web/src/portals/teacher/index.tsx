@@ -444,7 +444,9 @@ function TeacherLayout() {
     // carrier of the one protected quality (§1). The student shell has had it
     // since surface 1; the teacher portal had none of the texture layer at all,
     // which is why it read as the generic dashboard the anti-references name.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen">
+    // `bg-paper`: the shell owns its own ground rather than depending on
+    // `body`'s paint showing through beneath the fixed grain overlay.
+    <div data-portal="teacher" className="paper-grain flex min-h-screen bg-paper">
       <SkipLink />
       <Sidebar />
 

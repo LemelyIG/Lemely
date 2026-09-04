@@ -668,7 +668,12 @@ function StudentLayout() {
     // reaches every student screen, including the ~20 this surface does not
     // touch. It is fixed rather than scrolled precisely so it never repaints
     // on scroll on the mid-range Android phones §7 keeps naming.
-    <div data-portal="student" className="paper-grain flex min-h-screen">
+    //
+    // `bg-paper` is load-bearing here, not decoration: the shell must own its
+    // own ground rather than depend on what is behind it (`body`'s own paint,
+    // in this case — correct today, but a fragile thing for a portal root to
+    // lean on) matching the warm `--paper` token by coincidence.
+    <div data-portal="student" className="paper-grain flex min-h-screen bg-paper">
       <SkipLink />
       <Sidebar />
 

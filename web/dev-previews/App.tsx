@@ -21,7 +21,7 @@ import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { Modal } from "@/components/ui/modal"
 import { Popover } from "@/components/ui/popover"
 import { ToastCard, ToastProvider, useToast } from "@/components/ui/toast"
-import { EmptyState, ErrorState, RouteFallback } from "@/components/ui/state-views"
+import { EmptyState, ErrorState, OfflineState, RouteFallback } from "@/components/ui/state-views"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import { ChartFrame } from "@/components/ui/chart-frame"
@@ -805,16 +805,51 @@ function AppBody() {
           </ComponentSection>
 
           <ComponentSection
-            name="ErrorState"
-            summary="Active voice, names what happened and what to do, and offers a retry. Amber by default (PRODUCT.md's accessibility section: avoid red-heavy error states). The Phase 1 audit found no error boundary existed anywhere; ErrorBoundary now wraps this same full-panel presentation. Loading/error primitives PR, part A merged the kit-only red variant that used to live here (title/message/onRetry) into this component; compact below is what survived that merge."
+            name="ErrorState / EmptyState / OfflineState"
+            summary="StateView's full (non-compact) layout, brought onto the same canvas language FullPageState's nine full-page states already use: a line-drawn Doodle, a mono kicker, a text-display-md heading. Amber by default (PRODUCT.md's accessibility section: avoid red-heavy error states). Every kind gets a sensible default doodle+kicker (kindDoodle/kindKicker in state-views.tsx) so the ~50 existing call sites — including every QueryState error branch — improved without being touched. compact (bottom) is unchanged: a 112x64 doodle has no home in a table-cell-sized failure."
           >
-            <StateCell state="error" provenance="prop">
+            <StateCell state="error" provenance="prop" note="Default doodle+kicker for kind=error: the crash doodle, kicker 'Error'">
               <div className="w-full">
                 <ErrorState
                   heading="We couldn't load your papers"
                   body="The connection dropped partway through. Your work is safe."
                   action={{ label: "Try again", onClick: () => undefined }}
                 />
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Default doodle+kicker for kind=empty: the new empty doodle (an open, empty tray), kicker 'Empty'"
+            >
+              <div className="w-full">
+                <EmptyState
+                  heading="No papers assigned yet"
+                  body="Your teacher hasn't set any homework for this class."
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="default"
+              provenance="prop"
+              note="Default doodle+kicker for kind=offline: the offline doodle, kicker 'Offline'. marginalia renders above the kicker (§12)."
+            >
+              <div className="w-full">
+                <OfflineState
+                  marginalia="back in a moment"
+                  heading="You're offline"
+                  body="This panel needs a connection to load. It will pick up on its own once you're back online."
+                  action={{ label: "Try again", onClick: () => undefined }}
+                />
+              </div>
+            </StateCell>
+            <StateCell
+              state="error"
+              provenance="prop"
+              note="kicker={null} omits it entirely, for a caller that wants the doodle and heading alone"
+            >
+              <div className="w-full">
+                <ErrorState kicker={null} heading="Couldn't send this message" body="Check your connection and try again." />
               </div>
             </StateCell>
             <StateCell
