@@ -83,6 +83,7 @@ EXPECTED_TABLES = {
     "push_subscriptions",
     "auth_tokens",
     "invites",
+    "teacher_papers",
 }
 
 
@@ -887,3 +888,32 @@ def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
         session.add(Invite(code="TARGETLESS", role=InviteRole.student, created_by=admin.id))
         with pytest.raises(sa.exc.IntegrityError):
             session.commit()
+
+
+def test_teacher_paper_row_defaults(pg_engine: sa.Engine) -> None:
+    """Spec §4.2: a fresh row is pending, unstaged, and reuses the uploadstatus enum."""
+    from lemely.db.models import TeacherPaper, User
+    from lemely.db.models.enums import Role, UploadStatus
+
+    with Session(pg_engine) as session:
+        teacher = User(id=uuid.uuid4(), email="tp@example.com", role=Role.teacher)
+        session.add(teacher)
+        session.flush()
+        paper = TeacherPaper(
+            uploaded_by=teacher.id,
+            storage_path=f"teacher/{teacher.id}/{uuid.uuid4().hex}/scan.pdf",
+        )
+        session.add(paper)
+        session.commit()
+        session.refresh(paper)
+        assert paper.status is UploadStatus.pending
+        assert paper.stage is None
+        assert paper.report_json is None
+        assert paper.run_started_at is None
+        enum_name = session.execute(
+            sa.text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name = 'teacher_papers' AND column_name = 'status'"
+            )
+        ).scalar_one()
+        assert enum_name == "uploadstatus"

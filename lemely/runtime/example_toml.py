@@ -124,6 +124,12 @@ def render_example_toml() -> str:
     lines.append(f"otp_max_attempts = {s.auth.otp_max_attempts}")
     lines.append(f"otp_length = {s.auth.otp_length}")
     lines.append(f"otp_min_resend_seconds = {s.auth.otp_min_resend_seconds}")
+    lines.append("")
+
+    lines.append("[grading]")
+    lines.append("# A teacher_papers row stuck in `processing` past this many seconds is a")
+    lines.append("# dead run (its instance died) and may be reclaimed by the next regrade.")
+    lines.append(f"stale_run_after_seconds = {s.grading.stale_run_after_seconds}")
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

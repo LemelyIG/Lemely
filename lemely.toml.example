@@ -98,3 +98,8 @@ otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+
+[grading]
+# A teacher_papers row stuck in `processing` past this many seconds is a
+# dead run (its instance died) and may be reclaimed by the next regrade.
+stale_run_after_seconds = 900

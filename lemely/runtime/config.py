@@ -413,6 +413,19 @@ class IntegritySettings(BaseModel):
     ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
+class GradingSettings(BaseModel):
+    """Teacher grading run tuning (spec 2026-09-03 §4.2).
+
+    ``stale_run_after_seconds``: a ``teacher_papers`` row in ``processing``
+    whose ``updated_at`` is older than this is a dead run — its instance died
+    — and may be reclaimed by the next regrade. Progress is written at every
+    stage and every question, so a silent quarter-hour is not a slow run.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    stale_run_after_seconds: int = Field(default=900, ge=60)
+
+
 class StorageSettings(BaseModel):
     """Object storage for every upload the web app keeps (spec 2026-09-03, DS7/DS12).
 
@@ -486,6 +499,7 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    grading: GradingSettings = GradingSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
     database: DatabaseSettings = DatabaseSettings()
