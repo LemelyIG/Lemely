@@ -6,7 +6,11 @@ and the test fake implement.
 
 from __future__ import annotations
 
-from typing import Protocol
+import os
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from lemely.runtime.config import Settings
 
 
 class StorageObjectNotFoundError(KeyError):
@@ -42,4 +46,34 @@ class StorageBackend(Protocol):
         ...
 
 
-__all__ = ["StorageBackend", "StorageObjectNotFoundError"]
+def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
+    """``lemely doctor``'s storage check: ``(passed, detail)``.
+
+    ``local``: the root is writable. ``gcs``: application-default credentials
+    resolve and — unless ``no_network`` — the bucket answers a metadata read.
+    """
+    if settings.storage.backend == "local":
+        root = settings.paths.output_dir / "storage"
+        try:
+            root.mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            return False, str(exc)
+        return os.access(root, os.W_OK), str(root)
+    try:
+        import google.auth
+
+        google.auth.default()
+    except Exception as exc:  # any ADC failure surfaces as the detail
+        return False, f"application-default credentials: {exc}"
+    if no_network:
+        return True, f"gcs://{settings.storage.bucket} (not probed: --no-network)"
+    try:
+        from google.cloud import storage
+
+        storage.Client().get_bucket(settings.storage.bucket)
+    except Exception as exc:  # any bucket-probe failure surfaces as the detail
+        return False, f"bucket {settings.storage.bucket}: {exc}"
+    return True, f"gcs://{settings.storage.bucket}"
+
+
+__all__ = ["StorageBackend", "StorageObjectNotFoundError", "check_storage"]

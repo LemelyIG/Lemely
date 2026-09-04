@@ -62,11 +62,19 @@ class GradeResultDTO(ApiModel):
     questions: list[QuestionResultDTO]
 
 
+class StorageHealthDTO(ApiModel):
+    """Which object-storage backend this process is configured for (DS12)."""
+
+    backend: str
+    bucket: str
+
+
 class HealthDTO(ApiModel):
     """Health-check payload for ``GET /api/health``."""
 
     status: Literal["ok"] = "ok"
     apiKeyConfigured: bool
+    storage: StorageHealthDTO
 
 
 def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:

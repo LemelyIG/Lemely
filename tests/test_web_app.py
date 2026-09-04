@@ -6,6 +6,7 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
@@ -195,3 +196,17 @@ def test_question_to_dto_surfaces_topic() -> None:
         )
     )
     assert untopic.topic is None
+
+
+def test_health_reports_storage_backend_without_touching_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """DS12: the health route names the backend and bucket from settings only."""
+    monkeypatch.setenv("LEMELY_STORAGE__BACKEND", "gcs")
+    monkeypatch.setenv("LEMELY_STORAGE__BUCKET", "proj-uploads-staging")
+    from lemely.web.deps import reset_singletons
+
+    reset_singletons()
+    body = TestClient(create_app()).get("/api/health").json()
+    assert body["storage"] == {"backend": "gcs", "bucket": "proj-uploads-staging"}
+    reset_singletons()

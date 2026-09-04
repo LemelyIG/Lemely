@@ -479,6 +479,11 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     except OSError as exc:
         record("cache_dir_writable", False, str(exc))
 
+    from lemely.io.storage import check_storage
+
+    storage_ok, storage_detail = check_storage(settings, no_network=no_network)
+    record("storage_backend", storage_ok, detail=storage_detail)
+
     try:
         import gradio  # noqa: F401
 

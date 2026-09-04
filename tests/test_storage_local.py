@@ -46,3 +46,15 @@ def test_settings_default_backend_is_local() -> None:
     assert StorageSettings().backend == "local"
     assert StorageSettings().bucket == "uploads"
     assert not hasattr(StorageSettings(), "signed_url_ttl_seconds")
+
+
+def test_check_storage_local_reports_root(tmp_path: Path) -> None:
+    from lemely.io.storage import check_storage
+    from lemely.runtime.config import Settings
+
+    settings = Settings().model_copy(
+        update={"paths": Settings().paths.model_copy(update={"output_dir": tmp_path})}
+    )
+    ok, detail = check_storage(settings, no_network=True)
+    assert ok is True
+    assert detail == str(tmp_path / "storage")
