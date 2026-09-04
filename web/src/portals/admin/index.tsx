@@ -20,6 +20,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteFallback } from "@/components/ui/state-views"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -372,6 +373,11 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
               })
             }
           />
+          {/* Below the offline strip on purpose: connectivity is the transient,
+              self-healing message and belongs on top, while this is a standing fact
+              about the account. Renders nothing, and no margin either, unless the
+              profile has resolved and says the address is unverified. */}
+          <VerifyEmailBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for both admin lanes: a render crash
