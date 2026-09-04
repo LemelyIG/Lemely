@@ -28,6 +28,7 @@ from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Annotated, TypedDict
 
+import anyio
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
@@ -620,13 +621,20 @@ async def student_upload(
     scan_bytes = await scan.read()
     check_upload_cap(scan_bytes)
     object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
-    storage_backend.upload(settings.storage.bucket, object_path, scan_bytes, scan.content_type)
+    # Off the event loop: this is ``async def``, and a blocking network call
+    # made inline here would freeze every other request in the process for as
+    # long as it took (the same shape decision D6.13 removed from the teacher
+    # upload route).
+    await anyio.to_thread.run_sync(
+        storage_backend.upload, settings.storage.bucket, object_path, scan_bytes, scan.content_type
+    )
 
     if mark_scheme is not None:
         # Fixed name so ``resolve_mark_scheme`` can find the sibling scheme object.
         scheme_bytes = await mark_scheme.read()
         check_upload_cap(scheme_bytes)
-        storage_backend.upload(
+        await anyio.to_thread.run_sync(
+            storage_backend.upload,
             settings.storage.bucket,
             f"{object_prefix}/mark_scheme.pdf",
             scheme_bytes,

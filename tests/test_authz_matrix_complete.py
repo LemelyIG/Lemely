@@ -190,9 +190,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # Renders page 1 of a stored scan. Staff-only for the same reason the paper
     # detail is: it is a student's answer sheet.
     ("GET", "/api/papers/{paper_id}/preview"): STAFF,
-    ("POST", "/api/papers/{paper_id}/extract"): STAFF,
-    ("POST", "/api/papers/{paper_id}/grade"): STAFF,
     # Queues the same marking run without the stream (the console's retry).
+    # ``POST /papers/{id}/extract`` and ``POST /papers/{id}/grade`` are
+    # deleted (DS14): marking now starts at upload and runs in the
+    # background against the repository, so there is no separate SSE
+    # extract/grade step to gate here.
     ("POST", "/api/papers/{paper_id}/regrade"): STAFF,
     ("POST", "/api/quizzes/generate"): STAFF,
     ("GET", "/api/quizzes/pools"): STAFF,

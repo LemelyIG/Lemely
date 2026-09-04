@@ -12,7 +12,7 @@ from __future__ import annotations
 import random
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
@@ -58,6 +58,7 @@ from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
@@ -118,6 +119,16 @@ def get_student_upload_repo() -> StudentUploadRepository:
     override this with a repo bound to a throwaway Postgres database.
     """
     return StudentUploadRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_teacher_paper_repo() -> TeacherPaperRepository:
+    """Return the process-wide :class:`TeacherPaperRepository` singleton (spec §4.2)."""
+    settings = get_settings()
+    return TeacherPaperRepository(
+        get_sessionmaker(settings),
+        stale_after=timedelta(seconds=settings.grading.stale_run_after_seconds),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -887,6 +898,7 @@ def reset_singletons() -> None:
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
+    get_teacher_paper_repo.cache_clear()
     get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()
