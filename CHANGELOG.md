@@ -60,6 +60,18 @@ this entry is the user-visible summary.
   migrations run as their own gated job ahead of each deploy rather than on
   container start. See [`docs/ci-cd.md`](docs/ci-cd.md).
 
+### Fixed
+
+- **Verification and password-reset emails carried an unreachable link.** `AuthService` mints
+  links as frontend routes (`/verify-email/<token>`) for the SPA to navigate to, and the first
+  real provider mailed that path as-is; a recipient's mail client resolved the root-relative
+  href against no base and produced `http:///verify-email/<token>`, an empty-host URL no browser
+  can open. Emailed links are now joined onto `[email] app_base_url` before sending, set per
+  environment by `deploy.yml` so staging cannot mail production links. Settings rejects an origin
+  missing a scheme or host at load time, so the failure is now a startup error rather than a dead
+  link discovered by a recipient. Tokens already minted are unaffected — the same token works once
+  the origin is prefixed by hand.
+
 ### Known limitations, stated rather than discovered later
 
 - **Transactional mail is capped by a free tier.** Sending runs on Resend's free plan — 3,000

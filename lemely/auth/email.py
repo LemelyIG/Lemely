@@ -40,6 +40,7 @@ from __future__ import annotations
 import html
 import logging
 from typing import TYPE_CHECKING, Protocol
+from urllib.parse import urljoin
 
 import httpx
 
@@ -58,7 +59,13 @@ class EmailProvider(Protocol):
     """True when the link actually reaches the inbox by a channel outside this
     API (a real mail service). False means the API is the only way to obtain
     it, which is the sole condition under which a route may return it. Any real
-    provider added later **must** set this True."""
+    provider added later **must** set this True.
+
+    Setting it True carries a second obligation: ``link`` arrives as a
+    *frontend route* (``/verify-email/<token>``), and an inbox has no origin to
+    resolve that against, so a provider that delivers out of band must join it
+    onto a configured origin before sending. Skipping that step is not a
+    cosmetic bug — it mails an unreachable ``http:///…`` URL."""
 
     def send_verification(self, email: str, link: str) -> None:
         """Deliver an email-verification ``link`` to ``email``. Raises on failure."""
@@ -201,13 +208,31 @@ class ResendEmailProvider:
         """The ``From:`` header, as ``Display Name <address>``."""
         return f"{self._settings.from_name} <{self._settings.from_address}>"
 
+    def _absolute(self, link: str) -> str:
+        """Resolve ``link`` against the configured app origin.
+
+        :class:`~lemely.auth.service.AuthService` mints links as *frontend
+        routes* — ``/verify-email/<token>`` — because the SPA navigates to them
+        directly and the API returns them as dev links. That is meaningless in
+        an inbox: a mail client resolving a root-relative href against no base
+        produced ``http:///verify-email/<token>``, an empty-host URL that
+        cannot be reached. Absolutising here rather than in ``AuthService``
+        keeps the dev link relative, which is what the SPA wants, and puts the
+        join at the one boundary that actually requires it.
+
+        :func:`~urllib.parse.urljoin` also makes this idempotent — an already
+        absolute link passes through untouched — so a future caller that mints
+        full URLs is not double-prefixed.
+        """
+        return urljoin(self._settings.app_base_url, link)
+
     def send_verification(self, email: str, link: str) -> None:
         """Send the email-verification ``link`` to ``email``."""
-        self._send(email, *_render("verification", link))
+        self._send(email, *_render("verification", self._absolute(link)))
 
     def send_password_reset(self, email: str, link: str) -> None:
         """Send the password-reset ``link`` to ``email``."""
-        self._send(email, *_render("password_reset", link))
+        self._send(email, *_render("password_reset", self._absolute(link)))
 
     def _send(self, to: str, subject: str, html_body: str, text_body: str) -> None:
         """POST one mail to Resend, raising :class:`ExternalServiceError` on failure.

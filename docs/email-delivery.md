@@ -129,16 +129,39 @@ separate Resend account for it.
 export LEMELY_EMAIL__API_KEY="re_..."
 ```
 
+### 4. The link origin
+
+Emailed links are built on `[email] app_base_url`. This matters more than it
+looks: `AuthService` mints links as *frontend routes* (`/verify-email/<token>`),
+which the SPA navigates to directly and the API returns as dev links, but which
+an inbox cannot resolve — a mail client with no base turns that into
+`http:///verify-email/<token>`, an unreachable URL with an empty host. A real
+provider joins this origin on before sending.
+
+`deploy.yml` sets it explicitly for both environments rather than relying on the
+default, so a staging deploy cannot mail links pointing at production:
+
+| Environment | `LEMELY_EMAIL__APP_BASE_URL` |
+| --- | --- |
+| production | `https://lemelyig.com` |
+| staging | `https://staging.lemelyig.com` |
+
+Those hosts match the Worker Custom Domains in `web/wrangler.jsonc`. Settings
+rejects an origin without both a scheme and a host at load time, so a blank or
+half-written value fails at startup naming the value rather than silently
+mailing a broken link.
+
 Everything else has a working default. To override, in `lemely.toml`'s
 `[email]` section locally or as `env_vars` in `deploy.yml` when deployed:
 
 ```bash
+export LEMELY_EMAIL__APP_BASE_URL="https://staging.lemelyig.com"
 export LEMELY_EMAIL__FROM_ADDRESS="noreply@lemelyig.com"
 export LEMELY_EMAIL__FROM_NAME="Lemely"
 export LEMELY_EMAIL__REPLY_TO="support@lemelyig.com"
 ```
 
-### 4. Confirm
+### 5. Confirm
 
 With the key set and a revision deployed that carries it, a signup should send
 a real mail *and* stop returning the dev link in the API response. Both halves

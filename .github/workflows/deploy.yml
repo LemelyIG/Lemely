@@ -277,6 +277,13 @@ jobs:
           # line is safe to merge before the Resend secret exists: the
           # deploy succeeds and mail simply is not sent. Adding the secret
           # and redeploying is the whole switch-on. See
+          #
+          # LEMELY_EMAIL__APP_BASE_URL is the origin the emailed links are
+          # built on. It is set explicitly for both environments rather
+          # than left to the default in EmailSettings, so a staging deploy
+          # cannot mail links pointing at production. The hosts match the
+          # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
+          # job below.
           # docs/email-delivery.md.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
@@ -288,6 +295,7 @@ jobs:
             LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             LEMELY_EMAIL__API_KEY=${{ secrets.RESEND_API_KEY }}
+            LEMELY_EMAIL__APP_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
