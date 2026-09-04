@@ -20,6 +20,7 @@ and parent only, per G-12). Proves:
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -98,18 +99,33 @@ def prefs_service(pg_sessionmaker: sessionmaker[Session]) -> NotificationPrefere
     return NotificationPreferencesService(pg_sessionmaker)
 
 
-def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
+def _seed_user(
+    sm: sessionmaker[Session],
+    role: Role,
+    display_name: str | None = None,
+    email_verified_at: datetime | None = None,
+) -> uuid.UUID:
     """Insert a real ``users`` row — ``notification_preferences.user_id`` FKs to it,
     so any test that actually writes a preferences row (not just reads the
     all-defaults value) needs a real user to satisfy the constraint.
 
     ``display_name`` defaults to ``None`` (unset by every pre-existing caller
     of this helper) so the profile tests can seed the nullable-name case
-    without touching any other test in this file.
+    without touching any other test in this file. ``email_verified_at``
+    defaults to ``None`` for the same reason: an unverified account is what
+    every pre-existing caller already meant.
     """
     uid = uuid.uuid4()
     with sm.begin() as session:
-        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
+        session.add(
+            User(
+                id=uid,
+                email=f"{uid}@example.com",
+                role=role,
+                display_name=display_name,
+                email_verified_at=email_verified_at,
+            )
+        )
     return uid
 
 
@@ -466,6 +482,48 @@ def test_profile_display_name_is_null_when_unset_not_fabricated(
 
     assert resp.status_code == 200
     assert resp.json()["displayName"] is None
+
+
+def test_profile_reports_an_unverified_email_as_unverified(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """D7.5's gate reads ``email_verified_at``; nothing published it until now.
+
+    Without this field the app cannot tell a reader their address is
+    unverified before ``POST /student/correct`` refuses the run, which is the
+    whole reason the verify-email banner exists.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["emailVerified"] is False
+
+
+def test_profile_reports_a_verified_email_as_verified(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A boolean, never the timestamp: the client only asks the yes/no question."""
+    user = _seed_user(
+        pg_sessionmaker,
+        Role.student,
+        email_verified_at=datetime(2026, 3, 3, 12, 0, tzinfo=UTC),
+    )
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["emailVerified"] is True
+    # The date itself is deliberately not published. Shipping it would invite a
+    # screen to render "verified on 3 March", which nobody asked for and which
+    # would then have to be maintained as a user-facing fact.
+    assert "emailVerifiedAt" not in body
 
 
 @pytest.mark.parametrize(

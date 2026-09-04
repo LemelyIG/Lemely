@@ -44,11 +44,21 @@ class ProfileDTO(ApiModel):
     the schema (a user who never set one) — and the caller must render that
     absence honestly (e.g. the email's local part, or the role), never a
     fabricated name.
+
+    ``emailVerified`` is ``users.email_verified_at is not None`` and nothing
+    more. D7.5's soft gate (:func:`~lemely.web.deps.require_verified_email`)
+    reads that column to refuse ``POST /api/student/correct``, and until this
+    field existed no route and no token claim published the fact, so the app
+    could only discover it by being refused. A boolean rather than the
+    timestamp on purpose: the client only ever asks the yes/no question, and
+    publishing the date would invite a screen to render it as a user-facing
+    fact that then has to be maintained as one.
     """
 
     displayName: str | None = None
     email: str
     role: str
+    emailVerified: bool
 
 
 class NotificationPreferencesUpdateDTO(ApiModel):
