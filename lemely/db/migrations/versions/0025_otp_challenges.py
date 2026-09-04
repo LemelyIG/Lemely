@@ -19,7 +19,9 @@ and ``code_hash`` are the SHA-256 hex digests of the normalised address and
 the code respectively (D7.7, the same rule ``auth_tokens.token_hash``
 follows): a row never holds a redeemable credential or a raw contact, so a
 database read yields nothing that verifies a code or identifies who it was
-sent to.
+sent to. Both are ``String(64)`` — a SHA-256 hex digest is always exactly 64
+characters — the same explicit length ``auth_tokens.token_hash`` (migration
+``0022``) uses, rather than an unbounded column trusting the writer.
 
 No ``created_at``/``updated_at``. Every other table in this schema carries
 them because a row is a durable record worth knowing the history of; a
@@ -56,8 +58,8 @@ def upgrade() -> None:
     op.create_table(
         "otp_challenges",
         sa.Column("channel", sa.Enum("phone", "email", name="otpchannel"), nullable=False),
-        sa.Column("address_hash", sa.String(), nullable=False),
-        sa.Column("code_hash", sa.String(), nullable=False),
+        sa.Column("address_hash", sa.String(length=64), nullable=False),
+        sa.Column("code_hash", sa.String(length=64), nullable=False),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("issued_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column("attempts", sa.Integer(), server_default=sa.text("0"), nullable=False),

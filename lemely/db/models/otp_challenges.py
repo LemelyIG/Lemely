@@ -12,6 +12,10 @@ verify a code a second one issued.
 email address; ``code_hash`` is the SHA-256 hex digest of the code. Neither
 column ever holds plaintext — a database read (a backup, a log, a support
 query, a leak) yields nothing that verifies a code or identifies a contact.
+Both are ``String(64)`` — a SHA-256 hex digest is always exactly 64
+characters — the same explicit length ``auth_tokens.token_hash`` (migration
+``0022``) uses, so anything longer than a real digest is a rejected insert
+rather than a value this column silently accepts.
 
 **No :class:`~lemely.db.models.enums.TimestampMixin`.** Every other table in
 this schema carries ``created_at``/``updated_at`` because a row is a durable
@@ -47,9 +51,9 @@ class OtpChallenge(Base):
     channel: Mapped[OtpChannel] = mapped_column(
         sa.Enum(OtpChannel, name="otpchannel"), primary_key=True
     )
-    address_hash: Mapped[str] = mapped_column(sa.String, primary_key=True)
+    address_hash: Mapped[str] = mapped_column(sa.String(64), primary_key=True)
     """SHA-256 hex digest of the normalised phone number or email address."""
-    code_hash: Mapped[str] = mapped_column(sa.String, nullable=False)
+    code_hash: Mapped[str] = mapped_column(sa.String(64), nullable=False)
     """SHA-256 hex digest of the current code. Never the plaintext code."""
     expires_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
     issued_at: Mapped[datetime] = mapped_column(sa.DateTime(timezone=True), nullable=False)
