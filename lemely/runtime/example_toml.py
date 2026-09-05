@@ -1,4 +1,24 @@
-"""Generates `lemely.toml.example` from current Settings defaults."""
+"""Generates `lemely.toml.example` from current Settings defaults.
+
+Not every settings group is emitted, and the omission is a decision rather
+than an oversight: this file is what `CLAUDE.md` tells a developer to copy to
+get started, so it carries the knobs someone setting Lemely up actually sets.
+
+`[det_parser]` is the deliberate exclusion. Two of its fields
+(``header_keywords``, ``skip_line_tokens``) are ``frozenset[str]``, and
+frozenset iteration order for strings varies with the interpreter's hash seed,
+which is randomised per process. Emitting them as-is would make this
+generator's output differ between runs, so `test_example_matches_generator`
+would pass or fail depending on which process regenerated the file last. If
+these ever do need emitting, ``sorted()`` them — and decide separately whether
+ten internal parser-tuning knobs belong in a getting-started template at all.
+
+Adding a section here without adding it to `Settings` (or the reverse) is
+invisible to the drift test, which compares this generator's output to the
+file it wrote: an omitted section is self-consistent. That is how
+`[storage]` shipped a new `backend` setting that never appeared in the
+template developers copy.
+"""
 
 from __future__ import annotations
 
