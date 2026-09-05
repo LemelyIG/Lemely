@@ -164,6 +164,35 @@ first call with `Authentication error [code: 10000]` against
 admin grant a Workers role, or have them create an **Account API Token**,
 which is owned by the account and not tied to any member's roles.
 
+#### `www.lemelyig.com` is unreachable by default — fix it with a redirect rule
+
+A Custom Domain requires an exact hostname match, so the Worker attached to
+the apex (`lemelyig.com`) never receives `www.lemelyig.com` traffic — there is
+no DNS record for `www` at all until one is added, so visitors who type it
+get an unreachable/`NXDOMAIN` error. This is exactly the case Cloudflare's own
+docs call out ([Custom Domains → Redirect between www and root
+domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#redirect-between-www-and-root-domain)),
+and it isn't something `wrangler deploy` or a `custom_domain: true` route can
+fix — it's zone-level DNS + rules configuration, done once by hand in the
+Cloudflare dashboard for the `lemelyig.com` zone (not per-deploy, and not
+config this repo carries):
+
+1. **DNS → Records → Add record**: type `A`, name `www`, content `192.0.2.0`
+   (the [reserved placeholder for an originless
+   setup](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/#originless-setups)
+   — traffic never actually reaches it), **Proxy status: Proxied**. The
+   record must be proxied — an unproxied (DNS-only) record can't be matched
+   by a redirect rule.
+2. **Rules → Redirect Rules → Create rule** (or start from the built-in
+   ["Redirect from www to
+   root"](https://developers.cloudflare.com/rules/url-forwarding/examples/redirect-www-to-root/)
+   template): when hostname equals `www.lemelyig.com`, redirect to
+   `https://lemelyig.com${uri.path}` (or the dashboard's equivalent dynamic
+   expression), status 301, preserve query string.
+
+Verify with `curl -I https://www.lemelyig.com` — expect `301`/`308` with
+`Location: https://lemelyig.com/...`.
+
 ### 4. GitHub — environments, secrets, variables
 
 Repo → **Settings → Environments**:
