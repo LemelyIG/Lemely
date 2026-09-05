@@ -6,7 +6,9 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
 
 * :meth:`signup` — admin-creates a GoTrue email/password user, mirrors it into
   ``public.users``, and mints a self-signed access token for the new user. Also
-  mints and best-effort-sends an email-verification token (D7.4/D7.7).
+  mints and best-effort-sends an email-verification token (D7.4/D7.7), plus a
+  typed code sent alongside it (spec §4.4/DS15) so a recipient who cannot
+  follow the link has a second route through.
 * :meth:`login` — password-grants against GoTrue to *verify* the credential,
   re-mirrors the user, and mints a self-signed access token (GoTrue's token is
   discarded).
@@ -16,10 +18,13 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
   Supabase-compatible access token whose ``app_metadata.role == "parent"``.
 * :meth:`refresh` — redeems a refresh token for a new access token so a signed-in
   device stays signed in past the (short) access-token lifetime.
-* :meth:`verify_email` / :meth:`resend_verification` — redeem (or re-mint) the
-  single-use token minted by :meth:`signup`, stamping ``users.email_verified_at``
-  (D7.4), which soft-gates the Gemini spend at ``POST /api/student/correct``
-  (D7.5) — a route this service does not itself define.
+* :meth:`verify_email` / :meth:`verify_email_code` / :meth:`resend_verification`
+  — redeem (or re-mint) the single-use link token and/or the single-use code
+  minted by :meth:`signup`, stamping ``users.email_verified_at`` (D7.4), which
+  soft-gates the Gemini spend at ``POST /api/student/correct`` (D7.5) — a route
+  this service does not itself define. The link and the code are independent
+  credentials verifying the same fact: whichever is redeemed first stamps the
+  account, and the other simply expires on its own TTL, unused (spec §4.4).
 * :meth:`request_password_reset` / :meth:`reset_password` — the anti-enumeration
   request step and the confirm step, the latter revoking every outstanding
   ``auth_tokens`` row and every device session for the account (D7.7 + D1.11).
@@ -42,7 +47,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Protocol
 
-from lemely.auth.otp import OtpResult
+from lemely.auth.otp import OtpChannel, OtpResult
 from lemely.auth.tokens import (
     decode_refresh_token,
     mint_access_token,
@@ -117,6 +122,13 @@ class AuthResult:
     none is configured at all). Every other flow that returns an
     :class:`AuthResult` (:meth:`login`, :meth:`verify_otp`, :meth:`refresh`)
     mints no verification token and leaves this ``None``."""
+    verification_dev_code: str | None = None
+    """The typed code minted alongside :attr:`verification_dev_link` (spec
+    §4.4/DS15), under the exact same D3.16 rule: non-``None`` only when the
+    configured :class:`~lemely.auth.email.EmailProvider` does not deliver out
+    of band. Set together with :attr:`verification_dev_link` — either both are
+    populated or neither is, since both are minted in the same branch of
+    :meth:`AuthService.signup`."""
 
 
 class AuthService:
@@ -270,11 +282,14 @@ class AuthService:
         a timestamp for consent it never collected.
 
         A fresh account also gets a best-effort email-verification send (D7.4 /
-        D7.7): :meth:`_mint_verification_link` mints the token and
-        :meth:`_try_send_verification` attempts delivery, but — unlike
-        :meth:`resend_verification` — **never raises**. By the time delivery is
-        attempted, ``admin_create_user`` has already succeeded: this address now
-        belongs to a real GoTrue user that can never be registered again. Letting
+        D7.7), a link **and** a typed code (spec §4.4/DS15):
+        :meth:`_mint_verification_link` mints the link token,
+        :meth:`_issue_email_code` issues the code on the OTP store's ``email``
+        channel, and :meth:`_try_send_verification` attempts delivery of both
+        together, but — unlike :meth:`resend_verification` — **never raises**.
+        By the time delivery is attempted, ``admin_create_user`` has already
+        succeeded: this address now belongs to a real GoTrue user that can
+        never be registered again. Letting
         a delivery failure fail this method would fail a signup whose account in
         fact now exists — permanently orphaned, since the caller has no way back
         in and cannot re-signup with the same address. An account that exists
@@ -283,9 +298,10 @@ class AuthService:
 
         Both ``email`` and ``tokens`` are optional collaborators, exactly like
         ``device_registry``: when either is unconfigured (the many hermetic
-        tests built before this feature existed) no token is minted and
-        ``AuthResult.verification_dev_link`` is simply ``None`` — the rest of
-        signup's contract (create the account, return a working access token) is
+        tests built before this feature existed) neither the link nor the
+        code is minted, and ``AuthResult.verification_dev_link`` /
+        ``verification_dev_code`` are simply ``None`` — the rest of signup's
+        contract (create the account, return a working access token) is
         unaffected either way.
         """
         created = self._gotrue.admin_create_user(email, password, role.value, phone)
@@ -306,16 +322,20 @@ class AuthService:
             session_id=registration.session_id if registration else None,
         )
         verification_dev_link: str | None = None
+        verification_dev_code: str | None = None
         if self._tokens is not None:
             link = self._mint_verification_link(self._tokens, created.id)
-            self._try_send_verification(created.email, link)
+            code = self._issue_email_code(created.email)
+            self._try_send_verification(created.email, link, code)
             verification_dev_link = self._dev_link_for(link)
+            verification_dev_code = self._dev_code_for(code)
         return AuthResult(
             access_token=access_token,
             user_id=created.id,
             role=role,
             refresh_token=self._mint_refresh(created.id, registration, "email"),
             verification_dev_link=verification_dev_link,
+            verification_dev_code=verification_dev_code,
         )
 
     def login(
@@ -420,8 +440,38 @@ class AuthService:
         self._mirror.mark_email_verified(user_id, verified_at=_utcnow())
         return user_id
 
-    def resend_verification(self, user_id: uuid.UUID) -> str | None:
-        """Mint a fresh verification token for ``user_id`` and (re)send it.
+    def verify_email_code(self, user_id: uuid.UUID, code: str) -> uuid.UUID:
+        """Verify the caller's email by the code sent beside the link (DS15).
+
+        The address is the caller's own, from the mirror — never a body field —
+        so this cannot probe or verify another address. Every failure collapses
+        into one :class:`~lemely.runtime.errors.AuthError` (same non-revealing
+        rule as :meth:`verify_email`).
+
+        The link and this code are independent credentials: the OTP store's
+        ``email`` channel is entirely separate from the ``auth_tokens`` table
+        the link's token lives in, so redeeming one never touches the other —
+        each expires or is consumed on its own (spec §4.4, "Verification is
+        idempotent, so this is harmless").
+
+        Returns:
+            The id of the now-verified user.
+
+        Raises:
+            AuthError: ``user_id`` names no mirrored user, or the code is
+                unknown, expired, wrong, or locked out.
+        """
+        user = self._mirror.get_by_id(user_id)
+        if user is None:
+            raise AuthError("Unknown user.")
+        result = self._otp_store.verify(user.email, code, channel=OtpChannel.email)
+        if result is not OtpResult.ok:
+            raise AuthError(f"Email verification failed: {result.value}")
+        self._mirror.mark_email_verified(user_id, verified_at=_utcnow())
+        return user_id
+
+    def resend_verification(self, user_id: uuid.UUID) -> tuple[str | None, str | None]:
+        """Mint a fresh verification token and code for ``user_id`` and (re)send them.
 
         ``user_id`` is expected to come from the caller's own authenticated
         session (the router reads it from ``AuthContext``, never a request
@@ -441,9 +491,10 @@ class AuthService:
         to keep indistinguishable from a known one.
 
         Returns:
-            The dev link, exactly under :meth:`signup`'s D3.16 rule: non-``None``
-            only when the configured :class:`~lemely.auth.email.EmailProvider`
-            does not deliver out of band (or none is configured).
+            The ``(dev_link, dev_code)`` pair, each exactly under :meth:`signup`'s
+            D3.16 rule: non-``None`` only when the configured
+            :class:`~lemely.auth.email.EmailProvider` does not deliver out of
+            band (or none is configured).
 
         Raises:
             AuthError: No verification service is configured, or ``user_id``
@@ -455,12 +506,13 @@ class AuthService:
         if user is None:
             raise AuthError("Unknown user.")
         link = self._mint_verification_link(self._tokens, user_id)
+        code = self._issue_email_code(user.email)
         if self._email is not None:
             # Deliberately NOT swallowed here — see the docstring above for why
             # this call is allowed to raise where `_try_send_verification`
             # (used by `signup`) is not.
-            self._email.send_verification(user.email, link)
-        return self._dev_link_for(link)
+            self._email.send_verification(user.email, link, code)
+        return self._dev_link_for(link), self._dev_code_for(code)
 
     def request_password_reset(self, email: str) -> str | None:
         """Mint and send a password-reset token for ``email``, if it exists.
@@ -594,8 +646,32 @@ class AuthService:
         delivers = self._email.delivers_out_of_band if self._email is not None else False
         return None if delivers else link
 
-    def _try_send_verification(self, email: str, link: str) -> None:
-        """Best-effort delivery of a verification link. Never raises.
+    def _dev_code_for(self, code: str) -> str | None:
+        """Return ``code`` iff nothing else can be trusted to have delivered it.
+
+        :meth:`_dev_link_for`'s exact rule, applied to the code (spec
+        §4.4/DS15): ``None`` only when the configured
+        :class:`~lemely.auth.email.EmailProvider` reports
+        ``delivers_out_of_band = True``. The two dev values always agree —
+        both are gated on the same provider — so they are set together
+        everywhere a caller produces an :class:`AuthResult` or the
+        ``resend_verification`` tuple.
+        """
+        delivers = self._email.delivers_out_of_band if self._email is not None else False
+        return None if delivers else code
+
+    def _issue_email_code(self, email: str) -> str:
+        """Issue a fresh OTP-store challenge for ``email`` on the ``email`` channel.
+
+        This is the code half of DS15's link-and-code pair: a single-use,
+        hashed-at-rest (in the Postgres-backed store), independently-expiring
+        credential verifying the exact same fact as the link —
+        :meth:`verify_email_code` is its only consumer.
+        """
+        return self._otp_store.issue(email, channel=OtpChannel.email)
+
+    def _try_send_verification(self, email: str, link: str, code: str) -> None:
+        """Best-effort delivery of a verification link and code. Never raises.
 
         See :meth:`signup`'s docstring (rule 4) for why: a delivery failure
         here must not fail a signup whose GoTrue account already exists. A
@@ -606,7 +682,7 @@ class AuthService:
         if self._email is None:
             return
         try:
-            self._email.send_verification(email, link)
+            self._email.send_verification(email, link, code)
         except Exception:
             logger.exception(
                 "Verification email to %s could not be sent; the account exists "

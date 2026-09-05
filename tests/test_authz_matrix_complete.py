@@ -153,7 +153,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (14) ────────────────────
+    # ── AUTH_ANY (15) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
@@ -177,6 +177,14 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # `get_auth_context` alone, the same AUTH_ANY shape as the invite-redeem
     # route above, not a `require_role` guard.
     ("POST", "/api/auth/verify-email/resend"): AUTH_ANY,
+    # spec §4.4/DS15: the code half of the link-and-code pair. Authenticated
+    # (any signed-in role) because the address is read from the caller's own
+    # session, never a body field — the same AUTH_ANY shape as
+    # `verify-email/resend` above, not a `require_role` guard. Not PUBLIC like
+    # `/verify-email` (the link route): a six-digit code is a much weaker
+    # bearer credential than the link's opaque token, so it is scoped to the
+    # caller's own session rather than redeemable by anyone who has it.
+    ("POST", "/api/auth/verify-email/code"): AUTH_ANY,
     # ── STAFF (40) ────────────────────
     ("GET", "/api/classes/{class_id}"): STAFF,
     ("GET", "/api/classes/{class_id}/analytics"): STAFF,

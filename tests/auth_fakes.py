@@ -333,13 +333,13 @@ class FakeEmailProvider:
 
     delivers_out_of_band: bool = False
     raise_on_send: bool = False
-    sent_verifications: list[tuple[str, str]] = field(default_factory=list)
+    sent_verifications: list[tuple[str, str, str]] = field(default_factory=list)
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
 
-    def send_verification(self, email: str, link: str) -> None:
+    def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
             raise RuntimeError("simulated verification-email delivery failure")
-        self.sent_verifications.append((email, link))
+        self.sent_verifications.append((email, link, code))
 
     def send_password_reset(self, email: str, link: str) -> None:
         if self.raise_on_send:

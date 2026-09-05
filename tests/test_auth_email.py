@@ -14,12 +14,15 @@ def test_mock_provider_does_not_deliver_out_of_band() -> None:
     assert MockEmailProvider().delivers_out_of_band is False
 
 
-def test_mock_provider_logs_the_verification_link(caplog: pytest.LogCaptureFixture) -> None:
+def test_mock_provider_logs_the_verification_link_and_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     provider = MockEmailProvider()
     with caplog.at_level(logging.INFO, logger="lemely.auth.email"):
-        provider.send_verification("student@example.com", "https://app/verify-email/abc")
+        provider.send_verification("student@example.com", "https://app/verify-email/abc", "123456")
     assert "student@example.com" in caplog.text
     assert "https://app/verify-email/abc" in caplog.text
+    assert "123456" in caplog.text
 
 
 def test_mock_provider_logs_the_reset_link(caplog: pytest.LogCaptureFixture) -> None:

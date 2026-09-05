@@ -109,6 +109,13 @@ def context() -> Iterator[tuple[TestClient, AuthService, FakeUserMirror]]:
         ttl_seconds=settings.auth.otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
+        # `resend_verification` now issues a fresh email-channel code
+        # alongside the link (spec §4.4/DS15) — several tests below resend
+        # in the same instant as the signup that already issued one, and the
+        # store's default 30s resend cooldown would otherwise raise
+        # `OtpRateLimitError`. See `tests/test_auth_service.py`'s matching
+        # fix for the same reasoning.
+        min_resend_seconds=0,
     )
     service = AuthService(
         gotrue=FakeGoTrueBackend(),
@@ -398,6 +405,42 @@ def test_resend_verification_within_cooldown_is_429(
     assert first.status_code == 200, first.text
     second = client.post("/api/auth/verify-email/resend")
     assert second.status_code == 429, second.text
+
+
+# ── POST /api/auth/verify-email/code ────────────────────────────────────────
+
+
+def test_verify_email_code_route(
+    context: tuple[TestClient, AuthService, FakeUserMirror],
+) -> None:
+    client, _service, mirror = context
+    signup = _signup(client, email="codeverify@example.com")
+    headers = {"Authorization": f"Bearer {signup['accessToken']}"}
+    assert signup["devCode"] is not None
+    assert (
+        client.post(
+            "/api/auth/verify-email/code", json={"code": "000000"}, headers=headers
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/auth/verify-email/code", json={"code": signup["devCode"]}, headers=headers
+        ).status_code
+        == 200
+    )
+    user = mirror.get_by_id(uuid.UUID(str(signup["userId"])))
+    assert user is not None
+    assert user.email_verified_at is not None
+
+
+def test_verify_email_code_requires_a_session(
+    context: tuple[TestClient, AuthService, FakeUserMirror],
+) -> None:
+    client, _service, _mirror = context
+    resp = client.post("/api/auth/verify-email/code", json={"code": "123456"})
+    assert resp.status_code == 401, resp.text
+    assert resp.headers.get("WWW-Authenticate") == "Bearer"
 
 
 # ── POST /api/auth/password-reset/request ───────────────────────────────────
