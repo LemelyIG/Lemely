@@ -96,6 +96,23 @@ three values for step 4.
 GitHub Actions exchange its own OIDC token for short-lived GCP credentials
 at run time — nothing long-lived to leak.
 
+Then run the object-storage bootstrap, once per environment:
+
+```bash
+PROJECT_ID=<your-gcp-project-id> ENVIRONMENT=staging    ./scripts/gcs_bootstrap.sh
+PROJECT_ID=<your-gcp-project-id> ENVIRONMENT=production ./scripts/gcs_bootstrap.sh
+```
+
+Different script, different identity: `gcp-bootstrap.sh` sets up how GitHub
+Actions *deploys*; `gcs_bootstrap.sh` sets up what the deployed service
+*stores*. It creates `<project-id>-uploads-<env>` and
+`<project-id>-avatars-<env>` — the names `deploy.yml` computes by default, so
+no new GitHub variables are needed — and grants the Cloud Run **runtime**
+service account (the default compute SA, since `deploy.yml` pins none)
+`roles/storage.objectAdmin` on each plus `roles/iam.serviceAccountTokenCreator`
+on itself, which is what lets it sign avatar and upload URLs. Both scripts
+are idempotent.
+
 ### 2. Supabase — already provisioned
 
 Both projects exist already (created via the Supabase MCP tools available
@@ -107,6 +124,15 @@ in this session, org `LemelyIG`):
 | URL | `https://ynrmqjiqcvmcakondjbp.supabase.co` | `https://respcqftujbbyvsbkibk.supabase.co` |
 | Region | eu-west-1 | eu-west-1 |
 | `uploads` storage bucket | created (private, 50MiB, pdf/png/jpeg) | created (private, 50MiB, pdf/png/jpeg) |
+
+> **These Supabase buckets are no longer the ones the deployed backend
+> writes to.** Object storage now defaults to Google Cloud Storage
+> (`LEMELY_STORAGE__PROVIDER=gcs`), and `deploy.yml` points each environment
+> at its own pair of GCS buckets. The Supabase buckets above are kept because
+> the Supabase backend is still supported and switching back is one
+> environment variable. Create the GCS side with
+> `scripts/gcs_bootstrap.sh` — see the GCP section below and
+> `docs/deployment.md` §3.2 step 5.
 
 Both are on the free tier (2 free projects/org — this uses both slots; a
 third project needs either Pro ($25/mo) or a separate organization). Free

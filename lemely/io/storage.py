@@ -80,6 +80,15 @@ class StorageBackend(Protocol):
         """Return a time-limited signed URL for ``object_path`` in ``bucket``."""
         ...
 
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Remove ``object_path`` from ``bucket``.
+
+        Raises :class:`StorageObjectNotFoundError` when there is no such
+        object, matching :meth:`download` — a caller that wants an idempotent
+        delete catches it rather than the backend guessing which it wanted.
+        """
+        ...
+
 
 class HttpStorageBackend:
     """Real :class:`StorageBackend` backed by the Supabase Storage REST API.
@@ -179,14 +188,42 @@ class HttpStorageBackend:
             return f"{self._base_url}{signed_url}"
         return signed_url
 
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Delete ``{bucket}/{object_path}`` (service-role key).
+
+        Uses the same missing-object discrimination as :meth:`download`
+        (:func:`_is_missing_key`), because the self-hosted Storage API answers
+        a delete of a missing object with the same HTTP 400 + ``NoSuchKey``
+        body rather than a 404.
+        """
+        service_key = self._service_key()
+        try:
+            response = httpx.delete(
+                f"{self._base_url}/storage/v1/object/{bucket}/{object_path}",
+                headers={
+                    "Authorization": f"Bearer {service_key}",
+                    "apikey": service_key,
+                },
+                timeout=_TIMEOUT_SECONDS,
+            )
+        except httpx.HTTPError as exc:
+            raise ExternalServiceError(f"Storage delete request failed: {exc}") from exc
+        if response.status_code == 404 or _is_missing_key(response):
+            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}")
+        if response.status_code >= 300:
+            raise ExternalServiceError(
+                f"Storage delete failed ({response.status_code}): {response.text}"
+            )
+
 
 class GcsStorageBackend:
     """Real :class:`StorageBackend` backed by Google Cloud Storage.
 
-    The alternative production backend selected by
+    The **default** production backend, selected by
     ``StorageSettings.provider == "gcs"`` (see
-    :func:`~lemely.web.deps.get_storage_backend`) — Supabase Storage remains the
-    default. Authenticates via Application Default Credentials (ADC): a service
+    :func:`~lemely.web.deps.get_storage_backend`); Supabase Storage remains
+    available behind ``provider = "supabase"``. Authenticates via Application
+    Default Credentials (ADC): a service
     account attached to the Cloud Run/GCE/GKE workload in production, or
     ``gcloud auth application-default login`` locally for :meth:`upload` and
     :meth:`download`. No key is read from
@@ -201,10 +238,12 @@ class GcsStorageBackend:
     not just any ADC.
 
     The ``google-cloud-storage``/``google-auth``/``google-api-core`` imports are
-    deliberately **lazy** — inside :meth:`_client_and_credentials` and
-    :meth:`create_signed_url` rather than at module scope — so a deployment
-    running the default Supabase backend never imports this dependency at all,
-    matching :class:`HttpStorageBackend`'s zero-cost-when-unused shape.
+    deliberately **lazy** — inside the operation methods rather than at module
+    scope — and no ADC lookup happens in ``__init__`` either. Constructing this
+    backend therefore costs nothing and cannot fail, which is what lets
+    :func:`~lemely.web.deps.get_storage_backend` wire it by default: a fresh
+    clone with no Google credentials still imports the app and serves every
+    route that does not touch object storage.
     """
 
     def __init__(self, settings: Settings) -> None:
@@ -331,6 +370,19 @@ class GcsStorageBackend:
             )
         except gcs_exceptions.GoogleAPICallError as exc:
             raise ExternalServiceError(f"GCS sign failed: {exc}") from exc
+
+    def delete(self, bucket: str, object_path: str) -> None:
+        """Delete ``{bucket}/{object_path}`` via the GCS client library."""
+        from google.api_core import exceptions as gcs_exceptions
+
+        client, _ = self._client_and_credentials()
+        try:
+            blob = client.bucket(bucket).blob(object_path)  # type: ignore[attr-defined]
+            blob.delete()
+        except gcs_exceptions.NotFound as exc:
+            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
+        except gcs_exceptions.GoogleAPICallError as exc:
+            raise ExternalServiceError(f"GCS delete failed: {exc}") from exc
 
 
 __all__ = [

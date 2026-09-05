@@ -460,23 +460,40 @@ class StorageSettings(BaseModel):
     ``LEMELY_STORAGE__*`` env vars.
 
     ``provider`` selects which :class:`~lemely.io.storage.StorageBackend`
-    :func:`~lemely.web.deps.get_storage_backend` wires: ``"supabase"`` (the
-    default, and the only backend this build has ever run against) uses the
-    same ``supabase.url``/``service_role_key`` as GoTrue; ``"gcs"`` uses
-    Google Cloud Storage via Application Default Credentials (a service
-    account attached to the Cloud Run/GCE/GKE workload, or a local
+    :func:`~lemely.web.deps.get_storage_backend` wires. ``"gcs"`` is the
+    default: Google Cloud Storage via Application Default Credentials (a
+    service account attached to the Cloud Run/GCE/GKE workload, or a local
     ``gcloud auth application-default login``) — no key lives in this
-    settings tree for that path.
+    settings tree for that path. ``"supabase"`` uses the same
+    ``supabase.url``/``service_role_key`` as GoTrue and remains fully
+    supported; a deployment choosing it should also set ``bucket``/
+    ``avatar_bucket`` back to its Supabase bucket names (historically
+    ``uploads`` and ``avatars``), because the defaults below are GCS-shaped.
+
+    **Why the bucket defaults carry a ``lemely-`` prefix.** Supabase bucket
+    names are scoped to one project, so bare ``uploads``/``avatars`` were
+    fine there. GCS bucket names are a single *global* namespace shared by
+    every Google Cloud customer, so ``uploads`` and ``avatars`` are long
+    since taken and could never be created — a default that can only ever
+    fail is worse than no default. The deployed pipeline does not rely on
+    these defaults at all: ``.github/workflows/deploy.yml`` sets
+    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project
+    id + environment suffix), which is what keeps staging and production
+    from sharing one bucket.
     """
 
     model_config = ConfigDict(extra="forbid")
-    provider: Literal["supabase", "gcs"] = "supabase"
-    bucket: str = "uploads"
+    provider: Literal["supabase", "gcs"] = "gcs"
+    # `min_length=1` is not decoration: an unset GitHub Actions variable
+    # renders as the empty string, so a mistyped `vars.` reference in
+    # deploy.yml would otherwise boot a service that writes every object to
+    # bucket "" and fails at the first upload instead of at startup.
+    bucket: str = Field(default="lemely-uploads", min_length=1)
     signed_url_ttl_seconds: int = Field(default=3600, ge=1)
     # Profile pictures (student/teacher avatars) live in their own bucket,
     # separate from `bucket` (self-mark scans/mark schemes) — the two have
     # different retention/access shapes and no reason to share a namespace.
-    avatar_bucket: str = "avatars"
+    avatar_bucket: str = Field(default="lemely-avatars", min_length=1)
     avatar_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
     # GCP project id for the GCS client. Optional: Application Default
     # Credentials usually carry (or can infer) a project on their own; set

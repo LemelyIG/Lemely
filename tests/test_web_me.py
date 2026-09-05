@@ -629,14 +629,19 @@ def test_avatar_upload_sets_signed_url_and_stores_object(
 
     assert resp.status_code == 200
     body = resp.json()
+    # The bucket is read from settings, not written as a literal: the default
+    # moved from Supabase's "avatars" to GCS's "lemely-avatars" when GCS became
+    # the default provider, and this test is about the object path inside the
+    # bucket, not about which name the default happens to carry today.
+    avatar_bucket = load_settings().storage.avatar_bucket
     assert body["avatarUrl"] is not None
-    assert body["avatarUrl"].startswith("fake://avatars/")
-    assert f"avatars/{user}/" in body["avatarUrl"]
+    assert body["avatarUrl"].startswith(f"fake://{avatar_bucket}/")
+    assert f"{avatar_bucket}/{user}/" in body["avatarUrl"]
 
     # The object actually landed in storage under the caller's own namespace,
     # inside the avatars bucket (the object path itself does not repeat the
-    # bucket name — that would double it to "avatars/avatars/...").
-    stored_paths = [path for (bucket, path) in backend._objects if bucket == "avatars"]
+    # bucket name — that would double it to "<bucket>/<bucket>/...").
+    stored_paths = [path for (bucket, path) in backend._objects if bucket == avatar_bucket]
     assert len(stored_paths) == 1
     assert stored_paths[0].startswith(f"{user}/")
     assert stored_paths[0].endswith(".png")
@@ -775,24 +780,83 @@ def test_avatar_upload_garbage_bytes_with_image_content_type_is_422(
     assert client.get("/api/me/profile").json()["avatarUrl"] is None
 
 
-def test_avatar_delete_clears_avatar_url(
+def test_avatar_delete_clears_avatar_url_and_removes_the_object(
     client: TestClient, pg_sessionmaker: sessionmaker[Session]
 ) -> None:
+    """Delete removes the stored object too, not just the ``avatar_path`` pointer.
+
+    Earlier builds cleared only the pointer, because ``StorageBackend`` had no
+    delete operation at all — so every deleted avatar stayed in the bucket
+    forever, paid for and unreachable. Asserting the store is empty is what
+    stops that from silently coming back.
+    """
     user = _seed_user(pg_sessionmaker, Role.student)
     _use_user_mirror(client, pg_sessionmaker)
     _auth_as(client, user, Role.student)
-    _use_storage_backend(client, FakeStorageBackend())
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
     upload_resp = client.post(
         "/api/me/avatar",
         files={"image": ("avatar.png", _png_bytes(), "image/png")},
     )
     assert upload_resp.json()["avatarUrl"] is not None
+    assert len(backend._objects) == 1
 
     resp = client.delete("/api/me/avatar")
 
     assert resp.status_code == 200
     assert resp.json()["avatarUrl"] is None
     assert client.get("/api/me/profile").json()["avatarUrl"] is None
+    assert backend._objects == {}
+
+
+def test_avatar_delete_succeeds_even_when_storage_delete_fails(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A storage outage must not 500 a delete that already succeeded in the DB.
+
+    The user-visible contract is decided by ``users.avatar_path``, which is
+    cleared before the object removal is attempted. An unreachable bucket can
+    therefore only ever leave an orphan behind — never a profile pointing at
+    an object that is gone, and never a 500 on a delete the caller has to
+    retry.
+    """
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    class _UndeletableStorage(FakeStorageBackend):
+        def delete(self, bucket: str, object_path: str) -> None:
+            raise ExternalServiceError("bucket unreachable")
+
+    backend = _UndeletableStorage()
+    _use_storage_backend(client, backend)
+    client.post("/api/me/avatar", files={"image": ("avatar.png", _png_bytes(), "image/png")})
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+    # The orphan is the accepted cost of not failing the request.
+    assert len(backend._objects) == 1
+
+
+def test_avatar_delete_with_no_avatar_set_is_a_no_op(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Deleting when nothing is set must not reach storage with a ``None`` path."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert backend._objects == {}
 
 
 def test_unauthenticated_avatar_post_is_401(client: TestClient) -> None:

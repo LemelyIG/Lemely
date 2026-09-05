@@ -348,3 +348,132 @@ def test_gcs_client_and_credentials_are_cached_across_calls(
 
     assert len(auth_default_calls) == 1
     assert len(client_ctor_calls) == 1
+
+
+def test_http_delete_success_issues_a_delete_request(monkeypatch: pytest.MonkeyPatch) -> None:
+    calls: list[tuple[str, dict[str, object]]] = []
+
+    def _ok(url: str, **kwargs: object) -> httpx.Response:
+        calls.append((url, kwargs))
+        return httpx.Response(
+            200, json={"message": "Successfully deleted"}, request=httpx.Request("DELETE", url)
+        )
+
+    monkeypatch.setattr(httpx, "delete", _ok)
+    HttpStorageBackend(_settings()).delete("avatars", "u1/x.png")
+
+    assert calls[0][0].endswith("/storage/v1/object/avatars/u1/x.png")
+
+
+def test_http_delete_missing_key_raises_not_found(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Delete of a missing object gets the same HTTP 400 + NoSuchKey shape as download.
+
+    The self-hosted Storage API does not answer 404 here either (D2.8), so a
+    naive status check would report a missing object as a backend failure and
+    the avatar-delete route would log a spurious warning on every re-delete.
+    """
+    monkeypatch.setattr(
+        httpx,
+        "delete",
+        lambda *a, **k: _fake_response(
+            400,
+            {
+                "statusCode": "404",
+                "error": "not_found",
+                "message": "Object not found",
+                "code": "NoSuchKey",
+            },
+        ),
+    )
+    with pytest.raises(StorageObjectNotFoundError):
+        HttpStorageBackend(_settings()).delete("avatars", "missing.png")
+
+
+def test_http_delete_server_error_raises_external_service_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(httpx, "delete", lambda *a, **k: _fake_response(500))
+    with pytest.raises(ExternalServiceError):
+        HttpStorageBackend(_settings()).delete("avatars", "x.png")
+
+
+def test_gcs_delete_calls_blob_delete(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(name="credentials"))
+
+    GcsStorageBackend(_gcs_settings()).delete("avatars", "u1/x.png")
+
+    fake_blob.delete.assert_called_once_with()
+
+
+def test_gcs_delete_missing_object_raises_storage_object_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.api_core import exceptions as gcs_exceptions
+
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(name="credentials"))
+    fake_blob.delete.side_effect = gcs_exceptions.NotFound("missing")
+
+    with pytest.raises(StorageObjectNotFoundError):
+        GcsStorageBackend(_gcs_settings()).delete("avatars", "missing.png")
+
+
+def test_gcs_delete_failure_raises_external_service_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.api_core import exceptions as gcs_exceptions
+
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(name="credentials"))
+    fake_blob.delete.side_effect = gcs_exceptions.ServiceUnavailable("down")
+
+    with pytest.raises(ExternalServiceError):
+        GcsStorageBackend(_gcs_settings()).delete("avatars", "x.png")
+
+
+# ---------------------------------------------------------------------------
+# GCS is now the DEFAULT provider, which puts a new requirement on the wiring:
+# a machine with no Google credentials at all (a fresh clone, CI, this repo's
+# own hermetic suite) must still be able to build the app and serve every
+# route that does not touch object storage.
+# ---------------------------------------------------------------------------
+
+
+def test_gcs_backend_construction_resolves_no_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Constructing the default backend must not call ``google.auth.default()``.
+
+    ADC discovery raising in ``__init__`` would make `get_storage_backend`
+    fail on a credential-less machine, and that dependency is imported by the
+    whole `/api/me` router — so every profile and notification route would
+    500 on a laptop that has never run `gcloud auth`.
+    """
+    import google.auth
+
+    def _explode() -> tuple[object, str]:
+        raise AssertionError("google.auth.default() must not be called at construction time")
+
+    monkeypatch.setattr(google.auth, "default", _explode)
+
+    backend = GcsStorageBackend(_gcs_settings())
+
+    assert backend is not None
+
+
+def test_get_storage_backend_defaults_to_gcs_without_credentials(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The FastAPI dependency itself is safe to resolve with no ADC present."""
+    import google.auth
+
+    from lemely.web.deps import get_storage_backend
+
+    monkeypatch.setattr(
+        google.auth,
+        "default",
+        lambda: (_ for _ in ()).throw(AssertionError("ADC must not be resolved eagerly")),
+    )
+    get_storage_backend.cache_clear()
+    try:
+        assert isinstance(get_storage_backend(), GcsStorageBackend)
+    finally:
+        get_storage_backend.cache_clear()

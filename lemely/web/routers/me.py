@@ -243,6 +243,30 @@ def _avatar_url_for(user: User, settings: Settings, storage: StorageBackend) -> 
         return None
 
 
+def _delete_avatar_object(storage: StorageBackend, settings: Settings, object_path: str) -> None:
+    """Best-effort removal of one avatar object; never raises.
+
+    The user-visible contract of ``DELETE /api/me/avatar`` is that the profile
+    picture is gone, and that is decided by the ``users.avatar_path`` pointer,
+    which is cleared in the database whether or not the object store answers.
+    So a storage failure here is logged and swallowed rather than 500ing a
+    delete that already succeeded from the caller's point of view — the worst
+    case is one orphaned object nothing references.
+
+    Catches ``Exception`` for the same reason :func:`_avatar_url_for` does: as
+    well as :class:`~lemely.runtime.errors.ExternalServiceError`, a missing
+    Supabase service-role key raises
+    :class:`~lemely.runtime.errors.AuthError` and a misconfigured GCS
+    credential raises a plain google-auth error.
+    :class:`~lemely.io.storage.StorageObjectNotFoundError` is included
+    deliberately: an already-absent object is the desired end state.
+    """
+    try:
+        storage.delete(settings.storage.avatar_bucket, object_path)
+    except Exception as exc:  # a delete that already succeeded must not 500.
+        log.warning("avatar_object_delete_failed", object_path=object_path, error=str(exc))
+
+
 def _profile_dto(user: User, settings: Settings, storage: StorageBackend) -> ProfileDTO:
     """Build the ``ProfileDTO`` every ``/api/me/profile``-family route returns."""
     return ProfileDTO(
@@ -371,16 +395,30 @@ def delete_avatar(
     mirror: Annotated[UserMirror, Depends(get_user_mirror)],
     storage: Annotated[StorageBackend, Depends(get_storage_backend)],
 ) -> ProfileDTO:
-    """Clear the authenticated caller's profile picture.
+    """Clear the authenticated caller's profile picture, object included.
 
-    Only clears the ``users.avatar_path`` pointer — the object itself is left
-    in storage. :class:`~lemely.io.storage.StorageBackend` has no delete
-    operation (P2.5 never needed one), so there is nothing to call here; the
-    orphaned object is simply never referenced by a signed URL again.
+    Clears the ``users.avatar_path`` pointer **and** removes the object from
+    the avatars bucket. Earlier builds only cleared the pointer, because
+    :class:`~lemely.io.storage.StorageBackend` had no delete operation — which
+    left every deleted avatar sitting in the bucket forever, paid for and
+    never referenced again. The pointer is cleared first and the object
+    removed after, via :func:`_delete_avatar_object`: that order means a
+    storage outage can only ever leave an orphaned object, never a profile
+    still pointing at an object that is already gone.
     """
     user_id = _require_user_id(auth)
-    mirror.set_avatar_path(user_id, None)
+    previous = mirror.get_by_id(user_id)
+    if previous is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    previous_path = previous.avatar_path
 
+    mirror.set_avatar_path(user_id, None)
+    if previous_path is not None:
+        _delete_avatar_object(storage, settings, previous_path)
+
+    # Re-read rather than reusing `previous`: that instance still carries the
+    # pre-delete `avatar_path`, so the DTO built from it would sign a URL for
+    # the object this route just removed.
     user = mirror.get_by_id(user_id)
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")

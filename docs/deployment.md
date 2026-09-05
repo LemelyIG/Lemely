@@ -131,10 +131,10 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. |
 | `LEMELY_EMAIL__APP_BASE_URL` | `https://lemelyig.com` | The origin emailed verification/reset links are built on. Links are minted as frontend routes (`/verify-email/<token>`), so without an origin a mail client resolves them to `http:///…` — unreachable. `deploy.yml` sets it per environment (`staging.lemelyig.com` vs `lemelyig.com`). Rejected at startup unless it has both a scheme and a host. |
 | `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and lets the auth routes return it, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live link. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
-| `LEMELY_STORAGE__BUCKET` | `uploads` | Only to use a differently-named bucket. **The bucket must already exist** — nothing in this codebase creates it. |
-| `LEMELY_STORAGE__AVATAR_BUCKET` | `avatars` | Only to use a differently-named bucket for profile pictures. Same rule: **must already exist**. |
-| `LEMELY_STORAGE__PROVIDER` | `supabase` | Set to `gcs` to store uploads and avatars in Google Cloud Storage instead of Supabase Storage. Auth is via Application Default Credentials (a service account attached to the Cloud Run/GCE/GKE workload) — no key is configured through this app. |
-| `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity or `gcloud auth application-default login` credential usually carries one). |
+| `LEMELY_STORAGE__PROVIDER` | `gcs` | Set to `supabase` to store uploads and avatars in Supabase Storage instead. The GCS default authenticates via Application Default Credentials (a service account attached to the Cloud Run/GCE/GKE workload) — no key is configured through this app. |
+| `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns by default. **The bucket must already exist** — no application code path creates it; `scripts/gcs_bootstrap.sh` does. Switching to `provider = supabase` means setting this back to that project's bucket name (historically `uploads`). Empty is rejected at startup. |
+| `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures. `deploy.yml` sets `<project-id>-avatars-<env>`; the Supabase name was `avatars`. |
+| `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity or `gcloud auth application-default login` credential usually carries one). `deploy.yml` sets it from `vars.GCP_PROJECT_ID` anyway. |
 | `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | To change the hard spend cap (MISSION §8). |
 | `LEMELY_LOGGING__FORMAT` | `auto` | Set `json` for a log aggregator. |
 
@@ -186,19 +186,49 @@ host and accept the [CORS work in §4](#4-when-you-actually-do-need-cors).
 4. Rewrite the driver prefix: Supabase gives you `postgresql://…`; this app needs
    **`postgresql+psycopg://…`** (SQLAlchemy 2 + psycopg 3, as in the default at
    `config.py:148`). A plain `postgresql://` URL will pick the wrong DBAPI.
-5. Create the Storage bucket named in `LEMELY_STORAGE__BUCKET` (default `uploads`)
-   and the one named in `LEMELY_STORAGE__AVATAR_BUCKET` (default `avatars`).
-   **No code path creates either.** Uploads and avatar sets fail against a
-   missing bucket. To use Google Cloud Storage instead of Supabase Storage for
-   these two buckets, set `LEMELY_STORAGE__PROVIDER=gcs` and grant the
-   workload's service account `roles/storage.objectAdmin` on both buckets. The
-   signed-URL path additionally needs `roles/iam.serviceAccountTokenCreator`
-   on itself, because a workload-identity credential (the normal shape on
-   Cloud Run/GCE/GKE — no `signer`) signs via IAM `signBlob` rather than
-   locally; see `lemely/io/storage.py`'s `GcsStorageBackend`. Plain user ADC
-   (`gcloud auth application-default login`) cannot sign URLs at all — it is
-   fine for local `upload`/`download` testing, but signing avatar/upload URLs
-   needs a real service-account JSON key or an attached service account.
+5. Create the two object-storage buckets. **No application code path creates
+   either**, and uploads and avatar sets fail against a missing bucket.
+
+   **Google Cloud Storage is the default** (`LEMELY_STORAGE__PROVIDER=gcs`),
+   and there is a script for it — run it once per environment:
+
+   ```bash
+   PROJECT_ID=<gcp-project-id> ENVIRONMENT=staging ./scripts/gcs_bootstrap.sh
+   PROJECT_ID=<gcp-project-id> ENVIRONMENT=production ./scripts/gcs_bootstrap.sh
+   ```
+
+   It creates `<project-id>-uploads-<env>` and `<project-id>-avatars-<env>`
+   (the exact names `.github/workflows/deploy.yml` computes by default) with
+   uniform bucket-level access and public access prevented, then grants the
+   Cloud Run runtime service account `roles/storage.objectAdmin` on each. It
+   is idempotent, so re-running it is a no-op. `RUNTIME_SA` defaults to the
+   project's default compute service account, which is what the Cloud Run
+   revision runs as while `deploy.yml` passes no `--service-account`.
+
+   The script's non-obvious grant is `roles/iam.serviceAccountTokenCreator`
+   **on the runtime service account itself**. A workload-identity credential
+   (the normal shape on Cloud Run/GCE/GKE) has no local `signer`, so signed
+   avatar/upload URLs are produced through the IAM `signBlob` API — an
+   impersonation of the service account by itself, which 403s without that
+   binding. See `lemely/io/storage.py`'s `GcsStorageBackend`. Symptom if it is
+   missing: everything works except that profile pictures silently render as
+   absent, because `GET /api/me/profile` returns `avatarUrl: null` rather than
+   failing when a URL cannot be signed.
+
+   Plain user ADC (`gcloud auth application-default login`) cannot sign URLs
+   at all — fine for local `upload`/`download`, not for signing. Add
+   `--impersonate-service-account=<runtime SA>` to that login command to sign
+   locally through the same IAM path production uses.
+
+   **Supabase Storage** (`LEMELY_STORAGE__PROVIDER=supabase`) remains
+   supported. Create the buckets by hand in the Supabase dashboard and set
+   `LEMELY_STORAGE__BUCKET`/`LEMELY_STORAGE__AVATAR_BUCKET` back to their
+   Supabase names (historically `uploads` and `avatars`) — the defaults are
+   GCS-shaped and a Supabase project will not have buckets under those names.
+
+   To verify a real GCS environment end to end, including that signing
+   actually works, see `tests/test_storage_gcs_live.py` (opt-in via
+   `LEMELY_LIVE_GCS=1`).
 6. Apply the schema — see [§3.4](#34-migrations-are-a-separate-gated-step), and do
    **not** simply let the container do it.
 
@@ -455,9 +485,14 @@ replaces it).
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
 [ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
-[ ] Storage bucket "uploads" created by hand
-[ ] Storage bucket "avatars" created by hand
-[ ] LEMELY_STORAGE__PROVIDER=gcs set (or accept the default Supabase Storage)
+[ ] scripts/gcs_bootstrap.sh run once per environment (creates both buckets,
+    grants objectAdmin, grants serviceAccountTokenCreator for signed URLs) --
+    or, on Supabase Storage, both buckets created by hand in the dashboard
+[ ] LEMELY_STORAGE__BUCKET + __AVATAR_BUCKET match the buckets that exist
+    (deploy.yml sets <project-id>-{uploads,avatars}-<env> by default)
+[ ] LEMELY_STORAGE__PROVIDER left at the default gcs (or set to supabase,
+    in which case the two bucket names above must be set back to the
+    Supabase ones)
 [ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
 [ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --
     migrations create component_thresholds/option_thresholds empty; grading

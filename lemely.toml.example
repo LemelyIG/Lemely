@@ -88,17 +88,29 @@ jwt_audience = "authenticated"
 
 [storage]
 # Object storage for self-mark uploads (P2.5) and profile pictures.
-# "supabase" (default) uses the same [supabase] url/service_role_key as
-# GoTrue. "gcs" uses Google Cloud Storage via Application Default
+# "gcs" (default) uses Google Cloud Storage via Application Default
 # Credentials — no key belongs in this file for that path; see
-# docs/deployment.md. Note that signed URLs (avatar/upload downloads) need a
-# real service-account credential (a JSON key, or an attached/workload-
-# identity service account) — plain user ADC from
-# `gcloud auth application-default login` can list/upload/download but
-# cannot sign a URL at all.
-provider = "supabase"
-bucket = "uploads"
-avatar_bucket = "avatars"
+# docs/deployment.md and scripts/gcs_bootstrap.sh. "supabase" uses the same
+# [supabase] url/service_role_key as GoTrue.
+#
+# Note that signed URLs (avatar/upload downloads) need a real service-account
+# credential (a JSON key, or an attached/workload-identity service account) —
+# plain user ADC from `gcloud auth application-default login` can
+# upload/download but cannot sign a URL at all. For local signing, add
+# `--impersonate-service-account=<runtime SA>` to that login command.
+#
+# GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so
+# these defaults carry a project-ish prefix; bare "uploads"/"avatars" were
+# fine only because Supabase scopes bucket names per project. The deployed
+# pipeline overrides both per environment (see .github/workflows/deploy.yml),
+# so staging and production never share a bucket.
+provider = "gcs"
+bucket = "lemely-uploads"
+avatar_bucket = "lemely-avatars"
+# Switching back to Supabase Storage means switching the bucket names too:
+#   provider = "supabase"
+#   bucket = "uploads"
+#   avatar_bucket = "avatars"
 signed_url_ttl_seconds = 3600
 avatar_max_bytes = 5242880  # 5 MiB
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
