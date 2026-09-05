@@ -43,14 +43,13 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  *     and quizzes; a quiz row's `grade` is `null` by design and rendered as
  *     an honest absence (an origin label), never the student's last paper
  *     grade substituted in.
- *  5. Quick actions — all three are real routes. **Corrected in P3.2:** this
- *     note used to read "quiz builder (T-09) and announcement composer (T-12)
- *     don't exist yet (P3.8); rendered as visibly disabled buttons with a
- *     'Coming soon' tag". Both were built after it was written, and the
- *     comment plus the two disabled buttons it described outlived them, so the
- *     dashboard was telling teachers a shipped feature was unavailable while
- *     linking to it from the sidebar. The buttons are enabled and this note is
- *     no longer describing code that exists.
+ *  5. Quick actions — removed. The dashboard used to close with three buttons
+ *     ("Build a quiz", "Post an announcement", "Add a class") that duplicated
+ *     destinations the sidebar already carries as standing nav entries
+ *     (`/teacher/quizzes`, `/teacher/announcements`, `/teacher/classes`). A
+ *     row of buttons repeating the sidebar two feet to the left added a second
+ *     way to reach the same three places rather than a new one, so it is gone
+ *     rather than kept in sync with it.
  *
  * Deliberate deviation from the spec's wording (D3.12, reported): "average
  * predicted grade" on the class cards is NOT computed — averaging letter
@@ -456,37 +455,6 @@ function OverviewLoaded({
             </div>
           ))
         )}
-      </div>
-
-      {/*
-        * 5. Quick actions.
-        *
-        * P3.2: "Build a quiz" and "Post an announcement" were `disabled` with
-        * a "Coming soon" chip and a `title` of "Coming in a later release".
-        * Both features shipped. `/teacher/quizzes` is wired to
-        * `GET /teacher/quizzes` and the full quiz-builder API, and
-        * `/teacher/announcements` to `useAnnouncements()`; both are screens in
-        * the sidebar this teacher can already open. So the dashboard was
-        * telling them a feature does not exist while linking to it two feet to
-        * the left, which is worse than a dead button: it is a reason not to
-        * click a working one. Enabled and pointed at the real screens.
-        */}
-      <div className="flex flex-wrap items-center gap-2">
-        <Button variant="secondary" onClick={() => navigate("/teacher/quizzes")}>
-          Build a quiz
-        </Button>
-        <Button variant="secondary" onClick={() => navigate("/teacher/announcements")}>
-          Post an announcement
-        </Button>
-        {/* All three are secondary. "Add a class" used to be `ink`, which put
-            two filled primary buttons on one screen alongside "Open review
-            queue" at the top — and DESIGN.md §2 gives the Operate lane a
-            single obvious primary action per screen. The review queue is that
-            action here: it is the work only this teacher can do, and the
-            reason the portal exists. */}
-        <Button variant="secondary" onClick={() => navigate("/teacher/classes")}>
-          Add a class
-        </Button>
       </div>
     </>
   )
