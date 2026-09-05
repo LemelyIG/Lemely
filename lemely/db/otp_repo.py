@@ -164,6 +164,19 @@ class DbOtpStore:
         identical cooldown ``WHERE`` guard a normal resend is, so it is
         throttled rather than raising a database integrity error.
 
+        One consequence of making that guard atomic: a candidate code is
+        drawn from ``rng`` and hashed *before* the statement runs, because
+        ``code_hash`` is part of the ``INSERT``, and only the database can
+        say whether the ``WHERE`` guard admits it. A throttled call therefore
+        consumes an ``rng`` draw and discards it, where
+        :meth:`~lemely.auth.otp.OtpStore.issue` checks the cooldown in Python
+        first and never draws. That divergence is intrinsic to the upsert --
+        there is no point at which this store can know the guard passed
+        before composing the statement -- and it is invisible outside the
+        process: the discarded code is never stored, returned, or sent. It
+        matters only to a test asserting an exact sequence of codes across
+        throttled and accepted calls, which is why no parity test does.
+
         Raises:
             OtpRateLimitError: A live (non-expired) challenge was issued more
                 recently than ``min_resend_seconds`` ago — whether that
