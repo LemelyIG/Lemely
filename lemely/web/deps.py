@@ -98,8 +98,14 @@ def get_history_store() -> HistoryStoreProtocol:
 
 @lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Return the process-wide :class:`GeminiClient` singleton."""
-    return GeminiClient(get_settings())
+    """Return the process-wide :class:`GeminiClient` singleton.
+
+    ``ledger=None`` (DS3): the web process enforces no USD ceiling and writes
+    no ``gemini_spend.json`` — the shared Google Cloud billing budget is the
+    only spend guard in production. The CLI/Gradio/eval path is untouched;
+    it keeps the default file ledger.
+    """
+    return GeminiClient(get_settings(), ledger=None)
 
 
 @lru_cache(maxsize=1)

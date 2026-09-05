@@ -18,6 +18,7 @@ from lemely.io.gemini import (
 )
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ExternalServiceError, ParseError
+from lemely.runtime.events import EventType, bus
 
 
 class _SimpleSchema(BaseModel):
@@ -573,3 +574,40 @@ class GeminiClientTests(unittest.TestCase):
                 response_schema=_SimpleSchema,
                 prompt_version="1",
             )
+
+    def _one_call(self, client: GeminiClient) -> None:
+        client.generate_structured(
+            system_prompt="sys",
+            user_prompt="user",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+
+    def test_default_client_enforces_the_file_ledger_ceiling(self) -> None:
+        """Unchanged behaviour for the CLI/Gradio/eval path: a zero ceiling stops the call."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        settings = _make_settings(self.tmp, total_usd_ceiling=0.0)
+        client = GeminiClient(settings, _genai_client=mock_genai)
+        with self.assertRaisesRegex(ExternalServiceError, "USD ceiling"):
+            self._one_call(client)
+
+    def test_ledgerless_client_neither_checks_nor_records(self) -> None:
+        """DS3: ledger=None means no ceiling check, no ledger file, no budget events."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        settings = _make_settings(self.tmp, total_usd_ceiling=0.0)
+        events: list[EventType] = []
+        on_warning = lambda **_: events.append(EventType.BUDGET_WARNING)  # noqa: E731
+        on_exceeded = lambda **_: events.append(EventType.BUDGET_EXCEEDED)  # noqa: E731
+        bus.subscribe(EventType.BUDGET_WARNING, on_warning)
+        bus.subscribe(EventType.BUDGET_EXCEEDED, on_exceeded)
+        try:
+            client = GeminiClient(settings, _genai_client=mock_genai, ledger=None)
+            self._one_call(client)  # succeeds despite a zero ceiling
+        finally:
+            bus.unsubscribe(EventType.BUDGET_WARNING, on_warning)
+            bus.unsubscribe(EventType.BUDGET_EXCEEDED, on_exceeded)
+        self.assertEqual(events, [])
+        self.assertFalse((settings.paths.output_dir / "gemini_spend.json").exists())
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
