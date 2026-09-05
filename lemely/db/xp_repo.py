@@ -54,8 +54,9 @@ from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from enum import StrEnum
 from typing import TYPE_CHECKING
-from zoneinfo import ZoneInfo
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 
@@ -67,6 +68,8 @@ if TYPE_CHECKING:
     from collections.abc import Callable
 
     from sqlalchemy.orm import Session, sessionmaker
+
+log = structlog.get_logger(__name__)
 
 #: Launch-market default (MISSION §1 scopes v1 to Egypt). Not a per-user
 #: setting — see the module docstring and D5.1 §4.
@@ -125,6 +128,24 @@ def civil_date_in_zone(moment: datetime, *, zone: ZoneInfo) -> date:
     if moment.tzinfo is None:
         raise ValueError("civil_date_in_zone requires an aware datetime")
     return moment.astimezone(zone).date()
+
+
+def resolve_zone(name: str | None) -> ZoneInfo:
+    """Turn a stored ``users.timezone`` into a :class:`ZoneInfo`. Never raises.
+
+    ``None`` and blank mean never set and resolve to :data:`DEFAULT_ZONE`. A
+    name ``ZoneInfo`` cannot resolve — a tzdata drop that retired it, a corrupt
+    value, a path-shaped string — also resolves to :data:`DEFAULT_ZONE`, with a
+    warning. Falling back is wrong by an hour or two; raising here would let a
+    stored zone fail a student's XP award, which is wrong by the whole feature.
+    """
+    if name is None or not name.strip():
+        return DEFAULT_ZONE
+    try:
+        return ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError):
+        log.warning("timezone_unresolvable", timezone=name, fallback=DEFAULT_ZONE.key)
+        return DEFAULT_ZONE
 
 
 def week_bounds(today: date) -> tuple[date, date]:
@@ -629,6 +650,54 @@ def _is_dedupe_violation(exc: IntegrityError) -> bool:
     return constraint_name == _DEDUPE_CONSTRAINT_NAME
 
 
+class UserZoneReader:
+    """Resolve the civil-time zone a user lives in, from ``users.timezone``.
+
+    Injected into :class:`XpService` and
+    :class:`~lemely.db.notification_repo.NotificationService`, which keep their
+    ``zone`` constructor argument as the fallback this reader defers to — so
+    every existing test that pins a zone keeps working with no reader at all.
+
+    **The memo lives as long as this object, and this object lives as long as
+    the process** (``lemely.web.deps`` wires one singleton into both services).
+    ``PUT /api/me/timezone`` calls :meth:`forget` after every write, which is
+    what keeps a changed zone from being served stale; with the backend pinned
+    to one replica (``docs/deployment.md`` §5.1) that is the only writer there
+    is. A second replica would serve the old zone until its next restart,
+    bounded to one civil day of drift, and is recorded here rather than solved.
+    """
+
+    def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
+        """Bind the reader to a session factory."""
+        self._sessionmaker = sessionmaker
+        self._memo: dict[uuid.UUID, ZoneInfo] = {}
+
+    def zone_for(self, user_id: uuid.UUID | str) -> ZoneInfo:
+        """The zone for ``user_id``: the stored one, else :data:`DEFAULT_ZONE`.
+
+        An unknown user id also resolves to the default rather than raising:
+        the callers are award and notify paths that must never fail on a
+        lookup that is only there to pick a calendar.
+        """
+        key = _as_uuid(user_id)
+        cached = self._memo.get(key)
+        if cached is not None:
+            return cached
+        with self._sessionmaker() as session:
+            name = session.scalar(select(User.timezone).where(User.id == key))
+        zone = resolve_zone(name)
+        self._memo[key] = zone
+        return zone
+
+    def forget(self, user_id: uuid.UUID | str) -> None:
+        """Drop the memoised zone for one user, after their row changed."""
+        self._memo.pop(_as_uuid(user_id), None)
+
+    def clear(self) -> None:
+        """Drop every memoised zone. Tests, and ``deps.reset_singletons``."""
+        self._memo.clear()
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce a str/UUID to :class:`uuid.UUID`, raising ``ValueError`` if invalid."""
     if isinstance(value, uuid.UUID):
@@ -646,6 +715,7 @@ __all__ = [
     "GLOBAL_DAILY_CAP",
     "XP_AMOUNTS",
     "StreakState",
+    "UserZoneReader",
     "XpAwardResult",
     "XpBreakdown",
     "XpCapReason",
@@ -655,5 +725,6 @@ __all__ = [
     "XpService",
     "XpUserNotFoundError",
     "civil_date_in_zone",
+    "resolve_zone",
     "week_bounds",
 ]
