@@ -89,7 +89,7 @@ from lemely.io.scan_metadata import ScanMetadataExtractor
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 from lemely.io.teacher_quiz import TeacherQuizBuilder
 from lemely.runtime.config import Settings
-from lemely.runtime.events import Event, EventType, bus
+from lemely.runtime.events import Event, EventType, bus, current_run_id
 from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
@@ -217,8 +217,19 @@ _JOB_STAGES: tuple[tuple[str, str], ...] = (
 )
 
 # One worker so Queued means queued — a paper genuinely waiting behind another
-# on this instance. Raising it is a one-line change once per-run event scoping
-# (spec §4.5) lands.
+# on this instance (DS13). Raising it is a one-line change now that per-run
+# event scoping (spec §4.5) is in place: `_run_grading_job` sets
+# `current_run_id` itself at the top of its own call, so two jobs on two pool
+# threads scope correctly regardless of worker count. The trap for whoever
+# raises this is a level down, not here: if raising it also means splitting
+# one paper's own work across threads (a `ThreadPoolExecutor` or `Thread`
+# added inside `lemely/io/gemini.py`, `io/correction_ai.py` or
+# `io/answer_extraction.py`, none of which exist today), every submitted piece
+# of work must run under `contextvars.copy_context()` — a bare `.submit()`
+# does not propagate `current_run_id` into its worker thread, and an event
+# published without it carries no run id, which `EventBus.publish` then
+# delivers to *every* concurrent run's queue (see `lemely/web/sse.py`'s module
+# docstring).
 _grading_pool: ThreadPoolExecutor = ThreadPoolExecutor(
     max_workers=1, thread_name_prefix="lemely-grading"
 )
@@ -329,22 +340,26 @@ def _track_progress(
     reloaded page has, by definition, missed everything published before it
     asked again.
 
-    Not scoped to ``paper_id`` by the event payload: neither progress event
-    type carries one today — ``lemely.io.answer_extraction`` and
+    Scoped to this run by the queue itself (``q`` is
+    ``bus.subscribe_queue(str(paper_id))`` in :func:`_run_grading_job`,
+    matching the ``current_run_id`` that call sets), never by the event
+    payload (spec §4.5, DS10): neither progress event type carries a
+    ``paper_id`` at all — ``lemely.io.answer_extraction`` and
     ``lemely.io.correction_ai`` publish per-question progress with no run
-    identity attached at all, so a ``payload["paper_id"] == str(paper_id)``
-    filter would simply never match and this tracker would never write
-    anything. Safe regardless, because :data:`_grading_pool` stays at one
-    worker (DS13): at most one run is ever actively publishing either event
-    type, so whichever tracker is alive for it is unambiguously the right
-    one. Real per-run scoping is a context variable the publisher stamps and
-    the subscriber filters on, landing with spec §4.5 (Task 15) — not
-    something this payload shape can be made to do today.
+    identity attached — so a ``payload["paper_id"] == str(paper_id)`` filter
+    was never viable here and this function never tried one. Two concurrent
+    runs — on this instance, or, once :data:`_grading_pool` grows past one
+    worker (DS13), on two — each get their own scoped queue and so cannot mix
+    counters, whatever payload shape either publisher emits.
 
     Shutdown is the caller's ``stop`` flag, deliberately **not** the queue's
-    ``None`` sentinel. ``EventBus.publish_done`` broadcasts that ``None`` to
-    *every* subscriber, so a foreign end-of-stream must not be mistaken for
-    this run's own.
+    ``None`` sentinel. Scoping means a foreign run's ``publish_done()`` no
+    longer reaches this queue in practice — but this loop still does not lean
+    on that: it treats ``None`` as a no-op rather than a stop condition, both
+    because :meth:`~lemely.runtime.events.EventBus.publish_done` also still
+    reaches every *unscoped* subscriber (which is what this function is
+    directly exercised against in tests), and because relying on the sentinel
+    at all would be exactly the coupling this task removed.
 
     Runs on its own daemon thread for the lifetime of one job.
     """
@@ -391,11 +406,20 @@ def _run_grading_job(
     Failures are recorded on the row rather than raised: the caller is a pool
     worker with nobody to catch them, and every polling route reads
     :func:`_row_error` for exactly this reason.
+
+    Sets :data:`~lemely.runtime.events.current_run_id` to ``str(paper_id)`` for
+    the whole call (spec §4.5, DS10): every bus event this thread publishes —
+    directly, or via ``extract_answers``/``grade_paper`` below — carries this
+    paper's id, and :func:`_track_progress`'s own queue is subscribed scoped
+    to the same id, so a second run on this instance (or, once
+    :data:`_grading_pool` grows past one worker, a concurrent one on another)
+    cannot mix progress counters with this one.
     """
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import extract_answers, grade_paper
 
-    progress_queue = bus.subscribe_queue()
+    run_id_token = current_run_id.set(str(paper_id))
+    progress_queue = bus.subscribe_queue(str(paper_id))
     stop = threading.Event()
     tracker = threading.Thread(
         target=_track_progress,
@@ -475,6 +499,7 @@ def _run_grading_job(
         # Unsubscribe first, so nothing else can be queued behind the stop flag.
         bus.unsubscribe_queue(progress_queue)
         stop.set()
+        current_run_id.reset(run_id_token)
 
 
 def _start_run_if_claimed(

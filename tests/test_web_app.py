@@ -6,6 +6,9 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import time
+from concurrent.futures import ThreadPoolExecutor
+
 import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -88,6 +91,46 @@ def test_sse_stream_ends_with_done() -> None:
     assert '"type": "extraction_progress"' in payload_frames[0]
     assert '"question_id": "1a"' in payload_frames[0]
     assert '"type": "marking_progress"' in payload_frames[1]
+
+
+def test_two_concurrent_streams_are_isolated() -> None:
+    """Two runs at once: each stream sees only its frames and ends only with its own sentinel."""
+    app = FastAPI()
+
+    def _publisher(tag: str, delay: float):
+        def run() -> None:
+            try:
+                time.sleep(delay)
+                bus.publish(
+                    EventType.MARKING_PROGRESS,
+                    question_id=tag,
+                    marker_source="deterministic",
+                    confidence=1.0,
+                )
+            finally:
+                bus.publish_done()
+
+        return run
+
+    @app.get("/s/{tag}")
+    async def stream(tag: str) -> StreamingResponse:  # pyright: ignore[reportUnusedFunction]
+        delay = 0.05 if tag == "fast" else 0.4
+        return StreamingResponse(
+            bus_event_stream(_publisher(tag, delay), poll_seconds=0.02, run_id=tag),
+            media_type="text/event-stream",
+        )
+
+    client = TestClient(app)
+    with ThreadPoolExecutor(2) as pool:
+        fast, slow = pool.map(lambda t: client.get(f"/s/{t}").text, ["fast", "slow"])
+
+    assert '"question_id": "fast"' in fast and '"slow"' not in fast
+    assert '"question_id": "slow"' in slow and '"fast"' not in slow
+    assert fast.count("[DONE]") == 1 and slow.count("[DONE]") == 1
+    # `_format_frame` never puts the scoping id on the wire — the wire contract
+    # is unchanged even though delivery is now scoped underneath it.
+    assert "run_id" not in fast
+    assert "run_id" not in slow
 
 
 def test_correction_to_dto_round_trip() -> None:

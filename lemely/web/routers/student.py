@@ -1104,7 +1104,9 @@ def student_correct(
         finally:
             bus.publish_done()
 
-    return StreamingResponse(bus_event_stream(run), media_type="text/event-stream")
+    return StreamingResponse(
+        bus_event_stream(run, run_id=payload.paperId), media_type="text/event-stream"
+    )
 
 
 # ── Standings ─────────────────────────────────────────────────────────────────
