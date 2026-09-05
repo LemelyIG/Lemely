@@ -463,7 +463,14 @@ def _seed_graded_paper(
     """
     pid = uuid.uuid4()
     key = f"teacher/{owner}/{pid.hex}/scan.pdf"
-    storage.upload("uploads", key, b"%PDF-1.4 seeded", "application/pdf")
+    # Read the bucket, never hardcode it. The default moved from "uploads" to
+    # "lemely-uploads" when GCS's global namespace made a bare name unusable,
+    # and a literal here seeds the scan where the grading job does not look —
+    # which surfaces as "the regrade job never started", not as a storage
+    # error, because `_run_grading_job` swallows the miss into a failed run.
+    # The `settings` fixture overrides only `paths`, so this matches what the
+    # app under test reads.
+    storage.upload(load_settings().storage.bucket, key, b"%PDF-1.4 seeded", "application/pdf")
     repo.create(
         paper_id=pid,
         uploaded_by=owner,

@@ -66,7 +66,7 @@ class FakeStorageBackend:
         follows it), and a fake that raised here would let a test pass that
         production would fail.
         """
-        return f"https://signed.test/{bucket}/{object_path}?expires_in={expires_in}"
+        return f"fake://{bucket}/{object_path}?expires_in={expires_in}"
 
 
 __all__ = ["FakeStorageBackend", "StorageObjectNotFoundError"]
