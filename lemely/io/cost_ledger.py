@@ -4,11 +4,16 @@ Unlike the per-process token counters in :mod:`lemely.io.gemini`, this ledger
 survives process restarts by persisting to a JSON file, giving Lemely a real
 cross-run USD ceiling for unattended multi-day builds.
 
-Single-writer assumption: concurrent CLI + web writes to the same ledger file
-resolve as last-writer-wins (a lost increment under-counts spend, never
-over-counts). Each :meth:`CostLedger.add` performs a read-modify-write; there is
-no OS-level lock. Future: add ``fcntl.flock`` around the read-modify-write for
-POSIX multi-writer scenarios.
+Single-writer assumption: each :meth:`CostLedger.add` performs a
+read-modify-write with no OS-level lock, so two concurrent writers resolve as
+last-writer-wins (a lost increment under-counts spend, never over-counts).
+Future: add ``fcntl.flock`` around the read-modify-write for POSIX
+multi-writer scenarios (issue #114).
+
+The CLI is now the only writer. The web process builds its Gemini client with
+``ledger=None`` (DS3), so it never calls :meth:`add` — the concurrent
+"CLI + web" case this paragraph used to describe cannot arise in the deployed
+product, which is what makes the missing lock tolerable rather than urgent.
 
 ``cumulative_usd`` is an UPPER BOUND on money spent, not money spent
 --------------------------------------------------------------------

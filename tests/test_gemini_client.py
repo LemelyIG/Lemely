@@ -592,6 +592,29 @@ class GeminiClientTests(unittest.TestCase):
         with self.assertRaisesRegex(ExternalServiceError, "USD ceiling"):
             self._one_call(client)
 
+    def test_an_explicitly_passed_ledger_is_the_one_used(self) -> None:
+        """The third state the signature promises, which nothing else exercises.
+
+        ``ledger`` is typed ``CostLedger | _DefaultLedger | None``, but
+        production only ever uses the sentinel (CLI) or ``None`` (web). A
+        regression that quietly ignored an explicitly-passed ledger — resolving
+        it to the default path anyway — would be invisible to every other test
+        here, because none of them supply one.
+        """
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp)
+        elsewhere = Path(self.tmp) / "elsewhere" / "ledger.json"
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "hi"}')
+        client = GeminiClient(settings, _genai_client=mock_genai, ledger=CostLedger(elsewhere))
+        self._one_call(client)
+        self.assertTrue(elsewhere.exists(), "the explicitly passed ledger was never written")
+        self.assertFalse(
+            (settings.paths.output_dir / "gemini_spend.json").exists(),
+            "the default ledger path was written even though an explicit ledger was given",
+        )
+
     def test_ledgerless_client_neither_checks_nor_records(self) -> None:
         """DS3: ledger=None means no ceiling check, no ledger file, no budget events."""
         mock_genai = MagicMock()

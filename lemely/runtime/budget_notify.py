@@ -59,9 +59,9 @@ def _on_budget_exceeded(**payload: Any) -> None:  # noqa: ANN401
 def register_budget_ntfy() -> None:
     """Subscribe the budget-event ntfy handlers to the bus, exactly once.
 
-    Idempotent and thread-safe: repeated calls (e.g. from both the CLI and web
-    entrypoints, or across multiple ``launch`` invocations) register the
-    subscription only on the first call.
+    Idempotent and thread-safe: repeated calls (e.g. across multiple ``launch``
+    invocations) register the subscription only on the first call. See the
+    module docstring for why the CLI is the only entrypoint that calls this.
     """
     global _registered
     with _lock:
