@@ -13,13 +13,19 @@ behaviour so it can't silently regress again, live-Supabase or not.
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
+
 import httpx
 import pytest
 from pydantic import SecretStr
 
-from lemely.io.storage import HttpStorageBackend, StorageObjectNotFoundError
+from lemely.io.storage import GcsStorageBackend, HttpStorageBackend, StorageObjectNotFoundError
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import ExternalServiceError
+
+if TYPE_CHECKING:
+    from google.oauth2 import service_account
 
 
 def _settings() -> Settings:
@@ -100,3 +106,245 @@ def test_download_success_returns_bytes(monkeypatch: pytest.MonkeyPatch) -> None
     monkeypatch.setattr(httpx, "get", _ok)
     backend = HttpStorageBackend(_settings())
     assert backend.download("uploads", "scan.pdf") == b"pdf-bytes"
+
+
+# ---------------------------------------------------------------------------
+# GcsStorageBackend — hermetic, no network. The `google-cloud-storage`/
+# `google-auth` client library is monkeypatched at its own module attributes
+# (not at an import alias local to lemely.io.storage), which works precisely
+# because GcsStorageBackend imports both lazily, per-call, rather than once at
+# module scope — see that class's own docstring.
+# ---------------------------------------------------------------------------
+
+
+def _gcs_settings() -> Settings:
+    base = Settings()
+    return base.model_copy(update={"storage": base.storage.model_copy(update={"provider": "gcs"})})
+
+
+def _wire_fake_client(monkeypatch: pytest.MonkeyPatch, credentials: object) -> MagicMock:
+    """Patch ``google.auth.default``/``google.cloud.storage.Client``; return the fake blob."""
+    monkeypatch.setattr("google.auth.default", lambda: (credentials, "a-project"))
+    fake_blob = MagicMock(name="blob")
+    fake_bucket = MagicMock(name="bucket")
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock(name="client")
+    fake_client.bucket.return_value = fake_bucket
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **kwargs: fake_client)
+    return fake_blob
+
+
+def test_gcs_upload_passes_bucket_object_path_content_type_and_bytes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(private_key="a-private-key"))
+
+    GcsStorageBackend(_gcs_settings()).upload("avatars", "avatars/u1/x.png", b"bytes", "image/png")
+
+    fake_blob.upload_from_string.assert_called_once_with(b"bytes", content_type="image/png")
+
+
+def test_gcs_upload_with_no_content_type_defaults_to_octet_stream(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(private_key="a-private-key"))
+
+    GcsStorageBackend(_gcs_settings()).upload("uploads", "u1/scan.pdf", b"bytes", None)
+
+    fake_blob.upload_from_string.assert_called_once_with(
+        b"bytes", content_type="application/octet-stream"
+    )
+
+
+def test_gcs_upload_failure_raises_external_service_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    from google.api_core import exceptions as gcs_exceptions
+
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(private_key="a-private-key"))
+    fake_blob.upload_from_string.side_effect = gcs_exceptions.ServiceUnavailable("down")
+
+    with pytest.raises(ExternalServiceError):
+        GcsStorageBackend(_gcs_settings()).upload("avatars", "x.png", b"bytes", "image/png")
+
+
+def test_gcs_download_missing_object_raises_storage_object_not_found(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from google.api_core import exceptions as gcs_exceptions
+
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(private_key="a-private-key"))
+    fake_blob.download_as_bytes.side_effect = gcs_exceptions.NotFound("missing")
+
+    with pytest.raises(StorageObjectNotFoundError):
+        GcsStorageBackend(_gcs_settings()).download("avatars", "missing.png")
+
+
+def test_gcs_download_success_returns_bytes(monkeypatch: pytest.MonkeyPatch) -> None:
+    fake_blob = _wire_fake_client(monkeypatch, MagicMock(private_key="a-private-key"))
+    fake_blob.download_as_bytes.return_value = b"the-bytes"
+
+    result = GcsStorageBackend(_gcs_settings()).download("avatars", "x.png")
+
+    assert result == b"the-bytes"
+
+
+def _real_service_account_credentials() -> service_account.Credentials:
+    """Build a real ``service_account.Credentials`` from a freshly generated RSA key.
+
+    Not a ``MagicMock(private_key=...)`` shape — no real google-auth credential
+    exposes a public ``private_key`` attribute at all (the actual private key
+    lives behind ``signer``), so a mock built that way would validate a
+    discriminator no real credential could ever satisfy. This is a genuine
+    instance of the class the production JSON-key deployment path constructs,
+    built via the same ``from_service_account_info`` classmethod, so it
+    exercises the real ``signer``/``service_account_email`` attributes.
+    """
+    from cryptography.hazmat.primitives import serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from google.oauth2 import service_account
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    pem = key.private_bytes(
+        encoding=serialization.Encoding.PEM,
+        format=serialization.PrivateFormat.PKCS8,
+        encryption_algorithm=serialization.NoEncryption(),
+    ).decode("utf-8")
+    info = {
+        "type": "service_account",
+        "project_id": "a-project",
+        "private_key_id": "key-id-1",
+        "private_key": pem,
+        "client_email": "sa@a-project.iam.gserviceaccount.com",
+        "client_id": "123",
+        "token_uri": "https://oauth2.googleapis.com/token",
+    }
+    return service_account.Credentials.from_service_account_info(info)
+
+
+def test_gcs_signed_url_signs_locally_for_a_real_service_account_json_key_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real service-account JSON key credential needs no IAM signBlob kwargs.
+
+    Regression test for the original discriminator,
+    ``getattr(credentials, "private_key", None) is None`` — no google-auth
+    credential type (including this one) exposes a public ``private_key``
+    attribute, so that check was always true and even this credential always
+    took the IAM signBlob branch below. ``hasattr(credentials, "signer")`` is
+    the real discriminator, and only this credential type has it.
+    """
+    credentials = _real_service_account_credentials()
+    fake_blob = _wire_fake_client(monkeypatch, credentials)
+    fake_blob.generate_signed_url.return_value = "https://signed.example/x.png"
+    refresh = MagicMock()
+    monkeypatch.setattr(credentials, "refresh", refresh)
+
+    url = GcsStorageBackend(_gcs_settings()).create_signed_url("avatars", "x.png", 3600)
+
+    assert url == "https://signed.example/x.png"
+    refresh.assert_not_called()
+    _, kwargs = fake_blob.generate_signed_url.call_args
+    assert "service_account_email" not in kwargs
+    assert "access_token" not in kwargs
+    assert kwargs["version"] == "v4"
+    assert kwargs["method"] == "GET"
+
+
+def test_gcs_signed_url_uses_iam_signblob_kwargs_for_a_compute_engine_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real Cloud Run/GCE workload-identity credential carries no ``signer``.
+
+    ``generate_signed_url`` must instead be handed ``service_account_email``
+    and a freshly-refreshed ``access_token``, which routes the signature
+    through the IAM ``signBlob`` API. Only the network-bound ``refresh`` call
+    is mocked — everything else is the real
+    :class:`google.auth.compute_engine.Credentials` class.
+    """
+    import google.auth.compute_engine as compute_engine
+
+    credentials = compute_engine.Credentials(
+        service_account_email="sa@a-project.iam.gserviceaccount.com"
+    )
+    fake_blob = _wire_fake_client(monkeypatch, credentials)
+    fake_blob.generate_signed_url.return_value = "https://signed.example/x.png"
+
+    def _fake_refresh(request: object) -> None:
+        credentials.token = "fresh-access-token"
+
+    refresh = MagicMock(side_effect=_fake_refresh)
+    monkeypatch.setattr(credentials, "refresh", refresh)
+    monkeypatch.setattr("google.auth.transport.requests.Request", lambda: MagicMock())
+
+    GcsStorageBackend(_gcs_settings()).create_signed_url("avatars", "x.png", 3600)
+
+    refresh.assert_called_once()
+    _, kwargs = fake_blob.generate_signed_url.call_args
+    assert kwargs["service_account_email"] == "sa@a-project.iam.gserviceaccount.com"
+    assert kwargs["access_token"] == "fresh-access-token"
+
+
+def test_gcs_signed_url_for_a_user_adc_credential_raises_external_service_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Local ``gcloud auth application-default login`` credentials cannot sign at all.
+
+    A real :class:`google.oauth2.credentials.Credentials` has neither
+    ``signer`` (it isn't a service-account key) nor ``service_account_email``
+    (it isn't a workload-identity credential either) — the original code
+    reached the IAM signBlob branch anyway (per the ``private_key`` bug above)
+    and crashed with an uncaught ``AttributeError`` on
+    ``credentials.service_account_email``. This must instead be a clean,
+    named :class:`~lemely.runtime.errors.ExternalServiceError`.
+    """
+    from google.oauth2 import credentials as user_credentials
+
+    credentials = user_credentials.Credentials(
+        token="tok",
+        refresh_token="r",
+        client_id="id",
+        client_secret="secret",
+        token_uri="https://oauth2.googleapis.com/token",
+    )
+    _wire_fake_client(monkeypatch, credentials)
+
+    with pytest.raises(ExternalServiceError):
+        GcsStorageBackend(_gcs_settings()).create_signed_url("avatars", "x.png", 3600)
+
+
+def test_gcs_client_and_credentials_are_cached_across_calls(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """ADC discovery and ``storage.Client`` construction happen once per instance.
+
+    A fresh ``google.auth.default()`` call and a fresh ``storage.Client(...)``
+    per operation is wasted work on every avatar upload/download/sign — the
+    backend should discover credentials once and reuse them.
+    """
+    credentials = MagicMock(name="credentials")
+    auth_default_calls: list[None] = []
+
+    def _fake_default() -> tuple[object, str]:
+        auth_default_calls.append(None)
+        return credentials, "a-project"
+
+    monkeypatch.setattr("google.auth.default", _fake_default)
+
+    client_ctor_calls: list[dict[str, object]] = []
+    fake_blob = MagicMock(name="blob")
+    fake_bucket = MagicMock(name="bucket")
+    fake_bucket.blob.return_value = fake_blob
+    fake_client = MagicMock(name="client")
+    fake_client.bucket.return_value = fake_bucket
+
+    def _fake_client_ctor(**kwargs: object) -> MagicMock:
+        client_ctor_calls.append(kwargs)
+        return fake_client
+
+    monkeypatch.setattr("google.cloud.storage.Client", _fake_client_ctor)
+
+    backend = GcsStorageBackend(_gcs_settings())
+    backend.upload("avatars", "a/x.png", b"bytes", "image/png")
+    backend.upload("avatars", "a/y.png", b"bytes", "image/png")
+
+    assert len(auth_default_calls) == 1
+    assert len(client_ctor_calls) == 1

@@ -53,12 +53,20 @@ class ProfileDTO(ApiModel):
     timestamp on purpose: the client only ever asks the yes/no question, and
     publishing the date would invite a screen to render it as a user-facing
     fact that then has to be maintained as one.
+
+    ``avatarUrl`` is a freshly-signed, time-limited URL derived from
+    ``users.avatar_path`` (never the stored path itself, and never cached
+    beyond the response TTL) — ``null`` when no avatar is set, and also
+    ``null`` (never a 500) when storage cannot be reached to sign one: the
+    sidebar this DTO backs must render *something* even when object storage is
+    down, per :func:`~lemely.web.routers.me._avatar_url_for`.
     """
 
     displayName: str | None = None
     email: str
     role: str
     emailVerified: bool
+    avatarUrl: str | None = None
 
 
 class NotificationPreferencesUpdateDTO(ApiModel):

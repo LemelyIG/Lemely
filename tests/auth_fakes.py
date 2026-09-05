@@ -77,6 +77,7 @@ class _MirroredUser:
     created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
     terms_accepted_at: datetime | None = None
     email_verified_at: datetime | None = None
+    avatar_path: str | None = None
 
 
 class FakeUserMirror:
@@ -130,6 +131,11 @@ class FakeUserMirror:
         existing = self.rows.get(user_id)
         if existing is not None:
             existing.email_verified_at = verified_at
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        existing = self.rows.get(user_id)
+        if existing is not None:
+            existing.avatar_path = path
 
 
 class FakeDeviceRegistry:

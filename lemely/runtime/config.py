@@ -454,16 +454,35 @@ class IntegritySettings(BaseModel):
 
 
 class StorageSettings(BaseModel):
-    """Supabase Storage settings for the student self-mark upload path (P2.5).
+    """Object-storage settings for uploads (P2.5) and profile pictures.
 
     Overrides via ``lemely.toml`` under the ``[storage]`` section or
-    ``LEMELY_STORAGE__*`` env vars. The bucket/keys used to authenticate against
-    Storage are the same ``supabase.url``/``service_role_key`` as GoTrue.
+    ``LEMELY_STORAGE__*`` env vars.
+
+    ``provider`` selects which :class:`~lemely.io.storage.StorageBackend`
+    :func:`~lemely.web.deps.get_storage_backend` wires: ``"supabase"`` (the
+    default, and the only backend this build has ever run against) uses the
+    same ``supabase.url``/``service_role_key`` as GoTrue; ``"gcs"`` uses
+    Google Cloud Storage via Application Default Credentials (a service
+    account attached to the Cloud Run/GCE/GKE workload, or a local
+    ``gcloud auth application-default login``) — no key lives in this
+    settings tree for that path.
     """
 
     model_config = ConfigDict(extra="forbid")
+    provider: Literal["supabase", "gcs"] = "supabase"
     bucket: str = "uploads"
     signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+    # Profile pictures (student/teacher avatars) live in their own bucket,
+    # separate from `bucket` (self-mark scans/mark schemes) — the two have
+    # different retention/access shapes and no reason to share a namespace.
+    avatar_bucket: str = "avatars"
+    avatar_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    # GCP project id for the GCS client. Optional: Application Default
+    # Credentials usually carry (or can infer) a project on their own; set
+    # this only when ADC's own inference is wrong or absent (e.g. a
+    # user-account credential with no associated quota project).
+    gcs_project: OptionalCredential = None
 
 
 class PushSettings(BaseModel):

@@ -21,11 +21,13 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from io import BytesIO
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from PIL import Image
 from sqlalchemy import create_engine
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
@@ -35,14 +37,18 @@ from lemely.db.base import Base
 from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.config import DatabaseSettings, Settings, load_settings
+from lemely.runtime.errors import AuthError, ExternalServiceError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_notification_prefs_service,
+    get_settings,
+    get_storage_backend,
     get_user_mirror,
 )
+from tests.storage_fakes import FakeStorageBackend
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -153,6 +159,12 @@ class _SessionUserMirror:
             if user is not None:
                 session.expunge(user)
             return user
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        with self._sm.begin() as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.avatar_path = path
 
 
 def _use_user_mirror(client: TestClient, sm: sessionmaker[Session]) -> None:
@@ -572,3 +584,285 @@ def test_unauthenticated_get_is_401(client: TestClient) -> None:
 def test_unauthenticated_put_is_401(client: TestClient) -> None:
     resp = client.put("/api/me/notification-preferences", json={"gradeReady": False})
     assert resp.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# POST/DELETE /api/me/avatar — profile picture, any authenticated role.
+# ---------------------------------------------------------------------------
+
+
+def _png_bytes(size: tuple[int, int] = (4, 4)) -> bytes:
+    buf = BytesIO()
+    Image.new("RGB", size, color=(10, 20, 30)).save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def _use_storage_backend(client: TestClient, backend: FakeStorageBackend) -> None:
+    client.app.dependency_overrides[get_storage_backend] = lambda: backend  # type: ignore[union-attr]
+
+
+def _settings_with(**storage_overrides: object) -> Settings:
+    """A ``Settings`` copy with ``[storage]`` fields overridden (see ``test_web_classes.py``)."""
+    base = load_settings()
+    data = base.model_dump()
+    data["storage"] = {**data["storage"], **storage_overrides}
+    return Settings.model_validate(data)
+
+
+def _use_settings(client: TestClient, settings: Settings) -> None:
+    client.app.dependency_overrides[get_settings] = lambda: settings  # type: ignore[union-attr]
+
+
+def test_avatar_upload_sets_signed_url_and_stores_object(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    backend = FakeStorageBackend()
+    _use_storage_backend(client, backend)
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["avatarUrl"] is not None
+    assert body["avatarUrl"].startswith("fake://avatars/")
+    assert f"avatars/{user}/" in body["avatarUrl"]
+
+    # The object actually landed in storage under the caller's own namespace,
+    # inside the avatars bucket (the object path itself does not repeat the
+    # bucket name — that would double it to "avatars/avatars/...").
+    stored_paths = [path for (bucket, path) in backend._objects if bucket == "avatars"]
+    assert len(stored_paths) == 1
+    assert stored_paths[0].startswith(f"{user}/")
+    assert stored_paths[0].endswith(".png")
+
+    # GET reflects the upload.
+    get_resp = client.get("/api/me/profile")
+    assert get_resp.status_code == 200
+    assert get_resp.json()["avatarUrl"] == body["avatarUrl"]
+
+
+@pytest.mark.parametrize(
+    "role",
+    [Role.student, Role.teacher, Role.parent, Role.school_admin, Role.platform_admin],
+)
+def test_avatar_upload_is_reachable_by_every_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    user = _seed_user(pg_sessionmaker, role)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, role)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 200
+    assert resp.json()["role"] == role.value
+
+
+def test_avatar_upload_wrong_content_type_is_415(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("scan.pdf", b"%PDF-1.4 not really an image", "application/pdf")},
+    )
+
+    assert resp.status_code == 415
+
+
+def test_avatar_upload_oversize_is_413(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    _use_settings(client, _settings_with(avatar_max_bytes=16))
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    assert resp.status_code == 413
+
+
+def test_avatar_upload_decompression_bomb_is_422_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A tiny-on-disk, huge-in-memory PNG must 422, not crash with an unhandled 500.
+
+    ``PIL.Image.DecompressionBombError`` subclasses ``Exception`` directly
+    (neither ``OSError`` nor ``ValueError``), so a route that only catches
+    those two lets this one propagate as an internal server error.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    buf = BytesIO()
+    Image.new("L", (20000, 20000)).save(buf, format="PNG")
+    bomb_bytes = buf.getvalue()
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", bomb_bytes, "image/png")},
+    )
+
+    assert resp.status_code == 422
+    # Nothing was written to storage or the mirror.
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_upload_format_mismatching_declared_content_type_is_415(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Real GIF bytes declared as ``image/png`` must not be stored as a ``.png``.
+
+    The upload decodes cleanly with Pillow, so the "is this a valid image at
+    all" check alone would accept it — the format the bytes actually sniff as
+    must also match the declared content type.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    buf = BytesIO()
+    Image.new("RGB", (4, 4), color=(1, 2, 3)).save(buf, format="GIF")
+    gif_bytes = buf.getvalue()
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", gif_bytes, "image/png")},
+    )
+
+    assert resp.status_code == 415
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_upload_garbage_bytes_with_image_content_type_is_422(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A caller lying about the content type does not get an image accepted."""
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", b"not actually a png", "image/png")},
+    )
+
+    assert resp.status_code == 422
+    # Nothing was written to storage or the mirror.
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_avatar_delete_clears_avatar_url(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    _use_storage_backend(client, FakeStorageBackend())
+    upload_resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+    assert upload_resp.json()["avatarUrl"] is not None
+
+    resp = client.delete("/api/me/avatar")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+    assert client.get("/api/me/profile").json()["avatarUrl"] is None
+
+
+def test_unauthenticated_avatar_post_is_401(client: TestClient) -> None:
+    resp = client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+    assert resp.status_code == 401
+
+
+def test_unauthenticated_avatar_delete_is_401(client: TestClient) -> None:
+    resp = client.delete("/api/me/avatar")
+    assert resp.status_code == 401
+
+
+class _SigningFailsStorageBackend(FakeStorageBackend):
+    """A storage double whose signing always fails, like a down storage backend."""
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        raise ExternalServiceError("storage is unreachable")
+
+
+def test_profile_get_avatar_url_is_null_when_signing_fails_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The sidebar must render even when storage cannot sign a URL (D5.9-style rule)."""
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    _use_storage_backend(client, _SigningFailsStorageBackend())
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
+
+
+class _AuthErrorStorageBackend(FakeStorageBackend):
+    """A storage double raising ``AuthError``, like an unconfigured service-role key."""
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        raise AuthError("Supabase service-role key is not configured.")
+
+
+def test_profile_get_avatar_url_is_null_when_signing_raises_auth_error_not_500(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """A missing service-role key (``AuthError``) must not 500 the profile read either.
+
+    ``_avatar_url_for``'s contract is "never fail the profile read" for any
+    storage failure, not only :class:`~lemely.runtime.errors.ExternalServiceError`
+    — an unconfigured Supabase key, or a google-auth error on the GCS backend,
+    are equally not this route's problem.
+    """
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+    _use_storage_backend(client, FakeStorageBackend())
+    client.post(
+        "/api/me/avatar",
+        files={"image": ("avatar.png", _png_bytes(), "image/png")},
+    )
+
+    _use_storage_backend(client, _AuthErrorStorageBackend())
+    resp = client.get("/api/me/profile")
+
+    assert resp.status_code == 200
+    assert resp.json()["avatarUrl"] is None
