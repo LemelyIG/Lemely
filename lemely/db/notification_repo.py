@@ -50,7 +50,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from lemely.db.models import Notification, NotificationType, PushSubscription
-from lemely.db.xp_repo import DEFAULT_ZONE
+from lemely.db.xp_repo import DEFAULT_ZONE, UserZoneReader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -270,12 +270,20 @@ class NotificationService:
         *,
         now: Callable[[], datetime] = _utcnow,
         zone: ZoneInfo = DEFAULT_ZONE,
+        zones: UserZoneReader | None = None,
     ) -> None:
-        """Wire the service to a session factory, the preference gate, a clock, and a zone."""
+        """Wire the service to a session factory, the preference gate, a clock, and a zone.
+
+        ``zones`` resolves the recipient's own zone for quiet hours — whose
+        night it is, is a personal fact (push-delivery spec §3). ``zone`` is
+        the fallback it defers to, and the only zone in use when no reader is
+        given.
+        """
         self._sessionmaker = sessionmaker
         self._preferences = preferences
         self._now = now
         self._zone = zone
+        self._zones = zones
 
     # -- Writing ------------------------------------------------------------
 
@@ -344,8 +352,9 @@ class NotificationService:
                 )
             row = _row_from_model(notification)
 
+        zone = self._zone if self._zones is None else self._zones.zone_for(recipient)
         quiet = is_within_quiet_hours(
-            civil_time_in_zone(moment, zone=self._zone),
+            civil_time_in_zone(moment, zone=zone),
             prefs.quiet_hours_start,
             prefs.quiet_hours_end,
         )

@@ -144,3 +144,125 @@ def test_reader_memoises_until_told_to_forget(pg_sessionmaker: sessionmaker[Sess
 def test_reader_accepts_a_string_id(pg_sessionmaker: sessionmaker[Session]) -> None:
     uid = _seed_user(pg_sessionmaker, timezone="Asia/Tokyo")
     assert UserZoneReader(pg_sessionmaker).zone_for(str(uid)).key == "Asia/Tokyo"
+
+
+# -- The services read the user's zone --------------------------------------
+
+from datetime import UTC, date, datetime, time  # noqa: E402
+
+from lemely.db.leaderboard_repo import LeaderboardScope, LeaderboardService  # noqa: E402
+from lemely.db.models.enums import NotificationType, XpSource  # noqa: E402
+from lemely.db.notification_prefs_repo import NotificationPreferencesService  # noqa: E402
+from lemely.db.notification_repo import NotificationService  # noqa: E402
+from lemely.db.xp_repo import XpService  # noqa: E402
+
+#: 2026-09-05 22:30Z is 01:30 on the 6th in Cairo (UTC+3) and 15:30 on the 5th
+#: in Los Angeles (UTC-7): one instant, two civil dates.
+SPLIT_DATE_INSTANT = datetime(2026, 9, 5, 22, 30, tzinfo=UTC)
+
+
+def _xp(sm: sessionmaker[Session]) -> XpService:
+    return XpService(sm, now=lambda: SPLIT_DATE_INSTANT, zones=UserZoneReader(sm))
+
+
+def test_awarded_on_is_the_students_own_civil_date(pg_sessionmaker: sessionmaker[Session]) -> None:
+    cairo = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    la = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    xp = _xp(pg_sessionmaker)
+
+    assert xp.award(cairo, XpSource.quiz_completed, "q1").awarded_on == date(2026, 9, 6)
+    assert xp.award(la, XpSource.quiz_completed, "q1").awarded_on == date(2026, 9, 5)
+
+
+def test_a_student_with_no_zone_keeps_the_launch_zone(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    assert _xp(pg_sessionmaker).award(student, XpSource.quiz_completed, "q1").awarded_on == date(
+        2026, 9, 6
+    )
+
+
+def test_a_pinned_zone_without_a_reader_still_wins(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """Every existing test constructs the service with ``zone=`` and no reader."""
+    student = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    xp = XpService(pg_sessionmaker, now=lambda: SPLIT_DATE_INSTANT, zone=CAIRO)
+    assert xp.award(student, XpSource.quiz_completed, "q1").awarded_on == date(2026, 9, 6)
+
+
+def test_history_is_not_rewritten_when_a_zone_changes(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A zone applies forward only (spec §3): rows already stored keep the date
+    they were computed with."""
+    student = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    xp = _xp(pg_sessionmaker)
+    xp.award(student, XpSource.quiz_completed, "q1")
+
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(User).where(User.id == student).values(timezone="America/Los_Angeles")
+        )
+
+    by_day = xp.xp_by_day(student, start=date(2026, 9, 1), end=date(2026, 9, 30))
+    assert by_day == {date(2026, 9, 6): 30}
+
+
+def test_quiet_hours_are_evaluated_in_the_recipients_zone(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """05:30Z is 22:30 in Los Angeles (inside 22:00-07:00) and 08:30 in Cairo."""
+    moment = datetime(2026, 9, 5, 5, 30, tzinfo=UTC)
+    prefs = NotificationPreferencesService(pg_sessionmaker)
+    service = NotificationService(
+        pg_sessionmaker,
+        prefs,
+        now=lambda: moment,
+        zone=CAIRO,
+        zones=UserZoneReader(pg_sessionmaker),
+    )
+    la = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    cairo = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    for uid in (la, cairo):
+        prefs.set(uid, quiet_hours_start=time(22, 0), quiet_hours_end=time(7, 0))
+
+    asleep = service.create(la, NotificationType.announcement, "Test", dedupe_key="a")
+    awake = service.create(cairo, NotificationType.announcement, "Test", dedupe_key="a")
+
+    assert asleep.row is not None and asleep.push_allowed is False
+    assert asleep.push_suppressed_reason == "quiet_hours"
+    assert awake.row is not None and awake.push_allowed is True
+
+
+def test_the_leaderboard_week_is_the_same_for_every_zone(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The regression test for the invariant §3 refuses to break: a shared
+    ranking summed over two different weeks would mean nothing. 2026-09-06
+    22:30Z is Monday the 7th in Cairo and still Sunday the 6th in Los Angeles;
+    both boards use the global week regardless."""
+    moment = datetime(2026, 9, 6, 22, 30, tzinfo=UTC)
+    cairo = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    la = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    board = LeaderboardService(pg_sessionmaker, now=lambda: moment)
+
+    cairo_result = board.board(cairo, LeaderboardScope.global_)
+    la_result = board.board(la, LeaderboardScope.global_)
+
+    assert cairo_result.week_start == la_result.week_start == date(2026, 9, 7)
+    assert cairo_result.week_end == la_result.week_end == date(2026, 9, 13)
+
+
+def test_profile_uses_the_students_day_for_the_streak_and_the_global_week(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The seam §3 states plainly: near midnight, far from Cairo, the calendar
+    ends on the student's own date while the week window is the shared one."""
+    la = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    xp = _xp(pg_sessionmaker)
+
+    profile = xp.profile(la)
+
+    assert profile.calendar_end == date(2026, 9, 5)
+    assert profile.week_start == date(2026, 8, 31)  # Monday of the Cairo week containing the 6th
+    assert profile.week_end == date(2026, 9, 6)

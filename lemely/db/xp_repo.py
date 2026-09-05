@@ -13,14 +13,14 @@ defaulting to aware UTC now).
    all** (D5.1 §0). XP answers "did you do the work", never "were you good
    at it"; a leaderboard built from this table must never be a grade ranking
    in a costume.
-2. **A streak-day is a civil date in ``Africa/Cairo``, never UTC** (D5.1 §4).
-   Every conversion from an aware ``datetime`` to a streak-day goes through
-   :func:`civil_date_in_zone`, the one helper in this module that touches a
-   ``ZoneInfo`` — nothing else computes a streak date inline, and nothing
-   ever hardcodes a ``+02:00`` offset (Egypt's DST history is not constant).
-   The zone is a constructor parameter (:data:`DEFAULT_ZONE` is the launch
-   default), not baked into the helper, so per-user timezones are a later
-   wiring change rather than a rewrite.
+2. **A streak-day is a civil date in the student's own zone, never UTC**
+   (D5.1 §4, per-user since the push-delivery spec §3). Every conversion
+   from an aware ``datetime`` to a streak-day goes through
+   :func:`civil_date_in_zone`; the zone comes from :class:`UserZoneReader`
+   when one is injected and from the ``zone`` constructor argument otherwise
+   (:data:`DEFAULT_ZONE`, the launch default). Nothing computes a streak
+   date inline, and nothing ever hardcodes a ``+02:00`` offset (Egypt's DST
+   history is not constant).
 3. **A capped award still succeeds and writes no row** (D5.1 §3). Hitting a
    per-source or the global daily cap returns
    ``XpAwardResult(awarded=False, amount=0, ...)`` — never an exception, and
@@ -272,11 +272,25 @@ class XpService:
         *,
         now: Callable[[], datetime] = _utcnow,
         zone: ZoneInfo = DEFAULT_ZONE,
+        zones: UserZoneReader | None = None,
     ) -> None:
-        """Wire the service to a session factory, a clock, and a streak-day zone."""
+        """Wire the service to a session factory, a clock, and the streak-day zone.
+
+        ``zones`` resolves each student's own zone; ``zone`` is the fallback it
+        defers to and the only zone in use when no reader is given (every
+        pre-existing test). The week window is always ``zone`` — see
+        :meth:`profile`.
+        """
         self._sessionmaker = sessionmaker
         self._now = now
         self._zone = zone
+        self._zones = zones
+
+    def _zone_for(self, user_id: uuid.UUID) -> ZoneInfo:
+        """The zone this user's personal civil dates are computed in."""
+        if self._zones is None:
+            return self._zone
+        return self._zones.zone_for(user_id)
 
     # -- Awarding -----------------------------------------------------------
 
@@ -335,7 +349,7 @@ class XpService:
             raise ValueError("dedupe_key must be non-empty")
         student_uuid = _as_uuid(user_id)
         moment = now if now is not None else self._now()
-        awarded_on = civil_date_in_zone(moment, zone=self._zone)
+        awarded_on = civil_date_in_zone(moment, zone=self._zone_for(student_uuid))
         amount = XP_AMOUNTS[source]
 
         with self._sessionmaker() as session, session.begin():
@@ -500,7 +514,7 @@ class XpService:
         """
         student_uuid = _as_uuid(user_id)
         moment = now if now is not None else self._now()
-        today = civil_date_in_zone(moment, zone=self._zone)
+        today = civil_date_in_zone(moment, zone=self._zone_for(student_uuid))
         with self._sessionmaker() as session, session.begin():
             row = session.scalar(select(Streak).where(Streak.user_id == student_uuid))
             if row is None:
@@ -525,9 +539,15 @@ class XpService:
     ) -> XpProfile:
         """S-31's whole read: total, streak, this week by source, and the calendar.
 
-        Resolves ``today`` **once** and passes that one civil date to every
-        window, so the returned week and calendar cannot disagree about the
-        date for a request that crosses midnight in ``Africa/Cairo``.
+        Resolves ``today`` **once per zone** and passes it to every window.
+        The streak and the calendar use the student's own civil date; the week
+        window uses the global one, because :func:`week_bounds` is the single
+        definition of "this week" the leaderboard also reads (D5.13 §2) and a
+        student must not see a different week here than on the board. For a
+        student far from the launch zone, near midnight, the week window can be
+        off by one day relative to their own date. That is the accepted cost of
+        one shared week (push-delivery spec §3); it is bounded at a day and
+        self-corrects within hours.
 
         Note this makes four queries and pins none of them to a snapshot: a
         concurrent award can leave ``total_xp`` a few XP ahead of the week
@@ -543,8 +563,10 @@ class XpService:
             calendar_days: Length of the calendar window ending today.
         """
         moment = now if now is not None else self._now()
-        today = civil_date_in_zone(moment, zone=self._zone)
-        week_start, week_end = week_bounds(today)
+        student_uuid = _as_uuid(user_id)
+        today = civil_date_in_zone(moment, zone=self._zone_for(student_uuid))
+        # Deliberately the global zone, never the student's: see the docstring.
+        week_start, week_end = week_bounds(civil_date_in_zone(moment, zone=self._zone))
         calendar_start = today - timedelta(days=calendar_days - 1)
         return XpProfile(
             total_xp=self.total_xp(user_id),

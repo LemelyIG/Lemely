@@ -73,6 +73,7 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.upload_repo import StudentUploadRepository
+from lemely.db.xp_repo import UserZoneReader
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 from lemely.web import create_app
@@ -92,6 +93,7 @@ from lemely.web.deps import (
     get_student_profile_service,
     get_student_upload_repo,
     get_user_mirror,
+    get_user_zone_reader,
     get_xp_service,
 )
 from lemely.web.push import RecordingPushTransport
@@ -337,6 +339,7 @@ def correct_client(
     )
     # Issue #10 / D7.5: see `_PgUserMirror`'s own docstring above.
     app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    app.dependency_overrides[get_user_zone_reader] = lambda: UserZoneReader(pg_sessionmaker)
     yield TestClient(app), student_id
     app.dependency_overrides.clear()
 
