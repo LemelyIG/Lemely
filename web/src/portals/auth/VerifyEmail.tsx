@@ -8,7 +8,7 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { Button, buttonVariants } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { SkeletonLine } from "@/components/ui/skeleton"
-import { verificationFailureMessage } from "@/lib/authOutcome"
+import { verificationCodeFailureMessage, verificationFailureMessage } from "@/lib/authOutcome"
 import { AuthFrame } from "./Login"
 import { canSubmitCode, postVerifyPath, resendButtonLabel } from "./verifyEmailLogic"
 
@@ -232,7 +232,8 @@ function SignedInPending({ session }: { session: Session }) {
       { code },
       {
         onSuccess: () => navigate(postVerifyPath(session), { replace: true }),
-        onError: (err) => setOutcome({ kind: "error", message: verificationFailureMessage(err) }),
+        onError: (err) =>
+          setOutcome({ kind: "error", message: verificationCodeFailureMessage(err) }),
       },
     )
   }

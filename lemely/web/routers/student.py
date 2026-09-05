@@ -610,7 +610,7 @@ async def student_upload(
 ) -> StudentUploadResponse:
     """Persist a student's scanned paper (+ optional mark scheme) and register it.
 
-    The scan is uploaded to Supabase Storage under
+    The scan is uploaded to object storage (:mod:`lemely.io.storage`) under
     ``uploads/{user_id}/{paperId}/{filename}`` — the object key is namespaced by
     both the authenticated user id and a server-generated ``paperId`` (the
     :class:`Upload` row's id), and the client filename is sanitised to a
