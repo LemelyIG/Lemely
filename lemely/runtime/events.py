@@ -109,7 +109,14 @@ class EventBus:
         return q
 
     def unsubscribe_queue(self, q: queue.SimpleQueue[Event | None]) -> None:
-        """Remove a queue by identity; silently ignored if already removed."""
+        """Remove a queue by identity; silently ignored if already removed.
+
+        Removes *every* identity-match, where the previous ``list.remove``
+        removed only the first. Unreachable through this class's own API —
+        :meth:`subscribe_queue` mints a fresh ``SimpleQueue`` per call, so no
+        queue can appear twice — but the two are not equivalent if a caller
+        ever inserts one itself.
+        """
         with self._lock:
             self._queues[:] = [entry for entry in self._queues if entry[0] is not q]
 

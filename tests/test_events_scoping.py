@@ -62,8 +62,37 @@ def test_sentinel_ends_only_its_own_run() -> None:
     assert _drain(q_all) == [None]
 
 
+def test_publish_done_with_no_current_run_id_does_not_end_other_runs() -> None:
+    """The asymmetry between `publish` and `publish_done`, pinned.
+
+    `publish` deliberately passes an unscoped event through to every queue
+    (`event.run_id is None`), because a budget warning belongs to no run and
+    concerns them all. `publish_done` deliberately does NOT: a sentinel from
+    an unscoped context must end nothing, because the symmetric version would
+    let one caller who forgot to set `current_run_id` terminate every live
+    stream in the process — the exact cross-talk DS10 exists to remove.
+
+    Without this test the suite cannot tell the two apart: every other case
+    here sets `current_run_id` before publishing, so the wrong predicate
+    passes them all.
+    """
+    bus = EventBus()
+    qa, qb = bus.subscribe_queue("a"), bus.subscribe_queue("b")
+    bus.publish_done()  # no current_run_id set
+    assert _drain(qa) == []
+    assert _drain(qb) == []
+
+
 def test_child_threads_must_copy_context() -> None:
-    """The rule the spec pins: a bare Thread does not inherit the run id; copy_context does."""
+    """The rule the spec pins: a bare Thread does not inherit the run id; copy_context does.
+
+    This asserts CPython's own PEP 567 semantics, not anything in
+    :mod:`lemely.runtime.events` — it touches no bus method. It is kept
+    deliberately, as an executable statement of the assumption every worker
+    that publishes from a child thread depends on: if a Python upgrade ever
+    changed it, the failure would otherwise surface as silent cross-run
+    leakage rather than a red test.
+    """
     seen: list[str | None] = []
     token = current_run_id.set("run-1")
     try:
