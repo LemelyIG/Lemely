@@ -407,6 +407,85 @@ def test_resend_verification_within_cooldown_is_429(
     assert second.status_code == 429, second.text
 
 
+@pytest.fixture
+def rate_limited_otp_context() -> Iterator[tuple[TestClient, AuthService]]:
+    """Like ``context``, but the OTP store's OWN resend cooldown is left live.
+
+    ``context`` sets ``min_resend_seconds=0`` on its ``OtpStore`` so the
+    *other* resend tests above — which call ``resend_verification`` in the
+    same instant as the ``signup`` that already issued a code — don't trip
+    over the store's resend-cooldown while proving something else entirely.
+    That fix would also hide the exact collision this fixture exists to
+    reach, so it is a separate, local fixture rather than a change to the
+    shared one: ``otp_min_resend_seconds`` here is the real (non-zero)
+    default, matching production.
+    """
+    settings = Settings()
+    mirror = FakeUserMirror()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(7),
+        ttl_seconds=settings.auth.otp_ttl_seconds,
+        max_attempts=settings.auth.otp_max_attempts,
+        code_length=settings.auth.otp_length,
+        min_resend_seconds=settings.auth.otp_min_resend_seconds,
+    )
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=mirror,  # type: ignore[arg-type]
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+        email=FakeEmailProvider(),
+        tokens=FakeAuthTokenService(),  # type: ignore[arg-type]
+    )
+    app = create_app()
+    app.dependency_overrides[get_auth_service] = lambda: service
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    signup_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
+    )
+    resend_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.resend_verification_cooldown_seconds,
+    )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
+    client = TestClient(app)
+    try:
+        yield client, service
+    finally:
+        app.dependency_overrides.clear()
+        reset_singletons()
+
+
+def test_resend_immediately_after_signup_is_429_not_500(
+    rate_limited_otp_context: tuple[TestClient, AuthService],
+) -> None:
+    """A second, independent throttle can fire on a caller's FIRST-EVER resend.
+
+    D7.12's per-user cooldown (``test_resend_verification_within_cooldown_is_429``
+    above) is stamped only *on* a resend call, so it never blocks this first
+    one. But ``resend_verification`` also issues a fresh email-channel OTP
+    code, and the OTP store's own resend-cooldown (shared with the phone
+    channel, ``otp_min_resend_seconds``) is already live from the ``signup``
+    moments earlier — a completely different key (the email address) and a
+    completely different store from the D7.12 one. Without
+    ``resend_verification``'s ``except OtpRateLimitError`` this raises
+    unhandled (a 500); the route must map it to the same 429
+    ``/auth/otp/request`` already gives the identical exception on the phone
+    channel.
+    """
+    client, _service = rate_limited_otp_context
+    body = _signup(client, email="racy-resend@example.com")
+    headers = {"Authorization": f"Bearer {body['accessToken']}"}
+
+    resp = client.post("/api/auth/verify-email/resend", headers=headers)
+
+    assert resp.status_code == 429, resp.text
+
+
 # ── POST /api/auth/verify-email/code ────────────────────────────────────────
 
 

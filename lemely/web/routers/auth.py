@@ -350,6 +350,20 @@ def resend_verification(
 
     A per-user cooldown (D7.12) throttles repeat resends to a **429**,
     mirroring ``/auth/otp/request``'s existing resend-cooldown mapping.
+
+    **A second, independent 429 source.** ``AuthService.resend_verification``
+    now also issues a fresh email-channel code
+    (:meth:`~lemely.auth.service.AuthService._issue_email_code`), and the OTP
+    store's own resend cooldown (shared with the phone flow,
+    ``otp_min_resend_seconds``) can reject that issue with
+    :class:`~lemely.auth.otp.OtpRateLimitError` — distinct from, and not
+    prevented by, the ``cooldown`` check above: the D7.12 store is stamped
+    only *on* a resend call, so a caller's very first resend (no D7.12 stamp
+    yet) can still land inside the OTP store's own window if it follows the
+    ``signup`` that already issued a code for the same address moments
+    earlier. Mapped to the same 429 :func:`request_otp` already uses for the
+    identical exception on the phone channel, rather than left to surface as
+    an unhandled 500.
     """
     try:
         cooldown.check_and_stamp(auth.user_id)
@@ -357,6 +371,8 @@ def resend_verification(
         raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
     try:
         dev_link, dev_code = service.resend_verification(uuid.UUID(auth.user_id))
+    except OtpRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return ResendVerificationResponseDTO(devLink=dev_link, devCode=dev_code)
