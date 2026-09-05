@@ -15,7 +15,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from lemely.auth.cooldown import CooldownError, CooldownStore
+from lemely.auth.cooldown import CooldownError, CooldownStoreProtocol
 from lemely.auth.mirror import UserMirror
 from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
@@ -128,7 +128,7 @@ def signup(
     body: SignupRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
     mirror: Annotated[UserMirror, Depends(get_user_mirror)],
-    cooldown: Annotated[CooldownStore, Depends(get_signup_and_reset_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_signup_and_reset_cooldown_store)],
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
     """Create a self-service **student** or **teacher** account and return a token.
@@ -311,7 +311,7 @@ def verify_email(
 def resend_verification(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     service: Annotated[AuthService, Depends(get_auth_service)],
-    cooldown: Annotated[CooldownStore, Depends(get_resend_verification_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_resend_verification_cooldown_store)],
 ) -> ResendVerificationResponseDTO:
     """Re-mint and (re)send a verification token for the **authenticated caller**.
 
@@ -341,7 +341,7 @@ def resend_verification(
 def request_password_reset(
     body: PasswordResetRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
-    cooldown: Annotated[CooldownStore, Depends(get_signup_and_reset_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_signup_and_reset_cooldown_store)],
 ) -> PasswordResetRequestResponseDTO:
     """Request a password-reset link for ``email`` — always answers 200.
 

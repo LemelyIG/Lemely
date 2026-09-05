@@ -13,6 +13,7 @@ from __future__ import annotations
 # regardless of whether the caller has already triggered the lazy imports.
 from lemely.db.models.academic import ExamDate, MarkScheme, Paper, Subject
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
+from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
 from lemely.db.models.engagement import Streak, XpEvent
@@ -97,6 +98,7 @@ def import_all_models() -> None:
     from lemely.db.models import (  # noqa: F401
         academic,
         attempts,
+        auth_cooldowns,
         auth_tokens,
         billing,
         engagement,
@@ -137,6 +139,7 @@ __all__ = [
     "Attempt",
     # Enums and mixins
     "AttemptOrigin",
+    "AuthCooldown",
     "AuthToken",
     "AuthTokenPurpose",
     "BoundarySource",

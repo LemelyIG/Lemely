@@ -85,6 +85,7 @@ EXPECTED_TABLES = {
     "invites",
     "teacher_papers",
     "otp_challenges",
+    "auth_cooldowns",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.
@@ -94,7 +95,11 @@ EXPECTED_TABLES = {
 # was this created" for the one case (the resend cooldown) that needs it, so a
 # redundant created_at/updated_at pair would track nothing a caller ever
 # reads. See ``lemely/db/models/otp_challenges.py``'s module docstring.
-TABLES_WITHOUT_TIMESTAMPS = {"otp_challenges"}
+# ``auth_cooldowns`` is the same shape for the same reason: a row is
+# overwritten wholesale on every stamp and ``stamped_at`` already answers
+# "when was this last touched" — see
+# ``lemely/db/models/auth_cooldowns.py``'s module docstring.
+TABLES_WITHOUT_TIMESTAMPS = {"otp_challenges", "auth_cooldowns"}
 
 
 # ---------------------------------------------------------------------------

@@ -8,8 +8,10 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from lemely.auth.cooldown import CooldownStore
 from lemely.auth.otp import OtpChannel, OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
@@ -18,8 +20,42 @@ from lemely.db.models.enums import Role
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.app import create_app
-from lemely.web.deps import get_auth_service, get_device_registry, get_user_mirror, reset_singletons
+from lemely.web.deps import (
+    get_auth_service,
+    get_device_registry,
+    get_resend_verification_cooldown_store,
+    get_signup_and_reset_cooldown_store,
+    get_user_mirror,
+    reset_singletons,
+)
 from tests.auth_fakes import FakeDeviceRegistry, FakeGoTrueBackend, FakeUserMirror
+
+
+def _override_cooldowns(app: FastAPI, settings: Settings) -> None:
+    """Override both D7.12 cooldown dependencies with fresh in-memory stores.
+
+    Spec §4.4 moved ``get_signup_and_reset_cooldown_store`` /
+    ``get_resend_verification_cooldown_store`` onto ``DbCooldownStore``
+    (Postgres-backed) in production. Left unoverridden, every
+    ``/auth/signup``, ``/auth/verify-email/resend`` or
+    ``/auth/password-reset/request`` call this hermetic suite makes would
+    stamp the real dev database's ``auth_cooldowns`` table — and, unlike the
+    old in-memory ``CooldownStore`` that ``reset_singletons()`` rebuilt fresh
+    for every test, that stamp is durable: it outlives the fixture teardown
+    and throttles (429) whichever *later* test in the same run reuses the
+    same email, exactly as ``test_signup_duplicate_returns_400``'s own
+    comment already documents for ``get_user_mirror``. A fresh
+    :class:`~lemely.auth.cooldown.CooldownStore` per fixture invocation
+    restores that same fresh-per-test isolation.
+    """
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
+    )
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.resend_verification_cooldown_seconds,
+    )
 
 
 @pytest.fixture
@@ -50,6 +86,7 @@ def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
     # never touch — which would see every address as unclaimed forever and
     # make `test_signup_duplicate_returns_400`'s second call spuriously 429.
     app.dependency_overrides[get_user_mirror] = lambda: mirror
+    _override_cooldowns(app, settings)
     client = TestClient(app)
     try:
         yield client, service, settings
@@ -254,6 +291,7 @@ def refreshable() -> Iterator[tuple[TestClient, AuthService, Settings, FakeDevic
     app.dependency_overrides[get_device_registry] = lambda: registry
     # See the `context` fixture above for why this override is required now.
     app.dependency_overrides[get_user_mirror] = lambda: mirror
+    _override_cooldowns(app, settings)
     client = TestClient(app)
     try:
         yield client, service, settings, registry

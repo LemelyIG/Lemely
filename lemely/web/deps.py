@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from lemely.auth.cooldown import CooldownStore
 from lemely.auth.email import MockEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
@@ -32,6 +31,7 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
 from lemely.db.class_repo import ClassService
+from lemely.db.cooldown_repo import DbCooldownStore
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
@@ -74,6 +74,7 @@ from lemely.web.push import NotificationTransport, VapidPushTransport
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
     from lemely.io.storage import StorageBackend
 
@@ -179,7 +180,7 @@ def get_auth_token_service() -> AuthTokenService:
 
 
 @lru_cache(maxsize=1)
-def get_signup_and_reset_cooldown_store() -> CooldownStore:
+def get_signup_and_reset_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-email signup/password-reset cooldown (D7.12).
 
     Shared by ``POST /auth/signup`` and ``POST /auth/password-reset/request`` —
@@ -187,23 +188,37 @@ def get_signup_and_reset_cooldown_store() -> CooldownStore:
     serves both. Enforced in ``lemely.web.routers.auth``, not inside
     :class:`AuthService`: a cooldown is a router-level throttle on a caller's
     *request rate*, not a fact about an identity the service owns.
+
+    Postgres-backed (spec §4.4) so the cooldown holds across Cloud Run
+    instances, not just within one worker — the return type is the
+    structural :class:`~lemely.auth.cooldown.CooldownStoreProtocol` so tests
+    can override this with the in-memory
+    :class:`~lemely.auth.cooldown.CooldownStore` without touching Postgres.
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="signup_and_reset",
         min_seconds=get_settings().auth.signup_and_reset_cooldown_seconds,
     )
 
 
 @lru_cache(maxsize=1)
-def get_resend_verification_cooldown_store() -> CooldownStore:
+def get_resend_verification_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-user verification-resend cooldown (D7.12).
 
     Backs ``POST /auth/verify-email/resend`` alone, keyed by the caller's own
     ``user_id`` (never an address) — see
     ``AuthSettings.resend_verification_cooldown_seconds``.
+
+    Postgres-backed (spec §4.4), same reasoning as
+    :func:`get_signup_and_reset_cooldown_store` — a distinct ``purpose`` so
+    the two never contend over the same key (``test_purposes_do_not_interfere``).
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="resend_verification",
         min_seconds=get_settings().auth.resend_verification_cooldown_seconds,
     )
 
