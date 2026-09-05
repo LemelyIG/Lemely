@@ -112,10 +112,11 @@ type ScanSource = "file" | "camera"
  *      is going and nothing else. Ticking the three stages off again would be
  *      inventing progress, which is the one thing S-14 rules out by name.
  *   2. **It does not re-POST `/correct`.** That would start a *second* marking
- *      run over the same scan: double Gemini spend against a hard-capped
- *      budget, a second attempt row, and — because the event bus is global and
- *      single-stream — cross-talk between the two. Recovery polls; it never
- *      re-runs.
+ *      run over the same scan: Gemini paid for twice, a second attempt row,
+ *      and two runs interleaving on one stream. The bus is per-run scoped now
+ *      (DS10), but both runs would carry the *same* scope — they are the same
+ *      paper — so scoping does not separate them the way it separates two
+ *      different papers. Recovery polls; it never re-runs.
  *
  * A recovered run also unlocks the retry that could not work before: after a
  * reload there is no `File` object any more, but the server still has the scan,
@@ -427,10 +428,10 @@ export function CorrectPaper() {
   const retryLabel = retryable ? "Start marking again" : "Try again"
   /*
    * Nothing may start a second run while one is in flight. Two runs over one
-   * scan would spend the hard-capped Gemini budget twice, write a second
-   * attempt row, and cross-talk on an event bus that is global and
-   * single-stream. The form goes read-only rather than disappearing, so the
-   * student can still see what is being marked.
+   * scan would pay Gemini twice, write a second attempt row, and interleave
+   * on one stream — per-run bus scoping (DS10) does not help here, because
+   * both runs scope to the same paper. The form goes read-only rather than
+   * disappearing, so the student can still see what is being marked.
    */
   const canStart = canStartRun({
     phase,

@@ -114,28 +114,6 @@ class PlatformCounts:
 
 
 @dataclass(frozen=True, slots=True)
-class SpendSnapshot:
-    """Gemini spend against the configured hard ceiling.
-
-    ``ceiling_usd`` is ``None`` when no ceiling is configured, which is a real
-    configuration state and not a zero. ``thresholds_usd`` are the warning marks
-    the runtime notifies on; X-01 shows them because a number without its alarm
-    points cannot be read as safe or unsafe.
-    """
-
-    cumulative_usd: float
-    ceiling_usd: float | None
-    thresholds_usd: list[float]
-
-    @property
-    def remaining_usd(self) -> float | None:
-        """Headroom left, or ``None`` when there is no ceiling to be under."""
-        if self.ceiling_usd is None:
-            return None
-        return max(0.0, self.ceiling_usd - self.cumulative_usd)
-
-
-@dataclass(frozen=True, slots=True)
 class PendingActivation:
     """One subscription awaiting a manual decision (X-02)."""
 
@@ -465,7 +443,6 @@ __all__ = [
     "PlatformAdminService",
     "PlatformCounts",
     "SignupRow",
-    "SpendSnapshot",
     "SubjectCoverage",
     "SubscriptionAlreadyDecidedError",
     "SubscriptionNotFoundError",
