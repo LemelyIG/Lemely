@@ -341,7 +341,7 @@ def _track_progress(
     asked again.
 
     Scoped to this run by the queue itself (``q`` is
-    ``bus.subscribe_queue(str(paper_id))`` in :func:`_run_grading_job`,
+    ``bus.subscribe_queue(f"teacher:{paper_id}")`` in :func:`_run_grading_job`,
     matching the ``current_run_id`` that call sets), never by the event
     payload (spec §4.5, DS10): neither progress event type carries a
     ``paper_id`` at all — ``lemely.io.answer_extraction`` and
@@ -418,8 +418,8 @@ def _run_grading_job(
     from lemely.web.routers.student import resolve_mark_scheme
     from lemely.web.services.grading import extract_answers, grade_paper
 
-    run_id_token = current_run_id.set(str(paper_id))
-    progress_queue = bus.subscribe_queue(str(paper_id))
+    run_id_token = current_run_id.set(f"teacher:{paper_id}")
+    progress_queue = bus.subscribe_queue(f"teacher:{paper_id}")
     stop = threading.Event()
     tracker = threading.Thread(
         target=_track_progress,

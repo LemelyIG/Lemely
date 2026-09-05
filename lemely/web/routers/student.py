@@ -1105,7 +1105,7 @@ def student_correct(
             bus.publish_done()
 
     return StreamingResponse(
-        bus_event_stream(run, run_id=payload.paperId), media_type="text/event-stream"
+        bus_event_stream(run, run_id=f"student:{payload.paperId}"), media_type="text/event-stream"
     )
 
 

@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextvars
 import queue
 import threading
+import uuid
 
 from lemely.runtime.events import EventBus, EventType, current_run_id
 
@@ -83,6 +84,51 @@ def test_publish_done_with_no_current_run_id_does_not_end_other_runs() -> None:
     assert _drain(qb) == []
 
 
+def test_a_publisher_that_forgets_its_scope_reaches_every_run() -> None:
+    """`publish`'s unscoped pass-through is a loaded gun; this documents it.
+
+    `publish` deliberately delivers an event with ``run_id is None`` to every
+    queue, so that genuinely process-wide events (the CLI's ``BUDGET_*``) are
+    not lost by scoped listeners. The cost is that any publisher running on a
+    thread that never set :data:`current_run_id` broadcasts to all of them —
+    which for a marking event means one user's per-question results arriving
+    on another user's stream.
+
+    This is asserted rather than merely warned about in a docstring, because
+    the mechanism is invisible at the call site: nothing about
+    ``bus.publish(...)`` hints that the surrounding thread's context decides
+    who receives it. Anyone who changes this predicate should have to change
+    this test, and read why.
+
+    `lemely/web/routers/quiz.py` is the reason this is not hypothetical: it
+    marks submissions on a bare daemon thread, and until it set a run id its
+    marking events reached every open stream.
+    """
+    bus = EventBus()
+    qa, qb = bus.subscribe_queue("run-a"), bus.subscribe_queue("run-b")
+    bus.publish(EventType.WARNING, message="from a thread with no run id")
+    assert len(_drain(qa)) == 1
+    assert len(_drain(qb)) == 1
+
+
+def test_a_scoped_publisher_reaches_only_its_own_run() -> None:
+    """The other half: once the publisher sets a scope, the leak closes.
+
+    This is the shape every background worker must follow — the fix applied
+    to `quiz.py`'s marking thread, and what `_scoped_run` and
+    `_run_grading_job` already do.
+    """
+    bus = EventBus()
+    qa, qb = bus.subscribe_queue("run-a"), bus.subscribe_queue("run-b")
+    token = current_run_id.set("run-a")
+    try:
+        bus.publish(EventType.WARNING, message="scoped to a")
+    finally:
+        current_run_id.reset(token)
+    assert [e.payload["message"] for e in _drain(qa)] == ["scoped to a"]
+    assert _drain(qb) == []
+
+
 def test_child_threads_must_copy_context() -> None:
     """The rule the spec pins: a bare Thread does not inherit the run id; copy_context does.
 
@@ -106,3 +152,34 @@ def test_child_threads_must_copy_context() -> None:
     finally:
         current_run_id.reset(token)
     assert seen == [None, "run-1"]
+
+
+def test_quiz_marking_thread_sets_its_run_id() -> None:
+    """`quiz.py`'s fire-and-forget marking thread must scope its bus events.
+
+    Lives here rather than in `tests/test_web_quiz.py` deliberately: that
+    module needs a reachable Postgres and skips without one, and a guard
+    against a cross-tenant leak should not be skippable. Nothing here touches
+    the database — `_trigger_marking_in_background` only calls
+    `mark_submission`, so a duck-typed double is enough to observe the
+    context the thread runs under.
+
+    Reverting the `current_run_id.set(...)` in that function fails this.
+    """
+    from lemely.web.routers.quiz import _trigger_marking_in_background
+
+    submission_id = uuid.uuid4()
+    seen: list[str | None] = []
+    done = threading.Event()
+
+    class _RecordingMarkingService:
+        def mark_submission(self, sid: uuid.UUID) -> None:
+            seen.append(current_run_id.get())
+            done.set()
+
+    _trigger_marking_in_background(_RecordingMarkingService(), submission_id)  # type: ignore[arg-type]
+    assert done.wait(timeout=5.0), "the marking thread never ran"
+    assert seen == [f"quiz:{submission_id}"], (
+        "the marking thread published under no run id, so `EventBus.publish`'s "
+        "unscoped pass-through would deliver its marking events to every open stream"
+    )

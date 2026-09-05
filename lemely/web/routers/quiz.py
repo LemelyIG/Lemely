@@ -57,6 +57,7 @@ from lemely.db.quiz_taking_repo import (
     SubmitResultRow,
 )
 from lemely.db.xp_repo import XpService
+from lemely.runtime.events import current_run_id
 from lemely.web.deps import (
     AuthContext,
     get_quiz_marking_service,
@@ -457,6 +458,16 @@ def _trigger_marking_in_background(
     """
 
     def run() -> None:
+        # DS10: scope this thread's bus events to the submission being marked.
+        # `mark_submission` reaches `correct_paper`, which publishes
+        # MARKING_PROGRESS/WARNING/ERROR. Without a run id those events carry
+        # `run_id=None`, and `EventBus.publish` passes an unscoped event
+        # through to *every* subscribed queue — so one student's per-question
+        # marks would arrive on any other student's open `/student/correct`
+        # stream and in any teacher's live grading tracker. Nothing consumes
+        # this scope today (no stream subscribes to a submission id); it
+        # exists so these events reach nobody else's queue.
+        token = current_run_id.set(f"quiz:{submission_id}")
         try:
             marking_service.mark_submission(submission_id)
         except QuizMarkingError as exc:
@@ -467,6 +478,8 @@ def _trigger_marking_in_background(
             )
         except Exception:
             log.exception("quiz_marking_trigger_unexpected_error", submission_id=str(submission_id))
+        finally:
+            current_run_id.reset(token)
 
     threading.Thread(target=run, daemon=True).start()
 
