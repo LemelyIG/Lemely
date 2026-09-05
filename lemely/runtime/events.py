@@ -14,11 +14,17 @@ import contextlib
 import queue
 import threading
 from collections import defaultdict
+from contextvars import ContextVar
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
     from collections.abc import Callable
+
+current_run_id: ContextVar[str | None] = ContextVar("lemely_current_run_id", default=None)
+"""The run (SSE stream or grading job) the current thread is working for.
+Set once at the top of a worker thread; child threads must run under
+``contextvars.copy_context()`` — threads do not inherit it otherwise."""
 
 
 class EventType(StrEnum):
@@ -40,12 +46,13 @@ class EventType(StrEnum):
 
 
 class Event:
-    __slots__ = ("payload", "type")
+    __slots__ = ("payload", "run_id", "type")
 
-    def __init__(self, type: EventType, payload: dict[str, Any]) -> None:
-        """Initialise an event with a type and free-form payload."""
+    def __init__(self, type: EventType, payload: dict[str, Any], run_id: str | None = None) -> None:
+        """Initialise an event with a type, free-form payload, and optional run scope."""
         self.type = type
         self.payload = payload
+        self.run_id = run_id
 
     def __repr__(self) -> str:
         """Return a developer-readable representation."""
@@ -58,12 +65,20 @@ class EventBus:
     Subscribers receive copies of every event published after they subscribe.
     Use ``subscribe_queue`` / ``unsubscribe_queue`` to manage subscriptions; the
     returned ``queue.SimpleQueue`` is safe to drain from any thread.
+
+    Each queue is scoped to a run id (``subscribe_queue(run_id=...)``) or left
+    unscoped (``subscribe_queue()``, the default). ``publish`` stamps every
+    event with :data:`current_run_id`; a scoped queue receives events matching
+    its own run id plus events published with no run id (outside any run — the
+    CLI's ``BUDGET_*`` events, for instance). An unscoped queue receives
+    everything, which is what ``lemely/app/live_log.py`` (Gradio) and process-
+    wide listeners expect.
     """
 
     def __init__(self) -> None:
         """Initialise an empty bus with no subscribers."""
         self._lock = threading.Lock()
-        self._queues: list[queue.SimpleQueue[Event | None]] = []
+        self._queues: list[tuple[queue.SimpleQueue[Event | None], str | None]] = []
         self._callbacks: dict[EventType, list[Callable[..., Any]]] = defaultdict(list)
 
     def subscribe(self, event_type: EventType, callback: Callable[..., Any]) -> None:
@@ -81,35 +96,43 @@ class EventBus:
         with self._lock, contextlib.suppress(ValueError):
             self._callbacks[event_type].remove(callback)
 
-    def subscribe_queue(self) -> queue.SimpleQueue[Event | None]:
-        """Return a new queue that will receive all subsequent published events."""
+    def subscribe_queue(self, run_id: str | None = None) -> queue.SimpleQueue[Event | None]:
+        """Return a new queue scoped to ``run_id`` (or unscoped, receiving everything).
+
+        A scoped queue receives events whose ``run_id`` equals ``run_id``, plus
+        events published with no run id. Pass no ``run_id`` for a queue that
+        receives every event regardless of scope.
+        """
         q: queue.SimpleQueue[Event | None] = queue.SimpleQueue()
         with self._lock:
-            self._queues.append(q)
+            self._queues.append((q, run_id))
         return q
 
     def unsubscribe_queue(self, q: queue.SimpleQueue[Event | None]) -> None:
-        """Remove a queue; silently ignored if already removed."""
-        with self._lock, contextlib.suppress(ValueError):
-            self._queues.remove(q)
+        """Remove a queue by identity; silently ignored if already removed."""
+        with self._lock:
+            self._queues[:] = [entry for entry in self._queues if entry[0] is not q]
 
     def publish(self, event_type: EventType, **payload: Any) -> None:  # noqa: ANN401
-        """Publish an event to all current subscribers."""
-        event = Event(event_type, payload)
+        """Publish an event, stamped with :data:`current_run_id`, to matching subscribers."""
+        event = Event(event_type, payload, run_id=current_run_id.get())
         with self._lock:
             queues = list(self._queues)
             callbacks = list(self._callbacks.get(event_type, []))
-        for q in queues:
-            q.put(event)
+        for q, scope in queues:
+            if scope is None or event.run_id is None or scope == event.run_id:
+                q.put(event)
         for cb in callbacks:
             cb(**payload)
 
     def publish_done(self) -> None:
-        """Publish a sentinel ``None`` to signal end-of-stream to all subscribers."""
+        """Publish the sentinel ``None`` to queues scoped to the current run, plus unscoped ones."""
+        run_id = current_run_id.get()
         with self._lock:
             queues = list(self._queues)
-        for q in queues:
-            q.put(None)
+        for q, scope in queues:
+            if scope is None or scope == run_id:
+                q.put(None)
 
 
 # Module-level singleton — import this in all publishers and consumers.
