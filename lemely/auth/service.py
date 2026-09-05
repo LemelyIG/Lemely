@@ -58,7 +58,7 @@ if TYPE_CHECKING:
     from lemely.auth.email import EmailProvider
     from lemely.auth.gotrue import GoTrueBackend
     from lemely.auth.mirror import UserMirror
-    from lemely.auth.otp import OtpStore
+    from lemely.auth.otp import OtpChallengeStore
     from lemely.auth.sms import SmsProvider
     from lemely.db.auth_token_repo import AuthTokenService
     from lemely.db.device_repo import DeviceRegistration, DeviceRegistry
@@ -128,7 +128,7 @@ class AuthService:
         gotrue: GoTrueBackend,
         mirror: UserMirror,
         sms: SmsProvider,
-        otp_store: OtpStore,
+        otp_store: OtpChallengeStore,
         settings: Settings,
         token_signer: TokenSigner | None = None,
         device_registry: DeviceRegistry | None = None,
@@ -141,7 +141,11 @@ class AuthService:
             gotrue: Email/password backend (real or fake).
             mirror: ``public.users`` mirror (real DB or in-memory fake).
             sms: OTP delivery provider.
-            otp_store: In-memory OTP challenge store.
+            otp_store: OTP challenge store — in-memory (:class:`~lemely.auth.otp.OtpStore`,
+                tests and the seed script) or Postgres-backed
+                (:class:`~lemely.db.otp_repo.DbOtpStore`, ``deps.py``); this
+                service depends on the :class:`~lemely.auth.otp.OtpChallengeStore`
+                Protocol, never on either concretely.
             settings: Shared settings (JWT secret, audience, auth knobs).
             token_signer: Self-signed-token minter; defaults to
                 :func:`~lemely.auth.tokens.mint_otp_token`.

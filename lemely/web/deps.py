@@ -23,7 +23,6 @@ from lemely.auth.cooldown import CooldownStore
 from lemely.auth.email import MockEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
-from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -43,6 +42,7 @@ from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
+from lemely.db.otp_repo import DbOtpStore
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
 from lemely.db.practice_repo import PracticeService
@@ -213,9 +213,11 @@ def get_auth_service() -> AuthService:
     """Return the process-wide :class:`AuthService` singleton.
 
     Wired with the real GoTrue HTTP backend, the DB-backed user mirror, the mock
-    SMS provider, an OTP store using a wall-clock and the default RNG, the
-    device registry that enforces the 3-device limit (D1.11), the mock email
-    provider (D7.6 — nothing in this deployment sends a real mail; see
+    SMS provider, a Postgres-backed :class:`~lemely.db.otp_repo.DbOtpStore`
+    (spec §4.4) using a wall-clock and the default RNG — so a code one Cloud
+    Run instance issues can be verified by another — the device registry that
+    enforces the 3-device limit (D1.11), the mock email provider (D7.6 —
+    nothing in this deployment sends a real mail; see
     :mod:`lemely.auth.email`'s module docstring for the honesty rule that
     follows from wiring it unconditionally), and the Postgres-backed
     :class:`AuthTokenService` (D7.7) that mints and redeems verification/reset
@@ -223,10 +225,12 @@ def get_auth_service() -> AuthService:
     seams.
     """
     settings = get_settings()
-    otp_store = OtpStore(
+    otp_store = DbOtpStore(
+        get_sessionmaker(settings),
         clock=lambda: datetime.now(UTC),
         rng=random.SystemRandom(),
         ttl_seconds=settings.auth.otp_ttl_seconds,
+        email_ttl_seconds=settings.auth.email_otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
         min_resend_seconds=settings.auth.otp_min_resend_seconds,
