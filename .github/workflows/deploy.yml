@@ -141,12 +141,13 @@ jobs:
           echo "::add-mask::$DB_URL_PSYCOPG"
           echo "DATABASE_URL_PSYCOPG=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
 
-      # Free-tier shape throughout: max-instances=1 is NOT a cost knob, it is
-      # load-bearing — docs/deployment.md §5.1 documents two pieces of
-      # in-process state (the correction-job registry, the parent OTP store)
-      # that break silently with a second replica. min-instances=0 is the
-      # cost knob: it scales to zero between requests so idle time costs
-      # nothing, at the price of a cold start on the next request.
+      # max-instances=3 is a COST knob, not a correctness one. Every piece of
+      # state that once required a single replica now lives in Postgres or
+      # object storage (docs/deployment.md §5.1); the only per-instance state
+      # left is the Gemini response cache, which is a cache. Three is enough to
+      # absorb a spike and prove the app is instance-agnostic while a runaway
+      # cannot fan out to 100 containers on a free-tier project. min-instances=0
+      # keeps idle time free at the price of a cold start.
       # --allow-unauthenticated is required for the Cloudflare Worker's
       # plain fetch() to reach it (see web/worker/index.ts and docs/ci-cd.md
       # for the tradeoff and the optional shared-secret hardening it notes).
@@ -182,7 +183,7 @@ jobs:
           # very likely still work, but 1Gi costs nothing extra while idle
           # (min-instances=0) and buys headroom against a cold-start spike that
           # the per-minute metric could miss, so it stays.
-          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_LOGGING__FORMAT=json

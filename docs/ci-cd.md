@@ -363,11 +363,11 @@ regressions this pipeline introduced, just not solved by it:
   anyone acts. The CLI and Gradio are unaffected and still enforce their own
   `$8.00` on-disk ledger.
 - **Queued is per instance.** The teacher grading pool is one worker per
-  Cloud Run instance (`docs/deployment.md` §5.1). `deploy.yml` still runs at
-  `--max-instances=1`, so this is not yet observable in practice; once that
-  is raised, a paper can queue on one instance while another sits idle —
-  every instance answers a paper's status from the same Postgres row, so
-  this is a scheduling gap, not a correctness one.
+  Cloud Run instance (`docs/deployment.md` §5.1). With `--max-instances=3` a
+  paper can queue on one instance while another sits idle. Every instance
+  answers a paper's status from the same Postgres row, so this is a
+  scheduling gap, not a correctness one — and it has not been observed
+  either way, because this branch has not been deployed.
 - Everything else in `docs/deployment.md` §5 (no scheduler,
   `/api/teacher/overview`'s N+1) is unchanged by this pipeline — it deploys
   the app as-is, it doesn't fix it.

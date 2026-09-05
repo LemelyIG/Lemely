@@ -275,13 +275,17 @@ Honest constraints. Each is a real property of the code today, not a hypothetica
 
 ### 5.1 The single-replica constraint is lifted
 
-**The code no longer requires one instance; the deploy still asks for one.**
-`.github/workflows/deploy.yml` sets `--max-instances=1` today. Nothing below
-depends on that staying true — the point of this work was to remove the
-reasons it had to — but until that flag changes, staging and production run a
-single backend instance, and the multi-instance behaviour described here is
-what *would* happen, not what is happening. Raising it is a one-line change
-gated on exercising spec §8's checklist against staging first.
+`.github/workflows/deploy.yml` now sets `--max-instances=3`. That number is a
+cost ceiling, not a correctness one: nothing below depends on the instance
+count, and three is simply enough to absorb a spike while a runaway cannot fan
+out to a hundred containers. `--min-instances=0` is unchanged, so idle time
+still costs nothing and the first request after idle still pays a cold start.
+
+The multi-instance behaviour described here has not yet been observed against
+a real deployment — this branch has never been deployed. The verification
+checklist in the design spec's §8 exists to exercise it on staging, and until
+someone runs it, everything below is what the code is built to do rather than
+what has been seen to happen.
 
 This section used to name two pieces of process-local state and pin the backend to one
 instance because of them. Both are gone, and so are several more this document never

@@ -14271,11 +14271,12 @@ busy instance queues there even if another instance is idle. Accepted at three i
 (`max-instances=3`, DS6): a queue, its IAM, a second request path and local emulation cost more
 than the scheduling gap they would close at this scale.
 
-**What this decision does not claim.** `.github/workflows/deploy.yml` still deploys at
-`--max-instances=1`. Raising it to `3` is a separate, deliberately later step (spec §6 rolls it out
-last, after every earlier stage has been verified on staging) — this entry records what the code
-now *allows*, not what is running today. `docs/deployment.md` §5.1 is precise about the distinction
-and should be read before assuming otherwise from this paragraph alone.
+**What this decision does not claim.** `.github/workflows/deploy.yml` now deploys at
+`--max-instances=3`, the last step of this work. But the branch has never been deployed: the spec
+rolls the unpin out last precisely so every earlier stage can be verified on staging first, and
+that verification has not happened. This entry records what the code allows and what the pipeline
+will ask for on its next run — not behaviour anyone has observed. Spec §8's checklist is the
+list of things still to exercise.
 
 **Tests.** Each piece above shipped with its own hermetic and Postgres-backed coverage on its own
 commit — the storage seam (`tests/test_storage_local.py`, `tests/test_storage_gcs.py`,
