@@ -97,6 +97,7 @@ from lemely.web.schemas_teacher import (
     DistributionBarDTO,
     MasteryRowDTO,
     StatCardDTO,
+    StudentRowDTO,
 )
 
 # The staff triple every class route is at least readable by; class-level
@@ -239,6 +240,30 @@ def _class_row_to_summary(
     )
 
 
+def _empty_student_row(display_name: str, student_id: str) -> StudentRowDTO:
+    """Roster row for an enrolled student who has not yet submitted anything.
+
+    ``_student_row`` returns ``None`` for a student with no history — a
+    contract the overview/at-risk surfaces still rely on to skip students
+    with nothing to analyse. A class roster has a different job: it must
+    list every enrolled student, not just the ones who have started
+    working, so a not-yet-started student needs a real row here rather than
+    being silently dropped. The fields mirror ``_student_row``'s own "no
+    grade-bearing record" reading (``grade=""``, ``mark=""``) rather than
+    fabricating a value for a student who has done nothing yet.
+    """
+    return StudentRowDTO(
+        name=display_name,
+        studentId=student_id,
+        grade="",
+        mark="",
+        gradeAtRisk=False,
+        paperCount=0,
+        lastActiveAt=None,
+        flags=[],
+    )
+
+
 def _class_row_to_detail(
     row: ClassRow,
     roster: list[RosterEntry],
@@ -286,7 +311,6 @@ def _class_row_to_detail(
 
     rows = [
         student_row
-        for entry, history in histories
         if (
             student_row := _student_row(
                 history,
@@ -298,6 +322,8 @@ def _class_row_to_detail(
             )
         )
         is not None
+        else _empty_student_row(entry.display_name, str(entry.student_id))
+        for entry, history in histories
     ]
 
     all_records = [record for _, history in histories for record in history.records]
