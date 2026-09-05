@@ -1,7 +1,16 @@
 """Object storage seam.
 
-:class:`StorageBackend` is the Protocol the GCS backend, the local backend
-and the test fake implement.
+:class:`StorageBackend` is the Protocol the Google Cloud Storage backend
+(:mod:`lemely.io.storage_gcs`), the local filesystem backend
+(:mod:`lemely.io.storage_local`) and the test fake implement.
+
+The deployed backend is Google Cloud Storage. The public "How Lemely handles
+your data" page says so in as many words, and
+``web/tests/unit/dataHandling.test.ts`` asserts that this module and that
+copy still agree — so if this seam is ever pointed somewhere else, fix
+``web/src/portals/marketing/dataHandling.ts`` in the same change rather than
+relaxing the test. Where a user's scan is kept is a disclosure, not an
+implementation detail.
 """
 
 from __future__ import annotations
