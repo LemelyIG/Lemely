@@ -25,10 +25,19 @@ import { appRoutes } from "@/routes"
  * rather than a link in production.
  */
 
-/** Route paths the student portal actually mounts, as absolute pathnames. */
-const studentRoutePaths = (studentRoute.children ?? []).map((child) =>
-  child.index ? "/student" : `/student/${(child as { path: string }).path}`,
-)
+/**
+ * Route paths the student portal actually mounts, as absolute pathnames.
+ * Flattened one level for nested children, matching `teacherRoutePaths`
+ * below — the student `settings` route grew `devices`/`notifications`
+ * children the same shape as the teacher portal's `classes/:classId` one.
+ */
+const studentRoutePaths = (studentRoute.children ?? []).flatMap((child) => {
+  const base = child.index ? "/student" : `/student/${(child as { path: string }).path}`
+  const nested = (child.children ?? []).map((grand) =>
+    grand.index ? base : `/student/${(child as { path: string }).path}/${(grand as { path: string }).path}`,
+  )
+  return [base, ...nested]
+})
 
 /** Same for the teacher portal, flattened one level for nested children. */
 const teacherRoutePaths = (teacherRoute.children ?? []).flatMap((child) => {

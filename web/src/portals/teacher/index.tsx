@@ -15,6 +15,7 @@ import {
   Books,
   Sparkle,
   Megaphone,
+  Gear,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -64,6 +65,34 @@ const QuizResults = lazy(() => import("./screens/QuizResults").then((m) => ({ de
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
 )
+// Settings' three screens now mount here too, alongside every other lazy
+// screen in this portal, rather than only reaching the top-level
+// `/settings/*` lane from a footer link — see `data.ts`'s `navItems` and the
+// route registration below.
+// Each imported from its own module rather than the `@/portals/settings`
+// barrel: importing all four through one barrel module means a chunk
+// containing any one of them pulls in the code for all four, defeating the
+// per-screen splitting this whole file otherwise does. The barrel still
+// exists for other consumers (its own header explains why) — this portal
+// just does not use it for the lazy boundary.
+const PortalSettingsLayout = lazy(() =>
+  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
+    default: m.PortalSettingsLayout,
+  })),
+)
+const ProfileSettingsSection = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({
+    default: m.ProfileSettingsSection,
+  })),
+)
+const DeviceSettingsSection = lazy(() =>
+  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+)
+const NotificationSettingsSection = lazy(() =>
+  import("@/portals/settings/NotificationSettings").then((m) => ({
+    default: m.NotificationSettingsSection,
+  })),
+)
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -77,6 +106,7 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   schemes: Books,
   quizzes: Sparkle,
   announcements: Megaphone,
+  settings: Gear,
 }
 
 function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolean }) {
@@ -215,7 +245,7 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-2.5">
-      <Avatar name={name} size="sm" />
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-ink">{name}</div>
         <div className="text-body-sm text-ink-faint">{roleLabel}</div>
@@ -256,19 +286,6 @@ function TeacherNav({ touch = false }: { touch?: boolean }) {
 function SidebarFooter() {
   return (
     <div className="flex flex-col gap-3">
-      {/* Settings sits here rather than in `navItems` above, and that is a
-          judgement rather than convenience. The primary nav is this teacher's
-          *work* — every entry is a route under /teacher with a NavLink active
-          state. `/settings/*` is neither: it is account-level, shared with
-          every other role, and would never render active from a list matched
-          against the teacher subtree. One entry is enough because the two
-          settings screens link to each other. P5.9 chunk D. */}
-      <Link
-        to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-      >
-        Account, devices &amp; notifications <ForwardArrow />
-      </Link>
       <UserBlock />
     </div>
   )
@@ -556,6 +573,24 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Quiz results" },
     },
     { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    {
+      path: "settings",
+      element: <PortalSettingsLayout basePath="/teacher/settings" />,
+      handle: { title: "Settings" },
+      children: [
+        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          path: "devices",
+          element: <DeviceSettingsSection />,
+          handle: { title: "Account and devices" },
+        },
+        {
+          path: "notifications",
+          element: <NotificationSettingsSection />,
+          handle: { title: "Notification settings" },
+        },
+      ],
+    },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the sidebar. See `portals/misc/NotFound.tsx`.

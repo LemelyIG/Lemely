@@ -12,6 +12,7 @@ import {
   Bell,
   Books,
   Calculator,
+  Gear,
   HandHeart,
   House,
   Megaphone,
@@ -90,6 +91,7 @@ export const navGroups: NavGroup[] = [
       { to: "/student/notifications", label: "Notifications", icon: Bell },
       { to: "/student/announcements", label: "Announcements", icon: Megaphone },
       { to: "/student/parents", label: "Your parents", icon: HandHeart },
+      { to: "/student/settings", label: "Settings", icon: Gear },
     ],
   },
   {
@@ -182,6 +184,9 @@ export const crumbs: Record<string, string> = {
   "/student/notifications": "Home / Notifications",
   "/student/announcements": "Home / Announcements",
   "/student/parents": "Home / Your parents",
+  "/student/settings": "Home / Settings",
+  "/student/settings/devices": "Home / Settings / Account and devices",
+  "/student/settings/notifications": "Home / Settings / Notifications",
   "/student/onboard": "Onboarding",
   "/student/landing": "lemely.com",
 }

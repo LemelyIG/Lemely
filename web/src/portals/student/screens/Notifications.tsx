@@ -250,12 +250,13 @@ export function Notifications() {
                   controls, so it aligns to the end rather than splitting. */}
               <div className="flex flex-wrap items-end justify-end gap-3">
                 <div className="flex items-center gap-3">
-                  {/* The inbox is where a reader notices they are getting too
-                      much or too little, so it is where the settings for that
-                      belong. Until the portal navs grow an entry (P5.9 chunk
-                      D), this is also the only route to G-12 for a student. */}
+                  {/* The settings link sits here because the inbox is where a
+                      reader notices they are getting too much or too little.
+                      The sidebar's Settings entry also reaches this screen
+                      (Notification settings), so this is a convenience, not
+                      the only route to it. */}
                   <Link
-                    to="/settings/notifications"
+                    to="/student/settings/notifications"
                     className="text-body-sm text-accent-ink hover:underline"
                   >
                     Notification settings

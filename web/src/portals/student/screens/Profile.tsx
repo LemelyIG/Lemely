@@ -481,7 +481,7 @@ export function Profile() {
         <Button
           variant="secondary"
           size="sm"
-          onClick={() => navigate("/settings/devices")}
+          onClick={() => navigate("/student/settings/devices")}
         >
           Your devices
         </Button>

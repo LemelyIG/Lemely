@@ -195,7 +195,7 @@ describe("the settings lane still reaches every role — P4.7", () => {
    * three would silently lock platform admins out of their own device list.
    * That would be invisible — the routes render, just not for them.
    */
-  it.each(["/settings/devices", "/settings/notifications"])("admits all five roles on %s", (p) => {
+  it.each(["/settings/devices", "/settings/notifications", "/settings/profile"])("admits all five roles on %s", (p) => {
     const route = appRoutes.find((r) => r.path === p)
     expect(route).toBeDefined()
     const roles = allowedRolesOf(route!.element)

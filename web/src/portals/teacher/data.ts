@@ -35,6 +35,7 @@ export interface NavItem {
     | "schemes"
     | "quizzes"
     | "announcements"
+    | "settings"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
 }
@@ -63,6 +64,11 @@ export const navItems: NavItem[] = [
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
   { to: "/teacher/announcements", label: "Announcements", icon: "announcements" },
+  // Settings moves into the primary nav from the footer's plain link (P5.9
+  // chunk D's placement is superseded here): a route under /teacher with a
+  // real active state belongs beside the rest of this teacher's sections
+  // rather than set apart as an account-level afterthought.
+  { to: "/teacher/settings", label: "Settings", icon: "settings" },
 ]
 
 /* ── Breadcrumb trail (P3.1 / DECISION D1.5) ─────────────────────────────── */
@@ -114,6 +120,18 @@ export function resolveTrail(pathname: string): TrailCrumb[] {
   const reviewItem = path.match(/^\/teacher\/review\/[^/]+$/)
   if (reviewItem) {
     return [root, { label: "Review", to: "/teacher/review" }, { label: "This item" }]
+  }
+
+  if (path === "/teacher/settings/devices") {
+    return [
+      root,
+      { label: "Settings", to: "/teacher/settings" },
+      { label: "Account and devices" },
+    ]
+  }
+
+  if (path === "/teacher/settings/notifications") {
+    return [root, { label: "Settings", to: "/teacher/settings" }, { label: "Notifications" }]
   }
 
   const classAnalytics = path.match(/^\/teacher\/classes\/([^/]+)\/analytics$/)

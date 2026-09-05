@@ -69,6 +69,9 @@ const NotificationSettings = lazy(() =>
     default: m.NotificationSettings,
   })),
 )
+const ProfileSettings = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({ default: m.ProfileSettings })),
+)
 
 /*
  * Task 19 (spec §4.4) · lazy consts for the five G-02/G-03/G-06/G-07/G-08
@@ -191,6 +194,35 @@ function SessionEndedRoute({ children }: { children: React.ReactNode }) {
   if (!session) return children
   const next = safeNextPath(searchParams.get("next"))
   return <Navigate to={next ?? portalPathForRole(session.role)} replace />
+}
+
+/**
+ * `/settings/*` predates the in-portal `/teacher/settings/*` and
+ * `/student/settings/*` sections this same change adds. Both now exist, so a
+ * student or teacher following an old top-level link (a bookmark, a stale
+ * link elsewhere in the product) is sent on to the portal-scoped screen
+ * instead of rendering the frame-only version here — the two render the same
+ * sections, and the portal one carries the portal's own chrome around them.
+ *
+ * Parent and the two admin roles have no portal-scoped Settings section of
+ * their own (P4.10's `SettingsFrame` remains their only route to it), so this
+ * is a no-op for them and they keep rendering the framed screen exactly as
+ * they always have.
+ */
+function SettingsLaneRedirect({
+  segment,
+  children,
+}: {
+  /** The path under a portal's own `settings` root: `""` for the profile
+   * index, `"devices"` or `"notifications"` for its two siblings. */
+  segment: "" | "devices" | "notifications"
+  children: React.ReactNode
+}) {
+  const { session } = useAuth()
+  const suffix = segment ? `/${segment}` : ""
+  if (session?.role === "student") return <Navigate to={`/student/settings${suffix}`} replace />
+  if (session?.role === "teacher") return <Navigate to={`/teacher/settings${suffix}`} replace />
+  return children
 }
 
 /*
@@ -571,15 +603,23 @@ export const appRoutes: RouteObject[] = [
   // G-11 (devices section). Top-level rather than inside a portal subtree: the
   // 3-device limit applies to every account, so all five roles reach the same
   // screen — the same reason `/api/me/devices` is role-agnostic (P5.7).
+  //
+  // Wrapped in `SettingsLaneRedirect`, inside `RequireAuth` rather than
+  // outside it: a signed-out visitor still gets sent to `/login` first, and
+  // only once there is a real session does it matter whether that session
+  // belongs to a student or teacher with a portal-scoped Settings of their
+  // own to be sent on to instead.
   {
     path: "/settings/devices",
     errorElement,
     handle: { title: "Your devices" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
-          <DeviceSettings />
-        </Suspense>
+        <SettingsLaneRedirect segment="devices">
+          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+            <DeviceSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
       </RequireAuth>
     ),
   },
@@ -597,9 +637,29 @@ export const appRoutes: RouteObject[] = [
     handle: { title: "Notification settings" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
-          <NotificationSettings />
-        </Suspense>
+        <SettingsLaneRedirect segment="notifications">
+          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+            <NotificationSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
+      </RequireAuth>
+    ),
+  },
+  // The third settings screen, added alongside the portal-scoped Settings
+  // sections above. Top level for the same reason as its two siblings: parent
+  // and the two admin roles have no portal Settings of their own to render
+  // this inside, so `/settings/profile` stays their only route to it.
+  {
+    path: "/settings/profile",
+    errorElement,
+    handle: { title: "Profile settings" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <SettingsLaneRedirect segment="">
+          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+            <ProfileSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
       </RequireAuth>
     ),
   },
