@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest"
 
 import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
-import { navItems, resolveTrail } from "@/portals/teacher/data"
+import { navItems, resolveTrail, classesItemActive } from "@/portals/teacher/data"
 import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
@@ -322,6 +322,49 @@ describe("admin nav — P4.7", () => {
     expect(school.some((to) => platform.includes(to))).toBe(false)
     expect(school.every((to) => to.startsWith("/school"))).toBe(true)
     expect(platform.every((to) => to.startsWith("/platform"))).toBe(true)
+  })
+})
+
+/*
+ * The Classes nav row's active-state override. "Your classes" caps at 5
+ * rows, and this is the fallback for the sixth-and-later class: with no row
+ * of its own to highlight, the sidebar previously highlighted nothing at all
+ * while that class's screen was open. The product owner's requirement is
+ * equally explicit in the other direction — Classes must NOT read as active
+ * while a *visible* class row is the current page, since that row already
+ * carries the marker.
+ */
+describe("classesItemActive — the Classes row's fallback highlight", () => {
+  const visibleIds = ["c1", "c2", "c3", "c4", "c5"]
+
+  it("is active on the exact classes listing path", () => {
+    expect(classesItemActive("/teacher/classes", visibleIds)).toBe(true)
+  })
+
+  it("is active for a class beyond the visible cap", () => {
+    expect(classesItemActive("/teacher/classes/c9", visibleIds)).toBe(true)
+  })
+
+  it("is active for an out-of-cap class's analytics screen too", () => {
+    expect(classesItemActive("/teacher/classes/c9/analytics", visibleIds)).toBe(true)
+  })
+
+  it("is NOT active for a class that IS one of the visible rows", () => {
+    expect(classesItemActive("/teacher/classes/c1", visibleIds)).toBe(false)
+    expect(classesItemActive("/teacher/classes/c1/analytics", visibleIds)).toBe(false)
+  })
+
+  it("is not active for an unrelated teacher route", () => {
+    expect(classesItemActive("/teacher/grading", visibleIds)).toBe(false)
+    expect(classesItemActive("/teacher", visibleIds)).toBe(false)
+  })
+
+  it("treats an empty visible list as everyone being out-of-cap", () => {
+    expect(classesItemActive("/teacher/classes/c1", [])).toBe(true)
+  })
+
+  it("tolerates a trailing slash", () => {
+    expect(classesItemActive("/teacher/classes/c9/", visibleIds)).toBe(true)
   })
 })
 

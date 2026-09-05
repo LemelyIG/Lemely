@@ -28,7 +28,7 @@ import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { navItems, resolveTrail, type NavItem } from "./data"
+import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
@@ -109,7 +109,18 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   settings: Gear,
 }
 
-function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolean }) {
+function SidebarNavItem({
+  item,
+  touch = false,
+  forceActive = false,
+}: {
+  item: NavItem
+  touch?: boolean
+  /** Overrides NavLink's own `isActive` to true. Used by the Classes row for
+   * the one case its own `end: true` match cannot see — see
+   * `data.ts`'s `classesItemActive`. */
+  forceActive?: boolean
+}) {
   const Glyph = NAV_ICON[item.icon]
   return (
     <NavLink
@@ -134,27 +145,31 @@ function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolea
           // as you navigate.
           "border-s-2",
           touch && "min-h-11",
-          isActive
+          isActive || forceActive
             ? "border-accent bg-paper-raised text-ink"
             : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
         )
       }
     >
-      {({ isActive }) => (
-        <>
-          {/* §10 permits `fill` for a single active-state nav icon, and this is
-              it. The active row therefore carries four independent signals —
-              the accent margin rule, the raised sheet, full-strength ink, and
-              the filled glyph — so none of them carries the state alone. */}
-          <Glyph
-            size={16}
-            weight={isActive ? "fill" : "regular"}
-            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-            aria-hidden="true"
-          />
-          <span className="flex-1">{item.label}</span>
-        </>
-      )}
+      {({ isActive }) => {
+        const active = isActive || forceActive
+        return (
+          <>
+            {/* §10 permits `fill` for a single active-state nav icon, and this
+                is it. The active row therefore carries four independent
+                signals — the accent margin rule, the raised sheet,
+                full-strength ink, and the filled glyph — so none of them
+                carries the state alone. */}
+            <Glyph
+              size={16}
+              weight={active ? "fill" : "regular"}
+              className={cn("shrink-0", active ? "text-accent" : "text-ink-faint")}
+              aria-hidden="true"
+            />
+            <span className="flex-1">{item.label}</span>
+          </>
+        )
+      }}
     </NavLink>
   )
 }
@@ -187,16 +202,39 @@ function ClassesNavSection() {
         ) : (
           <>
             {data.classes.slice(0, 5).map((c) => (
-              <Link
+              // A `NavLink`, not a plain `Link`: this row is a navigation
+              // destination like any other in the sidebar, and until now it
+              // was the one row that never told a teacher which class they
+              // were looking at. No `end` — the default (non-exact) match is
+              // deliberate, since this row must also read as current on the
+              // class's `/analytics` child, not only on its own path.
+              <NavLink
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
                 // §6.1's 44px floor; these class rows measured 34px. Already
                 // `flex items-center`, so the label stays centred.
-                className="flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 text-body-sm text-ink-muted rounded-md hover:bg-paper hover:text-ink transition-colors duration-[var(--dur-instant)] ease-out-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 rounded-md border-s-2 transition-colors duration-[var(--dur-instant)] ease-out-soft",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    isActive
+                      ? "border-accent bg-paper-raised text-ink"
+                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+                  )
+                }
               >
-                <span className="w-1.5 h-1.5 rounded-full flex-none bg-rule-strong" />
-                <span className="truncate">{c.label}</span>
-              </Link>
+                {({ isActive }) => (
+                  <>
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full flex-none",
+                        isActive ? "bg-accent" : "bg-rule-strong",
+                      )}
+                    />
+                    <span className="truncate">{c.label}</span>
+                  </>
+                )}
+              </NavLink>
             ))}
             {data.classes.length > 5 ? (
               <Link
@@ -261,11 +299,27 @@ function UserBlock() {
  * another, and two copies of the list is how that comes back.
  */
 function TeacherNav({ touch = false }: { touch?: boolean }) {
+  const location = useLocation()
+  // Same query `ClassesNavSection` below subscribes to — react-query dedupes
+  // by queryKey, so this adds no second request, only a second subscriber to
+  // the classes list already in flight (or cached).
+  const { data } = useTeacherClasses()
+  const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
+
   return (
     <div className="flex flex-col gap-[22px]">
       <nav aria-label="Teacher sections" className="flex flex-col gap-0.5">
         {navItems.map((item) => (
-          <SidebarNavItem key={item.to} item={item} touch={touch} />
+          <SidebarNavItem
+            key={item.to}
+            item={item}
+            touch={touch}
+            forceActive={
+              item.to === "/teacher/classes"
+                ? classesItemActive(location.pathname, visibleClassIds)
+                : false
+            }
+          />
         ))}
       </nav>
       <ClassesNavSection />
