@@ -14,6 +14,7 @@ from __future__ import annotations
 import uuid
 from io import BytesIO
 from typing import Annotated
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import structlog
 from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
@@ -37,6 +38,7 @@ from lemely.db.student_profile_repo import (
     StudentProfileValidationError,
     SubjectEnrolmentRow,
 )
+from lemely.db.xp_repo import UserZoneReader
 from lemely.io.storage import StorageBackend
 from lemely.runtime.config import Settings
 from lemely.web.deps import (
@@ -48,6 +50,7 @@ from lemely.web.deps import (
     get_storage_backend,
     get_student_profile_service,
     get_user_mirror,
+    get_user_zone_reader,
     require_role,
 )
 from lemely.web.devices import to_device_dto
@@ -59,6 +62,8 @@ from lemely.web.schemas_me import (
     NotificationPreferencesDTO,
     NotificationPreferencesUpdateDTO,
     ProfileDTO,
+    TimezoneDTO,
+    TimezoneUpdateDTO,
 )
 from lemely.web.schemas_student_profile import (
     ConfidenceRatingDTO,
@@ -275,6 +280,8 @@ def _profile_dto(user: User, settings: Settings, storage: StorageBackend) -> Pro
         role=user.role.value,
         emailVerified=user.email_verified_at is not None,
         avatarUrl=_avatar_url_for(user, settings, storage),
+        timezone=user.timezone,
+        timezoneIsExplicit=user.timezone_is_explicit,
     )
 
 
@@ -423,6 +430,75 @@ def delete_avatar(
     if user is None:
         raise HTTPException(status_code=404, detail="No profile found for this account.")
     return _profile_dto(user, settings, storage)
+
+
+# ---------------------------------------------------------------------------
+# Time zone: any authenticated role (push-delivery spec §3).
+# ---------------------------------------------------------------------------
+
+
+def _validate_zone_name(name: str) -> None:
+    """422 unless ``name`` resolves through :class:`ZoneInfo`.
+
+    An unvalidated string would be stored once and then degrade to the launch
+    zone on every read forever (``resolve_zone`` never raises), which looks
+    exactly like the feature silently not working. Length is the DTO's job.
+    """
+    if not name.strip():
+        raise HTTPException(status_code=422, detail="timezone must be an IANA zone name.")
+    try:
+        ZoneInfo(name)
+    except (ZoneInfoNotFoundError, ValueError, OSError) as exc:
+        raise HTTPException(
+            status_code=422, detail=f"Unknown time zone: {name!r}. Use an IANA name."
+        ) from exc
+
+
+@router.put("/timezone", response_model=TimezoneDTO)
+def put_timezone(
+    payload: TimezoneUpdateDTO,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    zones: Annotated[UserZoneReader, Depends(get_user_zone_reader)],
+) -> TimezoneDTO:
+    """Set the caller's civil-time zone, or let the device decide it.
+
+    On the ``me`` router rather than ``student-profile`` because a zone
+    applies to every role: a teacher and a parent both receive
+    ``at_risk_alert`` and both have quiet hours.
+
+    Three bodies mean three things:
+
+    * ``{"timezone": "Z", "explicit": true}`` — the settings picker. Stored,
+      and marked as the user's choice.
+    * ``{"timezone": "Z", "explicit": false}`` — the app-boot auto-detect.
+      Stored **only while no choice is on record**; otherwise ignored, so
+      opening the app on a plane never undoes a deliberate choice.
+    * ``{"timezone": null, "explicit": false}`` — "follow this device".
+      Clears the choice; the client then sends its device zone, which the
+      second rule now accepts.
+
+    ``{"timezone": null, "explicit": true}`` is a 422 (nothing to choose), as
+    is any name ``ZoneInfo`` cannot resolve or one over 64 characters. The
+    response is the *stored* state, which for an ignored auto-detect write is
+    the earlier choice, unchanged.
+
+    The zone reader's memo for this user is dropped after the write so the
+    next award or notification reads the new zone rather than a stale one.
+    """
+    if payload.timezone is None and payload.explicit:
+        raise HTTPException(status_code=422, detail="An explicit time zone cannot be null.")
+    if payload.timezone is not None:
+        _validate_zone_name(payload.timezone)
+
+    user_id = _require_user_id(auth)
+    mirror.set_timezone(user_id, payload.timezone, explicit=payload.explicit)
+    zones.forget(user_id)
+
+    user = mirror.get_by_id(user_id)
+    if user is None:
+        raise HTTPException(status_code=404, detail="No profile found for this account.")
+    return TimezoneDTO(timezone=user.timezone, timezoneIsExplicit=user.timezone_is_explicit)
 
 
 # ---------------------------------------------------------------------------

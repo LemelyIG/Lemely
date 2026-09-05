@@ -146,8 +146,8 @@ class _SessionUserMirror:
     but bound to ``pg_sessionmaker`` directly rather than to ``Settings`` —
     the same shape every other test-local repo double in this file's sibling
     tests (``ClassService(sm)`` etc.) uses to avoid touching the process-wide
-    database in tests. Only ``get_by_id`` is implemented — the only method
-    ``get_profile`` calls.
+    database in tests. ``get_by_id``, ``set_avatar_path`` and ``set_timezone``
+    are implemented — the methods the routes under test call.
     """
 
     def __init__(self, sm: sessionmaker[Session]) -> None:
@@ -165,6 +165,20 @@ class _SessionUserMirror:
             user = session.get(User, user_id)
             if user is not None:
                 user.avatar_path = path
+
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        with self._sm.begin() as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            if explicit:
+                user.timezone = zone
+                user.timezone_is_explicit = True
+            elif zone is None:
+                user.timezone = None
+                user.timezone_is_explicit = False
+            elif not user.timezone_is_explicit:
+                user.timezone = zone
 
 
 def _use_user_mirror(client: TestClient, sm: sessionmaker[Session]) -> None:
@@ -930,3 +944,138 @@ def test_profile_get_avatar_url_is_null_when_signing_raises_auth_error_not_500(
 
     assert resp.status_code == 200
     assert resp.json()["avatarUrl"] is None
+
+
+# ---------------------------------------------------------------------------
+# PUT /api/me/timezone (push-delivery spec §3).
+# ---------------------------------------------------------------------------
+
+
+def _stored_zone(sm: sessionmaker[Session], user: uuid.UUID) -> tuple[str | None, bool]:
+    with sm() as session:
+        row = session.get(User, user)
+        assert row is not None
+        return row.timezone, row.timezone_is_explicit
+
+
+def test_profile_reports_the_zone_and_whether_it_was_chosen(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.teacher)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.teacher)
+
+    body = client.get("/api/me/profile").json()
+
+    assert body["timezone"] is None
+    assert body["timezoneIsExplicit"] is False
+
+
+@pytest.mark.parametrize("role", [Role.student, Role.teacher, Role.parent, Role.school_admin])
+def test_an_explicit_zone_is_stored_for_every_role(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], role: Role
+) -> None:
+    """On the ``me`` router because a zone applies to every role: a teacher and
+    a parent both receive ``at_risk_alert`` and both have quiet hours."""
+    user = _seed_user(pg_sessionmaker, role)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, role)
+
+    resp = client.put(
+        "/api/me/timezone", json={"timezone": "America/Los_Angeles", "explicit": True}
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json() == {"timezone": "America/Los_Angeles", "timezoneIsExplicit": True}
+    assert _stored_zone(pg_sessionmaker, user) == ("America/Los_Angeles", True)
+
+
+def test_a_device_zone_is_stored_while_nothing_was_chosen(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"timezone": "Europe/Paris", "timezoneIsExplicit": False}
+    assert _stored_zone(pg_sessionmaker, user) == ("Europe/Paris", False)
+
+
+def test_a_device_zone_never_overwrites_a_chosen_one(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Opening the app on a plane must not undo a deliberate choice."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"timezone": "Africa/Cairo", "timezoneIsExplicit": True}
+    assert _stored_zone(pg_sessionmaker, user) == ("Africa/Cairo", True)
+
+
+def test_an_explicit_write_replaces_an_earlier_choice(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    resp = client.put("/api/me/timezone", json={"timezone": "Asia/Tokyo", "explicit": True})
+
+    assert resp.json() == {"timezone": "Asia/Tokyo", "timezoneIsExplicit": True}
+
+
+def test_following_the_device_again_clears_the_choice(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """``timezone: null, explicit: false`` is the one body that flips the flag
+    back; the client follows it with its device zone, which is then accepted."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+    client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+
+    cleared = client.put("/api/me/timezone", json={"timezone": None, "explicit": False})
+    assert cleared.json() == {"timezone": None, "timezoneIsExplicit": False}
+
+    followed = client.put("/api/me/timezone", json={"timezone": "Europe/Paris", "explicit": False})
+    assert followed.json() == {"timezone": "Europe/Paris", "timezoneIsExplicit": False}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"timezone": "Mars/Olympus_Mons", "explicit": True},
+        {"timezone": "../etc/passwd", "explicit": False},
+        {"timezone": "A" * 65, "explicit": True},
+        {"timezone": None, "explicit": True},
+        {"timezone": "", "explicit": True},
+    ],
+)
+def test_a_bad_zone_is_422_and_stores_nothing(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], body: dict[str, object]
+) -> None:
+    """An unvalidated string would be stored once and then degrade to the
+    launch zone on every read forever, which looks like the feature silently
+    not working."""
+    user = _seed_user(pg_sessionmaker, Role.student)
+    _use_user_mirror(client, pg_sessionmaker)
+    _auth_as(client, user, Role.student)
+
+    resp = client.put("/api/me/timezone", json=body)
+
+    assert resp.status_code == 422, resp.text
+    assert _stored_zone(pg_sessionmaker, user) == (None, False)
+
+
+def test_timezone_requires_a_bearer_token(client: TestClient) -> None:
+    resp = client.put("/api/me/timezone", json={"timezone": "Africa/Cairo", "explicit": True})
+    assert resp.status_code == 401
