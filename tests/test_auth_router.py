@@ -47,15 +47,27 @@ def _override_cooldowns(app: FastAPI, settings: Settings) -> None:
     comment already documents for ``get_user_mirror``. A fresh
     :class:`~lemely.auth.cooldown.CooldownStore` per fixture invocation
     restores that same fresh-per-test isolation.
+
+    Each store is built once, here, and captured by the override lambda's
+    closure — **not** constructed inside the lambda. FastAPI re-invokes a
+    dependency override on every request with no caching of its own, so a
+    lambda that builds ``CooldownStore(...)`` in its own body would hand out
+    a brand-new, empty store to every request rather than one store shared
+    across the whole test: cooldown would silently never trigger *within* a
+    test, only (correctly, but for the wrong reason) look isolated *between*
+    tests. Capturing one instance here is what makes it isolated between
+    tests while still persisting within one.
     """
-    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: CooldownStore(
+    signup_cooldown = CooldownStore(
         clock=lambda: datetime.now(UTC),
         min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
     )
-    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: CooldownStore(
+    resend_cooldown = CooldownStore(
         clock=lambda: datetime.now(UTC),
         min_seconds=settings.auth.resend_verification_cooldown_seconds,
     )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
 
 
 @pytest.fixture

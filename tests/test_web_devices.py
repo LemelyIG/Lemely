@@ -168,14 +168,19 @@ def login_context() -> Iterator[tuple[TestClient, StubRegistry]]:
     # and 429s whichever test using this same fixture runs next in the same
     # session, exactly the failure mode the mirror override above already
     # guards against for the duplicate-address check.
-    cooldown = CooldownStore(
+    # Built once here and captured by the override lambdas' closures — never
+    # constructed inside a lambda, which FastAPI would re-invoke (with no
+    # caching of its own) on every request, silently handing out a brand-new
+    # empty store per call rather than one shared across a whole test.
+    signup_cooldown = CooldownStore(
         clock=lambda: datetime.now(UTC), min_seconds=settings.auth.signup_and_reset_cooldown_seconds
     )
-    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: cooldown
-    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: CooldownStore(
+    resend_cooldown = CooldownStore(
         clock=lambda: datetime.now(UTC),
         min_seconds=settings.auth.resend_verification_cooldown_seconds,
     )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
     client = TestClient(app)
     client.post(
         "/api/auth/signup",
