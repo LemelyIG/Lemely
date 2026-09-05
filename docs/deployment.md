@@ -183,8 +183,13 @@ host and accept the [CORS work in §4](#4-when-you-actually-do-need-cors).
 4. Rewrite the driver prefix: Supabase gives you `postgresql://…`; this app needs
    **`postgresql+psycopg://…`** (SQLAlchemy 2 + psycopg 3, as in the default at
    `config.py:148`). A plain `postgresql://` URL will pick the wrong DBAPI.
-5. Create the Storage bucket named in `LEMELY_STORAGE__BUCKET` (default `uploads`).
-   **No code path creates it.** Uploads fail against a missing bucket.
+5. Create the object-storage bucket named in `LEMELY_STORAGE__BUCKET`.
+   **No code path creates it.** Uploads fail against a missing bucket. Which
+   kind of bucket depends on `LEMELY_STORAGE__BACKEND` (§2): `gcs` needs a
+   Google Cloud Storage bucket the runtime identity can write — on Cloud Run
+   `scripts/gcp-bootstrap.sh` makes it for you — and `local` needs no bucket at
+   all, writing under `paths.output_dir/storage` instead. There is no longer a
+   Supabase Storage backend; that code was deleted with this change.
 6. Apply the schema — see [§3.4](#34-migrations-are-a-separate-gated-step), and do
    **not** simply let the container do it.
 
@@ -198,7 +203,7 @@ must provide:
 | Builds a `Dockerfile`, or accepts a pushed image | Both images are plain multi-stage Dockerfiles |
 | Injects env vars / secrets | Everything in §2 |
 | Listens on the port the app binds | Backend `8000`, web `80`; both configurable |
-| Any instance count | Used to be pinned to exactly one — see [§5.1](#51-the-single-replica-constraint-is-lifted) for what changed. **§3.2 step 5 below predates that change and is now wrong**: the storage backend it describes (a Supabase Storage bucket) no longer exists in this codebase — only `local` and `gcs` (`LEMELY_STORAGE__BACKEND`, §2) do. Do not follow step 5 as written; use the `gcs` backend and a real bucket instead. |
+| Any instance count | Used to be pinned to exactly one — see [§5.1](#51-the-single-replica-constraint-is-lifted) for what changed and what the deploy still sets today. |
 | ~512 MB RAM per container | PyMuPDF + SQLAlchemy; not measured under load |
 
 Free tiers change often enough that naming one here would be wrong within months.
@@ -269,6 +274,14 @@ This is a code change in `lemely/web/app.py`, not a compose-file change.
 Honest constraints. Each is a real property of the code today, not a hypothetical.
 
 ### 5.1 The single-replica constraint is lifted
+
+**The code no longer requires one instance; the deploy still asks for one.**
+`.github/workflows/deploy.yml` sets `--max-instances=1` today. Nothing below
+depends on that staying true — the point of this work was to remove the
+reasons it had to — but until that flag changes, staging and production run a
+single backend instance, and the multi-instance behaviour described here is
+what *would* happen, not what is happening. Raising it is a one-line change
+gated on exercising spec §8's checklist against staging first.
 
 This section used to name two pieces of process-local state and pin the backend to one
 instance because of them. Both are gone, and so are several more this document never
