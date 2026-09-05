@@ -22,6 +22,7 @@ import {
 import { cn, greetingFor } from "@/lib/utils"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useOverview } from "@/lib/hooks/useStudentApi"
+import { useMyClasses } from "@/lib/hooks/useLeaderboardApi"
 import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
 
@@ -333,11 +334,45 @@ function MomentumPanel({ points }: { points: readonly MomentumPoint[] }) {
   )
 }
 
+/**
+ * "Join your teacher's class" prompt (the other half of G-08's gap — see
+ * `screens/Classes.tsx`'s own module comment). Wired to `useMyClasses()`
+ * directly rather than to anything `useOverview()` returns: `OverviewDTO`
+ * carries no class list at all, and reusing the S-29 class-scope query here is
+ * the same reuse `Standings.tsx` already makes of it, not a new fetch this
+ * page invents for itself.
+ *
+ * Renders nothing until the read resolves, and nothing at all once it has —
+ * unless it resolved to zero classes. A pending or errored read must not flash
+ * a prompt to join a class the student may already be in; `status !==
+ * "success"` covers both without needing to read `isPending`/`isError`
+ * separately.
+ */
+function JoinClassPrompt() {
+  const classes = useMyClasses()
+  if (classes.status !== "success" || classes.data.classes.length > 0) return null
+
+  return (
+    <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-body-md font-medium text-ink">Join your teacher's class</h2>
+        <p className="text-body-sm text-ink-muted">
+          Enter the code your teacher gave you to see their announcements and join their roster.
+        </p>
+      </div>
+      <Link to="/student/classes" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+        Join a class
+      </Link>
+    </Card>
+  )
+}
+
 export function Overview() {
   const query = useOverview()
 
   return (
     <div className="lm-screen flex flex-col gap-8">
+      <JoinClassPrompt />
       <QueryState
         query={query}
         srHeading="Overview"

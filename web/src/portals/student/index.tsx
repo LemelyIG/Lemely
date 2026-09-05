@@ -52,6 +52,9 @@ const StudyPlanWeek = lazy(() =>
   import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
 )
 const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
+const StudentClasses = lazy(() =>
+  import("./screens/Classes").then((m) => ({ default: m.StudentClasses })),
+)
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
 )
@@ -799,6 +802,7 @@ export const studentRoute: RouteObject = {
      * is what happens to those.
      */
     { index: true, element: <Overview />, handle: { title: "Dashboard" } },
+    { path: "classes", element: <StudentClasses />, handle: { title: "Your classes" } },
     { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
     { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
     { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },

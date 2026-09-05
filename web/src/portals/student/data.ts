@@ -12,6 +12,7 @@ import {
   Bell,
   Books,
   Calculator,
+  ChalkboardTeacher,
   Gear,
   HandHeart,
   House,
@@ -81,6 +82,16 @@ export const navGroups: NavGroup[] = [
     label: "Student",
     items: [
       { to: "/student", label: "Overview", end: true, icon: House },
+      // `items[1]` — second in this array, so a student who was never handed
+      // a class link (the only way onto `POST /student/classes/join` before
+      // this route existed) finds one right after Overview in the source
+      // order. `NavGroups` in `index.tsx` renders `items.slice(0, 1)`, then
+      // the enrolled-subject accordion, then `items.slice(1)` — so this row
+      // actually paints below the subjects, not above them. That is the
+      // existing, deliberate order for everything past Overview (Standings,
+      // Friends, and the rest all sit in the same trailing slice), not a
+      // placement this entry is exempt from.
+      { to: "/student/classes", label: "Your classes", icon: ChalkboardTeacher },
       // Enrolled subjects render here as a collapsible accordion — see
       // `SubjectNavGroup` in `index.tsx`. They come from `GET
       // /student/overview`'s real `subjects` list, not this static array,
@@ -173,6 +184,7 @@ export function currentSubjectCode(pathname: string): string | null {
 export const crumbs: Record<string, string> = {
   "/student": "Home",
   "/student/correct": "Marking / Correct a paper",
+  "/student/classes": "Home / Your classes",
   "/student/board": "Home / Standings",
   "/student/friends": "Home / Friends",
   "/student/profile": "Home / Your profile",

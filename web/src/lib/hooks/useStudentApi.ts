@@ -6,6 +6,8 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
+import { CLASSES_KEY } from "@/lib/hooks/useLeaderboardApi"
+import type { JoinClassResponse } from "@/lib/leaderboardTypes"
 import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
@@ -109,6 +111,38 @@ export function useStandings(): UseQueryResult<Standings, Error> {
   return useQuery({
     queryKey: ["student", "standings"],
     queryFn: () => request<Standings>("/student/standings"),
+  })
+}
+
+/**
+ * `POST /student/classes/join` — self-enrol via a teacher's join code
+ * (`student_join_class`, `routers/student.py`). Idempotent on the backend:
+ * re-joining an already-enrolled class is a no-op success, not an error.
+ *
+ * Three invalidations on success, not one, because a join changes three
+ * screens at once: `useMyClasses()`'s own list (`CLASSES_KEY`, shared with
+ * `useLeaderboardApi.ts` so the two cannot key-drift), the Overview subject
+ * ledger (a new class can carry a subject the student had no papers in yet),
+ * and the announcements feed (a class's own announcements only become
+ * visible once its student is enrolled).
+ */
+export function useJoinClass(): UseMutationResult<
+  JoinClassResponse,
+  Error,
+  { joinCode: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ joinCode }: { joinCode: string }) =>
+      request<JoinClassResponse>("/student/classes/join", {
+        method: "POST",
+        body: JSON.stringify({ joinCode }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: CLASSES_KEY })
+      queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
+      queryClient.invalidateQueries({ queryKey: ["student", "announcements"] })
+    },
   })
 }
 
