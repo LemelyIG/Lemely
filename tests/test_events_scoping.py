@@ -3,17 +3,24 @@
 from __future__ import annotations
 
 import contextvars
+import queue
 import threading
 
 from lemely.runtime.events import EventBus, EventType, current_run_id
 
 
-def _drain(q):
-    out = []
+def _drain(q: queue.SimpleQueue[object]) -> list[object]:
+    """Drain everything currently queued, without blocking.
+
+    Catches only ``queue.Empty``: a broader ``except`` here would swallow a
+    real failure inside the bus and report it as "no events", which is the
+    one answer these tests must never get wrong.
+    """
+    out: list[object] = []
     while True:
         try:
             out.append(q.get_nowait())
-        except Exception:  # noqa: BLE001 — queue.Empty
+        except queue.Empty:
             return out
 
 
@@ -61,10 +68,12 @@ def test_child_threads_must_copy_context() -> None:
     token = current_run_id.set("run-1")
     try:
         t1 = threading.Thread(target=lambda: seen.append(current_run_id.get()))
-        t1.start(); t1.join()
+        t1.start()
+        t1.join()
         ctx = contextvars.copy_context()
         t2 = threading.Thread(target=ctx.run, args=(lambda: seen.append(current_run_id.get()),))
-        t2.start(); t2.join()
+        t2.start()
+        t2.join()
     finally:
         current_run_id.reset(token)
     assert seen == [None, "run-1"]
