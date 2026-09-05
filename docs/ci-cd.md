@@ -164,6 +164,43 @@ first call with `Authentication error [code: 10000]` against
 admin grant a Workers role, or have them create an **Account API Token**,
 which is owned by the account and not tied to any member's roles.
 
+#### `www` subdomains redirect to their root domain
+
+A Custom Domain requires an exact hostname match, so the Worker attached to
+the apex (`lemelyig.com`) never receives `www.lemelyig.com` traffic, and
+likewise `staging.lemelyig.com` never receives `www.staging.lemelyig.com`
+traffic — there is no DNS record for either `www` host by default, so
+visitors who type one get an unreachable/`NXDOMAIN` error. This is exactly
+the case Cloudflare's own docs call out ([Custom Domains → Redirect between
+www and root
+domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#redirect-between-www-and-root-domain)):
+it's zone-level DNS + rules configuration, not something `wrangler deploy` or
+a `custom_domain: true` route can fix, and not config this repo carries.
+
+**Done** for both `www.lemelyig.com` and `www.staging.lemelyig.com`, via the
+Cloudflare API against the `lemelyig.com` zone:
+
+1. A proxied `A` record per `www` host, content `192.0.2.0` (the [reserved
+   placeholder for an originless
+   setup](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/#originless-setups)
+   — traffic never actually reaches it). Proxied is required — an unproxied
+   (DNS-only) record can't be matched by a redirect rule.
+2. One zone-level Redirect Rule per host in a single ruleset (`http_request_dynamic_redirect`
+   phase, name "Redirect rules ruleset"): `www.lemelyig.com` → `https://lemelyig.com`
+   and `www.staging.lemelyig.com` → `https://staging.lemelyig.com`, both 301,
+   preserving path and query string.
+
+If either ever needs recreating (e.g. the zone gets rebuilt), redo both
+steps for the affected host — the dashboard equivalents are **DNS → Records
+→ Add record** and **Rules → Redirect Rules → Create rule** (or start from
+the built-in ["Redirect from www to
+root"](https://developers.cloudflare.com/rules/url-forwarding/examples/redirect-www-to-root/)
+template).
+
+Verify with `curl -I https://www.lemelyig.com` and `curl -I
+https://www.staging.lemelyig.com` — expect `301` with `Location:` pointing at
+the corresponding root domain.
+
 ### 4. GitHub — environments, secrets, variables
 
 Repo → **Settings → Environments**:
