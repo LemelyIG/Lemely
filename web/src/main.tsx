@@ -9,6 +9,7 @@ import { registerPushClientBridge } from "./lib/push/pushClientBridge"
 import { currentBuildId, reportClientError } from "./lib/clientErrors"
 import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
 import { RecoveryEffects } from "./components/recovery-effects"
+import { TimezoneSync } from "./components/timezone-sync"
 import { ToastProvider } from "./components/ui/toast"
 import "./index.css"
 
@@ -75,6 +76,10 @@ createRoot(document.getElementById("root")!).render(
               post-reload "Updated" toast) run for the app's whole lifetime
               rather than only while some particular screen is mounted. */}
           <RecoveryEffects />
+          {/* Sends the device zone once per session, so every civil-date
+              calculation for this reader runs where they actually are. See
+              the component for why it lives here and not in a screen. */}
+          <TimezoneSync />
           <RouterProvider router={router} />
         </ToastProvider>
       </AuthProvider>

@@ -15,6 +15,8 @@ import type {
   StudentProfileUpdate,
   StudentProfileWithEnrolments,
   SubjectEnrolment,
+  TimezoneState,
+  TimezoneUpdate,
 } from "@/lib/meTypes"
 
 /*
@@ -31,6 +33,27 @@ export function useProfile(): UseQueryResult<Profile, Error> {
   return useQuery({
     queryKey: PROFILE_KEY,
     queryFn: () => request<Profile>("/me/profile"),
+  })
+}
+
+/**
+ * `PUT /me/timezone` (push-delivery spec §3). Same partial-echo shape as the
+ * notification-preferences hook: the response is the *stored* state, which for
+ * an ignored device write is the earlier choice unchanged, so it is merged into
+ * the cached profile rather than assumed from the request.
+ */
+export function usePutTimezone(): UseMutationResult<TimezoneState, Error, TimezoneUpdate> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (update: TimezoneUpdate) =>
+      request<TimezoneState>("/me/timezone", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(update satisfies TimezoneUpdate),
+      }),
+    onSuccess: (state) => {
+      queryClient.setQueryData<Profile>(PROFILE_KEY, (old) => (old ? { ...old, ...state } : old))
+    },
   })
 }
 

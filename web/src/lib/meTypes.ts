@@ -31,6 +31,27 @@ export interface Profile {
    * anywhere — always re-read from a fresh `/me/profile` fetch.
    */
   avatarUrl: string | null
+  /**
+   * `users.timezone` and `users.timezone_is_explicit` (push-delivery spec
+   * §3). `timezone` is `null` when never set; render that as "follow this
+   * device", never as an invented name for the server's default.
+   */
+  timezone: string | null
+  timezoneIsExplicit: boolean
+}
+
+/** Body for `PUT /api/me/timezone` (mirrors `TimezoneUpdateDTO`). See
+ * `lib/timezone.ts` for the three shapes and what each means. */
+export interface TimezoneUpdate {
+  timezone: string | null
+  explicit: boolean
+}
+
+/** Response for `PUT /api/me/timezone` (mirrors `TimezoneDTO`): the stored
+ * state after the write, which for an ignored auto-detect is unchanged. */
+export interface TimezoneState {
+  timezone: string | null
+  timezoneIsExplicit: boolean
 }
 
 // ── Student onboarding profile (P4.3 chunk B, D4.5 / P4.8 chunk A) ─────────
