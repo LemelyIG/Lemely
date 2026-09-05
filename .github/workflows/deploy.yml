@@ -150,6 +150,12 @@ jobs:
       # --allow-unauthenticated is required for the Cloudflare Worker's
       # plain fetch() to reach it (see web/worker/index.ts and docs/ci-cd.md
       # for the tradeoff and the optional shared-secret hardening it notes).
+      # --service-account runs the revision as the per-environment runtime
+      # identity provisioned by scripts/gcp-bootstrap.sh, which holds object
+      # access on its own upload bucket only — never a project-level storage
+      # role; the deployer's project-level iam.serviceAccountUser (also
+      # granted by that script) is the separate permission that lets it
+      # deploy a revision running as that identity.
       - id: deploy
         uses: google-github-actions/deploy-cloudrun@v3
         with:
@@ -176,7 +182,7 @@ jobs:
           # very likely still work, but 1Gi costs nothing extra while idle
           # (min-instances=0) and buys headroom against a cold-start spike that
           # the per-minute metric could miss, so it stays.
-          flags: --allow-unauthenticated --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=1 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_LOGGING__FORMAT=json
@@ -186,6 +192,8 @@ jobs:
             LEMELY_SUPABASE__SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
             LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
+            LEMELY_STORAGE__BACKEND=gcs
+            LEMELY_STORAGE__BUCKET=${{ vars.GCP_PROJECT_ID }}-uploads-${{ needs.resolve-env.outputs.environment }}
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
@@ -216,8 +224,12 @@ jobs:
               || echo "(could not read logs — grant roles/logging.viewer to the deploy service account)"
           fi
 
-      - name: Verify health directly against Cloud Run
-        run: curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health"
+      - name: Verify health and the storage backend directly against Cloud Run
+        run: |
+          BODY="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health")"
+          echo "$BODY"
+          echo "$BODY" | grep -q '"backend":"gcs"' || { echo "health does not report the gcs backend"; exit 1; }
+          echo "$BODY" | grep -q "\"bucket\":\"${{ vars.GCP_PROJECT_ID }}-uploads-${{ needs.resolve-env.outputs.environment }}\"" || { echo "health reports the wrong bucket"; exit 1; }
 
   deploy-frontend:
     needs: [resolve-env, deploy-backend]
