@@ -607,6 +607,32 @@ def test_link_still_verifies_after_code_was_used(
     assert service.verify_email(token) == result.user_id  # no error, same user
 
 
+def test_code_still_verifies_after_link_was_used(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    """The other direction of independence: redeeming the link leaves the code usable.
+
+    ``test_link_still_verifies_after_code_was_used`` covers code-then-link;
+    this is link-then-code, and it is the half that is easy to get wrong.
+    Redeeming the link goes through
+    :class:`~lemely.db.auth_token_repo.AuthTokenService`, which owns the
+    ``auth_tokens`` table; the code lives in the OTP store's ``email``
+    channel. Nothing in :meth:`~lemely.auth.service.AuthService.verify_email`
+    reaches the OTP store, so consuming one credential must leave the other
+    intact — asserted here rather than left to inspection, because a future
+    change that "tidies up" by invalidating the code on link redemption would
+    otherwise break §4.4 silently.
+    """
+    service, _e, _o = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_code is not None
+    assert result.verification_dev_link is not None
+    token = result.verification_dev_link.rsplit("/", 1)[1]
+    service.verify_email(token)
+    # The code is still a live credential, and still names the same user.
+    assert service.verify_email_code(result.user_id, result.verification_dev_code) == result.user_id
+
+
 def test_dev_code_is_none_when_provider_delivers(
     service_with_delivering_email: tuple[AuthService, FakeEmailProvider, OtpStore],
 ) -> None:
