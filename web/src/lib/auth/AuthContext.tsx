@@ -14,6 +14,7 @@ import type {
   SignupRequest,
   TokenResponse,
   VerifyEmailBody,
+  VerifyEmailCodeBody,
   VerifyEmailResponse,
 } from "@/lib/authTypes"
 import {
@@ -35,10 +36,11 @@ import {
  * No `fallback` is ever passed to `request()` here — an auth failure must
  * surface as a real ApiError, never silently resolve.
  *
- * `verifyEmail`, `resendVerification`, `requestPasswordReset` and
- * `confirmPasswordReset` (Task 13, spec §4.4's G-07/G-06) join the group
- * below without an `onSuccess: applySession` of their own: none of the four
- * returns a token, so none of them has a session to mint — that is
+ * `verifyEmail`, `verifyEmailCode`, `resendVerification`,
+ * `requestPasswordReset` and `confirmPasswordReset` (Task 13, spec §4.4's
+ * G-07/G-06) join the group below without an `onSuccess: applySession` of
+ * their own: none of the five returns a token, so none of them has a
+ * session to mint — that is
  * `login`/`signup`/`verifyOtp`'s shape, not this one, exactly the same
  * distinction `requestOtp` already draws against those three. Nothing here
  * clears the session on `confirmPasswordReset` either, even though
@@ -101,6 +103,7 @@ interface AuthContextValue {
   requestOtp: UseMutationResult<OtpRequestResponse, Error, { phone: string }>
   verifyOtp: UseMutationResult<TokenResponse, Error, { phone: string; code: string }>
   verifyEmail: UseMutationResult<VerifyEmailResponse, Error, { token: string }>
+  verifyEmailCode: UseMutationResult<VerifyEmailResponse, Error, { code: string }>
   resendVerification: UseMutationResult<ResendVerificationResponse, Error, void>
   requestPasswordReset: UseMutationResult<PasswordResetRequestResponse, Error, { email: string }>
   confirmPasswordReset: UseMutationResult<
@@ -198,6 +201,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       }),
   })
 
+  // DS15's companion to `verifyEmail` above: authenticated (the address
+  // comes from the caller's own bearer token server-side, per
+  // `VerifyEmailCodeBody`'s own comment), so this is a second `/auth/`-
+  // prefixed call that skips `api.ts`'s pre-emptive refresh exactly like
+  // `resendVerification` below — harmless here for the same reason.
+  const verifyEmailCode = useMutation({
+    mutationFn: ({ code }: { code: string }) =>
+      request<VerifyEmailResponse>("/auth/verify-email/code", {
+        method: "POST",
+        body: JSON.stringify({ code } satisfies VerifyEmailCodeBody),
+      }),
+  })
+
   // Deliberately no request body — `ResendVerificationResponseDTO`'s own
   // docstring is explicit that the caller is read from the bearer token, on
   // both ends: a body-supplied address would let an attacker trigger a send
@@ -246,6 +262,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     requestOtp,
     verifyOtp,
     verifyEmail,
+    verifyEmailCode,
     resendVerification,
     requestPasswordReset,
     confirmPasswordReset,
