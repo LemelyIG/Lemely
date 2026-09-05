@@ -86,6 +86,19 @@ class UserMirror(Protocol):
         """
         ...
 
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        """Set or clear ``users.avatar_path`` for ``user_id``.
+
+        ``path`` is ``None`` to clear the avatar (``DELETE /api/me/avatar``) or
+        an object-storage path to set one (``POST /api/me/avatar``) — never a
+        URL (see :attr:`~lemely.db.models.users.User.avatar_path`). A
+        ``user_id`` with no mirrored row is a silent no-op, matching
+        :meth:`mark_email_verified`: both routes authenticate through a token
+        whose ``sub`` was itself mirrored at signup, so a missing row here
+        should be unreachable rather than a new failure mode to invent.
+        """
+        ...
+
 
 class DbUserMirror:
     """Real :class:`UserMirror` writing through the application database."""
@@ -163,6 +176,13 @@ class DbUserMirror:
             user = session.get(User, user_id)
             if user is not None:
                 user.email_verified_at = verified_at
+
+    def set_avatar_path(self, user_id: uuid.UUID, path: str | None) -> None:
+        """Set or clear ``users.avatar_path`` for ``user_id``, if the row exists."""
+        with session_scope(self._settings) as session:
+            user = session.get(User, user_id)
+            if user is not None:
+                user.avatar_path = path
 
 
 __all__ = ["DbUserMirror", "UserMirror"]

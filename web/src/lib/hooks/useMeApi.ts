@@ -25,10 +25,51 @@ import type {
  * resolve to empty data.
  */
 
+const PROFILE_KEY = ["me", "profile"] as const
+
 export function useProfile(): UseQueryResult<Profile, Error> {
   return useQuery({
-    queryKey: ["me", "profile"],
+    queryKey: PROFILE_KEY,
     queryFn: () => request<Profile>("/me/profile"),
+  })
+}
+
+/**
+ * `POST /me/avatar` — upload a new profile picture. `image` is the field name
+ * the router expects; `request()` skips the JSON content-type for a
+ * `FormData` body (see its own comment), so the browser sets its own
+ * multipart boundary here same as `uploadScan` in `useStudentApi.ts`.
+ *
+ * Writes the returned profile into the cache synchronously and invalidates —
+ * the same belt-and-braces pair `useCompleteOnboarding` uses, so a screen
+ * reading `profile.avatarUrl` right after this resolves sees the new URL on
+ * its very next render rather than the pre-upload one.
+ */
+export function useUploadAvatar(): UseMutationResult<Profile, Error, File> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: (file: File) => {
+      const form = new FormData()
+      form.append("image", file)
+      return request<Profile>("/me/avatar", { method: "POST", body: form })
+    },
+    onSuccess: (data) => {
+      queryClient.setQueryData<Profile>(PROFILE_KEY, data)
+      queryClient.invalidateQueries({ queryKey: PROFILE_KEY })
+    },
+  })
+}
+
+/** `DELETE /me/avatar` — remove the caller's profile picture. Same
+ * cache-write-then-invalidate pair as `useUploadAvatar`. */
+export function useRemoveAvatar(): UseMutationResult<Profile, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => request<Profile>("/me/avatar", { method: "DELETE" }),
+    onSuccess: (data) => {
+      queryClient.setQueryData<Profile>(PROFILE_KEY, data)
+      queryClient.invalidateQueries({ queryKey: PROFILE_KEY })
+    },
   })
 }
 

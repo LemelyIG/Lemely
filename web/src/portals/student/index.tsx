@@ -52,6 +52,9 @@ const StudyPlanWeek = lazy(() =>
   import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
 )
 const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
+const StudentClasses = lazy(() =>
+  import("./screens/Classes").then((m) => ({ default: m.StudentClasses })),
+)
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
 )
@@ -92,6 +95,34 @@ const FlashcardReview = lazy(() =>
 // lazy import went with it: a chunk nothing in this subtree renders is a
 // chunk the build still emits and the router still resolves.
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
+// Settings' three screens mount here too, alongside every other lazy screen
+// in this portal — see `data.ts`'s `navGroups` and the route registration
+// below. Same shared components the teacher portal's Settings mounts, so the
+// two cannot drift.
+// Each imported from its own module rather than the `@/portals/settings`
+// barrel: importing all four through one barrel module means a chunk
+// containing any one of them pulls in the code for all four, defeating the
+// per-screen splitting P6.1b's note above otherwise does. The barrel still
+// exists for other consumers (its own header explains why) — this portal
+// just does not use it for the lazy boundary.
+const PortalSettingsLayout = lazy(() =>
+  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
+    default: m.PortalSettingsLayout,
+  })),
+)
+const ProfileSettingsSection = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({
+    default: m.ProfileSettingsSection,
+  })),
+)
+const DeviceSettingsSection = lazy(() =>
+  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+)
+const NotificationSettingsSection = lazy(() =>
+  import("@/portals/settings/NotificationSettings").then((m) => ({
+    default: m.NotificationSettingsSection,
+  })),
+)
 
 /**
  * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
@@ -133,7 +164,7 @@ function UserBlock() {
           collision that rule describes. The initials logic it carried was a
           second copy of `Avatar`'s own; two copies of the same fallback is how
           one of them ends up handling a single-word name differently. */}
-      <Avatar name={name} size="md" />
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="md" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-ink">{name}</div>
         <div className="text-body-sm text-ink-faint">{roleLabel}</div>
@@ -771,6 +802,7 @@ export const studentRoute: RouteObject = {
      * is what happens to those.
      */
     { index: true, element: <Overview />, handle: { title: "Dashboard" } },
+    { path: "classes", element: <StudentClasses />, handle: { title: "Your classes" } },
     { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
     { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
     { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },
@@ -787,6 +819,24 @@ export const studentRoute: RouteObject = {
     { path: "profile", element: <Profile />, handle: { title: "Your profile" } },
     // The only place a parent_child_links row is created (D3.11).
     { path: "parents", element: <Parents />, handle: { title: "Parent access" } },
+    {
+      path: "settings",
+      element: <PortalSettingsLayout basePath="/student/settings" />,
+      handle: { title: "Settings" },
+      children: [
+        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          path: "devices",
+          element: <DeviceSettingsSection />,
+          handle: { title: "Account and devices" },
+        },
+        {
+          path: "notifications",
+          element: <NotificationSettingsSection />,
+          handle: { title: "Notification settings" },
+        },
+      ],
+    },
     { path: "onboard", element: <Onboarding />, handle: { title: "Getting set up" } },
     {
       path: "placement/:subjectCode",

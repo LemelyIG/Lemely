@@ -3,9 +3,13 @@ import {
   daysUntil,
   formatCountdown,
   nextExam,
+  readStateFor,
 } from "@/portals/student/screens/Announcements"
+import { applyOptimisticRead } from "@/lib/hooks/useAnnouncementApi"
 import type {
   ExamDate,
+  StudentAnnouncement,
+  StudentAnnouncementsPage,
   StudentExamCalendar,
   StudentExamEntry,
 } from "@/lib/announcementTypes"
@@ -44,6 +48,27 @@ function entry(overrides: Partial<StudentExamEntry> = {}): StudentExamEntry {
 
 function calendar(entries: StudentExamEntry[]): StudentExamCalendar {
   return { availability: "available", entries }
+}
+
+function announcement(
+  overrides: Partial<StudentAnnouncement> = {},
+): StudentAnnouncement {
+  return {
+    announcementId: "ann-1",
+    scope: "class",
+    classId: "class-1",
+    schoolId: null,
+    title: "Mock exam next week",
+    body: "Bring a calculator.",
+    publishedAt: "2026-05-01T09:00:00Z",
+    readAt: null,
+    authorId: "teacher-1",
+    ...overrides,
+  }
+}
+
+function page(announcements: StudentAnnouncement[]): StudentAnnouncementsPage {
+  return { announcements }
 }
 
 describe("daysUntil", () => {
@@ -150,5 +175,53 @@ describe("nextExam", () => {
     // be filtered out along with the past ones.
     const todayExam = entry({ dates: [examDate({ examDate: "2026-05-01" })] })
     expect(nextExam(calendar([todayExam]), today)?.days).toBe(0)
+  })
+})
+
+describe("readStateFor", () => {
+  // This is the exact decision that used to be conflated with the card's
+  // expand toggle: "read" is a fact about `readAt`, not about whether the
+  // body happens to be expanded right now.
+  it("is unread with no read label when readAt is null", () => {
+    expect(readStateFor(announcement({ readAt: null }))).toEqual({
+      unread: true,
+      readLabel: null,
+    })
+  })
+
+  it("is read with a formatted label when readAt is set", () => {
+    expect(readStateFor(announcement({ readAt: "2026-05-02T08:30:00Z" }))).toEqual({
+      unread: false,
+      readLabel: "Read on 2 May 2026",
+    })
+  })
+})
+
+describe("applyOptimisticRead", () => {
+  it("stamps readAt on the matching announcement only", () => {
+    const before = page([
+      announcement({ announcementId: "ann-1", readAt: null }),
+      announcement({ announcementId: "ann-2", readAt: null }),
+    ])
+    const after = applyOptimisticRead(before, "ann-1", "2026-05-03T10:00:00Z")
+    expect(after.announcements[0].readAt).toBe("2026-05-03T10:00:00Z")
+    expect(after.announcements[1].readAt).toBeNull()
+  })
+
+  it("does not overwrite an existing readAt with a later optimistic guess", () => {
+    // The receipt endpoint is idempotent and first-read-only; if the mutation
+    // somehow re-applies (a duplicate click before the first settles), the
+    // optimistic write must not push the original timestamp forward.
+    const before = page([
+      announcement({ announcementId: "ann-1", readAt: "2026-05-02T00:00:00Z" }),
+    ])
+    const after = applyOptimisticRead(before, "ann-1", "2026-05-03T10:00:00Z")
+    expect(after.announcements[0].readAt).toBe("2026-05-02T00:00:00Z")
+  })
+
+  it("leaves announcements not matching the id untouched", () => {
+    const before = page([announcement({ announcementId: "ann-1", readAt: null })])
+    const after = applyOptimisticRead(before, "ann-does-not-exist", "2026-05-03T10:00:00Z")
+    expect(after).toEqual(before)
   })
 })

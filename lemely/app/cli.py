@@ -479,6 +479,40 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     except OSError as exc:
         record("cache_dir_writable", False, str(exc))
 
+    # Advisory, never fatal (see `advisory_checks` at the bottom of this
+    # command). Object storage became GCS-by-default, and a fresh clone has no
+    # Google Application Default Credentials — reporting that plainly is
+    # useful, but failing `doctor` over it would red every developer machine
+    # for a subsystem that only the web avatar/upload routes touch. Nothing
+    # here raises: `google.auth.default()` throws `DefaultCredentialsError`
+    # when ADC is absent, which is precisely the state this check describes.
+    if settings.storage.provider == "gcs":
+        try:
+            import google.auth
+
+            _, adc_project = google.auth.default()
+            record(
+                "storage_backend",
+                True,
+                f"gcs: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}; "
+                f"ADC resolved (project {settings.storage.gcs_project or adc_project})",
+            )
+        except Exception as exc:
+            record(
+                "storage_backend",
+                False,
+                f"gcs: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}; "
+                f"no Application Default Credentials ({exc}) — run "
+                "`gcloud auth application-default login`, or set "
+                "LEMELY_STORAGE__PROVIDER=supabase",
+            )
+    else:
+        record(
+            "storage_backend",
+            True,
+            f"supabase: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}",
+        )
+
     try:
         import gradio  # noqa: F401
 
@@ -507,7 +541,12 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
                 # Any failure (auth, network, SDK) is a reachability failure to report.
                 record("gemini_reachable", False, str(exc))
 
-    fatal_checks = [c for c in checks if c["name"] != "gradio_extra_installed"]
+    # Checks that describe an optional subsystem rather than a broken install:
+    # `lemely ui` needs the [ui] extra, and object storage is only reached by
+    # the web app's avatar/upload routes. Both are reported honestly and
+    # neither decides the exit code.
+    advisory_checks = {"gradio_extra_installed", "storage_backend"}
+    fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 
     _print_result(ctx, {"all_passed": all_passed, "checks": checks})

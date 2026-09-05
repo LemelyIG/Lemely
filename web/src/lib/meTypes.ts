@@ -24,6 +24,13 @@ export interface Profile {
    * that does not serve it.
    */
   emailVerified: boolean
+  /**
+   * A short-lived signed URL for the caller's uploaded profile picture, or
+   * `null` when none is set. Not a stable identifier: it expires, so it must
+   * never be cached beyond the lifetime of this `Profile` object or persisted
+   * anywhere — always re-read from a fresh `/me/profile` fetch.
+   */
+  avatarUrl: string | null
 }
 
 // ── Student onboarding profile (P4.3 chunk B, D4.5 / P4.8 chunk A) ─────────

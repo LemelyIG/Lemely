@@ -157,12 +157,17 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (15) ────────────────────
+    # ── AUTH_ANY (17) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    # Profile picture set/clear: any authenticated role, same as the profile
+    # GET above -- a student and a teacher both have exactly one avatar to
+    # manage, gated only by `get_auth_context` (never a caller-supplied id).
+    ("POST", "/api/me/avatar"): AUTH_ANY,
+    ("DELETE", "/api/me/avatar"): AUTH_ANY,
     ("GET", "/api/notifications"): AUTH_ANY,
     ("GET", "/api/notifications/counts"): AUTH_ANY,
     ("GET", "/api/notifications/push/config"): AUTH_ANY,

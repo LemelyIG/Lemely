@@ -34,5 +34,11 @@ class FakeStorageBackend:
     def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
         return f"fake://{bucket}/{object_path}?ttl={expires_in}"
 
+    def delete(self, bucket: str, object_path: str) -> None:
+        try:
+            del self._objects[(bucket, object_path)]
+        except KeyError as exc:
+            raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
+
 
 __all__ = ["FakeStorageBackend", "StorageObjectNotFoundError"]

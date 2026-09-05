@@ -70,7 +70,20 @@ import { SettingsFrame } from "./SettingsFrame"
  * adjacent to the control that caused it.
  */
 
-export function DeviceSettings() {
+/**
+ * The section this screen renders, with no frame around it — mounted at
+ * `/teacher/settings/devices` and `/student/settings/devices` inside
+ * `PortalSettingsLayout`, which supplies its own `<h1>`/nav/chrome, in
+ * addition to the framed `DeviceSettings` below for the top-level
+ * `/settings/devices` lane (parent and admin still use that one).
+ *
+ * The intro paragraph moved in here from `SettingsFrame`'s `intro` prop
+ * because it depends on `devices.data` (the account's device limit), which
+ * only this section's own query has — behaviour is otherwise identical to
+ * the framed version, and the framed `DeviceSettings` below no longer needs
+ * to know that fact to pass a static `intro` instead.
+ */
+export function DeviceSettingsSection() {
   const { logout } = useAuth()
   const devices = useDevices()
   const revoke = useRevokeDevice()
@@ -114,21 +127,24 @@ export function DeviceSettings() {
     signOut(deviceId)
   }
 
-  return (
-    <SettingsFrame
-      title="Account and devices"
-      intro={
-        devices.data
-          ? `You can be signed in on ${devices.data.maxDevices} devices at a time. Signing in on another one signs out whichever you used least recently.`
-          : "You can be signed in on a limited number of devices at a time."
-      }
-    >
-      <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
-        <h2 id="devices-heading" className="text-display-sm text-ink">
-          Signed-in devices
-        </h2>
+  const intro = devices.data
+    ? `You can be signed in on ${devices.data.maxDevices} devices at a time. Signing in on another one signs out whichever you used least recently.`
+    : "You can be signed in on a limited number of devices at a time."
 
-        {/* No `srHeading`: `SettingsFrame` already renders this page's own
+  return (
+    <>
+      <section aria-labelledby="devices-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 id="devices-heading" className="text-display-sm text-ink">
+            Signed-in devices
+          </h2>
+          <p className="max-w-[65ch] text-body-sm text-ink-muted">{intro}</p>
+        </div>
+
+        {/* No `srHeading`: the page's own `<h1>` is rendered above this
+            section unconditionally, whether by `SettingsFrame` (the
+            top-level lane) or `PortalSettingsLayout` (the in-portal one), in
+            every query state — an sr-only heading here would duplicate it.
             `<h1>` unconditionally, above this section, in every query state —
             an sr-only heading here would duplicate it.
 
@@ -236,6 +252,22 @@ export function DeviceSettings() {
         }}
         onCancel={() => setConfirmingCurrent(null)}
       />
+    </>
+  )
+}
+
+/** The top-level `/settings/devices` route (parent and admin still reach this
+ * screen only through here — see `SettingsFrame`'s module header for why the
+ * lane is role-agnostic). A static intro: the section itself now renders the
+ * device-limit sentence once `devices.data` has loaded, so this wrapper no
+ * longer needs to know that fact to pass one in. */
+export function DeviceSettings() {
+  return (
+    <SettingsFrame
+      title="Account and devices"
+      intro="You can be signed in on a limited number of devices at a time."
+    >
+      <DeviceSettingsSection />
     </SettingsFrame>
   )
 }

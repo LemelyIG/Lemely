@@ -206,6 +206,37 @@ class SettingsTests(unittest.TestCase):
             s = load_settings(toml_path=None, cwd=Path(tmp))
         self.assertEqual(s.email.app_base_url, "https://lemelyig.com")
 
+    def test_storage_defaults_to_gcs_with_globally_unique_bucket_names(self) -> None:
+        """GCS is the default provider, and the bucket defaults are GCS-shaped.
+
+        The prefix is not cosmetic. GCS bucket names live in a single global
+        namespace shared by every Google Cloud customer, so the old Supabase
+        defaults (bare ``uploads``/``avatars``, which are per-project there)
+        name buckets this project could never own — a default that can only
+        fail. Pinned here because it is a deployment-visible contract that no
+        other test would notice moving.
+        """
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertEqual(s.storage.provider, "gcs")
+        self.assertEqual(s.storage.bucket, "lemely-uploads")
+        self.assertEqual(s.storage.avatar_bucket, "lemely-avatars")
+
+    def test_storage_rejects_an_empty_bucket_name(self) -> None:
+        """An unset GitHub Actions variable renders as "" — fail at startup, not at upload.
+
+        ``deploy.yml`` passes the bucket names through ``vars.``; a mistyped or
+        missing one would otherwise boot a service that writes every object to
+        bucket ``""`` and only discovers it at the first student upload.
+        """
+        with (
+            _IsolatedEnv(LEMELY_STORAGE__BUCKET=""),
+            TemporaryDirectory() as tmp,
+            self.assertRaises(ValidationError) as cm,
+        ):
+            load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertIn("bucket", str(cm.exception))
+
     def test_toml_discovery_prefers_cwd_lemely_toml(self) -> None:
         with TemporaryDirectory() as tmp:
             cwd = Path(tmp) / "cwd"

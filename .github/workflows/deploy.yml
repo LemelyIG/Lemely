@@ -285,8 +285,28 @@ jobs:
           # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
           # job below.
           # docs/email-delivery.md.
+          #
+          # Object storage is Google Cloud Storage (the application default
+          # since `feat(storage)`), and the two bucket names are set
+          # explicitly per environment. They MUST differ between staging and
+          # production — one shared bucket would let a staging test overwrite
+          # a real student's scan or avatar at the same object path.
+          #
+          # The `||` fallbacks mean this works with no new GitHub variables:
+          # unset `vars.` render as the empty string, which is falsy, so the
+          # names default to `<project-id>-uploads-<env>` /
+          # `<project-id>-avatars-<env>` — globally unique because the GCS
+          # namespace is global and the project id already is. Set
+          # `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET` as environment variables
+          # (Settings > Environments > staging|production) only to point an
+          # environment at differently-named buckets. `scripts/gcs_bootstrap.sh`
+          # derives the same defaults, so the pair agree by construction.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
+            LEMELY_STORAGE__PROVIDER=gcs
+            LEMELY_STORAGE__GCS_PROJECT=${{ vars.GCP_PROJECT_ID }}
+            LEMELY_STORAGE__BUCKET=${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__AVATAR_BUCKET=${{ vars.GCS_AVATAR_BUCKET || format('{0}-avatars-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_LOGGING__FORMAT=json
             LEMELY_SUPABASE__URL=${{ secrets.SUPABASE_URL }}
             LEMELY_SUPABASE__JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}

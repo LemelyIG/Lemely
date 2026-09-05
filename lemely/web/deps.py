@@ -66,7 +66,7 @@ from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.storage import HttpStorageBackend, StorageBackend
+from lemely.io.storage import GcsStorageBackend, HttpStorageBackend, StorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
@@ -142,10 +142,21 @@ def get_student_upload_repo() -> StudentUploadRepository:
 def get_storage_backend() -> StorageBackend:
     """Return the process-wide :class:`StorageBackend` singleton (P2.5).
 
-    Wired with the real HTTP client against Supabase Storage. Tests override
-    this with an in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+    Wired with :class:`~lemely.io.storage.GcsStorageBackend` by default, or the
+    real HTTP client against Supabase Storage when
+    ``settings.storage.provider == "supabase"``. Tests override this with an
+    in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+
+    Neither backend touches the network or resolves a credential in its
+    constructor, so this getter stays safe to call on a machine with no
+    Google Application Default Credentials and no Supabase service-role key —
+    the failure, if any, surfaces at the first storage operation rather than
+    at import or startup.
     """
-    return HttpStorageBackend(get_settings())
+    settings = get_settings()
+    if settings.storage.provider == "gcs":
+        return GcsStorageBackend(settings)
+    return HttpStorageBackend(settings)
 
 
 @lru_cache(maxsize=1)

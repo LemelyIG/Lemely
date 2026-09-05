@@ -59,10 +59,13 @@ import { gradeRank, widestVocabularyFor } from "@/lib/grades"
  * `TrendSparkline` (which needs a real multi-point series; two points
  * conjured from one delta would draw a shape this data doesn't support).
  *
- * Bulk actions ("assign a quiz", "post an announcement") are visibly
- * disabled with a "Coming soon" tag — T-09/T-10 quiz builder and T-12
- * announcement composer don't exist until P3.8 — following `Overview.tsx`'s
- * precedent, never a button that silently does nothing.
+ * Bulk actions ("assign a quiz", "post an announcement") are gone from this
+ * toolbar rather than kept as disabled placeholders: T-09's quiz builder and
+ * T-12's announcement composer both shipped as their own screens, reachable
+ * from the sidebar, and neither one is scoped to a single class the way this
+ * roster is — a "Coming soon" pair here would only ever have been telling a
+ * teacher a shipped feature does not exist. "+ Add students" is the one
+ * action this table's own row-level data (enrolment) actually owns.
  */
 
 type SortColumn = "name" | "paperCount" | "mark" | "grade" | "delta" | "atRisk" | "lastActiveAt"
@@ -252,18 +255,6 @@ export function ClassRoster() {
         <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
           {showAdd ? "Hide add students" : "+ Add students"}
         </Button>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Assign a quiz
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Post an announcement
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
       </div>
 
       {showAdd ? <AddStudentsPanel classId={classId} hasSchool={classDetail.schoolId != null} /> : null}

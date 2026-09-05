@@ -60,11 +60,67 @@ export interface SettingsFrameProps {
   children: ReactNode
 }
 
-/** The two screens in this lane, in the order they appear in the nav. */
+/** One entry in a settings pill nav. `end` is passed straight to `NavLink`;
+ * omit it for a route with no sub-routes of its own to distinguish from —
+ * see `SettingsNav`'s own doc for why it isn't simply always `true`. */
+export interface SettingsNavItem {
+  to: string
+  label: string
+  end?: boolean
+}
+
+/**
+ * The pill sub-nav shared by the top-level `SettingsFrame` lane and
+ * `PortalSettingsLayout` (the in-portal `/teacher/settings/*` and
+ * `/student/settings/*` mounts). Extracted rather than duplicated so the two
+ * lanes' settings nav can never drift into two different ideas of what an
+ * active pill looks like — see the module header for why a shared frame
+ * exists at all.
+ *
+ * `aria-label` rather than a visible heading: the nav's items name the
+ * section between them, and a "Settings sections" heading above a row of
+ * links is chrome nobody reads.
+ */
+export function SettingsNav({ items }: { items: readonly SettingsNavItem[] }) {
+  return (
+    <nav aria-label="Settings" className="flex flex-wrap gap-1">
+      {items.map((item) => (
+        <NavLink
+          key={item.to}
+          to={item.to}
+          className={({ isActive }) =>
+            cn(
+              "rounded-md px-3 py-1.5 text-body-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+              // §6.1's 44px floor; these pills measured 32px. They are flex
+              // items of the `<nav>` above, so they blockify and need their
+              // own centring with the min.
+              "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
+              isActive
+                ? "bg-paper-sunk font-medium text-ink"
+                : "text-ink-muted hover:bg-paper-sunk hover:text-ink",
+            )
+          }
+          // `aria-current="page"` is what tells a screen reader which of
+          // the items you are on. The weight-and-fill treatment is the
+          // sighted half of the same fact, never the whole of it.
+          end={item.end}
+        >
+          {item.label}
+        </NavLink>
+      ))}
+    </nav>
+  )
+}
+
+/** The three screens in this lane, in the order they appear in the nav.
+ * Profile leads because it is the identity screen a reader expects first;
+ * `end: true` on every entry keeps the old top-level behaviour unchanged —
+ * none of these three routes has a sub-route to distinguish itself from. */
 const SETTINGS_NAV = [
-  { to: "/settings/devices", label: "Account and devices" },
-  { to: "/settings/notifications", label: "Notifications" },
-] as const
+  { to: "/settings/profile", label: "Profile", end: true },
+  { to: "/settings/devices", label: "Account and devices", end: true },
+  { to: "/settings/notifications", label: "Notifications", end: true },
+] as const satisfies readonly SettingsNavItem[]
 
 /**
  * A human name for the portal a role goes back to.
@@ -121,37 +177,8 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
            * reader already knows, and in it the repetition stops registering
            * as one: the nav says where you are among the two, the title names
            * the page you landed on.
-           *
-           * `aria-label` rather than a visible heading: the nav's two items
-           * name the section between them, and a "Settings sections" heading
-           * above two links is chrome nobody reads.
            */}
-          <nav aria-label="Settings" className="flex flex-wrap gap-1">
-            {SETTINGS_NAV.map((item) => (
-              <NavLink
-                key={item.to}
-                to={item.to}
-                className={({ isActive }) =>
-                  cn(
-                    "rounded-md px-3 py-1.5 text-body-sm transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-                    // §6.1's 44px floor; these two pills measured 32px. They
-                    // are flex items of the `<nav>` above, so they blockify and
-                    // need their own centring with the min.
-                    "pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11",
-                    isActive
-                      ? "bg-paper-sunk font-medium text-ink"
-                      : "text-ink-muted hover:bg-paper-sunk hover:text-ink",
-                  )
-                }
-                // `aria-current="page"` is what tells a screen reader which of
-                // the two you are on. The weight-and-fill treatment is the
-                // sighted half of the same fact, never the whole of it.
-                end
-              >
-                {item.label}
-              </NavLink>
-            ))}
-          </nav>
+          <SettingsNav items={SETTINGS_NAV} />
 
           <div className="flex flex-col gap-2">
             <h1 className="text-display-md text-ink">{title}</h1>

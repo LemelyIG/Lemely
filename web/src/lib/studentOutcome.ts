@@ -141,6 +141,24 @@ export function studentSaveFailureMessage(err: unknown): string {
  * message a student could act on — these routes take an id from the screen's
  * own data, so a rejection means the plan changed underneath them.
  */
+/**
+ * Turn a failed `POST /student/classes/join` into a sentence.
+ *
+ * A 404 here means exactly one thing — the code does not match a class — and
+ * it is the one outcome this screen's reader can fix themselves, so it gets
+ * its own sentence naming the fix rather than `studentSaveFailureMessage`'s
+ * generic "we couldn't save that" (which is written for a form field losing
+ * typed content, the wrong reassurance for an eight-character code). A 422
+ * (malformed code) and everything else fall through to that helper, whose
+ * judgement is already right for them.
+ */
+export function joinClassFailureMessage(err: unknown): string {
+  if (err instanceof ApiError && err.status === 404) {
+    return "That code didn't match a class. Check it with your teacher and try again."
+  }
+  return studentSaveFailureMessage(err)
+}
+
 export function studentActionFailureMessage(err: unknown, action: string): string {
   const lead = `We couldn't ${action}.`
   if (!(err instanceof ApiError)) return `${lead} Something went wrong on our side.`

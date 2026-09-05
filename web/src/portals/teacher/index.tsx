@@ -15,6 +15,7 @@ import {
   Books,
   Sparkle,
   Megaphone,
+  Gear,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -27,7 +28,7 @@ import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
-import { navItems, resolveTrail, type NavItem } from "./data"
+import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 // P6.1b: screens are `React.lazy`, not static imports — see the same note in
@@ -64,6 +65,34 @@ const QuizResults = lazy(() => import("./screens/QuizResults").then((m) => ({ de
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
 )
+// Settings' three screens now mount here too, alongside every other lazy
+// screen in this portal, rather than only reaching the top-level
+// `/settings/*` lane from a footer link — see `data.ts`'s `navItems` and the
+// route registration below.
+// Each imported from its own module rather than the `@/portals/settings`
+// barrel: importing all four through one barrel module means a chunk
+// containing any one of them pulls in the code for all four, defeating the
+// per-screen splitting this whole file otherwise does. The barrel still
+// exists for other consumers (its own header explains why) — this portal
+// just does not use it for the lazy boundary.
+const PortalSettingsLayout = lazy(() =>
+  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
+    default: m.PortalSettingsLayout,
+  })),
+)
+const ProfileSettingsSection = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({
+    default: m.ProfileSettingsSection,
+  })),
+)
+const DeviceSettingsSection = lazy(() =>
+  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+)
+const NotificationSettingsSection = lazy(() =>
+  import("@/portals/settings/NotificationSettings").then((m) => ({
+    default: m.NotificationSettingsSection,
+  })),
+)
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -77,9 +106,21 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   schemes: Books,
   quizzes: Sparkle,
   announcements: Megaphone,
+  settings: Gear,
 }
 
-function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolean }) {
+function SidebarNavItem({
+  item,
+  touch = false,
+  forceActive = false,
+}: {
+  item: NavItem
+  touch?: boolean
+  /** Overrides NavLink's own `isActive` to true. Used by the Classes row for
+   * the one case its own `end: true` match cannot see — see
+   * `data.ts`'s `classesItemActive`. */
+  forceActive?: boolean
+}) {
   const Glyph = NAV_ICON[item.icon]
   return (
     <NavLink
@@ -104,27 +145,31 @@ function SidebarNavItem({ item, touch = false }: { item: NavItem; touch?: boolea
           // as you navigate.
           "border-s-2",
           touch && "min-h-11",
-          isActive
+          isActive || forceActive
             ? "border-accent bg-paper-raised text-ink"
             : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
         )
       }
     >
-      {({ isActive }) => (
-        <>
-          {/* §10 permits `fill` for a single active-state nav icon, and this is
-              it. The active row therefore carries four independent signals —
-              the accent margin rule, the raised sheet, full-strength ink, and
-              the filled glyph — so none of them carries the state alone. */}
-          <Glyph
-            size={16}
-            weight={isActive ? "fill" : "regular"}
-            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-            aria-hidden="true"
-          />
-          <span className="flex-1">{item.label}</span>
-        </>
-      )}
+      {({ isActive }) => {
+        const active = isActive || forceActive
+        return (
+          <>
+            {/* §10 permits `fill` for a single active-state nav icon, and this
+                is it. The active row therefore carries four independent
+                signals — the accent margin rule, the raised sheet,
+                full-strength ink, and the filled glyph — so none of them
+                carries the state alone. */}
+            <Glyph
+              size={16}
+              weight={active ? "fill" : "regular"}
+              className={cn("shrink-0", active ? "text-accent" : "text-ink-faint")}
+              aria-hidden="true"
+            />
+            <span className="flex-1">{item.label}</span>
+          </>
+        )
+      }}
     </NavLink>
   )
 }
@@ -157,16 +202,39 @@ function ClassesNavSection() {
         ) : (
           <>
             {data.classes.slice(0, 5).map((c) => (
-              <Link
+              // A `NavLink`, not a plain `Link`: this row is a navigation
+              // destination like any other in the sidebar, and until now it
+              // was the one row that never told a teacher which class they
+              // were looking at. No `end` — the default (non-exact) match is
+              // deliberate, since this row must also read as current on the
+              // class's `/analytics` child, not only on its own path.
+              <NavLink
                 key={c.id}
                 to={`/teacher/classes/${c.id}`}
                 // §6.1's 44px floor; these class rows measured 34px. Already
                 // `flex items-center`, so the label stays centred.
-                className="flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 text-body-sm text-ink-muted rounded-md hover:bg-paper hover:text-ink transition-colors duration-[var(--dur-instant)] ease-out-soft focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                className={({ isActive }) =>
+                  cn(
+                    "flex items-center gap-2.5 px-2 py-[7px] pointer-coarse:min-h-11 rounded-md border-s-2 transition-colors duration-[var(--dur-instant)] ease-out-soft",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
+                    isActive
+                      ? "border-accent bg-paper-raised text-ink"
+                      : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
+                  )
+                }
               >
-                <span className="w-1.5 h-1.5 rounded-full flex-none bg-rule-strong" />
-                <span className="truncate">{c.label}</span>
-              </Link>
+                {({ isActive }) => (
+                  <>
+                    <span
+                      className={cn(
+                        "w-1.5 h-1.5 rounded-full flex-none",
+                        isActive ? "bg-accent" : "bg-rule-strong",
+                      )}
+                    />
+                    <span className="truncate">{c.label}</span>
+                  </>
+                )}
+              </NavLink>
             ))}
             {data.classes.length > 5 ? (
               <Link
@@ -215,7 +283,7 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-2.5">
-      <Avatar name={name} size="sm" />
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-ink">{name}</div>
         <div className="text-body-sm text-ink-faint">{roleLabel}</div>
@@ -231,11 +299,27 @@ function UserBlock() {
  * another, and two copies of the list is how that comes back.
  */
 function TeacherNav({ touch = false }: { touch?: boolean }) {
+  const location = useLocation()
+  // Same query `ClassesNavSection` below subscribes to — react-query dedupes
+  // by queryKey, so this adds no second request, only a second subscriber to
+  // the classes list already in flight (or cached).
+  const { data } = useTeacherClasses()
+  const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
+
   return (
     <div className="flex flex-col gap-[22px]">
       <nav aria-label="Teacher sections" className="flex flex-col gap-0.5">
         {navItems.map((item) => (
-          <SidebarNavItem key={item.to} item={item} touch={touch} />
+          <SidebarNavItem
+            key={item.to}
+            item={item}
+            touch={touch}
+            forceActive={
+              item.to === "/teacher/classes"
+                ? classesItemActive(location.pathname, visibleClassIds)
+                : false
+            }
+          />
         ))}
       </nav>
       <ClassesNavSection />
@@ -256,19 +340,6 @@ function TeacherNav({ touch = false }: { touch?: boolean }) {
 function SidebarFooter() {
   return (
     <div className="flex flex-col gap-3">
-      {/* Settings sits here rather than in `navItems` above, and that is a
-          judgement rather than convenience. The primary nav is this teacher's
-          *work* — every entry is a route under /teacher with a NavLink active
-          state. `/settings/*` is neither: it is account-level, shared with
-          every other role, and would never render active from a list matched
-          against the teacher subtree. One entry is enough because the two
-          settings screens link to each other. P5.9 chunk D. */}
-      <Link
-        to="/settings/devices"
-        className="text-body-sm text-ink-faint px-0.5 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-      >
-        Account, devices &amp; notifications <ForwardArrow />
-      </Link>
       <UserBlock />
     </div>
   )
@@ -556,6 +627,24 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Quiz results" },
     },
     { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    {
+      path: "settings",
+      element: <PortalSettingsLayout basePath="/teacher/settings" />,
+      handle: { title: "Settings" },
+      children: [
+        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          path: "devices",
+          element: <DeviceSettingsSection />,
+          handle: { title: "Account and devices" },
+        },
+        {
+          path: "notifications",
+          element: <NotificationSettingsSection />,
+          handle: { title: "Notification settings" },
+        },
+      ],
+    },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the sidebar. See `portals/misc/NotFound.tsx`.

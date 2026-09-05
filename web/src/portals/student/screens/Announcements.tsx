@@ -83,7 +83,9 @@ function formatExamDate(examDate: string): string {
   })
 }
 
-function formatPublished(timestamp: string): string {
+/** Short-form date for display: "12 May 2026". Shared by the publish date and
+ * the read receipt date — both are the same "when did this happen" fact. */
+function formatDate(timestamp: string): string {
   return new Date(timestamp).toLocaleDateString("en-GB", {
     day: "numeric",
     month: "short",
@@ -118,16 +120,36 @@ export function nextExam(
 
 /* ── Announcements ──────────────────────────────────────────────────────── */
 
+/**
+ * The two facts a card needs to render its read state, derived from the one
+ * field the wire actually carries (`readAt`). Pulled out of the component so
+ * it is a plain function a test can call without mounting anything: this is
+ * the exact decision that used to be conflated with the expand toggle, so it
+ * is the exact thing worth pinning on its own.
+ */
+export function readStateFor(announcement: {
+  readAt: string | null
+}): { unread: boolean; readLabel: string | null } {
+  if (announcement.readAt === null) return { unread: true, readLabel: null }
+  return { unread: false, readLabel: `Read on ${formatDate(announcement.readAt)}` }
+}
+
 function AnnouncementCard({
   announcement,
-  onOpen,
   isOpen,
+  onToggleExpand,
+  onMarkRead,
+  isMarking,
+  markFailed,
 }: {
   announcement: StudentAnnouncement
-  onOpen: (id: string) => void
   isOpen: boolean
+  onToggleExpand: (id: string) => void
+  onMarkRead: (id: string) => void
+  isMarking: boolean
+  markFailed: boolean
 }) {
-  const unread = announcement.readAt === null
+  const { unread, readLabel } = readStateFor(announcement)
   return (
     <Card
       className={cn(
@@ -149,7 +171,7 @@ function AnnouncementCard({
                 {announcement.scope === "school" ? "Whole school" : "Your class"}
               </Chip>
               <time dateTime={announcement.publishedAt}>
-                {formatPublished(announcement.publishedAt)}
+                {formatDate(announcement.publishedAt)}
               </time>
             </div>
           </div>
@@ -157,37 +179,58 @@ function AnnouncementCard({
             <Chip tone="warn" className="flex-none">
               Unread
             </Chip>
-          ) : null}
+          ) : (
+            <p className="flex-none text-body-sm text-ink-faint">{readLabel}</p>
+          )}
         </div>
 
         <p
           className={cn(
             "text-body-md whitespace-pre-line text-ink-muted",
             // Collapsed by default so a long notice cannot bury the ones under
-            // it; the full text is one tap away and marking-read is that tap.
+            // it; the full text is one tap away and expanding still marks it
+            // read, same as before — this clamp is the only reason a "show
+            // more" control exists at all.
             !isOpen && "line-clamp-2",
           )}
         >
           {announcement.body}
         </p>
 
-        <div>
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             size="sm"
-            onClick={() => onOpen(announcement.announcementId)}
+            onClick={() => onToggleExpand(announcement.announcementId)}
             aria-expanded={isOpen}
             /* Every card renders a button with the identical visible text, so
-               a screen-reader user tabbing a list of notices hears "Read it,
-               Read it, Read it" with nothing to tell them apart. Naming the
-               button with the notice it belongs to fixes that; the visible
-               text stays the leading part of the accessible name, which is
-               what WCAG 2.5.3 (Label in Name) requires. */
-            aria-label={`${isOpen ? "Show less" : "Read it"}: ${announcement.title}`}
+               a screen-reader user tabbing a list of notices hears "Show
+               more, Show more, Show more" with nothing to tell them apart.
+               Naming the button with the notice it belongs to fixes that;
+               the visible text stays the leading part of the accessible
+               name, which is what WCAG 2.5.3 (Label in Name) requires. */
+            aria-label={`${isOpen ? "Show less" : "Show more"}: ${announcement.title}`}
           >
-            {isOpen ? "Show less" : "Read it"}
+            {isOpen ? "Show less" : "Show more"}
           </Button>
+          {unread ? (
+            <Button
+              variant="ghost"
+              size="sm"
+              loading={isMarking}
+              onClick={() => onMarkRead(announcement.announcementId)}
+              aria-label={`${isMarking ? "Marking" : "Mark as read"}: ${announcement.title}`}
+            >
+              {isMarking ? "Marking…" : "Mark as read"}
+            </Button>
+          ) : null}
         </div>
+
+        {markFailed ? (
+          <p role="alert" className="text-body-sm text-err">
+            We couldn't mark this as read. Try again.
+          </p>
+        ) : null}
       </CardBody>
     </Card>
   )
@@ -215,21 +258,24 @@ function AnnouncementsPanel() {
       }
     >
       {(data) => {
-        function handleOpen(id: string) {
-          if (openId === id) {
-            setOpenId(null)
-            return
-          }
-          setOpenId(id)
-          // Opening *is* reading. The receipt is idempotent and stores
-          // first-read only, so re-opening does not rewrite the timestamp
-          // and a failed receipt simply leaves it unread — never blocks the
-          // student from reading the text they already have in front of
-          // them.
+        // The receipt is idempotent and stores first-read only, so calling
+        // this on an already-read notice is always safe — it is what lets
+        // both the explicit button and expanding-to-read share one guard
+        // instead of duplicating the "already read" check at each call site.
+        function handleMarkRead(id: string) {
           const announcement = data.announcements.find(
             (a) => a.announcementId === id,
           )
           if (announcement && announcement.readAt === null) markRead.mutate(id)
+        }
+
+        function handleToggleExpand(id: string) {
+          setOpenId((prev) => (prev === id ? null : id))
+          // Opening *is* reading: a failed receipt here must never block the
+          // student from reading the text they already have in front of
+          // them, which is why this is fire-and-forget rather than gating
+          // the expand on the mutation settling.
+          handleMarkRead(id)
         }
 
         return (
@@ -239,7 +285,16 @@ function AnnouncementsPanel() {
                 key={announcement.announcementId}
                 announcement={announcement}
                 isOpen={openId === announcement.announcementId}
-                onOpen={handleOpen}
+                onToggleExpand={handleToggleExpand}
+                onMarkRead={handleMarkRead}
+                isMarking={
+                  markRead.variables === announcement.announcementId &&
+                  markRead.isPending
+                }
+                markFailed={
+                  markRead.variables === announcement.announcementId &&
+                  markRead.isError
+                }
               />
             ))}
           </div>
