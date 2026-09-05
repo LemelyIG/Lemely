@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import hashlib
 import random
+import threading
 import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
@@ -127,7 +128,23 @@ def store(
     pg_sessionmaker_or_skip: sessionmaker[Session] | None,
     clock: _FrozenClock,
 ) -> OtpChallengeStore:
-    kwargs = dict(
+    # Not built from a shared ``dict(...)`` unpacked with ``**`` into either
+    # constructor: mypy cannot check an untyped ``dict[str, object]`` against
+    # a typed ``__init__`` (it did not, until this was fixed), so the two
+    # branches spell the identical keyword arguments out instead.
+    if request.param == "memory":
+        return OtpStore(
+            clock=clock,
+            rng=random.Random(7),
+            ttl_seconds=300,
+            email_ttl_seconds=600,
+            max_attempts=3,
+            code_length=6,
+            min_resend_seconds=30,
+        )
+    assert pg_sessionmaker_or_skip is not None  # only None on the "memory" branch above
+    return DbOtpStore(
+        pg_sessionmaker_or_skip,
         clock=clock,
         rng=random.Random(7),
         ttl_seconds=300,
@@ -136,9 +153,6 @@ def store(
         code_length=6,
         min_resend_seconds=30,
     )
-    if request.param == "memory":
-        return OtpStore(**kwargs)
-    return DbOtpStore(pg_sessionmaker_or_skip, **kwargs)
 
 
 PHONE = "+201000000000"
@@ -174,21 +188,33 @@ def test_resend_inside_cooldown_raises(store: OtpChallengeStore, clock: _FrozenC
     with pytest.raises(OtpRateLimitError):
         store.issue(PHONE)
     clock.advance(31)
-    store.issue(PHONE)  # cooldown elapsed: a fresh challenge
+    code = store.issue(PHONE)  # cooldown elapsed: a fresh challenge
+    assert store.verify(PHONE, code) is OtpResult.ok  # the reissued code actually works
 
 
-def _db_store(sm: sessionmaker[Session], clock: _FrozenClock, **overrides: object) -> DbOtpStore:
-    kwargs = dict(
+def _db_store(
+    sm: sessionmaker[Session],
+    clock: _FrozenClock,
+    *,
+    ttl_seconds: int = 300,
+    email_ttl_seconds: int = 600,
+    max_attempts: int = 3,
+    code_length: int = 6,
+    min_resend_seconds: int = 0,
+) -> DbOtpStore:
+    # Named, typed overrides rather than `**overrides: object` merged into an
+    # untyped dict (the brief's original shape) -- mypy cannot check an
+    # untyped mapping unpacked into DbOtpStore's typed constructor.
+    return DbOtpStore(
+        sm,
         clock=clock,
         rng=random.Random(7),
-        ttl_seconds=300,
-        email_ttl_seconds=600,
-        max_attempts=3,
-        code_length=6,
-        min_resend_seconds=0,
+        ttl_seconds=ttl_seconds,
+        email_ttl_seconds=email_ttl_seconds,
+        max_attempts=max_attempts,
+        code_length=code_length,
+        min_resend_seconds=min_resend_seconds,
     )
-    kwargs.update(overrides)
-    return DbOtpStore(sm, **kwargs)
 
 
 def test_code_is_never_stored_in_plaintext(
@@ -210,3 +236,55 @@ def test_two_concurrent_verifies_yield_one_ok(
     with ThreadPoolExecutor(2) as pool:
         results = list(pool.map(lambda _: store.verify("+201000000000", code), range(2)))
     assert sorted(r.value for r in results) == ["no_challenge", "ok"]
+
+
+def test_concurrent_issue_for_brand_new_address_never_races(
+    pg_sessionmaker_or_skip: sessionmaker[Session], clock: _FrozenClock
+) -> None:
+    """A never-before-seen ``(channel, address)`` has no row for ``SELECT ...
+    FOR UPDATE`` to lock, so the *first* ``issue()`` for it cannot be
+    serialised by a row lock the way a resend or a ``verify`` can — the
+    insert itself has to be the thing the database arbitrates. A
+    :class:`threading.Barrier` releases every worker at (as close to) the
+    same instant, forcing genuinely concurrent first-time ``issue()`` calls
+    against real Postgres rather than trusting
+    :class:`~concurrent.futures.ThreadPoolExecutor` scheduling to happen to
+    interleave them.
+
+    Against the naive ``if row is None: session.add(...)`` shape this guards
+    against, this reliably raised an unhandled ``IntegrityError`` (a unique
+    violation on ``pk_otp_challenges``) instead of the domain's own
+    :class:`~lemely.auth.otp.OtpRateLimitError` for the losing caller.
+    """
+    n = 16
+    store = _db_store(pg_sessionmaker_or_skip, clock, min_resend_seconds=30)
+    address = "+201098888888"
+    barrier = threading.Barrier(n)
+
+    def _issue(_: int) -> str | OtpRateLimitError:
+        barrier.wait()
+        try:
+            return store.issue(address)
+        except OtpRateLimitError as exc:
+            return exc
+
+    with ThreadPoolExecutor(n) as pool:
+        results = list(pool.map(_issue, range(n)))
+
+    codes = [r for r in results if isinstance(r, str)]
+    throttled = [r for r in results if isinstance(r, OtpRateLimitError)]
+    # No IntegrityError (or anything else) escaped: every outcome is one of
+    # these two, and together they account for every caller.
+    assert len(codes) + len(throttled) == n
+    # The frozen clock means every conflicting write after the first sees a
+    # challenge that is neither expired nor past its cooldown, so exactly one
+    # caller wins the brand-new row and every other one is correctly
+    # throttled -- never a crash.
+    assert len(codes) == 1
+    with pg_sessionmaker_or_skip() as s:
+        row = s.scalars(
+            select(OtpChallenge).where(
+                OtpChallenge.address_hash == hashlib.sha256(address.encode()).hexdigest()
+            )
+        ).one()
+    assert row.code_hash == hashlib.sha256(codes[0].encode()).hexdigest()

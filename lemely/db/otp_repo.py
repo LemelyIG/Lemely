@@ -21,20 +21,38 @@ process can now reach the same row at once:
    nothing that identifies who a challenge was sent to or that would verify
    it.
 
-2. **``issue`` and ``verify`` each take the row with ``SELECT ... FOR UPDATE``
-   inside one transaction, so the resend cooldown, the attempt counter, and
-   single-use consumption hold across instances exactly as they hold across
-   threads today.** Two instances calling :meth:`verify` on the same
+2. **Every write is one statement the database arbitrates, never a Python
+   read-then-write, because a lock can only serialise callers over a row
+   that already exists.** :meth:`verify` takes the row with ``SELECT ...
+   FOR UPDATE`` inside one transaction: two instances calling it on the same
    ``(channel, address)`` at nearly the same moment serialise on that row
-   lock: whichever transaction commits first deletes the row (success,
+   lock, whichever transaction commits first deletes the row (success,
    expiry, or lockout all delete it), and the second transaction's ``SELECT
    ... FOR UPDATE`` — which blocks until the first commits — then finds no
    row and returns :data:`~lemely.auth.otp.OtpResult.no_challenge`. There is
-   no window in which both observe a live, unconsumed challenge; the database
-   arbitrates the race, not a read-then-write in this process (the same
-   pattern :meth:`~lemely.db.teacher_paper_repo.TeacherPaperRepository.claim_run`
-   and :meth:`~lemely.db.auth_token_repo.AuthTokenService.redeem` use for
-   exactly this reason).
+   no window in which both observe a live, unconsumed challenge. But a
+   *brand-new* ``(channel, address_hash)`` has no row yet for ``FOR UPDATE``
+   to lock — two concurrent first-time :meth:`issue` calls would both see
+   "no row" and both attempt to insert, and the loser would raise an
+   unhandled ``IntegrityError`` on the composite primary key rather than the
+   domain's own :class:`~lemely.auth.otp.OtpRateLimitError`. So
+   :meth:`issue` never branches on a prior ``SELECT`` at all: it always runs
+   a single ``INSERT ... ON CONFLICT (channel, address_hash) DO UPDATE ...
+   WHERE`` statement, whose ``WHERE`` clause is the resend-cooldown check
+   itself. A genuinely new address always inserts cleanly (nothing to
+   conflict with); a concurrent second attempt against the same new address
+   conflicts on the row the first just created and is evaluated by the exact
+   same cooldown guard a normal resend would be, so it is correctly
+   throttled rather than crashing. Postgres's own conflict resolution for
+   ``INSERT ... ON CONFLICT`` — not a lock this process holds — is what
+   makes two concurrent inserts of the same key resolve to one winner
+   (the same idiom spec §4.4 documents for ``DbCooldownStore.check_and_stamp``,
+   the sibling store this table's design follows). This is the same
+   database-arbitrates-the-race principle
+   :meth:`~lemely.db.teacher_paper_repo.TeacherPaperRepository.claim_run` and
+   :meth:`~lemely.db.auth_token_repo.AuthTokenService.redeem` use, applied to
+   the one shape those two examples don't have to handle: contention over a
+   row that may not exist yet.
 
 ``issue`` also opportunistically sweeps every expired row on each call
 (``DELETE ... WHERE expires_at < now``), table-wide rather than scoped to the
@@ -54,6 +72,7 @@ from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy import select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 from lemely.auth.otp import OtpChannel, OtpRateLimitError, OtpResult
 from lemely.db.models.otp_challenges import OtpChallenge
@@ -135,47 +154,65 @@ class DbOtpStore:
 
         A fresh challenge replaces any prior one for the same ``(channel,
         address_hash)`` row (new code, reset attempts and TTL), but only
-        after the resend cooldown has elapsed since the last live issue.
-        Locks the row (if any) with ``SELECT ... FOR UPDATE`` for the
-        duration of the check-and-write, so two concurrent re-issues for the
-        same address cannot both observe the cooldown as elapsed and both
-        reset the attempt counter.
+        after the resend cooldown has elapsed since the last live issue —
+        enforced as a single ``INSERT ... ON CONFLICT (channel, address_hash)
+        DO UPDATE ... WHERE`` statement (module docstring, point 2), never a
+        ``SELECT`` followed by a Python-level branch on whether a row was
+        found. A brand-new address inserts with nothing to conflict with; a
+        concurrent second attempt against that same brand-new address
+        conflicts on the row the first just created and is subject to the
+        identical cooldown ``WHERE`` guard a normal resend is, so it is
+        throttled rather than raising a database integrity error.
 
         Raises:
             OtpRateLimitError: A live (non-expired) challenge was issued more
-                recently than ``min_resend_seconds`` ago. The message names
-                neither the address nor the code (D7.7).
+                recently than ``min_resend_seconds`` ago — whether that
+                challenge already existed or was created by a concurrent
+                caller a moment before this one reached the database. The
+                message names neither the address nor the code (D7.7).
         """
         now = self._clock()
         key = _hash(address)
+        code = self._generate_code()
+        insert_stmt = pg_insert(OtpChallenge).values(
+            channel=channel,
+            address_hash=key,
+            code_hash=_hash(code),
+            expires_at=now + self._ttl_for(channel),
+            issued_at=now,
+            attempts=0,
+        )
+        upsert_stmt = insert_stmt.on_conflict_do_update(
+            index_elements=[OtpChallenge.channel, OtpChallenge.address_hash],
+            set_={
+                "code_hash": insert_stmt.excluded.code_hash,
+                "expires_at": insert_stmt.excluded.expires_at,
+                "issued_at": insert_stmt.excluded.issued_at,
+                "attempts": 0,
+            },
+            where=sa.or_(
+                OtpChallenge.expires_at <= now,
+                OtpChallenge.issued_at <= now - self._min_resend,
+            ),
+        ).returning(OtpChallenge.code_hash)
         with self._sm.begin() as session:
             session.execute(sa.delete(OtpChallenge).where(OtpChallenge.expires_at < now))
-            row = session.execute(
-                select(OtpChallenge)
-                .where(OtpChallenge.channel == channel, OtpChallenge.address_hash == key)
-                .with_for_update()
-            ).scalar_one_or_none()
-            if row is not None and now < row.expires_at and now - row.issued_at < self._min_resend:
-                remaining = int((self._min_resend - (now - row.issued_at)).total_seconds())
-                raise OtpRateLimitError(f"OTP already sent; retry in {remaining}s.")
-            code = self._generate_code()
-            if row is None:
-                session.add(
-                    OtpChallenge(
-                        channel=channel,
-                        address_hash=key,
-                        code_hash=_hash(code),
-                        expires_at=now + self._ttl_for(channel),
-                        issued_at=now,
-                        attempts=0,
-                    )
+            if session.execute(upsert_stmt).first() is not None:
+                return code
+            # The WHERE guard rejected the write: a live challenge for this
+            # key — ours or a concurrent caller's — is still inside its
+            # cooldown. Nothing was changed by our own statement, so a plain
+            # follow-up read (no lock needed) gets the numbers for the
+            # message, matching ``DbCooldownStore.check_and_stamp``'s
+            # documented shape (spec §4.4) for the identical "zero rows
+            # returned" outcome.
+            existing = session.execute(
+                select(OtpChallenge).where(
+                    OtpChallenge.channel == channel, OtpChallenge.address_hash == key
                 )
-            else:
-                row.code_hash = _hash(code)
-                row.expires_at = now + self._ttl_for(channel)
-                row.issued_at = now
-                row.attempts = 0
-        return code
+            ).scalar_one()
+            remaining = int((self._min_resend - (now - existing.issued_at)).total_seconds())
+            raise OtpRateLimitError(f"OTP already sent; retry in {remaining}s.")
 
     def verify(
         self, address: str, code: str, *, channel: OtpChannel = OtpChannel.phone
