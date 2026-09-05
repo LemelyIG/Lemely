@@ -106,3 +106,34 @@ email_otp_ttl_seconds = 600
 # A teacher_papers row stuck in `processing` past this many seconds is a
 # dead run (its instance died) and may be reclaimed by the next regrade.
 stale_run_after_seconds = 900
+
+[integrity]
+# AI-generated-text detection is opt-in and costs one Gemini call per
+# question — plagiarism detection alone needs no Gemini key.
+plagiarism_enabled = true
+ai_detection_enabled = false
+plagiarism_threshold = 0.85
+ai_detection_threshold = 0.8
+
+[storage]
+# Object storage for every upload the web app keeps (student scans, teacher
+# papers, mark-scheme PDFs). "local" (the default) writes under
+# `paths.output_dir/storage` — right for dev, Compose and CI. "gcs" talks to
+# Google Cloud Storage via application-default credentials — the Cloud Run
+# runtime service account in staging/production, set by LEMELY_STORAGE__BACKEND
+# in the deploy, not here.
+backend = "local"
+# Bucket name for "gcs", directory name for "local". The gcs bucket is
+# created by `scripts/gcp-bootstrap.sh`, one per environment — not by this app.
+bucket = "uploads"
+
+[push]
+# Web-push (VAPID) application-server credentials. All three secrets default
+# to unset, which is a supported state: the transport reports itself
+# unavailable and the notification inbox keeps working without them.
+# Secrets — prefer LEMELY_PUSH__* env vars over this file:
+# vapid_public_key = "..."
+# vapid_private_key = "..."
+# vapid_subject = "mailto:ops@example.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0

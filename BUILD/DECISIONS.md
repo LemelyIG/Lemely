@@ -14223,3 +14223,80 @@ security benefit; each route gets its own keyspace by construction (two stores, 
 `deps.py`) so the three abuse shapes cannot bleed into each other. *Real per-IP rate limiting* —
 explicitly out of scope, same reasoning `D1.7` already recorded: it needs infrastructure this
 build does not have and would fake behind a proxy that owns the real client address.
+
+### D7.13 — Uploads on GCS and the instance pin lifted
+
+**What.** Every upload this app keeps now lives in Google Cloud Storage, not the container
+filesystem or a third-party HTTP client, and every piece of state that previously forced the
+backend to a single instance is off process memory except one cache. `lemely/io/storage.py`'s
+`StorageBackend` Protocol gained a second real implementation — `GcsStorageBackend`
+(`lemely/io/storage_gcs.py`), the official `google-cloud-storage` SDK, built lazily — alongside
+`LocalFileStorageBackend` for dev/Compose/CI; `lemely/web/deps.py::get_storage_backend` selects
+between them on `settings.storage.backend`, and the Supabase Storage client is deleted outright.
+The teacher paper (`teacher_papers`, migration `0024`), the parsed scheme corpus (the existing
+`papers`/`mark_schemes` tables), the parent phone-OTP challenge and the new email-code challenge
+(`otp_challenges`, migration `0025`), and the auth cooldown store (`auth_cooldowns`, migration
+`0026`) all moved off process-local state — an in-memory dict for the two auth stores, a directory
+scan for the scheme corpus — onto Postgres rows any instance can read. The event bus
+(`lemely/runtime/events.py`) gained per-run channels carried in a `contextvars.ContextVar`, so
+concurrent streams on one instance stop cross-talking. The web process's Gemini spend cap is
+retired — `GeminiClient` takes a `ledger` keyword and `deps.get_gemini_client` passes
+`ledger=None` — in favour of a Google Cloud billing budget on the shared project; the admin
+overview's spend panel and `SpendDTO` are deleted with it. `scripts/gcp-bootstrap.sh` now
+provisions, per environment, the upload bucket, a runtime service account scoped to that
+bucket only, and — when `BILLING_ACCOUNT_ID`/`BUDGET_USD` are set — that budget.
+
+Fifteen decisions were put to the owner and answered before any of this was built, recorded as
+DS1–DS15 in `docs/superpowers/specs/2026-09-03-gcs-uploads-and-cloud-run-scale-out-design.md` §3.
+Not restated here — that table is the record, and duplicating it into a second prose form is how
+the two drift. This entry exists to give the design its one line in the decision log a reader of
+this file would otherwise never find, and to state the two trades it accepted without pretending
+either one closes cleanly.
+
+**Budget-not-cap (DS3).** The web process enforces no USD ceiling on Gemini spend of its own —
+`_check_cost_ceiling`'s USD branch runs only `if self._ledger is not None`, and `ledger=None` is
+exactly what `deps.get_gemini_client` passes, so neither that check nor a `BUDGET_WARNING`/
+`BUDGET_EXCEEDED` publish ever fires there. The billing budget `gcp-bootstrap.sh` creates is the
+only guard left, and a budget is an alert, not a stop: spend can cross it before anyone reads
+the mail. Accepted because the alternative — a per-instance file ledger — was never a real cap
+either (it reset on every cold start; DS3's own reasoning is that N instances would have made
+it N independent, resettable caps, which is worse than one honest alert). The CLI keeps its
+file ledger and its `$8.00` ceiling unchanged; only the web surface loses the enforcement.
+
+**Queued-per-instance (DS13).** The teacher grading pool stays one worker per instance
+(`routers/teacher.py::_grading_pool`), and Cloud Tasks was declined as the alternative. Run state
+now lives on the `teacher_papers` row rather than the pool, so every instance answers `GET
+/papers/{id}` correctly regardless of which one is running the job — but a paper submitted to a
+busy instance queues there even if another instance is idle. Accepted at three instances
+(`max-instances=3`, DS6): a queue, its IAM, a second request path and local emulation cost more
+than the scheduling gap they would close at this scale.
+
+**What this decision does not claim.** `.github/workflows/deploy.yml` still deploys at
+`--max-instances=1`. Raising it to `3` is a separate, deliberately later step (spec §6 rolls it out
+last, after every earlier stage has been verified on staging) — this entry records what the code
+now *allows*, not what is running today. `docs/deployment.md` §5.1 is precise about the distinction
+and should be read before assuming otherwise from this paragraph alone.
+
+**Tests.** Each piece above shipped with its own hermetic and Postgres-backed coverage on its own
+commit — the storage seam (`tests/test_storage_local.py`, `tests/test_storage_gcs.py`,
+`tests/storage_fakes.py`), the teacher-paper repository's concurrent-claim and visibility tests
+(`test_exactly_one_of_two_concurrent_claims_wins`, `test_visibility_matrix` in
+`tests/test_teacher_paper_repo.py`), the auth-store parity tests run against both the in-memory and
+Postgres implementations of the same Protocol (`tests/test_otp_store_parity.py`,
+`tests/test_cooldown_store_parity.py`), the bus-scoping test
+`test_two_concurrent_streams_are_isolated` (`tests/test_web_app.py`), and
+`test_ledgerless_client_neither_checks_nor_records`, asserting no ceiling check and no budget event
+with `ledger=None` (`tests/test_gemini_client.py`). No single test file covers this entry as a
+whole, by design — it is fifteen decisions, not one.
+
+**Alternatives rejected.** *Migrate the Supabase Storage buckets' existing contents into GCS* — no
+real uploads exist in either Supabase project to migrate (DS8); buckets start empty. *Redis or
+another shared cache for the auth stores* — Postgres was already the durable store every other
+piece of session-relevant state in this app uses; adding a second infrastructure dependency for
+three small, low-write tables would cost more than it returns. *A hand-written GCS HTTP client*,
+matching the existing Supabase Storage precedent — declined for the official SDK's managed retries
+and checksums (DS12); the cold-start cost is paid back by not re-implementing what the SDK already
+gets right. *Raise `max-instances` in the same change that retires the last blocking state* —
+declined; the rollout order (spec §6) merges and verifies each stage on staging before the next,
+and the unpin is deliberately the last step precisely because it is the one that makes every
+earlier gap visible.

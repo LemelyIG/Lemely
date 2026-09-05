@@ -263,20 +263,21 @@ source.**
 
 ### 5.6 Operational
 
-- **The backend cannot run more than one replica (D6.6).** `JobRegistry`
-  (`lemely/web/jobs.py`) — every in-flight correction job and its SSE stream —
-  and the parent OTP challenge store (`lemely/auth/service.py`) are
-  **process-local**. Two replicas mean a student reconnects to a replica that
-  never heard of their job, and a parent's OTP is issued on one instance and
-  verified on another. Intermittent, unreproducible, tripped silently by any
-  host that autoscales by default, and caught by no test in this build.
+- **The single-replica constraint D6.6 recorded is lifted (D7.13).** `JobRegistry`
+  is deleted outright — it backed nothing; `POST /student/correct` has always
+  streamed over the event bus on the one HTTP connection the correction runs on,
+  with no separate reconnect to lose. The parent OTP challenge store and the auth
+  cooldown store are Postgres-backed (migrations `0025`, `0026`), so a code issued
+  on one instance verifies on any other. The one piece of state still tied to a
+  single instance is the Gemini response cache — a cache, not a correctness issue
+  (`docs/deployment.md` §5.1).
 - **The container entrypoint runs `alembic upgrade head` on every start.** Right
   for a one-command local bring-up, wrong for production, where migration must
   be a separate gated step. `docs/deployment.md` says so.
-- **The $8 Gemini ledger lives on the container filesystem** under
-  `/app/.lemely-cache`. A host that recycles containers resets measured spend to
-  zero while the real bill climbs — mount a volume or the hard cap stops being
-  a cap.
+- **The web process enforces no cap on Gemini spend (D7.13).** A Google Cloud
+  billing budget on the project is the only guard now, and it is an alert, not a
+  stop — see `docs/deployment.md` §5.4. The CLI and Gradio are unaffected and
+  still enforce the on-disk `$8.00` ledger this bullet used to describe.
 - **`/api/teacher/overview` is 10–40× slower than everything else measured**
   (p50 396 ms / p95 458 ms against 8–150 ms elsewhere) — the shape of an N+1
   across a teacher's classes and students. Observed on seeded data during the
