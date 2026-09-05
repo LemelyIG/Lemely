@@ -179,8 +179,8 @@ class SchemeRowDTO(ApiModel):
     """A parsed / pending / custom mark-scheme row.
 
     Data-backed: ``doc`` (filename), ``paper``, ``session``, ``maxMarks``,
-    ``questionCount``, ``status``. All derived from the parsed
-    :class:`MarkScheme` on disk.
+    ``questionCount``, ``status``. All derived from the parsed scheme corpus
+    (``mark_schemes``/``papers``, spec §4.3) — not, as before, a file on disk.
     """
 
     doc: str

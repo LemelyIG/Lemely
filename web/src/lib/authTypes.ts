@@ -60,6 +60,14 @@ export interface TokenResponse {
    * product copy.
    */
   devLink: string | null
+  /**
+   * The typed 6-digit code minted alongside `devLink` (spec §4.4/DS15) —
+   * the same D3.16 rule, populated and cleared together with it: both
+   * `null` with a real provider configured, both non-null only when nothing
+   * delivers out of band. Render it in the same developer panel as the
+   * link, never as ordinary product copy.
+   */
+  devCode: string | null
 }
 
 export interface OtpRequestResponse {
@@ -77,6 +85,17 @@ export interface OtpRequestResponse {
  * (G-07's `/verify-email/:token`, spec §4.4). */
 export interface VerifyEmailBody {
   token: string
+}
+
+/**
+ * `POST /auth/verify-email/code` body (spec §4.4/DS15) — redeem the typed
+ * 6-digit code minted alongside the link. Authenticated: the address comes
+ * from the caller's own session server-side, never a body field, so there is
+ * deliberately no matching field here either — the code alone is the
+ * credential.
+ */
+export interface VerifyEmailCodeBody {
+  code: string
 }
 
 /** Acknowledgement that `users.email_verified_at` was stamped. */
@@ -99,6 +118,9 @@ export interface ResendVerificationResponse {
    * developer panel, never as ordinary product copy.
    */
   devLink: string | null
+  /** The typed 6-digit code re-minted alongside `devLink` — see
+   * `TokenResponse.devCode` for the D3.16/DS15 rule this follows. */
+  devCode: string | null
 }
 
 /** `POST /auth/password-reset/request` body. */

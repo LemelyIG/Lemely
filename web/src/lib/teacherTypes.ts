@@ -43,7 +43,7 @@
  * are free to drift or be deleted once screens move off stub data.
  */
 
-import type { MarkerSource, QuestionResult as BaseQuestionResult, WeakArea } from "./types"
+import type { QuestionResult as BaseQuestionResult, WeakArea } from "./types"
 
 /**
  * Kind of a tracked paper, driving the grading-grid card variant (mirrors
@@ -1107,100 +1107,4 @@ export interface AnnouncementCreateResponse {
 /** Response for `GET /teacher/announcements` (author-scoped, newest first). */
 export interface AnnouncementList {
   announcements: Announcement[]
-}
-
-// ── POST /papers/{id}/extract, /grade SSE frames ─────────────────────────
-
-/**
- * SSE frames emitted by `POST /papers/{id}/extract` and
- * `POST /papers/{id}/grade` over the shared event bus
- * (`lemely/runtime/events.py`), published from the `run()` closures in
- * `lemely/web/routers/teacher.py::extract_paper` /
- * `grade_paper_endpoint` and, transitively, from
- * `lemely/web/services/grading.py::extract_answers`/`grade_paper` — which
- * fan out into `lemely/io/answer_extraction.py`, `lemely/io/correction_ai.py`,
- * and `lemely/io/gemini.py`. (`lemely/io/integrity.py`'s
- * `apply_integrity_checks`, also on the grade path, never publishes.)
- *
- * Unlike the DTOs above, this payload is **not** a Pydantic `ApiModel`:
- * `EventBus.publish()` forwards whatever kwargs the publisher passed
- * verbatim (see `lemely/web/sse.py::_event_to_payload`), so these fields are
- * **snake_case** on the wire, not camelCase — same caveat as
- * `StudentCorrectFrame` in `studentTypes.ts`.
- *
- * Frame types actually observed across both endpoints' call graphs:
- * `extraction_progress` (per answer, extract endpoint and the extract-then-grade
- * path of the grade endpoint), `marking_progress` (per question — two distinct
- * shapes, see below), `gemini_call_start`, `gemini_call_end`, `gemini_cache_hit`,
- * `gemini_retry`, `gemini_escalate`, `budget_warning`, `budget_exceeded`,
- * `warning`, `error`. Neither endpoint publishes a terminal "complete"
- * summary frame (unlike the student `/correct` pipeline) — the stream simply
- * ends at the `[DONE]` sentinel `streamActivity()` already stops on.
- *
- * `marking_progress` shape differs by path: the live `correct_paper` marking
- * loop (`correction_ai.py`) publishes `question_id`/`marker_source`/
- * `confidence`/`awarded`/`max_marks` (no `paper_id`); the cached-report
- * replay branch in `grade_paper_endpoint` (no mark scheme attached, reusing an
- * already-graded `AccuracyReport`) publishes `paper_id`/`question_id`/
- * `marker_source`/`confidence` only (no `awarded`/`max_marks`). Both shapes
- * are covered by the all-optional fields below.
- *
- * `warning` shape also differs by source: `extract_paper`'s and
- * `grade_paper_endpoint`'s own fallback branches (missing mark
- * scheme/scan/report) publish `paper_id` + `message`; the mark-scheme
- * validation warning inside `correct_paper` publishes `message` only.
- */
-export interface TeacherPipelineFrame {
-  type:
-    | "extraction_progress"
-    | "marking_progress"
-    | "gemini_call_start"
-    | "gemini_call_end"
-    | "gemini_cache_hit"
-    | "gemini_retry"
-    | "gemini_escalate"
-    | "budget_warning"
-    | "budget_exceeded"
-    | "warning"
-    | "error"
-    | (string & {})
-  // warning (own fallback branches only — see interface doc)
-  paper_id?: string
-  message?: string
-  // extraction_progress (answer_extraction.py)
-  question_id?: string
-  confidence?: number
-  has_working?: boolean
-  // extraction_progress (answer_extraction.py) and the live marking loop
-  // (correction_ai.py): `index` is this question's 1-based position in the
-  // stage's work list, `total` is that list's length — the real "Question 7 of
-  // 21" counter behind C-10's per-stage progress. Both publishers derive
-  // `index` from `enumerate` over the source list rather than counting frames
-  // already emitted, so a question that fails and reports an `error` instead
-  // does not shift the indices after it. Not published by the cached-report
-  // replay branch in `grade_paper_endpoint`, which iterates an already-graded
-  // `AccuracyReport` — frames from that path carry no counter at all and the
-  // UI must render the stage without one rather than invent a denominator.
-  index?: number
-  total?: number
-  // marking_progress (correction_ai.py live loop and/or the cached-report replay)
-  marker_source?: MarkerSource
-  awarded?: number
-  max_marks?: number
-  // gemini_call_start / gemini_call_end / gemini_cache_hit / gemini_retry / gemini_escalate
-  task?: string
-  model?: string
-  cache_key?: string
-  attempt?: number
-  error?: string
-  input_tokens?: number
-  output_tokens?: number
-  usd_cost?: number
-  latency_ms?: number
-  escalation_model?: string
-  // budget_warning / budget_exceeded (gemini.py)
-  threshold?: number
-  total_usd?: number
-  ceiling?: number
-  [key: string]: unknown
 }

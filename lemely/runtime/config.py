@@ -427,6 +427,13 @@ class AuthSettings(BaseModel):
     # Minimum seconds between successive OTP issues for the same phone. Stops an
     # attacker resetting the attempt counter by re-requesting before lockout.
     otp_min_resend_seconds: int = Field(default=30, ge=0)
+    # Time-to-live for a pending email-channel OTP challenge (spec §4.4), in
+    # seconds — independent of the phone challenge's `otp_ttl_seconds`. Longer
+    # than the phone default: the code sits in an inbox rather than an SMS a
+    # parent is expected to act on within a minute or two. Length, attempt cap
+    # and resend cooldown are shared with the phone code (`otp_length`,
+    # `otp_max_attempts`, `otp_min_resend_seconds`).
+    email_otp_ttl_seconds: int = Field(default=600, ge=60)
     # D7.12: reuses D1.7 item 2's OTP-resend-cooldown mechanism
     # (``lemely.auth.cooldown.CooldownStore``) for the cheapest abuse shape on
     # the two *public, unauthenticated* auth routes that mint an account or
@@ -453,37 +460,49 @@ class IntegritySettings(BaseModel):
     ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
-class StorageSettings(BaseModel):
-    """Object-storage settings for uploads (P2.5) and profile pictures.
+class GradingSettings(BaseModel):
+    """Teacher grading run tuning (spec 2026-09-03 §4.2).
 
-    Overrides via ``lemely.toml`` under the ``[storage]`` section or
-    ``LEMELY_STORAGE__*`` env vars.
-
-    ``provider`` selects which :class:`~lemely.io.storage.StorageBackend`
-    :func:`~lemely.web.deps.get_storage_backend` wires. ``"gcs"`` is the
-    default: Google Cloud Storage via Application Default Credentials (a
-    service account attached to the Cloud Run/GCE/GKE workload, or a local
-    ``gcloud auth application-default login``) — no key lives in this
-    settings tree for that path. ``"supabase"`` uses the same
-    ``supabase.url``/``service_role_key`` as GoTrue and remains fully
-    supported; a deployment choosing it should also set ``bucket``/
-    ``avatar_bucket`` back to its Supabase bucket names (historically
-    ``uploads`` and ``avatars``), because the defaults below are GCS-shaped.
-
-    **Why the bucket defaults carry a ``lemely-`` prefix.** Supabase bucket
-    names are scoped to one project, so bare ``uploads``/``avatars`` were
-    fine there. GCS bucket names are a single *global* namespace shared by
-    every Google Cloud customer, so ``uploads`` and ``avatars`` are long
-    since taken and could never be created — a default that can only ever
-    fail is worse than no default. The deployed pipeline does not rely on
-    these defaults at all: ``.github/workflows/deploy.yml`` sets
-    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project
-    id + environment suffix), which is what keeps staging and production
-    from sharing one bucket.
+    ``stale_run_after_seconds``: a ``teacher_papers`` row in ``processing``
+    whose ``updated_at`` is older than this is a dead run — its instance died
+    — and may be reclaimed by the next regrade. Progress is written at every
+    stage and every question, so a silent quarter-hour is not a slow run.
     """
 
     model_config = ConfigDict(extra="forbid")
-    provider: Literal["supabase", "gcs"] = "gcs"
+    stale_run_after_seconds: int = Field(default=900, ge=60)
+
+
+class StorageSettings(BaseModel):
+    """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
+
+    ``backend`` selects the implementation ``lemely.web.deps.get_storage_backend``
+    builds: ``local`` (the default — files under ``paths.output_dir/storage``,
+    for dev, compose and CI) or ``gcs`` (Google Cloud Storage via the official
+    SDK, authenticated with application-default credentials — the Cloud Run
+    runtime service account in production). Overrides via ``[storage]`` in
+    ``lemely.toml`` or ``LEMELY_STORAGE__*`` env vars.
+
+    There is no Supabase Storage backend: DS7 removed it, and #220's
+    ``provider = "supabase"`` path came off with it. The two names are
+    deliberately different — a config written for ``provider`` fails loudly
+    against ``extra="forbid"`` rather than silently selecting a backend that
+    no longer exists.
+
+    **Why the bucket defaults carry a ``lemely-`` prefix.** GCS bucket names
+    are a single *global* namespace shared by every Google Cloud customer, so
+    bare ``uploads`` and ``avatars`` are long since taken and could never be
+    created — a default that can only ever fail is worse than no default. For
+    ``local`` these are directory names under ``paths.output_dir/storage``,
+    where the prefix is merely harmless. The deployed pipeline does not rely
+    on these defaults at all: ``.github/workflows/deploy.yml`` sets
+    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project id
+    + environment suffix), which is what keeps staging and production from
+    sharing one bucket.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    backend: Literal["local", "gcs"] = "local"
     # `min_length=1` is not decoration: an unset GitHub Actions variable
     # renders as the empty string, so a mistyped `vars.` reference in
     # deploy.yml would otherwise boot a service that writes every object to
@@ -621,6 +640,7 @@ class Settings(BaseSettings):
     accuracy_eval: AccuracyEvalSettings = AccuracyEvalSettings()
     det_parser: DetParserSettings = DetParserSettings()
     integrity: IntegritySettings = IntegritySettings()
+    grading: GradingSettings = GradingSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
     email: EmailSettings = EmailSettings()

@@ -6,7 +6,7 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { fetchBlobUrl, request, streamActivity } from "@/lib/api"
+import { fetchBlobUrl, request } from "@/lib/api"
 import type {
   AcknowledgeAtRiskRequest,
   AnnouncementCreateRequest,
@@ -46,7 +46,6 @@ import type {
   SchemeRow,
   SetQuizStatusRequest,
   StudentDetail,
-  TeacherPipelineFrame,
   UpdateClassRequest,
   UpdateQuizDraftRequest,
   UploadResponse,
@@ -856,10 +855,10 @@ export function useSchemes(): UseQueryResult<SchemeList, Error> {
  * `POST /papers/{paperId}/regrade` — queue a paper for another marking run.
  *
  * Returns as soon as the run is queued (202); the outcome arrives through
- * `usePapers`/`usePaperDetail` polling, since marking is server-side. The
- * streaming sibling (`gradePaper`) is not used for this: holding a connection
- * open for the minutes a run takes buys nothing when the grid is already
- * watching for the result.
+ * `usePapers`/`usePaperDetail` polling, since marking is server-side (the
+ * old streaming `POST /papers/{id}/extract` and `/grade` endpoints are
+ * deleted — DS14 — holding a connection open for the minutes a run takes
+ * bought nothing once the grid was already watching for the result).
  */
 export function useRegradePaper(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
@@ -893,43 +892,6 @@ export async function uploadPaper(scan: File, markScheme?: File): Promise<Upload
     method: "POST",
     body: form,
   })
-}
-
-/**
- * Stream the answer-extraction step for an uploaded paper. A thin
- * pass-through over `streamActivity` typed to the frame shapes
- * `POST /papers/{id}/extract` actually emits (see `TeacherPipelineFrame` in
- * `lib/teacherTypes.ts`). No request body — unlike the student `/correct`
- * endpoint, `paperId` here is a path param, not a JSON field.
- */
-export function extractPaper(paperId: string): AsyncGenerator<TeacherPipelineFrame> {
-  return streamActivity(`/papers/${paperId}/extract`, {
-    method: "POST",
-  }) as AsyncGenerator<TeacherPipelineFrame>
-}
-
-/**
- * Stream the grading step for an uploaded paper. A thin pass-through over
- * `streamActivity` typed to the frame shapes `POST /papers/{id}/grade`
- * actually emits (see `TeacherPipelineFrame` in `lib/teacherTypes.ts`). No
- * request body — `paperId` here is a path param, not a JSON field.
- *
- * **No screen calls this today.** The grading console used to, and driving the
- * run from a browser stream is what let one backend stall leave papers at
- * "Queued" forever with a refresh wiping the only progress readout (D6.13).
- * Marking is now a server-side job, so the console polls `GET /papers/{id}` —
- * which reports the same progress, for every paper, and survives a reload.
- *
- * Kept because the endpoint is real, tested, and the right tool for a
- * per-frame live view (warnings and model-call chatter that the polled
- * pipeline summarises away) if a screen ever wants one. Use `useRegradePaper`
- * to merely *start* a run — it returns immediately instead of holding a
- * connection open for the length of the marking.
- */
-export function gradePaper(paperId: string): AsyncGenerator<TeacherPipelineFrame> {
-  return streamActivity(`/papers/${paperId}/grade`, {
-    method: "POST",
-  }) as AsyncGenerator<TeacherPipelineFrame>
 }
 
 /**

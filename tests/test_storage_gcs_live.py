@@ -44,7 +44,8 @@ import uuid
 import httpx
 import pytest
 
-from lemely.io.storage import GcsStorageBackend, StorageObjectNotFoundError
+from lemely.io.storage import StorageObjectNotFoundError
+from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.runtime.config import Settings
 
 _LIVE_ENV_VAR = "LEMELY_LIVE_GCS"
@@ -65,7 +66,7 @@ def live_bucket() -> str:
 
 @pytest.fixture
 def live_backend(live_bucket: str) -> GcsStorageBackend:
-    backend = GcsStorageBackend(_live_settings())
+    backend = GcsStorageBackend(project=_live_settings().storage.gcs_project)
     try:
         # Resolving ADC is the cheapest way to turn "no credentials on this
         # machine" into a skip rather than an error inside the first test.

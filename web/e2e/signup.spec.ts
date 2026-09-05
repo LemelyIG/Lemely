@@ -14,6 +14,13 @@ const BACKEND_URL = "http://127.0.0.1:8000"
  * (Invite); the other two create a brand-new account through the UI, which
  * is the thing under test.
  *
+ * A fourth test, added by plan Task 13 (spec §4.4/DS15), sits inside the
+ * student `describe` block right after the link-based journey: same
+ * account-creation shape, but it types the dev code from `VerifyEmail.tsx`'s
+ * `DevPanel` into `#verify-code` instead of following the link, exercising
+ * the independent second credential DS15 adds rather than a second copy of
+ * the first journey.
+ *
  * ── Selectors below are grounded in the shipped component source, not
  * guessed — every label/button-name string here was read out of the actual
  * `.tsx` it exercises (SignupRoleSelect.tsx, SignupDetails.tsx,
@@ -119,6 +126,57 @@ test.describe("student sign-up: landing to dashboard", () => {
     })
 
     expect(errors, `console errors during the student journey:\n${errors.join("\n")}`).toEqual([])
+  })
+
+  test("a visitor signs up and verifies by typing the dev code instead of opening the link", async ({
+    page,
+  }) => {
+    const errors = watchConsole(page)
+    const runTag = `e2e${Date.now().toString(36)}`
+    const email = `student-code-${runTag}@example.com`
+
+    // Straight to the details form: the landing-to-/signup hop and the role
+    // card are already exercised by the journey above, and this test's own
+    // subject is the typed-code path (spec §4.4/DS15), not navigation into
+    // signup a second time.
+    await page.goto("/signup/student")
+    await page.getByLabel("Name").fill("E2E Student Code")
+    await page.getByLabel("Email").fill(email)
+    await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-4")
+    await page.getByRole("checkbox").check()
+    await page.getByRole("button", { name: "Create account" }).click()
+    await expect(page).toHaveURL(/\/verify-email$/, { timeout: 15_000 })
+    await expect(page.getByRole("heading", { name: "Verify your email" })).toBeVisible()
+
+    // G-07/DS15: one resend mints the link and the code together
+    // (`ResendVerificationResponse.devLink`/`devCode`, always populated as a
+    // pair) — this journey types the code in and never opens the link at all.
+    await page.getByRole("button", { name: "Resend verification link" }).click()
+    const devLink = page.getByRole("link", { name: /^\/verify-email\// })
+    await expect(devLink).toBeVisible({ timeout: 10_000 })
+
+    // The code renders in a labelled `<span>` next to the link's own anchor
+    // (`DevPanel`, VerifyEmail.tsx) — read-then-strip-the-label, the same
+    // pattern the invite journey's join-code assertion uses above for the
+    // identical reason: the element's text content mixes a label with the
+    // value it names.
+    const codeContainer = devLink.locator("xpath=following-sibling::span")
+    const codeRaw = (await codeContainer.textContent()) ?? ""
+    const code = codeRaw.replace("Code", "").trim()
+    expect(code, "dev code panel did not carry a 6-digit code").toMatch(/^\d{6}$/)
+
+    await page.locator("#verify-code").fill(code)
+    await page.getByRole("button", { name: "Verify code" }).click()
+
+    // Leaves /verify-email for the student portal — D7.9: a fresh account
+    // has no onboardingCompletedAt yet, so /student/onboard is the expected
+    // landing, same as the link-based journey above.
+    await expect(page).toHaveURL(/\/student(\/onboard)?$/, { timeout: 15_000 })
+
+    expect(
+      errors,
+      `console errors during the code-verification journey:\n${errors.join("\n")}`,
+    ).toEqual([])
   })
 })
 

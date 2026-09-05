@@ -6,16 +6,17 @@ import type {
 /*
  * Shared SSE-frame → C-10 `ProcessingState` reducer.
  *
- * Two screens drive the same C-10 component off the same backend frame
- * shapes: the student's S-14 "correct a paper" panel
+ * The student's S-14 "correct a paper" panel
  * (`portals/student/screens/CorrectPaper.tsx`, streaming `/student/correct`)
- * and the teacher grading console (streaming the teacher extract/grade
- * endpoints). The stage *lists* differ — the student's pipeline has a
- * mark-scheme fetch the teacher's does not — but the state machine driving
- * them is identical: advance one stage, back-fill the earlier ones, annotate
- * the running stage with non-stage-specific chatter, fail the running stage
- * on error. These helpers started life inline in `CorrectPaper.tsx`; they
- * live here now because a second copy in the teacher console would be free
+ * is the only streaming consumer: advance one stage, back-fill the earlier
+ * ones, annotate the running stage with non-stage-specific chatter, fail the
+ * running stage on error.
+ *
+ * The teacher grading console once streamed the extract/grade endpoints and
+ * drove the same machine; those SSE routes were removed (DS14) and it now
+ * polls, keeping only `failActiveStage` for its error path. The helpers are
+ * still shared rather than folded back into `CorrectPaper.tsx` because that
+ * one helper is genuinely used by both, and because a second copy would be free
  * to drift from the first, and a progress panel that reports the pipeline
  * differently depending on which portal you are in is exactly the kind of
  * "roughly true" UI that S-14 forbids.
@@ -25,9 +26,12 @@ import type {
  */
 
 /** The subset of an SSE frame these helpers read. Deliberately structural and
- * open-ended (`[key: string]: unknown`) so both `StudentCorrectFrame` and
- * `TeacherPipelineFrame` satisfy it without either importing the other — the
- * two wire schemas overlap but are not the same type. */
+ * open-ended (`[key: string]: unknown`) so a frame type satisfies it without
+ * importing anything from here. `StudentCorrectFrame` is the only implementor
+ * left: the teacher console's `TeacherPipelineFrame` was removed with the
+ * teacher SSE routes (DS14), and the structural shape is kept rather than
+ * narrowed to that one type because it costs nothing and is what lets a
+ * future frame schema opt in the same way. */
 export interface PipelineFrameLike {
   type: string
   message?: string

@@ -33,19 +33,6 @@ export interface PlatformCounts {
   uploadsByStatus: Record<string, number>
 }
 
-/** Gemini spend against the configured hard ceiling.
- *
- * `ceilingUsd` and `remainingUsd` are null together when no ceiling is
- * configured. That is a real state and is not the same as a ceiling of zero. */
-export interface Spend {
-  cumulativeUsd: number
-  ceilingUsd: number | null
-  remainingUsd: number | null
-  /** The marks the runtime sends warnings at. A spend figure without its alarm
-   * points cannot be read as safe or unsafe. */
-  thresholdsUsd: number[]
-}
-
 /** What the console can honestly assert about the deployment. No uptime and no
  * dependency ping: nothing records them, and a green light with no check behind
  * it is worse than no light. */
@@ -64,10 +51,13 @@ export interface Signup {
   createdAt: string
 }
 
-/** Response for `GET /api/admin/overview` (X-01). */
+/** Response for `GET /api/admin/overview` (X-01).
+ *
+ * Carries no spend figure (DS3): the web process keeps no cost ledger, and the
+ * guard on Gemini spend is a Google Cloud billing budget on the deployed
+ * service, not this endpoint. */
 export interface PlatformOverview {
   counts: PlatformCounts
-  spend: Spend
   health: SystemHealth
   recentSignups: Signup[]
 }

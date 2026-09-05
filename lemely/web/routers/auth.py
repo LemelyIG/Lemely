@@ -15,7 +15,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, Depends, Header, HTTPException
 
-from lemely.auth.cooldown import CooldownError, CooldownStore
+from lemely.auth.cooldown import CooldownError, CooldownStoreProtocol
 from lemely.auth.mirror import UserMirror
 from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
@@ -44,6 +44,7 @@ from lemely.web.schemas_auth import (
     ResendVerificationResponseDTO,
     SignupRequestDTO,
     TokenResponseDTO,
+    VerifyEmailCodeRequestDTO,
     VerifyEmailRequestDTO,
     VerifyEmailResponseDTO,
 )
@@ -74,6 +75,7 @@ def _to_token_dto(result: AuthResult) -> TokenResponseDTO:
         role=result.role.value,
         refreshToken=result.refresh_token,
         devLink=result.verification_dev_link,
+        devCode=result.verification_dev_code,
     )
 
 
@@ -128,7 +130,7 @@ def signup(
     body: SignupRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
     mirror: Annotated[UserMirror, Depends(get_user_mirror)],
-    cooldown: Annotated[CooldownStore, Depends(get_signup_and_reset_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_signup_and_reset_cooldown_store)],
     user_agent: Annotated[str | None, Header()] = None,
 ) -> TokenResponseDTO:
     """Create a self-service **student** or **teacher** account and return a token.
@@ -307,13 +309,36 @@ def verify_email(
     return VerifyEmailResponseDTO()
 
 
+@router.post("/auth/verify-email/code", response_model=VerifyEmailResponseDTO)
+def verify_email_code(
+    body: VerifyEmailCodeRequestDTO,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    service: Annotated[AuthService, Depends(get_auth_service)],
+) -> VerifyEmailResponseDTO:
+    """Verify the **authenticated caller's** email by code (DS15). 400 on any failure.
+
+    The second route through §4.4/DS15's link-and-code pair: authenticated
+    (any signed-in role, AUTH_ANY) rather than public like ``/verify-email``,
+    because the code alone — six digits — is far weaker as a bearer credential
+    than the link's opaque token, so it is only ever redeemed against the
+    caller's *own* session, read from :class:`~lemely.web.deps.AuthContext`,
+    never a body field. A wrong, expired, or locked-out code is a **400** with
+    the same non-revealing detail :func:`verify_email` uses.
+    """
+    try:
+        service.verify_email_code(uuid.UUID(auth.user_id), body.code)
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return VerifyEmailResponseDTO()
+
+
 @router.post("/auth/verify-email/resend", response_model=ResendVerificationResponseDTO)
 def resend_verification(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     service: Annotated[AuthService, Depends(get_auth_service)],
-    cooldown: Annotated[CooldownStore, Depends(get_resend_verification_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_resend_verification_cooldown_store)],
 ) -> ResendVerificationResponseDTO:
-    """Re-mint and (re)send a verification token for the **authenticated caller**.
+    """Re-mint and (re)send a verification link and code for the **authenticated caller**.
 
     Deliberately takes no address in the body: the caller is read from
     :class:`~lemely.web.deps.AuthContext` alone, exactly as
@@ -325,23 +350,39 @@ def resend_verification(
 
     A per-user cooldown (D7.12) throttles repeat resends to a **429**,
     mirroring ``/auth/otp/request``'s existing resend-cooldown mapping.
+
+    **A second, independent 429 source.** ``AuthService.resend_verification``
+    now also issues a fresh email-channel code
+    (:meth:`~lemely.auth.service.AuthService._issue_email_code`), and the OTP
+    store's own resend cooldown (shared with the phone flow,
+    ``otp_min_resend_seconds``) can reject that issue with
+    :class:`~lemely.auth.otp.OtpRateLimitError` — distinct from, and not
+    prevented by, the ``cooldown`` check above: the D7.12 store is stamped
+    only *on* a resend call, so a caller's very first resend (no D7.12 stamp
+    yet) can still land inside the OTP store's own window if it follows the
+    ``signup`` that already issued a code for the same address moments
+    earlier. Mapped to the same 429 :func:`request_otp` already uses for the
+    identical exception on the phone channel, rather than left to surface as
+    an unhandled 500.
     """
     try:
         cooldown.check_and_stamp(auth.user_id)
     except CooldownError as exc:
         raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
     try:
-        dev_link = service.resend_verification(uuid.UUID(auth.user_id))
+        dev_link, dev_code = service.resend_verification(uuid.UUID(auth.user_id))
+    except OtpRateLimitError as exc:
+        raise HTTPException(status_code=429, detail=str(exc)) from exc
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    return ResendVerificationResponseDTO(devLink=dev_link)
+    return ResendVerificationResponseDTO(devLink=dev_link, devCode=dev_code)
 
 
 @router.post("/auth/password-reset/request", response_model=PasswordResetRequestResponseDTO)
 def request_password_reset(
     body: PasswordResetRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
-    cooldown: Annotated[CooldownStore, Depends(get_signup_and_reset_cooldown_store)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_signup_and_reset_cooldown_store)],
 ) -> PasswordResetRequestResponseDTO:
     """Request a password-reset link for ``email`` — always answers 200.
 

@@ -16,10 +16,13 @@ file proves the four routes actually do what they are for — mirroring
 
 Hermetic throughout: :class:`~lemely.auth.service.AuthService` is built on
 the fakes in ``tests/auth_fakes.py`` (no Postgres, no GoTrue network, no
-Gemini), and the two D7.12 cooldown stores are the *real*
-:class:`~lemely.auth.cooldown.CooldownStore` singletons wired by
-``deps.py`` — a wall-clock, in-process store needs no double to behave
-correctly in a test that runs in milliseconds.
+Gemini), and the two D7.12 cooldown stores are overridden with a fresh
+:class:`~lemely.auth.cooldown.CooldownStore` per test — spec §4.4 moved
+``deps.py``'s real wiring onto ``DbCooldownStore`` (Postgres-backed), so
+leaving them unoverridden would make every cooldown-guarded call in this
+file a real write against the dev database, one this file's own hermetic
+claim (and ``test_auth_router.py``'s/``test_web_devices.py``'s matching
+overrides) says it never touches.
 """
 
 from __future__ import annotations
@@ -32,6 +35,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+from lemely.auth.cooldown import CooldownStore
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
@@ -71,11 +75,23 @@ def context() -> Iterator[tuple[TestClient, AuthService, FakeUserMirror]]:
     configured" regardless of what token it was handed, which would prove
     nothing about the routes themselves.
 
-    The two cooldown stores are deliberately **not** overridden: they are
-    real, in-process, wall-clock ``CooldownStore`` singletons (``deps.py``),
-    and ``reset_singletons()`` in the teardown gives every test a fresh one —
-    exactly the discipline ``test_auth_router.py``'s own fixture already
-    applies to the singletons it does not override either.
+    The two cooldown stores **are** overridden, each to its own fresh
+    in-memory :class:`~lemely.auth.cooldown.CooldownStore` built once per
+    fixture invocation and captured by closure (never rebuilt inside the
+    override lambda — the lambda must return the *same* instance on every
+    call within a test, or a route's second request in the same test would
+    see an empty store and cooldown enforcement would silently vanish
+    mid-test). ``deps.py``'s real wiring is ``DbCooldownStore`` (Postgres-backed,
+    spec §4.4): left unoverridden, every cooldown-guarded call this file
+    makes would stamp the real dev database's ``auth_cooldowns`` table, and
+    unlike this fresh-per-test double, that stamp outlives both the fixture
+    teardown and the test process itself — the exact bug this override, and
+    the matching ones in ``test_auth_router.py``/``test_web_devices.py``,
+    exist to prevent. ``test_signup_within_cooldown_is_429`` retrieves this
+    exact overridden instance (via ``client.app.dependency_overrides[...]()``)
+    to pre-stamp it directly, rather than calling the real
+    ``get_signup_and_reset_cooldown_store()`` singleton, which this app no
+    longer uses at all once overridden.
 
     ``get_user_mirror`` **is** overridden, to the same ``mirror`` instance
     ``service`` is built on: the signup route now reads the mirror directly
@@ -93,6 +109,13 @@ def context() -> Iterator[tuple[TestClient, AuthService, FakeUserMirror]]:
         ttl_seconds=settings.auth.otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
+        # `resend_verification` now issues a fresh email-channel code
+        # alongside the link (spec §4.4/DS15) — several tests below resend
+        # in the same instant as the signup that already issued one, and the
+        # store's default 30s resend cooldown would otherwise raise
+        # `OtpRateLimitError`. See `tests/test_auth_service.py`'s matching
+        # fix for the same reasoning.
+        min_resend_seconds=0,
     )
     service = AuthService(
         gotrue=FakeGoTrueBackend(),
@@ -106,6 +129,19 @@ def context() -> Iterator[tuple[TestClient, AuthService, FakeUserMirror]]:
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
     app.dependency_overrides[get_user_mirror] = lambda: mirror
+    # One instance per fixture invocation, captured by closure rather than
+    # built inside the lambda — see the docstring above for why a rebuild
+    # per call would silently disable cooldown enforcement within a test.
+    signup_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
+    )
+    resend_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.resend_verification_cooldown_seconds,
+    )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
     client = TestClient(app)
     try:
         yield client, service, mirror
@@ -206,8 +242,8 @@ def test_signup_within_cooldown_is_429(
 ) -> None:
     """D7.12, mirroring ``test_otp_resend_within_cooldown_returns_429``.
 
-    Pre-stamps the shared cooldown store directly rather than via a first
-    signup call: the router's duplicate-address carve-out (see
+    Pre-stamps the *overridden* per-test cooldown store directly rather than
+    via a first signup call: the router's duplicate-address carve-out (see
     ``routers/auth.py``'s ``signup`` docstring and
     ``test_signup_duplicate_email_is_400_not_429_even_when_retried`` below)
     means a repeat signup of an address that already succeeded is a
@@ -215,10 +251,18 @@ def test_signup_within_cooldown_is_429(
     429 for a genuinely unclaimed address is a same-email retry that lands
     *inside* the window a prior attempt already opened, exactly as pinning it
     this way proves: the cooldown, not "was this a duplicate", is what fires.
+
+    Retrieved via ``client.app.dependency_overrides[...]()`` rather than by
+    calling ``get_signup_and_reset_cooldown_store()`` directly — that module-
+    level singleton is the real, Postgres-backed ``DbCooldownStore`` (spec
+    §4.4) this app no longer uses at all once the ``context`` fixture
+    overrides it; stamping it would have no effect on what the route
+    actually checks.
     """
     client, _, _ = context
     email = "cooldown@example.com"
-    get_signup_and_reset_cooldown_store().check_and_stamp(email)
+    cooldown = client.app.dependency_overrides[get_signup_and_reset_cooldown_store]()  # type: ignore[attr-defined]
+    cooldown.check_and_stamp(email)
 
     resp = client.post(
         "/api/auth/signup",
@@ -342,7 +386,15 @@ def test_resend_verification_within_cooldown_is_429(
     context: tuple[TestClient, AuthService, FakeUserMirror],
 ) -> None:
     """D7.12's per-user resend cooldown, the authenticated counterpart of
-    ``test_signup_within_cooldown_is_429``."""
+    ``test_signup_within_cooldown_is_429``.
+
+    Both calls below hit this same ``client``/``app``, whose
+    ``get_resend_verification_cooldown_store`` override (the ``context``
+    fixture) returns the identical ``CooldownStore`` instance on every
+    invocation — so, unlike ``test_signup_within_cooldown_is_429``, no direct
+    pre-stamp is needed: the first live call stamps that overridden instance,
+    and the second observes it.
+    """
     client, _, _ = context
     body = _signup(client, email="resend-cooldown@example.com")
     client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
@@ -353,6 +405,121 @@ def test_resend_verification_within_cooldown_is_429(
     assert first.status_code == 200, first.text
     second = client.post("/api/auth/verify-email/resend")
     assert second.status_code == 429, second.text
+
+
+@pytest.fixture
+def rate_limited_otp_context() -> Iterator[tuple[TestClient, AuthService]]:
+    """Like ``context``, but the OTP store's OWN resend cooldown is left live.
+
+    ``context`` sets ``min_resend_seconds=0`` on its ``OtpStore`` so the
+    *other* resend tests above — which call ``resend_verification`` in the
+    same instant as the ``signup`` that already issued a code — don't trip
+    over the store's resend-cooldown while proving something else entirely.
+    That fix would also hide the exact collision this fixture exists to
+    reach, so it is a separate, local fixture rather than a change to the
+    shared one: ``otp_min_resend_seconds`` here is the real (non-zero)
+    default, matching production.
+    """
+    settings = Settings()
+    mirror = FakeUserMirror()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(7),
+        ttl_seconds=settings.auth.otp_ttl_seconds,
+        max_attempts=settings.auth.otp_max_attempts,
+        code_length=settings.auth.otp_length,
+        min_resend_seconds=settings.auth.otp_min_resend_seconds,
+    )
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=mirror,  # type: ignore[arg-type]
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+        email=FakeEmailProvider(),
+        tokens=FakeAuthTokenService(),  # type: ignore[arg-type]
+    )
+    app = create_app()
+    app.dependency_overrides[get_auth_service] = lambda: service
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    signup_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
+    )
+    resend_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.resend_verification_cooldown_seconds,
+    )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
+    client = TestClient(app)
+    try:
+        yield client, service
+    finally:
+        app.dependency_overrides.clear()
+        reset_singletons()
+
+
+def test_resend_immediately_after_signup_is_429_not_500(
+    rate_limited_otp_context: tuple[TestClient, AuthService],
+) -> None:
+    """A second, independent throttle can fire on a caller's FIRST-EVER resend.
+
+    D7.12's per-user cooldown (``test_resend_verification_within_cooldown_is_429``
+    above) is stamped only *on* a resend call, so it never blocks this first
+    one. But ``resend_verification`` also issues a fresh email-channel OTP
+    code, and the OTP store's own resend-cooldown (shared with the phone
+    channel, ``otp_min_resend_seconds``) is already live from the ``signup``
+    moments earlier — a completely different key (the email address) and a
+    completely different store from the D7.12 one. Without
+    ``resend_verification``'s ``except OtpRateLimitError`` this raises
+    unhandled (a 500); the route must map it to the same 429
+    ``/auth/otp/request`` already gives the identical exception on the phone
+    channel.
+    """
+    client, _service = rate_limited_otp_context
+    body = _signup(client, email="racy-resend@example.com")
+    headers = {"Authorization": f"Bearer {body['accessToken']}"}
+
+    resp = client.post("/api/auth/verify-email/resend", headers=headers)
+
+    assert resp.status_code == 429, resp.text
+
+
+# ── POST /api/auth/verify-email/code ────────────────────────────────────────
+
+
+def test_verify_email_code_route(
+    context: tuple[TestClient, AuthService, FakeUserMirror],
+) -> None:
+    client, _service, mirror = context
+    signup = _signup(client, email="codeverify@example.com")
+    headers = {"Authorization": f"Bearer {signup['accessToken']}"}
+    assert signup["devCode"] is not None
+    assert (
+        client.post(
+            "/api/auth/verify-email/code", json={"code": "000000"}, headers=headers
+        ).status_code
+        == 400
+    )
+    assert (
+        client.post(
+            "/api/auth/verify-email/code", json={"code": signup["devCode"]}, headers=headers
+        ).status_code
+        == 200
+    )
+    user = mirror.get_by_id(uuid.UUID(str(signup["userId"])))
+    assert user is not None
+    assert user.email_verified_at is not None
+
+
+def test_verify_email_code_requires_a_session(
+    context: tuple[TestClient, AuthService, FakeUserMirror],
+) -> None:
+    client, _service, _mirror = context
+    resp = client.post("/api/auth/verify-email/code", json={"code": "123456"})
+    assert resp.status_code == 401, resp.text
+    assert resp.headers.get("WWW-Authenticate") == "Bearer"
 
 
 # ── POST /api/auth/password-reset/request ───────────────────────────────────
@@ -388,7 +555,14 @@ def test_password_reset_request_within_cooldown_is_429(
     context: tuple[TestClient, AuthService, FakeUserMirror],
 ) -> None:
     """D7.12's per-email cooldown, shared with signup — see
-    ``AuthSettings.signup_and_reset_cooldown_seconds``."""
+    ``AuthSettings.signup_and_reset_cooldown_seconds``.
+
+    Both calls below hit this same ``client``/``app``, whose
+    ``get_signup_and_reset_cooldown_store`` override (the ``context``
+    fixture) returns the identical ``CooldownStore`` instance on every
+    invocation, so the first live call's stamp is what the second observes —
+    no direct pre-stamp needed here, unlike ``test_signup_within_cooldown_is_429``.
+    """
     client, _, _ = context
     email = "reset-cooldown@example.com"
     first = client.post("/api/auth/password-reset/request", json={"email": email})

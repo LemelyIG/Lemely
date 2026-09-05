@@ -480,38 +480,16 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         record("cache_dir_writable", False, str(exc))
 
     # Advisory, never fatal (see `advisory_checks` at the bottom of this
-    # command). Object storage became GCS-by-default, and a fresh clone has no
-    # Google Application Default Credentials — reporting that plainly is
-    # useful, but failing `doctor` over it would red every developer machine
-    # for a subsystem that only the web avatar/upload routes touch. Nothing
-    # here raises: `google.auth.default()` throws `DefaultCredentialsError`
-    # when ADC is absent, which is precisely the state this check describes.
-    if settings.storage.provider == "gcs":
-        try:
-            import google.auth
+    # command): a fresh clone has no Google Application Default Credentials,
+    # and failing `doctor` over that would red every developer machine for a
+    # subsystem only the web upload/avatar routes touch. `check_storage` also
+    # honours `--no-network`, which a bare `google.auth.default()` call here
+    # would not — it would reach for credentials in the one mode that promises
+    # not to.
+    from lemely.io.storage import check_storage
 
-            _, adc_project = google.auth.default()
-            record(
-                "storage_backend",
-                True,
-                f"gcs: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}; "
-                f"ADC resolved (project {settings.storage.gcs_project or adc_project})",
-            )
-        except Exception as exc:
-            record(
-                "storage_backend",
-                False,
-                f"gcs: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}; "
-                f"no Application Default Credentials ({exc}) — run "
-                "`gcloud auth application-default login`, or set "
-                "LEMELY_STORAGE__PROVIDER=supabase",
-            )
-    else:
-        record(
-            "storage_backend",
-            True,
-            f"supabase: buckets {settings.storage.bucket}/{settings.storage.avatar_bucket}",
-        )
+    storage_ok, storage_detail = check_storage(settings, no_network=no_network)
+    record("storage_backend", storage_ok, detail=storage_detail)
 
     try:
         import gradio  # noqa: F401

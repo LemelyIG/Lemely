@@ -62,11 +62,20 @@ class GradeResultDTO(ApiModel):
     questions: list[QuestionResultDTO]
 
 
+class StorageHealthDTO(ApiModel):
+    """Which object-storage backend this process is configured for (DS12)."""
+
+    backend: str
+    bucket: str
+
+
 class HealthDTO(ApiModel):
     """Health-check payload for ``GET /api/health``."""
 
     status: Literal["ok"] = "ok"
     apiKeyConfigured: bool
+    storage: StorageHealthDTO
+
     #: False when grade boundaries cannot be read, for either of two reasons:
     #: a fresh/unseeded database with no verified grade-boundary rows (where
     #: ``GradeBoundaryStore`` refuses to grade against invented numbers -- see

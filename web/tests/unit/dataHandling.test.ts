@@ -240,14 +240,20 @@ describe("the page cannot silently outlive the product it describes — D6.8", (
   })
 
   /*
-   * The page says a scan is stored in Supabase Storage and that an account row
-   * holds no password. Both are properties of modules that could be swapped
-   * without anybody thinking of this page, so they are named here.
+   * The page says a scan is stored in Google Cloud Storage and that an account
+   * row holds no password. Both are properties of modules that could be
+   * swapped without anybody thinking of this page, so they are named here.
+   *
+   * This guard has already earned itself once: the storage seam moved off
+   * Supabase and this assertion is what caught the page still telling readers
+   * their scans were kept there. Where someone's work is stored is a
+   * disclosure, so the fix is always to correct the sentence, never to widen
+   * the pattern until it passes.
    */
-  it("still stores uploads through the Supabase storage seam", () => {
+  it("still stores uploads through the Google Cloud Storage seam", () => {
     const source = fs.readFileSync(path.join(repoRoot, "lemely/io/storage.py"), "utf8")
-    expect(source).toMatch(/Supabase Storage/)
-    expect(allCopy).toMatch(/Supabase Storage/)
+    expect(source).toMatch(/Google Cloud Storage/)
+    expect(allCopy).toMatch(/Google Cloud Storage/)
   })
 
   it("still keeps no password on the user row", () => {

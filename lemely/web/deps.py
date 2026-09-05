@@ -13,18 +13,16 @@ import random
 import time
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from functools import lru_cache
 from typing import TYPE_CHECKING, Annotated
 
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from lemely.auth.cooldown import CooldownStore
 from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
-from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -35,6 +33,7 @@ from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
 from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_repo import ClassService
+from lemely.db.cooldown_repo import DbCooldownStore
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
@@ -45,6 +44,7 @@ from lemely.db.leaderboard_repo import LeaderboardService
 from lemely.db.models.enums import Role
 from lemely.db.notification_prefs_repo import NotificationPreferencesService
 from lemely.db.notification_repo import NotificationService
+from lemely.db.otp_repo import DbOtpStore
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.placement_repo import PlacementService
 from lemely.db.practice_repo import PracticeService
@@ -54,19 +54,23 @@ from lemely.db.quiz_repo import QuizService
 from lemely.db.quiz_results_repo import QuizResultsService
 from lemely.db.quiz_taking_repo import QuizTakingService
 from lemely.db.review_repo import ReviewService
+from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
-from lemely.io.storage import GcsStorageBackend, HttpStorageBackend, StorageBackend
+from lemely.io.storage import StorageBackend
+from lemely.io.storage_gcs import GcsStorageBackend
+from lemely.io.storage_local import LocalFileStorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
@@ -75,7 +79,9 @@ from lemely.web.ratelimit import SlidingWindowLimiter
 if TYPE_CHECKING:
     from collections.abc import Callable
 
+    from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
+    from lemely.io.storage import StorageBackend
 
 
 @lru_cache(maxsize=1)
@@ -113,8 +119,14 @@ def get_threshold_service() -> ThresholdService:
 
 @lru_cache(maxsize=1)
 def get_gemini_client() -> GeminiClient:
-    """Return the process-wide :class:`GeminiClient` singleton."""
-    return GeminiClient(get_settings())
+    """Return the process-wide :class:`GeminiClient` singleton.
+
+    ``ledger=None`` (DS3): the web process enforces no USD ceiling and writes
+    no ``gemini_spend.json`` — the shared Google Cloud billing budget is the
+    only spend guard in production. The CLI/Gradio/eval path is untouched;
+    it keeps the default file ledger.
+    """
+    return GeminiClient(get_settings(), ledger=None)
 
 
 @lru_cache(maxsize=1)
@@ -139,24 +151,40 @@ def get_student_upload_repo() -> StudentUploadRepository:
 
 
 @lru_cache(maxsize=1)
-def get_storage_backend() -> StorageBackend:
-    """Return the process-wide :class:`StorageBackend` singleton (P2.5).
+def get_teacher_paper_repo() -> TeacherPaperRepository:
+    """Return the process-wide :class:`TeacherPaperRepository` singleton (spec §4.2)."""
+    settings = get_settings()
+    return TeacherPaperRepository(
+        get_sessionmaker(settings),
+        stale_after=timedelta(seconds=settings.grading.stale_run_after_seconds),
+    )
 
-    Wired with :class:`~lemely.io.storage.GcsStorageBackend` by default, or the
-    real HTTP client against Supabase Storage when
-    ``settings.storage.provider == "supabase"``. Tests override this with an
-    in-memory ``FakeStorageBackend`` double (``tests/storage_fakes.py``).
+
+@lru_cache(maxsize=1)
+def get_scheme_corpus_repo() -> SchemeCorpusRepository:
+    """Return the process-wide :class:`SchemeCorpusRepository` singleton (spec §4.3)."""
+    return SchemeCorpusRepository(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_storage_backend() -> StorageBackend:
+    """Return the process-wide :class:`StorageBackend` singleton.
+
+    Selected on ``settings.storage.backend`` (DS7/DS12): ``gcs`` in staging and
+    production, ``local`` everywhere else. There is no Supabase backend —
+    DS7 removed it, and #220's ``provider = "supabase"`` path came off with it.
+    Tests override this with the in-memory ``FakeStorageBackend``
+    (``tests/storage_fakes.py``).
 
     Neither backend touches the network or resolves a credential in its
     constructor, so this getter stays safe to call on a machine with no
-    Google Application Default Credentials and no Supabase service-role key —
-    the failure, if any, surfaces at the first storage operation rather than
-    at import or startup.
+    Google Application Default Credentials — the failure, if any, surfaces at
+    the first storage operation rather than at import or startup.
     """
     settings = get_settings()
-    if settings.storage.provider == "gcs":
-        return GcsStorageBackend(settings)
-    return HttpStorageBackend(settings)
+    if settings.storage.backend == "gcs":
+        return GcsStorageBackend(project=settings.storage.gcs_project)
+    return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
 @lru_cache(maxsize=1)
@@ -186,7 +214,7 @@ def get_auth_token_service() -> AuthTokenService:
 
 
 @lru_cache(maxsize=1)
-def get_signup_and_reset_cooldown_store() -> CooldownStore:
+def get_signup_and_reset_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-email signup/password-reset cooldown (D7.12).
 
     Shared by ``POST /auth/signup`` and ``POST /auth/password-reset/request`` —
@@ -194,23 +222,37 @@ def get_signup_and_reset_cooldown_store() -> CooldownStore:
     serves both. Enforced in ``lemely.web.routers.auth``, not inside
     :class:`AuthService`: a cooldown is a router-level throttle on a caller's
     *request rate*, not a fact about an identity the service owns.
+
+    Postgres-backed (spec §4.4) so the cooldown holds across Cloud Run
+    instances, not just within one worker — the return type is the
+    structural :class:`~lemely.auth.cooldown.CooldownStoreProtocol` so tests
+    can override this with the in-memory
+    :class:`~lemely.auth.cooldown.CooldownStore` without touching Postgres.
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="signup_and_reset",
         min_seconds=get_settings().auth.signup_and_reset_cooldown_seconds,
     )
 
 
 @lru_cache(maxsize=1)
-def get_resend_verification_cooldown_store() -> CooldownStore:
+def get_resend_verification_cooldown_store() -> CooldownStoreProtocol:
     """Return the process-wide per-user verification-resend cooldown (D7.12).
 
     Backs ``POST /auth/verify-email/resend`` alone, keyed by the caller's own
     ``user_id`` (never an address) — see
     ``AuthSettings.resend_verification_cooldown_seconds``.
+
+    Postgres-backed (spec §4.4), same reasoning as
+    :func:`get_signup_and_reset_cooldown_store` — a distinct ``purpose`` so
+    the two never contend over the same key (``test_purposes_do_not_interfere``).
     """
-    return CooldownStore(
+    return DbCooldownStore(
+        get_sessionmaker(get_settings()),
         clock=lambda: datetime.now(UTC),
+        purpose="resend_verification",
         min_seconds=get_settings().auth.resend_verification_cooldown_seconds,
     )
 
@@ -220,9 +262,11 @@ def get_auth_service() -> AuthService:
     """Return the process-wide :class:`AuthService` singleton.
 
     Wired with the real GoTrue HTTP backend, the DB-backed user mirror, the mock
-    SMS provider, an OTP store using a wall-clock and the default RNG, the
-    device registry that enforces the 3-device limit (D1.11), the mock email
-    provider (D7.6 — nothing in this deployment sends a real mail; see
+    SMS provider, a Postgres-backed :class:`~lemely.db.otp_repo.DbOtpStore`
+    (spec §4.4) using a wall-clock and the default RNG — so a code one Cloud
+    Run instance issues can be verified by another — the device registry that
+    enforces the 3-device limit (D1.11), the mock email provider (D7.6 —
+    nothing in this deployment sends a real mail; see
     :mod:`lemely.auth.email`'s module docstring for the honesty rule that
     follows from wiring it unconditionally), and the Postgres-backed
     :class:`AuthTokenService` (D7.7) that mints and redeems verification/reset
@@ -230,10 +274,12 @@ def get_auth_service() -> AuthService:
     seams.
     """
     settings = get_settings()
-    otp_store = OtpStore(
+    otp_store = DbOtpStore(
+        get_sessionmaker(settings),
         clock=lambda: datetime.now(UTC),
         rng=random.SystemRandom(),
         ttl_seconds=settings.auth.otp_ttl_seconds,
+        email_ttl_seconds=settings.auth.email_otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
         min_resend_seconds=settings.auth.otp_min_resend_seconds,
@@ -1001,6 +1047,8 @@ def reset_singletons() -> None:
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
+    get_teacher_paper_repo.cache_clear()
+    get_scheme_corpus_repo.cache_clear()
     get_storage_backend.cache_clear()
     get_device_registry.cache_clear()
     get_auth_service.cache_clear()

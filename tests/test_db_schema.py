@@ -83,11 +83,27 @@ EXPECTED_TABLES = {
     "push_subscriptions",
     "auth_tokens",
     "invites",
+    "teacher_papers",
+    "otp_challenges",
+    "auth_cooldowns",
     "syllabus_papers",
     "subject_topics",
     "component_thresholds",
     "option_thresholds",
 }
+
+# Tables deliberately excluded from `test_every_model_has_timestamps` below.
+# ``otp_challenges`` (spec §4.4, D7.7) is not a durable record: a row lives
+# seconds to minutes, is replaced wholesale on reissue, and is deleted
+# outright on success, expiry or lockout — ``issued_at`` already answers "when
+# was this created" for the one case (the resend cooldown) that needs it, so a
+# redundant created_at/updated_at pair would track nothing a caller ever
+# reads. See ``lemely/db/models/otp_challenges.py``'s module docstring.
+# ``auth_cooldowns`` is the same shape for the same reason: a row is
+# overwritten wholesale on every stamp and ``stamped_at`` already answers
+# "when was this last touched" — see
+# ``lemely/db/models/auth_cooldowns.py``'s module docstring.
+TABLES_WITHOUT_TIMESTAMPS = {"otp_challenges", "auth_cooldowns"}
 
 
 # ---------------------------------------------------------------------------
@@ -117,6 +133,8 @@ def test_naming_convention_applied() -> None:
 
 def test_every_model_has_timestamps() -> None:
     for name, table in Base.metadata.tables.items():
+        if name in TABLES_WITHOUT_TIMESTAMPS:
+            continue
         assert "created_at" in table.c, f"{name} missing created_at"
         assert "updated_at" in table.c, f"{name} missing updated_at"
 
@@ -891,3 +909,58 @@ def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
         session.add(Invite(code="TARGETLESS", role=InviteRole.student, created_by=admin.id))
         with pytest.raises(sa.exc.IntegrityError):
             session.commit()
+
+
+def test_teacher_paper_row_defaults(pg_engine: sa.Engine) -> None:
+    """Spec §4.2: a fresh row is pending, unstaged, and reuses the uploadstatus enum."""
+    from lemely.db.models import TeacherPaper, User
+    from lemely.db.models.enums import Role, UploadStatus
+
+    with Session(pg_engine) as session:
+        teacher = User(id=uuid.uuid4(), email="tp@example.com", role=Role.teacher)
+        session.add(teacher)
+        session.flush()
+        paper = TeacherPaper(
+            uploaded_by=teacher.id,
+            storage_path=f"teacher/{teacher.id}/{uuid.uuid4().hex}/scan.pdf",
+        )
+        session.add(paper)
+        session.commit()
+        session.refresh(paper)
+        assert paper.status is UploadStatus.pending
+        assert paper.stage is None
+        assert paper.report_json is None
+        assert paper.run_started_at is None
+        enum_name = session.execute(
+            sa.text(
+                "SELECT udt_name FROM information_schema.columns "
+                "WHERE table_name = 'teacher_papers' AND column_name = 'status'"
+            )
+        ).scalar_one()
+        assert enum_name == "uploadstatus"
+
+
+def test_otp_challenge_row_round_trip(pg_engine: sa.Engine) -> None:
+    """Spec §4.4/D7.7: a channel-keyed row round-trips and stores only hashes."""
+    from datetime import UTC, datetime, timedelta
+
+    from lemely.auth.otp import OtpChannel
+    from lemely.db.models import OtpChallenge
+
+    now = datetime.now(UTC)
+    with Session(pg_engine) as session:
+        challenge = OtpChallenge(
+            channel=OtpChannel.email,
+            address_hash="a" * 64,
+            code_hash="b" * 64,
+            expires_at=now + timedelta(minutes=10),
+            issued_at=now,
+        )
+        session.add(challenge)
+        session.commit()
+
+        session.refresh(challenge)
+        assert challenge.channel is OtpChannel.email
+        assert challenge.address_hash == "a" * 64
+        assert challenge.code_hash == "b" * 64
+        assert challenge.attempts == 0  # server_default 0

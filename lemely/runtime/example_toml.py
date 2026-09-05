@@ -1,4 +1,24 @@
-"""Generates `lemely.toml.example` from current Settings defaults."""
+"""Generates `lemely.toml.example` from current Settings defaults.
+
+Not every settings group is emitted, and the omission is a decision rather
+than an oversight: this file is what `CLAUDE.md` tells a developer to copy to
+get started, so it carries the knobs someone setting Lemely up actually sets.
+
+`[det_parser]` is the deliberate exclusion. Two of its fields
+(``header_keywords``, ``skip_line_tokens``) are ``frozenset[str]``, and
+frozenset iteration order for strings varies with the interpreter's hash seed,
+which is randomised per process. Emitting them as-is would make this
+generator's output differ between runs, so `test_example_matches_generator`
+would pass or fail depending on which process regenerated the file last. If
+these ever do need emitting, ``sorted()`` them — and decide separately whether
+ten internal parser-tuning knobs belong in a getting-started template at all.
+
+Adding a section here without adding it to `Settings` (or the reverse) is
+invisible to the drift test, which compares this generator's output to the
+file it wrote: an omitted section is self-consistent. That is how
+`[storage]` shipped a new `backend` setting that never appeared in the
+template developers copy.
+"""
 
 from __future__ import annotations
 
@@ -111,29 +131,29 @@ def render_example_toml() -> str:
 
     lines.append("[storage]")
     lines.append("# Object storage for self-mark uploads (P2.5) and profile pictures.")
-    lines.append('# "gcs" (default) uses Google Cloud Storage via Application Default')
-    lines.append("# Credentials — no key belongs in this file for that path; see")
-    lines.append('# docs/deployment.md and scripts/gcs_bootstrap.sh. "supabase" uses the same')
-    lines.append("# [supabase] url/service_role_key as GoTrue.")
+    lines.append('# "local" (the default) writes under `paths.output_dir/storage` — right for')
+    lines.append('# dev, Compose and CI, and needs no credentials. "gcs" uses Google Cloud')
+    lines.append("# Storage via Application Default Credentials; no key belongs in this file")
+    lines.append("# for that path. See docs/deployment.md and scripts/gcp-bootstrap.sh.")
     lines.append("#")
-    lines.append("# Note that signed URLs (avatar/upload downloads) need a real service-account")
-    lines.append("# credential (a JSON key, or an attached/workload-identity service account) —")
-    lines.append("# plain user ADC from `gcloud auth application-default login` can")
+    lines.append("# There is no Supabase Storage backend — DS7 removed it.")
+    lines.append("#")
+    lines.append("# Note that signed URLs (avatar downloads) need a real service-account")
+    lines.append("# credential (a JSON key, or an attached/workload-identity service account)")
+    lines.append("# — plain user ADC from `gcloud auth application-default login` can")
     lines.append("# upload/download but cannot sign a URL at all. For local signing, add")
-    lines.append("# `--impersonate-service-account=<runtime SA>` to that login command.")
+    lines.append("# `--impersonate-service-account=<runtime SA>` to that login command. The")
+    lines.append('# "local" backend sidesteps this: it returns the bytes inline instead.')
     lines.append("#")
     lines.append("# GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so")
-    lines.append('# these defaults carry a project-ish prefix; bare "uploads"/"avatars" were')
-    lines.append("# fine only because Supabase scopes bucket names per project. The deployed")
-    lines.append("# pipeline overrides both per environment (see .github/workflows/deploy.yml),")
-    lines.append("# so staging and production never share a bucket.")
-    lines.append(f'provider = "{s.storage.provider}"')
+    lines.append("# these defaults carry a project-ish prefix. The deployed pipeline overrides")
+    lines.append("# both per environment (see .github/workflows/deploy.yml), so staging and")
+    lines.append("# production never share a bucket; `scripts/gcp-bootstrap.sh` creates them.")
+    lines.append(f'backend = "{s.storage.backend}"')
     lines.append(f'bucket = "{s.storage.bucket}"')
+    lines.append("# Profile pictures live in their own bucket: different retention and access")
+    lines.append("# shape from scans, and no reason to share a namespace.")
     lines.append(f'avatar_bucket = "{s.storage.avatar_bucket}"')
-    lines.append("# Switching back to Supabase Storage means switching the bucket names too:")
-    lines.append('#   provider = "supabase"')
-    lines.append('#   bucket = "uploads"')
-    lines.append('#   avatar_bucket = "avatars"')
     lines.append(f"signed_url_ttl_seconds = {s.storage.signed_url_ttl_seconds}")
     avatar_max_mib = s.storage.avatar_max_bytes // (1024 * 1024)
     lines.append(f"avatar_max_bytes = {s.storage.avatar_max_bytes}  # {avatar_max_mib} MiB")
@@ -160,8 +180,36 @@ def render_example_toml() -> str:
     lines.append(f"otp_max_attempts = {s.auth.otp_max_attempts}")
     lines.append(f"otp_length = {s.auth.otp_length}")
     lines.append(f"otp_min_resend_seconds = {s.auth.otp_min_resend_seconds}")
+    lines.append("# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the")
+    lines.append("# phone code above; length, attempt cap and resend cooldown are shared.")
+    lines.append(f"email_otp_ttl_seconds = {s.auth.email_otp_ttl_seconds}")
     lines.append("")
 
+    lines.append("[grading]")
+    lines.append("# A teacher_papers row stuck in `processing` past this many seconds is a")
+    lines.append("# dead run (its instance died) and may be reclaimed by the next regrade.")
+    lines.append(f"stale_run_after_seconds = {s.grading.stale_run_after_seconds}")
+    lines.append("")
+
+    lines.append("[integrity]")
+    lines.append("# AI-generated-text detection is opt-in and costs one Gemini call per")
+    lines.append("# question — plagiarism detection alone needs no Gemini key.")
+    lines.append(f"plagiarism_enabled = {str(s.integrity.plagiarism_enabled).lower()}")
+    lines.append(f"ai_detection_enabled = {str(s.integrity.ai_detection_enabled).lower()}")
+    lines.append(f"plagiarism_threshold = {s.integrity.plagiarism_threshold}")
+    lines.append(f"ai_detection_threshold = {s.integrity.ai_detection_threshold}")
+    lines.append("")
+
+    lines.append("[push]")
+    lines.append("# Web-push (VAPID) application-server credentials. All three secrets default")
+    lines.append("# to unset, which is a supported state: the transport reports itself")
+    lines.append("# unavailable and the notification inbox keeps working without them.")
+    lines.append("# Secrets — prefer LEMELY_PUSH__* env vars over this file:")
+    lines.append('# vapid_public_key = "..."')
+    lines.append('# vapid_private_key = "..."')
+    lines.append('# vapid_subject = "mailto:ops@example.com"')
+    lines.append(f"ttl_seconds = {s.push.ttl_seconds}")
+    lines.append(f"timeout_seconds = {s.push.timeout_seconds}")
     lines.append("[email]")
     lines.append("# Transactional mail for account verification and password reset (D7.7).")
     lines.append("#")

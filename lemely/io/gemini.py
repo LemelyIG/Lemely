@@ -149,6 +149,18 @@ class _TransientError(Exception):
     """Wraps transient Gemini SDK errors so tenacity can detect them."""
 
 
+class _DefaultLedger:
+    """Sentinel: build the file ledger under ``paths.output_dir`` (CLI, Gradio, eval)."""
+
+
+#: Default for :paramref:`GeminiClient.ledger` — build the persistent file
+#: ledger at ``settings.paths.output_dir / "gemini_spend.json"``, exactly as
+#: today (CLI, Gradio, eval and scripts are untouched by DS3). Pass an
+#: explicit ``ledger=None`` to run with no ceiling check, no ledger file and
+#: no budget events (the web process; spec DS3).
+DEFAULT_LEDGER = _DefaultLedger()
+
+
 class GeminiClient:
     def __init__(
         self,
@@ -156,10 +168,15 @@ class GeminiClient:
         *,
         _genai_client: Any = None,
         default_cache_mode: Literal["read_write", "bypass", "refresh"] = "read_write",
+        ledger: CostLedger | _DefaultLedger | None = DEFAULT_LEDGER,
     ) -> None:
         self._settings = settings
         self._raw_client: Any = _genai_client
-        self._ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        self._ledger: CostLedger | None = (
+            CostLedger(settings.paths.output_dir / "gemini_spend.json")
+            if isinstance(ledger, _DefaultLedger)
+            else ledger
+        )
         #: Single source of truth for this client's cache behaviour when a
         #: call site does not pass an explicit ``cache_mode`` (spec §3.3):
         #: ``_build_run_manifest`` reads this attribute rather than assuming
@@ -294,7 +311,7 @@ class GeminiClient:
                 raise ExternalServiceError(
                     f"Token ceiling ({g.per_run_token_ceiling}) exceeded; accumulated {total}."
                 )
-        if g.total_usd_ceiling is not None:
+        if g.total_usd_ceiling is not None and self._ledger is not None:
             ledger_total = self._ledger.total()
             if ledger_total >= g.total_usd_ceiling:
                 raise ExternalServiceError(
@@ -553,21 +570,25 @@ class GeminiClient:
 
         # Persist cumulative spend to the cross-run ledger; this is the source of
         # truth for the hard USD ceiling. Emit budget events for the UI/ntfy.
+        # DS3: a ledgerless client (the web process) skips all of this — no
+        # ledger file, no budget events. Spend is still observable via the
+        # unconditional `gemini_call` log line below.
         g = self._settings.gemini
-        new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
-        for threshold in crossed:
-            bus.publish(
-                EventType.BUDGET_WARNING,
-                threshold=threshold,
-                total_usd=round(new_total, 6),
-                ceiling=g.total_usd_ceiling,
-            )
-        if g.total_usd_ceiling is not None and new_total >= g.total_usd_ceiling:
-            bus.publish(
-                EventType.BUDGET_EXCEEDED,
-                total_usd=round(new_total, 6),
-                ceiling=g.total_usd_ceiling,
-            )
+        if self._ledger is not None:
+            new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
+            for threshold in crossed:
+                bus.publish(
+                    EventType.BUDGET_WARNING,
+                    threshold=threshold,
+                    total_usd=round(new_total, 6),
+                    ceiling=g.total_usd_ceiling,
+                )
+            if g.total_usd_ceiling is not None and new_total >= g.total_usd_ceiling:
+                bus.publish(
+                    EventType.BUDGET_EXCEEDED,
+                    total_usd=round(new_total, 6),
+                    ceiling=g.total_usd_ceiling,
+                )
 
         log.info(
             "gemini_call",

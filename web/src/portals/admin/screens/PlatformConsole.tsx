@@ -2,12 +2,12 @@
 import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
-import { Eyebrow, Meter } from "@/components/ui/primitives"
+import { Eyebrow } from "@/components/ui/primitives"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useAdminOverview } from "@/lib/hooks/useAdminApi"
-import type { PlatformCounts, Signup, Spend, SystemHealth } from "@/lib/adminTypes"
+import type { PlatformCounts, Signup, SystemHealth } from "@/lib/adminTypes"
 import { formatAdminDate } from "../data"
 
 /**
@@ -21,23 +21,15 @@ import { formatAdminDate } from "../data"
  *
  * **A blank console must never read as a calm one.** This is the screen whose
  * whole job is noticing trouble, and every one of its reassuring states —
- * nothing in the review queue, no failed uploads, spend well under the ceiling
- * — looks exactly like a failed fetch rendered as zeroes. So `useAdminApi.ts`
- * passes no `fallback` anywhere, and this screen renders an error state rather
- * than an empty grid when the read fails. There is no partial render: a console
- * showing four real numbers and three invented zeroes is worse than one that
- * admits it is blind.
+ * nothing in the review queue, no failed uploads — looks exactly like a failed
+ * fetch rendered as zeroes. So `useAdminApi.ts` passes no `fallback` anywhere,
+ * and this screen renders an error state rather than an empty grid when the
+ * read fails. There is no partial render: a console showing four real numbers
+ * and three invented zeroes is worse than one that admits it is blind.
  *
- * ── Spend ──────────────────────────────────────────────────────────────────
- *
- * The one panel that changes colour, and it changes into the **warn** register
- * rather than the accent. The accent is this product's link and brand colour
- * and appears on this very screen, so an alarm painted in it is an alarm that
- * looks like a hyperlink. The badge and the meter now agree.
- *
- * The thresholds are printed beside the bar: a spend figure with no alarm points
- * cannot be read as safe or unsafe, and this reader is the one who would have to
- * act on it.
+ * Carries no spend panel (DS3): the web process keeps no cost ledger, and the
+ * guard on Gemini spend is a Google Cloud billing budget on the deployed
+ * service, not this console.
  */
 export function PlatformConsole() {
   const query = useAdminOverview()
@@ -64,7 +56,6 @@ export function PlatformConsole() {
       >
         {(data) => (
           <>
-            <SpendPanel spend={data.spend} />
             <WorkPanel counts={data.counts} />
             <PeoplePanel counts={data.counts} />
             <HealthPanel health={data.health} />
@@ -73,65 +64,6 @@ export function PlatformConsole() {
         )}
       </QueryState>
     </div>
-  )
-}
-
-function SpendPanel({ spend }: { spend: Spend }) {
-  const thresholds = [...spend.thresholdsUsd].sort((a, b) => a - b)
-  const firstWarning = thresholds[0] ?? null
-  const warning = firstWarning !== null && spend.cumulativeUsd >= firstWarning
-  const pct =
-    spend.ceilingUsd && spend.ceilingUsd > 0
-      ? Math.min(100, (spend.cumulativeUsd / spend.ceilingUsd) * 100)
-      : 0
-
-  return (
-    <Card>
-      <CardBody className="flex flex-col gap-3">
-        <div className="flex flex-wrap items-baseline justify-between gap-2">
-          <Eyebrow>Gemini spend</Eyebrow>
-          {warning ? (
-            // A tone-coloured chip needs a label, every time. "Past a warning
-            // threshold" is what the colour means; the colour alone would be a
-            // riddle (a standing finding from surfaces 4 through 6).
-            <Badge tone="warn">Past a warning threshold</Badge>
-          ) : null}
-        </div>
-
-        <div className="flex items-baseline gap-2">
-          <span className="text-data-lg tabular-nums text-ink">
-            ${spend.cumulativeUsd.toFixed(2)}
-          </span>
-          {spend.ceilingUsd === null ? (
-            <span className="text-body-sm text-ink-muted">spent. No ceiling is configured.</span>
-          ) : (
-            <span className="text-body-sm text-ink-muted">
-              against a hard ceiling of ${spend.ceilingUsd.toFixed(2)}
-            </span>
-          )}
-        </div>
-
-        {spend.ceilingUsd === null ? null : (
-          <Meter
-            value={pct}
-            label={`Gemini spend: $${spend.cumulativeUsd.toFixed(2)} of $${spend.ceilingUsd.toFixed(2)}`}
-            // `warn`, not `accent`: the badge above already carries this
-            // condition in the warn register, and the accent is what every
-            // link on the page uses. One alarm, one colour.
-            fillClassName={warning ? "bg-warn" : "bg-ink-faint"}
-          />
-        )}
-
-        <p className="max-w-prose text-body-sm text-ink-muted">
-          {spend.remainingUsd === null
-            ? "Spend is recorded but nothing stops it, because no ceiling is set."
-            : `$${spend.remainingUsd.toFixed(2)} left before calls start being refused.`}{" "}
-          {thresholds.length > 0
-            ? `Warnings are sent at ${thresholds.map((t) => `$${t.toFixed(2)}`).join(" and ")}.`
-            : "No warning thresholds are configured."}
-        </p>
-      </CardBody>
-    </Card>
   )
 }
 

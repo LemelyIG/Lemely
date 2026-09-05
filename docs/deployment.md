@@ -14,17 +14,17 @@ Two deployments are described here:
    and production environments wired up. The two Supabase Cloud projects it uses
    are provisioned for real (not hypothetical); the pipeline itself has not been
    run end-to-end yet, pending the credentials `docs/ci-cd.md` asks for. Read this
-   section for the *why* behind the constraints (single replica, gated migrations,
-   the JWT secret trap); read `docs/ci-cd.md` for the concrete, automated *how*.
+   section for the *why* behind the remaining constraints (gated migrations, the
+   JWT secret trap); read `docs/ci-cd.md` for the concrete, automated *how*.
 
 MISSION §3 fixes the definition of done as *"one-command local run via Docker Compose
 … plus written deployment docs for a future free-tier cloud deploy. No live hosting."*
 Section 1 is the first half; sections 3–6 are the second.
 
 Read [§5 What will bite you](#5-what-will-bite-you-in-a-real-deploy) before deploying
-anywhere real. It is the part of this document with the highest value per line: the
-app has two pieces of **process-local state**, and the container entrypoint runs
-migrations on every start.
+anywhere real. It is the part of this document with the highest value per line: §5.1
+tracks what state is safe across instances and what still isn't, and the container
+entrypoint runs migrations on every start regardless of instance count.
 
 ---
 
@@ -130,12 +130,14 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. |
 | `LEMELY_EMAIL__APP_BASE_URL` | `https://lemelyig.com` | The origin emailed verification/reset links are built on. Links are minted as frontend routes (`/verify-email/<token>`), so without an origin a mail client resolves them to `http:///…` — unreachable. `deploy.yml` sets it per environment (`staging.lemelyig.com` vs `lemelyig.com`). Rejected at startup unless it has both a scheme and a host. |
-| `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and lets the auth routes return it, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live link. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
-| `LEMELY_STORAGE__PROVIDER` | `gcs` | Set to `supabase` to store uploads and avatars in Supabase Storage instead. The GCS default authenticates via Application Default Credentials (a service account attached to the Cloud Run/GCE/GKE workload) — no key is configured through this app. |
-| `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns by default. **The bucket must already exist** — no application code path creates it; `scripts/gcs_bootstrap.sh` does. Switching to `provider = supabase` means setting this back to that project's bucket name (historically `uploads`). Empty is rejected at startup. |
-| `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures. `deploy.yml` sets `<project-id>-avatars-<env>`; the Supabase name was `avatars`. |
-| `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity or `gcloud auth application-default login` credential usually carries one). `deploy.yml` sets it from `vars.GCP_PROJECT_ID` anyway. |
-| `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | To change the hard spend cap (MISSION §8). |
+| `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and code and lets the auth routes return them, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live credentials. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
+| `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
+| `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** The bucket (`gcs`) or directory name (`local`) for scans and mark schemes. `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns. **The bucket must already exist** — no application code path creates it; `scripts/gcp-bootstrap.sh` does. Empty is rejected at startup. |
+| `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures — a separate bucket because avatars are meant to persist and the uploads bucket carries a 90-day delete rule. `deploy.yml` sets `<project-id>-avatars-<env>`. |
+| `LEMELY_STORAGE__SIGNED_URL_TTL_SECONDS` | `3600` | How long an avatar URL stays readable. Ignored by the `local` backend, which returns the bytes inline and so has nothing to expire. |
+| `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity usually carries one). |
+| `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | **CLI/Gradio only** — to change the hard spend cap those surfaces enforce (MISSION §8). The web process enforces no cap; see [§5.4](#54-performance-and-cost). |
+| `LEMELY_GRADING__STALE_RUN_AFTER_SECONDS` | `900` | To change how long a teacher paper stuck in `processing` must go silent before the next regrade may reclaim it (its instance died mid-run). |
 | `LEMELY_LOGGING__FORMAT` | `auto` | Set `json` for a log aggregator. |
 
 > **The JWT secret is the one that will burn you.**
@@ -186,49 +188,24 @@ host and accept the [CORS work in §4](#4-when-you-actually-do-need-cors).
 4. Rewrite the driver prefix: Supabase gives you `postgresql://…`; this app needs
    **`postgresql+psycopg://…`** (SQLAlchemy 2 + psycopg 3, as in the default at
    `config.py:148`). A plain `postgresql://` URL will pick the wrong DBAPI.
-5. Create the two object-storage buckets. **No application code path creates
-   either**, and uploads and avatar sets fail against a missing bucket.
+5. Create the two object-storage buckets — one for scans and mark schemes,
+   one for profile pictures. **No application code path creates either**, and
+   uploads or avatar sets fail against a missing bucket.
 
-   **Google Cloud Storage is the default** (`LEMELY_STORAGE__PROVIDER=gcs`),
-   and there is a script for it — run it once per environment:
+   Which kind depends on `LEMELY_STORAGE__BACKEND` (§2). `local` needs no
+   bucket at all, writing under `paths.output_dir/storage`. `gcs` needs two
+   real Google Cloud Storage buckets the runtime identity can write, which
+   `scripts/gcp-bootstrap.sh` creates for both environments in one run — along
+   with the runtime service accounts, the 90-day lifecycle rule on uploads, the
+   `serviceAccountTokenCreator` grant that avatar signed URLs need, and
+   (optionally) the billing budget:
 
    ```bash
-   PROJECT_ID=<gcp-project-id> ENVIRONMENT=staging ./scripts/gcs_bootstrap.sh
-   PROJECT_ID=<gcp-project-id> ENVIRONMENT=production ./scripts/gcs_bootstrap.sh
+   PROJECT_ID=<gcp-project-id> BILLING_ACCOUNT_ID=<id> BUDGET_USD=25 \
+     ./scripts/gcp-bootstrap.sh
    ```
 
-   It creates `<project-id>-uploads-<env>` and `<project-id>-avatars-<env>`
-   (the exact names `.github/workflows/deploy.yml` computes by default) with
-   uniform bucket-level access and public access prevented, then grants the
-   Cloud Run runtime service account `roles/storage.objectAdmin` on each. It
-   is idempotent, so re-running it is a no-op. `RUNTIME_SA` defaults to the
-   project's default compute service account, which is what the Cloud Run
-   revision runs as while `deploy.yml` passes no `--service-account`.
-
-   The script's non-obvious grant is `roles/iam.serviceAccountTokenCreator`
-   **on the runtime service account itself**. A workload-identity credential
-   (the normal shape on Cloud Run/GCE/GKE) has no local `signer`, so signed
-   avatar/upload URLs are produced through the IAM `signBlob` API — an
-   impersonation of the service account by itself, which 403s without that
-   binding. See `lemely/io/storage.py`'s `GcsStorageBackend`. Symptom if it is
-   missing: everything works except that profile pictures silently render as
-   absent, because `GET /api/me/profile` returns `avatarUrl: null` rather than
-   failing when a URL cannot be signed.
-
-   Plain user ADC (`gcloud auth application-default login`) cannot sign URLs
-   at all — fine for local `upload`/`download`, not for signing. Add
-   `--impersonate-service-account=<runtime SA>` to that login command to sign
-   locally through the same IAM path production uses.
-
-   **Supabase Storage** (`LEMELY_STORAGE__PROVIDER=supabase`) remains
-   supported. Create the buckets by hand in the Supabase dashboard and set
-   `LEMELY_STORAGE__BUCKET`/`LEMELY_STORAGE__AVATAR_BUCKET` back to their
-   Supabase names (historically `uploads` and `avatars`) — the defaults are
-   GCS-shaped and a Supabase project will not have buckets under those names.
-
-   To verify a real GCS environment end to end, including that signing
-   actually works, see `tests/test_storage_gcs_live.py` (opt-in via
-   `LEMELY_LIVE_GCS=1`).
+   There is no longer a Supabase Storage backend; that code was deleted (DS7).
 6. Apply the schema — see [§3.4](#34-migrations-are-a-separate-gated-step), and do
    **not** simply let the container do it.
 
@@ -242,17 +219,17 @@ must provide:
 | Builds a `Dockerfile`, or accepts a pushed image | Both images are plain multi-stage Dockerfiles |
 | Injects env vars / secrets | Everything in §2 |
 | Listens on the port the app binds | Backend `8000`, web `80`; both configurable |
-| **Max 1 backend instance** | **Non-negotiable — see [§5.1](#51-the-backend-cannot-run-more-than-one-replica)** |
+| Any instance count | Used to be pinned to exactly one — see [§5.1](#51-the-single-replica-constraint-is-lifted) for what changed and what the deploy still sets today. |
 | ~512 MB RAM per container | PyMuPDF + SQLAlchemy; not measured under load |
 
 Free tiers change often enough that naming one here would be wrong within months.
 Check current terms yourself. The two properties that actually matter for *this*
 app, whichever host you pick:
 
-- **Scale-to-zero is fine; scale-to-many is not.** A cold start costs a request's
-  latency. A second replica silently breaks correction progress and parent login
-  ([§5.1](#51-the-backend-cannot-run-more-than-one-replica)). On a host that
-  autoscales by default (e.g. Cloud Run), **pin max instances to 1**.
+- **Scale-to-zero is fine; scale-to-many now is too.** A cold start still costs a
+  request's latency, but a second replica no longer breaks correction progress or
+  parent login — see [§5.1](#51-the-single-replica-constraint-is-lifted) for what
+  moved off process memory and the one thing (a cache) that didn't.
 - **A host that sleeps idle containers will drop in-flight correction jobs**, since
   they live in process memory. Not a data-loss bug — the attempt is already
   committed — but a student watching the progress stream sees it stall.
@@ -385,21 +362,50 @@ This is a code change in `lemely/web/app.py`, not a compose-file change.
 
 Honest constraints. Each is a real property of the code today, not a hypothetical.
 
-### 5.1 The backend cannot run more than one replica
+### 5.1 The single-replica constraint is lifted
 
-Two pieces of state live in **process memory**, not the database:
+`.github/workflows/deploy.yml` now sets `--max-instances=3`. That number is a
+cost ceiling, not a correctness one: nothing below depends on the instance
+count, and three is simply enough to absorb a spike while a runaway cannot fan
+out to a hundred containers. `--min-instances=0` is unchanged, so idle time
+still costs nothing and the first request after idle still pays a cold start.
 
-- **`JobRegistry`** (`lemely/web/jobs.py:31-37`) — a `dict` behind a lock holding
-  every in-flight correction job. It backs the SSE progress stream. With two
-  replicas, a student's browser reconnects to the replica that is *not* running
-  their job and sees a job that does not exist.
-- **The parent phone-OTP challenge store** (`lemely/auth/service.py:107`) — issued
-  on one replica, verified on another, verification fails. Parent login breaks
-  intermittently and unreproducibly.
+The multi-instance behaviour described here has not yet been observed against
+a real deployment — this branch has never been deployed. The verification
+checklist in the design spec's §8 exists to exercise it on staging, and until
+someone runs it, everything below is what the code is built to do rather than
+what has been seen to happen.
 
-Neither is hard to fix (Postgres or Redis for both), but **neither is fixed**. Until
-they are: **one backend instance.** The nginx/web image has no such constraint and
-scales freely.
+This section used to name two pieces of process-local state and pin the backend to one
+instance because of them. Both are gone, and so are several more this document never
+named — the design spec for this work
+(`docs/superpowers/specs/2026-09-03-gcs-uploads-and-cloud-run-scale-out-design.md` §1.3)
+found a longer list by reading the code. The table below is that same state inventory,
+with a "now" column added:
+
+| State | Where | Then | Now |
+|---|---|---|---|
+| Teacher paper store | `routers/teacher.py::_PaperStore` | In-process dict — a paper was visible only on the instance that received it, and lost on restart. | A `teacher_papers` Postgres row (migration `0024`). Every state change the grading worker makes is written to the row, so any instance's `GET /papers/{id}` sees it — including one that never ran the job. |
+| Grading pool + lock | `routers/teacher.py::_grading_pool` | Pinned to one worker per instance because the event bus had no per-run scoping — a regrade landing on another instance could start a second run of the same paper. | Still one worker per instance, for a different reason: run state now lives on the row, not the pool, so raising the worker count is a one-line change later (DS13). A `processing` row silent past `LEMELY_GRADING__STALE_RUN_AFTER_SECONDS` (default 900s) is reclaimable by the next regrade — its instance died mid-run. |
+| Job registry | `lemely/web/jobs.py` | An in-process `dict` behind a lock. Zero route callers — nothing ever read it. | **Deleted.** It backed nothing: `POST /student/correct` has always streamed over the event bus on the one HTTP connection the correction runs on, with no separate reconnect to lose. |
+| Parent phone-OTP challenge store | `lemely/auth/otp.py::OtpStore` | In-memory — issued on one replica, verified on another, verification fails. | Postgres-backed (`DbOtpStore`, migration `0025`) — a code minted on one instance verifies on any other. Email verification's own 6-digit code (alongside the existing link) shares the same table, keyed by channel. |
+| Auth cooldown store | `lemely/auth/cooldown.py::CooldownStore` | In-memory — the only abuse defence on public auth routes weakened by a factor of N instances. | Postgres-backed (`DbCooldownStore`, migration `0026`). |
+| Event bus | `lemely/runtime/events.py::bus` | Unscoped — two concurrent SSE streams on the same instance received each other's frames, and the first stream to finish ended both. This, not instance count, is why the grading pool above was pinned to one worker. | Per-run channels via a context variable. Still an in-process bus, not a cross-instance one — irrelevant to `/student/correct` (one HTTP connection, start to finish, never reconnected) and the reason the grading pool stays one worker per instance above. |
+| Scheme corpus | `output_dir/schemes` | A directory scan, per instance. | The existing `papers`/`mark_schemes` Postgres tables; the PDF itself lives in the storage bucket next to the scan. |
+| Spend ledger | `output_dir/gemini_spend.json` via `CostLedger` | The $8 cap reset on every cold start; with N instances it would have become N independent caps. | Retired in the web process — see [§5.4](#54-performance-and-cost). The CLI and Gradio are unchanged and still enforce it. |
+| Gemini response cache | `cache_dir/gemini` | Per instance. A cache, not a correctness issue. | **Unchanged — the only state left on this list.** More instances mean a lower hit rate, nothing else. |
+
+Two trades were accepted deliberately here, not overlooked:
+
+- **A budget alert is not a cap.** The web process enforces no USD ceiling on Gemini spend; a
+  Google Cloud billing budget on the project (provisioned by `scripts/gcp-bootstrap.sh`, alerts at
+  50/90/100%) is the only guard, and spend can pass it before anyone acts. See §5.4.
+- **Queued is per instance.** The grading pool is one worker per instance. With three instances,
+  at most three teacher runs proceed at once, and a paper can queue on one instance while another
+  sits idle. Not a correctness bug — every instance answers a paper's status from the same row —
+  just a scheduling one, accepted at this scale.
+
+The nginx/web image never had this constraint and scales freely regardless.
 
 ### 5.2 There is no scheduler
 
@@ -447,11 +453,11 @@ so the helper is a no-op when they are set.
 - **Load sanity reports numbers and no verdict**, deliberately. No latency threshold
   is specified anywhere in this build, and grading against an invented one would be
   manufactured precision.
-- **Gemini spend is capped at $8.00** by a persistent on-disk ledger. In a container
-  that ledger lives under `/app/.lemely-cache` (`Dockerfile:63`) — **on the container
-  filesystem, which is ephemeral.** A host that recycles containers resets the
-  *measured* spend to zero while the real bill keeps climbing. Mount a volume there,
-  or the cap silently stops being a cap.
+- **The web process enforces no cap on Gemini spend (DS3).** A Google Cloud billing
+  budget on the project — created by `scripts/gcp-bootstrap.sh` when
+  `BILLING_ACCOUNT_ID` and `BUDGET_USD` are set, with alerts at 50/90/100% — is the
+  only guard, and it is an alert, not a stop: spend can pass it before anyone acts.
+  The CLI and Gradio are unchanged and still enforce the on-disk `$8.00` ledger.
 
 ### 5.5 Security posture as shipped
 
@@ -484,15 +490,16 @@ replaces it).
 [ ] LEMELY_SUPABASE__JWT_SECRET set to the REAL secret  <-- nothing warns you
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
+[ ] LEMELY_STORAGE__BACKEND=gcs -- the "local" default writes to per-container
+    disk, invisible across instances (§5.1)
+[ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --
+    the web process itself enforces no USD cap (§5.4)
 [ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
-[ ] scripts/gcs_bootstrap.sh run once per environment (creates both buckets,
-    grants objectAdmin, grants serviceAccountTokenCreator for signed URLs) --
-    or, on Supabase Storage, both buckets created by hand in the dashboard
+[ ] scripts/gcp-bootstrap.sh run once (creates both buckets per environment,
+    grants objectAdmin, grants serviceAccountTokenCreator for avatar signed
+    URLs, applies the 90-day rule to uploads, and creates the billing budget)
 [ ] LEMELY_STORAGE__BUCKET + __AVATAR_BUCKET match the buckets that exist
     (deploy.yml sets <project-id>-{uploads,avatars}-<env> by default)
-[ ] LEMELY_STORAGE__PROVIDER left at the default gcs (or set to supabase,
-    in which case the two bucket names above must be set back to the
-    Supabase ones)
 [ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
 [ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --
     migrations create component_thresholds/option_thresholds empty; grading

@@ -4,8 +4,14 @@ Subscribes to :data:`lemely.runtime.events.bus` so that ``BUDGET_WARNING`` and
 ``BUDGET_EXCEEDED`` events (published by the Gemini client when the persistent
 cost ledger crosses a threshold) are delivered as ntfy push notifications.
 
-:func:`register_budget_ntfy` is idempotent — calling it from both the CLI and
-web entrypoints registers the subscription exactly once.
+:func:`register_budget_ntfy` is idempotent, so repeated calls register the
+subscription exactly once.
+
+The CLI is now its only caller. The web app used to register it too, but its
+Gemini client is built with ``ledger=None`` (DS3), so it publishes no
+``BUDGET_*`` events at all and there is nothing for a subscription to hear —
+the cap is enforced by a GCP billing budget on the deployed service rather
+than by this process counting its own spend.
 
 Import-linter contract: ``lemely.runtime`` must not depend on ``core``/``io``/
 ``app``. This module uses only stdlib, structlog, and sibling ``runtime``
@@ -53,9 +59,9 @@ def _on_budget_exceeded(**payload: Any) -> None:  # noqa: ANN401
 def register_budget_ntfy() -> None:
     """Subscribe the budget-event ntfy handlers to the bus, exactly once.
 
-    Idempotent and thread-safe: repeated calls (e.g. from both the CLI and web
-    entrypoints, or across multiple ``launch`` invocations) register the
-    subscription only on the first call.
+    Idempotent and thread-safe: repeated calls (e.g. across multiple ``launch``
+    invocations) register the subscription only on the first call. See the
+    module docstring for why the CLI is the only entrypoint that calls this.
     """
     global _registered
     with _lock:

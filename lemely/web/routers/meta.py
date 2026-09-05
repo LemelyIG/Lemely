@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.deps import get_boundary_store, get_settings
-from lemely.web.schemas import HealthDTO
+from lemely.web.schemas import HealthDTO, StorageHealthDTO
 
 logger = logging.getLogger(__name__)
 
@@ -115,4 +115,9 @@ def health(settings: Annotated[Settings, Depends(get_settings)]) -> HealthDTO:
     return HealthDTO(
         apiKeyConfigured=settings.gemini_api_key is not None,
         gradeBoundariesLoaded=grade_boundaries_loaded,
+        # Read straight off Settings, never by constructing a backend: the
+        # deploy smoke test greps this, and a health route that dialled GCS
+        # would fail exactly when it is most needed. Guarded by
+        # `test_health_reports_storage_backend_without_touching_it`.
+        storage=StorageHealthDTO(backend=settings.storage.backend, bucket=settings.storage.bucket),
     )

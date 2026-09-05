@@ -6,8 +6,9 @@ upload path — deriving a sandbox-safe destination name and capping the written
 size — live here so a single hardened implementation backs them all.
 
 Neither helper trusts the client filename as a path: only its basename survives
-:func:`safe_upload_name`, and :func:`write_upload_capped` aborts with a 413 once
-the byte cap is exceeded rather than letting a hostile body exhaust disk.
+:func:`safe_upload_name`, and :func:`check_upload_cap` rejects a body once the
+byte cap is exceeded rather than letting a hostile client exhaust disk or
+memory.
 """
 
 from __future__ import annotations
@@ -16,11 +17,10 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
-# Hard cap on a single uploaded file (scan or mark scheme). Uploads are written
-# to disk in chunks and aborted with a 413 once this many bytes are seen, so a
-# hostile client cannot exhaust disk by streaming an unbounded body.
+# Hard cap on a single uploaded file (scan or mark scheme), enforced once the
+# whole body has been read into memory, before it is written anywhere —
+# object storage included.
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
-UPLOAD_CHUNK_BYTES = 1024 * 1024
 
 
 def safe_upload_name(filename: str | None, fallback: str) -> str:
@@ -43,9 +43,9 @@ def safe_upload_name(filename: str | None, fallback: str) -> str:
 def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
     """Raise 413 when ``data`` exceeds ``max_bytes``.
 
-    The same cap-check :func:`write_upload_capped` applies before writing to
-    disk, extracted so callers that ship bytes elsewhere (e.g. Supabase
-    Storage) can enforce the cap without a local write.
+    Every upload path in the app ships bytes to the object-storage seam
+    (never the container filesystem, spec §4.1), so this is the one cap-check
+    every one of them shares.
     """
     if len(data) > max_bytes:
         raise HTTPException(
@@ -54,23 +54,8 @@ def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
         )
 
 
-def write_upload_capped(
-    data: bytes,
-    dest: Path,
-    *,
-    max_bytes: int = MAX_UPLOAD_BYTES,
-) -> None:
-    """Write ``data`` to ``dest`` in chunks, raising 413 past ``max_bytes``."""
-    check_upload_cap(data, max_bytes=max_bytes)
-    with dest.open("wb") as fh:
-        for start in range(0, len(data), UPLOAD_CHUNK_BYTES):
-            fh.write(data[start : start + UPLOAD_CHUNK_BYTES])
-
-
 __all__ = [
     "MAX_UPLOAD_BYTES",
-    "UPLOAD_CHUNK_BYTES",
     "check_upload_cap",
     "safe_upload_name",
-    "write_upload_capped",
 ]

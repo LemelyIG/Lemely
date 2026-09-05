@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpStore
+from lemely.auth.otp import OtpChannel, OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -64,6 +64,14 @@ def _service(
         ttl_seconds=settings.auth.otp_ttl_seconds,
         max_attempts=settings.auth.otp_max_attempts,
         code_length=settings.auth.otp_length,
+        # `resend_verification` now issues a fresh email-channel code
+        # alongside the link (spec §4.4/DS15) on the SAME frozen `clock` a
+        # test's own signup already used to issue one for the same address a
+        # moment earlier; the store's default 30s resend cooldown would
+        # otherwise raise `OtpRateLimitError` for a same-tick resend. That
+        # cooldown is proven independently in `tests/test_otp.py`, so
+        # disabling it here does not weaken anything this file tests.
+        min_resend_seconds=0,
     )
     service = AuthService(
         gotrue=FakeGoTrueBackend(),
@@ -220,7 +228,7 @@ def test_otp_reuses_existing_parent_row() -> None:
 def _verify_with_current_code(service: AuthService, phone: str) -> object:
     # Brute a small space is unnecessary: read from the store directly.
     store = service._otp_store  # test-only introspection of the injected store
-    challenge = store._challenges[phone]
+    challenge = store._challenges[(OtpChannel.phone, phone)]
     return service.verify_otp(phone, challenge.code)
 
 
@@ -289,9 +297,10 @@ def test_signup_mints_and_sends_a_verification_token() -> None:
     )
 
     assert email.sent_verifications, "expected a verification email to have been sent"
-    sent_email, sent_link = email.sent_verifications[-1]
+    sent_email, sent_link, sent_code = email.sent_verifications[-1]
     assert sent_email == "newstudent@example.com"
     assert result.verification_dev_link == sent_link
+    assert result.verification_dev_code == sent_code
 
     token = sent_link.rsplit("/", 1)[-1]
     assert service.verify_email(token) == result.user_id
@@ -310,6 +319,7 @@ def test_signup_returns_the_dev_link_only_when_the_provider_does_not_deliver() -
         "mocked@example.com", "hunter2pw", Role.student, accepted_terms=True
     )
     assert mock_result.verification_dev_link is not None
+    assert mock_result.verification_dev_code is not None
 
     real_email = FakeEmailProvider(delivers_out_of_band=True)
     real_service, _, _ = _service(clock, email=real_email, tokens=FakeAuthTokenService(clock=clock))
@@ -317,6 +327,7 @@ def test_signup_returns_the_dev_link_only_when_the_provider_does_not_deliver() -
         "delivered@example.com", "hunter2pw", Role.student, accepted_terms=True
     )
     assert real_result.verification_dev_link is None
+    assert real_result.verification_dev_code is None
     # ...and the provider still received it - only the *return* is withheld,
     # mirroring test_request_otp_returns_the_code_only_for_a_non_delivering_provider.
     assert real_email.sent_verifications
@@ -478,9 +489,10 @@ def test_resend_verification_mints_and_sends_a_fresh_token() -> None:
     signed_up = service.signup("resendme@example.com", "hunter2pw", Role.student)
     email.sent_verifications.clear()  # ignore signup's own send
 
-    dev_link = service.resend_verification(signed_up.user_id)
+    dev_link, dev_code = service.resend_verification(signed_up.user_id)
 
     assert dev_link is not None
+    assert dev_code is not None
     assert email.sent_verifications
     token = dev_link.rsplit("/", 1)[-1]
     assert service.verify_email(token) == signed_up.user_id
@@ -491,3 +503,144 @@ def test_resend_verification_for_an_unknown_user_raises_auth_error() -> None:
     service, _, _ = _service(clock, tokens=FakeAuthTokenService(clock=clock))
     with pytest.raises(AuthError):
         service.resend_verification(uuid.uuid4())
+
+
+# ── Email verification by code (spec §4.4/DS15) ─────────────────────────────
+#
+# The two fixtures below build the exact same collaborators as `_service()`
+# above (a wall clock rather than the frozen `_Clock`, since none of these
+# tests need to fast-forward time), differing only in the email provider's
+# `delivers_out_of_band` — the single knob D3.16 gates `devCode` on. Both
+# share one builder so the (already-accepted — see `_service()` above)
+# Fake-vs-Protocol mypy gap is a single call site, not two.
+
+
+def _service_with_otp_store(
+    *, delivers_out_of_band: bool
+) -> tuple[AuthService, FakeEmailProvider, OtpStore]:
+    settings = Settings()
+    mirror = FakeUserMirror()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(11),
+        ttl_seconds=settings.auth.otp_ttl_seconds,
+        email_ttl_seconds=settings.auth.email_otp_ttl_seconds,
+        max_attempts=5,
+        code_length=settings.auth.otp_length,
+        # `resend_verification` issues a fresh email-channel code, and without
+        # this the store's resend-cooldown would raise `OtpRateLimitError` for
+        # a same-instant re-issue — a guarantee this file leaves to
+        # `tests/test_otp.py`, not what these tests are about.
+        min_resend_seconds=0,
+    )
+    email = FakeEmailProvider(delivers_out_of_band=delivers_out_of_band)
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=mirror,  # type: ignore[arg-type]
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+        email=email,
+        tokens=FakeAuthTokenService(),  # type: ignore[arg-type]
+    )
+    return service, email, otp_store
+
+
+@pytest.fixture
+def service_with_email() -> tuple[AuthService, FakeEmailProvider, OtpStore]:
+    """AuthService wired with a NON-delivering email provider (the mock case)."""
+    return _service_with_otp_store(delivers_out_of_band=False)
+
+
+@pytest.fixture
+def service_with_delivering_email() -> tuple[AuthService, FakeEmailProvider, OtpStore]:
+    """Same as :func:`service_with_email`, but the provider DOES deliver (D3.16)."""
+    return _service_with_otp_store(delivers_out_of_band=True)
+
+
+def test_signup_issues_link_and_code_and_returns_both_dev_values(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    service, email_provider, otp_store = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_link is not None
+    assert result.verification_dev_code is not None
+    assert email_provider.sent_verifications == [
+        ("s@example.com", result.verification_dev_link, result.verification_dev_code)
+    ]
+
+
+def test_verify_email_code_stamps_verified_and_is_single_use(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    service, _e, _o = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_code is not None
+    assert service.verify_email_code(result.user_id, result.verification_dev_code) == result.user_id
+    with pytest.raises(AuthError):
+        service.verify_email_code(result.user_id, result.verification_dev_code)
+
+
+def test_wrong_code_five_times_locks(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    service, _e, _o = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_code is not None
+    for _ in range(5):
+        with pytest.raises(AuthError):
+            service.verify_email_code(result.user_id, "000000")
+    with pytest.raises(AuthError, match=r"no_challenge|locked_out"):
+        service.verify_email_code(result.user_id, result.verification_dev_code)
+
+
+def test_link_still_verifies_after_code_was_used(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    """The two credentials are independent; verification is idempotent (spec §4.4)."""
+    service, _e, _o = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_code is not None
+    assert result.verification_dev_link is not None
+    service.verify_email_code(result.user_id, result.verification_dev_code)
+    token = result.verification_dev_link.rsplit("/", 1)[1]
+    assert service.verify_email(token) == result.user_id  # no error, same user
+
+
+def test_code_still_verifies_after_link_was_used(
+    service_with_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    """The other direction of independence: redeeming the link leaves the code usable.
+
+    ``test_link_still_verifies_after_code_was_used`` covers code-then-link;
+    this is link-then-code, and it is the half that is easy to get wrong.
+    Redeeming the link goes through
+    :class:`~lemely.db.auth_token_repo.AuthTokenService`, which owns the
+    ``auth_tokens`` table; the code lives in the OTP store's ``email``
+    channel. Nothing in :meth:`~lemely.auth.service.AuthService.verify_email`
+    reaches the OTP store, so consuming one credential must leave the other
+    intact — asserted here rather than left to inspection, because a future
+    change that "tidies up" by invalidating the code on link redemption would
+    otherwise break §4.4 silently.
+    """
+    service, _e, _o = service_with_email
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_code is not None
+    assert result.verification_dev_link is not None
+    token = result.verification_dev_link.rsplit("/", 1)[1]
+    service.verify_email(token)
+    # The code is still a live credential, and still names the same user.
+    assert service.verify_email_code(result.user_id, result.verification_dev_code) == result.user_id
+
+
+def test_dev_code_is_none_when_provider_delivers(
+    service_with_delivering_email: tuple[AuthService, FakeEmailProvider, OtpStore],
+) -> None:
+    """D3.16 applied to the code: a real provider never leaks it back through the API."""
+    service, email_provider, _o = service_with_delivering_email
+    assert email_provider.delivers_out_of_band is True
+    result = service.signup("s@example.com", "pw-123456", Role.student, accepted_terms=True)
+    assert result.verification_dev_link is None
+    assert result.verification_dev_code is None
+    ((_addr, _link, code),) = email_provider.sent_verifications
+    assert len(code) == 6  # it was still issued and handed to the provider

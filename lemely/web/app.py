@@ -14,7 +14,6 @@ from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
-from lemely.runtime.budget_notify import register_budget_ntfy
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web.routers import (
     admin,
@@ -52,7 +51,6 @@ def create_app() -> FastAPI:
     Includes the meta/health router, the auth router, and the (initially empty)
     teacher and student portal routers so portal workers never edit this module.
     """
-    register_budget_ntfy()
     app = FastAPI(
         title="Lemely API",
         description="Backend for the Lemely Teacher and Student portals.",

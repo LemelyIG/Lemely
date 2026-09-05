@@ -218,7 +218,7 @@ class SettingsTests(unittest.TestCase):
         """
         with _IsolatedEnv(), TemporaryDirectory() as tmp:
             s = load_settings(toml_path=None, cwd=Path(tmp))
-        self.assertEqual(s.storage.provider, "gcs")
+        self.assertEqual(s.storage.backend, "local")
         self.assertEqual(s.storage.bucket, "lemely-uploads")
         self.assertEqual(s.storage.avatar_bucket, "lemely-avatars")
 

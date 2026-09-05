@@ -88,29 +88,29 @@ jwt_audience = "authenticated"
 
 [storage]
 # Object storage for self-mark uploads (P2.5) and profile pictures.
-# "gcs" (default) uses Google Cloud Storage via Application Default
-# Credentials — no key belongs in this file for that path; see
-# docs/deployment.md and scripts/gcs_bootstrap.sh. "supabase" uses the same
-# [supabase] url/service_role_key as GoTrue.
+# "local" (the default) writes under `paths.output_dir/storage` — right for
+# dev, Compose and CI, and needs no credentials. "gcs" uses Google Cloud
+# Storage via Application Default Credentials; no key belongs in this file
+# for that path. See docs/deployment.md and scripts/gcp-bootstrap.sh.
 #
-# Note that signed URLs (avatar/upload downloads) need a real service-account
-# credential (a JSON key, or an attached/workload-identity service account) —
-# plain user ADC from `gcloud auth application-default login` can
+# There is no Supabase Storage backend — DS7 removed it.
+#
+# Note that signed URLs (avatar downloads) need a real service-account
+# credential (a JSON key, or an attached/workload-identity service account)
+# — plain user ADC from `gcloud auth application-default login` can
 # upload/download but cannot sign a URL at all. For local signing, add
-# `--impersonate-service-account=<runtime SA>` to that login command.
+# `--impersonate-service-account=<runtime SA>` to that login command. The
+# "local" backend sidesteps this: it returns the bytes inline instead.
 #
 # GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so
-# these defaults carry a project-ish prefix; bare "uploads"/"avatars" were
-# fine only because Supabase scopes bucket names per project. The deployed
-# pipeline overrides both per environment (see .github/workflows/deploy.yml),
-# so staging and production never share a bucket.
-provider = "gcs"
+# these defaults carry a project-ish prefix. The deployed pipeline overrides
+# both per environment (see .github/workflows/deploy.yml), so staging and
+# production never share a bucket; `scripts/gcp-bootstrap.sh` creates them.
+backend = "local"
 bucket = "lemely-uploads"
+# Profile pictures live in their own bucket: different retention and access
+# shape from scans, and no reason to share a namespace.
 avatar_bucket = "lemely-avatars"
-# Switching back to Supabase Storage means switching the bucket names too:
-#   provider = "supabase"
-#   bucket = "uploads"
-#   avatar_bucket = "avatars"
 signed_url_ttl_seconds = 3600
 avatar_max_bytes = 5242880  # 5 MiB
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
@@ -132,7 +132,33 @@ otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
+# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the
+# phone code above; length, attempt cap and resend cooldown are shared.
+email_otp_ttl_seconds = 600
 
+[grading]
+# A teacher_papers row stuck in `processing` past this many seconds is a
+# dead run (its instance died) and may be reclaimed by the next regrade.
+stale_run_after_seconds = 900
+
+[integrity]
+# AI-generated-text detection is opt-in and costs one Gemini call per
+# question — plagiarism detection alone needs no Gemini key.
+plagiarism_enabled = true
+ai_detection_enabled = false
+plagiarism_threshold = 0.85
+ai_detection_threshold = 0.8
+
+[push]
+# Web-push (VAPID) application-server credentials. All three secrets default
+# to unset, which is a supported state: the transport reports itself
+# unavailable and the notification inbox keeps working without them.
+# Secrets — prefer LEMELY_PUSH__* env vars over this file:
+# vapid_public_key = "..."
+# vapid_private_key = "..."
+# vapid_subject = "mailto:ops@example.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0
 [email]
 # Transactional mail for account verification and password reset (D7.7).
 #

@@ -30,7 +30,7 @@ security boundary, and no caller should treat it as one.
 from __future__ import annotations
 
 from datetime import datetime, timedelta
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -52,6 +52,22 @@ class CooldownError(Exception):
         self.key = key
         self.retry_after = retry_after
         super().__init__(f"Cooldown active for {key!r}; retry in {retry_after:.0f}s.")
+
+
+class CooldownStoreProtocol(Protocol):
+    """Check-and-stamp a per-key resend cooldown.
+
+    :class:`CooldownStore` (this module, in-memory) and
+    :class:`~lemely.db.cooldown_repo.DbCooldownStore` (Postgres-backed) both
+    satisfy this Protocol — ``lemely.web.routers.auth`` depends on the
+    Protocol, not on either concrete store, so swapping the wiring in
+    ``lemely.web.deps.get_signup_and_reset_cooldown_store`` /
+    ``get_resend_verification_cooldown_store`` is the only change a caller
+    ever needs, matching :class:`~lemely.auth.otp.OtpChallengeStore`'s
+    established shape for the sibling OTP store.
+    """
+
+    def check_and_stamp(self, key: str) -> None: ...
 
 
 class CooldownStore:
@@ -104,4 +120,4 @@ class CooldownStore:
         self._stamped_at[key] = now
 
 
-__all__ = ["CooldownError", "CooldownStore"]
+__all__ = ["CooldownError", "CooldownStore", "CooldownStoreProtocol"]

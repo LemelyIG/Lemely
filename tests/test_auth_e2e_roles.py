@@ -44,7 +44,7 @@ from unittest.mock import MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
-from lemely.auth.otp import OtpStore
+from lemely.auth.otp import OtpChannel, OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token, mint_access_token
@@ -347,7 +347,7 @@ def test_parent_otp_e2e_locked_out_of_student_route(
     assert req_resp.json()["status"] == "sent"
 
     # Step 2: recover code via test introspection (mirrors test_auth_router.py)
-    code = service._otp_store._challenges[phone].code
+    code = service._otp_store._challenges[(OtpChannel.phone, phone)].code
 
     # Step 3: verify OTP → get parent token
     verify_resp = client.post("/api/auth/otp/verify", json={"phone": phone, "code": code})
