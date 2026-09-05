@@ -45,8 +45,14 @@ def test_settings_default_backend_is_local() -> None:
     from lemely.runtime.config import StorageSettings
 
     assert StorageSettings().backend == "local"
-    assert StorageSettings().bucket == "uploads"
-    assert not hasattr(StorageSettings(), "signed_url_ttl_seconds")
+    # `lemely-` prefixed since the merge with #220: GCS bucket names are one
+    # global namespace across all of Google Cloud, so a bare "uploads" default
+    # could never be created. For `local` these are directory names, where the
+    # prefix is merely harmless.
+    assert StorageSettings().bucket == "lemely-uploads"
+    assert StorageSettings().avatar_bucket == "lemely-avatars"
+    # Present since the merge with #220: avatars are served as signed URLs.
+    assert StorageSettings().signed_url_ttl_seconds == 3600
 
 
 def test_check_storage_local_reports_root(tmp_path: Path) -> None:
@@ -122,7 +128,10 @@ def test_check_storage_gcs_bucket_probe_failure_is_reported(
     monkeypatch.setattr("google.auth.default", lambda: None)
     client = MagicMock()
     client.get_bucket.side_effect = Exception("403 caller does not have access")
-    monkeypatch.setattr("google.cloud.storage.Client", lambda: client)
+    # `**kw` so this fails on the bucket probe, not on constructing the client
+    # — a zero-arg lambda would raise TypeError on `project=` and this test
+    # would pass without ever exercising the probe.
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **kw: client)
     settings = Settings().model_copy(
         update={
             "storage": Settings().storage.model_copy(
@@ -144,11 +153,17 @@ def test_check_storage_gcs_bucket_probe_success(monkeypatch: pytest.MonkeyPatch)
 
     monkeypatch.setattr("google.auth.default", lambda: None)
     client = MagicMock()
-    monkeypatch.setattr("google.cloud.storage.Client", lambda: client)
+    # `**kw` because check_storage passes `project=`; a zero-arg lambda here
+    # would fail for the wrong reason.
+    monkeypatch.setattr("google.cloud.storage.Client", lambda **kw: client)
     settings = Settings().model_copy(
         update={
             "storage": Settings().storage.model_copy(
-                update={"backend": "gcs", "bucket": "proj-uploads-staging"}
+                update={
+                    "backend": "gcs",
+                    "bucket": "proj-uploads-staging",
+                    "avatar_bucket": "proj-avatars-staging",
+                }
             )
         }
     )
@@ -156,5 +171,8 @@ def test_check_storage_gcs_bucket_probe_success(monkeypatch: pytest.MonkeyPatch)
     ok, detail = check_storage(settings, no_network=False)
 
     assert ok is True
+    # Both buckets are probed: a deploy that provisioned only one fails on
+    # whichever route touches the other.
+    assert client.get_bucket.call_count == 2
+    assert "proj-avatars-staging" in detail
     assert "proj-uploads-staging" in detail
-    client.get_bucket.assert_called_once_with("proj-uploads-staging")

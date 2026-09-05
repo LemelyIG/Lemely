@@ -1,18 +1,36 @@
-"""CAIE grade boundary resolver — bundled static JSON, no network calls."""
+"""CAIE grade boundary resolver, backed by ``component_thresholds``.
+
+Was bundled static JSON; the table is the source of truth now (Task 12's
+ingest wrote 1,354 component rows and 716 option rows, 2006-2026). The public
+shape is deliberately unchanged — ``resolve`` still returns the same
+``(dict[str, float], BoundarySource)`` pair via the same three-rung fallback
+chain — because ``attempts.boundary_source`` records which rung answered on
+every graded paper ever recorded, and that three-way distinction is a stored
+fact, not an implementation detail free to change.
+
+Only raw marks and ``max_mark`` are stored; percentages are computed from them
+at read time (:func:`_percentages`) and never written down, so every stored
+number stays one a human can check against the source PDF.
+"""
 
 from __future__ import annotations
 
-import json
+import threading
+from collections import defaultdict
+from statistics import mean
 from typing import TYPE_CHECKING, Literal
 
-from lemely.data import DATA_DIR
+import sqlalchemy as sa
+
+from lemely.db.models.enums import SessionMonth
+from lemely.db.models.thresholds import ComponentThreshold
+from lemely.db.session import get_sessionmaker
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 
 if TYPE_CHECKING:
-    from pathlib import Path
+    from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.core.schemas import ExamMetadata
-
-_BOUNDARIES_PATH = DATA_DIR / "grade_boundaries.json"
 
 # Maps ExamMetadata.session_month values to the short session code used in boundary keys.
 _SESSION_CODE: dict[str, str] = {
@@ -22,7 +40,36 @@ _SESSION_CODE: dict[str, str] = {
     "Specimen": "sp",
 }
 
+# The reverse mapping, keyed on the ORM enum, for building keys from stored rows.
+_SESSION_CODE_BY_MONTH: dict[SessionMonth, str] = {
+    SessionMonth.may_june: "m",
+    SessionMonth.oct_nov: "w",
+    SessionMonth.feb_mar: "s",
+    SessionMonth.specimen: "sp",
+}
+
+# Chronological order of sessions within a calendar year, for finding "the most
+# recent session" a paper number was examined in. Specimen carries no real
+# session and is never the most recent (see `_load`).
+_MONTH_ORDER: dict[SessionMonth, int] = {
+    SessionMonth.feb_mar: 0,
+    SessionMonth.may_june: 1,
+    SessionMonth.oct_nov: 2,
+    SessionMonth.specimen: -1,
+}
+
 BoundarySource = Literal["exact", "subject_default", "global_default"]
+
+_lock = threading.Lock()
+_ReferenceTuple = tuple[dict[str, dict[str, float]], dict[str, dict[str, float]], dict[str, float]]
+_cache: _ReferenceTuple | None = None
+
+
+def invalidate_reference_cache() -> None:
+    """Drop the process cache. Called by the ingest path."""
+    global _cache
+    with _lock:
+        _cache = None
 
 
 def _make_key(metadata: ExamMetadata) -> str | None:
@@ -64,30 +111,135 @@ def raw_to_percentage(raw: dict[str, int | float], max_mark: int | float) -> dic
     return {grade: (mark / max_mark) * 100.0 for grade, mark in raw.items()}
 
 
+def _percentages(thresholds: dict[str, int], max_mark: int) -> dict[str, float]:
+    """Raw marks → percentages.
+
+    Derived at read time, never stored, so every stored number stays one a
+    human can check against the PDF.
+
+    Raises:
+        ValueError: When ``max_mark`` is not positive. A zero divides by zero;
+            a negative value produces a nonsensical (and, for a negative raw
+            mark ratio, grade-inflating) percentage. ``raw_to_percentage``
+            already guards this for its own callers; this is the same guard
+            for the read path that builds the exact/default maps.
+    """
+    if max_mark <= 0:
+        raise ValueError(f"max_mark must be positive, got {max_mark}")
+    return {grade: round((mark / max_mark) * 100.0, 2) for grade, mark in thresholds.items()}
+
+
+def _load(session: Session) -> _ReferenceTuple:
+    """Build the exact/subject-default/global-default maps from verified rows only.
+
+    An unverified row (``verified=False``) is a real transcription whose PDF
+    could not be read; ``component_thresholds`` stores it as coverage awaiting
+    verification, but nothing may cite Cambridge as its source
+    (``lemely/db/models/thresholds.py``). Letting it populate ``exact`` or
+    either average would report a guess as ``boundary_source="exact"`` — worse
+    than the fallback the chain exists to provide — so unverified rows are
+    skipped here entirely. A paper whose only row is unverified falls through
+    to the subject/global default instead, which is the intended behaviour.
+
+    ``by_paper`` is keyed ``(subject_code, paper_number)`` rather than just
+    ``subject_code`` so the fallback map for a Core paper is built only from
+    other Core papers. Grade vocabularies differ by tier at the same subject
+    (Core C-G, Extended A*-G) — grouping by subject alone would let an
+    Extended paper's A/B boundaries leak into a Core paper's fallback, which a
+    Core candidate can never be awarded.
+
+    Which GRADES a paper number's default may offer is a structural fact about
+    the *current* syllabus, not something to average across two decades: CAIE
+    has renumbered/retiered papers, so a given (subject, paper_number) can mean
+    something different in 2014 than it does today (0625 paper 1 carried a B
+    threshold only in 2014-2015, and is Core-only, C-G, every other year on
+    record). The grade SET for a paper's default is therefore taken from its
+    most recent session's rows only; the threshold VALUE for each grade in that
+    set is still averaged across every verified row that carries it, across
+    all years — only the vocabulary is year-scoped, not the arithmetic.
+
+    Raises:
+        EmptyGradeBoundaryStoreError: When zero verified rows exist at all — a
+            fresh or unseeded database. Inventing a global default here (as an
+            earlier version of this store did) would grade every paper against
+            numbers Cambridge never published; refusing to grade is the
+            correct failure mode instead.
+    """
+    exact: dict[str, dict[str, float]] = {}
+    by_paper: dict[tuple[str, int], dict[str, list[float]]] = defaultdict(lambda: defaultdict(list))
+    latest_session: dict[tuple[str, int], tuple[int, int]] = {}
+    latest_grades: dict[tuple[str, int], set[str]] = defaultdict(set)
+    everything: dict[str, list[float]] = defaultdict(list)
+    for row in session.scalars(sa.select(ComponentThreshold)):
+        if not row.verified:
+            continue
+        if not row.thresholds:
+            # A verified row with an empty threshold map contributes nothing but
+            # an empty ``exact`` entry, which would shadow the paper's usable
+            # subject default and return a grade set of {} as ``boundary_source
+            # ="exact"``. Skip it so the fallback chain runs instead.
+            continue
+        pct = _percentages(row.thresholds, row.max_mark)
+        code = _SESSION_CODE_BY_MONTH[row.session_month]
+        year_suffix = row.session_year % 100
+        key = f"{row.subject_code}_{code}{year_suffix:02d}_p{row.paper_number}{row.paper_variant}"
+        exact[key] = pct
+
+        paper_key = (row.subject_code, row.paper_number)
+        session_key = (row.session_year, _MONTH_ORDER[row.session_month])
+        for grade, value in pct.items():
+            by_paper[paper_key][grade].append(value)
+            everything[grade].append(value)
+        current_latest = latest_session.get(paper_key)
+        if current_latest is None or session_key > current_latest:
+            latest_session[paper_key] = session_key
+            latest_grades[paper_key] = set(pct)
+        elif session_key == current_latest:
+            latest_grades[paper_key] |= set(pct)
+
+    subject_defaults = {
+        f"{subject}_p{paper_number}": {
+            g: round(mean(v), 2)
+            for g, v in grades.items()
+            if g in latest_grades[(subject, paper_number)]
+        }
+        for (subject, paper_number), grades in by_paper.items()
+    }
+    if not everything:
+        raise EmptyGradeBoundaryStoreError(
+            "component_thresholds has no verified rows — refusing to grade against "
+            "invented boundaries. Run `python scripts/ingest_thresholds.py` to ingest "
+            "and verify CAIE grade thresholds before grading any paper."
+        )
+    global_default = {g: round(mean(v), 2) for g, v in everything.items()}
+    return exact, subject_defaults, global_default
+
+
+def _load_reference(sm: sessionmaker[Session]) -> _ReferenceTuple:
+    global _cache
+    with _lock:
+        if _cache is not None:
+            return _cache
+    with sm() as session:
+        loaded = _load(session)
+    with _lock:
+        _cache = loaded
+    return loaded
+
+
 class GradeBoundaryStore:
-    """Resolver for CAIE grade boundaries from bundled static JSON.
+    """Resolver for CAIE grade boundaries, backed by ``component_thresholds``.
 
     Fallback chain: exact key → subject default → global default.
     source_tag vocabulary matches GradePrediction.boundary_source Literal values.
     """
 
-    def __init__(self, data_path: Path | None = None) -> None:
-        path = data_path or _BOUNDARIES_PATH
-        data = json.loads(path.read_text(encoding="utf-8"))
-        self._exact: dict[str, dict[str, float]] = {
-            k: v for k, v in data.items() if not k.startswith("_")
-        }
-        self._defaults: dict[str, dict[str, float]] = data.get("_defaults", {})
-        self._global: dict[str, float] = data.get(
-            "_global",
-            {
-                "A": 80.0,
-                "B": 70.0,
-                "C": 60.0,
-                "D": 50.0,
-                "E": 40.0,
-            },
-        )
+    def __init__(
+        self,
+        sessionmaker: sessionmaker[Session] | None = None,
+    ) -> None:
+        self._sessionmaker = sessionmaker or get_sessionmaker()
+        self._exact, self._defaults, self._global = _load_reference(self._sessionmaker)
 
     @property
     def exact_key_count(self) -> int:
@@ -102,20 +254,23 @@ class GradeBoundaryStore:
 
     @property
     def subject_default_count(self) -> int:
-        """How many subjects carry a fallback boundary set of their own."""
+        """How many (subject, paper number) pairs carry a fallback boundary set."""
         return len(self._defaults)
 
     def resolve(self, metadata: ExamMetadata) -> tuple[dict[str, float], BoundarySource]:
         """Return (boundary_map, source_tag) using the fallback chain.
 
         source_tag is one of: 'exact', 'subject_default', 'global_default'.
+        The subject-default rung is scoped to ``(subject_code, paper_number)``,
+        never subject alone, so a Core paper's fallback never contains a grade
+        (e.g. "A") sourced entirely from Extended papers of the same subject.
         """
         key = _make_key(metadata)
         if key and key in self._exact:
             return self._exact[key], "exact"
 
-        subject = metadata.subject_code
-        if subject in self._defaults:
-            return self._defaults[subject], "subject_default"
+        paper_key = f"{metadata.subject_code}_p{metadata.paper_number}"
+        if paper_key in self._defaults:
+            return self._defaults[paper_key], "subject_default"
 
         return self._global, "global_default"

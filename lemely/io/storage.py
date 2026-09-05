@@ -34,7 +34,7 @@ class StorageObjectNotFoundError(KeyError):
 
 
 class StorageBackend(Protocol):
-    """Upload, download, and delete operations against object storage."""
+    """Upload, download, delete and signed-URL operations against object storage."""
 
     def upload(
         self,
@@ -54,12 +54,31 @@ class StorageBackend(Protocol):
         """Remove ``object_path`` from ``bucket``. A missing object is not an error."""
         ...
 
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        """Return a URL that reads ``object_path`` for ``expires_in`` seconds.
+
+        Exists for profile pictures: the browser fetches the image directly,
+        so the bytes must be reachable without the caller's session, and the
+        reachability must expire. Every other consumer downloads through the
+        backend instead, which is why this is the only read that produces a
+        URL rather than bytes.
+
+        Raises :class:`~lemely.runtime.errors.ExternalServiceError` when the
+        configured credentials cannot sign. Callers that merely *display* an
+        avatar treat any failure as "no avatar" rather than an error — see
+        ``lemely.web.routers.me._avatar_url_for`` — because a profile read
+        must not fail just because object storage is unreachable.
+        """
+        ...
+
 
 def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
     """``lemely doctor``'s storage check: ``(passed, detail)``.
 
     ``local``: the root is writable. ``gcs``: application-default credentials
-    resolve and — unless ``no_network`` — the bucket answers a metadata read.
+    resolve and — unless ``no_network`` — both buckets answer a metadata read.
+    Both, because uploads and avatars live in separate buckets and a deploy
+    that provisioned only one fails on whichever route touches the other.
     """
     if settings.storage.backend == "local":
         root = settings.paths.output_dir / "storage"
@@ -74,15 +93,18 @@ def check_storage(settings: Settings, *, no_network: bool) -> tuple[bool, str]:
         google.auth.default()
     except Exception as exc:  # any ADC failure surfaces as the detail
         return False, f"application-default credentials: {exc}"
+    buckets = (settings.storage.bucket, settings.storage.avatar_bucket)
     if no_network:
-        return True, f"gcs://{settings.storage.bucket} (not probed: --no-network)"
+        return True, f"gcs://{' + '.join(buckets)} (not probed: --no-network)"
     try:
         from google.cloud import storage
 
-        storage.Client().get_bucket(settings.storage.bucket)
+        client = storage.Client(project=settings.storage.gcs_project)
+        for name in buckets:
+            client.get_bucket(name)
     except Exception as exc:  # any bucket-probe failure surfaces as the detail
-        return False, f"bucket {settings.storage.bucket}: {exc}"
-    return True, f"gcs://{settings.storage.bucket}"
+        return False, f"buckets {' + '.join(buckets)}: {exc}"
+    return True, f"gcs://{' + '.join(buckets)}"
 
 
 __all__ = ["StorageBackend", "StorageObjectNotFoundError", "check_storage"]

@@ -780,12 +780,16 @@ def test_class_detail_student_with_no_history_reports_zero_paper_count(
     class_service: ClassService,
     history_store: HistoryStore,
 ) -> None:
-    """An enrolled student with zero history never appears with fabricated numbers.
+    """An enrolled student with zero history still appears, with honest empty fields.
 
-    (They simply do not appear on the roster at all — ``_student_row`` returns
-    ``None`` for empty history, an existing contract this does not change —
-    but a classmate *with* history must report a real, non-fabricated
-    ``paperCount``/``lastActiveAt``/``flags``.)
+    The roster is one row per enrolled student (this test's own regression):
+    a student who has not yet submitted anything must not be invisible on the
+    teacher's class roster just because ``_student_row`` returns ``None`` for
+    empty history (that ``None`` contract is unchanged and still relied on by
+    the overview/at-risk surfaces — this route now fills in an honest,
+    non-fabricated empty row instead of dropping the student). A classmate
+    *with* history must still report real, non-fabricated
+    ``paperCount``/``lastActiveAt``/``flags``.
     """
     teacher = _seed_user(pg_sessionmaker, Role.teacher)
     has_history = _seed_user(pg_sessionmaker, Role.student, display_name="Has History")
@@ -800,12 +804,24 @@ def test_class_detail_student_with_no_history_reports_zero_paper_count(
         user_id=str(teacher), role=Role.teacher.value
     )
     body = client.get(f"/api/classes/{cls.class_id}").json()
-    assert len(body["students"]) == 1
-    row = body["students"][0]
-    assert row["name"] == "Has History"
-    assert row["paperCount"] == 1
-    assert row["lastActiveAt"] is not None
-    assert row["flags"] == []
+    assert len(body["students"]) == 2
+    rows_by_name = {r["name"]: r for r in body["students"]}
+    assert set(rows_by_name) == {"Has History", "No History"}
+
+    has_history_row = rows_by_name["Has History"]
+    assert has_history_row["paperCount"] == 1
+    assert has_history_row["lastActiveAt"] is not None
+    assert has_history_row["flags"] == []
+
+    no_history_row = rows_by_name["No History"]
+    assert no_history_row["grade"] == ""
+    assert no_history_row["mark"] == ""
+    assert no_history_row["delta"] is None
+    assert no_history_row["weakTopic"] is None
+    assert no_history_row["gradeAtRisk"] is False
+    assert no_history_row["paperCount"] == 0
+    assert no_history_row["lastActiveAt"] is None
+    assert no_history_row["flags"] == []
 
 
 def test_class_summary_and_detail_new_fields_scope_to_each_teachers_own_classes(

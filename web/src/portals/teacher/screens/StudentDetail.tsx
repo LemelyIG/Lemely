@@ -3,7 +3,8 @@ import { useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
@@ -185,264 +186,274 @@ export function StudentDetail() {
   const navigate = useNavigate()
   const detailQuery = useStudentDetail(studentId)
 
-  if (detailQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Student detail</h1>
-        <PanelSkeleton />
-        <PanelSkeleton />
-      </div>
-    )
-  }
-
-  if (detailQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">Student detail</h1>
-        <ErrorState
-          heading="Couldn't load this student"
-          body={teacherLoadFailureMessage(detailQuery.error)}
-          action={{ label: "Retry", onClick: () => detailQuery.refetch() }}
-          secondaryAction={{ label: "Go back", onClick: () => navigate(-1) }}
-        />
-      </div>
-    )
-  }
-
-  const student = detailQuery.data
-
   return (
     <div className="lm-screen flex flex-col gap-8 min-w-0">
-      <div className="flex flex-col gap-1">
-        <button
-          type="button"
-          onClick={() => navigate(-1)}
-          className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        >
-          <BackArrow /> Back
-        </button>
-        <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
-          <div className="min-w-0">
-            <h1 className="text-display-md mt-1.5 text-pretty">
-              {student.displayName}
-            </h1>
-            <div className="text-body-sm text-ink-muted mt-1">
-              {student.engagement.totalPapers} paper
-              {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
-              {student.engagement.lastActiveAt
-                ? `active ${relativeTime(student.engagement.lastActiveAt)}`
-                : "never active"}
-            </div>
-          </div>
-          <div className="flex-1" />
-          {student.isAtRisk ? (
-            <Chip tone="err">At risk</Chip>
-          ) : (
-            <Chip tone="ok">Not currently flagged</Chip>
-          )}
-        </div>
-      </div>
-
-      {/* At-risk status and reason */}
-      {student.atRiskFlags.length > 0 ? (
-        <section className="flex flex-col gap-3">
-          <div className="text-display-sm">At-risk flags</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
-            {student.atRiskFlags.map((f) => (
-              <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-ink-muted leading-[1.5]">
-                <span
-                  aria-hidden="true"
-                  className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
-                />
-                <span className="flex-1 text-pretty">{f.summary}</span>
-                {f.acknowledged ? (
-                  <Chip tone="neutral" className="flex-none">
-                    Acknowledged
-                  </Chip>
-                ) : null}
-              </div>
-            ))}
-          </div>
-        </section>
-      ) : null}
-
-      {/* Subjects and predicted grades */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">Subjects</div>
-        {student.subjects.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No subjects recorded yet.</div>
-        ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
-            {student.subjects.map((s) => (
-              <div
-                key={s.subjectCode}
-                className="bg-paper-raised border border-rule rounded-lg p-[18px] flex items-center gap-4"
+      <QueryState
+        query={detailQuery}
+        srHeading="Student detail"
+        skeleton={
+          <>
+            <PanelSkeleton />
+            <PanelSkeleton />
+          </>
+        }
+        // `useStudentDetail` disables its query when `studentId` is falsy
+        // (`enabled: !!studentId`) — same shape as `ClassDetail.tsx`'s
+        // `useClassDetail`, see that file's comment on `idle` for why a
+        // defensive branch is still required even though the route this
+        // screen mounts under always supplies `:studentId`.
+        idle={
+          <EmptyState
+            heading="No student selected"
+            body="Choose a student from a class roster or the at-risk list to see their detail."
+            action={{ label: "Go back", onClick: () => navigate(-1) }}
+          />
+        }
+        // Same reasoning as `ClassDetail.tsx`: a detail route reached with a
+        // bad or stale student id retries into the same failure every time,
+        // so "Try again" on its own is a dead end. `secondaryAction` was
+        // added to `QueryStateErrorProps` by this sweep for this pair.
+        error={{
+          heading: "Couldn't load this student",
+          body: teacherLoadFailureMessage,
+          secondaryAction: { label: "Go back", onClick: () => navigate(-1) },
+        }}
+      >
+        {(student) => (
+          <>
+            <div className="flex flex-col gap-1">
+              <button
+                type="button"
+                onClick={() => navigate(-1)}
+                className="text-body-sm text-ink-faint transition-colors hover:text-ink w-fit bg-transparent border-0 p-0 cursor-pointer rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
               >
-                <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
+                <BackArrow /> Back
+              </button>
+              <div className="flex items-start gap-4 flex-wrap gap-y-2 mt-1">
                 <div className="min-w-0">
-                  <div className="text-eyebrow text-ink-faint">
-                    {s.subjectCode}
-                  </div>
-                  <div className="text-body-md text-ink-muted mt-1">
-                    {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
-                    {s.paperCount === 1 ? "" : "s"}
+                  <h1 className="text-display-md mt-1.5 text-pretty">
+                    {student.displayName}
+                  </h1>
+                  <div className="text-body-sm text-ink-muted mt-1">
+                    {student.engagement.totalPapers} paper
+                    {student.engagement.totalPapers === 1 ? "" : "s"} recorded ·{" "}
+                    {student.engagement.lastActiveAt
+                      ? `active ${relativeTime(student.engagement.lastActiveAt)}`
+                      : "never active"}
                   </div>
                 </div>
-              </div>
-            ))}
-          </div>
-        )}
-      </section>
-
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
-        <StudentTrendPanel trend={student.trend} />
-
-        {/* Activity / engagement */}
-        <section className="flex flex-col gap-3 min-w-0">
-          <div className="text-display-sm">Engagement</div>
-          <div className="bg-paper-raised border border-rule rounded-lg p-[18px] grid grid-cols-2 gap-4">
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Total papers
-              </div>
-              <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
-            </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Last active
-              </div>
-              <div className="text-display-sm mt-1">
-                {student.engagement.lastActiveAt
-                  ? relativeTime(student.engagement.lastActiveAt)
-                  : "Never"}
+                <div className="flex-1" />
+                {student.isAtRisk ? (
+                  <Chip tone="err">At risk</Chip>
+                ) : (
+                  <Chip tone="ok">Not currently flagged</Chip>
+                )}
               </div>
             </div>
-            <div>
-              <div className="text-eyebrow text-ink-faint">
-                Days since last submission
-              </div>
-              <div className="text-display-sm mt-1">
-                {student.engagement.daysSinceLastSubmission ?? "—"}
-              </div>
-            </div>
-          </div>
-        </section>
-      </div>
 
-      {/* Weakness list with evidence */}
-      <section className="flex flex-col gap-3">
-        <div className="text-display-sm">Weaknesses</div>
-        {student.weaknesses.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No weakness data yet.</div>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {student.weaknesses.map((w) => (
-              <WeaknessRow key={w.topic} weakness={w} />
-            ))}
-          </div>
-        )}
-      </section>
+            {/* At-risk status and reason */}
+            {student.atRiskFlags.length > 0 ? (
+              <section className="flex flex-col gap-3">
+                <div className="text-display-sm">At-risk flags</div>
+                <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3">
+                  {student.atRiskFlags.map((f) => (
+                    <div key={f.reason} className="flex items-start gap-2.5 text-body-md text-ink-muted leading-[1.5]">
+                      <span
+                        aria-hidden="true"
+                        className="text-err mt-[6px] w-[6px] h-[6px] rounded-full bg-err flex-none"
+                      />
+                      <span className="flex-1 text-pretty">{f.summary}</span>
+                      {f.acknowledged ? (
+                        <Chip tone="neutral" className="flex-none">
+                          Acknowledged
+                        </Chip>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
+              </section>
+            ) : null}
 
-      {/* Full attempt history */}
-      <section className="flex flex-col gap-3 min-w-0">
-        <div className="text-display-sm">Attempt history</div>
-        {student.attempts.length === 0 ? (
-          <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
-        ) : (
-          <div
-            className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-            tabIndex={0}
-            role="region"
-            aria-label="Attempt history, scrollable horizontally"
-          >
-            <table className="w-full text-body-md border-collapse">
-              <caption className="sr-only">Full attempt history, newest first</caption>
-              <thead>
-                <tr className="bg-paper-sunk border-b border-rule">
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Paper
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Marks
-                  </th>
-                  <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Percentage
-                  </th>
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Grade
-                  </th>
-                  <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                    Recorded
-                  </th>
-                  <th scope="col" className="px-4 py-2.5">
-                    <span className="sr-only">Actions</span>
-                  </th>
-                </tr>
-              </thead>
-              <tbody>
-                {student.attempts.map((a) => (
-                  // `AttemptDTO.paperId` is a "human paper identity"
-                  // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
-                  // year, no per-attempt id — see `_paper_id` in
-                  // `lemely/web/routers/teacher.py`), NOT a unique key: a
-                  // student who re-sits the same paper (a realistic
-                  // scenario — practice, specimen papers, repeats) has
-                  // multiple attempt rows sharing one `paperId`, which
-                  // produced a real duplicate-React-key console error when
-                  // verified against seeded multi-attempt data. `recordedAt`
-                  // (a full ISO timestamp, one per submission) disambiguates.
-                  <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-rule last:border-b-0">
-                    <td className="px-4 py-2.5 text-data-sm whitespace-nowrap">
-                      {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm">
-                      {a.awardedMarks}/{a.maximumMarks}
-                    </td>
-                    <td className="px-4 py-2.5 text-end text-data-sm">
-                      {Math.round(a.percentage)}%
-                    </td>
-                    <td className="px-4 py-2.5">
-                      <GradeBadge grade={a.grade} size="inline" basis="achieved" />
-                    </td>
-                    <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
-                      {relativeTime(a.recordedAt)}
-                    </td>
-                    <td className="px-4 py-2.5 text-end whitespace-nowrap">
-                      <div className="inline-flex items-center gap-2">
-                        <Button
-                          size="sm"
-                          variant="ghost"
-                          disabled
-                          aria-disabled="true"
-                          title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
-                        >
-                          View / remark
-                        </Button>
-                        <Chip tone="neutral">Coming soon</Chip>
+            {/* Subjects and predicted grades */}
+            <section className="flex flex-col gap-3">
+              <div className="text-display-sm">Subjects</div>
+              {student.subjects.length === 0 ? (
+                <div className="text-body-md text-ink-muted">No subjects recorded yet.</div>
+              ) : (
+                <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-4">
+                  {student.subjects.map((s) => (
+                    <div
+                      key={s.subjectCode}
+                      className="bg-paper-raised border border-rule rounded-lg p-[18px] flex items-center gap-4"
+                    >
+                      <GradeBadge grade={s.predictedGrade} size="medium" basis="predicted" />
+                      <div className="min-w-0">
+                        <div className="text-eyebrow text-ink-faint">
+                          {s.subjectCode}
+                        </div>
+                        <div className="text-body-md text-ink-muted mt-1">
+                          {subjectPercent(s.latestPercentage)} latest · {s.paperCount} paper
+                          {s.paperCount === 1 ? "" : "s"}
+                        </div>
                       </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        )}
-      </section>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
 
-      {/* Actions the spec names but that have no route yet */}
-      <section className="flex flex-wrap items-center gap-4">
-        <div className="flex items-center gap-2">
-          <Button
-            variant="secondary"
-            disabled
-            aria-disabled="true"
-            title="Practice assignment lands in a later phase (P4)"
-          >
-            Assign practice
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-      </section>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 min-w-0">
+              <StudentTrendPanel trend={student.trend} />
+
+              {/* Activity / engagement */}
+              <section className="flex flex-col gap-3 min-w-0">
+                <div className="text-display-sm">Engagement</div>
+                <div className="bg-paper-raised border border-rule rounded-lg p-[18px] grid grid-cols-2 gap-4">
+                  <div>
+                    <div className="text-eyebrow text-ink-faint">
+                      Total papers
+                    </div>
+                    <div className="text-display-sm mt-1">{student.engagement.totalPapers}</div>
+                  </div>
+                  <div>
+                    <div className="text-eyebrow text-ink-faint">
+                      Last active
+                    </div>
+                    <div className="text-display-sm mt-1">
+                      {student.engagement.lastActiveAt
+                        ? relativeTime(student.engagement.lastActiveAt)
+                        : "Never"}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-eyebrow text-ink-faint">
+                      Days since last submission
+                    </div>
+                    <div className="text-display-sm mt-1">
+                      {student.engagement.daysSinceLastSubmission ?? "—"}
+                    </div>
+                  </div>
+                </div>
+              </section>
+            </div>
+
+            {/* Weakness list with evidence */}
+            <section className="flex flex-col gap-3">
+              <div className="text-display-sm">Weaknesses</div>
+              {student.weaknesses.length === 0 ? (
+                <div className="text-body-md text-ink-muted">No weakness data yet.</div>
+              ) : (
+                <div className="flex flex-col gap-2">
+                  {student.weaknesses.map((w) => (
+                    <WeaknessRow key={w.topic} weakness={w} />
+                  ))}
+                </div>
+              )}
+            </section>
+
+            {/* Full attempt history */}
+            <section className="flex flex-col gap-3 min-w-0">
+              <div className="text-display-sm">Attempt history</div>
+              {student.attempts.length === 0 ? (
+                <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
+              ) : (
+                <div
+                  className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                  tabIndex={0}
+                  role="region"
+                  aria-label="Attempt history, scrollable horizontally"
+                >
+                  <table className="w-full text-body-md border-collapse">
+                    <caption className="sr-only">Full attempt history, newest first</caption>
+                    <thead>
+                      <tr className="bg-paper-sunk border-b border-rule">
+                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
+                          Paper
+                        </th>
+                        <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
+                          Marks
+                        </th>
+                        <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
+                          Percentage
+                        </th>
+                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
+                          Grade
+                        </th>
+                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
+                          Recorded
+                        </th>
+                        <th scope="col" className="px-4 py-2.5">
+                          <span className="sr-only">Actions</span>
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {student.attempts.map((a) => (
+                        // `AttemptDTO.paperId` is a "human paper identity"
+                        // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
+                        // year, no per-attempt id — see `_paper_id` in
+                        // `lemely/web/routers/teacher.py`), NOT a unique key: a
+                        // student who re-sits the same paper (a realistic
+                        // scenario — practice, specimen papers, repeats) has
+                        // multiple attempt rows sharing one `paperId`, which
+                        // produced a real duplicate-React-key console error when
+                        // verified against seeded multi-attempt data. `recordedAt`
+                        // (a full ISO timestamp, one per submission) disambiguates.
+                        <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-rule last:border-b-0">
+                          <td className="px-4 py-2.5 text-data-sm whitespace-nowrap">
+                            {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
+                          </td>
+                          <td className="px-4 py-2.5 text-end text-data-sm">
+                            {a.awardedMarks}/{a.maximumMarks}
+                          </td>
+                          <td className="px-4 py-2.5 text-end text-data-sm">
+                            {Math.round(a.percentage)}%
+                          </td>
+                          <td className="px-4 py-2.5">
+                            <GradeBadge grade={a.grade} size="inline" basis="achieved" />
+                          </td>
+                          <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
+                            {relativeTime(a.recordedAt)}
+                          </td>
+                          <td className="px-4 py-2.5 text-end whitespace-nowrap">
+                            <div className="inline-flex items-center gap-2">
+                              <Button
+                                size="sm"
+                                variant="ghost"
+                                disabled
+                                aria-disabled="true"
+                                title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
+                              >
+                                View / remark
+                              </Button>
+                              <Chip tone="neutral">Coming soon</Chip>
+                            </div>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
+            </section>
+
+            {/* Actions the spec names but that have no route yet */}
+            <section className="flex flex-wrap items-center gap-4">
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="secondary"
+                  disabled
+                  aria-disabled="true"
+                  title="Practice assignment lands in a later phase (P4)"
+                >
+                  Assign practice
+                </Button>
+                <Chip tone="neutral">Coming soon</Chip>
+              </div>
+            </section>
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

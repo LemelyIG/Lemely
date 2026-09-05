@@ -5,7 +5,12 @@ import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { FileDrop } from "@/components/ui/file-drop"
-import { ProcessingState, type ProcessingStage } from "@/components/ui/processing-state"
+import {
+  ProcessingState,
+  type ProcessingStage,
+} from "@/components/ui/processing-state"
+import { QueryState } from "@/components/ui/query-state"
+import { ErrorState } from "@/components/ui/state-views"
 import { CameraCapture } from "@/components/CameraCapture"
 import {
   advanceStage,
@@ -18,15 +23,18 @@ import {
   correctionFailureMessage,
   STREAM_ENDED_WITHOUT_RESULT,
 } from "@/lib/correctionOutcome"
+import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   runCorrection,
   uploadScan,
   useActiveUpload,
   useUploadRun,
 } from "@/lib/hooks/useStudentApi"
+import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
-import type { QuestionResult, Result, StudentCorrectFrame } from "@/lib/studentTypes"
+import { uploadStageProgress } from "@/lib/uploadProgress"
+import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
 /** Which source the student is using to produce `scanFile`. */
@@ -122,17 +130,56 @@ type ScanSource = "file" | "camera"
  * reload there is no `File` object any more, but the server still has the scan,
  * so `canRetryInPlace` is the real test of whether marking can start, and the
  * local file is not required for it.
+ *
+ * ── PR 4 (loading-and-error-screens programme) ────────────────────────────
+ *
+ * Two things fixed here, both logged during PR 3's review and deferred to
+ * this one.
+ *
+ * 1. **The upload had nothing on screen moving.** `uploadScan` posted through
+ *    `fetch`, which cannot report upload progress, so the slowest part of this
+ *    flow — a phone photo, on a bad connection — sat under "Marking…" with
+ *    all three SSE-driven stages still pending, because none of them starts
+ *    until the file has already landed. `uploadScan` now takes an
+ *    `onProgress` callback (`lib/api.ts::uploadWithProgress`, `XMLHttpRequest`-
+ *    based specifically because `fetch` cannot do this) and a fourth stage,
+ *    `upload`, is prepended to `STAGE_ORDER` and driven from real
+ *    `xhr.upload.onprogress` bytes via `resolvePaperId` below — not from a
+ *    frame, because there is no SSE stream yet at this point in the flow.
+ *    A resumed run (`canRetryInPlace`) has no bytes to report — they moved
+ *    before this render existed — so that path marks `upload` done at once
+ *    instead of leaving it at a 0% that will never move.
+ * 2. **A failed `/student/uploads/active` check was invisible.** `active.data`
+ *    stayed `undefined` forever, `strandedId` was never set, and a genuinely
+ *    stranded run was never surfaced — no error, no retry, nothing. A compact
+ *    `ErrorState` now renders alongside the ordinary panel when `active`
+ *    errors, with its own retry; it does not replace the upload form, because
+ *    the reader must still be able to start a fresh upload while the check
+ *    for an old one is failing.
  */
 
-/** The three stages the backend's SSE frames give us real signal for. Spec
- * S-14 also lists "identifying the paper" and "analysing your weak topics" —
- * omitted here because no frame type announces the start/end of either; a
- * stage with no event that could ever move it out of "pending" would look
- * stuck rather than honest. Flagged in the P2.5.3 report as a content gap. */
-const STAGE_ORDER = ["extract", "scheme", "mark"] as const
+/**
+ * Four stages. The first, `upload`, is unlike the other three: it isn't
+ * announced by an SSE frame at all, because it runs *before* the SSE stream
+ * exists — the file has to land on the server before `/student/correct` can
+ * open one. It is driven directly from `resolvePaperId`'s own
+ * `uploadScan(..., { onProgress })` call below, off real `xhr.upload.
+ * onprogress` bytes, using the same `advanceStage`/`failActiveStage` shared
+ * with `streamCorrection`'s frame loop so both halves of this one pipeline
+ * are described by the same machinery.
+ *
+ * `extract`, `scheme` and `mark` are the three stages the backend's SSE
+ * frames give us real signal for. Spec S-14 also lists "identifying the
+ * paper" and "analysing your weak topics" — omitted here because no frame
+ * type announces the start/end of either; a stage with no event that could
+ * ever move it out of "pending" would look stuck rather than honest.
+ * Flagged in the P2.5.3 report as a content gap.
+ */
+const STAGE_ORDER = ["upload", "extract", "scheme", "mark"] as const
 type StageId = (typeof STAGE_ORDER)[number]
 
 const initialStages: ProcessingStage[] = [
+  { id: "upload", label: "Uploading your scan", status: "pending" },
   { id: "extract", label: "Reading your answers", status: "pending" },
   { id: "scheme", label: "Fetching the mark scheme", status: "pending" },
   { id: "mark", label: "Marking your questions", status: "pending" },
@@ -228,6 +275,52 @@ function SourceToggle({
           </button>
         )
       })}
+    </div>
+  )
+}
+
+/**
+ * The "a run this tab is not streaming" prose panel — a recovered run (mid-
+ * flight or stopped) that this tab did not itself drive. Reads its own phase
+ * from `run` rather than trusting a caller's already-computed one, so the
+ * transitional render (see `CorrectPaper`'s `skeleton` below, which passes
+ * `active.data` before `stranded`'s own poll has answered) and the settled
+ * one agree by construction rather than by two call sites staying in sync.
+ *
+ * Renders as prose and NOT as the stage list, because the stage list is a
+ * claim about which step the pipeline reached and this reader has no such
+ * information: the SSE frames went to a bus with no replay, and the tab that
+ * was reading them is gone. Ticking stages off from a status word would be
+ * the invented progress S-14 rules out.
+ */
+function StrandedRunPanel({ run, onRetry }: { run: UploadRun; onRetry: () => void }) {
+  const phase = runPhase(run)
+  const waiting = phase === "waiting"
+  const stopped = phase === "stopped"
+  return (
+    <div className="flex flex-col gap-3">
+      <p className="text-pretty text-body-sm text-ink-muted">
+        {waiting
+          ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
+          : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
+      </p>
+      {run.filename ? (
+        <p className="text-body-sm text-ink">
+          <span className="text-ink-muted">Paper</span>{" "}
+          <span className="break-words">{run.filename}</span>
+        </p>
+      ) : null}
+      {stopped ? (
+        <Button
+          variant="primary"
+          size="sm"
+          icon={<ArrowClockwise size={16} />}
+          onClick={onRetry}
+          className="self-start"
+        >
+          Start marking again
+        </Button>
+      ) : null}
     </div>
   )
 }
@@ -393,11 +486,37 @@ export function CorrectPaper() {
    * scan the server already has. Returns `null` when there is neither a file to
    * send nor a paper to re-mark, which is the one case the caller must not
    * start a run for.
+   *
+   * PR 4: this is also where the `upload` stage lives. `runPipeline` resets
+   * every stage to `initialStages` (all pending) before calling this, so
+   * whichever branch runs below has to give `upload` a real status of its
+   * own rather than leaving it pending — a pending stage that nothing will
+   * ever move looks stuck, which `failActiveStage`'s own "nothing had
+   * started yet" case (see `pipelineStages.ts`) already treats as a place a
+   * failure can land, and an *unstarted*-forever stage is the success-path
+   * version of that same trap.
    */
   const resolvePaperId = async (): Promise<string | null> => {
-    if (canRetryInPlace(resumableId)) return resumableId
+    if (canRetryInPlace(resumableId)) {
+      // Nothing to report: this is either a same-tab retry after the scan
+      // already landed (M5) or a stopped run recovered from another tab
+      // (P6.2). Either way the bytes moved before this render existed, so
+      // the honest reading is "already done" — a bar stuck at a dead 0%
+      // would claim a transfer is in flight that finished or never happened
+      // in this tab at all.
+      setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
+      return resumableId
+    }
     if (!scanFile) return null
-    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined)
+    setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, false))
+    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
+      onProgress: (progress) => {
+        setStages((prev) =>
+          advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
+        )
+      },
+    })
+    setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
     return uploaded.paperId
   }
 
@@ -415,6 +534,19 @@ export function CorrectPaper() {
       setPaperId(id)
       await streamCorrection(id)
     } catch (err) {
+      // A cancelled upload is not a failed one. `uploadWithProgress` rejects
+      // with a `DOMException` named `AbortError` (matching what an aborted
+      // `fetch` does), and that is an `Error` with a message, so without this
+      // guard `correctionFailureMessage` would fall through to its "any Error
+      // with a message" branch and print "Upload cancelled" as the reason a
+      // red cross now sits on "Uploading your scan", under a panel headed
+      // "Marking stopped". Nothing wires an `AbortSignal` through yet — see
+      // `uploadScan`'s `signal` option — so this is unreachable today and is
+      // here so that whoever adds the cancel control cannot land that bug.
+      if (err instanceof DOMException && err.name === "AbortError") {
+        setStages(initialStages)
+        return
+      }
       const message = correctionFailureMessage(err)
       setStages((prev) => failActiveStage(prev, message))
       setError(message)
@@ -433,10 +565,20 @@ export function CorrectPaper() {
    * both runs scope to the same paper. The form goes read-only rather than
    * disappearing, so the student can still see what is being marked.
    */
+  /*
+   * D7.5's gate, read before the run rather than after the refusal.
+   * `undefined` (profile pending, or errored) counts as allowed: the app does
+   * not know, and a verified student must not watch a dead button through a
+   * page load. If it guesses wrong the run is refused, and
+   * `correctionFailureMessage` now words that refusal properly.
+   */
+  const profile = useProfile()
+  const emailVerified = profile.data?.emailVerified !== false
   const canStart = canStartRun({
     phase,
     hasScan: Boolean(scanFile),
     hasUploadedPaper: retryable,
+    emailVerified,
   })
   const busy = running || waitingOnServer
 
@@ -585,39 +727,69 @@ export function CorrectPaper() {
               <h2 className="text-display-sm text-ink">{panel.title}</h2>
             </div>
 
+            {/*
+             * PR 4, audit item deferred from PR 3: a failed `/uploads/active`
+             * check used to be silent — `active.data` stayed `undefined`
+             * forever, `strandedId` was never set, and a genuinely stranded
+             * run was never surfaced. `compact` rather than `QueryState`'s
+             * full panel: this must sit *alongside* the ordinary upload form,
+             * not replace it — the reader can still start a fresh upload
+             * while the check for an old one is failing, so this is additive
+             * the way `QueryState`'s own exclusive skeleton/error/success
+             * switch cannot render.
+             *
+             * Gated on `!running`: once this tab is streaming its own run,
+             * whether some *other* run was also active is no longer a
+             * question this screen has to answer.
+             */}
+            {active.isError && !running ? (
+              <ErrorState
+                compact
+                heading="Couldn't check for a run already in progress"
+                body={studentLoadFailureMessage(active.error)}
+                action={{ label: "Try again", onClick: () => active.refetch() }}
+              />
+            ) : null}
+
             {strandedRun ? (
-              /*
-               * A run this tab is not streaming. It renders as prose and NOT as
-               * the stage list, because the stage list is a claim about which
-               * step the pipeline reached and this reader has no such
-               * information: the SSE frames went to a bus with no replay, and
-               * the tab that was reading them is gone. Ticking stages off from
-               * a status word would be the invented progress S-14 rules out.
-               */
-              <div className="flex flex-col gap-3">
-                <p className="text-pretty text-body-sm text-ink-muted">
-                  {waitingOnServer
-                    ? "This paper was already being marked when you opened this page, and it is still going. Marking carries on even if you close the tab, so you can leave this open or come back later."
-                    : "This paper was being marked and the run stopped before it finished. Nothing was marked, and your scan is still here."}
-                </p>
-                {strandedRun.filename ? (
-                  <p className="text-body-sm text-ink">
-                    <span className="text-ink-muted">Paper</span>{" "}
-                    <span className="break-words">{strandedRun.filename}</span>
-                  </p>
-                ) : null}
-                {strandedStopped ? (
-                  <Button
-                    variant="primary"
-                    size="sm"
-                    icon={<ArrowClockwise size={16} />}
-                    onClick={runPipeline}
-                    className="self-start"
-                  >
-                    Start marking again
-                  </Button>
-                ) : null}
-              </div>
+              <QueryState
+                query={stranded}
+                /*
+                 * `useUploadRun` is `enabled: !!paperId` (see that hook), so
+                 * with no `strandedId` it sits at `pending`/`fetchStatus:
+                 * "idle"` forever — the `idle` trap `query-state.tsx`'s own
+                 * header names. Unreachable here in practice: this branch
+                 * only renders when `strandedRun` is truthy, which (see its
+                 * definition above) only happens when `strandedId` is set —
+                 * and that is exactly what enables `stranded`. `null` rather
+                 * than inventing a state nothing can put the screen into.
+                 */
+                idle={null}
+                /*
+                 * While the fresh poll for THIS `strandedId` is in flight,
+                 * `active.data` already names the same run (`strandedRun`
+                 * falls back to it above, and this branch cannot be reached
+                 * unless it is set) — shown instead of a shimmer skeleton,
+                 * exactly as the pre-`QueryState` code did by falling back to
+                 * it (`stranded.data ?? active.data`).
+                 */
+                skeleton={<StrandedRunPanel run={active.data!} onRetry={runPipeline} />}
+                error={{
+                  /*
+                   * NEW: before this conversion a failed poll here fell back
+                   * silently to `active.data` with no error shown and no way
+                   * to retry beyond a full page reload — the poll's own
+                   * `refetchInterval` kept firing, but a query that has
+                   * settled into `status: "error"` needs a manual `refetch`
+                   * to leave it, which nothing here ever called. `refetch`
+                   * on `QueryState`'s retry button is that manual kick.
+                   */
+                  heading: "Couldn't check on this run",
+                  body: studentLoadFailureMessage,
+                }}
+              >
+                {(run) => <StrandedRunPanel run={run} onRetry={runPipeline} />}
+              </QueryState>
             ) : (
               <ProcessingState
                 stages={stages}

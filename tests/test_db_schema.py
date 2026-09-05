@@ -86,6 +86,10 @@ EXPECTED_TABLES = {
     "teacher_papers",
     "otp_challenges",
     "auth_cooldowns",
+    "syllabus_papers",
+    "subject_topics",
+    "component_thresholds",
+    "option_thresholds",
 }
 
 # Tables deliberately excluded from `test_every_model_has_timestamps` below.

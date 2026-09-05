@@ -43,6 +43,10 @@ web = [
   "uvicorn[standard]>=0.30,<1",
   "python-multipart>=0.0.9,<1",
   "httpx>=0.27,<1",
+  # GCS backend for StorageSettings.backend == "gcs": the student self-mark
+  # upload path, teacher papers, mark schemes and profile pictures. The floor
+  # is 3.1 for the create-only `if_generation_match` retry predicate the
+  # uploader relies on.
   "google-cloud-storage>=3.1,<4",
 ]
 db = [
@@ -148,6 +152,7 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 # Prompts __init__ re-exports everything; F403 and F401 are intentional.
 "lemely/io/prompts/__init__.py" = ["F403", "F401"]
 "lemely/io/gemini.py" = ["PLW0603", "PLW0602", "BLE001", "ANN401", "E501", "TCH", "SIM102"]
+"lemely/io/ciegt.py" = ["ANN401"]
 "lemely/io/parsers.py" = ["TCH"]
 "lemely/io/det/gmp.py" = ["ANN401"]
 # Unicode lookalikes are the entire subject matter here: the module maps Adobe
@@ -203,8 +208,10 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/web/routers/study_plan.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/flashcards.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/exam_calendar.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/reference.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/routers/invites.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/schemas_invites.py" = ["TC001", "TC002", "TC003"]
+"lemely/web/routers/client_errors.py" = ["TC001", "TC002", "TC003"]
 "lemely/web/jobs.py" = ["ANN401"]
 "lemely/web/deps.py" = ["ANN401"]
 # SQLAlchemy 2.0 ORM models resolve Mapped[...] annotations at runtime, so the
@@ -245,9 +252,12 @@ module = [
   "pdfplumber.*",
   "alembic.*",
   "fontTools.*",
-  # google-cloud-storage ships no py.typed marker / stubs (D2.x-style gap,
-  # same class as gradio/fitz above).
+  # The google-cloud-* packages ship no py.typed marker / stubs (D2.x-style
+  # gap, same class as gradio/fitz above). `google.auth` is needed too now
+  # that the GCS backend signs URLs through it.
   "google.cloud.*",
+  "google.auth.*",
+  "google.api_core.*",
 ]
 ignore_missing_imports = true
 
@@ -283,6 +293,7 @@ module = [
   "lemely.io.answer_extraction",
   "lemely.io.correction_ai",
   "lemely.io.subject",
+  "lemely.io.ciegt",
   "lemely.app.gradio_callbacks",
   "lemely.io.det.metadata",
   "lemely.io.det.tables",
@@ -312,6 +323,7 @@ module = [
   "lemely.web.schemas_exam_calendar",
   "lemely.web.schemas_notifications",
   "lemely.web.schemas_student_profile",
+  "lemely.web.schemas_reference",
   "lemely.web.schemas_study_plan",
   "lemely.web.schemas_leaderboard",
   "lemely.web.schemas_friends",
@@ -319,6 +331,7 @@ module = [
   "lemely.web.schemas_student_classes",
   "lemely.web.schemas_xp",
   "lemely.web.schemas_invites",
+  "lemely.web.schemas_client_errors",
   # httpx `.json()` and pyjwt `decode()` return Any at the trust boundary; these
   # modules parse those payloads defensively into typed dataclasses/Claims.
   "lemely.auth.gotrue",

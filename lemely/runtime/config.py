@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 from typing import Annotated, Literal
+from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
@@ -40,6 +41,32 @@ def _blank_to_none(value: object) -> object:
 OptionalSecret = Annotated[SecretStr | None, BeforeValidator(_blank_to_none)]
 #: The plain-text counterpart, for credential fields that are deliberately not secrets.
 OptionalCredential = Annotated[str | None, BeforeValidator(_blank_to_none)]
+
+
+def _absolute_origin(value: object) -> object:
+    """Require a fully-qualified ``http(s)://host`` origin, trailing slash trimmed.
+
+    A missing scheme or host is the whole reason this validator exists. An
+    origin of ``""`` joined onto the frontend route ``/verify-email/<token>``
+    yields ``http:///verify-email/<token>`` — syntactically a URL, with an
+    empty host, and unreachable. That reached a real inbox once. Rejecting it
+    at settings-load time turns a silently broken link, discoverable only by a
+    recipient clicking it, into a startup failure naming the bad value.
+    """
+    if not isinstance(value, str):
+        return value
+    trimmed = value.strip().rstrip("/")
+    parsed = urlsplit(trimmed)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+        raise ValueError(
+            "must be an absolute origin like https://lemelyig.com "
+            f"(scheme and host both required), got {value!r}"
+        )
+    return trimmed
+
+
+#: An origin that links can be safely joined onto — see :func:`_absolute_origin`.
+AbsoluteOrigin = Annotated[str, BeforeValidator(_absolute_origin)]
 
 
 class GradioSettings(BaseModel):
@@ -308,6 +335,19 @@ class DatabaseSettings(BaseModel):
     pool_size: int = Field(default=5, ge=1)
     max_overflow: int = Field(default=10, ge=0)
     pool_pre_ping: bool = True
+    # Seconds libpq waits for a TCP connection before giving up. Its own
+    # default is unlimited, which is the wrong failure mode for a server: a
+    # firewall or security-group change that *drops* packets (rather than
+    # refusing them) leaves every connect blocked on the OS TCP timeout, and
+    # because FastAPI runs sync routes in a bounded threadpool, a polled route
+    # like ``GET /api/health`` exhausts that pool and takes the whole app down
+    # with it. Bounding it turns the hang into a catchable OperationalError.
+    # Floor is 2, not 1: libpq silently raises any smaller value to 2, so a
+    # `1` here would quietly not mean what it says (measured: 1 -> 2.1s).
+    connect_timeout_seconds: int = Field(default=5, ge=2)
+    # Seconds to wait for a free slot in the QueuePool (SQLAlchemy's own
+    # default is 30). Same reasoning: fail fast rather than pile up.
+    pool_timeout_seconds: int = Field(default=5, ge=1)
 
 
 class SupabaseSettings(BaseModel):
@@ -434,20 +474,51 @@ class GradingSettings(BaseModel):
 
 
 class StorageSettings(BaseModel):
-    """Object storage for every upload the web app keeps (spec 2026-09-03, DS7/DS12).
+    """Object storage for uploads (P2.5) and profile pictures (spec 2026-09-03, DS7/DS12).
 
     ``backend`` selects the implementation ``lemely.web.deps.get_storage_backend``
     builds: ``local`` (the default — files under ``paths.output_dir/storage``,
     for dev, compose and CI) or ``gcs`` (Google Cloud Storage via the official
     SDK, authenticated with application-default credentials — the Cloud Run
-    runtime service account in production). ``bucket`` is the real bucket name
-    for ``gcs`` and a directory name for ``local``. Overrides via ``[storage]``
-    in ``lemely.toml`` or ``LEMELY_STORAGE__*`` env vars.
+    runtime service account in production). Overrides via ``[storage]`` in
+    ``lemely.toml`` or ``LEMELY_STORAGE__*`` env vars.
+
+    There is no Supabase Storage backend: DS7 removed it, and #220's
+    ``provider = "supabase"`` path came off with it. The two names are
+    deliberately different — a config written for ``provider`` fails loudly
+    against ``extra="forbid"`` rather than silently selecting a backend that
+    no longer exists.
+
+    **Why the bucket defaults carry a ``lemely-`` prefix.** GCS bucket names
+    are a single *global* namespace shared by every Google Cloud customer, so
+    bare ``uploads`` and ``avatars`` are long since taken and could never be
+    created — a default that can only ever fail is worse than no default. For
+    ``local`` these are directory names under ``paths.output_dir/storage``,
+    where the prefix is merely harmless. The deployed pipeline does not rely
+    on these defaults at all: ``.github/workflows/deploy.yml`` sets
+    ``LEMELY_STORAGE__BUCKET``/``__AVATAR_BUCKET`` per environment (project id
+    + environment suffix), which is what keeps staging and production from
+    sharing one bucket.
     """
 
     model_config = ConfigDict(extra="forbid")
     backend: Literal["local", "gcs"] = "local"
-    bucket: str = "uploads"
+    # `min_length=1` is not decoration: an unset GitHub Actions variable
+    # renders as the empty string, so a mistyped `vars.` reference in
+    # deploy.yml would otherwise boot a service that writes every object to
+    # bucket "" and fails at the first upload instead of at startup.
+    bucket: str = Field(default="lemely-uploads", min_length=1)
+    signed_url_ttl_seconds: int = Field(default=3600, ge=1)
+    # Profile pictures (student/teacher avatars) live in their own bucket,
+    # separate from `bucket` (self-mark scans/mark schemes) — the two have
+    # different retention/access shapes and no reason to share a namespace.
+    avatar_bucket: str = Field(default="lemely-avatars", min_length=1)
+    avatar_max_bytes: int = Field(default=5 * 1024 * 1024, ge=1)
+    # GCP project id for the GCS client. Optional: Application Default
+    # Credentials usually carry (or can infer) a project on their own; set
+    # this only when ADC's own inference is wrong or absent (e.g. a
+    # user-account credential with no associated quota project).
+    gcs_project: OptionalCredential = None
 
 
 class PushSettings(BaseModel):
@@ -487,6 +558,69 @@ class PushSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0)
 
 
+class EmailSettings(BaseModel):
+    """Transactional-email credentials for the account-lifecycle mails (D7.7).
+
+    Overrides via ``lemely.toml`` under the ``[email]`` section or
+    ``LEMELY_EMAIL__*`` env vars.
+
+    **``api_key`` defaults to ``None`` and that is a supported state, not a
+    misconfiguration**, exactly as :class:`PushSettings` treats its VAPID keys:
+    with no key, ``lemely.web.deps`` wires
+    :class:`~lemely.auth.email.MockEmailProvider` and signup still completes —
+    the link is logged instead of posted. Every developer machine and every CI
+    run is in that state, so treating absence as an error would fail the suite
+    in exactly the environment it runs in.
+
+    **Why Resend and not Cloudflare.** The domain's DNS is on Cloudflare and the
+    SPF/DKIM/DMARC records that authorise this sender live in that zone (see
+    ``docs/email-delivery.md``), but Cloudflare Email Sending is *not available*
+    on the Workers Free plan — only inbound Email Routing is, plus outbound to
+    addresses already verified inside the account, which a stranger signing up
+    never is. Resend's free tier (3,000 mails/month, 100/day) covers the same
+    ground at no cost. The transport is a detail behind
+    :class:`~lemely.auth.email.EmailProvider`; the ``From:`` domain the
+    recipient sees is ``lemelyig.com`` either way.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    # Resend API key (``re_...``). Absent => the mock provider, see above. Never
+    # commit this. Deployed it arrives from the ``RESEND_API_KEY`` GitHub
+    # Actions environment secret, which ``deploy.yml`` hands to Cloud Run as
+    # ``LEMELY_EMAIL__API_KEY``; locally, export that variable in the shell.
+    api_key: OptionalSecret = None
+    # Public origin of the SPA that the emailed links point at. Required
+    # because AuthService mints links as *frontend routes*, not URLs:
+    # ``_mint_verification_link`` returns ``/verify-email/<token>``, which the
+    # SPA can navigate to directly but which is meaningless in an inbox — a
+    # mail client resolving that root-relative href against no base produced
+    # ``http:///verify-email/<token>``, an unreachable URL with an empty host.
+    # A real provider therefore joins this origin onto the link before sending.
+    # It lives here rather than in ``[auth]`` because the emailed mail is its
+    # only consumer; the dev link returned through the API stays relative,
+    # which is what the SPA wants. ``deploy.yml`` sets it per environment
+    # (staging.lemelyig.com vs lemelyig.com) rather than leaning on this
+    # default, so a misconfigured staging cannot mail production links.
+    app_base_url: AbsoluteOrigin = "https://lemelyig.com"
+    # Envelope sender. Must be on a domain verified with the provider *and*
+    # carrying this sender's SPF/DKIM records in the Cloudflare zone, or mail is
+    # rejected outright rather than merely landing in spam.
+    from_address: str = "noreply@lemelyig.com"
+    # Display name shown beside the address in a recipient's client.
+    from_name: str = "Lemely"
+    # Where a recipient's reply goes. ``None`` means replies return to
+    # ``from_address`` — an unattended mailbox, which is why this is worth
+    # setting to a real inbox once one exists.
+    reply_to: OptionalCredential = None
+    # Per-request timeout. Short on purpose: verification mail is a best-effort
+    # side effect of an already-created account (``AuthService`` rule 4 — see
+    # ``_try_send_verification``), and must never make a signup hang.
+    timeout_seconds: float = Field(default=10.0, gt=0)
+    # Base URL of the Resend REST API. A field rather than a constant purely so
+    # a test can point it at a local stub without monkeypatching the module.
+    api_base_url: str = "https://api.resend.com"
+
+
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
         env_prefix="LEMELY_",
@@ -509,6 +643,7 @@ class Settings(BaseSettings):
     grading: GradingSettings = GradingSettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
+    email: EmailSettings = EmailSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()
     auth: AuthSettings = AuthSettings()

@@ -1,10 +1,13 @@
 """Placement assembly: the budget, the breadth rule, and the refusals (P4.4, D4.6 §5).
 
-Pure-function tests — no database. The point of each is a rule that D4.6 §5
-chose deliberately and that a later "small tidy-up" could silently undo:
-duration is derived from transcribed marks, an untopiced question is
-ineligible rather than counted, and a set that misses the viability floor is
-*refused with a reason* rather than shipped short or padded.
+Mostly pure-function tests. A handful touch the migrated database to confirm
+the ``syllabus_papers`` timings ``get_paper_timings``/``load_paper_timings``
+read still hold what the retired JSON held; everything else is deterministic
+and needs no database. The point of each is a rule that D4.6 §5 chose
+deliberately and that a later "small tidy-up" could silently undo: duration
+is derived from transcribed marks, an untopiced question is ineligible rather
+than counted, and a set that misses the viability floor is *refused with a
+reason* rather than shipped short or padded.
 """
 
 from __future__ import annotations
@@ -12,8 +15,10 @@ from __future__ import annotations
 import itertools
 import uuid
 from collections.abc import Iterator
+from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 
 from lemely.core.placement import (
     Assembly,
@@ -24,7 +29,11 @@ from lemely.core.placement import (
     assemble,
     estimated_minutes_for,
 )
-from lemely.io.paper_timing import get_paper_timings, load_paper_timings
+from lemely.db.models.catalogue import SyllabusPaper
+from lemely.io.paper_timing import get_paper_timings, invalidate_reference_cache, load_paper_timings
+
+if TYPE_CHECKING:
+    from sqlalchemy.orm import Session, sessionmaker
 
 # 0625 Paper 4: 75 minutes / 80 marks -> 0.9375 min per mark.
 P4 = PaperTiming(
@@ -59,6 +68,14 @@ def _reset_candidate_ids() -> Iterator[None]:
     yield
 
 
+@pytest.fixture(autouse=True)
+def _reset_paper_timing_cache() -> None:
+    """Force every DB-backed test to load through its own fixture-provided
+    session, rather than a process-cached result left over from another
+    test's throwaway database."""
+    invalidate_reference_cache()
+
+
 def _c(topic: str | None, marks: int, *, paper: int | None = 4, band: str = "medium") -> Candidate:
     return Candidate(
         question_bank_id=uuid.UUID(int=next(_next_id)),
@@ -89,43 +106,49 @@ def test_the_rate_is_derived_from_the_two_transcribed_numbers() -> None:
     assert P4.minutes_per_mark == 75 / 80
 
 
-def test_the_bundled_data_file_stores_no_derived_rate() -> None:
-    """The guard on D4.6 §5's central promise: every number on disk is checkable
-    against the syllabus. A ``minutes_per_mark`` key appearing here would be a
-    guess acquiring the authority of a fact."""
-    import json
-
-    from lemely.data import DATA_DIR
-
-    payload = json.loads((DATA_DIR / "paper_timing.json").read_text(encoding="utf-8"))
-    for record in payload["papers"]:
-        assert set(record) == {
-            "board",
-            "subject_code",
-            "paper_number",
-            "name",
-            "duration_minutes",
-            "total_marks",
-            "practical",
-            "source",
-        }
-        assert record["source"]["document"]
-        assert record["source"]["syllabus_version"]
+def test_the_stored_papers_hold_no_derived_rate(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The guard on D4.6 §5's central promise: every number in the catalogue is
+    checkable against the syllabus. A ``minutes_per_mark`` column appearing on
+    ``syllabus_papers`` would be a guess acquiring the authority of a fact."""
+    assert not hasattr(SyllabusPaper, "minutes_per_mark")
+    with migrated_sessionmaker() as s:
+        rows = s.scalars(sa.select(SyllabusPaper).where(SyllabusPaper.subject_code == "0625")).all()
+    assert rows
+    for row in rows:
+        assert row.duration_minutes
+        assert row.total_marks
+        assert row.source_document
+        assert row.syllabus_version
 
 
-def test_practical_papers_are_excluded_from_placement_by_default() -> None:
+def test_practical_papers_are_excluded_from_placement_by_default(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
     """0625 Paper 5/6 need apparatus; an at-home placement test cannot use them.
 
     The timings are still transcribed and reachable — this is assembly policy,
     not a claim the data is wrong.
     """
-    assert set(get_paper_timings("0625")) == {1, 2, 3, 4}
-    assert set(get_paper_timings("0625", include_practical=True)) == {1, 2, 3, 4, 5, 6}
-    assert load_paper_timings()[("caie", "0625")][5].practical is True
+    with migrated_sessionmaker() as s:
+        assert set(get_paper_timings("0625", session=s)) == {1, 2, 3, 4}
+        assert set(get_paper_timings("0625", include_practical=True, session=s)) == {
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+        }
+        assert load_paper_timings(session=s)[("caie", "0625")][5].practical is True
 
 
-def test_a_subject_with_no_transcribed_overview_yields_no_timings() -> None:
-    assert get_paper_timings("9999") == {}
+def test_a_subject_with_no_transcribed_overview_yields_no_timings(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    with migrated_sessionmaker() as s:
+        assert get_paper_timings("9999", session=s) == {}
 
 
 # ── Assembly: the budget and the breadth rule ────────────────────────────

@@ -19,6 +19,18 @@ on:
         type: choice
         options: [staging, production]
         required: true
+      # Off by default, and dispatch-only, because this is the one step in the
+      # pipeline that reaches out to two third-party sites (ciegt.pooruli.com
+      # and pastpapers.papacambridge.com) — one syllabus request plus one PDF
+      # per session, paced 2s apart by the script itself. Running that on every
+      # push would put a few hundred requests a day onto two small hosts to
+      # re-derive rows that have not changed, which is the politeness budget
+      # `scripts/ingest_thresholds.py` is written to respect.
+      ingest_thresholds:
+        description: Also ingest CAIE grade thresholds into this environment's database
+        type: boolean
+        default: false
+        required: false
 
 concurrency:
   # Two deploys to the SAME environment must never race (a slower run
@@ -97,6 +109,86 @@ jobs:
           echo "::add-mask::$LEMELY_DATABASE__URL"
           export LEMELY_DATABASE__URL
           alembic upgrade head
+
+  # Grade thresholds are NOT seeded by a migration and never will be:
+  # `docs/deployment.md` §3.5 explains why (a migration would either embed
+  # unverified numbers as literals or make schema replay depend on a live
+  # network call). So `alembic upgrade head` leaves `component_thresholds`
+  # empty, `GradeBoundaryStore` refuses to grade against boundaries Cambridge
+  # never published, and every grading surface in the environment 503s until
+  # this has run once. Staging spent its first days in exactly that state —
+  # the ingest was a manual step nobody was holding a terminal for.
+  #
+  # Deliberately NOT in `deploy-backend`'s `needs`. A skipped job skips
+  # everything downstream of it, so wiring this into the deploy chain would
+  # make an ordinary push-to-`develop` deploy skip the backend rollout
+  # entirely. It hangs off `migrate` alone (the tables must exist first) and
+  # nothing hangs off it, so on a normal deploy it is simply absent.
+  #
+  # Ordering against the rollout does not matter either way: the running
+  # backend caches boundaries only on a *successful* read, so a process that
+  # has been refusing picks the rows up on its next request with no redeploy.
+  ingest-thresholds:
+    needs: [resolve-env, approve, migrate]
+    if: github.event.inputs.ingest_thresholds == 'true'
+    runs-on: ubuntu-latest
+    environment: ${{ needs.resolve-env.outputs.environment }}
+    # ~50 sessions x 3 subjects, each a download plus a pdfplumber parse, at
+    # the script's own 2s pacing. Minutes, not seconds — but bounded, so a
+    # host that stops answering cannot hold a runner for six hours.
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+
+      # Same extra as `migrate`: `[db]` on top of the base dependencies, which
+      # already carry pdfplumber (the PDF verification) and structlog.
+      - run: pip install -e ".[db]"
+
+      - name: Compute SQLAlchemy DB URL
+        env:
+          RAW_DB_URL: ${{ secrets.SUPABASE_DB_URL }}
+        run: |
+          DB_URL_PSYCOPG="$(printf '%s' "$RAW_DB_URL" | sed -E 's#^postgresql://#postgresql+psycopg://#')"
+          # Re-masked for the same reason as `deploy-backend`'s copy of this
+          # step: the rewritten string no longer matches the registered secret
+          # byte-for-byte, so GitHub's automatic redaction would not catch it
+          # once it crosses into a later step via $GITHUB_ENV.
+          echo "::add-mask::$DB_URL_PSYCOPG"
+          echo "LEMELY_DATABASE__URL=$DB_URL_PSYCOPG" >> "$GITHUB_ENV"
+
+      - name: Ingest CAIE grade thresholds
+        run: python scripts/ingest_thresholds.py
+
+      # `main()` returns 0 unconditionally — a run where every document was
+      # unreadable, or where ciegt answered with nothing at all, still exits
+      # clean and prints `verified=0`. The exit code therefore proves only
+      # that the script ran, so the job asserts the thing that actually
+      # matters, against the database rather than against stdout: at least one
+      # row a paper can be graded on. Without this the pipeline would report
+      # green over precisely the state this job exists to end.
+      - name: Verify the ingest wrote gradeable rows
+        run: |
+          python - <<'PY'
+          import os
+          import sqlalchemy as sa
+
+          engine = sa.create_engine(os.environ["LEMELY_DATABASE__URL"])
+          with engine.connect() as conn:
+              verified = conn.execute(
+                  sa.text("SELECT count(*) FROM component_thresholds WHERE verified")
+              ).scalar_one()
+          print(f"verified component_thresholds rows: {verified}")
+          if not verified:
+              raise SystemExit(
+                  "ingest wrote no verified rows — grading stays unavailable in this "
+                  "environment. Check the step above for unreadable documents."
+              )
+          PY
 
   deploy-backend:
     needs: [resolve-env, migrate]
@@ -184,8 +276,51 @@ jobs:
           # (min-instances=0) and buys headroom against a cold-start spike that
           # the per-minute metric could miss, so it stays.
           flags: --allow-unauthenticated --service-account=lemely-backend-${{ needs.resolve-env.outputs.environment }}@${{ vars.GCP_PROJECT_ID }}.iam.gserviceaccount.com --max-instances=3 --min-instances=0 --memory=1Gi --cpu=1 --timeout=300 --port=8000 --execution-environment=gen2
+          #
+          # --service-account runs the revision as the per-environment runtime
+          # identity provisioned by scripts/gcp-bootstrap.sh, which holds
+          # object access on its own two buckets only — never a project-level
+          # storage role; the deployer's project-level iam.serviceAccountUser
+          # (also granted by that script) is the separate permission that lets
+          # it deploy a revision running as that identity.
+          #
+          # LEMELY_EMAIL__API_KEY is deliberately allowed to be empty. An
+          # unset repository secret renders as the empty string, which
+          # `_blank_to_none` in lemely/runtime/config.py maps to None, which
+          # makes `_build_email_provider` wire MockEmailProvider. So this
+          # line is safe to merge before the Resend secret exists: the
+          # deploy succeeds and mail simply is not sent. Adding the secret
+          # and redeploying is the whole switch-on. See
+          # docs/email-delivery.md.
+          #
+          # LEMELY_EMAIL__APP_BASE_URL is the origin the emailed links are
+          # built on. It is set explicitly for both environments rather
+          # than left to the default in EmailSettings, so a staging deploy
+          # cannot mail links pointing at production. The hosts match the
+          # Worker Custom Domains in web/wrangler.jsonc and the smoke-test
+          # job below.
+          #
+          # Object storage is Google Cloud Storage, and the two bucket names
+          # are set explicitly per environment. They MUST differ between
+          # staging and production — one shared bucket would let a staging
+          # test overwrite a real student's scan or avatar at the same object
+          # path.
+          #
+          # The `||` fallbacks mean this works with no new GitHub variables:
+          # unset `vars.` render as the empty string, which is falsy, so the
+          # names default to `<project-id>-uploads-<env>` /
+          # `<project-id>-avatars-<env>` — globally unique because the GCS
+          # namespace is global and the project id already is. Set
+          # `GCS_UPLOADS_BUCKET`/`GCS_AVATAR_BUCKET` as environment variables
+          # (Settings > Environments > staging|production) only to point an
+          # environment at differently-named buckets. `scripts/gcp-bootstrap.sh`
+          # derives the same defaults, so the pair agree by construction.
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
+            LEMELY_STORAGE__BACKEND=gcs
+            LEMELY_STORAGE__GCS_PROJECT=${{ vars.GCP_PROJECT_ID }}
+            LEMELY_STORAGE__BUCKET=${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
+            LEMELY_STORAGE__AVATAR_BUCKET=${{ vars.GCS_AVATAR_BUCKET || format('{0}-avatars-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}
             LEMELY_LOGGING__FORMAT=json
             LEMELY_SUPABASE__URL=${{ secrets.SUPABASE_URL }}
             LEMELY_SUPABASE__JWT_SECRET=${{ secrets.SUPABASE_JWT_SECRET }}
@@ -193,8 +328,8 @@ jobs:
             LEMELY_SUPABASE__SERVICE_ROLE_KEY=${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
             LEMELY_DATABASE__URL=${{ env.DATABASE_URL_PSYCOPG }}
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
-            LEMELY_STORAGE__BACKEND=gcs
-            LEMELY_STORAGE__BUCKET=${{ vars.GCP_PROJECT_ID }}-uploads-${{ needs.resolve-env.outputs.environment }}
+            LEMELY_EMAIL__API_KEY=${{ secrets.RESEND_API_KEY }}
+            LEMELY_EMAIL__APP_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
@@ -230,7 +365,11 @@ jobs:
           BODY="$(curl --fail --silent --show-error --retry 5 --retry-delay 5 "${{ steps.deploy.outputs.url }}/api/health")"
           echo "$BODY"
           echo "$BODY" | grep -q '"backend":"gcs"' || { echo "health does not report the gcs backend"; exit 1; }
-          echo "$BODY" | grep -q "\"bucket\":\"${{ vars.GCP_PROJECT_ID }}-uploads-${{ needs.resolve-env.outputs.environment }}\"" || { echo "health reports the wrong bucket"; exit 1; }
+          # Same expression as LEMELY_STORAGE__BUCKET above, fallback included:
+          # hardcoding the default here would assert the wrong name the moment
+          # an environment sets GCS_UPLOADS_BUCKET, failing a correct deploy.
+          EXPECTED_BUCKET="${{ vars.GCS_UPLOADS_BUCKET || format('{0}-uploads-{1}', vars.GCP_PROJECT_ID, needs.resolve-env.outputs.environment) }}"
+          echo "$BODY" | grep -q "\"bucket\":\"${EXPECTED_BUCKET}\"" || { echo "health reports the wrong bucket (expected ${EXPECTED_BUCKET})"; exit 1; }
 
   deploy-frontend:
     needs: [resolve-env, deploy-backend]

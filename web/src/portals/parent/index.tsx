@@ -2,11 +2,16 @@
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
+import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 
@@ -268,6 +273,11 @@ function Header() {
 // family), same as the other two portals — see the student portal for why.
 
 function ParentLayout() {
+  // Only read here for `ErrorBoundary`'s `resetKey` below — `Header` and
+  // `ParentTrail` each call `useLocation()` independently for their own
+  // needs, but this component had no reason to before now.
+  const location = useLocation()
+  const queryClient = useQueryClient()
   return (
     // `paper-grain` (DESIGN.md §8.1): one fixed, pointer-events-none noise
     // overlay at 0.03 opacity. The parent portal had no texture layer at all,
@@ -288,8 +298,38 @@ function ParentLayout() {
         tabIndex={-1}
         className="mx-auto w-full min-w-0 max-w-240 flex-1 overflow-x-hidden px-4 pb-16 pt-2 focus:outline-none md:px-8"
       >
+        {/* PR 2 part C: offline recovery banner, above the Suspense/
+            ErrorBoundary content it sits over — it renders nothing while
+            online, so its own `mb-6` is the only spacing this adds. */}
+        <OfflineBanner
+          onRetry={() =>
+            void queryClient.refetchQueries({
+              type: "active",
+              predicate: (query) => query.state.status === "error",
+            })
+          }
+        />
+        {/* Below the offline strip on purpose: connectivity is the transient,
+            self-healing message and belongs on top, while this is a standing fact
+            about the account. Renders nothing, and no margin either, unless the
+            profile has resolved and says the address is unverified. */}
+        <VerifyEmailBanner />
         <Suspense fallback={<RouteFallback />}>
-          <Outlet />
+          {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+              rebuilds each surface") for this portal: a render crash in one
+              screen stays inside this content slot rather than taking the
+              header down with it or falling out to the top-level
+              `errorElement`. Inside `Suspense` so a failed chunk load and a
+              render throw both land in this boundary.
+              `resetKey={location.pathname}` clears a caught error on
+              navigation. */}
+          <ErrorBoundary
+            label="This page"
+            resetKey={location.pathname}
+            fallback={portalErrorFallback}
+          >
+            <Outlet />
+          </ErrorBoundary>
         </Suspense>
       </main>
     </div>

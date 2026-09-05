@@ -15,5 +15,10 @@
     "noUnusedLocals": false,
     "paths": { "@/*": ["./src/*"] }
   },
-  "include": ["dev-previews", "vite.preview.config.ts"]
+  /* `src/vite-env.d.ts` carries the `__LEMELY_BUILD_ID__` declaration the
+     product's `lib/clientErrors.ts` reads; the kit reaches that file through
+     `components/recovery-effects.tsx` (PR 2 part D's recovery-toast cells),
+     and `include: ["dev-previews"]` alone would compile it without the
+     ambient declaration `tsconfig.app.json` gets from its own `src` include. */
+  "include": ["dev-previews", "vite.preview.config.ts", "src/vite-env.d.ts"]
 }

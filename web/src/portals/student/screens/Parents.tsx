@@ -6,7 +6,8 @@ import { ApiError } from "@/lib/api"
 import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 
@@ -69,7 +70,7 @@ function linkErrorMessage(error: Error): string {
 }
 
 export function Parents() {
-  const { data, isPending, isError, error } = useParentLinks()
+  const query = useParentLinks()
   const link = useLinkParent()
   const unlink = useUnlinkParent()
   const [phone, setPhone] = useState("")
@@ -145,60 +146,64 @@ export function Parents() {
         </div>
       </form>
 
-      {isPending ? (
-        <ListSkeleton rows={2} avatar />
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your parents"
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.parents.length === 0 ? (
-        <EmptyState
-          heading="Nobody is linked to your account yet"
-          body="Only you can add someone. Nothing is shared until you do."
-        />
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {data.parents.map((parent) => {
-            const failed = unlinkError?.id === parent.parentId ? unlinkError.message : null
-            return (
-              <li
-                key={parent.parentId}
-                className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
-              >
-                <div className="flex items-center gap-3">
-                  <Avatar name={parent.displayName} size="md" />
-                  <div className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-body-md text-ink">{parent.displayName}</span>
-                    {/* `phone` is nullable on the wire; absence is left blank
-                        rather than filled with a placeholder number. */}
-                    {parent.phone ? (
-                      <span className="text-data-sm text-ink-muted">{parent.phone}</span>
-                    ) : null}
+      {/* A panel inside the screen above, not a whole-route load: the page's own
+          `<h1>` and the add-parent form both render unconditionally above this,
+          so no `srHeading` is needed here — there is already a landmark to land
+          on mid-load or mid-failure. */}
+      <QueryState
+        query={query}
+        skeleton={<ListSkeleton rows={2} avatar />}
+        error={{ heading: "We couldn't load your parents", body: studentLoadFailureMessage }}
+        isEmpty={(data) => data.parents.length === 0}
+        empty={
+          <EmptyState
+            heading="Nobody is linked to your account yet"
+            body="Only you can add someone. Nothing is shared until you do."
+          />
+        }
+      >
+        {(data) => (
+          <ul className="flex flex-col gap-2">
+            {data.parents.map((parent) => {
+              const failed = unlinkError?.id === parent.parentId ? unlinkError.message : null
+              return (
+                <li
+                  key={parent.parentId}
+                  className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
+                >
+                  <div className="flex items-center gap-3">
+                    <Avatar name={parent.displayName} size="md" />
+                    <div className="flex min-w-0 flex-1 flex-col">
+                      <span className="text-body-md text-ink">{parent.displayName}</span>
+                      {/* `phone` is nullable on the wire; absence is left blank
+                          rather than filled with a placeholder number. */}
+                      {parent.phone ? (
+                        <span className="text-data-sm text-ink-muted">{parent.phone}</span>
+                      ) : null}
+                    </div>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Remove ${parent.displayName}`}
+                      disabled={removingId === parent.parentId}
+                      onClick={() => handleRemove(parent.parentId)}
+                    >
+                      <Trash size={15} aria-hidden="true" />
+                      {removingId === parent.parentId ? "Removing…" : "Remove"}
+                    </Button>
                   </div>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    aria-label={`Remove ${parent.displayName}`}
-                    disabled={removingId === parent.parentId}
-                    onClick={() => handleRemove(parent.parentId)}
-                  >
-                    <Trash size={15} aria-hidden="true" />
-                    {removingId === parent.parentId ? "Removing…" : "Remove"}
-                  </Button>
-                </div>
-                {failed ? (
-                  <p role="alert" className="text-body-sm text-err">
-                    {failed}
-                  </p>
-                ) : null}
-              </li>
-            )
-          })}
-        </ul>
-      )}
+                  {failed ? (
+                    <p role="alert" className="text-body-sm text-err">
+                      {failed}
+                    </p>
+                  ) : null}
+                </li>
+              )
+            })}
+          </ul>
+        )}
+      </QueryState>
     </div>
   )
 }

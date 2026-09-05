@@ -129,8 +129,13 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `GEMINI_API_KEY` | `None` | To enable marking/extraction at all. Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. |
-| `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. |
-| `LEMELY_STORAGE__BUCKET` | `uploads` | The bucket (`gcs`) or directory name (`local`) to use. For `gcs`, the bucket is **created by `scripts/gcp-bootstrap.sh`**, one per environment (`${PROJECT_ID}-uploads-${ENV}`) — not by this app. |
+| `LEMELY_EMAIL__APP_BASE_URL` | `https://lemelyig.com` | The origin emailed verification/reset links are built on. Links are minted as frontend routes (`/verify-email/<token>`), so without an origin a mail client resolves them to `http:///…` — unreachable. `deploy.yml` sets it per environment (`staging.lemelyig.com` vs `lemelyig.com`). Rejected at startup unless it has both a scheme and a host. |
+| `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and code and lets the auth routes return them, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live credentials. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
+| `LEMELY_STORAGE__BACKEND` | `local` | Set `gcs` for any deploy that isn't local dev/Compose/CI — see [§5.1](#51-the-single-replica-constraint-is-lifted). `local` writes under `paths.output_dir/storage` on the container's own disk. There is no Supabase Storage backend; that code was deleted (DS7). |
+| `LEMELY_STORAGE__BUCKET` | `lemely-uploads` | **Always on a real deploy.** The bucket (`gcs`) or directory name (`local`) for scans and mark schemes. `deploy.yml` sets it per environment to `<project-id>-uploads-<env>`; GCS bucket names are one global namespace, so the default is a placeholder no project owns. **The bucket must already exist** — no application code path creates it; `scripts/gcp-bootstrap.sh` does. Empty is rejected at startup. |
+| `LEMELY_STORAGE__AVATAR_BUCKET` | `lemely-avatars` | Same rules, for profile pictures — a separate bucket because avatars are meant to persist and the uploads bucket carries a 90-day delete rule. `deploy.yml` sets `<project-id>-avatars-<env>`. |
+| `LEMELY_STORAGE__SIGNED_URL_TTL_SECONDS` | `3600` | How long an avatar URL stays readable. Ignored by the `local` backend, which returns the bytes inline and so has nothing to expire. |
+| `LEMELY_STORAGE__GCS_PROJECT` | `None` | Only if Application Default Credentials cannot infer a project on their own (rare — a workload identity usually carries one). |
 | `LEMELY_GEMINI__TOTAL_USD_CEILING` | `8.0` | **CLI/Gradio only** — to change the hard spend cap those surfaces enforce (MISSION §8). The web process enforces no cap; see [§5.4](#54-performance-and-cost). |
 | `LEMELY_GRADING__STALE_RUN_AFTER_SECONDS` | `900` | To change how long a teacher paper stuck in `processing` must go silent before the next regrade may reclaim it (its instance died mid-run). |
 | `LEMELY_LOGGING__FORMAT` | `auto` | Set `json` for a log aggregator. |
@@ -183,13 +188,24 @@ host and accept the [CORS work in §4](#4-when-you-actually-do-need-cors).
 4. Rewrite the driver prefix: Supabase gives you `postgresql://…`; this app needs
    **`postgresql+psycopg://…`** (SQLAlchemy 2 + psycopg 3, as in the default at
    `config.py:148`). A plain `postgresql://` URL will pick the wrong DBAPI.
-5. Create the object-storage bucket named in `LEMELY_STORAGE__BUCKET`.
-   **No code path creates it.** Uploads fail against a missing bucket. Which
-   kind of bucket depends on `LEMELY_STORAGE__BACKEND` (§2): `gcs` needs a
-   Google Cloud Storage bucket the runtime identity can write — on Cloud Run
-   `scripts/gcp-bootstrap.sh` makes it for you — and `local` needs no bucket at
-   all, writing under `paths.output_dir/storage` instead. There is no longer a
-   Supabase Storage backend; that code was deleted with this change.
+5. Create the two object-storage buckets — one for scans and mark schemes,
+   one for profile pictures. **No application code path creates either**, and
+   uploads or avatar sets fail against a missing bucket.
+
+   Which kind depends on `LEMELY_STORAGE__BACKEND` (§2). `local` needs no
+   bucket at all, writing under `paths.output_dir/storage`. `gcs` needs two
+   real Google Cloud Storage buckets the runtime identity can write, which
+   `scripts/gcp-bootstrap.sh` creates for both environments in one run — along
+   with the runtime service accounts, the 90-day lifecycle rule on uploads, the
+   `serviceAccountTokenCreator` grant that avatar signed URLs need, and
+   (optionally) the billing budget:
+
+   ```bash
+   PROJECT_ID=<gcp-project-id> BILLING_ACCOUNT_ID=<id> BUDGET_USD=25 \
+     ./scripts/gcp-bootstrap.sh
+   ```
+
+   There is no longer a Supabase Storage backend; that code was deleted (DS7).
 6. Apply the schema — see [§3.4](#34-migrations-are-a-separate-gated-step), and do
    **not** simply let the container do it.
 
@@ -246,6 +262,79 @@ For a real deploy, do one of:
 
 Alembic's own config reads the same `LEMELY_DATABASE__URL`, so an operator run needs
 only that variable set.
+
+### 3.5 Grade thresholds must be ingested separately — migrations do not seed them
+
+`alembic upgrade head` creates `component_thresholds` and `option_thresholds`
+(`0025_thresholds`, `0026_component_max_mark_positive`) but inserts **zero rows into
+either**. Unlike `0024_reference_catalogue`'s subjects/papers/topics, CAIE grade
+thresholds are not embedded as migration literals — they come from a live ingest
+(`scripts/ingest_thresholds.py`) that fetches ciegt.pooruli.com's transcription and
+verifies every row against the official Cambridge PDF before storing it (D2/D8 of
+the design spec). A migration can't do that: it would either embed unverified
+numbers as literals or make schema replay depend on a live network call, both wrong.
+
+**This means `alembic upgrade head` alone leaves grading unusable.**
+`GradeBoundaryStore` (`lemely/io/grade_boundaries.py`) raises
+`EmptyGradeBoundaryStoreError` rather than grade against invented boundaries when
+`component_thresholds` has zero verified rows — a deliberate regression fix: an
+earlier version of this store silently fell back to a hardcoded, wrong global
+default (e.g. it would award a Core paper, capped at C, a fabricated A). The refusal
+is correct, but it is also loud: every grading request 500s until ingest has run.
+
+Run once per environment, after migrations and before any grading traffic:
+
+```bash
+python scripts/ingest_thresholds.py
+```
+
+Or from CI, which is the same script with the environment's `SUPABASE_DB_URL`
+already to hand: Actions tab → **deploy** → Run workflow → pick the environment
+and tick **"Also ingest CAIE grade thresholds"**. That job is dispatch-only and
+off by default, and it asserts afterwards that at least one *verified* row
+landed — the script itself exits 0 even when every document was unreadable
+(`verified=0`), so the exit code alone is not evidence the environment can
+grade.
+
+It targets the three subjects this build supports (`--subjects 0580 0606 0625` is
+the default) and reads `LEMELY_DATABASE__URL` the same way Alembic does. It makes
+real HTTP requests to ciegt.pooruli.com and pastpapers.papacambridge.com (one
+syllabus request plus one PDF per session, paced 2s apart — see the script's own
+docstring), so run it from a machine with outbound internet access to the database,
+not from inside a network-isolated container. It is safe to re-run: every write is
+an `ON CONFLICT DO UPDATE` keyed on the row's identity, so a second run updates in
+place rather than duplicating.
+
+> **Any database ingested by a build older than this release must re-run this
+> once.** Earlier builds marked a row `verified` after checking only its
+> threshold *values* against the PDF — the row's `max_mark` came from ciegt's
+> transcription and was never verified, while the row cites the Cambridge PDF as
+> its source. Because every grade is a percentage of `max_mark`, a wrong
+> denominator moves every boundary on that paper. The fix lives in
+> `scripts/ingest_thresholds.py::verify_row`, **not** in a migration, so
+> `alembic_version` cannot tell you whether a given database is affected —
+> `alembic upgrade head` does not repair the stored rows. Count the exposure with
+> `SELECT count(*) FROM component_thresholds WHERE verified;`: every one of those
+> rows was verified under the old rule until the ingest is re-run. Re-running
+> `scripts/ingest_thresholds.py` re-verifies and updates every row in place.
+
+**Verify it worked** with `GET /api/health` — `gradeBoundariesLoaded: true` means at
+least one verified row exists. `false` has two causes, and the backend log
+distinguishes them: a line reading `health: could not read grade boundaries from
+the database` means the **database could not be read**, not that ingest is missing;
+without it, ingest either has not run or failed partway (check the run's own
+printed report: `components=… verified=… options=… `). That line is written on
+**every** failing poll, so it is present in any recent log window, not only at the
+moment the outage began.
+
+> Scope: the boundary store is cached for the life of the process, so this flag
+> reports the state at **first load**. A database that becomes unreachable *after*
+> boundaries have loaded leaves `gradeBoundariesLoaded: true` — this is a deploy-time
+> readiness signal, not a live database monitor.
+
+This is not wired into `docs/ci-cd.md`'s `deploy.yml` pipeline (deliberately left
+alone here — see that doc's own notes on this gap). Until it is, treat this as a
+manual one-time step per environment, same as creating the Storage bucket in §3.2.
 
 ---
 
@@ -401,14 +490,28 @@ replaces it).
 [ ] LEMELY_SUPABASE__JWT_SECRET set to the REAL secret  <-- nothing warns you
 [ ] LEMELY_SUPABASE__ANON_KEY + __SERVICE_ROLE_KEY set
 [ ] GEMINI_API_KEY set (or accept apiKeyConfigured:false and no marking)
-[ ] LEMELY_STORAGE__BACKEND=gcs and LEMELY_STORAGE__BUCKET set to a real bucket --
-    the "local" default writes to per-container disk, invisible across instances (§5.1)
-[ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
+[ ] LEMELY_STORAGE__BACKEND=gcs -- the "local" default writes to per-container
+    disk, invisible across instances (§5.1)
 [ ] A spend guard exists on the Gemini project (a billing budget or equivalent) --
     the web process itself enforces no USD cap (§5.4)
+[ ] RESEND_API_KEY set (or accept the mock provider and no mail sent)
+[ ] scripts/gcp-bootstrap.sh run once (creates both buckets per environment,
+    grants objectAdmin, grants serviceAccountTokenCreator for avatar signed
+    URLs, applies the 90-day rule to uploads, and creates the billing budget)
+[ ] LEMELY_STORAGE__BUCKET + __AVATAR_BUCKET match the buckets that exist
+    (deploy.yml sets <project-id>-{uploads,avatars}-<env> by default)
+[ ] alembic upgrade head run as an explicit step, NOT via the entrypoint
+[ ] python scripts/ingest_thresholds.py run once against this database (§3.5) --
+    migrations create component_thresholds/option_thresholds empty; grading
+    stays refused (GradeBoundaryStore raises) until this has run
+[ ] Upgrading an EXISTING database, not creating one: ingest_thresholds.py
+    re-run so every verified row's max_mark is checked against the PDF (§3.5)
+[ ] Backend pinned to max 1 instance
+[ ] Volume mounted at /app/.lemely-cache so the $8 spend ledger survives
 [ ] web/nginx.conf proxy_pass repointed if the host has no Compose DNS
 [ ] TLS terminated in front of nginx
 [ ] Verified: 401 no token / 200 valid token / 403 wrong role on a real route
+[ ] Verified: GET /api/health reports gradeBoundariesLoaded: true
 ```
 
 That last line is the cheapest end-to-end proof that the deploy is wired correctly —

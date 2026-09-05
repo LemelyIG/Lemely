@@ -10,8 +10,9 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
 import { QuestionRow, type MarkState } from "@/components/ui/question-row"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
@@ -290,7 +291,7 @@ export function PaperResult() {
   const navigate = useNavigate()
   const live = isLiveResult(location.state) ? location.state : null
 
-  const { data, isPending, isError, error, refetch } = useResult(live ? "" : (paperId ?? ""))
+  const query = useResult(live ? "" : (paperId ?? ""))
 
   if (live) {
     const summary = confidenceSummaryOf(live.questions)
@@ -310,41 +311,51 @@ export function PaperResult() {
   }
 
   /*
-   * P4.2: this was a single line reading "Loading result…" where a full paper
-   * result arrives — a header card with a hero mark, a grade badge, a boundary
-   * bar and a sidebar, then a question list. One text row standing in for all
-   * of that is the layout shift DESIGN.md §12 names, and it is at its worst
-   * here: this screen is what a student lands on straight after watching the
-   * marking finish, so the jump happens at the exact moment they are looking
-   * for their score.
+   * The 404 case stays its own branch ahead of `<QueryState>` rather than
+   * living in its `error` slot: it renders `EmptyState`, not `ErrorState`,
+   * with two actions, and a heading that says what actually
+   * happened ("no paper recorded here") rather than the generic "we couldn't
+   * load this". `useResult`'s `enabled: !!code` only ever goes false on the
+   * `live ? "" : …` branch above, which has already returned by this point —
+   * so `query` below is always enabled and never parks at `fetchStatus:
+   * "idle"`; no `idle` prop is needed.
    */
-  if (isPending) {
+  if (query.isError && query.error instanceof ApiError && query.error.status === 404) {
     return (
       <ResultScreen srHeading="Paper result">
-        <PanelSkeleton bodyClassName="h-40" />
-        <ListSkeleton rows={5} />
+        <EmptyState
+          heading="No paper recorded at this address"
+          body="We don't have a result stored under this link. It may have been removed, or the address may be wrong."
+          marginalia="Nothing filed here"
+          action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
+          secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
+        />
       </ResultScreen>
     )
   }
 
-  if (isError) {
-    if (error instanceof ApiError && error.status === 404) {
-      return (
-        <ResultScreen srHeading="Paper result">
-          <EmptyState
-            heading="No paper recorded at this address"
-            body="We don't have a result stored under this link. It may have been removed, or the address may be wrong."
-            marginalia="Nothing filed here"
-            action={{ label: "Correct a paper", onClick: () => navigate("/student/correct") }}
-            secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
-          />
-        </ResultScreen>
-      )
-    }
-    return (
-      <ResultScreen srHeading="Paper result">
-        <ErrorState
-          heading="We couldn't load this result"
+  return (
+    <ResultScreen>
+      <QueryState
+        query={query}
+        srHeading="Paper result"
+        /*
+         * P4.2: this was a single line reading "Loading result…" where a full
+         * paper result arrives — a header card with a hero mark, a grade
+         * badge, a boundary bar and a sidebar, then a question list. One text
+         * row standing in for all of that is the layout shift DESIGN.md §12
+         * names, and it is at its worst here: this screen is what a student
+         * lands on straight after watching the marking finish, so the jump
+         * happens at the exact moment they are looking for their score.
+         */
+        skeleton={
+          <>
+            <PanelSkeleton bodyClassName="h-40" />
+            <ListSkeleton rows={5} />
+          </>
+        }
+        error={{
+          heading: "We couldn't load this result",
           /* P6.2. This rendered `error.message`, which on a dropped connection
              is the browser's "Failed to fetch" and on a 500 is the status line.
              The 404 above is handled properly and was doing the work of hiding
@@ -356,19 +367,46 @@ export function PaperResult() {
              sentence here worth keeping, which is the exact evidence
              `studentOutcome.ts` was written on. `correctionOutcome.ts` is the
              detail-first one and belongs to the marking stream, not to this
-             GET. */
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => refetch() }}
-          secondaryAction={{ label: "Back to overview", onClick: () => navigate("/student") }}
-        />
-      </ResultScreen>
-    )
-  }
-
-  return (
-    <ResultScreen>
-      <ResultHeader res={data} />
-      <QuestionList questions={[]} />
+             GET.
+ */
+          body: studentLoadFailureMessage,
+          /* The second button is the same one this branch always had. A
+             result that will not load is often a result that will not load
+             on the fourth try either, and a student stuck on it needs a way
+             back to their overview more than a fourth retry. */
+          secondaryAction: { label: "Back to overview", onClick: () => navigate("/student") },
+        }}
+      >
+        {(data) => (
+          <>
+            <ResultHeader res={data} />
+            {/*
+             * PR 4 investigation (deferred audit item): checked whether
+             * `ResultDTO` — `data` here — actually carries per-question rows
+             * before touching this. It does not, and not by omission: every
+             * `GET /student/result/{paper_id}` response builds `theory=[]`
+             * unconditionally (`routers/student.py::student_result`, whose
+             * own docstring calls it "structurally empty" — history rows
+             * persist totals, weak-areas and metadata only, never the
+             * per-question answers/mark-scheme points theory marking used).
+             * `theory` is also the wrong shape for this list regardless:
+             * `TheoryQuestionDTO` (`conf`/`confColor`/`points`/`markOk`, all
+             * pre-bucketed presentation fields) is not `QuestionResult`
+             * (`confidence`/`awardedMarks`/`reviewReason`, the raw fields
+             * `QuestionList`/`confidenceTierFor` read) — passing it through
+             * would need a second, speculative mapping for data that never
+             * arrives today. `questions={[]}` is therefore the honest
+             * literal, not a stand-in for `data.theory`: it renders
+             * `QuestionList`'s own "No per-question detail for this paper"
+             * empty state, which is the true state of every history-sourced
+             * result right now. Revisit this once the backend actually
+             * populates per-question history detail — the live path just
+             * above already proves `QuestionList` can render it real.
+             */}
+            <QuestionList questions={[]} />
+          </>
+        )}
+      </QueryState>
     </ResultScreen>
   )
 }

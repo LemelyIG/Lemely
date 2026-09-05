@@ -3,8 +3,8 @@ import { useEffect, useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Switch } from "@/components/ui/switch"
-import { ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import {
   NOTIFICATION_TOGGLES,
   quietHoursSummary,
@@ -112,7 +112,14 @@ function pushStateCopy(kind: string): { heading: string; body: string } {
   }
 }
 
-export function NotificationSettings() {
+/**
+ * The section this screen renders, with no frame around it — mounted at
+ * `/teacher/settings/notifications` and `/student/settings/notifications`
+ * inside `PortalSettingsLayout`, which supplies its own `<h1>`/nav/chrome,
+ * in addition to the framed `NotificationSettings` below for the top-level
+ * `/settings/notifications` lane (parent and admin still use that one).
+ */
+export function NotificationSettingsSection() {
   const prefs = useNotificationPreferences()
   const update = useUpdateNotificationPreferences()
   const pushConfig = usePushConfig()
@@ -236,10 +243,7 @@ export function NotificationSettings() {
   const summary = loaded ? quietHoursSummary(loaded.quietHoursStart, loaded.quietHoursEnd) : null
 
   return (
-    <SettingsFrame
-      title="Notifications"
-      intro="Choose what you want to hear about, and when. Everything you switch on arrives in your inbox whether or not this device can show pop-ups."
-    >
+    <>
       <section aria-labelledby="types-heading" className="flex flex-col gap-4">
         <div className="flex flex-col gap-2">
           <h2 id="types-heading" className="text-display-sm text-ink">
@@ -251,47 +255,64 @@ export function NotificationSettings() {
           </p>
         </div>
 
-        {prefs.isPending ? <ListSkeleton rows={4} /> : null}
+        {/* No `srHeading`: the page's own `<h1>` is rendered above this
+            section unconditionally, whether by `SettingsFrame` (the
+            top-level lane) or `PortalSettingsLayout` (the in-portal one), in
+            every query state — an sr-only heading here would duplicate it.
+            No `isEmpty` either: the five toggles are a fixed enum (module
+            note), so there is no "empty data" shape for this query to reach,
+            only the role-based filter below deciding which of the five apply.
 
-        {prefs.isError ? (
-          <ErrorState
-            heading="We couldn't load your notification settings"
-            body={settingsLoadFailureMessage(prefs.error)}
-            action={{ label: "Try again", onClick: () => void prefs.refetch() }}
-          />
-        ) : null}
-
-        {loaded ? (
-          <ul className="flex flex-col gap-2">
-            {NOTIFICATION_TOGGLES.filter(
-              // `atRiskAlert` arrives as `null` for every role but teacher and
-              // parent, and that null means "no such preference for you" rather
-              // than "off". Rendering it unchecked would offer a switch the
-              // router answers with a 422.
-              (toggle) => valueFor(loaded, toggle.key) !== null,
-            ).map((toggle) => (
-              <li
-                key={toggle.key}
-                className="rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
-              >
-                <Switch
-                  label={toggle.label}
-                  description={toggle.description}
-                  checked={valueFor(loaded, toggle.key) === true}
-                  // Only the switch in flight says so. The rest are disabled
-                  // because the mutation replaces the whole preference object
-                  // on success, so two in-flight changes could clobber each
-                  // other — but "disabled" and "saving" are different facts and
-                  // are now shown differently.
-                  state={savingKey === toggle.key ? "loading" : undefined}
-                  error={toggleFailure?.key === toggle.key ? toggleFailure.message : undefined}
-                  disabled={update.isPending && savingKey !== toggle.key}
-                  onCheckedChange={(next) => handleToggle(toggle.key, next)}
-                />
-              </li>
-            ))}
-          </ul>
-        ) : null}
+            One behaviour changed here and is worth naming. The pre-conversion
+            branches were sibling expressions, not exclusive ones, so a refetch
+            that failed *after* a successful load showed the error panel and
+            kept the list below it. `QueryState` is exclusive by design, so the
+            list goes. That is the honest reading: react-query moves `status`
+            to `"error"` on a failed refetch, and what is on screen at that
+            point is data we can no longer vouch for — after a revoke, a device
+            that is gone may still be listed, which is the one thing this
+            screen must not imply. A retry is a better offer than stale rows
+            presented as current. */}
+        <QueryState
+          query={prefs}
+          skeleton={<ListSkeleton rows={4} />}
+          error={{
+            heading: "We couldn't load your notification settings",
+            body: settingsLoadFailureMessage,
+          }}
+        >
+          {(data) => (
+            <ul className="flex flex-col gap-2">
+              {NOTIFICATION_TOGGLES.filter(
+                // `atRiskAlert` arrives as `null` for every role but teacher and
+                // parent, and that null means "no such preference for you" rather
+                // than "off". Rendering it unchecked would offer a switch the
+                // router answers with a 422.
+                (toggle) => valueFor(data, toggle.key) !== null,
+              ).map((toggle) => (
+                <li
+                  key={toggle.key}
+                  className="rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
+                >
+                  <Switch
+                    label={toggle.label}
+                    description={toggle.description}
+                    checked={valueFor(data, toggle.key) === true}
+                    // Only the switch in flight says so. The rest are disabled
+                    // because the mutation replaces the whole preference object
+                    // on success, so two in-flight changes could clobber each
+                    // other — but "disabled" and "saving" are different facts and
+                    // are now shown differently.
+                    state={savingKey === toggle.key ? "loading" : undefined}
+                    error={toggleFailure?.key === toggle.key ? toggleFailure.message : undefined}
+                    disabled={update.isPending && savingKey !== toggle.key}
+                    onCheckedChange={(next) => handleToggle(toggle.key, next)}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+        </QueryState>
       </section>
 
       <section aria-labelledby="quiet-heading" className="flex flex-col gap-4">
@@ -400,6 +421,20 @@ export function NotificationSettings() {
           ) : null}
         </div>
       </section>
+    </>
+  )
+}
+
+/** The top-level `/settings/notifications` route (parent and admin still
+ * reach this screen only through here — see `SettingsFrame`'s module header
+ * for why the lane is role-agnostic). */
+export function NotificationSettings() {
+  return (
+    <SettingsFrame
+      title="Notifications"
+      intro="Choose what you want to hear about, and when. Everything you switch on arrives in your inbox whether or not this device can show pop-ups."
+    >
+      <NotificationSettingsSection />
     </SettingsFrame>
   )
 }

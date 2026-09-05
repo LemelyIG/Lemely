@@ -76,6 +76,20 @@ class HealthDTO(ApiModel):
     apiKeyConfigured: bool
     storage: StorageHealthDTO
 
+    #: False when grade boundaries cannot be read, for either of two reasons:
+    #: a fresh/unseeded database with no verified grade-boundary rows (where
+    #: ``GradeBoundaryStore`` refuses to grade against invented numbers -- see
+    #: ``lemely.io.grade_boundaries``), or a database that could not be reached
+    #: or queried at all. ``/api/health`` stays 200 in both cases so the check
+    #: itself never crashes; the backend log discriminates them, since only the
+    #: second writes ``health: could not read grade boundaries from the
+    #: database``. A deploy can poll this to catch "migrations ran, ingest
+    #: never did" before a student sees a wrong grade.
+    #:
+    #: Scope: the store is cached, so this reflects the state at first load.
+    #: A database that fails *after* boundaries loaded leaves this ``true``.
+    gradeBoundariesLoaded: bool
+
 
 def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
     """Convert a core :class:`CorrectedQuestion` into a :class:`QuestionResultDTO`."""

@@ -49,7 +49,24 @@ class FakeStorageBackend:
             raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
 
     def delete(self, bucket: str, object_path: str) -> None:
+        """Idempotent, matching the Protocol: a missing object is not an error.
+
+        The merge with #220 briefly carried two definitions of this method with
+        opposite contracts — its seam raised on a missing object, this one does
+        not — and Python silently kept the second. This one matches the
+        Protocol both real backends implement.
+        """
         self._objects.pop((bucket, object_path), None)
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        """Return a deterministic stand-in URL.
+
+        Deliberately does not check that the object exists: real GCS will sign
+        a URL for a key that was never written (the 404 arrives when someone
+        follows it), and a fake that raised here would let a test pass that
+        production would fail.
+        """
+        return f"https://signed.test/{bucket}/{object_path}?expires_in={expires_in}"
 
 
 __all__ = ["FakeStorageBackend", "StorageObjectNotFoundError"]

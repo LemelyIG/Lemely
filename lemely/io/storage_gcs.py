@@ -30,14 +30,21 @@ _TRANSFER_TIMEOUT_SECONDS = 30.0
 class GcsStorageBackend:
     """Real :class:`StorageBackend` over ``google.cloud.storage``."""
 
-    def __init__(self, *, _client: Any = None) -> None:
-        """Optionally inject a client (tests); otherwise one is built on first use."""
+    def __init__(self, *, project: str | None = None, _client: Any = None) -> None:
+        """Optionally inject a client (tests); otherwise one is built on first use.
+
+        ``project`` is ``settings.storage.gcs_project``: Application Default
+        Credentials usually carry or infer a project on their own, so this is
+        only needed when that inference is wrong or absent (a user-account
+        credential with no associated quota project).
+        """
         self._raw_client: Any = _client
+        self._project = project
 
     def _client(self) -> Any:
         if self._raw_client is None:
             try:
-                self._raw_client = storage.Client()
+                self._raw_client = storage.Client(project=self._project)
             except DefaultCredentialsError as exc:
                 raise ExternalServiceError(
                     "Google Cloud Storage needs application-default credentials: "
@@ -93,6 +100,64 @@ class GcsStorageBackend:
             return
         except GoogleAPICallError as exc:
             raise ExternalServiceError(f"Storage delete failed: {exc}") from exc
+
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        """Create a V4 signed URL for ``{bucket}/{object_path}``.
+
+        A service-account JSON key credential exposes a ``signer`` and can sign
+        entirely locally; ``google-cloud-storage`` uses it automatically. A
+        workload-identity credential (Cloud Run/GCE/GKE) has no ``signer`` at
+        all, so passing ``service_account_email``/``access_token`` explicitly
+        makes the library sign through the IAM ``signBlob`` API instead — the
+        documented workaround for that credential shape. The token must be
+        fresh, hence the explicit ``refresh`` first.
+
+        ``hasattr(credentials, "signer")`` is the discriminator, and the choice
+        matters: ``getattr(credentials, "private_key", None)`` is not a valid
+        test, because no google-auth credential exposes a public
+        ``private_key`` (``service_account.Credentials`` keeps it behind
+        ``signer``). That check was always falsy, so an earlier version always
+        took the signBlob branch even for a JSON key that could have signed
+        offline.
+
+        Plain user credentials (``gcloud auth application-default login``) have
+        neither, and cannot sign at all — raised here by name rather than left
+        to fail later with an ``AttributeError`` on ``service_account_email``.
+
+        Ported from the implementation #220 added; on Cloud Run the runtime
+        service account additionally needs ``roles/iam.serviceAccountTokenCreator``
+        for the signBlob call to succeed.
+        """
+        from datetime import timedelta
+
+        import google.auth.transport.requests
+
+        client = self._client()
+        credentials = getattr(client, "_credentials", None)
+        try:
+            blob = client.bucket(bucket).blob(object_path)
+            sign_kwargs: dict[str, Any] = {}
+            if credentials is not None and not hasattr(credentials, "signer"):
+                if not hasattr(credentials, "service_account_email"):
+                    raise ExternalServiceError(
+                        "Cannot create a signed URL: the configured Application "
+                        "Default Credentials are user credentials (e.g. from "
+                        "`gcloud auth application-default login`), which can "
+                        "neither sign locally nor use IAM signBlob. Configure a "
+                        "service-account JSON key or an attached service account."
+                    )
+                credentials.refresh(google.auth.transport.requests.Request())
+                sign_kwargs["service_account_email"] = credentials.service_account_email
+                sign_kwargs["access_token"] = credentials.token
+            signed: str = blob.generate_signed_url(
+                version="v4",
+                expiration=timedelta(seconds=expires_in),
+                method="GET",
+                **sign_kwargs,
+            )
+        except GoogleAPICallError as exc:
+            raise ExternalServiceError(f"GCS sign failed: {exc}") from exc
+        return signed
 
 
 __all__ = ["GcsStorageBackend"]

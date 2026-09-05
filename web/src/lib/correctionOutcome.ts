@@ -1,4 +1,6 @@
 import { ApiError } from "@/lib/api"
+import { AUTH_EMAIL_UNVERIFIED } from "@/lib/authOutcome"
+import { isEmailUnverifiedError } from "@/lib/authTypes"
 
 /*
  * P4.2 · What the student is told when a marking run does not produce a result.
@@ -55,12 +57,41 @@ export const SERVICE_FAILURE =
 /**
  * Turn whatever `runCorrection` threw into a sentence written for a student.
  *
- * Order matters: a FastAPI `detail` is checked before the status class, because
- * a 422 that says "This paper has already been marked" is far more useful than
+ * Order matters twice over.
+ *
+ * `email_unverified` is checked first because it is the one `detail` on this
+ * route that is a *field* rather than prose, and the two branches below can
+ * only read prose. `deps.require_verified_email` raises
+ * `403 {"code": "email_unverified"}` and its own docstring calls that "a
+ * stable, machine-readable marker (never prose) the frontend's
+ * `lib/authOutcome.ts`-family outcome modules match on" — `authOutcome.ts`'s
+ * note 6 says the same from the other side, that the marker reaches that
+ * module because "some other screen's failed request (today, only
+ * `POST /student/correct`)" hands it over. This screen is that other screen,
+ * and until now it never handed anything over: `typeof err.detail === "string"`
+ * is false for an object, so the marker fell through to the 4xx branch and a
+ * student whose email was simply unverified was told the marking service
+ * "didn't say why" — about the one refusal that says exactly why, and the one
+ * this product can do something about. Reproduced against staging on
+ * 2026-09-04, where it is the whole of why marking stops.
+ *
+ * `AUTH_EMAIL_UNVERIFIED` is borrowed rather than reworded because that
+ * constant is written for exactly this: "wherever `require_verified_email`
+ * eventually guards something, not only today's one route". What is *not*
+ * borrowed is `verificationFailureMessage` itself — its other branches speak
+ * in the auth screens' voice ("We couldn't reach Lemely just then"), and this
+ * module's whole reason for existing is that a marking run and a sign-in
+ * failure are not the same sentence.
+ *
+ * Then a FastAPI `detail` is checked before the status class, because a 422
+ * that says "This paper has already been marked" is far more useful than
  * anything generic that could be said about a 422.
  */
 export function correctionFailureMessage(err: unknown): string {
   if (err instanceof ApiError) {
+    // D7.5's soft gate. Structured, so it has to be read as a shape — by the
+    // time it arrives `err.message` is only the "403 Forbidden" status line.
+    if (err.status === 403 && isEmailUnverifiedError(err.detail)) return AUTH_EMAIL_UNVERIFIED
     // `detail` is what the endpoint chose to tell a human. A status line
     // ("500 Internal Server Error") is what `api.ts` synthesises when the body
     // carried nothing, and that is not a sentence to show anybody.

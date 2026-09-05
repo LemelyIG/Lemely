@@ -2,17 +2,23 @@
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useEffect, useState } from "react"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { useQueryClient } from "@tanstack/react-query"
 import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
+import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
 import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
@@ -46,6 +52,9 @@ const StudyPlanWeek = lazy(() =>
   import("./screens/studyplan/StudyPlanWeek").then((m) => ({ default: m.StudyPlanWeek })),
 )
 const Standings = lazy(() => import("./screens/Standings").then((m) => ({ default: m.Standings })))
+const StudentClasses = lazy(() =>
+  import("./screens/Classes").then((m) => ({ default: m.StudentClasses })),
+)
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
 )
@@ -86,6 +95,34 @@ const FlashcardReview = lazy(() =>
 // lazy import went with it: a chunk nothing in this subtree renders is a
 // chunk the build still emits and the router still resolves.
 const Parents = lazy(() => import("./screens/Parents").then((m) => ({ default: m.Parents })))
+// Settings' three screens mount here too, alongside every other lazy screen
+// in this portal — see `data.ts`'s `navGroups` and the route registration
+// below. Same shared components the teacher portal's Settings mounts, so the
+// two cannot drift.
+// Each imported from its own module rather than the `@/portals/settings`
+// barrel: importing all four through one barrel module means a chunk
+// containing any one of them pulls in the code for all four, defeating the
+// per-screen splitting P6.1b's note above otherwise does. The barrel still
+// exists for other consumers (its own header explains why) — this portal
+// just does not use it for the lazy boundary.
+const PortalSettingsLayout = lazy(() =>
+  import("@/portals/settings/PortalSettingsLayout").then((m) => ({
+    default: m.PortalSettingsLayout,
+  })),
+)
+const ProfileSettingsSection = lazy(() =>
+  import("@/portals/settings/ProfileSettings").then((m) => ({
+    default: m.ProfileSettingsSection,
+  })),
+)
+const DeviceSettingsSection = lazy(() =>
+  import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettingsSection })),
+)
+const NotificationSettingsSection = lazy(() =>
+  import("@/portals/settings/NotificationSettings").then((m) => ({
+    default: m.NotificationSettingsSection,
+  })),
+)
 
 /**
  * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
@@ -127,7 +164,7 @@ function UserBlock() {
           collision that rule describes. The initials logic it carried was a
           second copy of `Avatar`'s own; two copies of the same fallback is how
           one of them ends up handling a single-word name differently. */}
-      <Avatar name={name} size="md" />
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="md" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-ink">{name}</div>
         <div className="text-body-sm text-ink-faint">{roleLabel}</div>
@@ -248,7 +285,13 @@ function SubjectNavGroup({
   touch?: boolean
 }) {
   const Glyph = subjectIcon(subject.code)
-  const { secondary } = subjectIdentifier(subject.name, subject.code, subject.qualificationLevel)
+  const { data: reference } = useReference()
+  const { secondary } = subjectIdentifier(
+    reference?.qualificationLevels,
+    subject.name,
+    subject.code,
+    subject.qualificationLevel,
+  )
   return (
     <div className="flex flex-col gap-0.5">
       <div className="flex items-center gap-1">
@@ -626,6 +669,7 @@ export function studentOnboardingRedirect(
 function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
+  const queryClient = useQueryClient()
 
   /*
    * The wiring for `studentOnboardingRedirect` above: `useStudentProfile()`
@@ -663,7 +707,12 @@ function StudentLayout() {
     // reaches every student screen, including the ~20 this surface does not
     // touch. It is fixed rather than scrolled precisely so it never repaints
     // on scroll on the mid-range Android phones §7 keeps naming.
-    <div data-portal="student" className="paper-grain flex min-h-screen">
+    //
+    // `bg-paper` is load-bearing here, not decoration: the shell must own its
+    // own ground rather than depend on what is behind it (`body`'s own paint,
+    // in this case — correct today, but a fragile thing for a portal root to
+    // lean on) matching the warm `--paper` token by coincidence.
+    <div data-portal="student" className="paper-grain flex min-h-screen bg-paper">
       <SkipLink />
       <Sidebar />
 
@@ -696,8 +745,40 @@ function StudentLayout() {
           tabIndex={-1}
           className="flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
+          {/* PR 2 part C: offline recovery banner, above the Suspense/
+              ErrorBoundary content it sits over — it renders nothing while
+              online, so its own `mb-6` is the only spacing this adds. */}
+          <OfflineBanner
+            onRetry={() =>
+              void queryClient.refetchQueries({
+                type: "active",
+                predicate: (query) => query.state.status === "error",
+              })
+            }
+          />
+          {/* Below the offline strip on purpose: connectivity is the transient,
+              self-healing message and belongs on top, while this is a standing fact
+              about the account. Renders nothing, and no margin either, unless the
+              profile has resolved and says the address is unverified. */}
+          <VerifyEmailBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            <Outlet />
+            {/* PR 1B fulfils the note above ("Phase 4 places those as it
+                rebuilds each surface", `routes.tsx`): a render crash in one
+                screen now stays inside this content slot instead of taking
+                the sidebar/header down with it or falling out to the
+                top-level `errorElement`. Inside `Suspense`, not outside it,
+                so a failed chunk load and a render throw both land in this
+                boundary while the chrome stays painted.
+                `resetKey={location.pathname}` clears a caught error on
+                navigation — a crash on `/student/board` must not still be
+                showing once the reader is on `/student/friends`. */}
+            <ErrorBoundary
+              label="This page"
+              resetKey={location.pathname}
+              fallback={portalErrorFallback}
+            >
+              <Outlet />
+            </ErrorBoundary>
           </Suspense>
         </main>
       </div>
@@ -721,6 +802,7 @@ export const studentRoute: RouteObject = {
      * is what happens to those.
      */
     { index: true, element: <Overview />, handle: { title: "Dashboard" } },
+    { path: "classes", element: <StudentClasses />, handle: { title: "Your classes" } },
     { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
     { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
     { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },
@@ -737,6 +819,24 @@ export const studentRoute: RouteObject = {
     { path: "profile", element: <Profile />, handle: { title: "Your profile" } },
     // The only place a parent_child_links row is created (D3.11).
     { path: "parents", element: <Parents />, handle: { title: "Parent access" } },
+    {
+      path: "settings",
+      element: <PortalSettingsLayout basePath="/student/settings" />,
+      handle: { title: "Settings" },
+      children: [
+        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          path: "devices",
+          element: <DeviceSettingsSection />,
+          handle: { title: "Account and devices" },
+        },
+        {
+          path: "notifications",
+          element: <NotificationSettingsSection />,
+          handle: { title: "Notification settings" },
+        },
+      ],
+    },
     { path: "onboard", element: <Onboarding />, handle: { title: "Getting set up" } },
     {
       path: "placement/:subjectCode",

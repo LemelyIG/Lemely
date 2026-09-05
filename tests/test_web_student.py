@@ -45,6 +45,7 @@ from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
@@ -173,7 +174,19 @@ def client(seeded_store: HistoryStore, profile_service: MagicMock) -> TestClient
 
 
 def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> None:
-    """Overview subject rows aggregate marks per subject with a weighted mean."""
+    """Overview subject rows aggregate marks per subject with a weighted mean.
+
+    `physics["grade"]` is resolved (`_grade_for`) against the most recent
+    record's real, ingested CAIE boundaries for 0625 paper 1 -- "Multiple
+    Choice (Core)" (`syllabus_papers.tier="core"`). Cambridge caps Core at
+    grade C: its component thresholds publish C-G only, no A/B, because Core
+    exists for candidates targeting C or below. So an 89% average on this
+    paper is correctly awarded a C, not the A it would be worth on an
+    Extended paper -- the old "A" expectation predated the reference-data
+    migration and awarded a grade Cambridge's own Core-tier papers cannot
+    give. See `test_result_is_data_backed_with_empty_theory` (seeds an
+    Extended paper instead) for this same reference data's A-boundary path.
+    """
     body = client.get("/api/student/overview").json()
 
     # `STUDENT_ID` ("maya") is this file's friendly string id for the
@@ -190,7 +203,10 @@ def test_overview_subjects_are_aggregated_from_history(client: TestClient) -> No
     # (33 + 38) / (40 + 40) = 88.75 → 89
     assert physics["pct"] == 89
     assert physics["papers"] == 2
-    assert physics["grade"] == "A"
+    # Core-tier cap (see docstring): 89% clears every published boundary
+    # (C:58.79 D:51.21 E:45.21 F:38.33 G:32.29) but Core publishes no A/B,
+    # so the highest awardable grade on this paper is C.
+    assert physics["grade"] == "C"
     assert physics["barColor"] == "ok"
     # trend = round(95.0 - 82.5) = round(12.5) = 12 (banker's rounding) → improving
     assert physics["trend"] == "+12"
@@ -336,6 +352,62 @@ def test_overview_empty_history_is_neutral(tmp_path: Path) -> None:
     assert body["subjects"] == []
     assert body["weakGlobal"] == []
     assert body["momentum"]["points"] == []
+
+
+def test_overview_with_no_papers_never_builds_the_boundary_store(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A student with nothing to grade must not need grade boundaries at all.
+
+    Regression test for the staging outage: ``_subjects`` built
+    :class:`~lemely.io.grade_boundaries.GradeBoundaryStore` before it looked at
+    the history, and that constructor raises
+    :class:`~lemely.runtime.errors.EmptyGradeBoundaryStoreError` against an
+    un-ingested ``component_thresholds``. So a freshly deployed environment
+    500'd the *first* screen a new student ever sees — the getting-started view,
+    which resolves no grade whatsoever.
+
+    The store is replaced with something that raises on construction rather than
+    asserting on a call count, because the module-level reference cache in
+    ``lemely.io.grade_boundaries`` makes a real construction succeed or fail
+    depending on which tests ran before this one.
+    """
+
+    def _refuse(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("built the boundary store with nothing to grade")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _refuse)
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: HistoryStore(tmp_path / "empty")
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id="nobody", role="student"
+    )
+    response = TestClient(app).get("/api/student/overview")
+
+    assert response.status_code == 200, response.text
+    assert response.json()["subjects"] == []
+
+
+def test_overview_reports_an_un_ingested_boundary_store_as_503(
+    client: TestClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An un-ingested threshold table is unavailability, not a bug in the request.
+
+    A student *with* papers genuinely cannot be graded until
+    ``scripts/ingest_thresholds.py`` has run, so refusing is correct (that is
+    what the store's own error is for). Returning a bare 500 told an operator
+    only "something threw"; 503 plus a detail naming the ingest is the same
+    refusal with the cause attached.
+    """
+
+    def _empty(*_args: object, **_kwargs: object) -> None:
+        raise EmptyGradeBoundaryStoreError("component_thresholds has no verified rows")
+
+    monkeypatch.setattr("lemely.web.routers.student.GradeBoundaryStore", _empty)
+    response = client.get("/api/student/overview")
+
+    assert response.status_code == 503, response.text
+    assert "ingest_thresholds" in response.json()["detail"]
 
 
 def test_overview_malformed_id_returns_200_not_500(
@@ -551,19 +623,52 @@ def test_subject_history_id_addresses_full_history_not_filtered_subset(
 # ── Paper result (flagship) ───────────────────────────────────────────────────
 
 
-def test_result_is_data_backed_with_empty_theory(client: TestClient) -> None:
-    """Result totals/grade/rail are data-backed; theory is structurally empty."""
-    body = client.get("/api/student/result/1").json()  # 2nd record: 38/40
+def test_result_is_data_backed_with_empty_theory(tmp_path: Path) -> None:
+    """Result totals/grade/rail are data-backed; theory is structurally empty.
+
+    Deliberately does NOT reuse the module's shared `client`/`seeded_store`
+    fixtures: both of their 0625 records are paper 1 ("Multiple Choice
+    (Core)", `syllabus_papers.tier="core"`), which `test_subject_breakdown_and_history`
+    relies on ("both papers share paper_number 1"). Cambridge caps Core at
+    grade C -- its real ingested thresholds carry no A boundary at all -- so
+    a Core record can never exercise `railFoot`'s "A boundary sat at ..."
+    line; see `test_overview_subjects_are_aggregated_from_history` for that
+    same Core-cap consequence on the aggregation path. This test seeds its
+    own one-record store on 0625 paper 2 ("Multiple Choice (Extended)",
+    `tier="extended"`) instead, to keep the A-boundary rail-foot format under
+    real, data-backed coverage rather than losing it to an empty-string
+    assertion.
+    """
+    store = HistoryStore(tmp_path / "history")
+    store.append(
+        STUDENT_ID,
+        _record(
+            paper_number=2,
+            awarded=38,
+            maximum=40,
+            percentage=95.0,
+            grade="A",
+            recorded_at="2020-06-01T10:00:00+00:00",
+            source_document="0625_m20_qp_22.pdf",
+        ),
+    )
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=STUDENT_ID, role="student"
+    )
+    body = TestClient(app).get("/api/student/result/0").json()
 
     assert body["awarded"] == 38
     assert body["max"] == 40
     assert body["pct"] == 95
     assert body["grade"] == "A"
     assert body["railLeft"] == 95
-    # The A boundary resolves to a real mark line (subject-default for 0625).
+    # 0625 paper 2 (Extended) publishes a real A boundary (subject-default,
+    # no exact-variant data for this session).
     assert body["railFoot"].startswith("A boundary sat at")
     assert body["boundaryYear"] == "2020"
-    assert body["provenance"] == "0625_m20_qp_12.pdf"
+    assert body["provenance"] == "0625_m20_qp_22.pdf"
 
     # Structurally empty: history records persist no per-question detail.
     assert body["theory"] == []

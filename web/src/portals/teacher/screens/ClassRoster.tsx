@@ -14,6 +14,8 @@ import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
 import type { StudentRow } from "@/lib/teacherTypes"
 import { useClassDetailContext } from "./ClassDetail"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { useReference } from "@/lib/hooks/useReferenceApi"
+import { gradeRank, widestVocabularyFor } from "@/lib/grades"
 
 /*
  * Class detail — roster (T-03). Reads `classDetail.students` from
@@ -57,15 +59,16 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  * `TrendSparkline` (which needs a real multi-point series; two points
  * conjured from one delta would draw a shape this data doesn't support).
  *
- * Bulk actions ("assign a quiz", "post an announcement") are visibly
- * disabled with a "Coming soon" tag — T-09/T-10 quiz builder and T-12
- * announcement composer don't exist until P3.8 — following `Overview.tsx`'s
- * precedent, never a button that silently does nothing.
+ * Bulk actions ("assign a quiz", "post an announcement") are gone from this
+ * toolbar rather than kept as disabled placeholders: T-09's quiz builder and
+ * T-12's announcement composer both shipped as their own screens, reachable
+ * from the sidebar, and neither one is scoped to a single class the way this
+ * roster is — a "Coming soon" pair here would only ever have been telling a
+ * teacher a shipped feature does not exist. "+ Add students" is the one
+ * action this table's own row-level data (enrolment) actually owns.
  */
 
 type SortColumn = "name" | "paperCount" | "mark" | "grade" | "delta" | "atRisk" | "lastActiveAt"
-
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
 
 function markPercent(mark: string): number | null {
   const [awarded, max] = mark.split("/").map(Number)
@@ -73,7 +76,11 @@ function markPercent(mark: string): number | null {
   return (awarded / max) * 100
 }
 
-function valueFor(s: StudentRow, column: SortColumn): string | number | null {
+/** `vocabulary` is the class's own subject's grades — every row in one
+ * roster shares the one class, so unlike `Quizzes.tsx` there is no
+ * cross-subject ambiguity here. `[]` while `/api/reference` is loading, so
+ * `gradeRank` ranks every student equally rather than scrambling the table. */
+function valueFor(s: StudentRow, column: SortColumn, vocabulary: readonly string[]): string | number | null {
   switch (column) {
     case "name":
       return s.name
@@ -81,10 +88,8 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
       return s.paperCount
     case "mark":
       return markPercent(s.mark)
-    case "grade": {
-      const idx = GRADE_ORDER.indexOf(s.grade)
-      return idx === -1 ? null : idx
-    }
+    case "grade":
+      return s.grade ? gradeRank(s.grade, vocabulary) : null
     case "delta":
       return s.delta
     case "atRisk":
@@ -94,9 +99,15 @@ function valueFor(s: StudentRow, column: SortColumn): string | number | null {
   }
 }
 
-function compareStudents(a: StudentRow, b: StudentRow, column: SortColumn, dir: 1 | -1): number {
-  const av = valueFor(a, column)
-  const bv = valueFor(b, column)
+function compareStudents(
+  a: StudentRow,
+  b: StudentRow,
+  column: SortColumn,
+  dir: 1 | -1,
+  vocabulary: readonly string[],
+): number {
+  const av = valueFor(a, column, vocabulary)
+  const bv = valueFor(b, column, vocabulary)
   if (av == null && bv == null) return 0
   if (av == null) return 1
   if (bv == null) return -1
@@ -208,13 +219,20 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
 export function ClassRoster() {
   const { classDetail, classId } = useClassDetailContext()
   const removeStudent = useRemoveStudent(classId)
+  const referenceQuery = useReference()
+  const vocabulary = classDetail.subjectCode
+    ? widestVocabularyFor(
+        referenceQuery.data?.targetGradeVocabularies ?? [],
+        classDetail.subjectCode,
+      )
+    : []
 
   const [sortColumn, setSortColumn] = useState<SortColumn>("name")
   const [sortDir, setSortDir] = useState<1 | -1>(1)
   const [showAdd, setShowAdd] = useState(false)
 
   const sorted = [...classDetail.students].sort((a, b) =>
-    compareStudents(a, b, sortColumn, sortDir),
+    compareStudents(a, b, sortColumn, sortDir, vocabulary),
   )
 
   function toggleSort(column: SortColumn) {
@@ -237,18 +255,6 @@ export function ClassRoster() {
         <Button variant="secondary" size="sm" onClick={() => setShowAdd((v) => !v)}>
           {showAdd ? "Hide add students" : "+ Add students"}
         </Button>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Assign a quiz
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
-        <div className="flex items-center gap-2">
-          <Button variant="secondary" size="sm" disabled aria-disabled="true" title="Coming in a later release">
-            Post an announcement
-          </Button>
-          <Chip tone="neutral">Coming soon</Chip>
-        </div>
       </div>
 
       {showAdd ? <AddStudentsPanel classId={classId} hasSchool={classDetail.schoolId != null} /> : null}

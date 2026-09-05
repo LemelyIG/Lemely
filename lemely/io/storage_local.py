@@ -54,6 +54,32 @@ class LocalFileStorageBackend:
         except FileNotFoundError as exc:
             raise StorageObjectNotFoundError(f"No object at {bucket}/{object_path}") from exc
 
+    def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
+        """Return a ``data:`` URL carrying the object's bytes inline.
+
+        A local directory has nothing to sign and no origin to serve from, so
+        the honest options were to raise (dev and CI would then never render an
+        avatar, and the feature would look broken everywhere but staging) or to
+        hand the browser the bytes directly. This does the latter: a ``data:``
+        URL renders in an ``<img>`` exactly like a signed one, with no extra
+        route to maintain.
+
+        ``expires_in`` is deliberately ignored — the URL *is* the content, so
+        there is nothing to expire. That is acceptable only because this
+        backend is dev, Compose and CI; the bytes never leave the machine that
+        already has them on disk. The GCS backend is the one that signs.
+
+        The response is `settings.storage.avatar_max_bytes` at most, inflated
+        about a third by base64, and it rides in the profile JSON — fine at
+        dev scale, and another reason this backend is not a deployment target.
+        """
+        import base64
+        import mimetypes
+
+        data = self.download(bucket, object_path)
+        media_type = mimetypes.guess_type(object_path)[0] or "application/octet-stream"
+        return f"data:{media_type};base64,{base64.b64encode(data).decode('ascii')}"
+
     def delete(self, bucket: str, object_path: str) -> None:
         """Remove the file if present. Missing is not an error."""
         target = self._path(bucket, object_path)

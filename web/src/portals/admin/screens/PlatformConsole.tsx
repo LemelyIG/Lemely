@@ -3,8 +3,8 @@ import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
 import { Eyebrow } from "@/components/ui/primitives"
-import { ErrorState } from "@/components/ui/state-views"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useAdminOverview } from "@/lib/hooks/useAdminApi"
 import type { PlatformCounts, Signup, SystemHealth } from "@/lib/adminTypes"
@@ -32,7 +32,7 @@ import { formatAdminDate } from "../data"
  * service, not this console.
  */
 export function PlatformConsole() {
-  const { data, isPending, isError, error } = useAdminOverview()
+  const query = useAdminOverview()
 
   return (
     <div className="flex flex-col gap-6">
@@ -44,25 +44,25 @@ export function PlatformConsole() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <CardGridSkeleton count={6} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't read the platform's figures"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : (
-        <>
-          <WorkPanel counts={data.counts} />
-          <PeoplePanel counts={data.counts} />
-          <HealthPanel health={data.health} />
-          <SignupsPanel signups={data.recentSignups} />
-        </>
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={6} />
+          </>
+        }
+        error={{ heading: "We couldn't read the platform's figures", body: adminLoadFailureMessage }}
+      >
+        {(data) => (
+          <>
+            <WorkPanel counts={data.counts} />
+            <PeoplePanel counts={data.counts} />
+            <HealthPanel health={data.health} />
+            <SignupsPanel signups={data.recentSignups} />
+          </>
+        )}
+      </QueryState>
     </div>
   )
 }

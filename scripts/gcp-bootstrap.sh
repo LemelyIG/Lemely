@@ -108,20 +108,10 @@ echo "== Enabling storage + budget APIs (safe to re-run) =="
 gcloud services enable storage.googleapis.com billingbudgets.googleapis.com --quiet
 
 for ENV in staging production; do
-  BUCKET="${PROJECT_ID}-uploads-${ENV}"
+  UPLOADS_BUCKET="${PROJECT_ID}-uploads-${ENV}"
+  AVATAR_BUCKET="${PROJECT_ID}-avatars-${ENV}"
   RUNTIME_SA_ID="lemely-backend-${ENV}"
   RUNTIME_SA="${RUNTIME_SA_ID}@${PROJECT_ID}.iam.gserviceaccount.com"
-
-  echo "== Bucket gs://$BUCKET (uniform access, no public access, 90-day lifecycle) =="
-  if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
-    gcloud storage buckets create "gs://$BUCKET" --location="$REGION" \
-      --uniform-bucket-level-access --public-access-prevention
-  else
-    echo "   already exists, skipping"
-  fi
-  # The lifecycle config is a full replace, not an append, so re-running
-  # this with the same file converges on the same state — safe unconditionally.
-  gcloud storage buckets update "gs://$BUCKET" --lifecycle-file="$(dirname "$0")/gcs-lifecycle.json"
 
   echo "== Runtime service account $RUNTIME_SA_ID =="
   if ! gcloud iam service-accounts describe "$RUNTIME_SA" >/dev/null 2>&1; then
@@ -129,12 +119,42 @@ for ENV in staging production; do
   else
     echo "   already exists, skipping"
   fi
-  # Object access on THIS bucket only — never a project-level storage role.
-  # Same idempotency as the deployer roles above: re-adding a binding the
-  # account already has is a no-op, not a duplicate.
-  gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+
+  # Scans and mark schemes in one bucket, profile pictures in another: they
+  # have different retention and access shapes, and the 90-day lifecycle below
+  # must not reach avatars, which are meant to persist.
+  for BUCKET in "$UPLOADS_BUCKET" "$AVATAR_BUCKET"; do
+    echo "== Bucket gs://$BUCKET (uniform access, no public access) =="
+    if ! gcloud storage buckets describe "gs://$BUCKET" >/dev/null 2>&1; then
+      gcloud storage buckets create "gs://$BUCKET" --location="$REGION" \
+        --uniform-bucket-level-access --public-access-prevention
+    else
+      echo "   already exists, skipping"
+    fi
+    # Object access on THIS bucket only — never a project-level storage role.
+    # Same idempotency as the deployer roles above: re-adding a binding the
+    # account already has is a no-op, not a duplicate.
+    gcloud storage buckets add-iam-policy-binding "gs://$BUCKET" \
+      --member="serviceAccount:${RUNTIME_SA}" \
+      --role="roles/storage.objectAdmin" \
+      --quiet >/dev/null
+  done
+
+  # Lifecycle applies to uploads only. The config is a full replace, not an
+  # append, so re-running with the same file converges — safe unconditionally.
+  echo "== 90-day delete rule on gs://$UPLOADS_BUCKET (uploads only) =="
+  gcloud storage buckets update "gs://$UPLOADS_BUCKET" \
+    --lifecycle-file="$(dirname "$0")/gcs-lifecycle.json"
+
+  # Needed for V4 signed URLs. A Cloud Run workload-identity credential has no
+  # local signer, so google-cloud-storage signs through the IAM signBlob API —
+  # which requires the runtime account to be able to impersonate itself.
+  # Without this, avatar URLs fail to sign in production and every profile
+  # renders with no picture (`_avatar_url_for` swallows the error by design).
+  echo "== serviceAccountTokenCreator on $RUNTIME_SA_ID (self) for signed URLs =="
+  gcloud iam service-accounts add-iam-policy-binding "$RUNTIME_SA" \
     --member="serviceAccount:${RUNTIME_SA}" \
-    --role="roles/storage.objectAdmin" \
+    --role="roles/iam.serviceAccountTokenCreator" \
     --quiet >/dev/null
 done
 

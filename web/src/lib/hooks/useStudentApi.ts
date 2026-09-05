@@ -5,7 +5,9 @@ import {
   type UseMutationResult,
   type UseQueryResult,
 } from "@tanstack/react-query"
-import { request, streamActivity } from "@/lib/api"
+import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
+import { CLASSES_KEY } from "@/lib/hooks/useLeaderboardApi"
+import type { JoinClassResponse } from "@/lib/leaderboardTypes"
 import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
@@ -113,27 +115,62 @@ export function useStandings(): UseQueryResult<Standings, Error> {
 }
 
 /**
+ * `POST /student/classes/join` — self-enrol via a teacher's join code
+ * (`student_join_class`, `routers/student.py`). Idempotent on the backend:
+ * re-joining an already-enrolled class is a no-op success, not an error.
+ *
+ * Three invalidations on success, not one, because a join changes three
+ * screens at once: `useMyClasses()`'s own list (`CLASSES_KEY`, shared with
+ * `useLeaderboardApi.ts` so the two cannot key-drift), the Overview subject
+ * ledger (a new class can carry a subject the student had no papers in yet),
+ * and the announcements feed (a class's own announcements only become
+ * visible once its student is enrolled).
+ */
+export function useJoinClass(): UseMutationResult<
+  JoinClassResponse,
+  Error,
+  { joinCode: string }
+> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ joinCode }: { joinCode: string }) =>
+      request<JoinClassResponse>("/student/classes/join", {
+        method: "POST",
+        body: JSON.stringify({ joinCode }),
+      }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: CLASSES_KEY })
+      queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
+      queryClient.invalidateQueries({ queryKey: ["student", "announcements"] })
+    },
+  })
+}
+
+/**
  * Upload a scanned paper (+ optional mark scheme) for self-marking. Not a
  * react-query hook — `CorrectPaper` calls this directly inside its own flow
  * control (pick file -> upload -> get `paperId` -> `runCorrection`).
  *
  * Builds multipart `FormData` with the exact field names FastAPI's
  * `student_upload` expects (`scan`, `mark_scheme` — the Python parameter
- * names). Goes through `request()`, which now skips the JSON content-type
- * for a `FormData` body (see `lib/api.ts::authHeaders`) so the browser can
- * set its own multipart boundary.
+ * names). Goes through `uploadWithProgress()` (PR 4 of the loading/error
+ * programme), not `request()` — `fetch` cannot report upload progress, and a
+ * phone photo of a paper can be several megabytes on a bad connection, so
+ * `CorrectPaper` needs `onProgress` to show the transfer moving instead of
+ * sitting on "Marking…" with nothing on screen changing until it lands.
+ * `uploadWithProgress` reproduces every other behaviour `request()` has —
+ * auth header, pre-emptive refresh, one-shot 401 replay, `detail`
+ * extraction, `Retry-After` — see its own doc comment in `lib/api.ts`.
  */
 export async function uploadScan(
   scan: File,
   markScheme?: File,
+  options?: { onProgress?: (progress: UploadProgress) => void; signal?: AbortSignal },
 ): Promise<StudentUploadResponse> {
   const form = new FormData()
   form.append("scan", scan)
   if (markScheme) form.append("mark_scheme", markScheme)
-  return request<StudentUploadResponse>("/student/uploads", {
-    method: "POST",
-    body: form,
-  })
+  return uploadWithProgress<StudentUploadResponse>("/student/uploads", form, options)
 }
 
 /**

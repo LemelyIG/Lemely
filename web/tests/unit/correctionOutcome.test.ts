@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
+import { AUTH_EMAIL_UNVERIFIED } from "@/lib/authOutcome"
 import {
   canRetryInPlace,
   correctionFailureMessage,
@@ -55,6 +56,27 @@ describe("correctionFailureMessage", () => {
     expect(
       correctionFailureMessage(new TypeError("NetworkError when attempting to fetch resource.")),
     ).toBe(NETWORK_FAILURE)
+  })
+
+  it("names D7.5's gate instead of pleading ignorance about it", () => {
+    // The one 403 `POST /student/correct` actually raises. Reproduced against
+    // staging on 2026-09-04: the run stopped with "turned this run down and
+    // didn't say why" while the response body said, in as many words, why —
+    // `{"detail":{"code":"email_unverified"}}`. `deps.require_verified_email`
+    // documents that marker as the thing "the frontend's `lib/authOutcome.ts`-
+    // family outcome modules match on", and no module on this screen's path
+    // ever did.
+    const err = new ApiError(403, "403 Forbidden", { code: "email_unverified" })
+    expect(correctionFailureMessage(err)).toBe(AUTH_EMAIL_UNVERIFIED)
+  })
+
+  it("does not mistake any other 403 for the verification gate", () => {
+    // `require_role`'s 403 carries a prose detail, not the marker. It must
+    // keep going through the detail-first branch above, or a student would be
+    // told to check their inbox about a permissions problem.
+    const detail = "Your role is not permitted to access this resource"
+    expect(correctionFailureMessage(new ApiError(403, detail, detail))).toBe(detail)
+    expect(correctionFailureMessage(new ApiError(403, "403 Forbidden"))).toContain("didn't say why")
   })
 
   it("keeps a 4xx honest about what it does not know", () => {

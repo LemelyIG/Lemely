@@ -10,11 +10,13 @@ migrated (``alembic upgrade head``). Seeding is split into:
   the Phase-6 fresh-clone acceptance test, on stable ``.local`` emails/phone so
   this module doubles as the one place their credentials are documented.
 
-Both are idempotent (insert-if-absent). The seeding *decisions* — which rows,
-which accounts, how a second run recognises what the first run already did,
-and the two recovery paths (GoTrue-has-it-but-the-mirror-does-not; the OTP
-provider that cannot hand back a code) — live in the pure/injected functions
-below (:func:`subjects_to_insert`, :func:`create_demo_accounts`), which
+Both are idempotent — reference data by upsert (migration 0024 also writes
+these rows, so insert-if-absent could no longer correct a drifted one), demo
+accounts by insert-if-absent. The seeding *decisions* — which rows, which
+accounts, how a second run recognises what the first run already did, and the
+two recovery paths (GoTrue-has-it-but-the-mirror-does-not; the OTP provider
+that cannot hand back a code) — live in the pure/injected functions below
+(:func:`subjects_to_upsert`, :func:`create_demo_accounts`), which
 ``tests/test_seed.py`` drives hermetically through the same in-memory fakes
 :mod:`tests.auth_fakes` gives ``test_auth_service.py``. :func:`seed_reference_data`
 and :func:`seed_demo_accounts` are thin wrappers that open a session, build the
@@ -38,8 +40,9 @@ from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.db.models.academic import Subject
-from lemely.db.models.enums import ExamBoard, Role
+from lemely.db.models.enums import ExamBoard, QualificationLevel, Role
 from lemely.db.session import session_scope
+from lemely.io import syllabus_topics
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError, LemelyError
 
@@ -67,26 +70,33 @@ class SubjectSpec:
     code: str
     name: str
     board: ExamBoard = ExamBoard.caie
+    qualification_level: QualificationLevel = QualificationLevel.igcse
 
 
 #: The three CAIE syllabus codes the corpus, the accuracy harness and the
 #: syllabus taxonomy all agree on (``lemely.io.det.profiles.SUBJECT_PROFILES``).
 #: A fourth code here would be a claim of support nothing else in the build
-#: backs.
-DEMO_SUBJECTS: tuple[SubjectSpec, ...] = (
+#: backs. All three are IGCSE syllabuses.
+CATALOGUE_SUBJECTS: tuple[SubjectSpec, ...] = (
     SubjectSpec(code="0580", name="Mathematics"),
     SubjectSpec(code="0606", name="Additional Mathematics"),
     SubjectSpec(code="0625", name="Physics"),
 )
 
 
-def subjects_to_insert(existing_codes: set[str]) -> list[SubjectSpec]:
-    """Return the :data:`DEMO_SUBJECTS` rows missing from ``existing_codes``.
+def subjects_to_upsert(existing_codes: set[str]) -> list[SubjectSpec]:
+    """Return every :data:`CATALOGUE_SUBJECTS` row, regardless of what exists.
 
-    Pure: no session, no I/O. Order is preserved from :data:`DEMO_SUBJECTS` so
-    callers get deterministic insert order.
+    Pure: no session, no I/O. Migration 0024 now inserts these same rows as
+    part of the schema upgrade, so the seeder is no longer the only writer —
+    insert-if-absent would leave a row that later drifted (e.g. a corrected
+    ``name``) uncorrectable. Upserting every spec on every run means the two
+    writers agree: same rows, same conflict handling, both idempotent.
+    ``existing_codes`` is accepted so the call site still reads as "what's
+    there vs. what should be there", but every spec is returned unconditionally.
     """
-    return [spec for spec in DEMO_SUBJECTS if spec.code not in existing_codes]
+    del existing_codes
+    return list(CATALOGUE_SUBJECTS)
 
 
 # ---------------------------------------------------------------------------
@@ -301,17 +311,54 @@ def _apply_parent_display_name(mirror: UserMirror, user_id: uuid.UUID) -> None:
 
 
 def seed_reference_data(settings: Settings | None = None) -> int:
-    """Insert missing :data:`DEMO_SUBJECTS` rows. Returns rows added.
+    """Upsert every :data:`CATALOGUE_SUBJECTS` row. Returns rows added.
 
-    Idempotent: existing rows (matched by ``code``) are left untouched.
+    Migration 0024 also inserts these rows during the schema upgrade, so this
+    upserts on ``code`` rather than inserting only what is missing — a row
+    that drifted since the migration ran (e.g. a corrected ``name``) is
+    corrected here too, not silently left alone. Existing columns this build
+    does not declare (``syllabus_version``, ``source_url``) are left
+    untouched.
+
+    Invalidates :mod:`lemely.io.syllabus_topics`'s process cache — its loader
+    queries ``Subject``, the exact table this upserts — so a long-lived
+    process that seeded does not keep serving a subject list it cached before
+    this run corrected the rows underneath it.
+    :mod:`lemely.io.paper_timing` and :mod:`lemely.io.grade_boundaries` also
+    carry process caches, but both are keyed off tables this function never
+    writes to (``syllabus_papers``, ``component_thresholds`` respectively) —
+    invalidating either here would be a no-op dressed up as caution, so both
+    are deliberately left alone.
     """
     settings = settings or load_settings()
     with session_scope(settings) as session:
-        existing_codes = set(session.scalars(select(Subject.code)))
-        to_insert = subjects_to_insert(existing_codes)
-        for spec in to_insert:
-            session.add(Subject(code=spec.code, name=spec.name, board=spec.board))
-    return len(to_insert)
+        to_upsert = subjects_to_upsert(set())
+        existing_subjects = {
+            subject.code: subject
+            for subject in session.scalars(
+                select(Subject).where(Subject.code.in_(spec.code for spec in to_upsert))
+            )
+        }
+        added = 0
+        for spec in to_upsert:
+            subject = existing_subjects.get(spec.code)
+            if subject is None:
+                session.add(
+                    Subject(
+                        code=spec.code,
+                        name=spec.name,
+                        board=spec.board,
+                        qualification_level=spec.qualification_level,
+                        active=True,
+                    )
+                )
+                added += 1
+            else:
+                subject.name = spec.name
+                subject.qualification_level = spec.qualification_level
+                subject.active = True
+    syllabus_topics.invalidate_reference_cache()
+    return added
 
 
 def _build_auth_service(settings: Settings) -> tuple[AuthService, DbUserMirror]:
@@ -384,10 +431,10 @@ def main() -> None:
 
 
 __all__ = [
+    "CATALOGUE_SUBJECTS",
     "DEMO_ACCOUNTS",
     "DEMO_PARENT",
     "DEMO_PASSWORD",
-    "DEMO_SUBJECTS",
     "DemoAccount",
     "DemoAccountsResult",
     "DemoParent",
@@ -399,7 +446,7 @@ __all__ = [
     "seed_all",
     "seed_demo_accounts",
     "seed_reference_data",
-    "subjects_to_insert",
+    "subjects_to_upsert",
 ]
 
 

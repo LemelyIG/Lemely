@@ -8,7 +8,8 @@ import { Input } from "@/components/ui/input"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Slider } from "@/components/ui/slider"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import {
   useAddCard,
@@ -22,7 +23,7 @@ import {
   useGenerateDeck,
 } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, DeckOrigin, GenerateDeckResponseDTO } from "@/lib/flashcardTypes"
-import { SUPPORTED_SUBJECTS } from "@/portals/student/screens/onboarding/onboardingData"
+import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
   cardSourceLabel,
@@ -221,71 +222,77 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
   const [front, setFront] = useState("")
   const [back, setBack] = useState("")
 
-  if (deckQuery.isPending) {
-    return (
-      <div className="px-5 pb-5">
-        <ListSkeleton rows={3} />
-      </div>
-    )
-  }
-  if (deckQuery.isError || !deckQuery.data) {
-    return (
-      <div className="px-5 pb-4">
-        <ErrorState
-          heading="Couldn't load this deck's cards"
-          body={studentLoadFailureMessage(deckQuery.error)}
-          action={{ label: "Try again", onClick: () => void deckQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const { cards } = deckQuery.data
-
   return (
-    <div className="flex flex-col gap-4 px-5 pb-5">
-      {cards.length === 0 ? (
-        <p className="text-body-sm text-ink-faint">No cards in this deck yet.</p>
-      ) : (
-        <ul className="flex flex-col gap-2">
-          {cards.map((card) => (
-            <CardRow key={card.id} card={card} editCard={editCard} deleteCard={deleteCard} />
-          ))}
-        </ul>
-      )}
-
-      <form
-        className="flex flex-col gap-3 border-t border-rule pt-4"
-        onSubmit={(e) => {
-          e.preventDefault()
-          if (!front.trim() || !back.trim()) return
-          addCard.mutate(
-            { front: front.trim(), back: back.trim() },
-            { onSuccess: () => { setFront(""); setBack("") } },
-          )
+    // The wrapper carries the padding every state shares, outside
+    // `<QueryState>` (recipe: the skeleton and the loaded render sit in the
+    // same box so nothing shifts when the fetch resolves).
+    <div className="px-5 pb-5">
+      <QueryState
+        query={deckQuery}
+        skeleton={<ListSkeleton rows={3} />}
+        /* `useFlashcardDeck` disables itself (`enabled: !!deckId`). Every
+           call site here passes a real `deck.id` from the list above, so
+           this is unreachable in practice, but the hook is conditionally
+           enabled and gets an `idle` on that basis rather than an assumption
+           about every future caller. */
+        idle={<p className="text-body-sm text-ink-faint">No deck selected.</p>}
+        error={{
+          heading: "Couldn't load this deck's cards",
+          body: studentLoadFailureMessage,
         }}
       >
-        <Input
-          required
-          label="Front"
-          placeholder="Question or prompt"
-          value={front}
-          onChange={(e) => setFront(e.target.value)}
-        />
-        <Input
-          required
-          label="Back"
-          placeholder="Answer"
-          value={back}
-          onChange={(e) => setBack(e.target.value)}
-          error={addCard.isError ? "We couldn't add that card. Try again." : undefined}
-        />
-        <div>
-          <Button type="submit" variant="secondary" size="sm" disabled={addCard.isPending}>
-            {addCard.isPending ? "Adding…" : "Add card"}
-          </Button>
-        </div>
-      </form>
+        {({ cards }) => (
+          <div className="flex flex-col gap-4">
+            {cards.length === 0 ? (
+              <p className="text-body-sm text-ink-faint">No cards in this deck yet.</p>
+            ) : (
+              <ul className="flex flex-col gap-2">
+                {cards.map((card) => (
+                  <CardRow key={card.id} card={card} editCard={editCard} deleteCard={deleteCard} />
+                ))}
+              </ul>
+            )}
+
+            <form
+              className="flex flex-col gap-3 border-t border-rule pt-4"
+              onSubmit={(e) => {
+                e.preventDefault()
+                if (!front.trim() || !back.trim()) return
+                addCard.mutate(
+                  { front: front.trim(), back: back.trim() },
+                  {
+                    onSuccess: () => {
+                      setFront("")
+                      setBack("")
+                    },
+                  },
+                )
+              }}
+            >
+              <Input
+                required
+                label="Front"
+                placeholder="Question or prompt"
+                value={front}
+                onChange={(e) => setFront(e.target.value)}
+              />
+              <Input
+                required
+                label="Back"
+                placeholder="Answer"
+                value={back}
+                onChange={(e) => setBack(e.target.value)}
+                error={addCard.isError ? "We couldn't add that card. Try again." : undefined}
+              />
+              <div>
+                <Button type="submit" variant="secondary" size="sm" disabled={addCard.isPending}>
+                  {addCard.isPending ? "Adding…" : "Add card"}
+                </Button>
+              </div>
+            </form>
+          </div>
+        )}
+      </QueryState>
     </div>
   )
 }
@@ -293,7 +300,7 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
 export function FlashcardDecks() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
-  const subjectName = SUPPORTED_SUBJECTS.find((s) => s.code === subjectCode)?.name ?? subjectCode
+  const subjectName = useSubjectName(subjectCode)
 
   const decksQuery = useFlashcardDecks(subjectCode)
   const dueQuery = useDueSession(subjectCode)
@@ -311,38 +318,6 @@ export function FlashcardDecks() {
   const [count, setCount] = useState(10)
   const [refusal, setRefusal] = useState<string | null | undefined>(undefined)
   const [generated, setGenerated] = useState<GenerateDeckResponseDTO | null>(null)
-
-  if (decksQuery.isPending) {
-    return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
-        <h1 className="sr-only">Flashcards for {subjectName}</h1>
-        {/* Shaped like what replaces it (§12): the header, the "what's due"
-            panel, then the deck list. A single "Loading your decks…" line was
-            what stood here, which reserves none of that height and shifts the
-            whole column when the real content lands. */}
-        <PageHeaderSkeleton />
-        <PanelSkeleton />
-        <ListSkeleton rows={3} />
-      </div>
-    )
-  }
-
-  if (decksQuery.isError || !decksQuery.data) {
-    return (
-      <>
-        <h1 className="sr-only">Flashcards for {subjectName}</h1>
-        <ErrorState
-          heading="Couldn't load your flashcard decks"
-          body={studentLoadFailureMessage(decksQuery.error)}
-          action={{ label: "Try again", onClick: () => void decksQuery.refetch() }}
-          className="lm-screen"
-        />
-      </>
-    )
-  }
-
-  const groups = groupDecksByTopic(decksQuery.data)
-  const due = dueQuery.data ? dueStateView(dueQuery.data) : null
 
   async function handleNewDeck() {
     setRefusal(undefined)
@@ -376,278 +351,323 @@ export function FlashcardDecks() {
 
   return (
     <div className="lm-screen lm-read flex flex-col gap-6">
-      <div className="flex flex-col gap-2">
-        <h1 className="text-display-lg text-ink">Flashcards for {subjectName}</h1>
-        <p className="lm-prose text-body-lg text-ink-muted">
-          Decks grouped by topic. Cards you write yourself and cards Lemely generates both live
-          here, and every card always shows which one it is.
-        </p>
-      </div>
+      <QueryState
+        query={decksQuery}
+        srHeading={`Flashcards for ${subjectName}`}
+        /* Shaped like what replaces it (§12): the header, the "what's due"
+           panel, then the deck list. A single "Loading your decks…" line was
+           what stood here, which reserves none of that height and shifts
+           the whole column when the real content lands. */
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <PanelSkeleton />
+            <ListSkeleton rows={3} />
+          </>
+        }
+        error={{
+          heading: "Couldn't load your flashcard decks",
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {(decks) => {
+          const groups = groupDecksByTopic(decks)
+          // `dueQuery` is independent of `decksQuery` and left hand-rolled
+          // rather than nested in its own `<QueryState>`: its three states
+          // are one line and one button inside this Card, not a panel-sized
+          // loading/error treatment, and `QueryState`'s `error` always
+          // renders the full centred `ErrorState` — which would balloon this
+          // compact panel into a much larger box on every failed check.
+          const due = dueQuery.data ? dueStateView(dueQuery.data) : null
 
-      {/* No `border-warn` on the "nothing due" case any more. A warn border said
-          "something needs your attention" about a student who is completely up
-          to date, which is the one state on this screen that needs nothing from
-          them (§3.6: a semantic colour states a fact, it does not decorate). */}
-      <Card>
-        <CardBody className="flex flex-col gap-3">
-          {dueQuery.isPending ? (
-            <p className="text-body-sm text-ink-faint">Checking what's due…</p>
-          ) : dueQuery.isError ? (
-            <p className="text-body-sm text-err">We couldn't check what's due. Try again.</p>
-          ) : due?.kind === "due" ? (
+          return (
             <>
-              <div className="flex items-baseline gap-2">
-                <span className="text-data-lg text-ink">{due.totalDue}</span>
-                <span className="text-body-lg text-ink-muted">
-                  card{due.totalDue === 1 ? "" : "s"} due today
-                </span>
-              </div>
-              <div>
-                <Button
-                  variant="accent"
-                  size="lg"
-                  onClick={() => navigate(`/student/flashcards/review/${subjectCode}`)}
-                >
-                  Review due cards
-                </Button>
-              </div>
-            </>
-          ) : due?.kind === "none" ? (
-            <>
-              <div className="text-display-sm text-ink">Nothing due today</div>
-              <p className="text-body-md text-ink-muted">{nextDueMessage(due.nextDueAt)}</p>
-            </>
-          ) : null}
-        </CardBody>
-      </Card>
-
-      <Card>
-        <CardBody className="flex flex-col gap-4">
-          <h2 className="text-eyebrow text-ink-faint">New deck</h2>
-          <div className="flex flex-wrap gap-2">
-            {NEW_DECK_MODES.map((m) => (
-              <Button
-                key={m.value}
-                type="button"
-                variant={mode === m.value ? "accent" : "secondary"}
-                size="sm"
-                aria-pressed={mode === m.value}
-                onClick={() => {
-                  setMode(m.value)
-                  setRefusal(undefined)
-                  setGenerated(null)
-                }}
-              >
-                {m.label}
-              </Button>
-            ))}
-          </div>
-
-          <div className="flex flex-col gap-4">
-            <Input
-              label={mode === "manual" ? "Title" : "Title (optional)"}
-              value={title}
-              onChange={(e) => setTitle(e.target.value)}
-              placeholder={`e.g. ${subjectName} revision`}
-            />
-
-            {mode !== "weakness" ? (
-              <Input
-                required={mode === "topic"}
-                label={mode === "manual" ? "Topic (optional)" : "Topic"}
-                value={topic}
-                onChange={(e) => setTopic(e.target.value)}
-                placeholder="e.g. 1.2 Motion"
-              />
-            ) : (
-              <p className="text-body-sm text-ink-faint">
-                The topic is chosen automatically from your own weakest recorded topic for this
-                subject, so there's no topic field to fill in.
-              </p>
-            )}
-
-            {mode !== "manual" ? (
               <div className="flex flex-col gap-2">
-                <label className="text-label text-ink" htmlFor="new-deck-count">
-                  Number of cards: <span className="text-data-md text-ink">{count}</span>
-                </label>
-                {/* C-15 Slider, not a raw `<input type="range">`. The practice
-                    generator on this same surface already used the kit control;
-                    this screen had its own, so one surface shipped two different
-                    sliders with two different focus and track treatments. */}
-                <Slider
-                  id="new-deck-count"
-                  value={count}
-                  onValueChange={setCount}
-                  min={1}
-                  max={50}
-                  step={1}
-                  aria-label="Number of cards to generate"
-                />
+                <h1 className="text-display-lg text-ink">Flashcards for {subjectName}</h1>
+                <p className="lm-prose text-body-lg text-ink-muted">
+                  Decks grouped by topic. Cards you write yourself and cards Lemely generates both
+                  live here, and every card always shows which one it is.
+                </p>
               </div>
-            ) : null}
-          </div>
 
-          {refusal !== undefined ? (
-            (() => {
-              const msg = flashcardUnavailableMessage(refusal)
-              return (
-                <div className="rounded-lg border border-warn bg-warn-wash p-4">
-                  <div className="text-display-sm text-ink">{msg.heading}</div>
-                  <p className="mt-1 text-body-md text-ink-muted">{msg.body}</p>
-                </div>
-              )
-            })()
-          ) : null}
+              {/* No `border-warn` on the "nothing due" case any more. A warn
+                  border said "something needs your attention" about a
+                  student who is completely up to date, which is the one
+                  state on this screen that needs nothing from them (§3.6: a
+                  semantic colour states a fact, it does not decorate). */}
+              <Card>
+                <CardBody className="flex flex-col gap-3">
+                  {dueQuery.isPending ? (
+                    <p className="text-body-sm text-ink-faint">Checking what's due…</p>
+                  ) : dueQuery.isError ? (
+                    <p className="text-body-sm text-err">
+                      We couldn't check what's due. Try again.
+                    </p>
+                  ) : due?.kind === "due" ? (
+                    <>
+                      <div className="flex items-baseline gap-2">
+                        <span className="text-data-lg text-ink">{due.totalDue}</span>
+                        <span className="text-body-lg text-ink-muted">
+                          card{due.totalDue === 1 ? "" : "s"} due today
+                        </span>
+                      </div>
+                      <div>
+                        <Button
+                          variant="accent"
+                          size="lg"
+                          onClick={() => navigate(`/student/flashcards/review/${subjectCode}`)}
+                        >
+                          Review due cards
+                        </Button>
+                      </div>
+                    </>
+                  ) : due?.kind === "none" ? (
+                    <>
+                      <div className="text-display-sm text-ink">Nothing due today</div>
+                      <p className="text-body-md text-ink-muted">
+                        {nextDueMessage(due.nextDueAt)}
+                      </p>
+                    </>
+                  ) : null}
+                </CardBody>
+              </Card>
 
-          {generated ? (
-            (() => {
-              const summary = generateDeckSummary(generated)
-              return (
-                <div className="rounded-lg border border-rule bg-paper p-4">
-                  <div className="text-display-sm text-ink">{summary.headline}</div>
-                  {summary.shortfall ? (
-                    <p className="mt-1 text-body-md text-ink-muted">
-                      The model returned fewer cards than requested, and nothing was padded to make
-                      up the difference.
+              <Card>
+                <CardBody className="flex flex-col gap-4">
+                  <h2 className="text-eyebrow text-ink-faint">New deck</h2>
+                  <div className="flex flex-wrap gap-2">
+                    {NEW_DECK_MODES.map((m) => (
+                      <Button
+                        key={m.value}
+                        type="button"
+                        variant={mode === m.value ? "accent" : "secondary"}
+                        size="sm"
+                        aria-pressed={mode === m.value}
+                        onClick={() => {
+                          setMode(m.value)
+                          setRefusal(undefined)
+                          setGenerated(null)
+                        }}
+                      >
+                        {m.label}
+                      </Button>
+                    ))}
+                  </div>
+
+                  <div className="flex flex-col gap-4">
+                    <Input
+                      label={mode === "manual" ? "Title" : "Title (optional)"}
+                      value={title}
+                      onChange={(e) => setTitle(e.target.value)}
+                      placeholder={`e.g. ${subjectName} revision`}
+                    />
+
+                    {mode !== "weakness" ? (
+                      <Input
+                        required={mode === "topic"}
+                        label={mode === "manual" ? "Topic (optional)" : "Topic"}
+                        value={topic}
+                        onChange={(e) => setTopic(e.target.value)}
+                        placeholder="e.g. 1.2 Motion"
+                      />
+                    ) : (
+                      <p className="text-body-sm text-ink-faint">
+                        The topic is chosen automatically from your own weakest recorded topic for
+                        this subject, so there's no topic field to fill in.
+                      </p>
+                    )}
+
+                    {mode !== "manual" ? (
+                      <div className="flex flex-col gap-2">
+                        <label className="text-label text-ink" htmlFor="new-deck-count">
+                          Number of cards: <span className="text-data-md text-ink">{count}</span>
+                        </label>
+                        {/* C-15 Slider, not a raw `<input type="range">`. The
+                            practice generator on this same surface already
+                            used the kit control; this screen had its own, so
+                            one surface shipped two different sliders with
+                            two different focus and track treatments. */}
+                        <Slider
+                          id="new-deck-count"
+                          value={count}
+                          onValueChange={setCount}
+                          min={1}
+                          max={50}
+                          step={1}
+                          aria-label="Number of cards to generate"
+                        />
+                      </div>
+                    ) : null}
+                  </div>
+
+                  {refusal !== undefined ? (
+                    (() => {
+                      const msg = flashcardUnavailableMessage(refusal)
+                      return (
+                        <div className="rounded-lg border border-warn bg-warn-wash p-4">
+                          <div className="text-display-sm text-ink">{msg.heading}</div>
+                          <p className="mt-1 text-body-md text-ink-muted">{msg.body}</p>
+                        </div>
+                      )
+                    })()
+                  ) : null}
+
+                  {generated ? (
+                    (() => {
+                      const summary = generateDeckSummary(generated)
+                      return (
+                        <div className="rounded-lg border border-rule bg-paper p-4">
+                          <div className="text-display-sm text-ink">{summary.headline}</div>
+                          {summary.shortfall ? (
+                            <p className="mt-1 text-body-md text-ink-muted">
+                              The model returned fewer cards than requested, and nothing was
+                              padded to make up the difference.
+                            </p>
+                          ) : null}
+                        </div>
+                      )
+                    })()
+                  ) : null}
+
+                  {(createDeck.isError && refusal === undefined) ||
+                  (generateDeck.isError && refusal === undefined) ? (
+                    <p className="text-body-sm text-err">
+                      We couldn't create that deck. Try again.
                     </p>
                   ) : null}
-                </div>
-              )
-            })()
-          ) : null}
 
-          {(createDeck.isError && refusal === undefined) ||
-          (generateDeck.isError && refusal === undefined) ? (
-            <p className="text-body-sm text-err">We couldn't create that deck. Try again.</p>
-          ) : null}
+                  <div>
+                    <Button
+                      type="button"
+                      variant="accent"
+                      size="lg"
+                      disabled={
+                        createDeck.isPending ||
+                        generateDeck.isPending ||
+                        (mode === "topic" && !topic.trim())
+                      }
+                      onClick={() => void handleNewDeck()}
+                    >
+                      {createDeck.isPending || generateDeck.isPending
+                        ? "Creating…"
+                        : mode === "manual"
+                          ? "Create deck"
+                          : "Generate deck"}
+                    </Button>
+                  </div>
+                </CardBody>
+              </Card>
 
-          <div>
-            <Button
-              type="button"
-              variant="accent"
-              size="lg"
-              disabled={
-                createDeck.isPending ||
-                generateDeck.isPending ||
-                (mode === "topic" && !topic.trim())
-              }
-              onClick={() => void handleNewDeck()}
-            >
-              {createDeck.isPending || generateDeck.isPending
-                ? "Creating…"
-                : mode === "manual"
-                  ? "Create deck"
-                  : "Generate deck"}
-            </Button>
-          </div>
-        </CardBody>
-      </Card>
+              {deleteDeck.isError ? (
+                <p className="text-body-sm text-err">
+                  We couldn't delete that deck. It's still in your list, so you can try again.
+                </p>
+              ) : null}
 
-      {deleteDeck.isError ? (
-        <p className="text-body-sm text-err">
-          We couldn't delete that deck. It's still in your list, so you can try again.
-        </p>
-      ) : null}
+              {groups.length === 0 ? (
+                <EmptyState
+                  marginalia="Nothing on the shelf yet"
+                  heading={`No decks yet for ${subjectName}`}
+                  body="Write your own cards, or let Lemely build a deck from a topic or from a weakness it has already recorded for you. Either way, every card says where it came from."
+                />
+              ) : (
+                groups.map((group) => (
+                  <section key={group.topic ?? "untopiced"} className="flex flex-col gap-2">
+                    {/* The margin rule (§8 item 5): one hairline at the
+                        content's inline start, the cheapest and most
+                        on-brand texture in the system, and here it also does
+                        real work — it is what visually binds a topic's decks
+                        to the topic heading above them. */}
+                    <h2 className="text-display-sm text-ink">{group.topic ?? "Untopiced"}</h2>
+                    <div className="margin-rule flex flex-col gap-2">
+                      {group.decks.map((deck) => {
+                        const expanded = expandedDeckId === deck.id
+                        return (
+                          <Card key={deck.id}>
+                            <CardBody className="flex flex-col gap-2">
+                              <div className="flex flex-wrap items-center justify-between gap-3">
+                                <div className="flex flex-col gap-1.5">
+                                  <div className="text-body-lg font-medium text-ink">
+                                    {deck.title}
+                                  </div>
+                                  <div className="flex flex-wrap items-center gap-2">
+                                    <DeckOriginBadge origin={deck.origin} />
+                                    {/* One span with an explicit separator,
+                                        not two adjacent ones. As two siblings
+                                        a gap apart, the counts rendered as
+                                        "18 cards 6 due" and scanned as a
+                                        single run-on string rather than two
+                                        separate facts about the deck. */}
+                                    <span className="text-data-sm text-ink-faint">
+                                      {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
+                                      {deck.dueCount} due
+                                    </span>
+                                  </div>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                  <Button
+                                    type="button"
+                                    variant="secondary"
+                                    size="sm"
+                                    aria-expanded={expanded}
+                                    onClick={() => setExpandedDeckId(expanded ? null : deck.id)}
+                                  >
+                                    {expanded ? (
+                                      <>
+                                        Edit <CaretUp size={14} aria-hidden />
+                                      </>
+                                    ) : (
+                                      <>
+                                        Edit <CaretDown size={14} aria-hidden />
+                                      </>
+                                    )}
+                                  </Button>
+                                  <Button
+                                    type="button"
+                                    variant="ghost"
+                                    size="sm"
+                                    aria-label={`Delete deck: ${deck.title}`}
+                                    onClick={() =>
+                                      setDeckPendingDelete({ id: deck.id, title: deck.title })
+                                    }
+                                  >
+                                    <Trash size={16} aria-hidden />
+                                  </Button>
+                                </div>
+                              </div>
+                            </CardBody>
+                            {expanded ? <DeckCardEditor deckId={deck.id} /> : null}
+                          </Card>
+                        )
+                      })}
+                    </div>
+                  </section>
+                ))
+              )}
 
-      {groups.length === 0 ? (
-        <EmptyState
-          marginalia="Nothing on the shelf yet"
-          heading={`No decks yet for ${subjectName}`}
-          body="Write your own cards, or let Lemely build a deck from a topic or from a weakness it has already recorded for you. Either way, every card says where it came from."
-        />
-      ) : (
-        groups.map((group) => (
-          <section key={group.topic ?? "untopiced"} className="flex flex-col gap-2">
-            {/* The margin rule (§8 item 5): one hairline at the content's inline
-                start, the cheapest and most on-brand texture in the system, and
-                here it also does real work — it is what visually binds a topic's
-                decks to the topic heading above them. */}
-            <h2 className="text-display-sm text-ink">{group.topic ?? "Untopiced"}</h2>
-            <div className="margin-rule flex flex-col gap-2">
-              {group.decks.map((deck) => {
-                const expanded = expandedDeckId === deck.id
-                return (
-                  <Card key={deck.id}>
-                    <CardBody className="flex flex-col gap-2">
-                      <div className="flex flex-wrap items-center justify-between gap-3">
-                        <div className="flex flex-col gap-1.5">
-                          <div className="text-body-lg font-medium text-ink">{deck.title}</div>
-                          <div className="flex flex-wrap items-center gap-2">
-                            <DeckOriginBadge origin={deck.origin} />
-                            {/* One span with an explicit separator, not two
-                                adjacent ones. As two siblings a gap apart, the
-                                counts rendered as "18 cards 6 due" and scanned
-                                as a single run-on string rather than two
-                                separate facts about the deck. */}
-                            <span className="text-data-sm text-ink-faint">
-                              {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
-                              {deck.dueCount} due
-                            </span>
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <Button
-                            type="button"
-                            variant="secondary"
-                            size="sm"
-                            aria-expanded={expanded}
-                            onClick={() => setExpandedDeckId(expanded ? null : deck.id)}
-                          >
-                            {expanded ? (
-                              <>
-                                Edit <CaretUp size={14} aria-hidden />
-                              </>
-                            ) : (
-                              <>
-                                Edit <CaretDown size={14} aria-hidden />
-                              </>
-                            )}
-                          </Button>
-                          <Button
-                            type="button"
-                            variant="ghost"
-                            size="sm"
-                            aria-label={`Delete deck: ${deck.title}`}
-                            onClick={() =>
-                              setDeckPendingDelete({ id: deck.id, title: deck.title })
-                            }
-                          >
-                            <Trash size={16} aria-hidden />
-                          </Button>
-                        </div>
-                      </div>
-                    </CardBody>
-                    {expanded ? <DeckCardEditor deckId={deck.id} /> : null}
-                  </Card>
-                )
-              })}
-            </div>
-          </section>
-        ))
-      )}
-
-      <ConfirmModal
-        open={deckPendingDelete !== null}
-        title="Delete this deck?"
-        description={
-          deckPendingDelete
-            ? `"${deckPendingDelete.title}" and every card in it.`
-            : ""
-        }
-        confirmLabel="Delete deck"
-        pendingLabel="Deleting…"
-        pending={deleteDeck.isPending}
-        error={deleteDeck.isError ? "We couldn't delete that deck. Try again." : null}
-        onCancel={() => setDeckPendingDelete(null)}
-        onConfirm={() => {
-          if (!deckPendingDelete) return
-          if (expandedDeckId === deckPendingDelete.id) setExpandedDeckId(null)
-          deleteDeck.mutate(deckPendingDelete.id, {
-            onSuccess: () => setDeckPendingDelete(null),
-          })
+              <ConfirmModal
+                open={deckPendingDelete !== null}
+                title="Delete this deck?"
+                description={
+                  deckPendingDelete ? `"${deckPendingDelete.title}" and every card in it.` : ""
+                }
+                confirmLabel="Delete deck"
+                pendingLabel="Deleting…"
+                pending={deleteDeck.isPending}
+                error={deleteDeck.isError ? "We couldn't delete that deck. Try again." : null}
+                onCancel={() => setDeckPendingDelete(null)}
+                onConfirm={() => {
+                  if (!deckPendingDelete) return
+                  if (expandedDeckId === deckPendingDelete.id) setExpandedDeckId(null)
+                  deleteDeck.mutate(deckPendingDelete.id, {
+                    onSuccess: () => setDeckPendingDelete(null),
+                  })
+                }}
+              />
+            </>
+          )
         }}
-      />
+      </QueryState>
     </div>
   )
 }

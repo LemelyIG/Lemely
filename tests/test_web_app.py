@@ -6,6 +6,7 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
@@ -14,6 +15,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import OperationalError
 
 from lemely.core.schemas import (
     ConfidenceBand,
@@ -21,8 +23,10 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
 )
+from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
+from lemely.web.routers import meta
 from lemely.web.schemas import correction_to_dto, question_to_dto
 from lemely.web.sse import bus_event_stream
 
@@ -37,6 +41,130 @@ def test_health_returns_ok() -> None:
     assert body["status"] == "ok"
     assert "apiKeyConfigured" in body
     assert isinstance(body["apiKeyConfigured"], bool)
+
+
+def test_health_survives_an_unreachable_database(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A database failure reports gradeBoundariesLoaded=false, not a 500.
+
+    ``gradeBoundariesLoaded`` is computed by reading ``component_thresholds``,
+    so the endpoint gained a database dependency it did not have before. A
+    health check that 500s when the database is down tells an operator only
+    "something is wrong"; the flag names which half is broken.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(OperationalError("SELECT 1", {}, Exception("down"))),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def test_health_survives_a_corrupt_threshold_payload(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A non-SQLAlchemy failure inside the store must degrade, not 500.
+
+    ``_percentages`` raises ``ValueError`` on a non-positive ``max_mark`` and
+    would raise ``TypeError`` on a non-numeric value inside the ``thresholds``
+    JSONB. Neither is a ``SQLAlchemyError``, and a corrupt row must not be able
+    to take the health endpoint down.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(ValueError("max_mark must be positive")),
+    )
+    response = TestClient(create_app()).get("/api/health")
+
+    assert response.status_code == 200
+    assert response.json()["gradeBoundariesLoaded"] is False
+
+
+def _failing_health_client(monkeypatch: pytest.MonkeyPatch, exc: Exception) -> TestClient:
+    monkeypatch.setattr(
+        "lemely.web.routers.meta.get_boundary_store",
+        lambda: (_ for _ in ()).throw(exc),
+    )
+    return TestClient(create_app())
+
+
+def test_health_logs_one_traceback_per_outage_but_a_line_every_poll(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Health is probe traffic, so the traceback must not repeat per poll.
+
+    But the one-line warning must, because `docs/deployment.md` tells an
+    operator to look for that line to tell "database unreachable" apart from
+    "ingest never ran". Suppressing it entirely would delete the signal the
+    docs point at for anyone who starts reading logs mid-outage.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, OperationalError("SELECT 1", {}, Exception()))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        for _ in range(4):
+            assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    unreadable = [r for r in caplog.records if "could not read grade boundaries" in r.message]
+    assert len(unreadable) == 4, "the discriminating log line must appear on every failing poll"
+    with_traceback = [r for r in unreadable if r.exc_info is not None]
+    assert len(with_traceback) == 1, "the traceback must be logged once per outage, not per poll"
+
+
+def test_health_clears_the_failure_flag_when_the_database_answers_but_is_unseeded(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """An `EmptyGradeBoundaryStoreError` is a *successful* read.
+
+    The database answered; it just has no verified rows. If that path does not
+    clear the failure flag, an outage that recovers into a not-yet-ingested
+    database leaves the flag stuck `True` -- and a later, genuinely different
+    failure is then never logged at all. The operator sees
+    `gradeBoundariesLoaded: false` with no log line and, following the docs,
+    concludes "ingest never ran" while the database is in fact unreadable.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", True)
+    empty = EmptyGradeBoundaryStoreError("no verified rows")
+    assert _failing_health_client(monkeypatch, empty).get("/api/health").status_code == 200
+    assert meta._boundary_read_failing is False
+
+    # ...so a different failure arriving afterwards is still reported *with its
+    # traceback*. Asserting merely that the line appears would not discriminate:
+    # the per-poll warning emits that same line whether or not the flag is stuck.
+    # Only the `exc_info` record is unique to the transition.
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+        assert client.get("/api/health").json()["gradeBoundariesLoaded"] is False
+
+    assert [r for r in caplog.records if r.exc_info is not None]
+
+
+def test_health_failure_log_names_the_exception_in_the_message_itself(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The exception type must survive into the rendered message.
+
+    `lemely.runtime.logging` bridges stdlib records into structlog with
+    `structlog.get_logger(...).log(levelno, record.getMessage())` -- it drops
+    `record.exc_info` entirely. So a bare `logger.exception` reaches a deployed
+    log as a bare string, and an operator cannot tell an `OperationalError`
+    (database unreachable) from a `TypeError` (corrupt thresholds JSONB). That
+    distinction is the whole reason this record exists, so the repr goes in the
+    message. Asserting on `caplog`'s `exc_info` would bypass the bridge and
+    pass while production stayed empty; this asserts on the rendered text.
+    """
+    monkeypatch.setattr("lemely.web.routers.meta._boundary_read_failing", False)
+    client = _failing_health_client(monkeypatch, ValueError("corrupt max_mark"))
+
+    with caplog.at_level(logging.WARNING, logger="lemely.web.routers.meta"):
+        client.get("/api/health")
+
+    rendered = [r.getMessage() for r in caplog.records]
+    assert any("ValueError" in m and "corrupt max_mark" in m for m in rendered), rendered
 
 
 def test_stub_routers_are_mounted() -> None:

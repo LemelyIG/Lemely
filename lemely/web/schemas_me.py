@@ -44,11 +44,29 @@ class ProfileDTO(ApiModel):
     the schema (a user who never set one) — and the caller must render that
     absence honestly (e.g. the email's local part, or the role), never a
     fabricated name.
+
+    ``emailVerified`` is ``users.email_verified_at is not None`` and nothing
+    more. D7.5's soft gate (:func:`~lemely.web.deps.require_verified_email`)
+    reads that column to refuse ``POST /api/student/correct``, and until this
+    field existed no route and no token claim published the fact, so the app
+    could only discover it by being refused. A boolean rather than the
+    timestamp on purpose: the client only ever asks the yes/no question, and
+    publishing the date would invite a screen to render it as a user-facing
+    fact that then has to be maintained as one.
+
+    ``avatarUrl`` is a freshly-signed, time-limited URL derived from
+    ``users.avatar_path`` (never the stored path itself, and never cached
+    beyond the response TTL) — ``null`` when no avatar is set, and also
+    ``null`` (never a 500) when storage cannot be reached to sign one: the
+    sidebar this DTO backs must render *something* even when object storage is
+    down, per :func:`~lemely.web.routers.me._avatar_url_for`.
     """
 
     displayName: str | None = None
     email: str
     role: str
+    emailVerified: bool
+    avatarUrl: str | None = None
 
 
 class NotificationPreferencesUpdateDTO(ApiModel):

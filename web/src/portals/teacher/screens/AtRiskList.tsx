@@ -4,7 +4,8 @@ import { Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { cn, relativeTime } from "@/lib/utils"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
@@ -21,6 +22,8 @@ import {
 } from "@/lib/hooks/useTeacherApi"
 import type { AtRiskFlag, AtRiskListEntry } from "@/lib/teacherTypes"
 import { SortArrow } from "@/components/ui/inline-arrow"
+import { gradeRank, widestVocabulary } from "@/lib/grades"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 
 /*
  * At-risk list (T-06). `GET /teacher/at-risk?reason=&acknowledged=`
@@ -42,7 +45,7 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  * definition, not a client-invented score.** The list already arrives
  * severity-sorted — `_at_risk_severity_key` in
  * `lemely/web/routers/teacher.py`: flag count descending, then worst
- * (furthest-down-`GRADE_ORDER`) grade first. `compareEntries` below
+ * (furthest-down-the-grade-ladder) grade first. `compareEntries` below
  * reproduces that identical two-key ordering only so the "Severity" column
  * stays re-sortable after a teacher sorts by Student/Class/Grade and clicks
  * back — see its comment. This is presented to the teacher only as a sort
@@ -68,8 +71,6 @@ import { SortArrow } from "@/components/ui/inline-arrow"
  *    renders as a real inline mutation error, not swallowed.
  */
 
-const GRADE_ORDER = ["A*", "A", "B", "C", "D", "E", "U"]
-
 const REASON_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "declining_trend", label: "Declining trend" },
@@ -85,12 +86,24 @@ const ACK_OPTIONS: { value: string; label: string }[] = [
 
 type SortColumn = "name" | "className" | "grade" | "severity"
 
+/*
+ * `AtRiskListEntryDTO` carries no subject or tier per row — this list spans
+ * every class the caller teaches, so there is no single served vocabulary to
+ * key a row's grade on the way `ClassRoster.tsx` (one class, one subject)
+ * can. `widestVocabulary` (`lib/grades.ts`) unions every grade any subject's
+ * catalogue entry serves, in ladder order — not the single longest served
+ * array. Picking the longest one would only be *accidentally* complete
+ * (today 0625 happens to serve the full 9-grade ladder; that's a fact about
+ * the current catalogue, not a guarantee another subject won't be added
+ * with a grade no single served list covers), so the union is what makes
+ * this correct by construction.
+ */
 /** Mirrors the backend's own `_grade_severity_rank` (teacher.py) exactly: an
  * unrecognised or empty grade (a student with only quiz activity) ranks as
  * the mildest possible rather than sorting as "worse than a real U". */
-function gradeSeverityRank(grade: string): number {
-  const idx = GRADE_ORDER.indexOf(grade)
-  return idx === -1 ? -1 : idx
+function gradeSeverityRank(grade: string, vocabulary: readonly string[]): number {
+  if (!grade) return -1
+  return gradeRank(grade, vocabulary)
 }
 
 function compareEntries(
@@ -98,6 +111,7 @@ function compareEntries(
   b: AtRiskListEntry,
   column: SortColumn,
   dir: 1 | -1,
+  vocabulary: readonly string[],
 ): number {
   if (column === "severity") {
     // Reproduces `_at_risk_severity_key` exactly: flag count first, worst
@@ -107,10 +121,10 @@ function compareEntries(
     // first"; same judgment call `ClassRoster.tsx`'s grade column already
     // documents for the same reason (a ladder position isn't a plain number).
     if (a.flags.length !== b.flags.length) return (b.flags.length - a.flags.length) * dir
-    return (gradeSeverityRank(b.grade) - gradeSeverityRank(a.grade)) * dir
+    return (gradeSeverityRank(b.grade, vocabulary) - gradeSeverityRank(a.grade, vocabulary)) * dir
   }
   if (column === "grade") {
-    return (gradeSeverityRank(a.grade) - gradeSeverityRank(b.grade)) * dir
+    return (gradeSeverityRank(a.grade, vocabulary) - gradeSeverityRank(b.grade, vocabulary)) * dir
   }
   const av = column === "name" ? a.displayName : a.className
   const bv = column === "name" ? b.displayName : b.className
@@ -251,6 +265,8 @@ export function AtRiskList() {
     reason: reason || undefined,
     acknowledged: acknowledged === "" ? undefined : acknowledged === "true",
   })
+  const referenceQuery = useReference()
+  const vocabulary = widestVocabulary(referenceQuery.data?.targetGradeVocabularies ?? [])
 
   function toggleSort(column: SortColumn) {
     if (column === sortColumn) {
@@ -261,187 +277,182 @@ export function AtRiskList() {
     }
   }
 
-  if (listQuery.isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">At-risk students</h1>
-        {/* A skeleton matching the header-plus-table this screen renders,
-            rather than one line of text where four regions are about to
-            appear. §12: loading states match the layout they replace so
-            nothing shifts. The rows carry an avatar because every row of this
-            table starts with one. */}
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={5} avatar />
-      </div>
-    )
-  }
-
-  if (listQuery.isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-6 min-w-0">
-        <h1 className="sr-only">At-risk students</h1>
-        <ErrorState
-          heading="Couldn't load the at-risk list"
-          body={teacherLoadFailureMessage(listQuery.error)}
-          action={{ label: "Retry", onClick: () => listQuery.refetch() }}
-        />
-      </div>
-    )
-  }
-
-  const students = [...listQuery.data.students].sort((a, b) =>
-    compareEntries(a, b, sortColumn, sortDir),
-  )
-  const filtersActive = reason !== "" || acknowledged !== ""
-
   return (
     <div className="lm-screen flex flex-col gap-6 min-w-0">
-      <div className="flex flex-col gap-1">
-        <div className="text-eyebrow text-ink-faint">
-          Flagged by trajectory, not by one bad day
-        </div>
-        <h1 className="text-display-lg text-ink mt-1">At-risk students</h1>
-      </div>
+      <QueryState
+        query={listQuery}
+        srHeading="At-risk students"
+        // A skeleton matching the header-plus-table this screen renders,
+        // rather than one line of text where four regions are about to
+        // appear. §12: loading states match the layout they replace so
+        // nothing shifts. The rows carry an avatar because every row of this
+        // table starts with one.
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={5} avatar />
+          </>
+        }
+        error={{ heading: "Couldn't load the at-risk list", body: teacherLoadFailureMessage }}
+      >
+        {(list) => {
+          const students = [...list.students].sort((a, b) =>
+            compareEntries(a, b, sortColumn, sortDir, vocabulary),
+          )
+          const filtersActive = reason !== "" || acknowledged !== ""
 
-      {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
-          carried `outline-accent`, which §3.9 gives to brand rather than to
-          focus, and neither had the disabled or error states the kit control
-          implements — §9 gate 4 wants all eight on every interactive component
-          a surface touches. It is still a native `<select>` underneath; see
-          its docstring for why that is deliberate. */}
-      <div className="flex items-end gap-4 flex-wrap">
-        <Select
-          label="Reason"
-          value={reason}
-          onChange={(e) => setReason(e.target.value)}
-          wrapperClassName="w-[220px]"
-        >
-          {REASON_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-        <Select
-          label="Acknowledged"
-          value={acknowledged}
-          onChange={(e) => setAcknowledged(e.target.value)}
-          wrapperClassName="w-[220px]"
-        >
-          {ACK_OPTIONS.map((o) => (
-            <option key={o.value} value={o.value}>
-              {o.label}
-            </option>
-          ))}
-        </Select>
-      </div>
+          return (
+            <>
+              <div className="flex flex-col gap-1">
+              <div className="text-eyebrow text-ink-faint">
+                Flagged by trajectory, not by one bad day
+              </div>
+              <h1 className="text-display-lg text-ink mt-1">At-risk students</h1>
+            </div>
 
-      {students.length === 0 ? (
-        <EmptyState
-          heading={filtersActive ? "No matches for these filters" : "Nothing flagged right now"}
-          body={
-            filtersActive
-              ? "No flagged student matches the current reason/acknowledged filters."
-              : "No students across your classes are currently flagged as at risk. Good news."
-          }
-          action={
-            filtersActive
-              ? {
-                  label: "Clear filters",
-                  onClick: () => {
-                    setReason("")
-                    setAcknowledged("")
-                  },
+            {/* The kit's `<Select>` rather than two hand-rolled `<select>`s. Both
+                carried `outline-accent`, which §3.9 gives to brand rather than to
+                focus, and neither had the disabled or error states the kit control
+                implements — §9 gate 4 wants all eight on every interactive component
+                a surface touches. It is still a native `<select>` underneath; see
+                its docstring for why that is deliberate. */}
+            <div className="flex items-end gap-4 flex-wrap">
+              <Select
+                label="Reason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                wrapperClassName="w-[220px]"
+              >
+                {REASON_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+              <Select
+                label="Acknowledged"
+                value={acknowledged}
+                onChange={(e) => setAcknowledged(e.target.value)}
+                wrapperClassName="w-[220px]"
+              >
+                {ACK_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>
+                    {o.label}
+                  </option>
+                ))}
+              </Select>
+            </div>
+
+            {students.length === 0 ? (
+              <EmptyState
+                heading={filtersActive ? "No matches for these filters" : "Nothing flagged right now"}
+                body={
+                  filtersActive
+                    ? "No flagged student matches the current reason/acknowledged filters."
+                    : "No students across your classes are currently flagged as at risk. Good news."
                 }
-              : undefined
-          }
-        />
-      ) : (
-        <div
-          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
-          tabIndex={0}
-          role="region"
-          aria-label="At-risk students, scrollable horizontally"
-        >
-          <table className="w-full text-body-md border-collapse">
-            <caption className="sr-only">
-              Flagged students across your classes, sortable by every column. Severity mirrors
-              the order this list already arrives in from the server: most flags, then worst
-              grade, first.
-            </caption>
-            <thead>
-              <tr className="bg-paper-sunk border-b border-rule">
-                {COLUMNS.map((col) => {
-                  const active = col.key === sortColumn
-                  return (
-                    <th
-                      key={col.key}
-                      scope="col"
-                      aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-start px-4 py-2.5 align-bottom"
-                    >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                      >
-                        {col.label}
-                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                      </button>
-                    </th>
-                  )
-                })}
-              </tr>
-            </thead>
-            <tbody>
-              {students.map((s) => (
-                <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
-                  <td className="px-4 py-3.5">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={s.displayName} size="sm" />
-                      <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
-                        {s.displayName}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <Link
-                      to={`/teacher/classes/${s.classId}`}
-                      className="text-ink-muted transition-colors hover:text-ink hover:underline"
-                    >
-                      {s.className}
-                    </Link>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    {s.grade ? (
-                      // `AtRiskListEntryDTO.grade` is the student's latest
-                      // recorded grade — the same underlying value as
-                      // `StudentRowDTO.grade` (T-03) and
-                      // `SubjectPredictionDTO.predictedGrade` (T-05), both of
-                      // which render `basis="predicted"` for exactly this
-                      // reason (their own docstrings: "the same domain
-                      // notion... already uses for its below-target rule").
-                      // Matching that here, not `"achieved"` — the same
-                      // value must never read differently on two screens.
-                      <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                    ) : (
-                      <span className="text-body-sm text-ink-faint">No paper grade yet</span>
-                    )}
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
-                      {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                    </div>
-                  </td>
-                  <td className="px-4 py-3.5">
-                    <FlagsCell studentId={s.studentId} flags={s.flags} />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
+                action={
+                  filtersActive
+                    ? {
+                        label: "Clear filters",
+                        onClick: () => {
+                          setReason("")
+                          setAcknowledged("")
+                        },
+                      }
+                    : undefined
+                }
+              />
+            ) : (
+              <div
+                className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                tabIndex={0}
+                role="region"
+                aria-label="At-risk students, scrollable horizontally"
+              >
+                <table className="w-full text-body-md border-collapse">
+                  <caption className="sr-only">
+                    Flagged students across your classes, sortable by every column. Severity mirrors
+                    the order this list already arrives in from the server: most flags, then worst
+                    grade, first.
+                  </caption>
+                  <thead>
+                    <tr className="bg-paper-sunk border-b border-rule">
+                      {COLUMNS.map((col) => {
+                        const active = col.key === sortColumn
+                        return (
+                          <th
+                            key={col.key}
+                            scope="col"
+                            aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                            className="text-start px-4 py-2.5 align-bottom"
+                          >
+                            <button
+                              type="button"
+                              onClick={() => toggleSort(col.key)}
+                              className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                            >
+                              {col.label}
+                              {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                            </button>
+                          </th>
+                        )
+                      })}
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {students.map((s) => (
+                      <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
+                        <td className="px-4 py-3.5">
+                          <div className="flex items-center gap-2.5">
+                            <Avatar name={s.displayName} size="sm" />
+                            <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
+                              {s.displayName}
+                            </Link>
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <Link
+                            to={`/teacher/classes/${s.classId}`}
+                            className="text-ink-muted transition-colors hover:text-ink hover:underline"
+                          >
+                            {s.className}
+                          </Link>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          {s.grade ? (
+                            // `AtRiskListEntryDTO.grade` is the student's latest
+                            // recorded grade — the same underlying value as
+                            // `StudentRowDTO.grade` (T-03) and
+                            // `SubjectPredictionDTO.predictedGrade` (T-05), both of
+                            // which render `basis="predicted"` for exactly this
+                            // reason (their own docstrings: "the same domain
+                            // notion... already uses for its below-target rule").
+                            // Matching that here, not `"achieved"` — the same
+                            // value must never read differently on two screens.
+                            <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                          ) : (
+                            <span className="text-body-sm text-ink-faint">No paper grade yet</span>
+                          )}
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
+                            {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                          </div>
+                        </td>
+                        <td className="px-4 py-3.5">
+                          <FlagsCell studentId={s.studentId} flags={s.flags} />
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

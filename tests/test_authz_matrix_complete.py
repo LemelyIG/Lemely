@@ -147,18 +147,27 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/auth/password-reset/request"): PUBLIC,
     ("POST", "/api/auth/password-reset/confirm"): PUBLIC,
     ("GET", "/api/health"): PUBLIC,
+    # PR 1 chunk C: the browser error-report sink. Deliberately unauthenticated
+    # — a signed-out login-page crash must still be reportable, and the route
+    # is rate-limited + size-capped instead (see its own module docstring).
+    ("POST", "/api/client-errors"): PUBLIC,
     # D7.3/spec §1.2: G-08's pre-account preview. Public and unauthenticated
     # by design - a visitor sees what a code joins *before* creating an
     # account, and `InviteService.preview` is written to be paranoid about
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (15) ────────────────────
+    # ── AUTH_ANY (18) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    # Profile picture set/clear: any authenticated role, same as the profile
+    # GET above -- a student and a teacher both have exactly one avatar to
+    # manage, gated only by `get_auth_context` (never a caller-supplied id).
+    ("POST", "/api/me/avatar"): AUTH_ANY,
+    ("DELETE", "/api/me/avatar"): AUTH_ANY,
     ("GET", "/api/notifications"): AUTH_ANY,
     ("GET", "/api/notifications/counts"): AUTH_ANY,
     ("GET", "/api/notifications/push/config"): AUTH_ANY,
@@ -166,6 +175,11 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/notifications/push/unsubscribe"): AUTH_ANY,
     ("POST", "/api/notifications/read-all"): AUTH_ANY,
     ("POST", "/api/notifications/{notification_id}/read"): AUTH_ANY,
+    # The subject catalogue and UI enumerations: authenticated for any role
+    # (see the router's own docstring) since onboarding is a student flow but
+    # the screens resolving a syllabus code to a display name span the
+    # student portal, and the payload carries nothing user-specific.
+    ("GET", "/api/reference"): AUTH_ANY,
     # D7.3/spec §1.2: redeem is authenticated but role-agnostic - an invite's
     # own `role` decides what redeeming it does, not the caller's platform
     # role, so this is `get_auth_context` alone (no `require_role`), the same
@@ -485,8 +499,8 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     assert len(ROUTES) == len(EXPECTED)
     # 8 auth entrypoints (the original 5 + issue #10's verify-email,
     # password-reset/request, password-reset/confirm) + /api/health + invite
-    # preview.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 10
+    # preview + PR 1 chunk C's client-error sink.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 11
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

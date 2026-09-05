@@ -602,12 +602,20 @@ class AuthService:
         """Mint an email-verification token under its own TTL and return its link.
 
         The link is the frontend route with the token embedded
-        (``/verify-email/:token``, spec §4.4) rather than a fully-qualified URL:
-        there is no configured public origin in ``Settings`` (nothing in this
-        codebase needs one yet), so a relative path is what is handed to
-        :class:`~lemely.auth.email.EmailProvider` and returned as the dev link
-        — exactly what the SPA needs to navigate there directly, and the
-        caller's job to prefix an origin if a real provider ever requires one.
+        (``/verify-email/:token``, spec §4.4) rather than a fully-qualified
+        URL. That is what the SPA needs to navigate there directly, and it is
+        what the dev link returned through the API should be.
+
+        **A relative path is not what an inbox needs**, and that distinction
+        was learned the hard way: when a real provider was first wired, this
+        path went into a mail as-is and the recipient's client resolved the
+        root-relative href against no base, yielding
+        ``http:///verify-email/<token>`` — an unreachable URL with an empty
+        host. The join now happens in
+        :meth:`~lemely.auth.email.ResendEmailProvider._absolute`, against
+        ``[email] app_base_url``, so the two consumers each get the form they
+        need: relative here for the SPA, absolute in the mail. A provider that
+        reports ``delivers_out_of_band = True`` is responsible for that join.
         """
         token = tokens.mint(
             user_id,
@@ -620,7 +628,8 @@ class AuthService:
         """Mint a password-reset token under its own (shorter) TTL and return its link.
 
         See :meth:`_mint_verification_link` for why this is a relative path
-        (``/reset/:token``, spec §4.4) rather than a fully-qualified URL.
+        (``/reset/:token``, spec §4.4) rather than a fully-qualified URL, and
+        for which component absolutises it before it reaches an inbox.
         """
         token = tokens.mint(
             user_id,

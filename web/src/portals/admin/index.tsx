@@ -13,9 +13,14 @@ import {
   FlowArrow,
   type Icon,
 } from "@phosphor-icons/react"
+import { useQueryClient } from "@tanstack/react-query"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { ErrorBoundary } from "@/components/ui/error-boundary"
+import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { OfflineBanner } from "@/components/ui/offline-banner"
+import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteFallback } from "@/components/ui/state-views"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -156,7 +161,7 @@ function UserBlock() {
 
   return (
     <div className="flex items-center gap-2.5">
-      <Avatar name={name} size="sm" />
+      <Avatar name={name} src={data.avatarUrl ?? undefined} size="sm" />
       <div className="min-w-0">
         <div className="truncate text-body-sm font-medium text-ink">{name}</div>
         <div className="text-body-sm text-ink-faint">{roleLabel}</div>
@@ -324,12 +329,18 @@ function AdminTopBar({ lane, onOpenNav }: { lane: AdminLane; onOpenNav: () => vo
 
 function AdminLayout({ lane }: { lane: AdminLane }) {
   const [navOpen, setNavOpen] = useState(false)
+  // Only read here for `ErrorBoundary`'s `resetKey` below — `AdminTopBar`
+  // calls `useLocation()` independently for its own breadcrumb trail.
+  const location = useLocation()
+  const queryClient = useQueryClient()
 
   return (
     // `paper-grain` is DESIGN.md §8's first texture element and the cheapest
     // carrier of the one protected quality (§1). Even the utilitarian console
     // gets it: "consistent with the system" is 4.10's own instruction.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen">
+    // `bg-paper`: the shell owns its own ground rather than depending on
+    // `body`'s paint showing through beneath the fixed grain overlay.
+    <div data-portal="teacher" className="paper-grain flex min-h-screen bg-paper">
       <SkipLink />
       <Sidebar lane={lane} />
 
@@ -351,8 +362,38 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
           tabIndex={-1}
           className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
         >
+          {/* PR 2 part C: offline recovery banner, above the Suspense/
+              ErrorBoundary content it sits over — it renders nothing while
+              online, so its own `mb-6` is the only spacing this adds. */}
+          <OfflineBanner
+            onRetry={() =>
+              void queryClient.refetchQueries({
+                type: "active",
+                predicate: (query) => query.state.status === "error",
+              })
+            }
+          />
+          {/* Below the offline strip on purpose: connectivity is the transient,
+              self-healing message and belongs on top, while this is a standing fact
+              about the account. Renders nothing, and no margin either, unless the
+              profile has resolved and says the address is unverified. */}
+          <VerifyEmailBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            <Outlet />
+            {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+                rebuilds each surface") for both admin lanes: a render crash
+                in one screen stays inside this content slot rather than
+                taking the sidebar down with it or falling out to the
+                top-level `errorElement`. Inside `Suspense` so a failed chunk
+                load and a render throw both land in this boundary.
+                `resetKey={location.pathname}` clears a caught error on
+                navigation. */}
+            <ErrorBoundary
+              label="This page"
+              resetKey={location.pathname}
+              fallback={portalErrorFallback}
+            >
+              <Outlet />
+            </ErrorBoundary>
           </Suspense>
         </main>
       </div>

@@ -479,6 +479,13 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     except OSError as exc:
         record("cache_dir_writable", False, str(exc))
 
+    # Advisory, never fatal (see `advisory_checks` at the bottom of this
+    # command): a fresh clone has no Google Application Default Credentials,
+    # and failing `doctor` over that would red every developer machine for a
+    # subsystem only the web upload/avatar routes touch. `check_storage` also
+    # honours `--no-network`, which a bare `google.auth.default()` call here
+    # would not — it would reach for credentials in the one mode that promises
+    # not to.
     from lemely.io.storage import check_storage
 
     storage_ok, storage_detail = check_storage(settings, no_network=no_network)
@@ -512,7 +519,12 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
                 # Any failure (auth, network, SDK) is a reachability failure to report.
                 record("gemini_reachable", False, str(exc))
 
-    fatal_checks = [c for c in checks if c["name"] != "gradio_extra_installed"]
+    # Checks that describe an optional subsystem rather than a broken install:
+    # `lemely ui` needs the [ui] extra, and object storage is only reached by
+    # the web app's avatar/upload routes. Both are reported honestly and
+    # neither decides the exit code.
+    advisory_checks = {"gradio_extra_installed", "storage_backend"}
+    fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 
     _print_result(ctx, {"all_passed": all_passed, "checks": checks})
@@ -752,11 +764,11 @@ def question_bank_survey_cmd(ctx: click.Context) -> None:
 def question_bank_classify_topics_cmd(
     ctx: click.Context, subject: str | None, reclassify: bool, dry_run: bool
 ) -> None:
-    """Backfill ``question_bank.topic`` from the bundled CAIE syllabus taxonomies (P4.2).
+    """Backfill ``question_bank.topic`` from the CAIE syllabus taxonomies (P4.2).
 
-    Deterministic and free: keyword scoring against
-    ``lemely/data/syllabus_topics.json``, no Gemini call. Idempotent unless
-    ``--reclassify`` is passed.
+    Deterministic and free: keyword scoring against the ``subject_topics``
+    table (:mod:`lemely.io.syllabus_topics`), no Gemini call. Idempotent
+    unless ``--reclassify`` is passed.
 
     Only ``high``- and ``medium``-confidence matches are written; ``low`` ones
     are counted and discarded (``lemely.core.topics.WRITABLE_BANDS`` explains

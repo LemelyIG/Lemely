@@ -66,9 +66,651 @@
       would crop it to a square and cut the mark's tick in half.
     -->
     <meta name="twitter:card" content="summary_large_image" />
+
+    <!--
+      PR 2 part B: the pre-mount shell (DESIGN.md §12's loading tiers, staged
+      before React exists to render anything at all). `createRoot(...).render()`
+      replaces `#root`'s children on its first commit, so everything below —
+      the inline styles and the markup inside `#root` — disappears the instant
+      the real app takes over; it exists purely for the window between the HTML
+      parsing and that first commit, which on a slow connection or a cold
+      cache can be seconds long.
+
+      Colours are ONLY the seven `%LEMELY_COLOR_*%` placeholders below, resolved
+      at build time by `vite/preMountShell.ts` from the same design tokens
+      `themeColor.ts` and `index.css` use — never a literal hex, for the same
+      reason `themeColor.ts`'s own header gives: a value here is unreachable by
+      every colour gate in this repo, so a hand-typed hex would drift the moment
+      a token changed and nothing would say so. The two `%LEMELY_LOADING_TIER_*%`
+      duration placeholders are resolved from `index.css`'s own
+      `--loading-tier-*` tokens, so this shell cannot stage on different numbers
+      than `RouteFallback` does.
+
+      This whole block is inline CSS, not a stylesheet import: `index.css`
+      (and its `prefers-reduced-motion` rule) has not loaded yet at the point
+      this paints, so the reduced-motion handling for the shell's own motion is
+      duplicated here, scoped to the shell's own classes only.
+
+      This shell depends on the repo shipping no Content-Security-Policy
+      today: this inline `<style>` block needs `style-src 'unsafe-inline'`
+      (or a nonce/hash), the inline `<script>` further down that sets
+      `data-shell="portal"` and the inline `onclick="location.reload()"` on
+      the tier 3 reload button both need the same of `script-src`. A future
+      CSP has to grant those, move this markup to external files, or attach
+      a nonce/hash to each, before `script-src`/`style-src` can be tightened.
+    -->
+    <style>
+      html,
+      body {
+        margin: 0;
+        padding: 0;
+      }
+      /* Border-box for every shell box: `.lm-shell-sidebar`'s 24px vertical
+         padding would otherwise add to its `min-height: 100vh` grid cell and
+         push the footer row (`margin-top: auto`) below the fold. */
+      .lm-shell,
+      .lm-shell * {
+        box-sizing: border-box;
+      }
+      body {
+        background: %LEMELY_COLOR_PAPER%;
+      }
+      #root {
+        background: %LEMELY_COLOR_PAPER%;
+        min-height: 100vh;
+      }
+
+      /* The two tiers share one grid cell, so tier 3 (with its own paper
+         background) simply paints over tier 2 once it fades in — see the same
+         trick, with the same reasoning, on `.lm-tier-skeleton`/`.lm-tier-slow`
+         in index.css. */
+      .lm-shell {
+        display: grid;
+        min-height: 100vh;
+      }
+      .lm-shell-tier2,
+      .lm-shell-tier3 {
+        grid-column: 1;
+        grid-row: 1;
+        min-height: 100vh;
+      }
+
+      /* Tier 2: the portal chrome skeleton. Hidden entirely off the portal
+         paths (marketing, auth, settings) — those are small forms with no
+         sidebar/header to promise, so they show paper only until tier 3, same
+         as `RouteFallback`'s `frame="standalone"`. The inline script below sets
+         `data-shell="portal"` on `#root` before this markup is parsed. */
+      .lm-shell-tier2 {
+        display: none;
+        opacity: 0;
+        visibility: hidden;
+        animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SKELETON% both;
+      }
+      /* Mobile-first: a portal path gets tier 2's header/content skeleton
+         in a single column, with no sidebar column reserved for it. The real
+         portal shell (`src/portals/student/index.tsx`'s `<Sidebar>`, mirrored
+         by the teacher/parent portals) renders its `<aside>` only from
+         `min-[820px]:flex` upward and swaps in a drawer below that; a fixed
+         246px column here on a 375px phone painted a sidebar that never
+         arrives and left ~129px for the content well, and at 320px tier 3's
+         96px mark overflowed the viewport outright. The two-column layout
+         and the sidebar itself both move into the `min-width: 820px` query
+         below, to match. */
+      #root[data-shell="portal"] .lm-shell-tier2 {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+
+      .lm-shell-sidebar {
+        display: none;
+        flex-direction: column;
+        gap: 28px;
+        padding: 24px 20px;
+        background: %LEMELY_COLOR_PAPER_SUNK%;
+        border-right: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      /* The media query has to come AFTER `.lm-shell-sidebar`'s own base
+         rule above, not before it: both declare `display` at equal
+         (single-class) specificity, and a later rule in source order beats
+         an earlier one at equal specificity regardless of which is nested in
+         a matching `@media` block. Declared the other way round once, by
+         mistake, and `display: flex` here was silently overridden back to
+         `none` at every width — caught by `shell_shot_f1.mjs`'s `1280px`
+         run reporting `sidebarDisplay: "none"` on `/student`, not by reading
+         the rule. */
+      @media (min-width: 820px) {
+        #root[data-shell="portal"] .lm-shell-tier2 {
+          grid-template-columns: 246px 1fr;
+        }
+        .lm-shell-sidebar {
+          display: flex;
+        }
+      }
+      .lm-shell-brand {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .lm-shell-wordmark {
+        font-family: Georgia, serif;
+        font-size: 17px;
+        font-weight: 500;
+        color: %LEMELY_COLOR_INK%;
+      }
+      .lm-shell-nav {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+      .lm-shell-navrow {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+      }
+
+      .lm-shell-main {
+        display: flex;
+        flex-direction: column;
+        min-width: 0;
+      }
+      .lm-shell-header {
+        height: 68px;
+        flex: none;
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 0 28px;
+        border-bottom: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      .lm-shell-content {
+        display: flex;
+        flex-direction: column;
+        gap: 20px;
+        padding: 32px 28px;
+      }
+      .lm-shell-list {
+        display: flex;
+        flex-direction: column;
+        border: 1px solid %LEMELY_COLOR_RULE%;
+        border-radius: 12px;
+        overflow: hidden;
+      }
+      .lm-shell-row {
+        display: flex;
+        align-items: center;
+        gap: 16px;
+        padding: 14px 20px;
+        border-bottom: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      .lm-shell-row:last-child {
+        border-bottom: none;
+      }
+      .lm-shell-panels {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 16px;
+      }
+      .lm-shell-panel {
+        display: flex;
+        flex-direction: column;
+        gap: 12px;
+        padding: 18px 20px;
+        border: 1px solid %LEMELY_COLOR_RULE%;
+        border-radius: 12px;
+      }
+
+      /* The pulsing placeholder bars — the ".sk" boxes DESIGN.md's canvas
+         calls out — every one of them decorative and `aria-hidden`. */
+      .sk {
+        background: %LEMELY_COLOR_RULE%;
+        border-radius: 4px;
+        animation: lm-shell-pulse 1.6s ease-in-out infinite;
+      }
+      @keyframes lm-shell-pulse {
+        0%,
+        100% {
+          opacity: 0.35;
+        }
+        50% {
+          opacity: 1;
+        }
+      }
+
+      /* The section-label bar above each nav group ("eyebrow" as in DESIGN.md's
+         type scale, not the tall block P6.6's screenshot caught this as before
+         the fix: a short wide bar, not a heading-sized slab). */
+      .lm-shell-eyebrow {
+        height: 11px;
+        width: 3.5rem;
+      }
+      .lm-shell-navicon {
+        height: 18px;
+        width: 18px;
+        flex: none;
+      }
+      .lm-shell-navbar {
+        height: 10px;
+        width: 56%;
+      }
+      /* Sidebar footer: an identity row (squircle + name/role bars) pinned to
+         the bottom with a hairline separating it from the nav above, matching
+         the account switcher every portal's real sidebar footer renders. */
+      .lm-shell-footer {
+        margin-top: auto;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        padding-top: 16px;
+        border-top: 1px solid %LEMELY_COLOR_RULE%;
+      }
+      .lm-shell-footer-avatar {
+        height: 32px;
+        width: 32px;
+        border-radius: 12px;
+        flex: none;
+      }
+      .lm-shell-footer-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+      .lm-shell-footer-line1 {
+        height: 10px;
+        width: 70%;
+      }
+      .lm-shell-footer-line2 {
+        height: 8px;
+        width: 45%;
+      }
+      .lm-shell-crumb {
+        height: 12px;
+        width: 160px;
+      }
+      .lm-shell-button {
+        height: 33px;
+        width: 138px;
+        border-radius: 8px;
+      }
+      .lm-shell-title {
+        height: 32px;
+        width: min(22rem, 60%);
+      }
+      .lm-shell-subtitle {
+        height: 14px;
+        width: min(34rem, 85%);
+      }
+      .lm-shell-row-line1 {
+        height: 10px;
+        width: 40%;
+      }
+      .lm-shell-row-line2 {
+        height: 10px;
+        width: 3rem;
+        margin-left: auto;
+      }
+      .lm-shell-row-lines {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        flex: 1;
+        min-width: 0;
+      }
+      .lm-shell-panel-title {
+        height: 14px;
+        width: 45%;
+      }
+      /* `PanelSkeleton`'s (`components/ui/loading-shapes.tsx`) second line -
+         a subtitle under the title before the body block. */
+      .lm-shell-panel-subtitle {
+        height: 12px;
+        width: 65%;
+      }
+      .lm-shell-panel-body {
+        height: 96px;
+        border-radius: 8px;
+      }
+
+      /* Tier 3: the slow-load screen. Always available on every path, portal
+         or not — a marketing page can be slow too. On a portal path it
+         replaces only the content well (see the `#root[data-shell="portal"]`
+         rule below), so tier 2's sidebar and header stay painted around it
+         rather than being covered over; on every other path there is no
+         chrome to preserve, so it stays the full-viewport treatment. */
+      .lm-shell-tier3 {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+        gap: 16px;
+        padding: 24px;
+        text-align: center;
+        background: %LEMELY_COLOR_PAPER%;
+        opacity: 0;
+        visibility: hidden;
+        animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SLOW% both;
+      }
+      /* Inset tier 3 by the header's height at every width, and by the
+         sidebar's width from `min-width: 820px` up, matching the real portal
+         shell: the top bar (`Header` in `src/portals/student/index.tsx`)
+         renders on every width, but the `<aside>` sidebar only exists from
+         820px, same threshold as `.lm-shell-tier2` above. Below 820px tier 3
+         is inset by the header alone, so it never claims 246px of a content
+         well that has no sidebar beside it. */
+      #root[data-shell="portal"] .lm-shell-tier3 {
+        margin-top: 68px;
+        min-height: calc(100vh - 68px);
+      }
+      @media (min-width: 820px) {
+        #root[data-shell="portal"] .lm-shell-tier3 {
+          margin-left: 246px;
+        }
+      }
+      /* `visibility` rides along with `opacity` here for the same reason, and
+         under the same §9.2 exemption, as `index.css`'s `lm-appear` keyframe:
+         it is a discrete, non-interpolated property, so animating it is a
+         step, not motion, and it is what actually removes tier 3's heading
+         and reload button from the accessibility tree and the tab order
+         before `%LEMELY_LOADING_TIER_SLOW%` elapses — `opacity: 0` alone does
+         neither, and this whole block sits inside a `role="status"` live
+         region. See `index.css`'s longer comment on `lm-appear` for the full
+         reasoning; duplicated here only because this shell cannot reference
+         that stylesheet before it has loaded. */
+      @keyframes lm-shell-appear {
+        from {
+          opacity: 0;
+          visibility: hidden;
+        }
+        to {
+          opacity: 1;
+          visibility: visible;
+        }
+      }
+      .lm-shell-mark {
+        width: 96px;
+        height: 96px;
+      }
+      .lm-shell-heading {
+        margin: 0;
+        font-family: Georgia, serif;
+        font-size: 24px;
+        font-weight: 500;
+        color: %LEMELY_COLOR_INK%;
+      }
+      .lm-shell-body-copy {
+        margin: 0;
+        max-width: 32rem;
+        font-family: system-ui, sans-serif;
+        font-size: 14px;
+        line-height: 1.5;
+        color: %LEMELY_COLOR_INK_MUTED%;
+      }
+      .lm-shell-reload {
+        font-family: system-ui, sans-serif;
+        font-size: 13px;
+        font-weight: 500;
+        padding: 8px 16px;
+        border-radius: 8px;
+        border: 1px solid %LEMELY_COLOR_RULE%;
+        background: %LEMELY_COLOR_PAPER_RAISED%;
+        color: %LEMELY_COLOR_INK%;
+        cursor: pointer;
+      }
+      .lm-shell-reload:hover {
+        border-color: %LEMELY_COLOR_INK_MUTED%;
+      }
+
+      /* The mark's self-draw loop. `stroke-dashoffset` on three short paths is
+         DESIGN.md §9.2's one documented exception, granted for this tier only —
+         see that section. Same dasharray/timing split as `components/ui/mark.tsx`'s
+         `lm-draw-*` classes: L1 draws over 0-18% of the loop, L2 over 18-32%,
+         the tick over 38-62%, then the drawn mark holds until the 2.8s loop
+         restarts. */
+      .lm-shell-l1 {
+        stroke-dasharray: 36;
+        stroke-dashoffset: 36;
+        animation: lm-shell-draw-l1 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+      }
+      .lm-shell-l2 {
+        stroke-dasharray: 24;
+        stroke-dashoffset: 24;
+        animation: lm-shell-draw-l2 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+      }
+      .lm-shell-tick {
+        stroke-dasharray: 42;
+        stroke-dashoffset: 42;
+        animation: lm-shell-draw-tick 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+      }
+      @keyframes lm-shell-draw-l1 {
+        0% {
+          stroke-dashoffset: 36;
+        }
+        18%,
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+      @keyframes lm-shell-draw-l2 {
+        0%,
+        18% {
+          stroke-dashoffset: 24;
+        }
+        32%,
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+      @keyframes lm-shell-draw-tick {
+        0%,
+        38% {
+          stroke-dashoffset: 42;
+        }
+        62%,
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+
+      .lm-shell-sr {
+        position: absolute;
+        width: 1px;
+        height: 1px;
+        padding: 0;
+        margin: -1px;
+        overflow: hidden;
+        clip: rect(0, 0, 0, 0);
+        white-space: nowrap;
+        border: 0;
+      }
+
+      /* index.css is not loaded yet, so the product-wide reduced-motion rule
+         cannot reach this markup: duplicated here, scoped to the shell's own
+         motion only. The tier delays (`.lm-shell-tier2`/`.lm-shell-tier3`) are
+         untouched on purpose — DESIGN.md §9.4 — only the pulsing skeleton bars
+         and the mark's draw loop stop. */
+      @media (prefers-reduced-motion: reduce) {
+        .sk {
+          animation: none;
+          opacity: 0.6;
+        }
+        .lm-shell-l1,
+        .lm-shell-l2,
+        .lm-shell-tick {
+          animation: none;
+          stroke-dashoffset: 0;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!--
+        Sets `data-shell="portal"` on `#root` before the shell markup below is
+        parsed, so the browser never paints the portal chrome skeleton and then
+        has to hide it again for a non-portal path. Portal prefixes read off
+        `src/routes.tsx`: `studentRoute`/`teacherRoute`/`parentRoute` mount at
+        `/student`, `/teacher`, `/parent`; the two admin lanes
+        (`schoolAdminRoute`/`platformAdminRoute`) mount at `/school` and
+        `/platform` — there is no literal `/admin` route in this router.
+      -->
+      <script>
+        (function () {
+          if (/^\/(student|teacher|parent|school|platform)(\/|$)/.test(location.pathname)) {
+            document.getElementById("root").dataset.shell = "portal"
+          }
+        })()
+      </script>
+      <div class="lm-shell" role="status">
+        <span class="lm-shell-sr">Loading</span>
+
+        <!-- Tier 2: the portal shell skeleton. Decorative furniture standing
+             in for the sidebar/header/content-well shape a signed-in portal
+             renders; hidden from the accessibility tree since the single
+             "Loading" text above already announces the wait. -->
+        <div class="lm-shell-tier2" aria-hidden="true">
+          <aside class="lm-shell-sidebar">
+            <div class="lm-shell-brand">
+              <svg
+                class="lm-shell-mark"
+                style="width: 24px; height: 24px"
+                viewBox="0 0 64 64"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M20 10V46"
+                  stroke="%LEMELY_COLOR_INK%"
+                  stroke-width="2"
+                  stroke-linecap="butt"
+                />
+                <path
+                  d="M20 46H44"
+                  stroke="%LEMELY_COLOR_INK%"
+                  stroke-width="2"
+                  stroke-linecap="butt"
+                />
+                <path
+                  d="M27 37L33 46L47 19"
+                  stroke="%LEMELY_COLOR_ACCENT%"
+                  stroke-width="6"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+              <span class="lm-shell-wordmark">Lemely</span>
+            </div>
+            <div class="sk lm-shell-eyebrow"></div>
+            <nav class="lm-shell-nav">
+              <div class="lm-shell-navrow">
+                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
+              </div>
+              <div class="lm-shell-navrow">
+                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
+              </div>
+              <div class="lm-shell-navrow">
+                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
+              </div>
+              <div class="lm-shell-navrow">
+                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
+              </div>
+            </nav>
+            <!-- The second nav group (settings/account, below the main
+                 sections) gets its own eyebrow bar above its single row,
+                 matching the real sidebar's two-group layout. -->
+            <div class="sk lm-shell-eyebrow"></div>
+            <nav class="lm-shell-nav">
+              <div class="lm-shell-navrow">
+                <span class="sk lm-shell-navicon"></span><span class="sk lm-shell-navbar"></span>
+              </div>
+            </nav>
+            <div class="lm-shell-footer">
+              <span class="sk lm-shell-footer-avatar"></span>
+              <div class="lm-shell-footer-lines">
+                <span class="sk lm-shell-footer-line1"></span>
+                <span class="sk lm-shell-footer-line2"></span>
+              </div>
+            </div>
+          </aside>
+          <div class="lm-shell-main">
+            <header class="lm-shell-header">
+              <span class="sk lm-shell-crumb"></span>
+              <span class="sk lm-shell-button"></span>
+            </header>
+            <div class="lm-shell-content">
+              <span class="sk lm-shell-title"></span>
+              <span class="sk lm-shell-subtitle"></span>
+              <!-- No row avatar: the Overview ledger this stands in for has
+                   no per-row avatar, just a description and a value. -->
+              <div class="lm-shell-list">
+                <div class="lm-shell-row">
+                  <span class="sk lm-shell-row-line1"></span>
+                  <span class="sk lm-shell-row-line2"></span>
+                </div>
+                <div class="lm-shell-row">
+                  <span class="sk lm-shell-row-line1"></span>
+                  <span class="sk lm-shell-row-line2"></span>
+                </div>
+                <div class="lm-shell-row">
+                  <span class="sk lm-shell-row-line1"></span>
+                  <span class="sk lm-shell-row-line2"></span>
+                </div>
+              </div>
+              <div class="lm-shell-panels">
+                <div class="lm-shell-panel">
+                  <span class="sk lm-shell-panel-title"></span>
+                  <span class="sk lm-shell-panel-subtitle"></span>
+                  <span class="sk lm-shell-panel-body"></span>
+                </div>
+                <div class="lm-shell-panel">
+                  <span class="sk lm-shell-panel-title"></span>
+                  <span class="sk lm-shell-panel-subtitle"></span>
+                  <span class="sk lm-shell-panel-body"></span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Tier 3: the slow-load screen. Real content, not decoration, so it
+             is not aria-hidden — a reader who has waited five seconds gets a
+             named mark, a heading, an explanation, and a working button. -->
+        <div class="lm-shell-tier3">
+          <svg class="lm-shell-mark" viewBox="0 0 64 64" fill="none" role="img" aria-label="Lemely is still loading">
+            <path
+              class="lm-shell-l1"
+              d="M20 10V46"
+              stroke="%LEMELY_COLOR_INK%"
+              stroke-width="2"
+              stroke-linecap="butt"
+            />
+            <path
+              class="lm-shell-l2"
+              d="M20 46H44"
+              stroke="%LEMELY_COLOR_INK%"
+              stroke-width="2"
+              stroke-linecap="butt"
+            />
+            <path
+              class="lm-shell-tick"
+              d="M27 37L33 46L47 19"
+              stroke="%LEMELY_COLOR_ACCENT%"
+              stroke-width="6"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+            />
+          </svg>
+          <h1 class="lm-shell-heading">Still loading</h1>
+          <p class="lm-shell-body-copy">
+            Your connection seems slow. We're still trying, and you can reload if you'd rather
+            start again.
+          </p>
+          <button type="button" class="lm-shell-reload" onclick="location.reload()">
+            Reload the page
+          </button>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

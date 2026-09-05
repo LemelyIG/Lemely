@@ -16,6 +16,7 @@ from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessR
 from lemely.db.models.auth_cooldowns import AuthCooldown
 from lemely.db.models.auth_tokens import AuthToken
 from lemely.db.models.billing import PlanTier, Subscription
+from lemely.db.models.catalogue import SubjectTopic, SyllabusPaper
 from lemely.db.models.engagement import Streak, XpEvent
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
@@ -30,6 +31,7 @@ from lemely.db.models.enums import (
     MarkerSource,
     MembershipRole,
     NotificationType,
+    PaperTier,
     PlanInterval,
     QualificationLevel,
     QuestionDifficulty,
@@ -84,6 +86,7 @@ from lemely.db.models.study_plan import StudyPlan as StudyPlanTable
 from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.study_plan import StudyPlanSession as StudyPlanSessionTable
 from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.models.thresholds import ComponentThreshold, OptionThreshold
 from lemely.db.models.users import Device, Friendship, ParentChildLink, User
 
 
@@ -101,6 +104,7 @@ def import_all_models() -> None:
         auth_cooldowns,
         auth_tokens,
         billing,
+        catalogue,
         engagement,
         flashcards,
         invites,
@@ -111,6 +115,7 @@ def import_all_models() -> None:
         quizzes,
         study_plan,
         teacher_papers,
+        thresholds,
         users,
     )
 
@@ -145,6 +150,7 @@ __all__ = [
     "BoundarySource",
     "CardSource",
     "ClassEnrollment",
+    "ComponentThreshold",
     "ConfidenceBand",
     "DeckOrigin",
     "Device",
@@ -165,8 +171,10 @@ __all__ = [
     "Notification",
     "NotificationPreference",
     "NotificationType",
+    "OptionThreshold",
     "OtpChallenge",
     "Paper",
+    "PaperTier",
     "ParentChildLink",
     "PlanInterval",
     "PlanTier",
@@ -203,8 +211,10 @@ __all__ = [
     "StudyPlanSessionTable",
     "StudyPlanTable",
     "Subject",
+    "SubjectTopic",
     "Subscription",
     "SubscriptionStatus",
+    "SyllabusPaper",
     "TeacherPaper",
     "TimestampMixin",
     "Upload",

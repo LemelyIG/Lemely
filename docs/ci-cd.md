@@ -42,6 +42,7 @@ doesn't.
 | Push to `develop` | staging | Automatic, no approval |
 | Push to `main` | production | Pauses for one manual approval (see below) |
 | Manual run (Actions tab → "deploy" → Run workflow) | your choice | Redeploy either environment on demand — no new commit needed. Good for prototyping/iteration or re-running a flaky step. |
+| Manual run with **"Also ingest CAIE grade thresholds"** ticked | your choice | Additionally runs `scripts/ingest_thresholds.py` against that environment's database (`docs/deployment.md` §3.5). Off by default and never on a push: it fetches from two small third-party hosts. Required once per environment before any grading works. |
 
 Both environments are fully separate resources top to bottom: their own
 Supabase project, their own Cloud Run service, their own Worker/domain. A
@@ -119,6 +120,17 @@ budget's outcome, for the record.
 GitHub Actions exchange its own OIDC token for short-lived GCP credentials
 at run time — nothing long-lived to leak.
 
+That one script covers both environments in a single run — there is no
+separate object-storage bootstrap. It sets up how GitHub Actions *deploys*
+(WIF, deployer roles, Artifact Registry) **and** what the deployed service
+*stores*: it creates `<project-id>-uploads-<env>` and
+`<project-id>-avatars-<env>` — the names `deploy.yml` computes by default, so
+no new GitHub variables are needed — and grants the Cloud Run **runtime**
+service account (the default compute SA, since `deploy.yml` pins none)
+`roles/storage.objectAdmin` on each plus `roles/iam.serviceAccountTokenCreator`
+on itself, which is what lets it sign avatar and upload URLs. Both scripts
+are idempotent.
+
 ### 2. Supabase — already provisioned
 
 Both projects exist already (created via the Supabase MCP tools available
@@ -138,6 +150,15 @@ still does real work here (Postgres, GoTrue auth); only the Storage bucket in ea
 project is dead weight. Deleting it (Dashboard → Storage → the `uploads` bucket) is
 optional and safe — nothing reads or writes it — and left undone here since removing
 it buys nothing at the free tier's storage allowance.
+
+> **These Supabase buckets are no longer the ones the deployed backend
+> writes to.** Object storage now defaults to Google Cloud Storage
+> (`LEMELY_STORAGE__BACKEND=gcs`), and `deploy.yml` points each environment
+> at its own pair of GCS buckets. The Supabase buckets above are kept because
+> there is no Supabase Storage backend any more — DS7 deleted it, and the
+> only backends are `gcs` and `local`. Create the buckets with
+> `scripts/gcp-bootstrap.sh` — see the GCP section below and
+> `docs/deployment.md` §3.2 step 5.
 
 Both are on the free tier (2 free projects/org — this uses both slots; a
 third project needs either Pro ($25/mo) or a separate organization). Free
@@ -195,6 +216,43 @@ first call with `Authentication error [code: 10000]` against
 admin grant a Workers role, or have them create an **Account API Token**,
 which is owned by the account and not tied to any member's roles.
 
+#### `www` subdomains redirect to their root domain
+
+A Custom Domain requires an exact hostname match, so the Worker attached to
+the apex (`lemelyig.com`) never receives `www.lemelyig.com` traffic, and
+likewise `staging.lemelyig.com` never receives `www.staging.lemelyig.com`
+traffic — there is no DNS record for either `www` host by default, so
+visitors who type one get an unreachable/`NXDOMAIN` error. This is exactly
+the case Cloudflare's own docs call out ([Custom Domains → Redirect between
+www and root
+domain](https://developers.cloudflare.com/workers/configuration/routing/custom-domains/#redirect-between-www-and-root-domain)):
+it's zone-level DNS + rules configuration, not something `wrangler deploy` or
+a `custom_domain: true` route can fix, and not config this repo carries.
+
+**Done** for both `www.lemelyig.com` and `www.staging.lemelyig.com`, via the
+Cloudflare API against the `lemelyig.com` zone:
+
+1. A proxied `A` record per `www` host, content `192.0.2.0` (the [reserved
+   placeholder for an originless
+   setup](https://developers.cloudflare.com/dns/manage-dns-records/how-to/create-dns-records/#originless-setups)
+   — traffic never actually reaches it). Proxied is required — an unproxied
+   (DNS-only) record can't be matched by a redirect rule.
+2. One zone-level Redirect Rule per host in a single ruleset (`http_request_dynamic_redirect`
+   phase, name "Redirect rules ruleset"): `www.lemelyig.com` → `https://lemelyig.com`
+   and `www.staging.lemelyig.com` → `https://staging.lemelyig.com`, both 301,
+   preserving path and query string.
+
+If either ever needs recreating (e.g. the zone gets rebuilt), redo both
+steps for the affected host — the dashboard equivalents are **DNS → Records
+→ Add record** and **Rules → Redirect Rules → Create rule** (or start from
+the built-in ["Redirect from www to
+root"](https://developers.cloudflare.com/rules/url-forwarding/examples/redirect-www-to-root/)
+template).
+
+Verify with `curl -I https://www.lemelyig.com` and `curl -I
+https://www.staging.lemelyig.com` — expect `301` with `Location:` pointing at
+the corresponding root domain.
+
 ### 4. GitHub — environments, secrets, variables
 
 Repo → **Settings → Environments**:
@@ -234,6 +292,7 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `SUPABASE_SERVICE_ROLE_KEY` | Env secret (staging + production) | Dashboard → project → Settings → API → **service_role** key (click reveal) |
 | `SUPABASE_DB_URL` | Env secret (staging + production) | Dashboard → project → Settings → Database → Connection string → **Session pooler** tab (not "Direct connection" — GitHub Actions runners are IPv4-only and the direct connection is IPv6-only). Paste it exactly as shown, including your DB password; `deploy.yml` rewrites the `postgresql://` prefix itself. If you don't have the DB password (these two projects were created via API, so it was never shown to anyone), reset it from the same Database settings page. |
 | `GEMINI_API_KEY` | Env secret (staging + production) | Reuse the key from your local `.env`, or mint a new one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Fine to reuse the same key for both environments. |
+| `RESEND_API_KEY` | Env secret (staging + production) — **optional** | [resend.com](https://resend.com) → API Keys → Create, with *Sending access* only. Leave it unset and the deploy still succeeds: an absent secret renders as the empty string, which the backend reads as *not configured* and falls back to the offline mock provider, so nothing sends. Setting it is the entire switch-on. **Reusing one key across both environments shares one 100/day free-tier allowance** — a staging smoke test spends production's quota, so mint a second Resend account for staging or leave staging unset. See `docs/email-delivery.md`. |
 
 **No new secret or variable for GCS.** The upload bucket and the runtime service
 account `deploy.yml` deploys as are both just names `deploy.yml` derives itself from

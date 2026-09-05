@@ -70,6 +70,11 @@ echo = false
 pool_size = 5
 max_overflow = 10
 pool_pre_ping = true
+# Bound how long a connect may block. libpq's own connect_timeout default is
+# unlimited, which lets a dropped-packet outage (firewall/security-group
+# change) hang every request instead of failing them.
+connect_timeout_seconds = 5
+pool_timeout_seconds = 5
 
 [supabase]
 # Local Supabase Auth (GoTrue). Defaults are the well-known local-dev
@@ -80,6 +85,35 @@ jwt_audience = "authenticated"
 # jwt_secret = "super-secret-jwt-token-with-at-least-32-characters-long"
 # anon_key = "..."
 # service_role_key = "..."
+
+[storage]
+# Object storage for self-mark uploads (P2.5) and profile pictures.
+# "local" (the default) writes under `paths.output_dir/storage` — right for
+# dev, Compose and CI, and needs no credentials. "gcs" uses Google Cloud
+# Storage via Application Default Credentials; no key belongs in this file
+# for that path. See docs/deployment.md and scripts/gcp-bootstrap.sh.
+#
+# There is no Supabase Storage backend — DS7 removed it.
+#
+# Note that signed URLs (avatar downloads) need a real service-account
+# credential (a JSON key, or an attached/workload-identity service account)
+# — plain user ADC from `gcloud auth application-default login` can
+# upload/download but cannot sign a URL at all. For local signing, add
+# `--impersonate-service-account=<runtime SA>` to that login command. The
+# "local" backend sidesteps this: it returns the bytes inline instead.
+#
+# GCS bucket names are ONE GLOBAL namespace across all of Google Cloud, so
+# these defaults carry a project-ish prefix. The deployed pipeline overrides
+# both per environment (see .github/workflows/deploy.yml), so staging and
+# production never share a bucket; `scripts/gcp-bootstrap.sh` creates them.
+backend = "local"
+bucket = "lemely-uploads"
+# Profile pictures live in their own bucket: different retention and access
+# shape from scans, and no reason to share a namespace.
+avatar_bucket = "lemely-avatars"
+signed_url_ttl_seconds = 3600
+avatar_max_bytes = 5242880  # 5 MiB
+# gcs_project = "my-gcp-project"  # only if ADC can't infer one
 
 [auth]
 # How long a minted access token is accepted for. Short on purpose: it is a
@@ -115,18 +149,6 @@ ai_detection_enabled = false
 plagiarism_threshold = 0.85
 ai_detection_threshold = 0.8
 
-[storage]
-# Object storage for every upload the web app keeps (student scans, teacher
-# papers, mark-scheme PDFs). "local" (the default) writes under
-# `paths.output_dir/storage` — right for dev, Compose and CI. "gcs" talks to
-# Google Cloud Storage via application-default credentials — the Cloud Run
-# runtime service account in staging/production, set by LEMELY_STORAGE__BACKEND
-# in the deploy, not here.
-backend = "local"
-# Bucket name for "gcs", directory name for "local". The gcs bucket is
-# created by `scripts/gcp-bootstrap.sh`, one per environment — not by this app.
-bucket = "uploads"
-
 [push]
 # Web-push (VAPID) application-server credentials. All three secrets default
 # to unset, which is a supported state: the transport reports itself
@@ -136,4 +158,38 @@ bucket = "uploads"
 # vapid_private_key = "..."
 # vapid_subject = "mailto:ops@example.com"
 ttl_seconds = 86400
+timeout_seconds = 10.0
+[email]
+# Transactional mail for account verification and password reset (D7.7).
+#
+# Leave `api_key` unset and lemely.web.deps wires MockEmailProvider: the link
+# is logged to the `lemely.auth.email` logger instead of sent, and the auth
+# routes keep returning it so a local signup completes with no mail service at
+# all. That is the supported default for development and CI, not a broken
+# state. Setting a key flips both halves at once — mail is really sent, and the
+# routes stop returning the live link, because a real sender makes the inbox
+# the only place a bearer credential belongs.
+#
+# NEVER put the key in this file. `lemely.toml` is gitignored, but the key still
+# does not belong on disk. Deployed, it is the `RESEND_API_KEY` GitHub Actions
+# environment secret, which `deploy.yml` passes to Cloud Run as
+# LEMELY_EMAIL__API_KEY. Locally, export LEMELY_EMAIL__API_KEY in your shell.
+# api_key = "re_..."
+#
+# The origin emailed links are built on. AuthService mints links as frontend
+# routes (`/verify-email/<token>`), which the SPA can navigate to but an inbox
+# cannot resolve — a mail client with no base turns that into
+# `http:///verify-email/<token>`. A real provider joins this origin on first.
+# deploy.yml sets it per environment; this default is the production site.
+app_base_url = "https://lemelyig.com"
+#
+# Must be on a domain verified with the provider AND carrying that sender's
+# SPF/DKIM records in the Cloudflare DNS zone — see docs/email-delivery.md.
+from_address = "noreply@lemelyig.com"
+from_name = "Lemely"
+# Where replies go. Unset means they return to `from_address`, an unattended
+# mailbox; point it at a real inbox once one exists.
+# reply_to = "support@lemelyig.com"
+# Short on purpose: verification mail is a best-effort side effect of an
+# already-created account and must never make a signup hang.
 timeout_seconds = 10.0

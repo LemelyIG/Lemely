@@ -8,10 +8,11 @@ import { buttonVariants } from "@/components/ui/button"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { GradeBadge } from "@/components/ui/grade-badge"
-import { ErrorState } from "@/components/ui/state-views"
+import { QueryState } from "@/components/ui/query-state"
 import { GettingStarted } from "@/components/ui/getting-started"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
+import { useReference } from "@/lib/hooks/useReferenceApi"
 import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
@@ -21,6 +22,7 @@ import {
 import { cn, greetingFor } from "@/lib/utils"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useOverview } from "@/lib/hooks/useStudentApi"
+import { useMyClasses } from "@/lib/hooks/useLeaderboardApi"
 import type { MomentumPoint, SubjectRow } from "@/lib/studentTypes"
 import { vizBg } from "../components/colors"
 
@@ -74,6 +76,18 @@ import { vizBg } from "../components/colors"
  * — each row prints its topic and its accuracy as text, which is a stronger
  * artefact than a bar chart of six categories, and nothing about it is a plot
  * in a coordinate space.
+ *
+ * Loading/error primitives PR, part A: `Overview` is the reference conversion
+ * to `<QueryState>`. The pending/error branches below are unchanged in
+ * substance (same skeleton shapes, same heading, same `studentLoadFailure-
+ * Message` body) and now live inside `query-state.tsx` rather than being
+ * hand-written per screen. The `subjects.length === 0` empty branch stays
+ * written out here rather than going through `QueryState`'s own `isEmpty`/
+ * `empty` props: that pair renders a fixed `ReactNode`, and this screen's
+ * empty view needs `studentName` off the loaded data for its greeting, which
+ * a static node cannot read. `isEmpty`/`empty` suit an empty view that does
+ * not need the payload; this one does, so it stays inside `children`, which
+ * does.
  */
 
 /** Where the subject ledger's trend column gets its three arms. */
@@ -120,6 +134,7 @@ function trendOf(row: SubjectRow): {
 function SubjectLedgerRow({ row }: { row: SubjectRow }) {
   const trend = trendOf(row)
   const TrendIcon = trend.icon
+  const { data: reference } = useReference()
 
   return (
     <Link
@@ -146,7 +161,12 @@ function SubjectLedgerRow({ row }: { row: SubjectRow }) {
     >
       <div className="flex items-center gap-3 md:contents">
         {(() => {
-          const { primary, secondary } = subjectIdentifier(row.name, row.code, row.qualificationLevel)
+          const { primary, secondary } = subjectIdentifier(
+            reference?.qualificationLevels,
+            row.name,
+            row.code,
+            row.qualificationLevel,
+          )
           return (
             <span className="flex flex-col gap-0.5 flex-1 min-w-0 md:flex-none">
               {/* The name is the row's identity now, so it is the element that
@@ -314,174 +334,211 @@ function MomentumPanel({ points }: { points: readonly MomentumPoint[] }) {
   )
 }
 
-export function Overview() {
-  const { data, isPending, isError, error, refetch } = useOverview()
+/**
+ * "Join your teacher's class" prompt (the other half of G-08's gap — see
+ * `screens/Classes.tsx`'s own module comment). Wired to `useMyClasses()`
+ * directly rather than to anything `useOverview()` returns: `OverviewDTO`
+ * carries no class list at all, and reusing the S-29 class-scope query here is
+ * the same reuse `Standings.tsx` already makes of it, not a new fetch this
+ * page invents for itself.
+ *
+ * Renders nothing until the read resolves, and nothing at all once it has —
+ * unless it resolved to zero classes. A pending or errored read must not flash
+ * a prompt to join a class the student may already be in; `status !==
+ * "success"` covers both without needing to read `isPending`/`isError`
+ * separately.
+ */
+function JoinClassPrompt() {
+  const classes = useMyClasses()
+  if (classes.status !== "success" || classes.data.classes.length > 0) return null
 
-  /*
-   * P3.3: a skeleton matching this screen's real layout, replacing the single
-   * line of "Loading overview…" text that used to sit here.
-   *
-   * The line was not merely plain, it was the wrong *size*: it occupied one
-   * text row where the loaded screen renders a heading, a subjects ledger and
-   * a two-up panel row, so every load ended in the page jumping several
-   * hundred pixels as content arrived. That is the layout shift DESIGN.md §12
-   * names (CLS < 0.1) and the reason the rule is "match the layout", not
-   * "look nicer while waiting".
-   */
-  if (isPending) {
-    return (
-      <div className="lm-screen flex flex-col gap-8">
-        <h1 className="sr-only">Overview</h1>
-        <PageHeaderSkeleton />
-        <ListSkeleton rows={3} />
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-          <PanelSkeleton />
-          <PanelSkeleton />
-        </div>
+  return (
+    <Card className="flex flex-wrap items-center justify-between gap-3 p-5">
+      <div className="flex flex-col gap-1">
+        <h2 className="text-body-md font-medium text-ink">Join your teacher's class</h2>
+        <p className="text-body-sm text-ink-muted">
+          Enter the code your teacher gave you to see their announcements and join their roster.
+        </p>
       </div>
-    )
-  }
+      <Link to="/student/classes" className={buttonVariants({ variant: "secondary", size: "sm" })}>
+        Join a class
+      </Link>
+    </Card>
+  )
+}
 
-  if (isError) {
-    return (
-      <div className="lm-screen flex flex-col gap-8">
-        <h1 className="sr-only">Overview</h1>
-        <ErrorState
-          heading="Couldn't load your overview"
+export function Overview() {
+  const query = useOverview()
+
+  return (
+    <div className="lm-screen flex flex-col gap-8">
+      <JoinClassPrompt />
+      <QueryState
+        query={query}
+        srHeading="Overview"
+        /*
+         * P3.3: a skeleton matching this screen's real layout, replacing the
+         * single line of "Loading overview…" text that used to sit here.
+         *
+         * The line was not merely plain, it was the wrong *size*: it occupied
+         * one text row where the loaded screen renders a heading, a subjects
+         * ledger and a two-up panel row, so every load ended in the page
+         * jumping several hundred pixels as content arrived. That is the
+         * layout shift DESIGN.md §12 names (CLS < 0.1) and the reason the
+         * rule is "match the layout", not "look nicer while waiting".
+         */
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <ListSkeleton rows={3} />
+            <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+              <PanelSkeleton />
+              <PanelSkeleton />
+            </div>
+          </>
+        }
+        error={{
+          heading: "Couldn't load your overview",
           /* P6.2, same defect as `PaperResult`: this printed `error.message`,
              so the first screen a student sees after signing in greeted a
              dropped connection with "Failed to fetch". The two screens
              redesigned first (surfaces 1 and 2) are the two the failure-copy
              family never reached, because the module that answers this
              (`studentOutcome.ts`) was not written until surface 10. */
-          body={studentLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => refetch() }}
-        />
-      </div>
-    )
-  }
+          body: studentLoadFailureMessage,
+        }}
+      >
+        {({ studentName, subjects, weakGlobal, momentum }) => {
+          // `studentName` is the caller's real display name (falling back to
+          // email server-side), and can still be empty for an account with
+          // neither set — fall back to a plain greeting rather than showing
+          // nothing.
+          const greetingName = studentName || "there"
 
-  const { studentName, subjects, weakGlobal, momentum } = data
+          // This read "Good afternoon" unconditionally, at every hour of the
+          // day, so a student revising at eleven at night was greeted as
+          // though it were two in the afternoon. A small thing, but it is the
+          // first line on the first screen and it was the one sentence on the
+          // page that was plainly untrue.
+          const greeting = greetingFor(new Date().getHours())
 
-  // `studentName` is the caller's real display name (falling back to email
-  // server-side), and can still be empty for an account with neither set —
-  // fall back to a plain greeting rather than showing nothing.
-  const greetingName = studentName || "there"
-
-  // This read "Good afternoon" unconditionally, at every hour of the day, so
-  // a student revising at eleven at night was greeted as though it were two in
-  // the afternoon. A small thing, but it is the first line on the first screen
-  // and it was the one sentence on the page that was plainly untrue.
-  const greeting = greetingFor(new Date().getHours())
-
-  /*
-   * First run (P3.2). A student who just onboarded has no results at all yet.
-   *
-   * This used to be a single centred `EmptyState` — "Correct your first paper
-   * to see it here" and one button. That is a correct sentence and a poor
-   * first screen: it says what is missing rather than what happens next, and
-   * it gives no sense of how much setting-up is left. It is replaced by the
-   * composed getting-started view Phase 3.2 asks for.
-   *
-   * What the steps may and may not claim is constrained by what this screen
-   * can actually observe. `GET /student/overview` reports subjects derived
-   * from corrected papers, so `subjects.length === 0` proves exactly one
-   * thing: no paper has been marked yet. It does not tell us whether this
-   * student has taken a placement test, and no endpoint on this screen does.
-   *
-   * So no step here is marked `done`. Marking the placement step complete
-   * would be a guess, and marking it `now` alongside the paper step would give
-   * a first-run reader two competing primary actions. It is `later`: true,
-   * useful, and not a claim about what they have already done.
-   */
-  if (subjects.length === 0) {
-    return (
-      <div className="lm-screen flex flex-col gap-8">
-        <h1 className="text-display-lg text-ink">
-          {greeting}, {greetingName}.
-        </h1>
-        <GettingStarted
-          heading="Let's get your first paper marked"
-          body="Lemely works from your own past papers. Mark one and this page fills in on its own."
-          steps={[
-            {
-              title: "Correct your first paper",
-              body: "Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.",
-              status: "now",
-              to: "/student/correct",
-              actionLabel: "Correct a paper",
-            },
-            {
-              title: "See where you stand",
-              body: "Your predicted grade is measured against the real Cambridge grade boundaries for that paper, so it is a position rather than a percentage.",
-              status: "later",
-            },
-            {
-              title: "Get a study plan built from your own mistakes",
-              body: "Every dropped mark is traced back to a topic. Those topics become practice questions, flashcards and a plan for the week that rewrites itself as you improve.",
-              status: "later",
-            },
-          ]}
-          footnote="Nothing here is filled in with sample data. This page stays empty until it has your own work to show."
-        />
-      </div>
-    )
-  }
-
-  const paperCount = subjects.reduce((total, row) => total + row.papers, 0)
-
-  return (
-    <div className="lm-screen flex flex-col gap-8">
-      {/* §8.5's margin rule: one hairline at the content's inline start,
-          echoing the logo. It is the whole texture budget for this header —
-          the Operate lane runs texture low (§13), and the paper grain on the
-          portal shell is already carrying the notebook feel underneath. */}
-      <header className="margin-rule flex flex-col gap-1">
-        <h1 className="text-display-lg text-ink">
-          {greeting}, {greetingName}.
-        </h1>
-        {/* Both numbers are counted from the rows on this page, so the sentence
-            cannot drift from what is rendered below it. */}
-        <p className="text-body-md text-ink-muted">
-          {subjects.length} {subjects.length === 1 ? "subject" : "subjects"}, {paperCount}{" "}
-          {paperCount === 1 ? "paper" : "papers"} corrected so far.
-        </p>
-      </header>
-
-      <Card className="overflow-hidden">
-        <h2 className="px-6 pt-5 pb-4 text-display-md text-ink">Subjects this session</h2>
-        {subjects.map((row) => (
-          <SubjectLedgerRow key={row.code} row={row} />
-        ))}
-      </Card>
-
-      <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-        <MomentumPanel points={momentum.points} />
-
-        <ChartFrame
-          title="Weakest threads"
-          subtitle="Accuracy by topic, all subjects"
-          isEmpty={weakGlobal.length === 0}
-          emptyMarginalia="Nothing weak yet"
-          emptyBody="Topics appear here once a marked paper drops marks against them. An empty list means nothing has been traced to a topic so far, not that nothing needs work."
-        >
-          <div className="flex flex-col gap-3.5">
-            {weakGlobal.map((thread) => (
-              <div key={thread.topic} className="flex flex-col gap-1.5">
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="min-w-0 truncate text-body-md text-ink">{thread.topic}</span>
-                  <span className="shrink-0 text-data-sm text-ink-muted">{thread.acc}</span>
-                </div>
-                <Meter
-                  value={thread.width}
-                  label={`${thread.topic} accuracy: ${thread.acc}`}
-                  fillClassName={vizBg(thread.color)}
+          /*
+           * First run (P3.2). A student who just onboarded has no results at
+           * all yet.
+           *
+           * This used to be a single centred `EmptyState` — "Correct your
+           * first paper to see it here" and one button. That is a correct
+           * sentence and a poor first screen: it says what is missing rather
+           * than what happens next, and it gives no sense of how much
+           * setting-up is left. It is replaced by the composed
+           * getting-started view Phase 3.2 asks for.
+           *
+           * What the steps may and may not claim is constrained by what this
+           * screen can actually observe. `GET /student/overview` reports
+           * subjects derived from corrected papers, so `subjects.length ===
+           * 0` proves exactly one thing: no paper has been marked yet. It
+           * does not tell us whether this student has taken a placement
+           * test, and no endpoint on this screen does.
+           *
+           * So no step here is marked `done`. Marking the placement step
+           * complete would be a guess, and marking it `now` alongside the
+           * paper step would give a first-run reader two competing primary
+           * actions. It is `later`: true, useful, and not a claim about what
+           * they have already done.
+           */
+          if (subjects.length === 0) {
+            return (
+              <>
+                <h1 className="text-display-lg text-ink">
+                  {greeting}, {greetingName}.
+                </h1>
+                <GettingStarted
+                  heading="Let's get your first paper marked"
+                  body="Lemely works from your own past papers. Mark one and this page fills in on its own."
+                  steps={[
+                    {
+                      title: "Correct your first paper",
+                      body: "Photograph or upload a paper you have already sat. Lemely finds the session and variant, pulls the official mark scheme, and marks it question by question.",
+                      status: "now",
+                      to: "/student/correct",
+                      actionLabel: "Correct a paper",
+                    },
+                    {
+                      title: "See where you stand",
+                      body: "Your predicted grade is measured against the real Cambridge grade boundaries for that paper, so it is a position rather than a percentage.",
+                      status: "later",
+                    },
+                    {
+                      title: "Get a study plan built from your own mistakes",
+                      body: "Every dropped mark is traced back to a topic. Those topics become practice questions, flashcards and a plan for the week that rewrites itself as you improve.",
+                      status: "later",
+                    },
+                  ]}
+                  footnote="Nothing here is filled in with sample data. This page stays empty until it has your own work to show."
                 />
+              </>
+            )
+          }
+
+          const paperCount = subjects.reduce((total, row) => total + row.papers, 0)
+
+          return (
+            <>
+              {/* §8.5's margin rule: one hairline at the content's inline
+                  start, echoing the logo. It is the whole texture budget for
+                  this header — the Operate lane runs texture low (§13), and
+                  the paper grain on the portal shell is already carrying the
+                  notebook feel underneath. */}
+              <header className="margin-rule flex flex-col gap-1">
+                <h1 className="text-display-lg text-ink">
+                  {greeting}, {greetingName}.
+                </h1>
+                {/* Both numbers are counted from the rows on this page, so the
+                    sentence cannot drift from what is rendered below it. */}
+                <p className="text-body-md text-ink-muted">
+                  {subjects.length} {subjects.length === 1 ? "subject" : "subjects"}, {paperCount}{" "}
+                  {paperCount === 1 ? "paper" : "papers"} corrected so far.
+                </p>
+              </header>
+
+              <Card className="overflow-hidden">
+                <h2 className="px-6 pt-5 pb-4 text-display-md text-ink">Subjects this session</h2>
+                {subjects.map((row) => (
+                  <SubjectLedgerRow key={row.code} row={row} />
+                ))}
+              </Card>
+
+              <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
+                <MomentumPanel points={momentum.points} />
+
+                <ChartFrame
+                  title="Weakest threads"
+                  subtitle="Accuracy by topic, all subjects"
+                  isEmpty={weakGlobal.length === 0}
+                  emptyMarginalia="Nothing weak yet"
+                  emptyBody="Topics appear here once a marked paper drops marks against them. An empty list means nothing has been traced to a topic so far, not that nothing needs work."
+                >
+                  <div className="flex flex-col gap-3.5">
+                    {weakGlobal.map((thread) => (
+                      <div key={thread.topic} className="flex flex-col gap-1.5">
+                        <div className="flex items-baseline justify-between gap-3">
+                          <span className="min-w-0 truncate text-body-md text-ink">{thread.topic}</span>
+                          <span className="shrink-0 text-data-sm text-ink-muted">{thread.acc}</span>
+                        </div>
+                        <Meter
+                          value={thread.width}
+                          label={`${thread.topic} accuracy: ${thread.acc}`}
+                          fillClassName={vizBg(thread.color)}
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </ChartFrame>
               </div>
-            ))}
-          </div>
-        </ChartFrame>
-      </div>
+            </>
+          )
+        }}
+      </QueryState>
     </div>
   )
 }

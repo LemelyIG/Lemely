@@ -3,8 +3,9 @@ import { Link } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Eyebrow, Meter } from "@/components/ui/primitives"
 import { Badge } from "@/components/ui/badge"
-import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { EmptyState } from "@/components/ui/state-views"
 import { CardGridSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
+import { QueryState } from "@/components/ui/query-state"
 import { adminLoadFailureMessage } from "@/lib/adminOutcome"
 import { useSchoolOverview } from "@/lib/hooks/useSchoolApi"
 import type { SchoolOverview } from "@/lib/schoolTypes"
@@ -38,7 +39,7 @@ import { cn } from "@/lib/utils"
  * commercial fact that is real: the quota this school holds.
  */
 export function SchoolDashboard() {
-  const { data, isPending, isError, error } = useSchoolOverview()
+  const query = useSchoolOverview()
 
   return (
     <div className="flex flex-col gap-6">
@@ -50,26 +51,26 @@ export function SchoolDashboard() {
         </p>
       </header>
 
-      {isPending ? (
-        <>
-          <PageHeaderSkeleton />
-          <CardGridSkeleton count={4} />
-        </>
-      ) : isError ? (
-        <ErrorState
-          heading="We couldn't load your school"
-          body={adminLoadFailureMessage(error)}
-          action={{ label: "Try again", onClick: () => window.location.reload() }}
-        />
-      ) : data.schools.length === 0 ? (
-        <EmptyState
-          marginalia="nothing to administer yet"
-          heading="No school is assigned to you"
-          body="This account holds no school membership, so there is nothing to show. Ask whoever set the account up to add you to your school."
-        />
-      ) : (
-        data.schools.map((school) => <SchoolPanel key={school.schoolId} school={school} />)
-      )}
+      <QueryState
+        query={query}
+        skeleton={
+          <>
+            <PageHeaderSkeleton />
+            <CardGridSkeleton count={4} />
+          </>
+        }
+        error={{ heading: "We couldn't load your school", body: adminLoadFailureMessage }}
+        isEmpty={(data) => data.schools.length === 0}
+        empty={
+          <EmptyState
+            marginalia="nothing to administer yet"
+            heading="No school is assigned to you"
+            body="This account holds no school membership, so there is nothing to show. Ask whoever set the account up to add you to your school."
+          />
+        }
+      >
+        {(data) => data.schools.map((school) => <SchoolPanel key={school.schoolId} school={school} />)}
+      </QueryState>
     </div>
   )
 }

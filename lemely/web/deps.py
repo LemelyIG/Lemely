@@ -10,6 +10,7 @@ wrappers make these injectable into routers and overridable in tests via
 from __future__ import annotations
 
 import random
+import time
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -19,7 +20,7 @@ from typing import TYPE_CHECKING, Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from lemely.auth.email import MockEmailProvider
+from lemely.auth.email import EmailProvider, MockEmailProvider, ResendEmailProvider
 from lemely.auth.gotrue import HttpGoTrueBackend
 from lemely.auth.mirror import DbUserMirror, UserMirror
 from lemely.auth.service import AuthService
@@ -30,6 +31,7 @@ from lemely.db.announcement_repo import AnnouncementService
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
+from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_repo import ClassService
 from lemely.db.cooldown_repo import DbCooldownStore
 from lemely.db.device_repo import DeviceRegistry
@@ -60,16 +62,19 @@ from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
+from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.storage import StorageBackend
 from lemely.io.storage_gcs import GcsStorageBackend
 from lemely.io.storage_local import LocalFileStorageBackend
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
+from lemely.web.ratelimit import SlidingWindowLimiter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -94,6 +99,22 @@ def get_history_store() -> HistoryStoreProtocol:
     in-tmp JSON store double without touching Postgres.
     """
     return DbHistoryStore(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_catalogue_service() -> CatalogueService:
+    """The syllabus catalogue reader, bound to the process sessionmaker."""
+    return CatalogueService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_threshold_service() -> ThresholdService:
+    """The grade-threshold reader, bound to the process sessionmaker.
+
+    Derives `/api/reference`'s `targetGradeVocabularies` from the ingested
+    `option_thresholds` rows (see `ThresholdService.target_vocabularies`).
+    """
+    return ThresholdService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
@@ -150,12 +171,19 @@ def get_storage_backend() -> StorageBackend:
     """Return the process-wide :class:`StorageBackend` singleton.
 
     Selected on ``settings.storage.backend`` (DS7/DS12): ``gcs`` in staging and
-    production, ``local`` everywhere else. Tests override this with the
-    in-memory ``FakeStorageBackend`` (``tests/storage_fakes.py``).
+    production, ``local`` everywhere else. There is no Supabase backend —
+    DS7 removed it, and #220's ``provider = "supabase"`` path came off with it.
+    Tests override this with the in-memory ``FakeStorageBackend``
+    (``tests/storage_fakes.py``).
+
+    Neither backend touches the network or resolves a credential in its
+    constructor, so this getter stays safe to call on a machine with no
+    Google Application Default Credentials — the failure, if any, surfaces at
+    the first storage operation rather than at import or startup.
     """
     settings = get_settings()
     if settings.storage.backend == "gcs":
-        return GcsStorageBackend()
+        return GcsStorageBackend(project=settings.storage.gcs_project)
     return LocalFileStorageBackend(settings.paths.output_dir / "storage")
 
 
@@ -263,9 +291,28 @@ def get_auth_service() -> AuthService:
         otp_store=otp_store,
         settings=settings,
         device_registry=get_device_registry(),
-        email=MockEmailProvider(),
+        email=_build_email_provider(settings),
         tokens=get_auth_token_service(),
     )
+
+
+def _build_email_provider(settings: Settings) -> EmailProvider:
+    """Return the real email provider when one is configured, else the mock.
+
+    The choice is made by the *presence of a credential*, never by an
+    environment name — the same rule ``lemely.web.push`` applies to VAPID keys.
+    A machine with no ``[email] api_key`` (every developer checkout, every CI
+    run) gets :class:`~lemely.auth.email.MockEmailProvider`, which logs the link
+    and reports ``delivers_out_of_band = False``, so the auth routes keep
+    surfacing the dev link and signup still completes end to end offline.
+
+    Configuring a key flips both halves of that at once: mail is really sent,
+    and ``delivers_out_of_band = True`` stops the routes returning the live link
+    through the API. That coupling is the point — the two must never disagree.
+    """
+    if settings.email.api_key is None:
+        return MockEmailProvider()
+    return ResendEmailProvider(settings.email)
 
 
 class AuthServiceStudentCreator:
@@ -321,10 +368,11 @@ def get_platform_admin_service() -> PlatformAdminService:
 def get_boundary_store() -> GradeBoundaryStore:
     """Return the process-wide :class:`GradeBoundaryStore` singleton.
 
-    Cached because construction parses the bundled JSON, and X-03 reads only its
-    two key counts. Other routers construct their own inline (``student.py``,
-    ``parent.py``) because they resolve boundaries per request against
-    per-request metadata; those call sites are deliberately left alone.
+    Cached because construction queries every row of ``component_thresholds``,
+    and X-03 reads only its two key counts. Other routers construct their own
+    inline (``student.py``, ``parent.py``) because they resolve boundaries per
+    request against per-request metadata; those call sites are deliberately
+    left alone.
     """
     return GradeBoundaryStore()
 
@@ -923,10 +971,79 @@ def get_invite_service() -> InviteService:
     return InviteService(get_sessionmaker(get_settings()), get_class_service())
 
 
+@dataclass(frozen=True, slots=True)
+class ClientErrorLimiters:
+    """The two :class:`SlidingWindowLimiter` instances guarding ``POST /api/client-errors``.
+
+    That route is anonymous (see its own module docstring for why): ``per_client``
+    throttles a single caller, keyed by IP, and ``global_`` caps the endpoint's
+    aggregate volume regardless of caller.
+
+    **``per_client`` only binds a caller that arrived through the Cloudflare
+    Worker.** ``docs/ci-cd.md`` ("Known gaps this setup doesn't close")
+    records, as a known live gap, that the Cloud Run service behind this app
+    is reachable directly (``--allow-unauthenticated``), bypassing the
+    Worker that would otherwise stamp a trustworthy ``X-Forwarded-For``. A
+    caller hitting the ``*.run.app`` URL directly can send a fresh,
+    unverified ``X-Forwarded-For`` on every request and get a fresh
+    ``per_client`` bucket each time — for that caller, ``global_`` is the
+    only thing that binds anything: at most 300 accepted reports per minute,
+    each at most about 19 000 characters. Making ``per_client`` honest against a
+    direct caller needs the shared-secret header ``docs/ci-cd.md`` proposes
+    there (the Worker stamps it, a small FastAPI middleware checks it) —
+    infrastructure work out of scope for this PR. See
+    ``lemely.web.routers.client_errors``'s own module docstring for the full
+    reasoning.
+    """
+
+    per_client: SlidingWindowLimiter
+    global_: SlidingWindowLimiter
+
+
+# Client-error reports (PR 1 chunk C): 10 per caller per minute, 300 across
+# every caller per minute. Both numbers are a first cut, sized to comfortably
+# absorb a genuine crash storm (one bad deploy tripping the same
+# `ErrorBoundary` for every visitor at once) while still bounding the log
+# volume — and Cloud Logging bill — an anonymous, unauthenticated caller can
+# generate. See `lemely.web.routers.client_errors`'s module docstring for the
+# full reasoning.
+_CLIENT_ERROR_PER_CLIENT_LIMIT = 10
+_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS = 60.0
+_CLIENT_ERROR_GLOBAL_LIMIT = 300
+_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS = 60.0
+
+
+@lru_cache(maxsize=1)
+def get_client_error_limiters() -> ClientErrorLimiters:
+    """Return the process-wide rate limiters guarding ``POST /api/client-errors``.
+
+    Wired with the real monotonic clock (``time.monotonic`` — immune to a
+    system clock adjustment, and fine here since nothing compares this clock's
+    value across a process restart, unlike the cooldown stores' wall-clock
+    ``datetime.now(UTC)``). Tests override this dependency with limiters built
+    on an injected fake clock, so no test sleeps out a 60-second window.
+    """
+    return ClientErrorLimiters(
+        per_client=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_PER_CLIENT_LIMIT,
+            window_seconds=_CLIENT_ERROR_PER_CLIENT_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+        global_=SlidingWindowLimiter(
+            limit=_CLIENT_ERROR_GLOBAL_LIMIT,
+            window_seconds=_CLIENT_ERROR_GLOBAL_WINDOW_SECONDS,
+            clock=time.monotonic,
+        ),
+    )
+
+
 def reset_singletons() -> None:
     """Clear all cached singletons. Intended for tests that swap settings."""
     get_settings.cache_clear()
+    get_boundary_store.cache_clear()
     get_history_store.cache_clear()
+    get_catalogue_service.cache_clear()
+    get_threshold_service.cache_clear()
     get_gemini_client.cache_clear()
     get_attempt_repo.cache_clear()
     get_student_upload_repo.cache_clear()
@@ -970,3 +1087,6 @@ def reset_singletons() -> None:
     get_auth_token_service.cache_clear()
     get_signup_and_reset_cooldown_store.cache_clear()
     get_resend_verification_cooldown_store.cache_clear()
+    # PR 1 chunk C: the client-error rate limiters — same reasoning as the two
+    # comments above, the promise is *all* cached singletons.
+    get_client_error_limiters.cache_clear()

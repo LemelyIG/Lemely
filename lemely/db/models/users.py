@@ -73,6 +73,13 @@ class User(TimestampMixin, Base):
     form at all) has no such timestamp and inventing one would be a lie about a
     consent nobody gave."""
 
+    avatar_path: Mapped[str | None] = mapped_column(sa.String, nullable=True)
+    """Migration ``0028``. Object-storage path of the caller's profile picture
+    (``avatars/{user_id}/{uuid}.{ext}``), or ``None`` for no avatar set. Never a
+    URL — a signed URL is derived from this path per-request
+    (:func:`~lemely.web.routers.me._avatar_url_for`), so the bucket, backend, and
+    signed-URL TTL can all change without touching stored rows."""
+
     locale: Mapped[str] = mapped_column(sa.String, nullable=False, server_default=sa.literal("en"))
     friend_code: Mapped[str | None] = mapped_column(sa.String(8), nullable=True, unique=True)
     """Migration ``0015`` (P5.4 chunk A). ``users`` has no ``username`` column,
