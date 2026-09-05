@@ -6,6 +6,7 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
 
@@ -292,3 +293,48 @@ def test_health_reports_storage_backend_without_touching_it(
 
     assert body["storage"] == {"backend": "gcs", "bucket": "proj-uploads-staging"}
     reset_singletons()
+
+
+def test_stream_ends_when_the_worker_dies_without_a_sentinel() -> None:
+    """The liveness guard: a run that never publishes its sentinel must not hang.
+
+    Scoping made this reachable. `EventBus.publish_done` delivers only to
+    queues whose scope matches the *current* run id, so a sentinel published
+    from the wrong context — or never published at all, because `run` died
+    before its `finally` — leaves this scoped queue waiting on something that
+    will never arrive. The drain loop treats an empty poll as "keep waiting",
+    so without the guard it spins for the life of the connection, pinning a
+    Cloud Run instance that this plan is about to make one of only three.
+
+    Bounded by a daemon thread and an explicit join rather than left to run:
+    if the guard regresses, this fails in ten seconds instead of hanging the
+    suite, and the leaked thread cannot block interpreter exit.
+    """
+    app = FastAPI()
+
+    @app.get("/orphan")
+    async def stream() -> StreamingResponse:
+        def run() -> None:
+            bus.publish(EventType.WARNING, message="orphan-event")
+            # Deliberately no `bus.publish_done()` — the failure under test.
+
+        return StreamingResponse(
+            bus_event_stream(run, poll_seconds=0.02, run_id="orphan-run"),
+            media_type="text/event-stream",
+        )
+
+    client = TestClient(app)
+    body: list[str] = []
+    reader = threading.Thread(target=lambda: body.append(client.get("/orphan").text), daemon=True)
+    reader.start()
+    reader.join(timeout=10.0)
+
+    assert not reader.is_alive(), (
+        "the stream never ended: bus_event_stream kept polling after its worker exited "
+        "without publishing a sentinel, which is exactly the hang the liveness guard exists "
+        "to prevent"
+    )
+    # The event published before the worker exited is still delivered, not
+    # dropped by the shortcut out of the loop.
+    assert '"message": "orphan-event"' in body[0]
+    assert body[0].count("[DONE]") == 1
