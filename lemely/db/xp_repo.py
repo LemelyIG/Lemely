@@ -35,9 +35,11 @@ defaulting to aware UTC now).
    *that* specific constraint is swallowed — :func:`_is_dedupe_violation`
    inspects the driver's ``constraint_name`` so a genuine foreign-key
    violation (e.g. an unknown ``subject_code``) still raises.
-5. **Streaks resolve lazily, on both read and award** (D5.1 §5). There is no
-   scheduler in this build; :meth:`XpService.streak` and the streak
-   resolution inside :meth:`XpService.award` both run the same
+5. **Streaks resolve lazily, on both read and award** (D5.1 §5). Nothing
+   resolves them on a timer — the notification sweeper
+   (:mod:`lemely.web.scheduled_notifications`) reads ``streaks`` rows to
+   decide who to warn but never writes them; :meth:`XpService.streak` and
+   the streak resolution inside :meth:`XpService.award` both run the same
    ``_resolve_gap`` catch-up logic from whatever ``last_active_on`` was
    persisted last, however long ago that was, and persist the result so a
    later call never re-consumes the same freeze twice.

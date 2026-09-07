@@ -26,6 +26,7 @@ calls it for a post that is due the moment it is written.
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from datetime import date, timedelta
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -33,6 +34,7 @@ import structlog
 from sqlalchemy import select
 
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
+from lemely.db.models.engagement import Streak
 from lemely.db.models.enums import NotificationType
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
@@ -40,9 +42,9 @@ from lemely.web.notify import notify_safely
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
-    from datetime import date, datetime
+    from datetime import datetime
 
-    from sqlalchemy.orm import Session
+    from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql import ColumnElement
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
@@ -229,12 +231,121 @@ def publish_due_announcements(
         return len(claim.rows)
 
 
+# ---------------------------------------------------------------------------
+# streak_warning (§2).
+# ---------------------------------------------------------------------------
+
+#: Spec §2's copy. ``Profile.tsx`` states the streak is "offered, never used as
+#: leverage — no countdown to losing it, no red, no 'don't break it now!'". A
+#: 19:00 warning is the exact shape that sentence refuses, so the constraint
+#: moved into the wording: each body states the situation once, no exclamation,
+#: no countdown, no second sentence stacking urgency on the first.
+STREAK_WARNING_TITLE = "Nothing logged today"
+
+
+def streak_warning_body(length: int, *, freeze_available: bool) -> str:
+    """The one sentence a streak warning carries. See :data:`STREAK_WARNING_TITLE`."""
+    if freeze_available:
+        return f"A freeze will cover today. Your {length}-day streak stays."
+    return f"Your {length}-day streak ends if today stays empty."
+
+
+def streak_tonight(row: Streak, today: date) -> tuple[int, bool] | None:
+    """``(length, freeze_available)`` for a streak still alive tonight, else ``None``.
+
+    Streaks resolve **lazily** (D5.1 §5): a row nobody has read in days still
+    carries its old ``current_length``, and
+    :meth:`~lemely.db.xp_repo.XpService._resolve_gap` is what would zero it on
+    the next read. This applies that method's arithmetic without persisting
+    it — the days missed between ``last_active_on`` and yesterday are covered
+    by held freezes or they are not. A streak the next read would reset gets
+    no warning, because "your 5-day streak ends if today stays empty" would
+    name a streak that has already ended. ``freeze_available`` is whether a
+    freeze remains *after* covering those days: the one that would cover
+    today, which is what the body promises.
+    """
+    if row.current_length < 1 or row.last_active_on is None:
+        return None
+    yesterday = today - timedelta(days=1)
+    missed = max(0, (yesterday - row.last_active_on).days)
+    if missed > row.freezes_available:
+        return None
+    return row.current_length, row.freezes_available - missed >= 1
+
+
+def warn_streaks(
+    sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: NotificationTransport,
+    *,
+    now: datetime,
+    hour: int,
+    memo: ZoneDateMemo,
+) -> int:
+    """Send ``streak_warning`` to every student whose day is past ``hour`` with nothing logged.
+
+    Per due zone (§4): candidates are ``streaks`` rows in that zone's bucket
+    with ``current_length >= 1`` and ``last_active_on < today``, where
+    ``today`` is that zone's own civil date. Streaks belong to students by
+    construction — XP is only ever awarded to one — so no role filter is
+    needed. The key is that date, one per student per their own day; the
+    unique index makes every later pass that day a ``duplicate``. Returns how
+    many rows were created.
+
+    Fires even when a freeze would cover the day, and says so — the kinder
+    message is the one that tells a student a freeze is being spent (§2).
+    """
+    created = 0
+    with sessionmaker() as session:
+        for zone_name, today in due_zones(zones_in_use(session), now=now, hour=hour):
+            if memo.is_done(zone_name, today):
+                continue
+            candidates = session.scalars(
+                select(Streak)
+                .join(User, User.id == Streak.user_id)
+                .where(
+                    zone_bucket(zone_name),
+                    Streak.current_length >= 1,
+                    Streak.last_active_on.is_not(None),
+                    Streak.last_active_on < today,
+                )
+            ).all()
+            for row in candidates:
+                tonight = streak_tonight(row, today)
+                if tonight is None:
+                    continue
+                length, freeze_available = tonight
+                result = notify_safely(
+                    notifications,
+                    transport,
+                    user_id=row.user_id,
+                    type=NotificationType.streak_warning,
+                    title=STREAK_WARNING_TITLE,
+                    body=streak_warning_body(length, freeze_available=freeze_available),
+                    payload={
+                        "streakLength": str(length),
+                        "freezeAvailable": "true" if freeze_available else "false",
+                    },
+                    dedupe_key=today.isoformat(),
+                    seam="streak_warning",
+                )
+                created += 1 if result.created else 0
+            memo.mark_done(zone_name, today)
+    if created:
+        log.info("streak_warnings_sent", count=created)
+    return created
+
+
 __all__ = [
+    "STREAK_WARNING_TITLE",
     "ZoneDateMemo",
     "deliver_announcements_now",
     "due_zones",
     "notify_announcement_audience",
     "publish_due_announcements",
+    "streak_tonight",
+    "streak_warning_body",
+    "warn_streaks",
     "zone_bucket",
     "zones_in_use",
 ]
