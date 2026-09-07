@@ -115,6 +115,24 @@ signed_url_ttl_seconds = 3600
 avatar_max_bytes = 5242880  # 5 MiB
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
 
+[push]
+# Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):
+# the transport reports itself unavailable, the notification inbox keeps
+# working, and every developer machine and CI run is in that state.
+#
+# Generate a pair with `lemely push-keygen` (prints, writes nothing). The
+# public key is handed to every browser and is not a secret; the private key
+# is. Deployed, both arrive from GitHub Actions (a repository variable and a
+# repository secret) as LEMELY_PUSH__VAPID_PUBLIC_KEY / __VAPID_PRIVATE_KEY.
+# ROTATING THE PAIR INVALIDATES EVERY STORED SUBSCRIPTION - the public key is
+# baked into each one, so every browser must re-subscribe. See
+# docs/push-notifications.md before changing it.
+# vapid_public_key = "BASE64URL-65-BYTE-POINT"
+# vapid_private_key = "BASE64URL-32-BYTE-SCALAR"
+# vapid_subject = "mailto:support@lemelyig.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0
+
 [auth]
 # How long a minted access token is accepted for. Short on purpose: it is a
 # bearer credential with no revocation of its own, so this bounds the window

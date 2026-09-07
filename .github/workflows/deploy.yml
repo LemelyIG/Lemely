@@ -301,6 +301,15 @@ jobs:
           # (Settings > Environments > staging|production) only to point an
           # environment at differently-named buckets. `scripts/gcs_bootstrap.sh`
           # derives the same defaults, so the pair agree by construction.
+          #
+          # Web push (VAPID). The public key is handed to every browser and is
+          # a repository VARIABLE; the private key is a repository SECRET; the
+          # subject is a literal contact. An unset secret renders as the empty
+          # string, which `_blank_to_none` maps to None, so this is safe to
+          # merge before the pair is registered: the deploy succeeds and push
+          # simply stays unavailable, exactly like LEMELY_EMAIL__API_KEY
+          # above. Generate the pair with `lemely push-keygen`; rotating it
+          # invalidates every stored subscription (docs/push-notifications.md).
           env_vars: |-
             LEMELY_RUN_MIGRATIONS=0
             LEMELY_STORAGE__PROVIDER=gcs
@@ -316,6 +325,9 @@ jobs:
             GEMINI_API_KEY=${{ secrets.GEMINI_API_KEY }}
             LEMELY_EMAIL__API_KEY=${{ secrets.RESEND_API_KEY }}
             LEMELY_EMAIL__APP_BASE_URL=https://${{ needs.resolve-env.outputs.environment == 'production' && 'lemelyig.com' || 'staging.lemelyig.com' }}
+            LEMELY_PUSH__VAPID_PUBLIC_KEY=${{ vars.VAPID_PUBLIC_KEY }}
+            LEMELY_PUSH__VAPID_PRIVATE_KEY=${{ secrets.VAPID_PRIVATE_KEY }}
+            LEMELY_PUSH__VAPID_SUBJECT=mailto:support@lemelyig.com
 
       # A rollout that fails the startup probe reports only "the user-provided
       # container failed to start and listen on the port" plus a Cloud Console
