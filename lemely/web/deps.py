@@ -71,6 +71,7 @@ from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.scheduled_notifications import Sweeper
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -675,6 +676,27 @@ def get_push_transport() -> NotificationTransport:
 
 
 @lru_cache(maxsize=1)
+def get_sweeper() -> Sweeper:
+    """Return the process-wide notification :class:`Sweeper` (push-delivery spec §4).
+
+    Composed from the same singletons the routers use — announcements,
+    notifications, the push transport, the session factory — so a scheduled
+    announcement is delivered through exactly the code an immediate one is.
+    Built even when ``settings.notifications.sweeper_enabled`` is false;
+    ``create_app``'s lifespan decides whether to *run* it. Constructing it
+    opens no connection (the engine is lazy).
+    """
+    settings = get_settings()
+    return Sweeper(
+        sessionmaker=get_sessionmaker(settings),
+        announcements=get_announcement_service(),
+        notifications=get_notification_service(),
+        transport=get_push_transport(),
+        settings=settings.notifications,
+    )
+
+
+@lru_cache(maxsize=1)
 def get_student_profile_service() -> StudentProfileService:
     """Return the process-wide :class:`StudentProfileService` singleton (P4.3 chunk B).
 
@@ -1040,6 +1062,7 @@ def reset_singletons() -> None:
     get_exam_calendar_service.cache_clear()
     get_notification_service.cache_clear()
     get_push_transport.cache_clear()
+    get_sweeper.cache_clear()
     # The three admin-surface singletons. `get_platform_admin_service` and
     # `get_school_admin_service` were absent here before issue #10 — an
     # omission, not a policy: this function's docstring promises to clear

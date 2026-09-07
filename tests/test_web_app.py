@@ -6,7 +6,9 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from collections.abc import Iterator
 
 import pytest
 from fastapi import FastAPI
@@ -325,3 +327,79 @@ def test_question_to_dto_surfaces_topic() -> None:
         )
     )
     assert untopic.topic is None
+
+
+# -- The notification sweeper's lifespan (push-delivery spec §4) ---------------
+
+
+@pytest.fixture
+def _fresh_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Clear the settings singleton around a test that changes the env."""
+    from lemely.web import deps
+
+    deps.reset_singletons()
+    try:
+        yield
+    finally:
+        deps.reset_singletons()
+
+
+def _capture_sweeper(monkeypatch: pytest.MonkeyPatch) -> dict[str, object]:
+    """Stand in for ``run_sweeper`` and record how the lifespan drove it."""
+    from lemely.web import app as app_module
+
+    seen: dict[str, object] = {"started": 0, "poll_seconds": None, "stopped": False}
+
+    async def fake_run_sweeper(
+        sweeper: object, *, poll_seconds: float, stop: asyncio.Event
+    ) -> None:
+        seen["started"] = int(seen["started"]) + 1  # type: ignore[call-overload]
+        seen["poll_seconds"] = poll_seconds
+        await stop.wait()
+        seen["stopped"] = True
+
+    monkeypatch.setattr(app_module, "run_sweeper", fake_run_sweeper)
+    return seen
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_the_sweeper_is_not_started_when_disabled(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The suite-wide default (``tests/conftest.py``): no background task races a test."""
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    seen = _capture_sweeper(monkeypatch)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+
+    assert seen["started"] == 0
+
+
+@pytest.mark.usefixtures("_fresh_settings")
+def test_the_sweeper_is_started_on_startup_and_stopped_on_shutdown(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "1")
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEP_POLL_SECONDS", "7")
+    seen = _capture_sweeper(monkeypatch)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/health").status_code == 200
+        assert seen["started"] == 1
+        assert seen["poll_seconds"] == 7
+        assert seen["stopped"] is False
+
+    assert seen["stopped"] is True
+
+
+def test_a_client_without_the_context_manager_never_starts_a_task(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every pre-existing test builds ``TestClient(create_app())`` without a
+    ``with``; Starlette runs the lifespan only inside one, so those tests are
+    unaffected whatever the setting says."""
+    monkeypatch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "1")
+    seen = _capture_sweeper(monkeypatch)
+
+    TestClient(create_app()).get("/api/health")
+
+    assert seen["started"] == 0

@@ -824,11 +824,12 @@ def _alert_teachers_and_parents(
 
     **Rule 3 (≥14 days inactive) cannot fire at this seam and that is not an
     oversight.** A student who has just uploaded a paper is, by definition,
-    active. Rule 3 is time-triggered and joins ``streak_warning`` and
-    ``study_plan_reminder`` in D5.9 §5's no-scheduler limitation — which means
-    the reason most likely to matter for a disengaging student is the one this
-    build cannot deliver. Stated in D5.11 §2 and carried to the Phase-5
-    limitations rather than left to be discovered.
+    active. Rule 3 is time-triggered and is the one notification the sweeper
+    in :mod:`lemely.web.scheduled_notifications` does **not** run:
+    ``streak_warning`` and ``study_plan_reminder`` — which this docstring
+    used to list beside it under D5.9 §5's no-scheduler limitation — now do
+    fire on a timer, and rule 3 alone is still carried as a limitation rather
+    than delivered.
 
     The dedupe key is ``(student, reason, the student's own civil date)``
     (D5.11 §3, per-user since the push-delivery spec §3): at-risk is a state,

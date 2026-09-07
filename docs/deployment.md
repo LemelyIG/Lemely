@@ -129,6 +129,7 @@ field are ignored by pydantic-settings, so a typo'd *env var* is silent — chec
 | `GEMINI_API_KEY` | `None` | To enable marking/extraction at all. Absent is a *documented* state — `/api/health` reports `apiKeyConfigured: false` rather than crashing (`lemely/web/routers/meta.py:17-19`). |
 | `LEMELY_WEB_HOST` / `LEMELY_WEB_PORT` | `0.0.0.0` / `8000` **in the image** | Already correct in the Dockerfile. The *application* default is `127.0.0.1`, right for a bare-metal dev run and unreachable from outside a container — the image overrides it (`Dockerfile:51-52`). |
 | `LEMELY_PUSH__VAPID_PUBLIC_KEY` / `__VAPID_PRIVATE_KEY` / `__VAPID_SUBJECT` | `None` | To enable web push. All three absent is a **supported** state (D5.9 §4): the transport reports itself unavailable and the notification inbox keeps working. |
+| `LEMELY_NOTIFICATIONS__SWEEPER_ENABLED` | `true` | Set `false` to run an API instance that never sweeps (a second replica behind a load balancer, or a one-off maintenance container). The test suite sets it. See §5.2 for the Cloud Run caveat; `__SWEEP_POLL_SECONDS` (60), `__STREAK_WARNING_HOUR` (19) and `__STUDY_PLAN_REMINDER_HOUR` (8) are its companions. |
 | `LEMELY_EMAIL__APP_BASE_URL` | `https://lemelyig.com` | The origin emailed verification/reset links are built on. Links are minted as frontend routes (`/verify-email/<token>`), so without an origin a mail client resolves them to `http:///…` — unreachable. `deploy.yml` sets it per environment (`staging.lemelyig.com` vs `lemelyig.com`). Rejected at startup unless it has both a scheme and a host. |
 | `LEMELY_EMAIL__API_KEY` | `None` | To actually send verification / password-reset mail (Resend). Absent is a **supported** state: `lemely.web.deps` wires the offline mock, which logs the link and lets the auth routes return it, so sign-up works with no mail service. Setting it flips both halves — mail sends *and* the routes stop returning the live link. Optional companions: `__FROM_ADDRESS` (`noreply@lemelyig.com`), `__FROM_NAME` (`Lemely`), `__REPLY_TO`. On the deployed pipeline this is not set by hand: it is the `RESEND_API_KEY` Actions environment secret, which `deploy.yml` passes through as this variable. See `docs/email-delivery.md` for the Cloudflare DNS records and `docs/ci-cd.md` for the secret. |
 | `LEMELY_STORAGE__PROVIDER` | `gcs` | Set to `supabase` to store uploads and avatars in Supabase Storage instead. The GCS default authenticates via Application Default Credentials (a service account attached to the Cloud Run/GCE/GKE workload) — no key is configured through this app. |
@@ -401,13 +402,29 @@ Neither is hard to fix (Postgres or Redis for both), but **neither is fixed**. U
 they are: **one backend instance.** The nginx/web image has no such constraint and
 scales freely.
 
-### 5.2 There is no scheduler
+### 5.2 The notification sweeper runs inside the API process, and Cloud Run can scale it to nothing
 
-`streak_warning` and `study_plan_reminder` are service methods **nothing invokes on a
-timer** (D5.9 §5). At-risk rule 3 (≥14 days inactive) cannot fire at its seam — the
-alert fires on correction, and a student who just uploaded is by definition active.
-Deploying does not create a scheduler. If you need these, add a cron/worker that
-calls them; do not report them as delivered notification types.
+`create_app` starts one asyncio task (`lemely/web/app.py`, `_lifespan`) that every
+`[notifications] sweep_poll_seconds` (60) runs three jobs from
+`lemely/web/scheduled_notifications.py`: it publishes announcements whose `publish_at`
+has passed, sends `streak_warning` at `streak_warning_hour` (19:00) and
+`study_plan_reminder` at `study_plan_reminder_hour` (08:00), each in the recipient's
+**own** time zone (`users.timezone`). There is no separate worker to deploy, and no
+cron to add. Two replicas are safe — the announcement claim is `FOR UPDATE SKIP LOCKED`
+and every notification is deduped by the unique index on `notifications` — but §5.1
+still limits you to one for other reasons.
+
+**Timely delivery needs `--min-instances=1`, and `deploy.yml` sets `--min-instances=0`.**
+At zero instances the container is not running and no sweep happens; the first request
+after scale-up sweeps immediately and delivers late. For an announcement that is
+correct-but-late. For a 19:00 streak warning it may mean **no warning at all that day**:
+the per-zone memo and the dedupe key are both scoped to the user's civil date, so a
+warning that was never sent on the 5th is not sent on the 6th under the 5th's key.
+Raise `--min-instances` to 1 in `deploy.yml` when the notifications matter more than the
+idle cost; until then this section is the honest statement of what the platform gives.
+
+At-risk rule 3 (≥14 days inactive) is still **not** delivered by anything: the alert
+fires on correction, and a student who just uploaded is by definition active.
 
 ### 5.3 `make seed` seeds demo credentials — never run it against production
 

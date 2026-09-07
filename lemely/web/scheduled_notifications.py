@@ -25,8 +25,9 @@ calls it for a post that is due the moment it is written.
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import UTC, date, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
@@ -43,14 +44,14 @@ from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Sequence
-    from datetime import datetime
+    from collections.abc import Callable, Iterable, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
     from sqlalchemy.sql import ColumnElement
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
     from lemely.db.notification_repo import NotificationService
+    from lemely.runtime.config import NotificationsSettings
     from lemely.web.push import NotificationTransport
 
 log = structlog.get_logger(__name__)
@@ -412,15 +413,125 @@ def remind_study_plans(
     return created
 
 
+# ---------------------------------------------------------------------------
+# The runner (§4).
+# ---------------------------------------------------------------------------
+
+
+def run_jobs(jobs: Sequence[tuple[str, Callable[[], int]]]) -> dict[str, int | None]:
+    """Run each job in turn, each wrapped individually.
+
+    A job that throws is a logged warning and the others still run (§4). The
+    returned map carries each job's count, or ``None`` for one that threw, so
+    a caller (and a test) can see exactly which did what.
+    """
+    results: dict[str, int | None] = {}
+    for name, job in jobs:
+        try:
+            results[name] = job()
+        except Exception:
+            log.warning("sweep_job_failed", job=name, exc_info=True)
+            results[name] = None
+    return results
+
+
+def _utcnow() -> datetime:
+    """Default clock: aware UTC now. Production wiring only — tests inject their own."""
+    return datetime.now(UTC)
+
+
+@dataclass(slots=True)
+class Sweeper:
+    """One tick's worth of the three jobs, with the state that persists between ticks.
+
+    The two memos are the per-zone optimisation §4 describes and are the only
+    state a sweeper carries; everything else is a collaborator the app already
+    has. ``deps.get_sweeper`` builds one per process.
+    """
+
+    sessionmaker: sessionmaker[Session]
+    announcements: AnnouncementService
+    notifications: NotificationService
+    transport: NotificationTransport
+    settings: NotificationsSettings
+    now: Callable[[], datetime] = _utcnow
+    streak_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
+    plan_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
+
+    def sweep_once(self) -> dict[str, int | None]:
+        """Run announcements, streak warnings and study-plan reminders, once each."""
+        moment = self.now()
+        return run_jobs(
+            [
+                (
+                    "publish_due_announcements",
+                    lambda: publish_due_announcements(
+                        self.announcements, self.notifications, self.transport, now=moment
+                    ),
+                ),
+                (
+                    "warn_streaks",
+                    lambda: warn_streaks(
+                        self.sessionmaker,
+                        self.notifications,
+                        self.transport,
+                        now=moment,
+                        hour=self.settings.streak_warning_hour,
+                        memo=self.streak_memo,
+                    ),
+                ),
+                (
+                    "remind_study_plans",
+                    lambda: remind_study_plans(
+                        self.sessionmaker,
+                        self.notifications,
+                        self.transport,
+                        now=moment,
+                        hour=self.settings.study_plan_reminder_hour,
+                        memo=self.plan_memo,
+                    ),
+                ),
+            ]
+        )
+
+
+async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Event) -> None:
+    """Sweep now, then every ``poll_seconds``, until ``stop`` is set.
+
+    The first pass is immediate rather than after one interval: on Cloud Run
+    a freshly scaled-up instance is the only chance a missed pass gets, and
+    making it wait a minute first would lose the 19:00 warning for anyone
+    whose zone crossed the trigger while nothing was running (§4's caveat).
+
+    Each pass runs in a worker thread (``asyncio.to_thread``): every job is
+    synchronous SQLAlchemy, and running it on the event loop would stall every
+    request for the duration of a fan-out.
+    """
+    while not stop.is_set():
+        try:
+            await asyncio.to_thread(sweeper.sweep_once)
+        except Exception:
+            # ``run_jobs`` already wraps each job; this catches the pass
+            # itself dying (the clock, a thread failure) so the loop lives.
+            log.warning("sweep_pass_failed", exc_info=True)
+        try:
+            await asyncio.wait_for(stop.wait(), timeout=poll_seconds)
+        except TimeoutError:
+            continue
+
+
 __all__ = [
     "STREAK_WARNING_TITLE",
     "STUDY_PLAN_REMINDER_TITLE",
+    "Sweeper",
     "ZoneDateMemo",
     "deliver_announcements_now",
     "due_zones",
     "notify_announcement_audience",
     "publish_due_announcements",
     "remind_study_plans",
+    "run_jobs",
+    "run_sweeper",
     "streak_tonight",
     "streak_warning_body",
     "study_plan_reminder_body",

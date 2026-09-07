@@ -497,3 +497,77 @@ def test_a_session_is_reminded_on_its_owners_civil_date(
     assert _remind(pg_sessionmaker, notifications, transport) == 1
     assert len(notifications.list_for_user(cairo)) == 1
     assert notifications.list_for_user(la) == []
+
+
+# -- The sweeper (§4) ---------------------------------------------------------
+
+import asyncio  # noqa: E402
+
+from lemely.web.scheduled_notifications import Sweeper, run_jobs, run_sweeper  # noqa: E402
+
+
+def test_a_job_that_throws_is_a_logged_warning_and_the_others_still_run() -> None:
+    ran: list[str] = []
+
+    def ok_one() -> int:
+        ran.append("one")
+        return 1
+
+    def boom() -> int:
+        raise RuntimeError("database went away")
+
+    def ok_two() -> int:
+        ran.append("two")
+        return 2
+
+    results = run_jobs([("one", ok_one), ("boom", boom), ("two", ok_two)])
+
+    assert ran == ["one", "two"]
+    assert results == {"one": 1, "boom": None, "two": 2}
+
+
+def test_the_sweeper_loop_sweeps_immediately_and_stops_when_asked() -> None:
+    """The loop must not wait a full poll interval before its first pass — a
+    freshly started instance on Cloud Run has to sweep now — and must exit
+    promptly on ``stop`` rather than sleeping out the interval."""
+    sweeps: list[int] = []
+
+    class _Fake:
+        def sweep_once(self) -> dict[str, int | None]:
+            sweeps.append(len(sweeps))
+            return {}
+
+    async def scenario() -> None:
+        stop = asyncio.Event()
+        task = asyncio.create_task(run_sweeper(_Fake(), poll_seconds=60, stop=stop))  # type: ignore[arg-type]
+        await asyncio.sleep(0.05)
+        assert sweeps == [0]
+        stop.set()
+        await asyncio.wait_for(task, timeout=1)
+
+    asyncio.run(scenario())
+
+
+def test_a_sweeper_pass_runs_all_three_jobs_against_an_empty_database(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    from lemely.db.announcement_repo import AnnouncementService
+    from lemely.db.class_repo import ClassService
+    from lemely.runtime.config import NotificationsSettings
+
+    sweeper = Sweeper(
+        sessionmaker=pg_sessionmaker,
+        announcements=AnnouncementService(pg_sessionmaker, ClassService(pg_sessionmaker)),
+        notifications=notifications,
+        transport=transport,
+        settings=NotificationsSettings(),
+        now=lambda: CAIRO_EVENING,
+    )
+
+    assert sweeper.sweep_once() == {
+        "publish_due_announcements": 0,
+        "warn_streaks": 0,
+        "remind_study_plans": 0,
+    }
