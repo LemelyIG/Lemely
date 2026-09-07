@@ -25,23 +25,92 @@ calls it for a post that is due the moment it is written.
 
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 import structlog
+from sqlalchemy import select
 
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
 from lemely.db.models.enums import NotificationType
+from lemely.db.models.users import User
+from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
-    from datetime import datetime
+    from collections.abc import Iterable, Sequence
+    from datetime import date, datetime
+
+    from sqlalchemy.orm import Session
+    from sqlalchemy.sql import ColumnElement
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
     from lemely.db.notification_repo import NotificationService
     from lemely.web.push import NotificationTransport
 
 log = structlog.get_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Firing a per-user hour without scanning every user (§4).
+# ---------------------------------------------------------------------------
+
+
+def zones_in_use(session: Session) -> list[str]:
+    """Every distinct ``users.timezone``, plus the default bucket that covers ``NULL``.
+
+    Tiny by construction — distinct zones, not users — so the two daily jobs
+    do work proportional to the number of zones in use.
+    """
+    stored = session.scalars(
+        select(User.timezone).where(User.timezone.is_not(None)).distinct()
+    ).all()
+    return sorted({DEFAULT_ZONE.key, *(name for name in stored if name is not None)})
+
+
+def due_zones(zone_names: Iterable[str], *, now: datetime, hour: int) -> list[tuple[str, date]]:
+    """The zones whose local civil time is at or past ``hour``, with their civil date.
+
+    The date is that zone's own, which is what every notification from these
+    jobs is keyed on (spec §2). A name ``resolve_zone`` cannot resolve keeps
+    its own bucket name — that is what ``users.timezone`` says for those users
+    — but is timed on the launch zone, so they are reached an hour or two off
+    rather than never.
+    """
+    due: list[tuple[str, date]] = []
+    for name in zone_names:
+        local = now.astimezone(resolve_zone(name))
+        if local.hour >= hour:
+            due.append((name, local.date()))
+    return due
+
+
+def zone_bucket(zone_name: str) -> ColumnElement[bool]:
+    """``COALESCE(users.timezone, '<default>') = :zone`` — the per-zone candidate filter."""
+    return sa.func.coalesce(User.timezone, DEFAULT_ZONE.key) == zone_name
+
+
+@dataclass(slots=True)
+class ZoneDateMemo:
+    """The last civil date each zone's job completed. An optimisation, not a guard.
+
+    After 19:00 in a zone the candidate query would otherwise repeat every
+    minute until midnight, doing real work only for the unique index to
+    discard it. Correctness comes from that index (spec §2), which is also
+    what keeps two replicas — each with its own memo — from double-sending.
+    A job that throws mid-zone never marks it, so the next pass retries.
+    """
+
+    _done: dict[str, date] = field(default_factory=dict)
+
+    def is_done(self, zone: str, day: date) -> bool:
+        """Whether this zone's job already completed for ``day``."""
+        return self._done.get(zone) == day
+
+    def mark_done(self, zone: str, day: date) -> None:
+        """Record that this zone's job completed for ``day``."""
+        self._done[zone] = day
 
 
 # ---------------------------------------------------------------------------
@@ -161,7 +230,11 @@ def publish_due_announcements(
 
 
 __all__ = [
+    "ZoneDateMemo",
     "deliver_announcements_now",
+    "due_zones",
     "notify_announcement_audience",
     "publish_due_announcements",
+    "zone_bucket",
+    "zones_in_use",
 ]

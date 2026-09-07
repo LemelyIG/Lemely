@@ -539,6 +539,42 @@ class PushSettings(BaseModel):
     timeout_seconds: float = Field(default=10.0, gt=0)
 
 
+class NotificationsSettings(BaseModel):
+    """The in-process notification sweeper (push-delivery spec §4).
+
+    Overrides via ``lemely.toml`` under the ``[notifications]`` section or
+    ``LEMELY_NOTIFICATIONS__*`` env vars.
+
+    ``create_app`` starts one asyncio task that, every ``sweep_poll_seconds``,
+    runs the three jobs in :mod:`lemely.web.scheduled_notifications` — due
+    announcements, ``streak_warning``, ``study_plan_reminder`` — each wrapped
+    so a job that throws is a logged warning and the other two still run.
+
+    **``sweeper_enabled`` is ``False`` under test** (``tests/conftest.py``
+    sets the env var for the whole suite) so the suite never races a
+    background task; the default is ``True`` because a deployment that forgot
+    to enable it would silently deliver nothing on a timer.
+
+    The two hours are civil hours **in each recipient's own zone**
+    (``users.timezone``, spec §3), never the server's: a student in Los
+    Angeles is warned at their 19:00, not Cairo's.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+    sweeper_enabled: bool = True
+    # How often the sweep loop runs. A minute is fine-grained enough for a
+    # 19:00 warning and coarse enough that an idle deployment does almost
+    # nothing between ticks (the per-zone memo skips a zone once it is done).
+    sweep_poll_seconds: int = Field(default=60, ge=1)
+    # ``streak_warning`` fires once the recipient's local time is at or past
+    # this hour (spec §2: late enough that "nothing logged today" is true of
+    # most of the day, early enough to act on).
+    streak_warning_hour: int = Field(default=19, ge=0, le=23)
+    # ``study_plan_reminder`` fires once the recipient's local time is at or
+    # past this hour, for every incomplete session dated today.
+    study_plan_reminder_hour: int = Field(default=8, ge=0, le=23)
+
+
 class EmailSettings(BaseModel):
     """Transactional-email credentials for the account-lifecycle mails (D7.7).
 
@@ -623,6 +659,7 @@ class Settings(BaseSettings):
     integrity: IntegritySettings = IntegritySettings()
     storage: StorageSettings = StorageSettings()
     push: PushSettings = PushSettings()
+    notifications: NotificationsSettings = NotificationsSettings()
     email: EmailSettings = EmailSettings()
     database: DatabaseSettings = DatabaseSettings()
     supabase: SupabaseSettings = SupabaseSettings()

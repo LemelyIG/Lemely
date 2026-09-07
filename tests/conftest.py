@@ -41,6 +41,25 @@ def _disable_dotenv_file() -> Iterator[None]:
 
 
 @pytest.fixture(scope="session", autouse=True)
+def _disable_notification_sweeper() -> Iterator[None]:
+    """Never race a background task under test (push-delivery spec §4).
+
+    ``create_app`` starts the notification sweeper from its lifespan when
+    ``settings.notifications.sweeper_enabled`` is true, which is the shipped
+    default. The env var wins over every other settings source, so setting it
+    once here covers every ``TestClient`` in the suite; the one test that
+    needs the sweeper on sets the var back itself and clears the settings
+    singleton.
+    """
+    patch = pytest.MonkeyPatch()
+    patch.setenv("LEMELY_NOTIFICATIONS__SWEEPER_ENABLED", "0")
+    try:
+        yield
+    finally:
+        patch.undo()
+
+
+@pytest.fixture(scope="session", autouse=True)
 def _forbid_live_gemini_calls() -> Iterator[None]:
     """Make a real Gemini API call impossible for the whole suite.
 

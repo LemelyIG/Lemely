@@ -167,3 +167,17 @@ from_name = "Lemely"
 # Short on purpose: verification mail is a best-effort side effect of an
 # already-created account and must never make a signup hang.
 timeout_seconds = 10.0
+
+[notifications]
+# The in-process sweeper that publishes scheduled announcements and sends the
+# two daily engagement notifications (streak_warning at streak_warning_hour,
+# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN
+# time zone. It runs inside the API process, started by create_app's lifespan;
+# there is no separate worker to deploy. On Cloud Run, timely delivery needs
+# --min-instances=1: at zero instances nothing is running to sweep, and a
+# 19:00 warning may be missed for that day entirely. See docs/deployment.md.
+# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.
+sweeper_enabled = true
+sweep_poll_seconds = 60
+streak_warning_hour = 19
+study_plan_reminder_hour = 8
