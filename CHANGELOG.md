@@ -60,6 +60,34 @@ this entry is the user-visible summary.
   migrations run as their own gated job ahead of each deploy rather than on
   container start. See [`docs/ci-cd.md`](docs/ci-cd.md).
 
+#### Push notifications delivered
+
+- Scheduled announcements are notified at their `publishAt` rather than at
+  create time: `announcements.notified_at` records the fan-out, and an
+  in-process sweeper claims due rows `FOR UPDATE SKIP LOCKED` and stamps them
+  after the send.
+- `streak_warning` (19:00) and `study_plan_reminder` (08:00) are sent daily,
+  each in the recipient's own time zone; idempotency is the existing unique
+  index on `notifications`, not a new table.
+- Per-user time zones: `users.timezone`, auto-detected from the device at boot
+  and overridable in Profile settings (`PUT /api/me/timezone`). Quiet hours,
+  streak days, the XP daily cap and the at-risk day follow it; the leaderboard
+  week and the profile week window stay global on purpose.
+- `[notifications]` settings (`sweeper_enabled`, `sweep_poll_seconds`, the two
+  trigger hours); the sweeper is off under test.
+- `lemely push-keygen` generates a VAPID keypair; `lemely doctor` reports
+  whether push is available; `deploy.yml` reads the keys from a repository
+  variable and secret and tolerates their absence. `docs/push-notifications.md`
+  covers generating, placing, verifying and rotating (rotation invalidates
+  every stored subscription).
+- Teacher and parent inboxes (`/teacher/notifications`, `/parent/notifications`)
+  for `at_risk_alert`, with unread counts in the nav; pushes now open the
+  screen each type is about.
+- The teacher announcements screen no longer says students cannot see
+  announcements. *Limited, still:* at-risk rule 3 (>=14 days inactive) is not
+  delivered by anything, and on Cloud Run at `--min-instances=0` a sweep only
+  happens while an instance is running (`docs/deployment.md` section 5.2).
+
 ### Fixed
 
 - **Verification and password-reset emails carried an unreachable link.** `AuthService` mints
