@@ -16,8 +16,13 @@
  */
 
 import { request } from "@/lib/api"
-import type { NotificationsPage } from "@/lib/notificationTypes"
-import { PUSH_CONTENT_REPLY, PUSH_CONTENT_REQUEST } from "@/lib/push/pushDecision"
+import { getSession } from "@/lib/auth/storage"
+import type { Notification, NotificationsPage } from "@/lib/notificationTypes"
+import {
+  DEFAULT_PUSH_URL,
+  PUSH_CONTENT_REPLY,
+  PUSH_CONTENT_REQUEST,
+} from "@/lib/push/pushDecision"
 
 /** What this module posts back to the worker. */
 export interface PushContentReply {
@@ -30,27 +35,44 @@ export interface PushContentReply {
 /**
  * Where a push of a given type sends the reader.
  *
- * Only `announcement` gets a specific screen. `grade_ready` deliberately does
- * not: its payload carries the upload's UUID, and the only per-paper route
- * (`/student/result/:paperId`) addresses papers by **history index** and 404s on
- * a UUID (`routers/student.py:487`). Linking it would ship a guaranteed dead
- * link. The three time-triggered types have no screen at all.
+ * Four of the five types have a specific screen. `grade_ready` deliberately
+ * does not: its payload carries the upload's UUID, and the only per-paper
+ * route (`/student/result/:paperId`) addresses papers by **history index**
+ * and 404s on a UUID (`routers/student.py:487`). Linking it would ship a
+ * guaranteed dead link, so it keeps `DEFAULT_PUSH_URL`.
  *
- * Everything else goes to `/`, which routes the reader to their own portal by
- * role. That matters because this API is role-agnostic on purpose:
- * `at_risk_alert` is addressed to a **teacher and a parent**, neither of whom
- * has an inbox screen in this build, so a hardcoded student path would 404 for
- * exactly the audience that notification was written for.
+ * `at_risk_alert` is addressed to a **teacher and a parent**, and each has
+ * their own inbox (`/teacher/notifications`, `/parent/notifications`), so the
+ * viewer's role decides. `school_admin` reads the teacher portal. With no role
+ * known the answer is `/`, which routes by role and cannot 404 for whoever
+ * received the push. This comment used to say neither portal had an inbox
+ * screen; both do now, and the fallback stays for the reason above.
  *
- * Kept consistent with `Notifications.destinationFor` so a push and the inbox
- * row it announces land in the same place.
+ * Kept consistent with the student `Notifications.destinationFor` so a push
+ * and the inbox row it announces land in the same place. The two differ only
+ * where they must: the inbox screen returns `null` for "no action" and this
+ * returns `DEFAULT_PUSH_URL`, because a click has to go somewhere.
  */
-function destinationFor(type: string): string {
-  switch (type) {
+export function destinationFor(
+  notification: Pick<Notification, "type" | "payload">,
+  role: string | undefined,
+): string {
+  switch (notification.type) {
     case "announcement":
       return "/student/announcements"
+    case "streak_warning":
+      return "/student/profile"
+    case "study_plan_reminder": {
+      const { subjectCode, sessionId } = notification.payload
+      if (!subjectCode || !sessionId) return DEFAULT_PUSH_URL
+      return `/student/plan/${encodeURIComponent(subjectCode)}/session/${encodeURIComponent(sessionId)}`
+    }
+    case "at_risk_alert":
+      if (role === "teacher" || role === "school_admin") return "/teacher/notifications"
+      if (role === "parent") return "/parent/notifications"
+      return DEFAULT_PUSH_URL
     default:
-      return "/"
+      return DEFAULT_PUSH_URL
   }
 }
 
@@ -66,7 +88,10 @@ function destinationFor(type: string): string {
  * opened would be actively misleading, and is the failure mode a naive
  * `notifications[0]` produces the moment a read row sits at the top.
  */
-export function buildPushReply(page: NotificationsPage | null): PushContentReply | null {
+export function buildPushReply(
+  page: NotificationsPage | null,
+  role?: string,
+): PushContentReply | null {
   if (page === null) return null
   const unread = page.notifications.find((notification) => notification.readAt === null)
   if (unread === undefined) return null
@@ -74,7 +99,7 @@ export function buildPushReply(page: NotificationsPage | null): PushContentReply
     type: PUSH_CONTENT_REPLY,
     title: unread.title,
     body: unread.body,
-    url: destinationFor(unread.type),
+    url: destinationFor(unread, role),
   }
 }
 
@@ -88,9 +113,10 @@ export function buildPushReply(page: NotificationsPage | null): PushContentReply
  */
 export async function answerPushContentRequest(
   fetchInbox: () => Promise<NotificationsPage>,
+  role?: string,
 ): Promise<PushContentReply | null> {
   try {
-    return buildPushReply(await fetchInbox())
+    return buildPushReply(await fetchInbox(), role)
   } catch {
     // A failed or unauthorised fetch is not an error worth surfacing anywhere:
     // the worker's fallback already covers it, and there is no UI in scope
@@ -121,8 +147,11 @@ export function registerPushClientBridge(): void {
     const port = event.ports[0]
     if (port === undefined) return
 
-    void answerPushContentRequest(() =>
-      request<NotificationsPage>("/notifications?unreadOnly=true&limit=1"),
+    void answerPushContentRequest(
+      () => request<NotificationsPage>("/notifications?unreadOnly=true&limit=1"),
+      // The role is read at answer time, not at registration: a page can
+      // outlive a sign-out and sign-in as someone else.
+      getSession()?.role,
     ).then((reply) => {
       // Always post something, even null: the worker races this against a
       // timeout, and a definite "nothing to say" lets it render the generic
