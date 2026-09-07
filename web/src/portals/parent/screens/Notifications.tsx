@@ -106,9 +106,24 @@ export function ParentNotifications() {
 
   return (
     <div className="flex flex-col gap-4">
-      <div>
-        <Eyebrow>Inbox</Eyebrow>
-        <h1 className="text-display-md text-ink">Notifications</h1>
+      {/* The heading and the settings link both sit OUTSIDE `QueryState`, in
+          every state. The heading for the reason the student inbox documents
+          (a heading is what the page IS). The link because `QueryState`
+          renders the `empty` slot *instead of* the children, so a link inside
+          them is unreachable in exactly the state a reader who has never had
+          a notification is in — which is the state most likely to send them
+          looking for the setting. Playwright caught this. */}
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <Eyebrow>Inbox</Eyebrow>
+          <h1 className="text-display-md text-ink">Notifications</h1>
+        </div>
+        <Link
+          to="/settings/notifications"
+          className="text-body-sm text-accent-ink hover:underline"
+        >
+          Notification settings
+        </Link>
       </div>
       <QueryState
         query={query}
@@ -119,28 +134,18 @@ export function ParentNotifications() {
       >
         {(data) => (
           <div className="flex flex-col gap-4">
-            <div className="flex flex-wrap items-end justify-end gap-3">
-              <div className="flex items-center gap-3">
-                {/* The parent portal has no in-portal settings lane; the
-                    top-level one is their only route to it. */}
-                <Link
-                  to="/settings/notifications"
-                  className="text-body-sm text-accent-ink hover:underline"
+            {showMarkAllRead(data) ? (
+              <div className="flex justify-end">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => markAll.mutate()}
+                  disabled={markAll.isPending}
                 >
-                  Notification settings
-                </Link>
-                {showMarkAllRead(data) ? (
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => markAll.mutate()}
-                    disabled={markAll.isPending}
-                  >
-                    Mark all as read
-                  </Button>
-                ) : null}
+                  Mark all as read
+                </Button>
               </div>
-            </div>
+            ) : null}
 
             <div className="flex flex-col gap-3">
               {data.notifications.map((notification) => (
