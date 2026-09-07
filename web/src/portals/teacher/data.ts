@@ -35,9 +35,12 @@ export interface NavItem {
     | "schemes"
     | "quizzes"
     | "announcements"
+    | "notifications"
     | "settings"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
+  /** A live count rendered beside the label. Only the inbox has one. */
+  badge?: "unread-notifications"
 }
 
 /*
@@ -66,6 +69,15 @@ export const navItems: NavItem[] = [
   { to: "/teacher/schemes", label: "Mark schemes", icon: "schemes" },
   { to: "/teacher/quizzes", label: "AI quizzes", icon: "quizzes" },
   { to: "/teacher/announcements", label: "Announcements", icon: "announcements" },
+  // The inbox carries its unread count (push-delivery spec §6): at_risk_alert
+  // is the one notification a teacher receives, and it is the one that asks
+  // for action.
+  {
+    to: "/teacher/notifications",
+    label: "Notifications",
+    icon: "notifications",
+    badge: "unread-notifications",
+  },
   // Settings moves into the primary nav from the footer's plain link (P5.9
   // chunk D's placement is superseded here): a route under /teacher with a
   // real active state belongs beside the rest of this teacher's sections
