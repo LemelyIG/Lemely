@@ -301,11 +301,19 @@ class NotificationService:
         """Create one inbox row, gated by preferences and idempotent on ``dedupe_key``.
 
         ``dedupe_key`` is optional and its absence is meaningful, not lazy:
-        some notification types have no natural idempotency key at all (two
-        ``study_plan_reminder`` rows a week apart are two real reminders), and
-        those rows carry ``NULL`` and are exempt from the partial unique index
-        migration 0018 creates. This mirrors D5.3's split for XP, where the
-        paper seam dedupes and the flashcard seam deliberately does not.
+        a notification type may have no natural idempotency key, and such rows
+        carry ``NULL`` and are exempt from the partial unique index migration
+        0018 creates. This mirrors D5.3's split for XP, where the paper seam
+        dedupes and the flashcard seam deliberately does not.
+
+        This docstring used to offer ``study_plan_reminder`` as the example
+        of a type with no natural key ("two rows a week apart are two real
+        reminders"). The push-delivery spec (§2) gave it one — the session
+        id, so each scheduled session prompts exactly once ever — and gave
+        ``streak_warning`` one too, the recipient's own civil date. Today all
+        five types pass a key; the ``NULL`` path stays for the same reason
+        ``_notify_audience`` once corrected its own comment: a docstring the
+        code disproves is worse than none.
 
         Returns:
             A :class:`CreateResult` whose ``push_allowed`` is a separate

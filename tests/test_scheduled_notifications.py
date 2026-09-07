@@ -337,3 +337,163 @@ def test_a_student_with_no_zone_is_warned_on_the_launch_zone(
     _seed_streak(pg_sessionmaker, student, length=1, last_active_on=date(2026, 9, 4))
 
     assert _warn(pg_sessionmaker, notifications, transport, now=CAIRO_EVENING) == 1
+
+
+# -- study_plan_reminder ----------------------------------------------------
+
+from lemely.db.models.study_plan import (  # noqa: E402
+    StudyPlan,
+    StudyPlanActivityType,
+    StudyPlanSession,
+)
+from lemely.web.scheduled_notifications import (  # noqa: E402
+    STUDY_PLAN_REMINDER_TITLE,
+    remind_study_plans,
+)
+
+#: 06:30Z on 5 Sept 2026: 09:30 in Cairo, past 08:00.
+CAIRO_MORNING = datetime(2026, 9, 5, 6, 30, tzinfo=UTC)
+
+
+def _seed_session(
+    sm: sessionmaker[Session],
+    user: uuid.UUID,
+    *,
+    subject_code: str = "0625",
+    on: date = date(2026, 9, 5),
+    topic: str = "Algebraic fractions",
+    duration: int = 40,
+    completed: bool = False,
+    superseded: bool = False,
+) -> uuid.UUID:
+    with sm.begin() as session:
+        plan = StudyPlan(
+            user_id=user,
+            subject_code=subject_code,
+            week_start=date(2026, 8, 31),
+            weekly_hours=5.0,
+            available=True,
+            generated_at=datetime(2026, 8, 31, 8, 0, tzinfo=UTC),
+            superseded_at=datetime(2026, 9, 1, 8, 0, tzinfo=UTC) if superseded else None,
+        )
+        session.add(plan)
+        session.flush()
+        row = StudyPlanSession(
+            plan_id=plan.id,
+            date=on,
+            topic=topic,
+            activity_type=StudyPlanActivityType.practice,
+            duration_minutes=duration,
+            focus="Cancel common factors first.",
+            completed_at=datetime(2026, 9, 5, 5, 0, tzinfo=UTC) if completed else None,
+        )
+        session.add(row)
+        session.flush()
+        return row.id
+
+
+def _remind(
+    sm: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+    *,
+    now: datetime = CAIRO_MORNING,
+    memo: ZoneDateMemo | None = None,
+) -> int:
+    return remind_study_plans(
+        sm, notifications, transport, now=now, hour=8, memo=memo or ZoneDateMemo()
+    )
+
+
+def test_an_incomplete_session_dated_today_is_reminded_once(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    student = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    session_id = _seed_session(pg_sessionmaker, student)
+
+    assert _remind(pg_sessionmaker, notifications, transport) == 1
+    assert _remind(pg_sessionmaker, notifications, transport) == 0
+
+    rows = notifications.list_for_user(student)
+    assert len(rows) == 1
+    assert rows[0].type is NotificationType.study_plan_reminder
+    assert rows[0].title == STUDY_PLAN_REMINDER_TITLE
+    assert rows[0].body == "Algebraic fractions · 40 min"
+    assert rows[0].payload == {
+        "sessionId": str(session_id),
+        "subjectCode": "0625",
+        "topic": "Algebraic fractions",
+    }
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"completed": True},
+        {"on": date(2026, 9, 6)},
+        {"on": date(2026, 9, 4)},
+        {"superseded": True},
+    ],
+)
+def test_completed_other_day_and_superseded_sessions_are_skipped(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+    kwargs: dict[str, object],
+) -> None:
+    student = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    _seed_session(pg_sessionmaker, student, **kwargs)  # type: ignore[arg-type]
+
+    assert _remind(pg_sessionmaker, notifications, transport) == 0
+    assert notifications.list_for_user(student) == []
+
+
+def test_three_subjects_with_a_session_each_today_produce_three_notifications(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """The volume is asserted, not left to be discovered in production (spec
+    §2): a plan is single-subject, so three subjects are three reminders."""
+    student = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    for code in ("0625", "0580", "0606"):
+        _seed_session(pg_sessionmaker, student, subject_code=code)
+
+    assert _remind(pg_sessionmaker, notifications, transport) == 3
+    assert sorted(row.payload["subjectCode"] for row in notifications.list_for_user(student)) == [
+        "0580",
+        "0606",
+        "0625",
+    ]
+
+
+def test_a_study_plan_reminder_preference_of_false_suppresses_the_row(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    student = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    _seed_session(pg_sessionmaker, student)
+    NotificationPreferencesService(pg_sessionmaker).set(student, study_plan_reminder=False)
+
+    assert _remind(pg_sessionmaker, notifications, transport) == 0
+    assert notifications.list_for_user(student) == []
+
+
+def test_a_session_is_reminded_on_its_owners_civil_date(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """06:30Z is 09:30 in Cairo and 23:30 on the 4th in Los Angeles: the
+    Los Angeles session dated the 5th is not today there yet."""
+    cairo = _seed_user(pg_sessionmaker, timezone="Africa/Cairo")
+    la = _seed_user(pg_sessionmaker, timezone="America/Los_Angeles")
+    _seed_session(pg_sessionmaker, cairo)
+    _seed_session(pg_sessionmaker, la)
+
+    assert _remind(pg_sessionmaker, notifications, transport) == 1
+    assert len(notifications.list_for_user(cairo)) == 1
+    assert notifications.list_for_user(la) == []

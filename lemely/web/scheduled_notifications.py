@@ -36,6 +36,8 @@ from sqlalchemy import select
 from lemely.db.announcement_repo import DEFAULT_CLAIM_LIMIT
 from lemely.db.models.engagement import Streak
 from lemely.db.models.enums import NotificationType
+from lemely.db.models.study_plan import StudyPlan as DbStudyPlan
+from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
@@ -336,15 +338,92 @@ def warn_streaks(
     return created
 
 
+# ---------------------------------------------------------------------------
+# study_plan_reminder (§2).
+# ---------------------------------------------------------------------------
+
+STUDY_PLAN_REMINDER_TITLE = "Today's study session"
+
+
+def study_plan_reminder_body(topic: str, duration_minutes: int) -> str:
+    """A pointer to the session, not a summary of it: ``Algebraic fractions · 40 min``."""
+    return f"{topic} · {duration_minutes} min"
+
+
+def remind_study_plans(
+    sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: NotificationTransport,
+    *,
+    now: datetime,
+    hour: int,
+    memo: ZoneDateMemo,
+) -> int:
+    """Send ``study_plan_reminder`` for every incomplete session dated today, once ever.
+
+    Per due zone (§4): ``study_plan_sessions`` joined to their plan where the
+    plan is active (``superseded_at IS NULL``), ``session.date`` is that zone's
+    civil today, and ``completed_at IS NULL``. The key is the **session id**,
+    so each scheduled session prompts exactly once, ever — across a day
+    boundary, a restart, or a plan regenerated mid-week. Returns rows created.
+
+    Volume, stated rather than discovered later (§2): a plan is
+    single-subject, so a student studying three subjects with a session dated
+    today receives three notifications at ``hour``. The collapse to one per
+    day is a one-line change of shape and is deliberately not made here.
+    """
+    created = 0
+    with sessionmaker() as session:
+        for zone_name, today in due_zones(zones_in_use(session), now=now, hour=hour):
+            if memo.is_done(zone_name, today):
+                continue
+            candidates = session.execute(
+                select(StudyPlanSession, DbStudyPlan.user_id, DbStudyPlan.subject_code)
+                .join(DbStudyPlan, DbStudyPlan.id == StudyPlanSession.plan_id)
+                .join(User, User.id == DbStudyPlan.user_id)
+                .where(
+                    zone_bucket(zone_name),
+                    DbStudyPlan.superseded_at.is_(None),
+                    StudyPlanSession.completed_at.is_(None),
+                    StudyPlanSession.date == today,
+                )
+                .order_by(StudyPlanSession.id)
+            ).all()
+            for row, user_id, subject_code in candidates:
+                result = notify_safely(
+                    notifications,
+                    transport,
+                    user_id=user_id,
+                    type=NotificationType.study_plan_reminder,
+                    title=STUDY_PLAN_REMINDER_TITLE,
+                    body=study_plan_reminder_body(row.topic, row.duration_minutes),
+                    payload={
+                        "sessionId": str(row.id),
+                        "subjectCode": subject_code,
+                        "topic": row.topic,
+                    },
+                    dedupe_key=str(row.id),
+                    seam="study_plan_reminder",
+                )
+                created += 1 if result.created else 0
+            memo.mark_done(zone_name, today)
+    if created:
+        log.info("study_plan_reminders_sent", count=created)
+    return created
+
+
 __all__ = [
     "STREAK_WARNING_TITLE",
+    "STUDY_PLAN_REMINDER_TITLE",
     "ZoneDateMemo",
     "deliver_announcements_now",
     "due_zones",
     "notify_announcement_audience",
     "publish_due_announcements",
+    "remind_study_plans",
     "streak_tonight",
     "streak_warning_body",
+    "study_plan_reminder_body",
     "warn_streaks",
     "zone_bucket",
     "zones_in_use",
