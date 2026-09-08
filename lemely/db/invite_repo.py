@@ -378,10 +378,20 @@ class InviteService:
         stable in fact unstable (review round 1, Important 1). The second
         caller to acquire the lock sees the first's committed row and
         returns it, never inserting a duplicate.
+
+        Raises:
+            InviteError: ``student_id`` names no ``users`` row. Unreachable
+                through the authenticated router (which only ever calls
+                this with the caller's own id), but worth a clear error
+                instead of letting the insert below fail its ``child_id``
+                foreign key and get misreported by :meth:`_insert_invite`'s
+                retry loop as an exhausted *code*-collision search (review
+                round 2, Minor 2).
         """
         student_uuid = _as_uuid(student_id)
         with self._sessionmaker() as session, session.begin():
-            session.get(User, student_uuid, with_for_update=True)
+            if session.get(User, student_uuid, with_for_update=True) is None:
+                raise InviteError(f"Unknown user: {student_uuid}")
             existing = self._find_reusable_parent_code(session, student_uuid)
             if existing is not None:
                 return existing
@@ -397,20 +407,31 @@ class InviteService:
     def rotate_parent_code(self, student_id: uuid.UUID | str) -> Invite:
         """Replace this child's reusable code with a freshly minted one.
 
-        Locks the child's ``users`` row for the same reason
-        :meth:`get_or_create_parent_code` does — a rotation racing that
-        method's read-then-insert must serialise with it, not interleave —
-        then deletes the old row and inserts the new one in the same
-        transaction, so a redemption racing the rotation sees either the
-        old code (and its now-superseded row disappears cleanly under it)
-        or the new one, never both live at once.
+        Deletes the old row (which locks it, exactly as ``DELETE`` always
+        does for the rows it removes) *before* locking the child's own
+        ``users`` row — that order matters, not just the fact of locking
+        both. :meth:`redeem` locks an ``invites`` row first
+        (``_find_live_invite(..., for_update=True)``) and only needs the
+        child's ``users`` row second, implicitly, when
+        :meth:`_redeem_parent_invite` calls
+        :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`
+        (whose ``INSERT`` takes a ``FOR KEY SHARE`` lock on ``users`` to
+        satisfy the FK). Locking ``users`` first here, as the original fix
+        for review round 1 did, opened a deadlock cycle against a
+        concurrent :meth:`redeem` of the same child's reusable code — this
+        order closes it by matching ``redeem``'s invites-then-users
+        sequence (review round 2, Important A). Deleting first also means a
+        rotation with no existing reusable row locks and deletes nothing,
+        so a first-ever mint via this path takes no unnecessary lock beyond
+        the ``users`` row itself.
         """
         student_uuid = _as_uuid(student_id)
         with self._sessionmaker() as session, session.begin():
-            session.get(User, student_uuid, with_for_update=True)
             session.execute(
                 delete(Invite).where(Invite.child_id == student_uuid, Invite.reusable.is_(True))
             )
+            if session.get(User, student_uuid, with_for_update=True) is None:
+                raise InviteError(f"Unknown user: {student_uuid}")
             return self._insert_invite(
                 session,
                 role=InviteRole.parent,
@@ -579,7 +600,16 @@ class InviteService:
             # through it is exactly the mistake `InviteRoleMismatchError`
             # exists to catch on the branch above - the guard must not stop
             # short of this one just because the code is the older, class-
-            # native kind (review round 1, Important 2).
+            # native kind (review round 1, Important 2). Resolved read-only
+            # first, though: a parent who simply mistyped their invite code
+            # must get the ordinary `InviteNotFoundError`, not a confident,
+            # false "this is a class join code" mismatch (review round 2,
+            # Important B) - and this lookup itself never enrols anyone,
+            # unlike calling `join_by_code` to find out the same thing.
+            with self._sessionmaker() as session:
+                cls = self._find_class_by_join_code(session, code)
+            if cls is None:
+                raise InviteNotFoundError(f"Unknown code: {code!r}")
             raise InviteRoleMismatchError(
                 f"Code {code!r} is a class join code, not a parent invite; caller is a parent"
             )
@@ -627,8 +657,9 @@ class InviteService:
         """
         if invite.redeemed_by is not None and invite.redeemed_by != user_uuid:
             raise InviteAlreadyRedeemedError(f"Invite {invite.code!r} has already been redeemed")
-        if invite.child_id is not None:  # pragma: no cover - mint_parent_invite always sets it
-            self._parent_link_service.link_in_session(session, user_uuid, invite.child_id)
+        if invite.child_id is None:  # pragma: no cover - mint_parent_invite always sets it
+            return RedeemResult(role=invite.role, school_id=None, class_id=None, child_id=None)
+        self._parent_link_service.link_in_session(session, user_uuid, invite.child_id)
         if not invite.reusable and invite.redeemed_by is None:
             invite.redeemed_by = user_uuid
             invite.redeemed_at = datetime.now(UTC)

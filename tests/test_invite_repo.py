@@ -48,6 +48,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import (
     PARENT_INVITE_TTL,
     InviteAlreadyRedeemedError,
+    InviteError,
     InviteNotFoundError,
     InviteOwnershipError,
     InviteQuotaExceededError,
@@ -908,3 +909,73 @@ def test_redeem_class_join_code_by_parent_is_role_mismatch(
             sa.select(ClassEnrollment).where(ClassEnrollment.class_id == class_id)
         ).first()
         assert enrolled is None, "a parent must not be enrolled as a student via a join code"
+
+
+# ── review round 2 fixes: unknown code, unknown student, rotation order ────
+
+
+def test_redeem_unknown_code_by_parent_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A parent who simply mistypes their invite code must get the ordinary
+    ``InviteNotFoundError`` - the same thing anyone else redeeming an
+    unknown code gets - not a confident, false claim that the code they
+    typed is a class join code (review round 2, Important B). The role
+    guard on the bare-join-code fall-through must only fire once the code
+    is confirmed to actually resolve to a class."""
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteNotFoundError):
+        service.redeem(parent, "NOSUCHCODEATALL", caller_role=Role.parent)
+
+
+def test_get_or_create_parent_code_for_unknown_student_raises_invite_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A ``student_id`` naming no real user must fail clearly - not silently
+    take no lock, hit the ``child_id`` foreign key on insert, and get
+    misreported by :meth:`InviteService._insert_invite`'s retry loop as an
+    exhausted *code*-collision search (review round 2, Minor 2)."""
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteError, match="Unknown user"):
+        service.get_or_create_parent_code(uuid.uuid4())
+
+
+def test_rotate_parent_code_for_unknown_student_raises_invite_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Same clear-error requirement as ``get_or_create_parent_code``, for
+    the other newly-locked writer (review round 2, Minor 2)."""
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteError, match="Unknown user"):
+        service.rotate_parent_code(uuid.uuid4())
+
+
+def test_rotate_parent_code_then_redeem_links_the_new_code(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Regression check for reordering ``rotate_parent_code``'s lock/delete
+    steps to close the deadlock cycle with ``redeem`` (review round 2,
+    Important A): the method must still do exactly what it always did -
+    delete the old row, mint a new one - and the new code must still be
+    fully redeemable afterwards."""
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    rotated = service.rotate_parent_code(student)
+    result = service.redeem(parent, rotated.code, caller_role=Role.parent)
+
+    assert result.child_id == student
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, original.id) is None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(
+                ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+            )
+        ).first()
+        assert link is not None
