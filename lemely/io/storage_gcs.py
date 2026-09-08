@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any
 
+import google.auth
+import google.auth.transport.requests
 from google.api_core.exceptions import GoogleAPICallError, NotFound, PreconditionFailed
 from google.auth.exceptions import DefaultCredentialsError
 from google.cloud import storage
@@ -25,6 +27,12 @@ from lemely.io.storage import StorageObjectNotFoundError
 from lemely.runtime.errors import ExternalServiceError
 
 _TRANSFER_TIMEOUT_SECONDS = 30.0
+
+# The scope IAM signBlob demands. `storage.Client.SCOPE` is the three
+# `devstorage.*` scopes and nothing else, so the credential the client holds
+# refreshes to a token that `iamcredentials.googleapis.com` refuses with
+# ACCESS_TOKEN_SCOPE_INSUFFICIENT — see `_signing_token`.
+_IAM_SIGN_SCOPE = "https://www.googleapis.com/auth/cloud-platform"
 
 
 class GcsStorageBackend:
@@ -101,6 +109,48 @@ class GcsStorageBackend:
         except GoogleAPICallError as exc:
             raise ExternalServiceError(f"Storage delete failed: {exc}") from exc
 
+    def _signing_token(self) -> str:
+        """Mint an access token that IAM signBlob will actually accept.
+
+        Not the storage client's own token. ``storage.Client.SCOPE`` is the
+        three ``devstorage.*`` scopes, and a workload-identity credential
+        narrows its metadata token to exactly the scopes it was asked for — so
+        the token the client holds is storage-only. Handing that to
+        ``iamcredentials.googleapis.com`` fails, and the failure is not a
+        permission problem anyone can fix in IAM::
+
+            Error calling the IAM signBytes API: 403 "Request had insufficient
+            authentication scopes." reason: ACCESS_TOKEN_SCOPE_INSUFFICIENT,
+            method: google.iam.credentials.v1.IAMCredentials.SignBlob
+
+        :func:`~lemely.web.routers.me._avatar_url_for` swallows that by design
+        ("never fail the profile read"), so the whole visible effect was every
+        profile rendering its initials: a user could upload a picture, get a
+        200, and never see it anywhere. Fixed by asking ADC for a second,
+        ``cloud-platform``-scoped credential and signing with that.
+
+        Separate from the ``roles/iam.serviceAccountTokenCreator`` binding
+        ``scripts/gcp-bootstrap.sh`` grants, which is also required and was
+        already in place — a token with the wrong scope is refused before any
+        IAM policy is consulted.
+        """
+        # `Any` for the same reason the client itself is: google-auth returns a
+        # union of credential classes whose `refresh`/`token` are untyped, and
+        # this module already treats SDK objects as opaque.
+        signing_credentials: Any
+        try:
+            signing_credentials, _ = google.auth.default(scopes=[_IAM_SIGN_SCOPE])
+        except DefaultCredentialsError as exc:
+            raise ExternalServiceError(
+                "Cannot create a signed URL: no Application Default Credentials "
+                "are available to mint an IAM signing token. On Cloud Run attach "
+                "a runtime service account; locally run `gcloud auth "
+                "application-default login` or set LEMELY_STORAGE__BACKEND=local."
+            ) from exc
+        signing_credentials.refresh(google.auth.transport.requests.Request())
+        token: str = signing_credentials.token
+        return token
+
     def create_signed_url(self, bucket: str, object_path: str, expires_in: int) -> str:
         """Create a V4 signed URL for ``{bucket}/{object_path}``.
 
@@ -109,8 +159,10 @@ class GcsStorageBackend:
         workload-identity credential (Cloud Run/GCE/GKE) has no ``signer`` at
         all, so passing ``service_account_email``/``access_token`` explicitly
         makes the library sign through the IAM ``signBlob`` API instead — the
-        documented workaround for that credential shape. The token must be
-        fresh, hence the explicit ``refresh`` first.
+        documented workaround for that credential shape. The token comes from
+        :meth:`_signing_token`, **not** from this client's own credential,
+        which carries only the ``devstorage.*`` scopes and is refused; that
+        method's docstring has the whole story.
 
         ``hasattr(credentials, "signer")`` is the discriminator, and the choice
         matters: ``getattr(credentials, "private_key", None)`` is not a valid
@@ -130,8 +182,6 @@ class GcsStorageBackend:
         """
         from datetime import timedelta
 
-        import google.auth.transport.requests
-
         client = self._client()
         credentials = getattr(client, "_credentials", None)
         try:
@@ -146,9 +196,14 @@ class GcsStorageBackend:
                         "neither sign locally nor use IAM signBlob. Configure a "
                         "service-account JSON key or an attached service account."
                     )
+                # Refresh the client's own credential purely to learn *who* is
+                # signing: `compute_engine.Credentials.service_account_email` is
+                # documented as "not guaranteed to be set until refresh has been
+                # called". Its *token* is deliberately not reused — see
+                # `_signing_token`.
                 credentials.refresh(google.auth.transport.requests.Request())
                 sign_kwargs["service_account_email"] = credentials.service_account_email
-                sign_kwargs["access_token"] = credentials.token
+                sign_kwargs["access_token"] = self._signing_token()
             signed: str = blob.generate_signed_url(
                 version="v4",
                 expiration=timedelta(seconds=expires_in),

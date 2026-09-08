@@ -476,7 +476,39 @@ so the helper is a no-op when they are set.
   only guard, and it is an alert, not a stop: spend can pass it before anyone acts.
   The CLI and Gradio are unchanged and still enforce the on-disk `$8.00` ledger.
 
-### 5.5 Security posture as shipped
+### 5.5 Profile pictures go missing quietly when a signed URL cannot be signed
+
+`GET /api/me/profile` answers `avatarUrl: null` both when no picture is set
+and when object storage could not sign a URL for the one that is
+(`_avatar_url_for` in `lemely/web/routers/me.py` never fails a profile read).
+The UI cannot tell the two apart, so a signing failure looks exactly like "I
+never uploaded a picture" — the upload returns 200, and the avatar is the
+initials monogram everywhere, forever.
+
+Nothing surfaces it except the log line. Check for it first:
+
+```bash
+gcloud logging read \
+  'resource.type="cloud_run_revision"
+   AND resource.labels.service_name="lemely-backend-<env>"
+   AND jsonPayload.event="avatar_signed_url_failed"' \
+  --project=<gcp-project-id> --limit=5 --freshness=7d
+```
+
+Signing on Cloud Run goes through the IAM `signBlob` API, because a
+workload-identity credential has no local signer. That needs **two** separate
+things, and only the first is an IAM grant:
+
+* `roles/iam.serviceAccountTokenCreator` on the runtime service account, for
+  itself — `scripts/gcp-bootstrap.sh` grants it.
+* An access token scoped for `cloud-platform`. `storage.Client.SCOPE` is the
+  three `devstorage.*` scopes only, so the credential the storage client holds
+  refreshes to a storage-only token that `signBlob` refuses with
+  `ACCESS_TOKEN_SCOPE_INSUFFICIENT` — a 403 no IAM policy change can fix.
+  `GcsStorageBackend._signing_token` mints a second, correctly scoped
+  credential for the signature; the storage client's own token is never reused.
+
+### 5.6 Security posture as shipped
 
 Good already: the backend image runs **non-root** (`Dockerfile:45,67`), carries no
 compiler toolchain and no dev/test dependencies, and all 121 route operations are
