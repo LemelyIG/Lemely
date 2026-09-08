@@ -14,8 +14,8 @@ the sweeper will now notify those at their ``publish_at`` if it is still ahead,
 which is the correct-but-late outcome the spec accepts. Stamping them all as
 notified would silently drop a scheduled post's audience.
 
-Revision ID: 0030_announcement_notified_at
-Revises: 0029_user_timezone
+Revision ID: 0033_announcement_notified_at
+Revises: 0032_user_timezone
 Create Date: 2026-09-05 00:00:00.000000
 """
 
@@ -28,8 +28,8 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 # Kept to <=32 chars: alembic_version.version_num is varchar(32).
-revision: str = "0030_announcement_notified_at"
-down_revision: str | Sequence[str] | None = "0029_user_timezone"
+revision: str = "0033_announcement_notified_at"
+down_revision: str | Sequence[str] | None = "0032_user_timezone"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 

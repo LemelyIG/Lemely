@@ -6,8 +6,8 @@ changes nobody's behaviour on deploy. ``timezone_is_explicit`` records that the
 *user* chose the zone, which is what stops the client's auto-detect overwriting
 a deliberate choice. No backfill: nothing knows where an existing user is.
 
-Revision ID: 0029_user_timezone
-Revises: 0028_user_avatar_path
+Revision ID: 0032_user_timezone
+Revises: 0031_auth_cooldowns
 Create Date: 2026-09-05 00:00:00.000000
 """
 
@@ -20,8 +20,8 @@ from alembic import op
 
 # revision identifiers, used by Alembic.
 # Kept to <=32 chars: alembic_version.version_num is varchar(32).
-revision: str = "0029_user_timezone"
-down_revision: str | Sequence[str] | None = "0028_user_avatar_path"
+revision: str = "0032_user_timezone"
+down_revision: str | Sequence[str] | None = "0031_auth_cooldowns"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
