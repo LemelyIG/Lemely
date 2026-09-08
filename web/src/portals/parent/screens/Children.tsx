@@ -144,7 +144,7 @@ function NoChildrenLinked() {
         {[
           "Ask your child to open Lemely and sign in.",
           "In their account, they open Parent access and share their code or link with you.",
-          "Enter it at lemely.app/join, confirm your email, and you're in.",
+          "Open what they send you, confirm your email, and you're in.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
             <span

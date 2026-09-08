@@ -15,7 +15,12 @@
  */
 
 import { ApiError } from "@/lib/api"
-import { AUTH_NETWORK_FAILURE, AUTH_SERVICE_FAILURE, AUTH_SIGNUP_REJECTED } from "@/lib/authOutcome"
+import {
+  AUTH_NETWORK_FAILURE,
+  AUTH_SERVICE_FAILURE,
+  AUTH_SIGNUP_REJECTED,
+  otpRequestFailureMessage,
+} from "@/lib/authOutcome"
 import { MIN_PASSWORD_LENGTH } from "./signupDetailsLogic"
 
 /**
@@ -119,39 +124,36 @@ export interface ParentRequestCodeFailure {
 
 /**
  * Turn a failed `POST /auth/parent/request-code` into what step 1 should do
- * about it. Not folded into `authOutcome.ts`: that module owns sentences
- * shared across screens, and every branch here is specific to this one route
- * (a 400 that means "this email already has an account", a 404 that means
- * "swap the whole screen", a 429 whose `detail` is already a sentence a human
- * wrote) — the same reasoning `useInvitesApi.ts`'s own `redeemFailureMessage`
- * gives for layering route-specific classification on top of, rather than
- * inside, the shared module.
+ * about it. The two branches specific to this route — a 404 that means "the
+ * invite died, swap the whole screen", a 400 that means "this email already
+ * has an account" — are handled here; everything else (network loss, the
+ * cooldown/rate-limit 429, a 5xx, the generic fallback) is delegated to
+ * `otpRequestFailureMessage` (`authOutcome.ts`) rather than re-implemented.
+ * That function already owns exactly this shape of classification for the
+ * phone-OTP request this route replaces, and its 429 branch already keeps
+ * the backend's own human-written detail verbatim — review round 1 found the
+ * first cut of this function had quietly duplicated that logic instead of
+ * calling it, the same "layer route-specific classification on top of, not
+ * inside, the shared module" reasoning `useInvitesApi.ts`'s own
+ * `redeemFailureMessage` follows for `inviteFailureMessage`.
+ *
+ * Only reached for a status `otpRequestFailureMessage` would otherwise map
+ * to its own 400/422 branch ("check the digits and the country") — that
+ * copy is phone-specific and wrong here, which is exactly why 400 is
+ * intercepted above it rather than falling through.
  */
 export function parentRequestCodeFailure(err: unknown): ParentRequestCodeFailure {
   if (err instanceof ApiError) {
     if (err.status === 404) return { message: "", deadInvite: true, hasAccount: false }
     if (err.status === 400) {
       return {
-        message: "That email already has a Lemely account. Sign in to add this child from there instead.",
+        message: "That email already has a Lemely account. Sign in, then open this invite again to add this child.",
         deadInvite: false,
         hasAccount: true,
       }
     }
-    // The backend's own cooldown/rate-limit detail is a sentence a human
-    // wrote ("retry in 12s"), kept verbatim — the same call
-    // `otpRequestFailureMessage` makes for the OTP request 429 it replaces.
-    if (err.status === 429 && typeof err.detail === "string" && err.detail.trim() !== "") {
-      return { message: err.detail.trim(), deadInvite: false, hasAccount: false }
-    }
-    if (err.status === 0) return { message: AUTH_NETWORK_FAILURE, deadInvite: false, hasAccount: false }
-    if (err.status >= 500) return { message: AUTH_SERVICE_FAILURE, deadInvite: false, hasAccount: false }
   }
-  if (err instanceof TypeError) return { message: AUTH_NETWORK_FAILURE, deadInvite: false, hasAccount: false }
-  return {
-    message: "We couldn't send a code just then. Trying again usually sorts it.",
-    deadInvite: false,
-    hasAccount: false,
-  }
+  return { message: otpRequestFailureMessage(err), deadInvite: false, hasAccount: false }
 }
 
 /**

@@ -58,6 +58,11 @@ function expiryLabel(expiresAt: string): string {
   return `Expires in ${hours}h`
 }
 
+/** How long a "Copied" acknowledgement stays on a button before reverting to
+ * its resting label — review round 1, Minor finding 6: without a reset, the
+ * label was stuck on "Copied" for the rest of the visit after the first tap. */
+const COPY_ACKNOWLEDGEMENT_MS = 1500
+
 /** Copy `text` to the clipboard, calling `onCopied` only on success. Silent
  * on failure (permissions, a non-secure context) — the code or link is still
  * visible on screen, so hand-copying it still works. */
@@ -96,6 +101,11 @@ function ParentCodeCard({ code, url }: { code: string; url: string }) {
   const rotate = useRotateParentCode()
   const [copied, setCopied] = useState(false)
 
+  const acknowledgeCopy = () => {
+    setCopied(true)
+    window.setTimeout(() => setCopied(false), COPY_ACKNOWLEDGEMENT_MS)
+  }
+
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
       <div className="flex flex-col gap-1">
@@ -109,19 +119,23 @@ function ParentCodeCard({ code, url }: { code: string; url: string }) {
         <span className="rounded-md border border-rule bg-paper-sunk px-3 py-1.5 font-mono text-data-md tracking-[0.06em] text-ink">
           {code}
         </span>
+        {/* Review round 1, Minor finding 6: this used to copy `url` while
+            labelled plainly "Copy" beside the code the card actually shows —
+            it now copies the code itself, matching what's on screen; `url`
+            is what "Share" sends instead, since a share sheet wants a link. */}
         <Button
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => copyToClipboard(url, () => setCopied(true))}
+          onClick={() => copyToClipboard(code, acknowledgeCopy)}
         >
-          {copied ? "Copied" : "Copy"}
+          {copied ? "Copied" : "Copy code"}
         </Button>
         <Button
           type="button"
           variant="secondary"
           size="sm"
-          onClick={() => shareOrCopy(url, () => setCopied(true))}
+          onClick={() => shareOrCopy(url, acknowledgeCopy)}
         >
           Share
         </Button>
@@ -158,6 +172,11 @@ function OneTimeLinkCard({
   const [revokingCode, setRevokingCode] = useState<string | null>(null)
   const [revokeError, setRevokeError] = useState<{ code: string; message: string } | null>(null)
 
+  const acknowledgeCopy = (code: string) => {
+    setCopiedCode(code)
+    window.setTimeout(() => setCopiedCode((current) => (current === code ? null : current)), COPY_ACKNOWLEDGEMENT_MS)
+  }
+
   const handleRevoke = (code: string) => {
     setRevokingCode(code)
     setRevokeError(null)
@@ -169,6 +188,14 @@ function OneTimeLinkCard({
       },
     )
   }
+
+  // Review round 1, Minor finding 6: a freshly minted link used to appear
+  // twice — once in the highlight box below (from `mint.data`, before the
+  // invalidated query has refetched) and again in `links` once it has. Once
+  // the list itself carries the new code, the highlight box would be a
+  // duplicate of a row that already has its own copy action (below), so it
+  // stops rendering.
+  const justMinted = mint.data && !links.some((link) => link.code === mint.data?.code) ? mint.data : null
 
   return (
     <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
@@ -194,18 +221,16 @@ function OneTimeLinkCard({
           {studentSaveFailureMessage(mint.error)}
         </p>
       ) : null}
-      {mint.data ? (
+      {justMinted ? (
         <div className="flex flex-wrap items-center gap-2 rounded-md border border-rule bg-paper-sunk px-3 py-2">
-          <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{mint.data.url}</span>
+          <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{justMinted.url}</span>
           <Button
             type="button"
             variant="secondary"
             size="sm"
-            onClick={() =>
-              mint.data && copyToClipboard(mint.data.url, () => setCopiedCode(mint.data!.code))
-            }
+            onClick={() => copyToClipboard(justMinted.url, () => acknowledgeCopy(justMinted.code))}
           >
-            {copiedCode === mint.data.code ? "Copied" : "Copy"}
+            {copiedCode === justMinted.code ? "Copied" : "Copy"}
           </Button>
         </div>
       ) : null}
@@ -225,10 +250,23 @@ function OneTimeLinkCard({
                   <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{link.url}</span>
                   <div className="flex items-center gap-2">
                     <span className="text-body-sm text-ink-faint">{expiryLabel(link.expiresAt)}</span>
+                    {/* Review round 1, Minor finding 6: a link minted before
+                        a page reload had no way to be retrieved again except
+                        reading the truncated URL by eye. */}
                     <Button
                       type="button"
                       variant="ghost"
                       size="sm"
+                      aria-label={`Copy link for code ${link.code}`}
+                      onClick={() => copyToClipboard(link.url, () => acknowledgeCopy(link.code))}
+                    >
+                      {copiedCode === link.code ? "Copied" : "Copy"}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      aria-label={`Revoke link for code ${link.code}`}
                       disabled={revokingCode === link.code}
                       onClick={() => handleRevoke(link.code)}
                     >

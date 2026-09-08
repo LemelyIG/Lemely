@@ -9,6 +9,7 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { CodeInput } from "@/components/auth/CodeInput"
 import { ApiError } from "@/lib/api"
 import { otpVerifyFailureMessage } from "@/lib/authOutcome"
+import { withNext } from "@/lib/nextPath"
 import { normalizeInviteCode } from "@/lib/hooks/useInvitesApi"
 import { useRequestParentCode, useVerifyParentCode } from "@/lib/hooks/useParentSignupApi"
 import { MIN_PASSWORD_LENGTH, passwordStrength, strengthFillClass } from "./signupDetailsLogic"
@@ -146,6 +147,15 @@ export function SignupParent() {
   const [codeValue, setCodeValue] = useState("")
   const [cooldown, setCooldown] = useState(0)
   const lastAttempted = useRef<string | null>(null)
+  // Bumped on every successful `request-code` call, fresh send or resend
+  // alike — used only as part of `CodeInput`'s `key` below, to force a real
+  // remount (and therefore a genuinely cleared digit array) whenever a new
+  // code has been sent. `CodeInput` itself does not resync its boxes from a
+  // later `value` prop change (review round 1's Important finding 1 — see
+  // that component's own module docstring), so this is how this screen
+  // clears the boxes for a resend without giving `CodeInput` a resync path
+  // that would reintroduce the bug that fix removed.
+  const [codeGeneration, setCodeGeneration] = useState(0)
 
   const [proofToken, setProofToken] = useState<string | null>(null)
   const [password, setPassword] = useState("")
@@ -176,6 +186,12 @@ export function SignupParent() {
           setCodeValue("")
           lastAttempted.current = null
           setCooldown(RESEND_COOLDOWN_SECONDS)
+          setCodeGeneration((n) => n + 1)
+          // Review round 1, Minor finding 10: a resend must not leave a
+          // stale "that code doesn't match" sitting under boxes the reader
+          // has not touched yet — the fresh code just sent has nothing to
+          // do with the one that failed.
+          verifyCode.reset()
         },
         onError: (err) => {
           if (parentRequestCodeFailure(err).deadInvite) setInviteDead(true)
@@ -249,6 +265,36 @@ export function SignupParent() {
   }
 
   const requestFailure = requestCode.isError ? parentRequestCodeFailure(requestCode.error) : null
+  // Matches `JoinWithCode.tsx`'s own use of `withNext` exactly (review round
+  // 1, Minor finding 8) — one allowlisted `?next=` encoder for every screen
+  // that carries a reader back to an invite after signing in, not a second,
+  // hand-built query string that could drift from it.
+  const signInHref = withNext("/login", `/join/${code}`)
+
+  /**
+   * The request-code failure panel, shared between the email step (a failed
+   * initial send) and the code step (a failed resend) — `requestCode` is one
+   * mutation object used by both `sendCode` call sites, so its `error` at
+   * any given moment reflects whichever step's own last attempt produced it.
+   * Review round 1, Important finding 2: the first cut only ever rendered
+   * this inside the email step, so a resend that hit the server's cooldown
+   * or a 5xx left the reader with no explanation at all.
+   */
+  const renderRequestFailure = () => {
+    if (!requestFailure || requestFailure.deadInvite) return null
+    return (
+      <div className="flex flex-col gap-1.5">
+        <p role="alert" className="text-body-sm text-err">
+          {requestFailure.message}
+        </p>
+        {requestFailure.hasAccount ? (
+          <Link to={signInHref} className={`${LINK_CLASS} w-fit`}>
+            Sign in
+          </Link>
+        ) : null}
+      </div>
+    )
+  }
 
   return (
     <AuthFrame
@@ -256,7 +302,7 @@ export function SignupParent() {
       footer={
         <p className="text-body-sm text-ink-muted">
           Already have an account?{" "}
-          <Link to={`/login?next=${encodeURIComponent(`/join/${code}`)}`} className={LINK_CLASS}>
+          <Link to={signInHref} className={LINK_CLASS}>
             Sign in
           </Link>
         </p>
@@ -294,21 +340,7 @@ export function SignupParent() {
                 error={emailError}
               />
 
-              {requestFailure && !requestFailure.deadInvite ? (
-                <div className="flex flex-col gap-1.5">
-                  <p role="alert" className="text-body-sm text-err">
-                    {requestFailure.message}
-                  </p>
-                  {requestFailure.hasAccount ? (
-                    <Link
-                      to={`/login?next=${encodeURIComponent(`/join/${code}`)}`}
-                      className={`${LINK_CLASS} w-fit`}
-                    >
-                      Sign in
-                    </Link>
-                  ) : null}
-                </div>
-              ) : null}
+              {renderRequestFailure()}
 
               <Button type="submit" variant="accent" size="lg" loading={requestCode.isPending}>
                 {requestCode.isPending ? "Sending…" : "Send code"}
@@ -325,6 +357,11 @@ export function SignupParent() {
               </div>
 
               <CodeInput
+                // Forces a real remount, and therefore a freshly-cleared
+                // digit array, whenever a new code is sent — see
+                // `codeGeneration`'s own comment for why `CodeInput` cannot
+                // be trusted to resync itself from `value` alone.
+                key={`${sentTo}-${codeGeneration}`}
                 length={CODE_LENGTH}
                 value={codeValue}
                 onChange={setCodeValue}
@@ -342,6 +379,11 @@ export function SignupParent() {
                   Checking your code…
                 </p>
               ) : null}
+
+              {/* Review round 1, Important finding 2: a failed resend (the
+                  server's own cooldown, a 5xx, a dropped connection) used to
+                  render nothing at all on this step. */}
+              {renderRequestFailure()}
 
               {devCode
                 ? (() => {
@@ -384,6 +426,12 @@ export function SignupParent() {
                     setDevCode(null)
                     setCodeValue("")
                     verifyCode.reset()
+                    // A stale send/resend failure (the 400 "this email
+                    // already has an account", a cooldown 429) is tied to
+                    // the email being left behind — carrying it onto a blank
+                    // "enter your email" form would read as a complaint
+                    // about an address not yet typed.
+                    requestCode.reset()
                   }}
                 >
                   Change email

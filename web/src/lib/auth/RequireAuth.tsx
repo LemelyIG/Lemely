@@ -100,8 +100,7 @@ export function portalPathForRole(role: string): string {
  * session's role forward so `FullPageStateBody`'s `sign-in` action can
  * resolve through this one function instead of duplicating the mapping.
  */
-export function loginPathForRole(role: string | undefined): string {
-  void role
+export function loginPathForRole(_role: string | undefined): string {
   return "/login"
 }
 
