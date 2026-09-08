@@ -45,15 +45,18 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import (
+    PARENT_INVITE_TTL,
     InviteAlreadyRedeemedError,
     InviteNotFoundError,
     InviteOwnershipError,
     InviteQuotaExceededError,
+    InviteRoleMismatchError,
     InviteService,
 )
 from lemely.db.models import (
     ClassEnrollment,
     Invite,
+    ParentChildLink,
     School,
     SchoolClass,
     SchoolMembership,
@@ -61,6 +64,7 @@ from lemely.db.models import (
     User,
 )
 from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
+from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -148,7 +152,7 @@ def _seed_class(
 
 
 def _service(sm: sessionmaker[Session]) -> InviteService:
-    return InviteService(sm, ClassService(sm))
+    return InviteService(sm, ClassService(sm), ParentLinkService(sm))
 
 
 # ── preview: dual resolution ────────────────────────────────────────────────
@@ -239,7 +243,7 @@ def test_preview_does_not_leak_member_identities(pg_sessionmaker: sessionmaker[S
     preview = service.preview(invite.code)
 
     dumped = dataclasses.asdict(preview)
-    assert set(dumped) == {"role", "school_name", "class_name", "teacher_name"}
+    assert set(dumped) == {"role", "school_name", "class_name", "teacher_name", "child_name"}
     rendered = repr(dumped)
     assert "Secret Student" not in rendered
     assert str(student) not in rendered
@@ -510,3 +514,278 @@ def test_redeem_of_a_minted_class_invite_enrols_via_join_by_code(
     other_student = _seed_user(pg_sessionmaker, Role.student)
     with pytest.raises(InviteAlreadyRedeemedError):
         service.redeem(other_student, code)
+
+
+# ── mint_parent_invite / get_or_create_parent_code / rotate_parent_code ────
+
+
+def test_mint_parent_link_sets_child_created_by_and_seven_day_expiry(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    assert invite.role is InviteRole.parent
+    assert invite.child_id == student
+    assert invite.created_by == student
+    assert invite.reusable is False
+    assert invite.redeemed_by is None
+    assert invite.expires_at is not None
+    expected = datetime.now(UTC) + PARENT_INVITE_TTL
+    assert abs((invite.expires_at - expected).total_seconds()) < 5
+
+
+def test_get_or_create_parent_code_is_lazy_and_stable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    with pg_sessionmaker() as session:
+        existing = session.scalars(sa.select(Invite).where(Invite.child_id == student)).first()
+        assert existing is None, "no row until first request - lazy"
+
+    first = service.get_or_create_parent_code(student)
+    second = service.get_or_create_parent_code(student)
+
+    assert first.id == second.id
+    assert first.code == second.code
+    assert first.reusable is True
+    assert first.expires_at is None
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1
+
+
+def test_rotate_parent_code_replaces_the_row(pg_sessionmaker: sessionmaker[Session]) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    rotated = service.rotate_parent_code(student)
+
+    assert rotated.id != original.id
+    assert rotated.code != original.code
+    assert rotated.reusable is True
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, original.id) is None
+        assert session.get(Invite, rotated.id) is not None
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1
+
+
+# ── list_parent_invites / revoke_parent_invite ──────────────────────────────
+
+
+def test_list_parent_invites_excludes_expired_redeemed_and_reusable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    first_live = service.mint_parent_invite(student, reusable=False)
+    second_live = service.mint_parent_invite(student, reusable=False)
+    service.mint_parent_invite(student, reusable=True)  # the reusable code - excluded
+    redeemed = service.mint_parent_invite(student, reusable=False)
+    service.redeem(parent, redeemed.code, caller_role=Role.parent)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Invite(
+                code="EXPIREDPARENT",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+
+    invites = service.list_parent_invites(student)
+
+    assert [i.id for i in invites] == [first_live.id, second_live.id]
+
+
+def test_revoke_parent_invite_refuses_another_students_code(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(other_student, invite.code)
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, invite.id) is not None
+
+    # Owner can revoke it.
+    service.revoke_parent_invite(student, invite.code)
+    with pg_sessionmaker() as session:
+        assert session.get(Invite, invite.id) is None
+
+    # The reusable code is never revocable through this method.
+    code_row = service.get_or_create_parent_code(student)
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(student, code_row.code)
+
+    with pytest.raises(InviteNotFoundError):
+        service.revoke_parent_invite(student, "NOSUCHCODE")
+
+
+# ── preview: parent invite names the child ──────────────────────────────────
+
+
+def test_preview_parent_invite_names_child_never_email_or_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    named_student = _seed_user(pg_sessionmaker, Role.student, display_name="Amira")
+    blank_student = _seed_user(pg_sessionmaker, Role.student, display_name=None)
+    service = _service(pg_sessionmaker)
+    named_invite = service.mint_parent_invite(named_student, reusable=False)
+    blank_invite = service.mint_parent_invite(blank_student, reusable=False)
+
+    named_preview = service.preview(named_invite.code)
+    blank_preview = service.preview(blank_invite.code)
+
+    assert named_preview.role is InviteRole.parent
+    assert named_preview.child_name == "Amira"
+    assert blank_preview.role is InviteRole.parent
+    assert blank_preview.child_name == "your child"
+    for preview, student in ((named_preview, named_student), (blank_preview, blank_student)):
+        assert preview.school_name is None
+        assert preview.class_name is None
+        assert preview.teacher_name is None
+        dumped = dataclasses.asdict(preview)
+        rendered = repr(dumped)
+        assert str(student) not in rendered
+        with pg_sessionmaker() as session:
+            email = session.get(User, student).email  # type: ignore[union-attr]
+        assert email not in rendered
+
+
+# ── redeem: parent invite links, role mismatch, idempotency ────────────────
+
+
+def test_redeem_parent_link_links_and_consumes(pg_sessionmaker: sessionmaker[Session]) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    result = service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    assert result.role is InviteRole.parent
+    assert result.child_id == student
+    assert result.school_id is None
+    assert result.class_id is None
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by == parent
+        assert redeemed.redeemed_at is not None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(
+                ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+            )
+        ).first()
+        assert link is not None
+
+    # Single-use, like every other invites row: a second parent is refused.
+    other_parent = _seed_user(pg_sessionmaker, Role.parent)
+    with pytest.raises(InviteAlreadyRedeemedError):
+        service.redeem(other_parent, invite.code, caller_role=Role.parent)
+
+
+def test_redeem_parent_code_links_without_consuming_so_a_second_parent_can_use_it(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    first_parent = _seed_user(pg_sessionmaker, Role.parent)
+    second_parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    code_invite = service.get_or_create_parent_code(student)
+
+    first_result = service.redeem(first_parent, code_invite.code, caller_role=Role.parent)
+    second_result = service.redeem(second_parent, code_invite.code, caller_role=Role.parent)
+
+    assert first_result.child_id == student
+    assert second_result.child_id == student
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, code_invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+        assert redeemed.redeemed_at is None
+        links = list(
+            session.scalars(sa.select(ParentChildLink).where(ParentChildLink.child_id == student))
+        )
+        assert {link.parent_id for link in links} == {first_parent, second_parent}
+
+
+def test_redeem_parent_invite_by_student_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(other_student, invite.code, caller_role=Role.student)
+
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+        link = session.scalars(
+            sa.select(ParentChildLink).where(ParentChildLink.child_id == student)
+        ).first()
+        assert link is None
+
+
+def test_redeem_class_invite_by_parent_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_id = _seed_class(pg_sessionmaker, teacher_id=teacher)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_class_invite(teacher, Role.teacher, class_id)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    with pg_sessionmaker() as session:
+        redeemed = session.get(Invite, invite.id)
+        assert redeemed is not None
+        assert redeemed.redeemed_by is None
+
+
+def test_redeem_parent_invite_twice_by_same_parent_is_idempotent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    first = service.redeem(parent, invite.code, caller_role=Role.parent)
+    second = service.redeem(parent, invite.code, caller_role=Role.parent)
+
+    assert first == second
+    with pg_sessionmaker() as session:
+        links = list(
+            session.scalars(
+                sa.select(ParentChildLink).where(
+                    ParentChildLink.parent_id == parent, ParentChildLink.child_id == student
+                )
+            )
+        )
+        assert len(links) == 1

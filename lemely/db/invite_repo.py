@@ -70,6 +70,21 @@ code remains exactly as unlimited-use as it always was (D3.1). That
 difference is why a class invite is minted as its own ``invites`` row rather
 than simply handing out the class's existing ``join_code`` a second time —
 doing so would make a "single-use" invite as shareable as the code it wraps.
+
+**Parent invites are the one documented exception to "single-use"** (spec
+"two invite kinds, one table" §3). A student mints either a single-use link
+(:meth:`mint_parent_invite` with ``reusable=False``, 7-day expiry via
+:data:`PARENT_INVITE_TTL`) or holds one rotatable, non-expiring reusable
+code (:meth:`get_or_create_parent_code`/:meth:`rotate_parent_code`). The
+link behaves exactly like every other ``invites`` row here — ``redeemed_by``
+marks it consumed and a second parent is refused. The reusable code is
+never marked redeemed at all: each redemption only inserts a
+``parent_child_links`` row via
+:meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`, so a
+second (or third) parent can use the identical code a sibling's other
+parent already used. Both kinds are minted with ``created_by`` and
+``child_id`` set to the same student — the invite proves who issued it and
+who it links to in one row.
 """
 
 from __future__ import annotations
@@ -77,10 +92,10 @@ from __future__ import annotations
 import secrets
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import func, select
+from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 
 from lemely.db.class_repo import (
@@ -94,6 +109,14 @@ from lemely.db.models.enums import InviteRole, MembershipRole, Role, SeatStatus
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
+
+    from lemely.db.parent_repo import ParentLinkService
+
+
+PARENT_INVITE_TTL = timedelta(days=7)
+"""How long a single-use parent invite link lives before it reads as unknown
+(spec §3). The reusable parent code carries no expiry at all — it lives
+until rotated."""
 
 
 class InviteError(Exception):
@@ -114,6 +137,19 @@ class InviteNotFoundError(InviteError):
 
 class InviteAlreadyRedeemedError(InviteError):
     """The invite was already redeemed by a different user (→ 409)."""
+
+
+class InviteRoleMismatchError(InviteError):
+    """The code's role and the redeeming caller's role disagree (→ 403).
+
+    Two directions matter, both required by the spec: a parent invite
+    (``role=parent``) redeemed by anyone whose ``caller_role`` is not
+    :attr:`~lemely.db.models.enums.Role.parent`, and a student/teacher
+    invite redeemed by a caller whose ``caller_role`` *is*
+    :attr:`~lemely.db.models.enums.Role.parent`. Nothing else is checked
+    here — a bare ``classes.join_code`` and every other role combination
+    keep their pre-existing, unchecked behaviour.
+    """
 
 
 # Alphabet excludes visually-ambiguous characters (0/O, 1/I/L), mirroring
@@ -141,6 +177,11 @@ class InvitePreview:
     school_name: str | None
     class_name: str | None
     teacher_name: str | None
+    child_name: str | None
+    """Set only for a ``role=parent`` invite: the child's ``display_name``,
+    or ``"your child"`` when blank. Never the child's email or id — a
+    parent invite gets the identical disclosure discipline binding rule 4
+    already applies to a school/class/teacher name."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -152,28 +193,42 @@ class RedeemResult:
     a class invite (or a bare ``classes.join_code``) yields a class, whose
     school is filled in from the class itself when the invite did not carry
     one directly (a class invite never does — see the module docstring).
+    ``child_id`` is set only for a parent invite, mirroring
+    :attr:`~lemely.db.models.invites.Invite.child_id`.
     """
 
     role: InviteRole
     school_id: uuid.UUID | None
     class_id: uuid.UUID | None
+    child_id: uuid.UUID | None
 
 
 class InviteService:
     """Mint, preview and redeem invite codes for a school seat or a class.
 
     Constructed with a ``sessionmaker`` (mirroring
-    :class:`~lemely.db.seat_repo.SeatService`) and the same
+    :class:`~lemely.db.seat_repo.SeatService`), the same
     :class:`~lemely.db.class_repo.ClassService` singleton every other
     class-scoped service composes, so class ownership and class enrolment
     can never diverge from what the rest of the teacher/student portals
-    already enforce (D3.1).
+    already enforce (D3.1), and a
+    :class:`~lemely.db.parent_repo.ParentLinkService` — the seam a parent
+    invite's redemption links an existing parent account to a child
+    through, never a hand-rolled ``parent_child_links`` insert of its own
+    (the same single-writer discipline that service's own docstring
+    establishes).
     """
 
-    def __init__(self, sessionmaker: sessionmaker[Session], class_service: ClassService) -> None:
-        """Wire the service to a session factory and the shared ``ClassService``."""
+    def __init__(
+        self,
+        sessionmaker: sessionmaker[Session],
+        class_service: ClassService,
+        parent_link_service: ParentLinkService,
+    ) -> None:
+        """Wire the service to a session factory, ``ClassService`` and ``ParentLinkService``."""
         self._sessionmaker = sessionmaker
         self._class_service = class_service
+        self._parent_link_service = parent_link_service
 
     # -- Minting --------------------------------------------------------------
 
@@ -277,6 +332,125 @@ class InviteService:
                 class_id=class_uuid,
             )
 
+    # -- Parent invites (child-issued) -------------------------------------------
+
+    def mint_parent_invite(self, student_id: uuid.UUID | str, *, reusable: bool) -> Invite:
+        """Mint a ``role=parent`` invite naming ``student_id`` as its child.
+
+        No ownership check runs here — unlike a seat or class invite, a
+        parent invite's caller and its target (``child_id``) are the same
+        person, so there is no "may this caller touch this target" question
+        to ask (the router only ever calls this with the authenticated
+        student's own id).
+
+        ``reusable=False`` mints a single-use link, ``expires_at`` set to
+        now plus :data:`PARENT_INVITE_TTL`; ``reusable=True`` mints the
+        rotatable code, ``expires_at`` left ``NULL`` (spec §3's table).
+        Prefer :meth:`get_or_create_parent_code`/:meth:`rotate_parent_code`
+        over calling this directly with ``reusable=True`` — they are what
+        keeps "a student has at most one reusable row at a time" true.
+        """
+        student_uuid = _as_uuid(student_id)
+        expires_at = None if reusable else datetime.now(UTC) + PARENT_INVITE_TTL
+        with self._sessionmaker() as session, session.begin():
+            return self._insert_invite(
+                session,
+                role=InviteRole.parent,
+                created_by=student_uuid,
+                child_id=student_uuid,
+                reusable=reusable,
+                expires_at=expires_at,
+            )
+
+    def get_or_create_parent_code(self, student_id: uuid.UUID | str) -> Invite:
+        """Return this child's reusable parent code, minting one lazily.
+
+        Mirrors ``classes.join_code``'s "a class always has a join code"
+        rule: a student never sees an empty state for their code, only a
+        value. Read-then-insert rather than an upsert — there is no unique
+        index enforcing "at most one reusable row per child" (the schema
+        constrains ``code`` uniqueness only), so the invariant is kept by
+        this method and :meth:`rotate_parent_code` being the only two
+        writers of a reusable row, both self-service and low-traffic enough
+        that a race is not worth a stronger guarantee here.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session:
+            existing = self._find_reusable_parent_code(session, student_uuid)
+            if existing is not None:
+                return existing
+        return self.mint_parent_invite(student_uuid, reusable=True)
+
+    def rotate_parent_code(self, student_id: uuid.UUID | str) -> Invite:
+        """Replace this child's reusable code with a freshly minted one.
+
+        Deletes the old row and inserts the new one in the same
+        transaction, so a redemption racing the rotation sees either the
+        old code (and its now-superseded row disappears cleanly under it)
+        or the new one, never both live at once.
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session, session.begin():
+            session.execute(
+                delete(Invite).where(Invite.child_id == student_uuid, Invite.reusable.is_(True))
+            )
+            return self._insert_invite(
+                session,
+                role=InviteRole.parent,
+                created_by=student_uuid,
+                child_id=student_uuid,
+                reusable=True,
+                expires_at=None,
+            )
+
+    def list_parent_invites(self, student_id: uuid.UUID | str) -> list[Invite]:
+        """Return this child's live, unredeemed single-use links, oldest first.
+
+        The reusable code is deliberately excluded — it is not a pending
+        invite a student manages one at a time, it is a standing code
+        surfaced separately by :meth:`get_or_create_parent_code`. A
+        redeemed or expired link is equally excluded: both have already
+        served their purpose and clutter a "pending" list otherwise.
+        """
+        student_uuid = _as_uuid(student_id)
+        now = datetime.now(UTC)
+        with self._sessionmaker() as session:
+            stmt = (
+                select(Invite)
+                .where(
+                    Invite.child_id == student_uuid,
+                    Invite.reusable.is_(False),
+                    Invite.redeemed_by.is_(None),
+                    or_(Invite.expires_at.is_(None), Invite.expires_at > now),
+                )
+                .order_by(Invite.created_at)
+            )
+            return list(session.scalars(stmt).all())
+
+    def revoke_parent_invite(self, student_id: uuid.UUID | str, code: str) -> None:
+        """Delete a single-use parent link that belongs to ``student_id``.
+
+        Deletes only when ``code`` resolves to an ``invites`` row whose
+        ``child_id`` is ``student_id`` and whose ``reusable`` is ``False``;
+        anything else — another student's code, the reusable code, or an
+        unknown code — is the identical :class:`InviteNotFoundError`, so a
+        student learns nothing about whether a code they don't own exists
+        (the same disclosure discipline binding rule 4 applies to
+        :meth:`preview`).
+        """
+        student_uuid = _as_uuid(student_id)
+        with self._sessionmaker() as session, session.begin():
+            invite = session.scalars(select(Invite).where(Invite.code == code)).first()
+            if invite is None or invite.child_id != student_uuid or invite.reusable:
+                raise InviteNotFoundError(f"Unknown code: {code!r}")
+            session.delete(invite)
+
+    def _find_reusable_parent_code(
+        self, session: Session, student_uuid: uuid.UUID
+    ) -> Invite | None:
+        stmt = select(Invite).where(Invite.child_id == student_uuid, Invite.reusable.is_(True))
+        return session.scalars(stmt).first()
+
     # -- Preview (public, pre-account) -----------------------------------------
 
     def preview(self, code: str) -> InvitePreview:
@@ -298,6 +472,8 @@ class InviteService:
         with self._sessionmaker() as session:
             invite = self._find_live_invite(session, code)
             if invite is not None:
+                if invite.role is InviteRole.parent:
+                    return self._preview_for_parent_invite(session, invite)
                 return self._preview_for_invite(session, invite)
             cls = self._find_class_by_join_code(session, code)
             if cls is not None:
@@ -306,7 +482,13 @@ class InviteService:
 
     # -- Redemption -------------------------------------------------------------
 
-    def redeem(self, user_id: uuid.UUID | str, code: str) -> RedeemResult:
+    def redeem(
+        self,
+        user_id: uuid.UUID | str,
+        code: str,
+        *,
+        caller_role: Role | None = None,
+    ) -> RedeemResult:
         """Redeem a code for the authenticated caller. Idempotent (binding rule 3).
 
         Assumes the caller already has an account — unlike :meth:`preview`,
@@ -333,17 +515,34 @@ class InviteService:
                 class join code (→ 404).
             InviteAlreadyRedeemedError: The invite was already redeemed by a
                 different user (→ 409).
+            InviteRoleMismatchError: ``code`` is a parent invite and
+                ``caller_role`` is not
+                :attr:`~lemely.db.models.enums.Role.parent`, or ``code`` is
+                a student/teacher invite and ``caller_role`` *is*
+                :attr:`~lemely.db.models.enums.Role.parent` (→ 403).
         """
         user_uuid = _as_uuid(user_id)
         with self._sessionmaker() as session, session.begin():
             invite = self._find_live_invite(session, code, for_update=True)
             if invite is not None:
+                if invite.role is InviteRole.parent:
+                    if caller_role is not Role.parent:
+                        raise InviteRoleMismatchError(
+                            f"Invite {code!r} is a parent invite; caller role is {caller_role}"
+                        )
+                    return self._redeem_parent_invite(session, invite, user_uuid)
+                if caller_role is Role.parent:
+                    raise InviteRoleMismatchError(
+                        f"Invite {code!r} is not a parent invite; caller is a parent"
+                    )
                 return self._redeem_invite(session, invite, user_uuid)
         try:
             row = self._class_service.join_by_code(user_uuid, code)
         except JoinCodeError as exc:
             raise InviteNotFoundError(str(exc)) from exc
-        return RedeemResult(role=InviteRole.student, school_id=row.school_id, class_id=row.class_id)
+        return RedeemResult(
+            role=InviteRole.student, school_id=row.school_id, class_id=row.class_id, child_id=None
+        )
 
     def _redeem_invite(
         self, session: Session, invite: Invite, user_uuid: uuid.UUID
@@ -365,7 +564,30 @@ class InviteService:
         if invite.redeemed_by is None:
             invite.redeemed_by = user_uuid
             invite.redeemed_at = datetime.now(UTC)
-        return RedeemResult(role=invite.role, school_id=school_id, class_id=class_id)
+        return RedeemResult(role=invite.role, school_id=school_id, class_id=class_id, child_id=None)
+
+    def _redeem_parent_invite(
+        self, session: Session, invite: Invite, user_uuid: uuid.UUID
+    ) -> RedeemResult:
+        """Link the redeeming parent to ``invite.child_id``. Called under its lock.
+
+        Marks ``redeemed_by``/``redeemed_at`` only when the invite is not
+        ``reusable`` — a reusable code is never consumed (spec §3), so every
+        parent who holds it links successfully and the row itself is
+        untouched by any redemption. The single-use link, by contrast,
+        behaves exactly like :meth:`_redeem_invite`: idempotent for the
+        parent who already redeemed it, refused for a different one.
+        """
+        if invite.redeemed_by is not None and invite.redeemed_by != user_uuid:
+            raise InviteAlreadyRedeemedError(f"Invite {invite.code!r} has already been redeemed")
+        if invite.child_id is not None:
+            self._parent_link_service.link_in_session(session, user_uuid, invite.child_id)
+        if not invite.reusable and invite.redeemed_by is None:
+            invite.redeemed_by = user_uuid
+            invite.redeemed_at = datetime.now(UTC)
+        return RedeemResult(
+            role=InviteRole.parent, school_id=None, class_id=None, child_id=invite.child_id
+        )
 
     def _assign_seat(self, session: Session, seat_id: uuid.UUID, user_uuid: uuid.UUID) -> None:
         seat = session.get(Seat, seat_id, with_for_update=True)
@@ -423,6 +645,7 @@ class InviteService:
             school_name=school_name,
             class_name=class_name,
             teacher_name=teacher_name,
+            child_name=None,
         )
 
     def _preview_for_class(self, session: Session, cls: SchoolClass) -> InvitePreview:
@@ -431,6 +654,27 @@ class InviteService:
             school_name=self._school_name(session, cls.school_id),
             class_name=cls.name,
             teacher_name=self._teacher_name(session, cls.teacher_id),
+            child_name=None,
+        )
+
+    def _preview_for_parent_invite(self, session: Session, invite: Invite) -> InvitePreview:
+        """Name the child, never their email or id (binding rule 4).
+
+        ``child_id`` is FK-guaranteed to resolve to a live ``users`` row for
+        the lifetime of the invite (``ON DELETE CASCADE`` deletes the invite
+        alongside the child, rather than leaving a dangling reference).
+        """
+        child_name = "your child"
+        if invite.child_id is not None:
+            child = session.get(User, invite.child_id)
+            if child is not None:  # pragma: no cover - child_id is FK-guaranteed to resolve
+                child_name = child.display_name or "your child"
+        return InvitePreview(
+            role=InviteRole.parent,
+            school_name=None,
+            class_name=None,
+            teacher_name=None,
+            child_name=child_name,
         )
 
     def _school_name(self, session: Session, school_id: uuid.UUID | None) -> str | None:
@@ -477,6 +721,9 @@ class InviteService:
         school_id: uuid.UUID | None = None,
         class_id: uuid.UUID | None = None,
         seat_id: uuid.UUID | None = None,
+        child_id: uuid.UUID | None = None,
+        reusable: bool = False,
+        expires_at: datetime | None = None,
     ) -> Invite:
         """Insert a new ``Invite`` row with a freshly generated, unique code.
 
@@ -486,6 +733,11 @@ class InviteService:
         transaction — the school-row lock :meth:`mint_seat_invite` holds must
         survive a retry here exactly as it must survive
         ``SeatService.invite_student``'s own account-creation step.
+
+        ``child_id``, ``reusable`` and ``expires_at`` exist for
+        :meth:`mint_parent_invite`/:meth:`rotate_parent_code`; every other
+        caller leaves them at their defaults (no child, single-use, no
+        expiry).
 
         Raises:
             InviteError: A unique code could not be generated after several
@@ -501,6 +753,9 @@ class InviteService:
                 school_id=school_id,
                 class_id=class_id,
                 seat_id=seat_id,
+                child_id=child_id,
+                reusable=reusable,
+                expires_at=expires_at,
             )
             try:
                 with session.begin_nested():
@@ -528,12 +783,14 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "PARENT_INVITE_TTL",
     "InviteAlreadyRedeemedError",
     "InviteError",
     "InviteNotFoundError",
     "InviteOwnershipError",
     "InvitePreview",
     "InviteQuotaExceededError",
+    "InviteRoleMismatchError",
     "InviteService",
     "RedeemResult",
 ]

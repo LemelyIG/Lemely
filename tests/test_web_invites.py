@@ -33,6 +33,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
+from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web.app import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
@@ -120,7 +121,7 @@ def _seed_class(
 def _app(sm: sessionmaker[Session]) -> FastAPI:
     application = create_app()
     application.dependency_overrides[get_invite_service] = lambda: InviteService(
-        sm, ClassService(sm)
+        sm, ClassService(sm), ParentLinkService(sm)
     )
     return application
 
@@ -148,7 +149,9 @@ def _client(
 def test_preview_route_requires_no_authentication(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
 
     client = _client(pg_sessionmaker, role=None)
@@ -199,7 +202,9 @@ def test_redeem_route_requires_authentication(pg_sessionmaker: sessionmaker[Sess
 def test_redeem_route_assigns_the_seat(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
     student = _seed_user(pg_sessionmaker, Role.student)
 
@@ -229,7 +234,9 @@ def test_redeem_route_already_redeemed_by_another_is_409(
 ) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=1, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
     first, second = (
         _seed_user(pg_sessionmaker, Role.student),
@@ -280,7 +287,9 @@ def test_mint_seat_invite_code_reserves_a_seat(pg_sessionmaker: sessionmaker[Ses
 def test_mint_seat_invite_code_at_quota_is_409(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=1, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     service.mint_seat_invite(admin, school)
 
     client = _client(pg_sessionmaker, role=Role.school_admin, user_id=admin)
