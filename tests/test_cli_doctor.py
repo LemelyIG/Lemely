@@ -121,7 +121,6 @@ class DoctorTests(unittest.TestCase):
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
-                    "LEMELY_STORAGE__PROVIDER": "supabase",
                 },
             )
         self.assertEqual(result.exit_code, 0, msg=result.output)
@@ -146,7 +145,6 @@ class DoctorTests(unittest.TestCase):
                     "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
                     "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
                     "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
-                    "LEMELY_STORAGE__PROVIDER": "supabase",
                     "LEMELY_PUSH__VAPID_PUBLIC_KEY": pair.public_key,
                     "LEMELY_PUSH__VAPID_PRIVATE_KEY": pair.private_key,
                     "LEMELY_PUSH__VAPID_SUBJECT": "mailto:ops@example.test",
