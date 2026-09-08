@@ -585,13 +585,32 @@ class InviteService:
         :class:`InvitePreview` is something the code's holder already
         learned from whoever handed them the code, and nothing else.
 
+        **A redeemed single-use link previews as unknown, not as live.**
+        Spec §3 defines a single-use link as dead once redeemed, expired,
+        or revoked; :meth:`_find_live_invite` only ever filters on
+        ``expires_at`` (revocation deletes the row outright, so that case
+        needs no separate check here) — deliberately, since :meth:`redeem`
+        relies on that same lookup finding an already-redeemed row to stay
+        idempotent for the caller who redeemed it. So this method, not
+        ``_find_live_invite``, is where "already redeemed" gets turned into
+        the identical :class:`InviteNotFoundError` an unknown code would
+        raise — a holder of a used-up link must not be shown a preview of
+        something they can no longer claim, and must not learn "this code
+        once worked" either. A reusable code is exempt: it is never marked
+        redeemed at all (the module docstring's documented exception to
+        "single-use"), so it keeps previewing after every redemption, by
+        every parent who has ever claimed it.
+
         Raises:
             InviteNotFoundError: ``code`` matches neither a live invite nor a
-                class join code (→ 404).
+                class join code (→ 404), or matches a single-use link that
+                has already been redeemed.
         """
         with self._sessionmaker() as session:
             invite = self._find_live_invite(session, code)
             if invite is not None:
+                if invite.redeemed_by is not None and not invite.reusable:
+                    raise InviteNotFoundError(f"Unknown code: {code!r}")
                 if invite.role is InviteRole.parent:
                     return self._preview_for_parent_invite(session, invite)
                 return self._preview_for_invite(session, invite)

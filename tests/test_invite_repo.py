@@ -1072,3 +1072,38 @@ def test_rotate_parent_code_race_leaves_exactly_one_reusable_row(
         assert session.get(Invite, rival_row["id"]) is None, (
             "the rival's row must have been deleted by rotate's re-issued DELETE"
         )
+
+
+# ── review round 3 (cont'd): preview must not show a redeemed link as live ─
+
+
+def test_preview_of_a_redeemed_single_use_link_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Spec §3: a single-use link is dead once redeemed, expired, or revoked.
+    ``_find_live_invite`` only filters on ``expires_at`` (deliberately -
+    ``redeem`` relies on it finding an already-redeemed row to stay
+    idempotent), so ``preview`` is where "already redeemed" must turn into
+    the identical ``InviteNotFoundError`` an unknown code raises - a holder
+    of a used-up link must not see a preview of something they can no
+    longer claim, and must not learn "this code once worked" either.
+
+    A reusable code is the documented exception: it is never marked
+    redeemed, so it must keep previewing after every redemption.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Nadia")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    link = service.mint_parent_invite(student, reusable=False)
+    reusable = service.get_or_create_parent_code(student)
+
+    service.redeem(parent, link.code, caller_role=Role.parent)
+    service.redeem(parent, reusable.code, caller_role=Role.parent)
+
+    with pytest.raises(InviteNotFoundError):
+        service.preview(link.code)
+
+    # The reusable code is never marked redeemed, so it must keep previewing.
+    preview = service.preview(reusable.code)
+    assert preview.role is InviteRole.parent
+    assert preview.child_name == "Nadia"
