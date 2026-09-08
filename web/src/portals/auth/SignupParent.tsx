@@ -8,7 +8,6 @@ import { Input } from "@/components/ui/input"
 import { Checkbox } from "@/components/ui/checkbox"
 import { CodeInput } from "@/components/auth/CodeInput"
 import { ApiError } from "@/lib/api"
-import { otpVerifyFailureMessage } from "@/lib/authOutcome"
 import { withNext } from "@/lib/nextPath"
 import { normalizeInviteCode } from "@/lib/hooks/useInvitesApi"
 import { useRequestParentCode, useVerifyParentCode } from "@/lib/hooks/useParentSignupApi"
@@ -19,6 +18,7 @@ import {
   parentSignupDevPanel,
   parentSignupFailureMessage,
   parentSignupStep,
+  parentVerifyCodeFailure,
   validateParentEmailStep,
   validateParentPasswordStep,
 } from "./signupParentLogic"
@@ -265,6 +265,15 @@ export function SignupParent() {
   }
 
   const requestFailure = requestCode.isError ? parentRequestCodeFailure(requestCode.error) : null
+  // `verifyCode`'s 404 (the invite died between `request-code` and this
+  // call) is handled in `handleVerify`'s own `onError` by setting
+  // `inviteDead`, which swaps the whole screen above — so by the time this
+  // renders, any surviving `verifyCode` error is never a 404, and
+  // `parentVerifyCodeFailure` only ever sees the cases it classifies.
+  const verifyFailure =
+    verifyCode.isError && !(verifyCode.error instanceof ApiError && verifyCode.error.status === 404)
+      ? parentVerifyCodeFailure(verifyCode.error)
+      : null
   // Matches `JoinWithCode.tsx`'s own use of `withNext` exactly (review round
   // 1, Minor finding 8) — one allowlisted `?next=` encoder for every screen
   // that carries a reader back to an invite after signing in, not a second,
@@ -367,17 +376,24 @@ export function SignupParent() {
                 onChange={setCodeValue}
                 onComplete={handleVerify}
                 disabled={verifyCode.isPending}
-                error={
-                  verifyCode.isError && !(verifyCode.error instanceof ApiError && verifyCode.error.status === 404)
-                    ? otpVerifyFailureMessage(verifyCode.error)
-                    : null
-                }
+                error={verifyFailure?.message ?? null}
               />
 
               {verifyCode.isPending ? (
                 <p role="status" aria-live="polite" className="text-body-md text-ink-muted">
                   Checking your code…
                 </p>
+              ) : null}
+
+              {/* The email gained an account in the window since this same
+                  address's own `request-code` call — no code will ever
+                  verify against it now, so this offers the way out
+                  `parentVerifyCodeFailure`'s message names rather than
+                  leaving the reader to keep retrying a dead code. */}
+              {verifyFailure?.hasAccount ? (
+                <Link to={signInHref} className={`${LINK_CLASS} w-fit`}>
+                  Sign in
+                </Link>
               ) : null}
 
               {/* Review round 1, Important finding 2: a failed resend (the

@@ -52,6 +52,7 @@ from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.invite_repo import (
+    MAX_LIVE_PARENT_LINKS,
     InviteError,
     InviteLimitReachedError,
     InviteNotFoundError,
@@ -1330,6 +1331,31 @@ def _raise_for_invite_error(exc: InviteError) -> NoReturn:
     ) from exc
 
 
+_SMALL_NUMBER_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _spelled_out(n: int) -> str:
+    """Spell a small integer out in prose, falling back to the digit past ten.
+
+    Used only for :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` in the
+    409 detail below, so that constant's cap can change without also hunting
+    down a hard-coded English word for it — the failure mode a literal
+    ``"five"`` in the f-string would otherwise reintroduce.
+    """
+    return _SMALL_NUMBER_WORDS.get(n, str(n))
+
+
 @router.get("/student/parent-invites", response_model=ParentInvitesDTO)
 def student_parent_invites(
     auth: Annotated[AuthContext, Depends(require_role(Role.student))],
@@ -1378,7 +1404,10 @@ def student_mint_parent_invite(
     except InviteLimitReachedError as exc:
         raise HTTPException(
             status_code=409,
-            detail="You already have five unused links. Revoke one or wait for it to expire.",
+            detail=(
+                f"You already have {_spelled_out(MAX_LIVE_PARENT_LINKS)} unused links. "
+                "Revoke one or wait for it to expire."
+            ),
         ) from exc
     except InviteError as exc:
         _raise_for_invite_error(exc)

@@ -20,6 +20,7 @@ import {
   AUTH_SERVICE_FAILURE,
   AUTH_SIGNUP_REJECTED,
   otpRequestFailureMessage,
+  otpVerifyFailureMessage,
 } from "@/lib/authOutcome"
 import { MIN_PASSWORD_LENGTH } from "./signupDetailsLogic"
 
@@ -154,6 +155,47 @@ export function parentRequestCodeFailure(err: unknown): ParentRequestCodeFailure
     }
   }
   return { message: otpRequestFailureMessage(err), deadInvite: false, hasAccount: false }
+}
+
+export interface ParentVerifyCodeFailure {
+  message: string
+  /** The email gained an account in the window between this step's own
+   * `request-code` call and this one (400) — the caller offers a sign-in
+   * link alongside the message, the same `hasAccount` shape
+   * `parentRequestCodeFailure` above already gives its own 400. */
+  hasAccount: boolean
+}
+
+/**
+ * Turn a failed `POST /auth/parent/verify-code` into what step 2 should do
+ * about it. The dead-invite 404 is handled by the caller the same way
+ * `parentRequestCodeFailure`'s `deadInvite` is (`SignupParent.tsx`'s own
+ * `handleVerify`) — this function is only reached once that branch has
+ * already been ruled out.
+ *
+ * The 400 this route can return — `routers/auth.py`'s `verify_parent_code`
+ * re-checks the email is still unclaimed before it ever touches the OTP
+ * store (final review I-1's ordering), so its only 400 is
+ * `_EMAIL_TAKEN_DETAIL`: the address gained an account in the window since
+ * this same email's own `request-code` call. Left to fall through to
+ * `otpVerifyFailureMessage`'s generic "we couldn't check that code" copy,
+ * the reader would be told to retry a code that can never succeed — the
+ * account isn't unclaimed anymore, no code will fix that — so it is
+ * intercepted here with parent-specific copy instead, the same
+ * "layer route-specific classification on top of, not inside, the shared
+ * module" reasoning `parentRequestCodeFailure` above already follows for
+ * `otpRequestFailureMessage`. Everything else (network loss, a wrong code,
+ * a 5xx, the generic fallback) is delegated to `otpVerifyFailureMessage`
+ * (`authOutcome.ts`) unchanged.
+ */
+export function parentVerifyCodeFailure(err: unknown): ParentVerifyCodeFailure {
+  if (err instanceof ApiError && err.status === 400) {
+    return {
+      message: "This address now has a Lemely account. Sign in and open your invite instead.",
+      hasAccount: true,
+    }
+  }
+  return { message: otpVerifyFailureMessage(err), hasAccount: false }
 }
 
 /**

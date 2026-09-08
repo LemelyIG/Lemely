@@ -1169,7 +1169,14 @@ def test_student_minting_past_the_cap_is_409(
 ) -> None:
     """Final review I-6: the sixth live single-use link is refused with a 409
     a student can act on, rather than an unbounded mint loop.
+
+    The detail's spelled-out count is asserted via
+    ``student_router_module._spelled_out(MAX_LIVE_PARENT_LINKS)`` rather than
+    a hard-coded ``"five"`` — final re-review nit: a hard-coded word cannot
+    track a future change to the cap.
     """
+    from lemely.web.routers import student as student_router_module
+
     student = _seed_pg_user(pg_sessionmaker, Role.student)
     _auth_as_pg(parent_links_client, student, Role.student)
     for _ in range(MAX_LIVE_PARENT_LINKS):
@@ -1179,7 +1186,8 @@ def test_student_minting_past_the_cap_is_409(
     resp = parent_links_client.post("/api/student/parent-invites")
 
     assert resp.status_code == 409, resp.text
-    assert "five" in resp.json()["detail"].lower()
+    expected_count = student_router_module._spelled_out(MAX_LIVE_PARENT_LINKS)
+    assert expected_count in resp.json()["detail"].lower()
 
 
 def test_student_revoking_an_unknown_code_is_404(

@@ -7,6 +7,7 @@ import {
   parentSignupDevPanel,
   parentSignupFailureMessage,
   parentSignupStep,
+  parentVerifyCodeFailure,
   validateParentEmailStep,
   validateParentPasswordStep,
 } from "@/portals/auth/signupParentLogic"
@@ -123,6 +124,37 @@ describe("parentRequestCodeFailure", () => {
     expect(parentRequestCodeFailure(new ApiError(0, "x")).message).toBe(AUTH_NETWORK_FAILURE)
     expect(parentRequestCodeFailure(new TypeError("x")).message).toBe(AUTH_NETWORK_FAILURE)
     expect(parentRequestCodeFailure(new ApiError(500, "x")).message).toBe(AUTH_SERVICE_FAILURE)
+  })
+})
+
+describe("parentVerifyCodeFailure", () => {
+  /**
+   * `routers/auth.py`'s `verify_parent_code` re-checks the email is still
+   * unclaimed before it ever touches the OTP store (final review I-1's
+   * ordering), so its only 400 means the address gained an account in the
+   * window since this same email's own `request-code` call — no code will
+   * ever verify against it now. Distinct wording from
+   * `parentRequestCodeFailure`'s own 400 (a different step, a different
+   * next action: "sign in and open your invite" rather than "sign in, then
+   * open this invite again").
+   */
+  it("flags a 400 as an existing account, with sign-in-specific copy", () => {
+    const failure = parentVerifyCodeFailure(new ApiError(400, "Bad Request"))
+    expect(failure.hasAccount).toBe(true)
+    expect(failure.message.length).toBeGreaterThan(0)
+    expect(failure.message).toMatch(/sign in/i)
+  })
+
+  it("delegates a wrong code (401) to otpVerifyFailureMessage, without hasAccount", () => {
+    const failure = parentVerifyCodeFailure(new ApiError(401, "Unauthorized"))
+    expect(failure.hasAccount).toBe(false)
+    expect(failure.message.length).toBeGreaterThan(0)
+  })
+
+  it("maps transport and server failures to the shared sentences", () => {
+    expect(parentVerifyCodeFailure(new ApiError(0, "x")).message).toBe(AUTH_NETWORK_FAILURE)
+    expect(parentVerifyCodeFailure(new TypeError("x")).message).toBe(AUTH_NETWORK_FAILURE)
+    expect(parentVerifyCodeFailure(new ApiError(500, "x")).message).toBe(AUTH_SERVICE_FAILURE)
   })
 })
 
