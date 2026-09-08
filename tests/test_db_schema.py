@@ -201,6 +201,31 @@ def test_notification_type_enum_matches_preference_columns() -> None:
     assert toggle_columns == {member.value for member in NotificationType}
 
 
+def test_migrations_have_a_single_head() -> None:
+    """Guard against a repeat of the ``0034`` split-head incident.
+
+    Two PRs each branched a ``0034_*`` migration off the same
+    ``0033_announcement_notified_at`` parent without seeing each other's
+    revision id, leaving Alembic with two heads and ``alembic upgrade head``
+    refusing to run once both merged to ``develop``. ``0035_merge_heads``
+    (``lemely/db/migrations/versions/0035_merge_parent_invites_review.py``)
+    joins them back into one; this test is what makes the next such collision
+    fail in CI instead of only at deploy time. Hermetic: it only inspects the
+    script directory's revision graph, no database required.
+    """
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config("alembic.ini")
+    script_dir = ScriptDirectory.from_config(cfg)
+    heads = script_dir.get_heads()
+    assert len(heads) == 1, (
+        f"expected exactly one Alembic head, found {len(heads)}: {heads}. "
+        "Two migrations were branched from the same down_revision — add a "
+        "merge migration (see 0035_merge_parent_invites_review.py)."
+    )
+
+
 def test_every_enum_column_binds_its_value_not_its_member_name() -> None:
     """Every ``sa.Enum`` column must send ``.value`` to Postgres, not ``.name``.
 
