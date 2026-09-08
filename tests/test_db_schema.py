@@ -911,6 +911,68 @@ def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
             session.commit()
 
 
+def test_invite_supports_parent_target_and_reusable_flag(pg_engine: sa.Engine) -> None:
+    """Parent invites (spec §3): `child_id`/`reusable` widen the invite shape.
+
+    A parent invite targets a child rather than a school or a class, and
+    `reusable` distinguishes the rotatable short code from the single-use
+    link — both sharing this table per the spec's "two invite kinds, one
+    table" rule.
+    """
+    from lemely.db.models import Invite, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    inspector = sa.inspect(pg_engine)
+    columns = {c["name"]: c for c in inspector.get_columns("invites")}
+    assert columns["child_id"]["nullable"] is True
+    assert columns["reusable"]["nullable"] is False
+
+    fk_by_column = {
+        fk["constrained_columns"][0]: fk for fk in inspector.get_foreign_keys("invites")
+    }
+    child_fk = fk_by_column["child_id"]
+    assert child_fk["referred_table"] == "users"
+    assert child_fk["referred_columns"] == ["id"]
+    assert child_fk["options"].get("ondelete") == "CASCADE"
+
+    index_names = {ix["name"] for ix in inspector.get_indexes("invites")}
+    assert "ix_invites_child_id" in index_names
+
+    with pg_engine.connect() as conn:
+        labels = (
+            conn.execute(
+                sa.text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'inviterole'"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert "parent" in labels
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="parent-invite-child@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+
+        parent_invite = Invite(
+            code="PARENTCODE",
+            role=InviteRole.parent,
+            child_id=student.id,
+            created_by=student.id,
+        )
+        session.add(parent_invite)
+        session.commit()
+        session.refresh(parent_invite)
+
+        assert parent_invite.child_id == student.id
+        assert parent_invite.school_id is None
+        assert parent_invite.class_id is None
+        assert parent_invite.reusable is False  # server_default false
+
+
 def test_teacher_paper_row_defaults(pg_engine: sa.Engine) -> None:
     """Spec §4.2: a fresh row is pending, unstaged, and reuses the uploadstatus enum."""
     from lemely.db.models import TeacherPaper, User

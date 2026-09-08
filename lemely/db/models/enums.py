@@ -334,15 +334,16 @@ class InviteRole(enum.StrEnum):
     """The role an invite code provisions (D7.3).
 
     Deliberately **not** :class:`Role`. An invite may only ever produce a
-    student or a teacher; reusing the five-member ``Role`` here would put
-    ``platform_admin`` in the type system of a code an anonymous caller
-    redeems, and the only thing standing between that and an escalation would
-    be a validation nobody had written yet. A narrower type cannot express the
-    mistake.
+    student, a teacher, or a parent; reusing the five-member ``Role`` here
+    would put ``platform_admin`` in the type system of a code an anonymous
+    caller redeems, and the only thing standing between that and an
+    escalation would be a validation nobody had written yet. A narrower type
+    cannot express the mistake.
     """
 
     student = "student"
     teacher = "teacher"
+    parent = "parent"
 
 
 # ---------------------------------------------------------------------------
