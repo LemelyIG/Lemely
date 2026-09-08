@@ -26,17 +26,24 @@ import { injectSession, readSeed } from "./seed"
 
 test("a fresh visitor joins via a child's invite code, signs up with an emailed code, and lands on that child", async ({
   page,
-}) => {
+}, testInfo) => {
   const errors = watchConsole(page)
   const seed = readSeed()
   const declining = seed.students.declining
 
   // Run-tagged (seed_e2e.py mints a fresh `runTag` every seed run) so a
   // re-run of this suite against a re-seeded stack never collides with a
-  // GoTrue user this very test created on a previous run — a second signup
-  // attempt for the same email is a real 400 "already has an account"
-  // (`parentRequestCodeFailure`), not something to dodge by cleaning up.
-  const email = `parent-fresh-${seed.runTag}@example.com`
+  // GoTrue user a previous stack's run created — AND per-attempt
+  // (`Date.now()` plus `testInfo.retry`) so a CI retry of *this same*
+  // invocation (`playwright.config.ts`'s `retries: process.env.CI ? 2 : 0`)
+  // never collides with the account this very test already created on its
+  // own first attempt. `runTag` alone is stable across every attempt against
+  // one seeded stack, so a retry triggered by a late assertion failing after
+  // `Create account` (the URL check, the child heading, or the console-error
+  // check) would re-run from the top, hit `Send code` with an email that now
+  // has an account, and stall on the 400 `parentRequestCodeFailure` reports
+  // as `hasAccount` — a symptom with nothing to do with the real failure.
+  const email = `parent-fresh-${seed.runTag}-${Date.now().toString(36)}-${testInfo.retry}@example.com`
 
   // G-08: a signed-out visitor opens the child's own invite link directly,
   // exactly as a parent would from a link their child shared with them.
@@ -46,12 +53,16 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
   ).toBeVisible({ timeout: 15_000 })
 
   await page.getByRole("button", { name: "Create your parent account" }).click()
-  await expect(page).toHaveURL(new RegExp(`/signup/parent\\?code=${declining.parentInviteCode}$`))
+  await expect(page).toHaveURL(new RegExp(`/signup/parent\\?code=${declining.parentInviteCode}$`), {
+    timeout: 15_000,
+  })
 
   // G-05 step 1: email + display name. `Your name` is optional on the wire
   // (`validateParentEmailStep`'s own docstring) but filled in here anyway,
   // matching a real visitor who has no reason to skip it.
-  await expect(page.getByRole("heading", { name: "Create your parent account" })).toBeVisible()
+  await expect(page.getByRole("heading", { name: "Create your parent account" })).toBeVisible({
+    timeout: 15_000,
+  })
   await page.getByLabel("Your name").fill("E2E Parent")
   await page.getByLabel("Email").fill(email)
   await page.getByRole("button", { name: "Send code" }).click()
@@ -75,7 +86,11 @@ test("a fresh visitor joins via a child's invite code, signs up with an emailed 
     timeout: 15_000,
   })
   await page.getByLabel("Password").fill("a-genuinely-strong-passphrase-1")
-  await page.getByRole("checkbox").check()
+  // Name-qualified rather than a bare role: the sole checkbox on this step
+  // (`SignupParent.tsx`'s `parent-signup-consent`) has no `<label>`, only an
+  // `aria-labelledby` pointing at its consent paragraph, so its accessible
+  // name is that paragraph's own text.
+  await page.getByRole("checkbox", { name: /I agree to how Lemely handles my data/ }).check()
   await page.getByRole("button", { name: "Create account" }).click()
 
   // `POST /auth/parent/signup` creates the account (email already verified),
