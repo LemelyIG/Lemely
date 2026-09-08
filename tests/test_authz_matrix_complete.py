@@ -163,6 +163,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
     ("PUT", "/api/me/notification-preferences"): AUTH_ANY,
     ("GET", "/api/me/profile"): AUTH_ANY,
+    ("PUT", "/api/me/timezone"): AUTH_ANY,
     # Profile picture set/clear: any authenticated role, same as the profile
     # GET above -- a student and a teacher both have exactly one avatar to
     # manage, gated only by `get_auth_context` (never a caller-supplied id).

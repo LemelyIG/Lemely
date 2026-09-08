@@ -56,27 +56,39 @@ export function typeLabel(type: string): string {
 /**
  * Where a notification's "Open" action goes, or null for no action at all.
  *
- * **Only `announcement` has a destination, and `grade_ready` deliberately does
- * not — that is a measured constraint, not an oversight.** `grade_ready`'s
- * payload carries `uploadId` (the upload's UUID, `routers/student.py:891`), and
- * the only per-paper screen is `/student/result/:paperId`, whose `paperId` is a
- * **history record index**, not an id: `student_result` does `int(paper_id)` and
- * 404s on anything else (`routers/student.py:487`). So an "Open" button here
- * would be a guaranteed 404 dressed up as a link. There is no route that maps an
- * upload id to its result, and inventing one is not this screen's job.
+ * **`grade_ready` deliberately has no destination — that is a measured
+ * constraint, not an oversight.** Its payload carries `uploadId` (the upload's
+ * UUID, `routers/student.py:891`), and the only per-paper screen is
+ * `/student/result/:paperId`, whose `paperId` is a **history record index**,
+ * not an id: `student_result` does `int(paper_id)` and 404s on anything else
+ * (`routers/student.py:487`). So an "Open" button here would be a guaranteed
+ * 404 dressed up as a link. There is no route that maps an upload id to its
+ * result, and inventing one is not this screen's job.
  *
- * The three remaining types have no screen of their own either. A notification
- * with no destination renders with no action rather than a control that goes
- * somewhere unrelated — the title and body already carry the information, and
- * that is what D5.9 §2 means by "a notification is a pointer".
+ * `streak_warning` opens the profile, where the streak lives (S-31), and
+ * `study_plan_reminder` opens that session's page; both are pointers to a
+ * screen that already shows the thing, which is what D5.9 §2 means by "a
+ * notification is a pointer". A reminder whose payload lacks its ids renders
+ * with no action rather than a link that cannot resolve. `at_risk_alert` is
+ * addressed to teachers and parents and never reaches a student's inbox, so
+ * it has no destination here.
  *
  * Kept deliberately consistent with `pushClientBridge.destinationFor` so that
- * tapping a push and tapping the same row in this inbox land in the same place.
+ * tapping a push and tapping the same row in this inbox land in the same
+ * place. The two differ only where they must: this returns `null` for "no
+ * action", the bridge returns the root, because a click has to go somewhere.
  */
 export function destinationFor(notification: Notification): string | null {
   switch (notification.type) {
     case "announcement":
       return "/student/announcements"
+    case "streak_warning":
+      return "/student/profile"
+    case "study_plan_reminder": {
+      const { subjectCode, sessionId } = notification.payload
+      if (!subjectCode || !sessionId) return null
+      return `/student/plan/${encodeURIComponent(subjectCode)}/session/${encodeURIComponent(sessionId)}`
+    }
     default:
       return null
   }
@@ -237,7 +249,7 @@ export function Notifications() {
         empty={
           <EmptyState
             heading="Nothing yet"
-            body="When a paper is marked, a teacher posts an announcement, or your streak is about to break, it will appear here."
+            body="When a paper is marked, a teacher posts an announcement, your streak needs a day logged, or a study session is due, it will appear here."
           />
         }
       >

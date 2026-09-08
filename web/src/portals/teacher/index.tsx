@@ -14,6 +14,7 @@ import {
   Warning,
   Books,
   Sparkle,
+  Bell,
   Megaphone,
   Gear,
   type Icon,
@@ -28,6 +29,9 @@ import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
+import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
+import { unreadBadgeLabel } from "@/lib/staffInbox"
+import { Chip } from "@/components/ui/chip"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
@@ -64,6 +68,9 @@ const QuizBuilder = lazy(() => import("./screens/QuizBuilder").then((m) => ({ de
 const QuizResults = lazy(() => import("./screens/QuizResults").then((m) => ({ default: m.QuizResults })))
 const Announcements = lazy(() =>
   import("./screens/Announcements").then((m) => ({ default: m.Announcements })),
+)
+const TeacherNotifications = lazy(() =>
+  import("./screens/Notifications").then((m) => ({ default: m.TeacherNotifications })),
 )
 // Settings' three screens now mount here too, alongside every other lazy
 // screen in this portal, rather than only reaching the top-level
@@ -106,7 +113,22 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   schemes: Books,
   quizzes: Sparkle,
   announcements: Megaphone,
+  notifications: Bell,
   settings: Gear,
+}
+
+/** The inbox's unread count. Renders nothing while pending, on error, or at
+ * zero, so the nav never shows a number the app has not established. */
+function UnreadNotificationsBadge() {
+  const { data } = useNotificationCounts()
+  const label = unreadBadgeLabel(data)
+  if (label === null) return null
+  return (
+    <Chip tone="warn" className="flex-none">
+      {label}
+      <span className="sr-only"> unread</span>
+    </Chip>
+  )
 }
 
 function SidebarNavItem({
@@ -167,6 +189,7 @@ function SidebarNavItem({
               aria-hidden="true"
             />
             <span className="flex-1">{item.label}</span>
+            {item.badge === "unread-notifications" ? <UnreadNotificationsBadge /> : null}
           </>
         )
       }}
@@ -627,6 +650,11 @@ export const teacherRoute: RouteObject = {
       handle: { title: "Quiz results" },
     },
     { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    {
+      path: "notifications",
+      element: <TeacherNotifications />,
+      handle: { title: "Notifications" },
+    },
     {
       path: "settings",
       element: <PortalSettingsLayout basePath="/teacher/settings" />,

@@ -3,13 +3,16 @@ import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
 import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Gear, SignOut } from "@phosphor-icons/react"
+import { Bell, Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
+import { Chip } from "@/components/ui/chip"
+import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
+import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -28,6 +31,9 @@ const SubjectDetail = lazy(() =>
   import("./screens/SubjectDetail").then((m) => ({ default: m.SubjectDetail })),
 )
 const Weaknesses = lazy(() => import("./screens/Weaknesses").then((m) => ({ default: m.Weaknesses })))
+const ParentNotifications = lazy(() =>
+  import("./screens/Notifications").then((m) => ({ default: m.ParentNotifications })),
+)
 
 /*
  * Parent portal shell — the Study Notebook (P4.6, redesign surface 6).
@@ -204,6 +210,19 @@ function BrandLockup() {
   )
 }
 
+/** The inbox's unread count. Nothing while pending, on error, or at zero. */
+function UnreadNotificationsBadge() {
+  const { data } = useNotificationCounts()
+  const label = unreadBadgeLabel(data)
+  if (label === null) return null
+  return (
+    <Chip tone="warn" className="flex-none">
+      {label}
+      <span className="sr-only"> unread</span>
+    </Chip>
+  )
+}
+
 function Header() {
   const { logout } = useAuth()
   const navigate = useNavigate()
@@ -236,6 +255,18 @@ function Header() {
               settings screens link to each other. Same icon-at-mobile treatment
               as Sign out beside it, `aria-label` and all, for the same
               `button-name` reason. */}
+          {/* The parent's inbox (push-delivery spec §6). at_risk_alert is
+              addressed to a parent and until now had no screen to read it
+              in; the same icon-at-mobile treatment as its neighbours. */}
+          <Link
+            to="/parent/notifications"
+            aria-label="Notifications"
+            className="flex items-center gap-1.5 rounded-md px-2 py-1.5 pointer-coarse:min-h-11 pointer-coarse:min-w-11 pointer-coarse:justify-center text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            <Bell size={16} aria-hidden="true" />
+            <span className="hidden sm:inline">Notifications</span>
+            <UnreadNotificationsBadge />
+          </Link>
           <Link
             to="/settings/devices"
             aria-label="Settings"
@@ -355,6 +386,11 @@ export const parentRoute: RouteObject = {
       path: "children/:childId/weaknesses",
       element: <Weaknesses />,
       handle: { title: "Topics to work on" },
+    },
+    {
+      path: "notifications",
+      element: <ParentNotifications />,
+      handle: { title: "Notifications" },
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the

@@ -80,6 +80,23 @@ class User(TimestampMixin, Base):
     (:func:`~lemely.web.routers.me._avatar_url_for`), so the bucket, backend, and
     signed-URL TTL can all change without touching stored rows."""
 
+    timezone: Mapped[str | None] = mapped_column(sa.String(64), nullable=True)
+    """Migration ``0029`` (push-delivery spec §3). An IANA zone name
+    (``America/Los_Angeles``) that every *personal* civil-date and civil-time
+    calculation for this user runs in: quiet hours, streak days, the XP daily
+    cap, and the two daily engagement notifications. ``None`` means never set
+    and resolves to :data:`~lemely.db.xp_repo.DEFAULT_ZONE` through
+    :func:`~lemely.db.xp_repo.resolve_zone`. Shared facts (the leaderboard
+    week, the profile week window) deliberately do not read this column."""
+
+    timezone_is_explicit: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.false()
+    )
+    """Migration ``0029``. ``True`` when the user chose ``timezone`` in
+    settings. The client sends its device zone at every app boot, and the
+    server stores that only while this is ``False``, so opening the app on a
+    plane never silently undoes a deliberate choice."""
+
     locale: Mapped[str] = mapped_column(sa.String, nullable=False, server_default=sa.literal("en"))
     friend_code: Mapped[str | None] = mapped_column(sa.String(8), nullable=True, unique=True)
     """Migration ``0015`` (P5.4 chunk A). ``users`` has no ``username`` column,

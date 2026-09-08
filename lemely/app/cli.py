@@ -197,6 +197,48 @@ def estimate_cost_cmd(ctx: click.Context, source_root: str) -> None:
     _print_result(ctx, _estimate_cost(source_root))
 
 
+@cli.command("push-keygen")
+@click.option(
+    "--subject",
+    default="mailto:support@lemelyig.com",
+    show_default=True,
+    help="RFC 8292 contact for whoever operates this server (mailto: or https:).",
+)
+@click.pass_context
+def push_keygen_cmd(ctx: click.Context, subject: str) -> None:
+    """Generate a VAPID keypair for web push. Prints; writes nothing.
+
+    A flat command like ``estimate-cost``, not a subgroup. See
+    docs/push-notifications.md for where the two halves go and what rotating
+    them costs.
+    """
+    from lemely.runtime.vapid import generate_vapid_keypair, render_push_toml
+
+    pair = generate_vapid_keypair()
+    block = render_push_toml(pair, subject)
+    payload = {
+        "vapid_public_key": pair.public_key,
+        "vapid_private_key": pair.private_key,
+        "vapid_subject": subject,
+        "toml": block,
+    }
+    if ctx.obj.get("json_output", False):
+        _dump_json(payload)
+        return
+    click.echo("VAPID public key (65-byte uncompressed P-256 point, base64url):")
+    click.echo(f"  {pair.public_key}")
+    click.echo("VAPID private key (32-byte scalar, base64url) - a secret:")
+    click.echo(f"  {pair.private_key}")
+    click.echo("")
+    click.echo("Paste into lemely.toml (gitignored), or export the three LEMELY_PUSH__* vars:")
+    click.echo(block.rstrip("\n"))
+    click.echo("")
+    click.echo(
+        "Rotating this pair invalidates every stored subscription: the public key is "
+        "baked into each one, so every browser must re-subscribe. See docs/push-notifications.md."
+    )
+
+
 @cli.command("parse-mark-schemes")
 @click.argument("source_root", type=click.Path(exists=True, file_okay=False))
 @click.option("--output-root", type=click.Path(file_okay=False), default=None)
@@ -491,6 +533,28 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     storage_ok, storage_detail = check_storage(settings, no_network=no_network)
     record("storage_backend", storage_ok, detail=storage_detail)
 
+    # Advisory, like storage: this build ships without VAPID keys and that is
+    # a supported state (D5.9 §4) — the inbox keeps working and push simply
+    # stays unavailable. Asking the transport rather than counting settings
+    # fields keeps this check and the runtime's own answer from disagreeing.
+    from lemely.web.push import VapidPushTransport
+
+    push_transport = VapidPushTransport(settings.push)
+    try:
+        push_available = push_transport.available
+    finally:
+        push_transport.close()
+    record(
+        "push_transport",
+        push_available,
+        (
+            f"VAPID keys configured; subject {settings.push.vapid_subject}"
+            if push_available
+            else "no VAPID keys configured; push unavailable, inbox still works. "
+            "Run `lemely push-keygen` and see docs/push-notifications.md"
+        ),
+    )
+
     try:
         import gradio  # noqa: F401
 
@@ -520,10 +584,11 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
                 record("gemini_reachable", False, str(exc))
 
     # Checks that describe an optional subsystem rather than a broken install:
-    # `lemely ui` needs the [ui] extra, and object storage is only reached by
-    # the web app's avatar/upload routes. Both are reported honestly and
-    # neither decides the exit code.
-    advisory_checks = {"gradio_extra_installed", "storage_backend"}
+    # `lemely ui` needs the [ui] extra, object storage is only reached by
+    # the web app's avatar/upload routes, and web push only needs keys once a
+    # deployment wants real pushes. All three are reported honestly and none
+    # decides the exit code.
+    advisory_checks = {"gradio_extra_installed", "storage_backend", "push_transport"}
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 

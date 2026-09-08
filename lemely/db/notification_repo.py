@@ -50,7 +50,7 @@ import sqlalchemy as sa
 from sqlalchemy.exc import IntegrityError
 
 from lemely.db.models import Notification, NotificationType, PushSubscription
-from lemely.db.xp_repo import DEFAULT_ZONE
+from lemely.db.xp_repo import DEFAULT_ZONE, UserZoneReader
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -270,12 +270,20 @@ class NotificationService:
         *,
         now: Callable[[], datetime] = _utcnow,
         zone: ZoneInfo = DEFAULT_ZONE,
+        zones: UserZoneReader | None = None,
     ) -> None:
-        """Wire the service to a session factory, the preference gate, a clock, and a zone."""
+        """Wire the service to a session factory, the preference gate, a clock, and a zone.
+
+        ``zones`` resolves the recipient's own zone for quiet hours — whose
+        night it is, is a personal fact (push-delivery spec §3). ``zone`` is
+        the fallback it defers to, and the only zone in use when no reader is
+        given.
+        """
         self._sessionmaker = sessionmaker
         self._preferences = preferences
         self._now = now
         self._zone = zone
+        self._zones = zones
 
     # -- Writing ------------------------------------------------------------
 
@@ -293,11 +301,19 @@ class NotificationService:
         """Create one inbox row, gated by preferences and idempotent on ``dedupe_key``.
 
         ``dedupe_key`` is optional and its absence is meaningful, not lazy:
-        some notification types have no natural idempotency key at all (two
-        ``study_plan_reminder`` rows a week apart are two real reminders), and
-        those rows carry ``NULL`` and are exempt from the partial unique index
-        migration 0018 creates. This mirrors D5.3's split for XP, where the
-        paper seam dedupes and the flashcard seam deliberately does not.
+        a notification type may have no natural idempotency key, and such rows
+        carry ``NULL`` and are exempt from the partial unique index migration
+        0018 creates. This mirrors D5.3's split for XP, where the paper seam
+        dedupes and the flashcard seam deliberately does not.
+
+        This docstring used to offer ``study_plan_reminder`` as the example
+        of a type with no natural key ("two rows a week apart are two real
+        reminders"). The push-delivery spec (§2) gave it one — the session
+        id, so each scheduled session prompts exactly once ever — and gave
+        ``streak_warning`` one too, the recipient's own civil date. Today all
+        five types pass a key; the ``NULL`` path stays for the same reason
+        ``_notify_audience`` once corrected its own comment: a docstring the
+        code disproves is worse than none.
 
         Returns:
             A :class:`CreateResult` whose ``push_allowed`` is a separate
@@ -344,8 +360,9 @@ class NotificationService:
                 )
             row = _row_from_model(notification)
 
+        zone = self._zone if self._zones is None else self._zones.zone_for(recipient)
         quiet = is_within_quiet_hours(
-            civil_time_in_zone(moment, zone=self._zone),
+            civil_time_in_zone(moment, zone=zone),
             prefs.quiet_hours_start,
             prefs.quiet_hours_end,
         )

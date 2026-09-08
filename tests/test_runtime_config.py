@@ -50,6 +50,30 @@ class _IsolatedEnv:
 
 
 class SettingsTests(unittest.TestCase):
+    def test_notifications_defaults_match_the_spec(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertTrue(s.notifications.sweeper_enabled)
+        self.assertEqual(s.notifications.sweep_poll_seconds, 60)
+        self.assertEqual(s.notifications.streak_warning_hour, 19)
+        self.assertEqual(s.notifications.study_plan_reminder_hour, 8)
+
+    def test_notifications_hours_must_be_hours(self) -> None:
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import NotificationsSettings
+
+        with self.assertRaises(ValidationError):
+            NotificationsSettings(streak_warning_hour=24)
+        with self.assertRaises(ValidationError):
+            NotificationsSettings(sweep_poll_seconds=0)
+
+    def test_sweeper_can_be_disabled_from_the_environment(self) -> None:
+        with _IsolatedEnv(), TemporaryDirectory() as tmp:
+            os.environ["LEMELY_NOTIFICATIONS__SWEEPER_ENABLED"] = "0"
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        self.assertFalse(s.notifications.sweeper_enabled)
+
     def test_defaults_load_without_any_source(self) -> None:
         with _IsolatedEnv(), TemporaryDirectory() as tmp:
             s = load_settings(toml_path=None, cwd=Path(tmp))

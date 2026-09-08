@@ -34,8 +34,10 @@
  * `GenerateQuizQuestionsResponse`, `CreateQuizAssignmentRequest`,
  * `QuizAssignment`, `QuizAssignmentList`, `QuizPoolCount`. Deliberately
  * excludes the T-10 results family (`QuizAssignmentResultsDTO` and its
- * nested DTOs) — that is a later phase's screen to build. Announcement
- * endpoints remain a later P3.8 chunk's to add.
+ * nested DTOs) — that is a later phase's screen to build.
+ *
+ * The T-12 announcement family (`AnnouncementCreateRequest`, `Announcement`,
+ * `AnnouncementList`) sits at the bottom of this file.
  *
  * This module is intentionally self-contained — it does not import from
  * `web/src/portals/teacher/data.ts` (the mock shapes these DTOs were modeled
@@ -1071,8 +1073,10 @@ export interface QuizAssignmentResults {
  * required whenever `schoolWide` is true (a school_admin can administer
  * several schools, so the flag alone does not say which).
  *
- * `publishAt` is **stored but never read** — no scheduler exists and delivery
- * is Phase 5's. Label it honestly; never imply it will fire.
+ * `publishAt` is an absolute instant that both **gates visibility** (a dated
+ * announcement is hidden from students until then) and **schedules the
+ * notification** (the sweeper fans out to the audience at that moment). Null
+ * means visible and notified immediately. Word it as exactly that.
  */
 export interface AnnouncementCreateRequest {
   title: string

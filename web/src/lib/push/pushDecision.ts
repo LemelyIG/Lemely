@@ -56,11 +56,14 @@ export const GENERIC_PUSH_BODY = "You have a new notification"
 /**
  * Where a notification with no better destination sends the reader.
  *
- * The app root, not an inbox path, and deliberately so: this API is
- * role-agnostic because `at_risk_alert` is addressed to a **teacher and a
- * parent**, and neither portal has an inbox screen in this build. `/` routes by
- * role, so it is the one destination that cannot 404 for the reader who
- * received the push.
+ * The app root, not an inbox path, and deliberately so: this value is the
+ * fallback for when **no page answered the worker at all**, so the worker does
+ * not know who received the push. `/` routes by role, so it is the one
+ * destination that cannot 404 for the reader who tapped it. The typed
+ * destinations, including the teacher and parent inboxes, live in
+ * `pushClientBridge.destinationFor`, which only runs when a page did answer.
+ * This comment used to say neither of those portals had an inbox screen;
+ * both do now, and the fallback stays for the reason above.
  */
 export const DEFAULT_PUSH_URL = "/"
 

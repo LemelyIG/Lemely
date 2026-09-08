@@ -57,7 +57,7 @@ from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
 from lemely.db.upload_repo import StudentUploadRepository, UploadRun
-from lemely.db.xp_repo import DEFAULT_ZONE, XpService, civil_date_in_zone
+from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -80,6 +80,7 @@ from lemely.web.deps import (
     get_student_profile_service,
     get_student_upload_repo,
     get_user_mirror,
+    get_user_zone_reader,
     get_xp_service,
     require_role,
     require_verified_email,
@@ -792,6 +793,7 @@ def _alert_teachers_and_parents(
     profile_service: StudentProfileService,
     class_service: ClassService,
     parent_service: ParentLinkService,
+    zones: UserZoneReader,
     student_id: str,
 ) -> None:
     """Raise ``at_risk_alert`` for a freshly corrected student's staff (D5.11).
@@ -803,18 +805,20 @@ def _alert_teachers_and_parents(
 
     **Rule 3 (≥14 days inactive) cannot fire at this seam and that is not an
     oversight.** A student who has just uploaded a paper is, by definition,
-    active. Rule 3 is time-triggered and joins ``streak_warning`` and
-    ``study_plan_reminder`` in D5.9 §5's no-scheduler limitation — which means
-    the reason most likely to matter for a disengaging student is the one this
-    build cannot deliver. Stated in D5.11 §2 and carried to the Phase-5
-    limitations rather than left to be discovered.
+    active. Rule 3 is time-triggered and is the one notification the sweeper
+    in :mod:`lemely.web.scheduled_notifications` does **not** run:
+    ``streak_warning`` and ``study_plan_reminder`` — which this docstring
+    used to list beside it under D5.9 §5's no-scheduler limitation — now do
+    fire on a timer, and rule 3 alone is still carried as a limitation rather
+    than delivered.
 
-    The dedupe key is ``(student, reason, Cairo civil date)`` (D5.11 §3):
-    at-risk is a state, not an event, so an upload-keyed alert would send a
-    teacher of thirty students one notification per upload. The day boundary is
-    :func:`~lemely.db.xp_repo.civil_date_in_zone`, the same one D5.1 §4 fixed
-    for streaks — Cairo is UTC+3 in summer, so a hardcoded offset is wrong for
-    half the year.
+    The dedupe key is ``(student, reason, the student's own civil date)``
+    (D5.11 §3, per-user since the push-delivery spec §3): at-risk is a state,
+    not an event, so an upload-keyed alert would send a teacher of thirty
+    students one notification per upload. The day boundary is
+    :func:`~lemely.db.xp_repo.civil_date_in_zone` in the *assessed student's*
+    zone — it windows that student's own work — never the recipient's and
+    never a hardcoded offset.
 
     Every recipient's row is gated by **their own** preferences, which
     :func:`notify_safely` does for free by reading the recipient's row
@@ -838,7 +842,7 @@ def _alert_teachers_and_parents(
         if not recipients:
             return
 
-        today = civil_date_in_zone(datetime.now(UTC), zone=DEFAULT_ZONE)
+        today = civil_date_in_zone(datetime.now(UTC), zone=zones.zone_for(student_id))
         for flag in assessment.flags:
             for recipient in recipients:
                 notify_safely(
@@ -883,6 +887,7 @@ def student_correct(
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
     class_service: Annotated[ClassService, Depends(get_class_service)],
     parent_service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
+    zones: Annotated[UserZoneReader, Depends(get_user_zone_reader)],
 ) -> StreamingResponse:
     """Stream the real self-mark pipeline for an uploaded paper over SSE.
 
@@ -1065,6 +1070,7 @@ def student_correct(
                     profile_service=profile_service,
                     class_service=class_service,
                     parent_service=parent_service,
+                    zones=zones,
                     student_id=auth.user_id,
                 )
                 # ``report.correction.metadata`` (an ``ExamMetadata``, derived from

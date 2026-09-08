@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from datetime import time
 
+from pydantic import Field
+
 from lemely.web.schemas import ApiModel
 
 
@@ -60,6 +62,11 @@ class ProfileDTO(ApiModel):
     ``null`` (never a 500) when storage cannot be reached to sign one: the
     sidebar this DTO backs must render *something* even when object storage is
     down, per :func:`~lemely.web.routers.me._avatar_url_for`.
+
+    ``timezone``/``timezoneIsExplicit`` mirror ``users.timezone`` and
+    ``users.timezone_is_explicit`` (push-delivery spec §3). ``timezone`` is
+    ``null`` when never set; the client renders that as "follow this device"
+    and never invents a name for the server-side default.
     """
 
     displayName: str | None = None
@@ -67,6 +74,8 @@ class ProfileDTO(ApiModel):
     role: str
     emailVerified: bool
     avatarUrl: str | None = None
+    timezone: str | None = None
+    timezoneIsExplicit: bool = False
 
 
 class NotificationPreferencesUpdateDTO(ApiModel):
@@ -89,4 +98,35 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     quietHoursEnd: time | None = None
 
 
-__all__ = ["NotificationPreferencesDTO", "NotificationPreferencesUpdateDTO", "ProfileDTO"]
+class TimezoneUpdateDTO(ApiModel):
+    """Body for ``PUT /api/me/timezone`` (push-delivery spec §3).
+
+    ``timezone`` is an IANA name or ``null``; ``max_length=64`` matches the
+    column. ``explicit`` says whether the *user* chose it: the settings picker
+    sends ``true``, the app-boot auto-detect sends ``false``, and
+    ``{"timezone": null, "explicit": false}`` is "follow this device" — the
+    one body that clears an earlier choice. See the route for the full table.
+    """
+
+    timezone: str | None = Field(default=None, max_length=64)
+    explicit: bool
+
+
+class TimezoneDTO(ApiModel):
+    """Response for ``PUT /api/me/timezone``: the stored state after the write.
+
+    Echoes what is *stored*, not what was sent — a non-explicit write against
+    a chosen zone changes nothing, and the response says so.
+    """
+
+    timezone: str | None
+    timezoneIsExplicit: bool
+
+
+__all__ = [
+    "NotificationPreferencesDTO",
+    "NotificationPreferencesUpdateDTO",
+    "ProfileDTO",
+    "TimezoneDTO",
+    "TimezoneUpdateDTO",
+]

@@ -64,7 +64,7 @@ from lemely.db.study_plan_repo import StudyPlanService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
-from lemely.db.xp_repo import XpService
+from lemely.db.xp_repo import UserZoneReader, XpService
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -75,6 +75,7 @@ from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError
 from lemely.web.push import NotificationTransport, VapidPushTransport
 from lemely.web.ratelimit import SlidingWindowLimiter
+from lemely.web.scheduled_notifications import Sweeper
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -577,20 +578,34 @@ def get_flashcard_service() -> FlashcardService:
 
 
 @lru_cache(maxsize=1)
+def get_user_zone_reader() -> UserZoneReader:
+    """Return the process-wide :class:`UserZoneReader` singleton (push-delivery spec §3).
+
+    One reader, shared by :func:`get_xp_service`, :func:`get_notification_service`
+    and the at-risk seam, so every personal civil-date calculation in one
+    process resolves a user's zone the same way and ``PUT /api/me/timezone``
+    has exactly one memo to invalidate. Tests override this with a reader
+    bound to a throwaway Postgres database.
+    """
+    return UserZoneReader(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
 def get_xp_service() -> XpService:
     """Return the process-wide :class:`XpService` singleton (P5.2 chunk B).
 
     Wired with the DB session factory alone, mirroring
     :func:`get_study_plan_service`/:func:`get_placement_service` — the clock
-    and streak-day zone are left at their defaults (real UTC now,
-    ``Africa/Cairo``); tests override this dependency with a service built on
+    is left at its default (real UTC now) and streak days are computed in each
+    student's own zone through :func:`get_user_zone_reader`, falling back to
+    ``Africa/Cairo``; tests override this dependency with a service built on
     an injected fake clock and a throwaway Postgres database. Composed with
     each of the four award call sites only through
     :func:`~lemely.web.xp_awards.award_xp_safely`, never called directly from
     a repo service (D5.1: awarding is a router-layer concern, not nested
     inside another service's own transaction).
     """
-    return XpService(get_sessionmaker(get_settings()))
+    return XpService(get_sessionmaker(get_settings()), zones=get_user_zone_reader())
 
 
 @lru_cache(maxsize=1)
@@ -675,13 +690,15 @@ def get_notification_service() -> NotificationService:
     constructing its own preferences service, so the gate that decides whether
     a notification row is written and the endpoint that lets a user change
     that preference cannot disagree about what the user asked for (D5.9 §2).
-    The clock and quiet-hours zone are left at their defaults (real UTC now,
-    ``Africa/Cairo``); tests override this dependency with a service built on
-    an injected fake clock and a throwaway Postgres database.
+    The clock is left at its default (real UTC now) and quiet hours are
+    evaluated in the recipient's own zone through :func:`get_user_zone_reader`,
+    falling back to ``Africa/Cairo``; tests override this dependency with a
+    service built on an injected fake clock and a throwaway Postgres database.
     """
     return NotificationService(
         get_sessionmaker(get_settings()),
         get_notification_prefs_service(),
+        zones=get_user_zone_reader(),
     )
 
 
@@ -702,6 +719,27 @@ def get_push_transport() -> NotificationTransport:
     headless push mock MISSION §4's Phase-5 acceptance asks for.
     """
     return VapidPushTransport(get_settings().push)
+
+
+@lru_cache(maxsize=1)
+def get_sweeper() -> Sweeper:
+    """Return the process-wide notification :class:`Sweeper` (push-delivery spec §4).
+
+    Composed from the same singletons the routers use — announcements,
+    notifications, the push transport, the session factory — so a scheduled
+    announcement is delivered through exactly the code an immediate one is.
+    Built even when ``settings.notifications.sweeper_enabled`` is false;
+    ``create_app``'s lifespan decides whether to *run* it. Constructing it
+    opens no connection (the engine is lazy).
+    """
+    settings = get_settings()
+    return Sweeper(
+        sessionmaker=get_sessionmaker(settings),
+        announcements=get_announcement_service(),
+        notifications=get_notification_service(),
+        transport=get_push_transport(),
+        settings=settings.notifications,
+    )
 
 
 @lru_cache(maxsize=1)
@@ -1066,11 +1104,13 @@ def reset_singletons() -> None:
     get_announcement_service.cache_clear()
     get_student_profile_service.cache_clear()
     get_xp_service.cache_clear()
+    get_user_zone_reader.cache_clear()
     get_leaderboard_service.cache_clear()
     get_friend_service.cache_clear()
     get_exam_calendar_service.cache_clear()
     get_notification_service.cache_clear()
     get_push_transport.cache_clear()
+    get_sweeper.cache_clear()
     # The three admin-surface singletons. `get_platform_admin_service` and
     # `get_school_admin_service` were absent here before issue #10 — an
     # omission, not a policy: this function's docstring promises to clear

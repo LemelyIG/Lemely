@@ -15,16 +15,19 @@ query of its own.
 longer true and the sentence is corrected rather than left standing.** Phase 5
 built both halves MISSION §4 assigned it: the student read surface lives on
 :mod:`lemely.web.routers.student_announcements` (P5.5 chunk B), and P5.6 chunk
-C2b added the notification seam below — ``create`` now fans out one
-``announcement`` notification per student in each written row's audience,
-after the rows have committed and wrapped so that no delivery failure can
-reach the composing teacher.
+C2b added the notification seam — ``create`` fans out one ``announcement``
+notification per student in each written row's audience, after the rows have
+committed and wrapped so that no delivery failure can reach the composing
+teacher. The push-delivery spec (§1) moved that fan-out to
+:mod:`lemely.web.scheduled_notifications`, shared with the sweeper: a row
+whose ``publish_at`` is still ahead is **not** notified here, and is claimed
+by the sweeper at that moment instead.
 """
 
 from __future__ import annotations
 
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import Annotated, NoReturn
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException
@@ -37,7 +40,7 @@ from lemely.db.announcement_repo import (
     AnnouncementService,
     AnnouncementValidationError,
 )
-from lemely.db.models.enums import NotificationType, Role
+from lemely.db.models.enums import Role
 from lemely.db.notification_repo import (
     NotificationService,  # noqa: TC001 - FastAPI resolves this at runtime
 )
@@ -48,7 +51,6 @@ from lemely.web.deps import (
     get_push_transport,
     require_role,
 )
-from lemely.web.notify import notify_safely
 
 # ``NotificationService`` above and ``NotificationTransport`` here are
 # **runtime** imports with a reasoned ``noqa``, not TYPE_CHECKING ones, and
@@ -58,15 +60,13 @@ from lemely.web.notify import notify_safely
 # raises PydanticUserError on its *first request* rather than at import, which
 # is a much later and more confusing place to find out (P5.6 chunk C1).
 from lemely.web.push import NotificationTransport  # noqa: TC001 - resolved at runtime
+from lemely.web.scheduled_notifications import deliver_announcements_now
 from lemely.web.schemas_announcements import (
     AnnouncementCreateRequestDTO,
     AnnouncementCreateResponseDTO,
     AnnouncementDTO,
     AnnouncementListDTO,
 )
-
-if TYPE_CHECKING:
-    from collections.abc import Sequence
 
 log = structlog.get_logger(__name__)
 
@@ -161,61 +161,8 @@ def create_announcement(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    _notify_audience(service, notifications, push_transport, rows)
+    deliver_announcements_now(service, notifications, push_transport, rows)
     return AnnouncementCreateResponseDTO(announcements=[_row_to_dto(row) for row in rows])
-
-
-def _notify_audience(
-    service: AnnouncementService,
-    notifications: NotificationService,
-    transport: NotificationTransport,
-    rows: Sequence[AnnouncementRow],
-) -> None:
-    """Tell each row's audience, after the rows are already written (P5.6 chunk C2b).
-
-    Runs at the router layer after ``service.create`` has committed, exactly
-    like ``award_xp_safely`` and the ``grade_ready`` seam: the announcement
-    exists and stays existing whatever happens here (D5.9 §1). ``notify_safely``
-    already swallows per-recipient failures, but the **audience lookup** is a
-    query of our own and sits outside it, so the whole loop is wrapped — a
-    teacher must never see a 500 for a post that went out fine.
-
-    D5.9 §6 fixes this seam's idempotency on the pair
-    ``(announcement_id, user_id)``, and the **column value is the announcement
-    id alone** because migration 0018's unique index is already
-    ``(user_id, type, dedupe_key)`` — the recipient half of the pair comes
-    from the index, not from the string. Concatenating the user id in as well
-    was the first cut here and it is *not* wrong, merely redundant; it was
-    removed because the comment justifying it ("otherwise the first student
-    notified suppresses everyone else") is false, and an inversion proved it
-    false: with the suffix dropped, every enrolled student is still notified.
-    A comment the code disproves is worse than no comment.
-
-    Fan-out is sequential and unbatched. A class is tens of students and a
-    school is hundreds, not millions; a queue is the right answer at a scale
-    this build does not have, and inventing one now would add an unproven
-    moving part to a path whose failure is already harmless.
-    """
-    try:
-        for row in rows:
-            for recipient in service.student_recipients(row):
-                notify_safely(
-                    notifications,
-                    transport,
-                    user_id=recipient,
-                    type=NotificationType.announcement,
-                    title="New announcement",
-                    # The title the teacher wrote is the pointer. The body is
-                    # deliberately not forwarded: it can be long, and the
-                    # notification's job is to send the student to the post,
-                    # not to be the post (D5.9 §2).
-                    body=row.title,
-                    payload={"announcementId": str(row.announcement_id)},
-                    dedupe_key=str(row.announcement_id),
-                    seam="announcement",
-                )
-    except Exception:
-        log.exception("announcement_fanout_failed", announcement_count=len(rows))
 
 
 @router.get("", response_model=AnnouncementListDTO)

@@ -115,6 +115,24 @@ signed_url_ttl_seconds = 3600
 avatar_max_bytes = 5242880  # 5 MiB
 # gcs_project = "my-gcp-project"  # only if ADC can't infer one
 
+[push]
+# Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):
+# the transport reports itself unavailable, the notification inbox keeps
+# working, and every developer machine and CI run is in that state.
+#
+# Generate a pair with `lemely push-keygen` (prints, writes nothing). The
+# public key is handed to every browser and is not a secret; the private key
+# is. Deployed, both arrive from GitHub Actions (a repository variable and a
+# repository secret) as LEMELY_PUSH__VAPID_PUBLIC_KEY / __VAPID_PRIVATE_KEY.
+# ROTATING THE PAIR INVALIDATES EVERY STORED SUBSCRIPTION - the public key is
+# baked into each one, so every browser must re-subscribe. See
+# docs/push-notifications.md before changing it.
+# vapid_public_key = "BASE64URL-65-BYTE-POINT"
+# vapid_private_key = "BASE64URL-32-BYTE-SCALAR"
+# vapid_subject = "mailto:support@lemelyig.com"
+ttl_seconds = 86400
+timeout_seconds = 10.0
+
 [auth]
 # How long a minted access token is accepted for. Short on purpose: it is a
 # bearer credential with no revocation of its own, so this bounds the window
@@ -149,16 +167,6 @@ ai_detection_enabled = false
 plagiarism_threshold = 0.85
 ai_detection_threshold = 0.8
 
-[push]
-# Web-push (VAPID) application-server credentials. All three secrets default
-# to unset, which is a supported state: the transport reports itself
-# unavailable and the notification inbox keeps working without them.
-# Secrets — prefer LEMELY_PUSH__* env vars over this file:
-# vapid_public_key = "..."
-# vapid_private_key = "..."
-# vapid_subject = "mailto:ops@example.com"
-ttl_seconds = 86400
-timeout_seconds = 10.0
 [email]
 # Transactional mail for account verification and password reset (D7.7).
 #
@@ -193,3 +201,17 @@ from_name = "Lemely"
 # Short on purpose: verification mail is a best-effort side effect of an
 # already-created account and must never make a signup hang.
 timeout_seconds = 10.0
+
+[notifications]
+# The in-process sweeper that publishes scheduled announcements and sends the
+# two daily engagement notifications (streak_warning at streak_warning_hour,
+# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN
+# time zone. It runs inside the API process, started by create_app's lifespan;
+# there is no separate worker to deploy. On Cloud Run, timely delivery needs
+# --min-instances=1: at zero instances nothing is running to sweep, and a
+# 19:00 warning may be missed for that day entirely. See docs/deployment.md.
+# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.
+sweeper_enabled = true
+sweep_poll_seconds = 60
+streak_warning_hour = 19
+study_plan_reminder_hour = 8

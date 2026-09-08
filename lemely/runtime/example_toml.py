@@ -22,7 +22,7 @@ template developers copy.
 
 from __future__ import annotations
 
-from lemely.runtime.config import Settings
+from lemely.runtime.config import NotificationsSettings, Settings
 
 _HEADER = """\
 # lemely.toml — configuration template
@@ -160,6 +160,25 @@ def render_example_toml() -> str:
     lines.append('# gcs_project = "my-gcp-project"  # only if ADC can\'t infer one')
     lines.append("")
 
+    lines.append("[push]")
+    lines.append("# Web push (VAPID, RFC 8292). All three absent is a SUPPORTED state (D5.9 §4):")
+    lines.append("# the transport reports itself unavailable, the notification inbox keeps")
+    lines.append("# working, and every developer machine and CI run is in that state.")
+    lines.append("#")
+    lines.append("# Generate a pair with `lemely push-keygen` (prints, writes nothing). The")
+    lines.append("# public key is handed to every browser and is not a secret; the private key")
+    lines.append("# is. Deployed, both arrive from GitHub Actions (a repository variable and a")
+    lines.append("# repository secret) as LEMELY_PUSH__VAPID_PUBLIC_KEY / __VAPID_PRIVATE_KEY.")
+    lines.append("# ROTATING THE PAIR INVALIDATES EVERY STORED SUBSCRIPTION - the public key is")
+    lines.append("# baked into each one, so every browser must re-subscribe. See")
+    lines.append("# docs/push-notifications.md before changing it.")
+    lines.append('# vapid_public_key = "BASE64URL-65-BYTE-POINT"')
+    lines.append('# vapid_private_key = "BASE64URL-32-BYTE-SCALAR"')
+    lines.append('# vapid_subject = "mailto:support@lemelyig.com"')
+    lines.append(f"ttl_seconds = {s.push.ttl_seconds}")
+    lines.append(f"timeout_seconds = {s.push.timeout_seconds}")
+    lines.append("")
+
     lines.append("[auth]")
     lines.append("# How long a minted access token is accepted for. Short on purpose: it is a")
     lines.append("# bearer credential with no revocation of its own, so this bounds the window")
@@ -200,16 +219,6 @@ def render_example_toml() -> str:
     lines.append(f"ai_detection_threshold = {s.integrity.ai_detection_threshold}")
     lines.append("")
 
-    lines.append("[push]")
-    lines.append("# Web-push (VAPID) application-server credentials. All three secrets default")
-    lines.append("# to unset, which is a supported state: the transport reports itself")
-    lines.append("# unavailable and the notification inbox keeps working without them.")
-    lines.append("# Secrets — prefer LEMELY_PUSH__* env vars over this file:")
-    lines.append('# vapid_public_key = "..."')
-    lines.append('# vapid_private_key = "..."')
-    lines.append('# vapid_subject = "mailto:ops@example.com"')
-    lines.append(f"ttl_seconds = {s.push.ttl_seconds}")
-    lines.append(f"timeout_seconds = {s.push.timeout_seconds}")
     lines.append("[email]")
     lines.append("# Transactional mail for account verification and password reset (D7.7).")
     lines.append("#")
@@ -244,6 +253,29 @@ def render_example_toml() -> str:
     lines.append("# Short on purpose: verification mail is a best-effort side effect of an")
     lines.append("# already-created account and must never make a signup hang.")
     lines.append(f"timeout_seconds = {s.email.timeout_seconds}")
+
+    lines.append("")
+
+    lines.append("[notifications]")
+    lines.append("# The in-process sweeper that publishes scheduled announcements and sends the")
+    lines.append("# two daily engagement notifications (streak_warning at streak_warning_hour,")
+    lines.append("# study_plan_reminder at study_plan_reminder_hour) in each recipient's OWN")
+    lines.append("# time zone. It runs inside the API process, started by create_app's lifespan;")
+    lines.append("# there is no separate worker to deploy. On Cloud Run, timely delivery needs")
+    lines.append("# --min-instances=1: at zero instances nothing is running to sweep, and a")
+    lines.append("# 19:00 warning may be missed for that day entirely. See docs/deployment.md.")
+    lines.append("# The test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0.")
+    # The shipped default, deliberately not ``s.notifications.sweeper_enabled``:
+    # the test suite sets LEMELY_NOTIFICATIONS__SWEEPER_ENABLED=0 for every
+    # test, so reading the live value would make this generator emit "false"
+    # under pytest and "true" everywhere else — and
+    # tests/test_settings_example_drift.py would fail on a file that is
+    # correct. An example file documents what ships, not what this process's
+    # environment happens to say.
+    lines.append(f"sweeper_enabled = {str(NotificationsSettings().sweeper_enabled).lower()}")
+    lines.append(f"sweep_poll_seconds = {s.notifications.sweep_poll_seconds}")
+    lines.append(f"streak_warning_hour = {s.notifications.streak_warning_hour}")
+    lines.append(f"study_plan_reminder_hour = {s.notifications.study_plan_reminder_hour}")
 
     # No trailing blank line: pre-commit's end-of-file-fixer collapses a double
     # trailing newline in lemely.toml.example, which would drift from this

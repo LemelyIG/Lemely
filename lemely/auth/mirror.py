@@ -104,6 +104,19 @@ class UserMirror(Protocol):
         """
         ...
 
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        """Set, follow, or clear ``users.timezone`` (push-delivery spec §3).
+
+        ``explicit=True`` stores ``zone`` and marks it chosen. ``explicit=False``
+        with a ``zone`` is the client's device auto-detect and is written only
+        while nothing was chosen — a plane must never undo a deliberate choice.
+        ``explicit=False`` with ``zone=None`` clears the choice so auto-detect
+        resumes. Validation (a resolvable IANA name, at most 64 characters) is
+        the route's job; this writes what it is given. A ``user_id`` with no
+        mirrored row is a silent no-op, matching :meth:`set_avatar_path`.
+        """
+        ...
+
 
 class DbUserMirror:
     """Real :class:`UserMirror` writing through the application database."""
@@ -188,6 +201,21 @@ class DbUserMirror:
             user = session.get(User, user_id)
             if user is not None:
                 user.avatar_path = path
+
+    def set_timezone(self, user_id: uuid.UUID, zone: str | None, *, explicit: bool) -> None:
+        """Set, follow, or clear ``users.timezone``, if the row exists."""
+        with session_scope(self._settings) as session:
+            user = session.get(User, user_id)
+            if user is None:
+                return
+            if explicit:
+                user.timezone = zone
+                user.timezone_is_explicit = True
+            elif zone is None:
+                user.timezone = None
+                user.timezone_is_explicit = False
+            elif not user.timezone_is_explicit:
+                user.timezone = zone
 
 
 __all__ = ["DbUserMirror", "UserMirror"]

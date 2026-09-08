@@ -109,6 +109,51 @@ class DoctorTests(unittest.TestCase):
         self.assertFalse(reach["ok"])
         self.assertIn("not reachable", str(reach["detail"]))
 
+    def test_doctor_reports_push_unavailable_without_keys_and_does_not_fail_for_it(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        push = next(c for c in payload["checks"] if c["name"] == "push_transport")
+        self.assertFalse(push["ok"])
+        self.assertIn("push-keygen", push["detail"])
+        self.assertTrue(payload["all_passed"])
+
+    def test_doctor_reports_push_available_with_a_generated_pair(self) -> None:
+        from lemely.runtime.vapid import generate_vapid_keypair
+
+        pair = generate_vapid_keypair()
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    "LEMELY_PUSH__VAPID_PUBLIC_KEY": pair.public_key,
+                    "LEMELY_PUSH__VAPID_PRIVATE_KEY": pair.private_key,
+                    "LEMELY_PUSH__VAPID_SUBJECT": "mailto:ops@example.test",
+                },
+            )
+        payload = json.loads(result.output)
+        push = next(c for c in payload["checks"] if c["name"] == "push_transport")
+        self.assertTrue(push["ok"], msg=push)
+
 
 class DoctorTestsEnvLeakTests(unittest.TestCase):
     """Regression test for #121: DoctorTests.setUp must not leak env deletions."""

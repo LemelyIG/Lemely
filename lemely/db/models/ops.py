@@ -72,9 +72,26 @@ class ReviewQueueItem(TimestampMixin, Base):
 
 
 class Announcement(TimestampMixin, Base):
-    """An announcement published by a teacher or school admin."""
+    """An announcement published by a teacher or school admin.
+
+    ``notified_at`` (migration ``0030``, push-delivery spec §1) is when the
+    notification fan-out for this row **completed**; ``NULL`` means it has not.
+    The composer stamps it right after an immediate fan-out; the sweeper in
+    :mod:`lemely.web.scheduled_notifications` claims unstamped rows whose
+    ``publish_at`` has passed, fans out, and stamps **after** the send — so a
+    crash between the two re-runs the row, and migration ``0018``'s unique
+    index on ``notifications`` makes that re-run harmless. The partial index is
+    the only shape the sweeper's claim needs.
+    """
 
     __tablename__ = "announcements"
+    __table_args__ = (
+        sa.Index(
+            "ix_announcements_due_unnotified",
+            "publish_at",
+            postgresql_where=sa.text("notified_at IS NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -99,6 +116,7 @@ class Announcement(TimestampMixin, Base):
     title: Mapped[str] = mapped_column(sa.String, nullable=False)
     body: Mapped[str] = mapped_column(sa.Text, nullable=False)
     publish_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    notified_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
 
 
 class AnnouncementRead(TimestampMixin, Base):

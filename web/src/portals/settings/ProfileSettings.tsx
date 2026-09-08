@@ -5,7 +5,17 @@ import { Button } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { validateAvatarFile } from "@/lib/avatarUpload"
-import { useProfile, useRemoveAvatar, useUploadAvatar } from "@/lib/hooks/useMeApi"
+import { useProfile, usePutTimezone, useRemoveAvatar, useUploadAvatar } from "@/lib/hooks/useMeApi"
+import {
+  FOLLOW_DEVICE_UPDATE,
+  FOLLOW_DEVICE_VALUE,
+  browserTimezones,
+  deviceTimezone,
+  deviceTimezoneUpdate,
+  explicitTimezoneUpdate,
+  pickerValue,
+  timezoneOptions,
+} from "@/lib/timezone"
 import {
   settingsLoadFailureMessage,
   settingsSaveFailureMessage,
@@ -56,6 +66,30 @@ export function ProfileSettingsSection() {
   const profile = useProfile()
   const upload = useUploadAvatar()
   const remove = useRemoveAvatar()
+  const putTimezone = usePutTimezone()
+  const [timezoneError, setTimezoneError] = useState<string | null>(null)
+  const device = deviceTimezone()
+  const zoneOptions = timezoneOptions(browserTimezones(), profile.data?.timezone, device)
+
+  const handleTimezoneChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    setTimezoneError(null)
+    const value = event.target.value
+    if (value === FOLLOW_DEVICE_VALUE) {
+      // Clear the choice first, then send the device zone: the server
+      // accepts a device write only once nothing is chosen.
+      putTimezone.mutate(FOLLOW_DEVICE_UPDATE, {
+        onError: (error) => setTimezoneError(settingsSaveFailureMessage(error)),
+        onSuccess: () => {
+          const update = deviceTimezoneUpdate(device)
+          if (update !== null) putTimezone.mutate(update)
+        },
+      })
+      return
+    }
+    putTimezone.mutate(explicitTimezoneUpdate(value), {
+      onError: (error) => setTimezoneError(settingsSaveFailureMessage(error)),
+    })
+  }
   const fileInputRef = useRef<HTMLInputElement>(null)
   /** A local object URL shown while a chosen file is uploading, so the
    * picture the reader just picked appears immediately rather than waiting
@@ -212,6 +246,44 @@ export function ProfileSettingsSection() {
           {actionError ? (
             <p role="status" className="text-body-sm text-err">
               {actionError}
+            </p>
+          ) : null}
+        </div>
+      </section>
+
+      <section aria-labelledby="timezone-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 id="timezone-heading" className="text-display-sm text-ink">
+            Time zone
+          </h2>
+          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+            Quiet hours, streak days and daily reminders follow this. Following your device
+            keeps it up to date when you travel.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
+            Your time zone
+            <select
+              value={pickerValue(profile.data)}
+              onChange={handleTimezoneChange}
+              disabled={profile.isPending || putTimezone.isPending}
+              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+            >
+              <option value={FOLLOW_DEVICE_VALUE}>
+                {device ? `Follow this device (${device})` : "Follow this device"}
+              </option>
+              {zoneOptions.map((zone) => (
+                <option key={zone} value={zone}>
+                  {zone}
+                </option>
+              ))}
+            </select>
+          </label>
+          {timezoneError ? (
+            <p role="status" className="text-body-sm text-err">
+              {timezoneError}
             </p>
           ) : null}
         </div>

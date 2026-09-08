@@ -8,13 +8,17 @@ endpoints are added.
 
 from __future__ import annotations
 
+import asyncio
 import logging
+from contextlib import asynccontextmanager
+from typing import TYPE_CHECKING
 
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
 from lemely import __version__
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
+from lemely.web.deps import get_settings, get_sweeper
 from lemely.web.routers import (
     admin,
     announcements,
@@ -43,6 +47,49 @@ from lemely.web.routers import (
     teacher,
     xp,
 )
+from lemely.web.scheduled_notifications import run_sweeper
+
+if TYPE_CHECKING:
+    from collections.abc import AsyncIterator
+
+log = logging.getLogger(__name__)
+
+
+@asynccontextmanager
+async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
+    """Start the notification sweeper on startup and stop it on shutdown (spec §4).
+
+    One asyncio task for the process. It is not started when
+    ``settings.notifications.sweeper_enabled`` is false — the suite sets that
+    so no test races a background task — and the settings are read here, at
+    startup, rather than at import so a test can change the env and rebuild
+    the app. Shutdown sets the stop event and waits for the loop to return:
+    a pass in flight finishes (its rows are locked in its own transaction),
+    the loop sees the event, and the task exits. Starlette runs this only
+    inside ``with TestClient(app)`` / a real server, never for a bare
+    ``TestClient(app)``, which is why every pre-existing test is unaffected.
+    """
+    settings = get_settings()
+    stop = asyncio.Event()
+    task: asyncio.Task[None] | None = None
+    if settings.notifications.sweeper_enabled:
+        task = asyncio.create_task(
+            run_sweeper(
+                get_sweeper(),
+                poll_seconds=settings.notifications.sweep_poll_seconds,
+                stop=stop,
+            ),
+            name="notification-sweeper",
+        )
+        log.info(
+            "notification sweeper started (every %ss)", settings.notifications.sweep_poll_seconds
+        )
+    try:
+        yield
+    finally:
+        if task is not None:
+            stop.set()
+            await task
 
 
 def create_app() -> FastAPI:
@@ -59,6 +106,7 @@ def create_app() -> FastAPI:
         # through five phases). An editable install needs `pip install -e .`
         # after a version bump before this reports the new number.
         version=__version__,
+        lifespan=_lifespan,
     )
     app.include_router(meta.router)
     app.include_router(reference.router)
