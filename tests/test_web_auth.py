@@ -1,7 +1,7 @@
 """HTTP-boundary tests for the four new account-lifecycle auth routes (D7).
 
-Complements ``tests/test_auth_router.py`` (signup/login/refresh/OTP, unchanged
-in shape by this issue) and ``tests/test_auth_service.py`` (the service-level
+Complements ``tests/test_auth_router.py`` (signup/login/refresh/parent-invite,
+unchanged in shape by this issue) and ``tests/test_auth_service.py`` (the service-level
 proof of every business rule these routes are a thin HTTP layer over). This
 file is the focused, readable proof that ``/verify-email``,
 ``/verify-email/resend``, ``/password-reset/request`` and
@@ -240,7 +240,7 @@ def test_signup_without_accepted_terms_is_rejected(
 def test_signup_within_cooldown_is_429(
     context: tuple[TestClient, AuthService, FakeUserMirror],
 ) -> None:
-    """D7.12, mirroring ``test_otp_resend_within_cooldown_returns_429``.
+    """D7.12, mirroring ``test_request_parent_signup_code_propagates_resend_cooldown``.
 
     Pre-stamps the *overridden* per-test cooldown store directly rather than
     via a first signup call: the router's duplicate-address carve-out (see
@@ -309,8 +309,8 @@ def test_signup_returns_a_dev_link_only_for_the_offline_provider(
 ) -> None:
     """D3.16 applied to email (D7.6): the fixture's provider does not deliver
     out of band, so the freshly minted verification link rides back on the
-    response — the same rule ``OtpRequestResponseDTO.devCode`` already proves
-    for the OTP flow, now proven for signup's ``devLink``."""
+    response — the same rule ``ParentCodeRequestResponseDTO.devCode`` already
+    proves for the parent-invite flow, now proven for signup's ``devLink``."""
     client, _, _ = context
     body = _signup(client, email="devlink@example.com")
     assert body["devLink"] is not None
@@ -474,8 +474,8 @@ def test_resend_immediately_after_signup_is_429_not_500(
     completely different store from the D7.12 one. Without
     ``resend_verification``'s ``except OtpRateLimitError`` this raises
     unhandled (a 500); the route must map it to the same 429
-    ``/auth/otp/request`` already gives the identical exception on the phone
-    channel.
+    ``/auth/parent/request-code`` already gives the identical exception on
+    its own signup-code channel.
     """
     client, _service = rate_limited_otp_context
     body = _signup(client, email="racy-resend@example.com")

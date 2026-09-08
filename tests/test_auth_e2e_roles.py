@@ -26,10 +26,14 @@ Two test groups live here:
    authz check passes, the service is never called with real data).  The
    no-super-role invariant (D1.6) is asserted: platform_admin is 403 there.
 
-2. **Parent OTP E2E** (hermetic): OTP request → code recovery → verify →
-   parent token → hit /api/student/overview → assert 403 (parent locked out).
-   This proves the OTP-minted token flows through get_auth_context RBAC end
-   to end.
+2. **Parent-invite E2E** (Postgres-backed, spec §4): a student's reusable
+   parent code → email-code request → verify → parent signup → the parent is
+   genuinely linked to the child → hit /api/student/overview → assert 403
+   (parent locked out). This proves the invite-minted token flows through
+   get_auth_context RBAC end to end, and that the link it carries is real,
+   not just an asserted role. Retired phone-OTP routes (``/auth/otp/request``,
+   ``/auth/otp/verify``) are gone; ``AuthService.request_otp``/``verify_otp``
+   stay in the codebase as a kept seam but are not exercised here.
 """
 
 from __future__ import annotations
@@ -42,29 +46,43 @@ from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
 
 import pytest
+import sqlalchemy as sa
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
-from lemely.auth.otp import OtpChannel, OtpStore
+from lemely.auth.cooldown import CooldownStore
+from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token, mint_access_token
+from lemely.db.base import Base
+from lemely.db.class_repo import ClassService
+from lemely.db.invite_repo import InviteService
+from lemely.db.models import User
 from lemely.db.models.enums import Role
+from lemely.db.parent_repo import ParentLinkService
 from lemely.db.seat_repo import SeatService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import Settings
+from lemely.runtime.config import DatabaseSettings, Settings
 from lemely.web import create_app
 from lemely.web.deps import (
     get_auth_service,
     get_history_store,
+    get_invite_service,
     get_seat_service,
     get_settings,
+    get_signup_and_reset_cooldown_store,
+    get_user_mirror,
     reset_singletons,
 )
 
 if TYPE_CHECKING:
     from pathlib import Path
 
-from tests.auth_fakes import FakeGoTrueBackend, FakeUserMirror
+from tests.auth_fakes import FakeEmailProvider, FakeGoTrueBackend, FakeUserMirror
 
 # ---------------------------------------------------------------------------
 # Shared fixtures
@@ -285,15 +303,168 @@ def test_parent_denied_school_seats(app_with_overrides: TestClient, settings: Se
 
 
 # ---------------------------------------------------------------------------
-# §6  Parent OTP E2E: request OTP → verify → token → assert 403 on student
-#     route. Proves the OTP-minted token flows through get_auth_context RBAC.
+# §6  Parent-invite E2E (spec §4): request-code → verify-code → signup →
+#     assert a genuine parent-child link → assert 403 on a student route.
+#     Proves the invite-minted token flows through get_auth_context RBAC.
 # ---------------------------------------------------------------------------
+#
+# Postgres-backed rather than the fully in-memory ``app_with_overrides``
+# above, mirroring ``tests/test_auth_router.py``'s ``parent_context`` fixture:
+# completing ``/auth/parent/signup`` redeems the invite through
+# :meth:`~lemely.db.invite_repo.InviteService.redeem`, which inserts a real
+# ``parent_child_links`` row via
+# :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` — a fake
+# invite service could not prove that link is real, only that a token with
+# ``role=parent`` came back. GoTrue itself stays in-memory
+# (:class:`~tests.auth_fakes.FakeGoTrueBackend`): this test's RBAC assertion
+# does not depend on a live Supabase Auth server, only on genuine Postgres
+# rows for the invite/link tables, so a throwaway per-test database (skipped,
+# never failed, when local Postgres is unreachable — see
+# :func:`_server_reachable`) is enough.
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
 
 
 @pytest.fixture
-def otp_context(settings: Settings) -> Iterator[tuple[TestClient, AuthService]]:
-    """App wired with the full auth stack (FakeGoTrue) plus stub SeatService."""
-    mirror = FakeUserMirror()
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    """Throwaway Postgres database for the parent-invite E2E test.
+
+    Duplicated (rather than shared via conftest) matching the same
+    per-file-duplication convention ``tests/test_auth_router.py`` documents
+    for its own copy of this fixture.
+    """
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+def _seed_student(sm: sessionmaker[Session], display_name: str | None = None) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            User(id=uid, email=f"{uid}@example.com", role=Role.student, display_name=display_name)
+        )
+    return uid
+
+
+def _invite_service(sm: sessionmaker[Session]) -> InviteService:
+    return InviteService(sm, ClassService(sm), ParentLinkService(sm))
+
+
+class PgBackedUserMirror(FakeUserMirror):
+    """A :class:`~tests.auth_fakes.FakeUserMirror` that also writes real ``users`` rows.
+
+    Needed because the parent-signup flow redeems through the **real**,
+    Postgres-backed :class:`~lemely.db.invite_repo.InviteService` this
+    fixture wires, and
+    :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` inserts a
+    genuine ``parent_child_links`` row whose ``parent_id`` foreign-keys to
+    ``users.id`` in that same database — a plain, in-memory-only
+    :class:`~tests.auth_fakes.FakeUserMirror` is invisible to Postgres and
+    cannot satisfy that constraint. Mirrors
+    ``tests/test_auth_router.py``'s class of the same name exactly.
+    """
+
+    def __init__(self, sessionmaker_: sessionmaker[Session]) -> None:
+        super().__init__()
+        self._sessionmaker = sessionmaker_
+
+    def upsert(
+        self,
+        user_id: uuid.UUID,
+        email: str,
+        role: Role,
+        phone: str | None = None,
+        display_name: str | None = None,
+        terms_accepted_at: datetime | None = None,
+    ) -> None:
+        super().upsert(
+            user_id,
+            email=email,
+            role=role,
+            phone=phone,
+            display_name=display_name,
+            terms_accepted_at=terms_accepted_at,
+        )
+        with self._sessionmaker.begin() as session:
+            existing = session.get(User, user_id)
+            if existing is None:
+                session.add(
+                    User(
+                        id=user_id,
+                        email=email,
+                        role=role,
+                        phone=phone,
+                        display_name=display_name,
+                        terms_accepted_at=terms_accepted_at,
+                    )
+                )
+            else:
+                existing.email = email
+                existing.role = role
+                if phone is not None:
+                    existing.phone = phone
+                if display_name is not None:
+                    existing.display_name = display_name
+                if terms_accepted_at is not None:
+                    existing.terms_accepted_at = terms_accepted_at
+
+    def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
+        super().mark_email_verified(user_id, verified_at=verified_at)
+        with self._sessionmaker.begin() as session:
+            existing = session.get(User, user_id)
+            if existing is not None:
+                existing.email_verified_at = verified_at
+
+
+@pytest.fixture
+def parent_invite_context(
+    pg_sessionmaker: sessionmaker[Session], settings: Settings
+) -> Iterator[tuple[TestClient, sessionmaker[Session]]]:
+    """App wired with FakeGoTrue plus a real, Postgres-backed InviteService.
+
+    Same stub SeatService as :func:`app_with_overrides`; the OTP store still
+    backs the parent-signup email code (spec §4's channel, not the retired
+    phone one) and post-signup email verification, exactly as
+    :class:`~lemely.auth.service.AuthService` itself requires it.
+
+    ``get_signup_and_reset_cooldown_store`` is overridden to a fresh,
+    in-memory :class:`~lemely.auth.cooldown.CooldownStore` for the same
+    reason ``tests/test_auth_router.py``'s ``_override_cooldowns`` gives:
+    left unoverridden it falls back to the real ``DbCooldownStore`` (spec
+    §4.4), which stamps the dev database's ``auth_cooldowns`` table on every
+    ``/auth/parent/request-code`` call — a stamp durable across runs, not
+    reset by this fixture's own throwaway ``pg_sessionmaker`` database, so a
+    prior run's call for the same email would otherwise throttle this one
+    with a stray 429.
+    """
+    mirror = PgBackedUserMirror(pg_sessionmaker)
     otp_store = OtpStore(
         clock=lambda: datetime.now(UTC),
         rng=random.Random(42),
@@ -307,60 +478,96 @@ def otp_context(settings: Settings) -> Iterator[tuple[TestClient, AuthService]]:
         sms=MockSmsProvider(),
         otp_store=otp_store,
         settings=settings,
+        email=FakeEmailProvider(),
     )
 
     store = HistoryStore(settings.paths.output_dir / "history")
     stub_seat_service = MagicMock(spec=SeatService)
     stub_seat_service.list_admin_schools.return_value = []
+    signup_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.signup_and_reset_cooldown_seconds,
+    )
 
     app = create_app()
     app.dependency_overrides[get_settings] = lambda: settings
     app.dependency_overrides[get_auth_service] = lambda: service
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    app.dependency_overrides[get_invite_service] = lambda: _invite_service(pg_sessionmaker)
     app.dependency_overrides[get_history_store] = lambda: store
     app.dependency_overrides[get_seat_service] = lambda: stub_seat_service
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
 
     client = TestClient(app)
     try:
-        yield client, service
+        yield client, pg_sessionmaker
     finally:
         app.dependency_overrides.clear()
         reset_singletons()
 
 
-def test_parent_otp_e2e_locked_out_of_student_route(
-    otp_context: tuple[TestClient, AuthService], settings: Settings
+def test_parent_invite_e2e_locked_out_of_student_route(
+    parent_invite_context: tuple[TestClient, sessionmaker[Session]], settings: Settings
 ) -> None:
-    """Full OTP flow: request → recover code → verify → use token → assert 403.
+    """Full parent-invite flow: request-code → verify-code → signup → use token → assert 403.
 
     This covers:
-    * /api/auth/otp/request returns 200 and status=sent
-    * OTP code is valid and /api/auth/otp/verify returns a token with role=parent
-    * The minted token is accepted by the JWT middleware (no 401)
+    * a student's reusable parent code (``InviteService.get_or_create_parent_code``)
+      opens the flow
+    * /api/auth/parent/request-code returns 200 and a devCode (the mock email
+      provider does not deliver out of band, D3.16)
+    * /api/auth/parent/verify-code exchanges the code for a proofToken
+    * /api/auth/parent/signup returns a token with role=parent
+    * the redeemed invite produced a genuine parent_child_links row, not just
+      an asserted role
+    * the minted token is accepted by the JWT middleware (no 401)
     * get_auth_context RBAC correctly rejects parent from /api/student/overview (403)
     """
-    client, service = otp_context
-    phone = "+201234599999"
+    client, sm = parent_invite_context
+    student = _seed_student(sm, display_name="Student")
+    invite = _invite_service(sm).get_or_create_parent_code(student)
+    email = "new-parent@example.com"
 
-    # Step 1: request OTP
-    req_resp = client.post("/api/auth/otp/request", json={"phone": phone})
-    assert req_resp.status_code == 200, req_resp.text
-    assert req_resp.json()["status"] == "sent"
+    # Step 1: request the parent-signup email code.
+    request_resp = client.post(
+        "/api/auth/parent/request-code",
+        json={"email": email, "inviteCode": invite.code},
+    )
+    assert request_resp.status_code == 200, request_resp.text
+    dev_code = request_resp.json()["devCode"]
+    assert dev_code is not None
 
-    # Step 2: recover code via test introspection (mirrors test_auth_router.py)
-    code = service._otp_store._challenges[(OtpChannel.phone, phone)].code
-
-    # Step 3: verify OTP → get parent token
-    verify_resp = client.post("/api/auth/otp/verify", json={"phone": phone, "code": code})
+    # Step 2: verify the code → proof token.
+    verify_resp = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email, "inviteCode": invite.code, "code": dev_code},
+    )
     assert verify_resp.status_code == 200, verify_resp.text
-    parent_token = verify_resp.json()["accessToken"]
+    proof_token = verify_resp.json()["proofToken"]
+
+    # Step 3: complete signup → parent token.
+    signup_resp = client.post(
+        "/api/auth/parent/signup",
+        json={
+            "proofToken": proof_token,
+            "password": "pw-123456",
+            "acceptedTerms": True,
+            "displayName": "New Parent",
+        },
+    )
+    assert signup_resp.status_code == 200, signup_resp.text
+    body = signup_resp.json()
+    assert body["role"] == "parent"
+    parent_token = body["accessToken"]
 
     # Confirm the token carries role=parent
     claims = decode_token(parent_token, settings)
     assert claims.app_role == "parent"
 
-    # Step 4: use parent token against a student-only route → must be 403
-    protected_resp = client.get(
-        "/api/student/overview",
-        headers={"Authorization": f"Bearer {parent_token}"},
-    )
+    # Confirm the invite actually linked the parent to the child.
+    children = ParentLinkService(sm).linked_children(uuid.UUID(body["userId"]))
+    assert [c.child_id for c in children] == [student]
+
+    # Step 4: use parent token against a student-only route → must be 403.
+    protected_resp = client.get("/api/student/overview", headers=_bearer(parent_token))
     assert protected_resp.status_code == 403, protected_resp.text
