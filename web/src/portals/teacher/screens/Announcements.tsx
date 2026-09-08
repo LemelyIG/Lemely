@@ -73,11 +73,15 @@ function AnnouncementRow({
   audienceLabel,
   onDelete,
   deleting,
+  otherDeleting,
 }: {
   announcement: Announcement
   audienceLabel: string
   onDelete: () => void
+  /** This row is the one being deleted right now. */
   deleting: boolean
+  /** A different row is being deleted, so this one must not start a second. */
+  otherDeleting: boolean
 }) {
   return (
     <li className="bg-paper-raised border border-rule rounded-lg px-4 py-3.5 flex items-start gap-3">
@@ -97,12 +101,17 @@ function AnnouncementRow({
             : ""}
         </div>
       </div>
+      {/* `loading` on the row actually being deleted, `disabled` on the rest.
+          Those are different facts and used to render identically: every row
+          greyed out at once, so the teacher could not tell which of them was
+          going, or whether anything was happening at all. */}
       <Button
         type="button"
         variant="secondary"
         size="sm"
         onClick={onDelete}
-        disabled={deleting}
+        loading={deleting}
+        disabled={otherDeleting}
         aria-label={`Delete announcement ${announcement.title}`}
       >
         <Trash size={14} aria-hidden />
@@ -434,7 +443,14 @@ export function Announcements() {
                   announcement={a}
                   audienceLabel={audienceLabelFor(a)}
                   onDelete={() => setPendingDelete(a)}
-                  deleting={deleteAnnouncement.isPending}
+                  deleting={
+                    deleteAnnouncement.isPending &&
+                    deleteAnnouncement.variables === a.announcementId
+                  }
+                  otherDeleting={
+                    deleteAnnouncement.isPending &&
+                    deleteAnnouncement.variables !== a.announcementId
+                  }
                 />
               ))}
             </ul>
