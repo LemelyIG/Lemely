@@ -31,6 +31,7 @@ route is authenticated) — there is no GoTrue seam to fake.
 from __future__ import annotations
 
 import dataclasses
+import threading
 import uuid
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
@@ -789,3 +790,121 @@ def test_redeem_parent_invite_twice_by_same_parent_is_idempotent(
             )
         )
         assert len(links) == 1
+
+
+# ── review round 1 fixes: concurrency, cross-child isolation, join-code role ─
+
+
+def test_get_or_create_parent_code_survives_concurrent_calls(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The second caller, racing the first, must be serialised behind the
+    first's still-open transaction rather than reading "no row yet" and
+    minting a second one - the failure mode review round 1's Important 1
+    described (an unstable code, since ``_find_reusable_parent_code`` has no
+    ``ORDER BY`` and would return either row on different calls).
+
+    A bare two-thread race can pass by luck even on unfixed code (the OS
+    may simply run the threads one after the other), so this deliberately
+    controls the interleaving: a holder thread opens a transaction, inserts
+    a reusable row and *does not commit*, proving via ``Event`` that it has
+    done so; only then does a second thread call the real
+    ``get_or_create_parent_code``. Without the fix that second call reads
+    "no row" (the holder's insert is uncommitted, invisible under read
+    committed) and inserts its own - a duplicate - and returns immediately.
+    With the fix it blocks on the same row lock the holder took, so this
+    also asserts it is still running half a second later, before the holder
+    releases it.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    holder_locked = threading.Event()
+    release_holder = threading.Event()
+    held: dict[str, uuid.UUID] = {}
+
+    def hold_first_transaction() -> None:
+        with pg_sessionmaker() as session, session.begin():
+            session.get(User, student, with_for_update=True)
+            invite = Invite(
+                code="HELDCODE1",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                reusable=True,
+            )
+            session.add(invite)
+            session.flush()
+            held["id"] = invite.id
+            holder_locked.set()
+            assert release_holder.wait(timeout=5), "test setup failed to signal release in time"
+        # `session.begin()` commits here, on clean context-manager exit.
+
+    holder = threading.Thread(target=hold_first_transaction)
+    holder.start()
+    assert holder_locked.wait(timeout=5), "holder thread failed to insert+lock in time"
+
+    second_result: dict[str, Invite] = {}
+
+    def call_second() -> None:
+        second_result["invite"] = service.get_or_create_parent_code(student)
+
+    second = threading.Thread(target=call_second)
+    second.start()
+    second.join(timeout=0.5)
+    assert second.is_alive(), (
+        "get_or_create_parent_code must block behind the holder's row lock, "
+        "not race ahead and insert a second reusable row"
+    )
+
+    release_holder.set()
+    holder.join(timeout=5)
+    second.join(timeout=5)
+
+    assert second_result["invite"].id == held["id"]
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1, "a race must not leave two reusable rows for one child"
+
+
+def test_get_or_create_parent_code_is_isolated_per_student(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``_find_reusable_parent_code`` filters on ``child_id`` - prove it does
+    not hand one student a sibling's reusable row (review round 1, Minor 6)."""
+    first_student = _seed_user(pg_sessionmaker, Role.student)
+    second_student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+
+    first_code = service.get_or_create_parent_code(first_student)
+    second_code = service.get_or_create_parent_code(second_student)
+
+    assert first_code.id != second_code.id
+    assert first_code.code != second_code.code
+    assert service.get_or_create_parent_code(first_student).id == first_code.id
+    assert service.get_or_create_parent_code(second_student).id == second_code.id
+
+
+def test_redeem_class_join_code_by_parent_is_role_mismatch(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The role-mismatch guard must also cover the bare ``classes.join_code``
+    fall-through, not just an ``invites`` row - otherwise a parent handed (or
+    guessing) a class join code is silently enrolled as a student (review
+    round 1, Important 2)."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    class_id = _seed_class(pg_sessionmaker, teacher_id=teacher, join_code="PARENTJOIN")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(InviteRoleMismatchError):
+        service.redeem(parent, "PARENTJOIN", caller_role=Role.parent)
+
+    with pg_sessionmaker() as session:
+        enrolled = session.scalars(
+            sa.select(ClassEnrollment).where(ClassEnrollment.class_id == class_id)
+        ).first()
+        assert enrolled is None, "a parent must not be enrolled as a student via a join code"
