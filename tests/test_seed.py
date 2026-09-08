@@ -41,6 +41,7 @@ from lemely.db.seed import (
     CATALOGUE_SUBJECTS,
     DEMO_ACCOUNTS,
     DEMO_PASSWORD,
+    DemoAccountsResult,
     create_demo_accounts,
     seed_reference_data,
     subjects_to_upsert,
@@ -84,7 +85,11 @@ class _FakeParentLinkService:
     Deliberately ignores the ``session`` argument — this is a test double for
     the *seed script's own call*, not for ``link_in_session``'s Postgres
     behaviour, which ``test_parent_repo.py`` already proves against a real
-    database.
+    database. Dedupes exactly like the real
+    :meth:`~lemely.db.parent_repo.ParentLinkService._link_if_absent` (checked
+    first, no duplicate insert) — a fake that appended unconditionally could
+    not tell a correctly-idempotent second call from a seeder that re-links
+    on every run.
     """
 
     def __init__(self) -> None:
@@ -92,7 +97,9 @@ class _FakeParentLinkService:
 
     def link_in_session(self, session: object, parent_id: uuid.UUID, child_id: uuid.UUID) -> None:
         del session
-        self.links.append((parent_id, child_id))
+        pair = (parent_id, child_id)
+        if pair not in self.links:
+            self.links.append(pair)
 
 
 def _service(*, gotrue: FakeGoTrueBackend | None = None) -> tuple[AuthService, FakeUserMirror]:
@@ -116,22 +123,31 @@ def _service(*, gotrue: FakeGoTrueBackend | None = None) -> tuple[AuthService, F
 
 
 def _create_demo_accounts(
-    *, gotrue: FakeGoTrueBackend | None = None
-) -> tuple[object, FakeUserMirror, _FakeParentLinkService]:
+    *,
+    gotrue: FakeGoTrueBackend | None = None,
+    auth_service: AuthService | None = None,
+    mirror: FakeUserMirror | None = None,
+    parent_link_service: _FakeParentLinkService | None = None,
+) -> tuple[DemoAccountsResult, AuthService, FakeUserMirror, _FakeParentLinkService]:
     """Drive :func:`create_demo_accounts` against the fakes above.
 
-    Returns the result alongside the mirror and the fake link service so
-    tests can assert on either side of the call.
+    Builds a fresh ``auth_service``/``mirror``/``parent_link_service`` unless
+    the caller passes existing ones back in — which is how a test proves a
+    *second* run against the same state is idempotent, rather than proving
+    idempotency of two independent, freshly-seeded databases. Returns the
+    result alongside every fake so a test can assert on any of them.
     """
-    service, mirror = _service(gotrue=gotrue)
-    parent_link_service = _FakeParentLinkService()
+    if auth_service is None or mirror is None:
+        auth_service, mirror = _service(gotrue=gotrue)
+    if parent_link_service is None:
+        parent_link_service = _FakeParentLinkService()
     result = create_demo_accounts(
-        auth_service=service,
+        auth_service=auth_service,
         mirror=mirror,
         parent_link_service=parent_link_service,  # type: ignore[arg-type]
         session_factory=_fake_session_factory,  # type: ignore[arg-type]
     )
-    return result, mirror, parent_link_service
+    return result, auth_service, mirror, parent_link_service
 
 
 # ---------------------------------------------------------------------------
@@ -224,37 +240,28 @@ class TestDemoAccountTable:
 
 class TestCreateDemoAccounts:
     def test_creates_every_role_on_a_fresh_database(self) -> None:
-        result, mirror, _link_service = _create_demo_accounts()
+        result, _auth_service, mirror, _link_service = _create_demo_accounts()
 
         assert result.created == len(DEMO_ACCOUNTS)
         assert len(mirror.rows) == len(DEMO_ACCOUNTS)
         assert sorted(r.role.value for r in mirror.rows.values()) == sorted(r.value for r in Role)
 
     def test_is_idempotent(self) -> None:
-        service, mirror = _service()
-        parent_link_service = _FakeParentLinkService()
+        first, auth_service, mirror, link_service = _create_demo_accounts()
+        second, _auth_service, _mirror, _link_service = _create_demo_accounts(
+            auth_service=auth_service, mirror=mirror, parent_link_service=link_service
+        )
 
-        def _run() -> object:
-            return create_demo_accounts(
-                auth_service=service,
-                mirror=mirror,
-                parent_link_service=parent_link_service,  # type: ignore[arg-type]
-                session_factory=_fake_session_factory,  # type: ignore[arg-type]
-            )
-
-        first = _run()
-        second = _run()
-
-        assert first.created == len(DEMO_ACCOUNTS)  # type: ignore[attr-defined]
-        assert second.created == 0  # type: ignore[attr-defined]
-        assert second.skipped == len(DEMO_ACCOUNTS)  # type: ignore[attr-defined]
+        assert first.created == len(DEMO_ACCOUNTS)
+        assert second.created == 0
+        assert second.skipped == len(DEMO_ACCOUNTS)
         # The second run must not mint a second row for anyone — the docstring
         # has promised "insert-if-absent" since Phase 0.
         assert len(mirror.rows) == len(DEMO_ACCOUNTS)
-        assert first.accounts == second.accounts  # type: ignore[attr-defined]
+        assert first.accounts == second.accounts
 
     def test_mirrors_each_account_with_its_declared_role(self) -> None:
-        _result, mirror, _link_service = _create_demo_accounts()
+        _result, _auth_service, mirror, _link_service = _create_demo_accounts()
 
         by_email = {row.email: row for row in mirror.rows.values()}
         for account in DEMO_ACCOUNTS:
@@ -269,7 +276,7 @@ class TestCreateDemoAccounts:
         teacher = next(a for a in DEMO_ACCOUNTS if a.role is Role.teacher)
         gotrue.admin_create_user(teacher.email, DEMO_PASSWORD, teacher.role.value, None)
 
-        result, mirror, _link_service = _create_demo_accounts(gotrue=gotrue)
+        result, _auth_service, mirror, _link_service = _create_demo_accounts(gotrue=gotrue)
 
         assert result.created == len(DEMO_ACCOUNTS)
         recovered = next(r for r in mirror.rows.values() if r.email == teacher.email)
@@ -285,7 +292,7 @@ class TestCreateDemoAccounts:
         leaving a human to link it by hand before the parent portal has
         anything to show.
         """
-        result, mirror, link_service = _create_demo_accounts()
+        result, _auth_service, mirror, link_service = _create_demo_accounts()
 
         student_account = next(a for a in DEMO_ACCOUNTS if a.role is Role.student)
         parent_account = next(a for a in DEMO_ACCOUNTS if a.role is Role.parent)
@@ -296,24 +303,39 @@ class TestCreateDemoAccounts:
         assert (parent_id, student_id) in link_service.links
         assert result.created == len(DEMO_ACCOUNTS)
 
+    def test_demo_parent_is_created_email_verified(self) -> None:
+        """Every parent a real invite redemption creates is stamped
+        ``email_verified_at`` at signup (``AuthService.signup``'s
+        ``email_verified=True`` branch) — the demo parent must match that
+        shape rather than read, uniquely among real parents, as unverified.
+        """
+        _result, _auth_service, mirror, _link_service = _create_demo_accounts()
+
+        parent_account = next(a for a in DEMO_ACCOUNTS if a.role is Role.parent)
+        parent = mirror.get_by_email(parent_account.email)
+
+        assert parent is not None
+        assert parent.email_verified_at is not None
+
     def test_second_run_creates_nothing(self) -> None:
-        """A second ``make seed`` must recognise every account (and the link)
-        rather than re-creating or re-linking anything — the whole point of
-        idempotent seeding (module docstring)."""
-        service, mirror = _service()
-        parent_link_service = _FakeParentLinkService()
+        """A second ``make seed`` must recognise every account rather than
+        re-creating any of them, and must not re-link (or duplicate-link) the
+        demo parent — the whole point of idempotent seeding (module
+        docstring)."""
+        _first, auth_service, mirror, link_service = _create_demo_accounts()
+        student_account = next(a for a in DEMO_ACCOUNTS if a.role is Role.student)
+        parent_account = next(a for a in DEMO_ACCOUNTS if a.role is Role.parent)
+        by_email = {row.email: row for row in mirror.rows.values()}
+        student_id = by_email[student_account.email].id
+        parent_id = by_email[parent_account.email].id
 
-        def _run() -> object:
-            return create_demo_accounts(
-                auth_service=service,
-                mirror=mirror,
-                parent_link_service=parent_link_service,  # type: ignore[arg-type]
-                session_factory=_fake_session_factory,  # type: ignore[arg-type]
-            )
+        second, _auth_service, _mirror, _link_service = _create_demo_accounts(
+            auth_service=auth_service, mirror=mirror, parent_link_service=link_service
+        )
 
-        _run()
-        second = _run()
-
-        assert second.created == 0  # type: ignore[attr-defined]
-        assert second.skipped == len(DEMO_ACCOUNTS)  # type: ignore[attr-defined]
+        assert second.created == 0
+        assert second.skipped == len(DEMO_ACCOUNTS)
         assert len(mirror.rows) == len(DEMO_ACCOUNTS)
+        # Exactly one link after two runs, not two identical entries — proves
+        # the seeder recognised the existing link rather than re-linking.
+        assert link_service.links == [(parent_id, student_id)]

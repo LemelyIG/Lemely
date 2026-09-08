@@ -41,7 +41,10 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   student portal are non-empty without entangling the at-risk assertions.
 * a **parent**, an ordinary email/password account
   (:meth:`~lemely.auth.service.AuthService.signup` with ``role=Role.parent``,
-  same as every other role here) linked to the ``declining`` student through
+  ``email_verified=True`` — a real invite redemption verifies the parent's
+  address before the account exists at all, spec §2, so this seed's account
+  matches that shape rather than the unverified default every other role
+  here signs up with) linked to the ``declining`` student through
   :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` — the same
   method a redeemed invite's server call uses (spec §3), called here inside
   this script's own single-purpose transaction since there is no invite
@@ -969,13 +972,27 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _signup_account(role_label: str, role: Role, run_tag: str) -> dict[str, Any]:
+def _signup_account(
+    role_label: str, role: Role, run_tag: str, *, email_verified: bool = False
+) -> dict[str, Any]:
+    """Sign up one seed account.
+
+    ``email_verified`` mirrors a real invite redemption's shape for a parent
+    (the parent proves control of the address by verifying a code before the
+    account exists at all, spec §2) — every other role here defaults to
+    unverified, same as the real self-service signup flow those roles
+    actually go through.
+    """
     auth_service = deps.get_auth_service()
     email = build_email(role_label, run_tag)
     password = build_password(run_tag)
     _log(f"Signing up {role.value} account: {email}")
     result: AuthResult = auth_service.signup(
-        email, password, role, display_name=f"Seed {role_label.replace('-', ' ').title()}"
+        email,
+        password,
+        role,
+        display_name=f"Seed {role_label.replace('-', ' ').title()}",
+        email_verified=email_verified,
     )
     return {
         "userId": str(result.user_id),
@@ -1121,7 +1138,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     _log("Signing up the empty teacher (no classes) and empty parent (no linked children)")
     empty_teacher = _signup_account("empty-teacher", Role.teacher, run_tag)
-    empty_parent = _signup_account("empty-parent", Role.parent, run_tag)
+    empty_parent = _signup_account("empty-parent", Role.parent, run_tag, email_verified=True)
     # Deliberately no ParentLinkService.link_in_session call — this account
     # must stay genuinely childless for the `empty` parent-portal screenshot
     # capture.
@@ -1191,9 +1208,9 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
 
-    parent = _signup_account("parent", Role.parent, run_tag)
+    parent_account = _signup_account("parent", Role.parent, run_tag, email_verified=True)
     declining_uuid = uuid.UUID(declining["userId"])
-    parent_uuid = uuid.UUID(parent["userId"])
+    parent_uuid = uuid.UUID(parent_account["userId"])
     _log(f"Linking parent {parent_uuid} to the declining student")
     # `link_in_session` takes an already-open session because its one
     # production caller, `InviteService.redeem`, needs the link and the
@@ -1432,7 +1449,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "className": below_target_class_row.name,
         },
     }
-    parent = {**parent, "linkedStudent": "declining"}
+    parent = {**parent_account, "linkedStudent": "declining"}
     class_dict = {
         "classId": str(class_row.class_id),
         "name": class_row.name,
@@ -1450,7 +1467,6 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "submittedBy": "control",
         "status": mark_result.status.value,
     }
-    empty_parent_dict = empty_parent
     placement_dict = {
         "subjectCode": PLACEMENT_SUBJECT_CODE,
         # Derived, never restated: a literal here silently drifted from the constant
@@ -1866,7 +1882,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         review_item=review_item,
         quiz=quiz,
         empty_teacher=empty_teacher,
-        empty_parent=empty_parent_dict,
+        empty_parent=empty_parent,
         placement=placement_dict,
         practice=practice_dict,
         study_plan=study_plan_dict,

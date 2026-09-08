@@ -120,6 +120,13 @@ class DemoAccount:
     email: str
     role: Role
     display_name: str
+    #: Whether :func:`_create_or_recover_email_account` signs this account up
+    #: already email-verified. ``False`` for every role except the parent:
+    #: a real parent-invite redemption stamps ``email_verified_at`` at signup
+    #: (the parent proves control of the address by verifying a code before
+    #: the account is even created, spec §2), so a demo/e2e parent seeded as
+    #: unverified would read as a shape no real parent account ever has.
+    email_verified: bool = False
 
 
 #: A password shared by every demo account. Stable and documented (rather than
@@ -147,7 +154,12 @@ DEMO_ACCOUNTS: tuple[DemoAccount, ...] = (
         role=Role.platform_admin,
         display_name="Demo Platform Admin",
     ),
-    DemoAccount(email="parent@demo.lemely.local", role=Role.parent, display_name="Demo Parent"),
+    DemoAccount(
+        email="parent@demo.lemely.local",
+        role=Role.parent,
+        display_name="Demo Parent",
+        email_verified=True,
+    ),
 )
 
 
@@ -192,13 +204,9 @@ def create_demo_accounts(
     Idempotent: a second call creates nothing and reports every account
     skipped, with the same :class:`SeededAccount` ids as the first call, and
     re-links the same already-linked pair rather than duplicating it
-    (``link_in_session`` checks first).
-
-    Raises:
-        SeedError: A future seed step raises it; nothing here does today (see
-            the class docstring). Kept as the module's declared failure seam
-            rather than removed along with the phone-OTP branch that used to
-            raise it.
+    (``link_in_session`` checks first). Raises nothing of its own today —
+    :class:`SeedError` is kept as the module's declared failure seam even
+    though the phone-OTP branch that used to raise it is gone.
     """
     created = 0
     skipped = 0
@@ -234,7 +242,11 @@ def _create_or_recover_email_account(
     """
     try:
         result = auth_service.signup(
-            account.email, DEMO_PASSWORD, account.role, display_name=account.display_name
+            account.email,
+            DEMO_PASSWORD,
+            account.role,
+            display_name=account.display_name,
+            email_verified=account.email_verified,
         )
         return (
             SeededAccount(email=account.email, role=account.role, user_id=result.user_id),
