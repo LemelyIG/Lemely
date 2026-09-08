@@ -87,6 +87,22 @@ export function isIntegrityReason(reason: string): boolean {
   return INTEGRITY_REASONS.has(reason)
 }
 
+/**
+ * Whether a row came from the grading console rather than a student submission.
+ *
+ * Branch on `source`, never on "is `studentId` null" — the queue holds two
+ * kinds of row (migration `0034`) and the backend says which explicitly so the
+ * client never has to infer it from which ids happen to be populated.
+ *
+ * A `console_paper` row is a scan the teacher uploaded themselves. It has no
+ * student and no class behind it (D1.12), so the student/class fields are
+ * `null` and there is nowhere to link to for either; the paper's own label —
+ * the same one its grading-console card carries — is its identity instead.
+ */
+export function isConsolePaperItem(item: { source: string }): boolean {
+  return item.source === "console_paper"
+}
+
 /** Honest paper-identity line. A review item can originate from a quiz
  * question (P3.5's low-confidence quiz marking path also queues review
  * items) whose `Attempt` carries no subject/paper/session fields at all —
@@ -503,6 +519,43 @@ export function Review() {
                               />
                             </td>
                             <td className="px-[16px] py-[13px]">
+                              {/* Two row shapes, because the queue has two
+                                  sources. A console-uploaded paper has no
+                                  student and no class (D1.12), so it gets
+                                  neither an avatar nor the two links below:
+                                  rendering a person's avatar for a scan, or a
+                                  link to `/teacher/students/null`, would be
+                                  inventing a student this row does not have. */}
+                              {isConsolePaperItem(item) ? (
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                  <span
+                                    aria-hidden="true"
+                                    className="flex-none w-8 h-8 rounded-full bg-paper-sunk border border-rule flex items-center justify-center text-ink-faint"
+                                  >
+                                    <svg
+                                      viewBox="0 0 16 16"
+                                      className="w-3.5 h-3.5"
+                                      fill="none"
+                                      stroke="currentColor"
+                                      strokeWidth="1.5"
+                                    >
+                                      <path d="M9.5 1.5H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V5z" />
+                                      <path d="M9.5 1.5V5H13" />
+                                    </svg>
+                                  </span>
+                                  <div className="min-w-0 max-w-[20ch]">
+                                    <Link
+                                      to="/teacher/grading"
+                                      className="flex items-center text-ink hover:underline pointer-coarse:min-h-11"
+                                    >
+                                      <span className="truncate">{item.studentDisplayName}</span>
+                                    </Link>
+                                    <span className="flex items-center text-body-sm text-ink-faint">
+                                      Grading console
+                                    </span>
+                                  </div>
+                                </div>
+                              ) : (
                               <div className="flex items-center gap-2.5 min-w-0">
                                 <Avatar name={item.studentDisplayName} size="sm" />
                                 {/* P6.2's long-content pass. `min-w-0` alone could not
@@ -563,6 +616,7 @@ export function Review() {
                                   </Link>
                                 </div>
                               </div>
+                              )}
                             </td>
                             <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
                               {paperIdentityLabel(item)}

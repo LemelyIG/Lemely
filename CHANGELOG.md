@@ -90,6 +90,25 @@ this entry is the user-visible summary.
 
 ### Fixed
 
+- **The review queue was empty for every paper uploaded through the grading console.** A paper the
+  marker flagged showed `REVIEW` on its console card while `/teacher/review` said "Nothing waiting
+  for review" — the two screens read different tables and nothing joined them. The console derives
+  its badge from `teacher_papers.report_json`; the queue lists `review_queue` rows, and the only
+  writer of those was `AttemptRepository.persist_correction`, the *student* submission path. A
+  console upload is deliberately never attributed to a student (`teacher_papers.student_id` is
+  always NULL, D1.12), so it creates no `Attempt` and could therefore never create a queue row —
+  the queue was structurally incapable of holding one. Migration `0034` gives `review_queue` a
+  second source (`teacher_paper_id` + `question_id`, `attempt_id` now nullable, with a CHECK that
+  exactly one is set), `TeacherPaperRepository.finish` writes the flagged questions in the same
+  transaction as the report, and `ReviewService` lists, resolves, dismisses and bulk-approves them
+  alongside student items. Console rows are scoped by the grading console's own paper-visibility
+  rule rather than the class roster they have no place in, and `platform_admin` stays empty-scoped
+  on both halves — this queue has no super-role bypass and adding a source did not introduce one.
+  Existing papers are not backfilled: work a teacher has already looked at should not reappear as
+  unreviewed weeks later. *Limited, still:* a console item can be accepted as-is or dismissed but
+  **not re-marked** — its marks live inside the paper's report with no `QuestionResult` row for an
+  override to be recorded on, so `resolve` with `overrideMarks` is refused (422) rather than
+  accepted and silently dropped. Re-run the paper from the console to change its marks.
 - **Verification and password-reset emails carried an unreachable link.** `AuthService` mints
   links as frontend routes (`/verify-email/<token>`) for the SPA to navigate to, and the first
   real provider mailed that path as-is; a recipient's mail client resolved the root-relative

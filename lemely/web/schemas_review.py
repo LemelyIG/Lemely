@@ -27,15 +27,29 @@ class ReviewBreakdownDTO(ApiModel):
 
 
 class ReviewQueueItemDTO(ApiModel):
-    """One T-07 queue row: student, paper identity, question, reason, age."""
+    """One T-07 queue row: who/what, paper identity, question, reason, age.
+
+    ``source`` says which half of the queue this row came from, so the client
+    never has to infer it from which ids are populated:
+
+    * ``"student_attempt"`` — a student submission. ``attemptId`` and the
+      ``studentId``/``classId``/``className`` trio are set; ``paperId`` is null.
+    * ``"console_paper"`` — a scan the teacher uploaded through the grading
+      console. ``paperId`` is set and ``attemptId`` is null. A console upload
+      is never attributed to a student (D1.12), so the student/class fields are
+      **null rather than filled in with a guess**, and ``studentDisplayName``
+      carries the paper's own label — the same one its console card shows.
+    """
 
     itemId: str
-    attemptId: str
+    source: str
+    attemptId: str | None
+    paperId: str | None
     questionResultId: str | None
-    studentId: str
+    studentId: str | None
     studentDisplayName: str
-    classId: str
-    className: str
+    classId: str | None
+    className: str | None
     subjectCode: str | None
     paperNumber: int | None
     paperVariant: int | None
@@ -66,15 +80,25 @@ class ReviewItemDetailDTO(ApiModel):
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
     ``matchedPointIds`` and ``studentAnswer`` are the honest substitutes this
     backend can actually provide.
+
+    On a ``"console_paper"`` row the marking evidence is read from the paper's
+    stored report, but every **override** field (``isOverridden``,
+    ``teacherAwardedMarks``, ``teacherNote``, ``teacherBreakdown``,
+    ``overriddenBy``, ``overriddenAt``) is always empty: a console paper has no
+    ``QuestionResult``, which is the only place a corrected mark is persisted.
+    Resolving such an item with ``overrideMarks`` is a 422, not a silent
+    no-op — see ``ReviewService.resolve``.
     """
 
     itemId: str
-    attemptId: str
+    source: str
+    attemptId: str | None
+    paperId: str | None
     questionResultId: str | None
-    studentId: str
+    studentId: str | None
     studentDisplayName: str
-    classId: str
-    className: str
+    classId: str | None
+    className: str | None
     subjectCode: str | None
     paperNumber: int | None
     paperVariant: int | None

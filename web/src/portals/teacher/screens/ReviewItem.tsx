@@ -20,7 +20,13 @@ import {
   teacherLoadFailureMessage,
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
-import { confidenceTone, isIntegrityReason, paperIdentityLabel, reasonLabel } from "./Review"
+import {
+  confidenceTone,
+  isConsolePaperItem,
+  isIntegrityReason,
+  paperIdentityLabel,
+  reasonLabel,
+} from "./Review"
 import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
@@ -167,7 +173,17 @@ function ResolveControls({
   const [studentNote, setStudentNote] = useState("")
   const [validationError, setValidationError] = useState<string | null>(null)
 
+  /* Adjusting a mark needs a `QuestionResult` to write it to — that is where
+     `0005_review_overrides` persists a teacher correction. Two different
+     reasons it can be missing, and the button says which rather than giving
+     one generic excuse: a console-uploaded paper stores its marking inside
+     the paper's own report and has no per-question row at all (D1.12), so the
+     backend answers `overrideMarks` with a 422; any other item without one
+     simply carries no mark data to adjust. */
   const canAdjust = detail.questionResultId != null
+  const cannotAdjustReason = isConsolePaperItem(detail)
+    ? "Papers marked in the grading console store no per-question result to record a new mark on. Accept as-is, or re-run the paper from the console."
+    : "No mark data on this item to adjust"
 
   const handleAccept = useCallback(() => {
     resolve.mutate({ note: acceptNote.trim() || undefined }, { onSuccess: onDone })
@@ -227,7 +243,7 @@ function ResolveControls({
                 type="button"
                 variant="secondary"
                 disabled={!canAdjust}
-                title={canAdjust ? undefined : "No mark data on this item to adjust"}
+                title={canAdjust ? undefined : cannotAdjustReason}
                 onClick={() => setMode("adjust")}
               >
                 Adjust marks instead
@@ -435,13 +451,20 @@ export function ReviewItem() {
                   <BackArrow /> Back to queue
                 </button>
                 <div className="flex items-start gap-3.5 flex-wrap gap-y-2 mt-1">
-                  <Avatar name={detail.studentDisplayName} size="md" />
+                  {/* A console-uploaded paper has no student behind it
+                      (D1.12), so it gets no avatar and no class in its
+                      subtitle — "Grading console" is the honest answer to
+                      where this mark came from. See `isConsolePaperItem`. */}
+                  {isConsolePaperItem(detail) ? null : (
+                    <Avatar name={detail.studentDisplayName} size="md" />
+                  )}
                   <div className="min-w-0">
                     <h1 className="text-display-sm text-pretty">
                       {detail.studentDisplayName}
                     </h1>
                     <div className="text-body-sm text-ink-muted mt-0.5">
-                      {detail.className} · {paperIdentityLabel(detail)}
+                      {isConsolePaperItem(detail) ? "Grading console" : detail.className} ·{" "}
+                      {paperIdentityLabel(detail)}
                       {detail.questionId ? ` · Q${detail.questionId}` : ""}
                     </div>
                   </div>
