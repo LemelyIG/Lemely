@@ -9,7 +9,8 @@ conftest). Proves the guarantees D3.11 requires:
 
 * ``link_in_session`` is idempotent (no duplicate link row, no
   ``IntegrityError``) and writes inside whatever transaction the caller
-  passes it, mirroring the invite-service call site.
+  passes it rather than committing one of its own — proved by rolling that
+  transaction back and finding no row survived it.
 * ``get_child`` is the authz seam: ``None`` for an unlinked pair, a real row
   for a linked one — including the two-parent/two-child disjoint-link
   regression (a parent must never resolve a child linked only to someone
@@ -240,6 +241,36 @@ def test_link_in_session_inserts_one_row_and_is_idempotent(
 
     # Redeeming the same invite twice (e.g. a reusable code) must not
     # attempt a duplicate insert or raise IntegrityError.
+    with pg_sessionmaker.begin() as session:
+        service.link_in_session(session, parent, student)
+
+    assert _link_row_count(pg_sessionmaker) == 1
+
+
+def test_link_in_session_participates_in_the_callers_transaction(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The write must live or die with the caller's transaction, not its own.
+
+    ``test_link_in_session_inserts_one_row_and_is_idempotent`` uses
+    ``pg_sessionmaker.begin()``, which always commits on a clean exit — that
+    alone can't tell "wrote through the session I was given" apart from "opened
+    and committed its own session regardless of what was passed in". Rolling
+    back here is the only way to prove ``link_in_session`` never calls
+    ``commit()`` itself: if it did, this rollback would have nothing left to
+    undo and the row would survive it.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = ParentLinkService(pg_sessionmaker)
+
+    with pg_sessionmaker() as session:
+        service.link_in_session(session, parent, student)
+        session.rollback()
+
+    assert _link_row_count(pg_sessionmaker) == 0
+
+    # Contrast: a call inside a transaction that *does* commit leaves the row.
     with pg_sessionmaker.begin() as session:
         service.link_in_session(session, parent, student)
 

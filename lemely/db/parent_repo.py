@@ -40,7 +40,13 @@ if TYPE_CHECKING:
 
 
 class ParentLinkError(Exception):
-    """Base class for parent-link-model failures."""
+    """Base class for parent-link-model failures.
+
+    No concrete subclass exists right now — the last one, ``ParentUserNotFoundError``,
+    went away with the phone-lookup ``link`` method it belonged to. Kept as the
+    seam for whatever domain error a future ``ParentLinkService`` method needs
+    to raise, rather than reintroducing a base class from scratch then.
+    """
 
 
 @dataclass(frozen=True, slots=True)
