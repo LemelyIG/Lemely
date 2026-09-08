@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { ApiError } from "@/lib/api"
 import {
   AUTH_BAD_CREDENTIALS,
+  AUTH_CODE_REJECTED,
   AUTH_COOLDOWN_ACTIVE,
   AUTH_EMAIL_UNVERIFIED,
   AUTH_INVITE_ALREADY_USED,
@@ -16,6 +17,7 @@ import {
   resetFailureMessage,
   signInFailureMessage,
   signUpFailureMessage,
+  verificationCodeFailureMessage,
   verificationFailureMessage,
 } from "@/lib/authOutcome"
 
@@ -296,6 +298,51 @@ describe("verificationFailureMessage", () => {
       expect(message, detailStrings[i]).not.toContain("Token")
     }
     expect(new Set(messages).size).toBe(1)
+  })
+
+  /*
+   * DS15's typed code is a different credential from the link, so its failure
+   * must not borrow the link's sentence. `verify_email_code` collapses wrong,
+   * expired and locked-out into one non-revealing 400
+   * (`lemely/web/routers/auth.py`), so the three still produce one identical
+   * message — but it is the code's message, and it never says "link".
+   */
+  it("tells a code failure it was the code, not a link", () => {
+    const detailStrings = [
+      "Email verification failed: wrong_code",
+      "Email verification failed: expired",
+      "Email verification failed: locked_out",
+    ]
+    const messages = detailStrings.map((d) =>
+      verificationCodeFailureMessage(new ApiError(400, d, d)),
+    )
+    for (const [i, message] of messages.entries()) {
+      expect(message, detailStrings[i]).toBe(AUTH_CODE_REJECTED)
+      // The bug this guards: a typed code reported as an expired *link*.
+      expect(message, detailStrings[i]).not.toContain("link")
+      expect(message, detailStrings[i]).not.toBe(AUTH_LINK_EXPIRED)
+      // No raw backend identifier reaches the reader. Only the snake_case
+      // tokens are forbidden — "expired" is ordinary English and belongs in
+      // the sentence; it is `wrong_code` as a literal that must never show.
+      expect(message, detailStrings[i]).not.toMatch(/wrong_code|locked_out/)
+      expect(message, detailStrings[i]).not.toContain("Email verification failed")
+    }
+    expect(new Set(messages).size).toBe(1)
+  })
+
+  it("maps a code failure's other statuses exactly as the link route does", () => {
+    expect(verificationCodeFailureMessage(new ApiError(0, "Failed to fetch"))).toBe(
+      AUTH_NETWORK_FAILURE,
+    )
+    expect(verificationCodeFailureMessage(new TypeError("Failed to fetch"))).toBe(
+      AUTH_NETWORK_FAILURE,
+    )
+    expect(verificationCodeFailureMessage(new ApiError(429, "Slow down"))).toBe(
+      AUTH_COOLDOWN_ACTIVE,
+    )
+    expect(verificationCodeFailureMessage(new ApiError(503, "Service Unavailable"))).toBe(
+      AUTH_SERVICE_FAILURE,
+    )
   })
 
   it("says the link may have expired, and offers a new one", () => {

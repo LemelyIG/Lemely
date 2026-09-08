@@ -25,6 +25,7 @@ from typing import TYPE_CHECKING
 import pytest
 from fastapi.testclient import TestClient
 
+from lemely.auth.cooldown import CooldownStore
 from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
@@ -43,6 +44,8 @@ from lemely.web.deps import (
     get_auth_context,
     get_auth_service,
     get_device_registry,
+    get_resend_verification_cooldown_store,
+    get_signup_and_reset_cooldown_store,
     get_user_mirror,
     reset_singletons,
 )
@@ -156,6 +159,28 @@ def login_context() -> Iterator[tuple[TestClient, StubRegistry]]:
     # falling back to the real DbUserMirror against a database this file
     # otherwise never touches.
     app.dependency_overrides[get_user_mirror] = lambda: mirror
+    # Spec §4.4: the two D7.12 cooldown dependencies are now Postgres-backed
+    # (`DbCooldownStore`) in production. Left unoverridden, this fixture's own
+    # `/auth/signup` call below would stamp the real dev database's
+    # `auth_cooldowns` table for "s@example.com" — and unlike the old
+    # in-memory `CooldownStore` that `reset_singletons()` rebuilt fresh for
+    # every test, that stamp is durable: it outlives this fixture's teardown
+    # and 429s whichever test using this same fixture runs next in the same
+    # session, exactly the failure mode the mirror override above already
+    # guards against for the duplicate-address check.
+    # Built once here and captured by the override lambdas' closures — never
+    # constructed inside a lambda, which FastAPI would re-invoke (with no
+    # caching of its own) on every request, silently handing out a brand-new
+    # empty store per call rather than one shared across a whole test.
+    signup_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC), min_seconds=settings.auth.signup_and_reset_cooldown_seconds
+    )
+    resend_cooldown = CooldownStore(
+        clock=lambda: datetime.now(UTC),
+        min_seconds=settings.auth.resend_verification_cooldown_seconds,
+    )
+    app.dependency_overrides[get_signup_and_reset_cooldown_store] = lambda: signup_cooldown
+    app.dependency_overrides[get_resend_verification_cooldown_store] = lambda: resend_cooldown
     client = TestClient(app)
     client.post(
         "/api/auth/signup",

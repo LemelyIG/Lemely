@@ -21,6 +21,10 @@ from lemely.runtime.errors import ExternalServiceError
 from lemely.web.deps import _build_email_provider
 
 VERIFY_LINK = "https://lemelyig.com/verify-email/abc123"
+# DS15's typed code, sent beside the link in the same mail. These tests were
+# written against the two-argument `send_verification`; the Protocol required
+# a third from the moment DS15 landed, and #220's provider never caught up.
+VERIFY_CODE = "123456"
 RESET_LINK = "https://lemelyig.com/reset-password/xyz789"
 
 
@@ -29,12 +33,15 @@ def test_mock_provider_does_not_deliver_out_of_band() -> None:
     assert MockEmailProvider().delivers_out_of_band is False
 
 
-def test_mock_provider_logs_the_verification_link(caplog: pytest.LogCaptureFixture) -> None:
+def test_mock_provider_logs_the_verification_link_and_code(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     provider = MockEmailProvider()
     with caplog.at_level(logging.INFO, logger="lemely.auth.email"):
-        provider.send_verification("student@example.com", "https://app/verify-email/abc")
+        provider.send_verification("student@example.com", "https://app/verify-email/abc", "123456")
     assert "student@example.com" in caplog.text
     assert "https://app/verify-email/abc" in caplog.text
+    assert "123456" in caplog.text
 
 
 def test_mock_provider_logs_the_reset_link(caplog: pytest.LogCaptureFixture) -> None:
@@ -89,7 +96,7 @@ def test_resend_provider_requires_an_api_key() -> None:
 
 def test_verification_send_posts_the_expected_request() -> None:
     provider, seen = _provider(_ok)
-    provider.send_verification("student@example.com", VERIFY_LINK)
+    provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
 
     assert len(seen) == 1
     request = seen[0]
@@ -119,18 +126,18 @@ def test_password_reset_send_is_a_distinct_mail() -> None:
 
 def test_reply_to_is_omitted_when_unset_and_sent_when_set() -> None:
     provider, seen = _provider(_ok)
-    provider.send_verification("student@example.com", VERIFY_LINK)
+    provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
     assert "reply_to" not in json.loads(seen[0].content)
 
     provider, seen = _provider(_ok, _settings(reply_to="support@lemelyig.com"))
-    provider.send_verification("student@example.com", VERIFY_LINK)
+    provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
     assert json.loads(seen[0].content)["reply_to"] == "support@lemelyig.com"
 
 
 def test_link_is_html_escaped_in_the_html_part() -> None:
     """A query string must not break out of the href attribute."""
     provider, seen = _provider(_ok)
-    provider.send_verification("student@example.com", "https://lemelyig.com/v?a=1&b=2")
+    provider.send_verification("student@example.com", "https://lemelyig.com/v?a=1&b=2", VERIFY_CODE)
 
     body = json.loads(seen[0].content)
     assert 'href="https://lemelyig.com/v?a=1&amp;b=2"' in body["html"]
@@ -154,7 +161,7 @@ def test_a_relative_link_is_made_absolute_before_it_is_sent() -> None:
     origin on first.
     """
     provider, seen = _provider(_ok)
-    provider.send_verification("student@example.com", RELATIVE_VERIFY)
+    provider.send_verification("student@example.com", RELATIVE_VERIFY, VERIFY_CODE)
 
     body = json.loads(seen[0].content)
     expected = "https://lemelyig.com/verify-email/abc123"
@@ -178,7 +185,7 @@ def test_a_relative_reset_link_is_made_absolute_too() -> None:
 def test_the_origin_is_configurable_per_environment() -> None:
     """Staging must mail staging links, not production ones."""
     provider, seen = _provider(_ok, _settings(app_base_url="https://staging.lemelyig.com"))
-    provider.send_verification("student@example.com", RELATIVE_VERIFY)
+    provider.send_verification("student@example.com", RELATIVE_VERIFY, VERIFY_CODE)
 
     body = json.loads(seen[0].content)
     assert "https://staging.lemelyig.com/verify-email/abc123" in body["text"]
@@ -188,7 +195,7 @@ def test_the_origin_is_configurable_per_environment() -> None:
 def test_an_already_absolute_link_is_not_double_prefixed() -> None:
     """Joining must be idempotent, so a caller that mints full URLs still works."""
     provider, seen = _provider(_ok)
-    provider.send_verification("student@example.com", VERIFY_LINK)
+    provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
 
     body = json.loads(seen[0].content)
     assert VERIFY_LINK in body["text"]
@@ -204,7 +211,7 @@ def test_rejected_send_raises_with_status_and_body() -> None:
 
     provider, _ = _provider(_rejected)
     with pytest.raises(ExternalServiceError) as excinfo:
-        provider.send_verification("student@example.com", VERIFY_LINK)
+        provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
 
     message = str(excinfo.value)
     assert "422" in message
@@ -221,14 +228,14 @@ def test_transport_failure_raises_external_service_error() -> None:
     provider, _ = _provider(_boom)
     expected = re.escape("Email delivery to student@example.com failed")
     with pytest.raises(ExternalServiceError, match=expected):
-        provider.send_verification("student@example.com", VERIFY_LINK)
+        provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
 
 
 def test_the_live_link_is_never_logged(caplog: pytest.LogCaptureFixture) -> None:
     """The whole point of a real sender is that the credential reaches only the inbox."""
     provider, _ = _provider(_ok)
     with caplog.at_level(logging.DEBUG, logger="lemely.auth.email"):
-        provider.send_verification("student@example.com", VERIFY_LINK)
+        provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)
 
     assert VERIFY_LINK not in caplog.text
     assert "msg_abc123" in caplog.text  # the traceable id is kept
@@ -241,7 +248,7 @@ def test_success_with_an_unexpected_body_still_succeeds() -> None:
         return httpx.Response(200, text="not json")
 
     provider, _ = _provider(_odd)
-    provider.send_verification("student@example.com", VERIFY_LINK)  # does not raise
+    provider.send_verification("student@example.com", VERIFY_LINK, VERIFY_CODE)  # does not raise
 
 
 # --------------------------------------------------------------------------

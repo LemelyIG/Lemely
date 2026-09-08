@@ -22,7 +22,14 @@ from lemely.db.models.enums import (
 
 
 class Upload(TimestampMixin, Base):
-    """A student's raw scan/upload stored in Supabase Storage."""
+    """A student's raw scan/upload stored in object storage.
+
+    The deployed backend is Google Cloud Storage
+    (:mod:`lemely.io.storage_gcs`); dev and CI use the local filesystem
+    backend behind the same seam. The public "How Lemely handles your data"
+    page cites this model for what an upload row keeps, so a change to that
+    list is a change to a disclosure — see :mod:`lemely.io.storage`.
+    """
 
     __tablename__ = "uploads"
 

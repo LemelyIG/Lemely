@@ -73,11 +73,16 @@ class UserMirror(Protocol):
     def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
         """Stamp ``users.email_verified_at`` for ``user_id`` (D7.4).
 
-        Called exactly once per verification, by
-        :meth:`~lemely.auth.service.AuthService.verify_email`, immediately
-        after it has redeemed a single-use verification token for this exact
-        ``user_id`` — this method does no further checking of its own and
-        simply writes the timestamp it is given. A ``user_id`` with no
+        Called by both halves of §4.4's link-and-code pair —
+        :meth:`~lemely.auth.service.AuthService.verify_email` (having redeemed
+        a single-use verification token) and
+        :meth:`~lemely.auth.service.AuthService.verify_email_code` (having
+        verified the email-channel OTP) — each immediately after establishing
+        the fact for this exact ``user_id``. The two credentials are
+        independent, so an account may legitimately reach here twice; the
+        write is a plain overwrite and therefore idempotent. This method does
+        no further checking of its own and simply writes the timestamp it is
+        given. A ``user_id`` with no
         mirrored row is a silent no-op rather than a raised error: it should
         be unreachable in practice (verification always names a user
         :meth:`~lemely.auth.service.AuthService.signup` itself just mirrored),

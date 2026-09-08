@@ -230,7 +230,7 @@ _SESSION_MONTH_BY_LABEL: Final[dict[str, SessionMonth]] = {
 mapping rather than restated, so the two cannot drift apart."""
 
 
-def _paper_identity(board: ExamBoard, source_question_id: str | None) -> _PaperIdentity | None:
+def _paper_identity(board: ExamBoard, source_question_id: str | None) -> PaperIdentity | None:
     """Parse a bank row's paper identity out of its ``source_question_id``.
 
     P4.1 builds that value as ``f"{qp_stem}#{ref}"`` — e.g.
@@ -248,7 +248,7 @@ def _paper_identity(board: ExamBoard, source_question_id: str | None) -> _PaperI
     month = _SESSION_MONTH_BY_LABEL.get(meta.session_month)
     if month is None:
         return None
-    return _PaperIdentity(
+    return PaperIdentity(
         board=board,
         subject_code=meta.subject_code,
         session_month=month,
@@ -258,7 +258,7 @@ def _paper_identity(board: ExamBoard, source_question_id: str | None) -> _PaperI
     )
 
 
-def _resolve_paper(session: Session, identity: _PaperIdentity) -> tuple[uuid.UUID, bool] | None:
+def resolve_paper(session: Session, identity: PaperIdentity) -> tuple[uuid.UUID, bool] | None:
     """Get-or-create the ``papers`` row (and the ``subjects`` row it FKs to).
 
     Returns ``(paper_id, created)``, or ``None`` when the subject has no
@@ -328,7 +328,7 @@ class PaperLinkOutcome:
 
 
 @dataclass(frozen=True, slots=True)
-class _PaperIdentity:
+class PaperIdentity:
     """The six columns of ``uq_papers_identity``, as a hashable cache key."""
 
     board: ExamBoard
@@ -337,6 +337,16 @@ class _PaperIdentity:
     session_year: int | None
     paper_number: int
     paper_variant: int
+
+
+#: Pre-rename names, kept as aliases (2026-09-03 spec §4.3): this module's own
+#: :func:`_paper_identity` and :meth:`QuestionBankService.link_past_paper_rows`
+#: were repointed at the public :class:`PaperIdentity`/:func:`resolve_paper`
+#: names directly, and an audit of the codebase found no external caller of
+#: the old private names — but the aliases stay so nothing importing them
+#: later breaks silently.
+_PaperIdentity = PaperIdentity
+_resolve_paper = resolve_paper
 
 
 @dataclass(frozen=True, slots=True)
@@ -584,7 +594,7 @@ class QuestionBankService:
                 )
             ).all()
             outcome.considered = len(rows)
-            cache: dict[_PaperIdentity, uuid.UUID] = {}
+            cache: dict[PaperIdentity, uuid.UUID] = {}
             for row in rows:
                 identity = _paper_identity(row.board, row.source_question_id)
                 if identity is None:
@@ -592,7 +602,7 @@ class QuestionBankService:
                     continue
                 paper_id = cache.get(identity)
                 if paper_id is None:
-                    resolved = _resolve_paper(session, identity)
+                    resolved = resolve_paper(session, identity)
                     if resolved is None:
                         outcome.no_subject_taxonomy += 1
                         continue
@@ -1065,6 +1075,7 @@ __all__ = [
     "GeneratedImportResult",
     "GeneratedImportSkip",
     "NewBankQuestion",
+    "PaperIdentity",
     "PastPaperSurveyReport",
     "QuestionBankRow",
     "QuestionBankService",
@@ -1073,6 +1084,7 @@ __all__ = [
     "classify_bank_topics",
     "generated_questions_to_bank_rows",
     "import_generated_quiz_files",
+    "resolve_paper",
     "survey_past_paper_questions",
     "visible_bank_filter",
 ]

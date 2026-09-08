@@ -88,8 +88,8 @@ export const dataHandlingSections: DataHandlingSection[] = [
   {
     heading: "The papers you upload",
     /*
-     * `lemely/db/models/attempts.py:24` (Upload): the file goes to Supabase
-     * Storage (`lemely/io/storage.py`) and the row keeps storage_path,
+     * `lemely/db/models/attempts.py:24` (Upload): the file goes to Google
+     * Cloud Storage (`lemely/io/storage.py`) and the row keeps storage_path,
      * original_filename, content_type, byte_size, page_count.
      *
      * The marks are a separate table, `attempts.py:53` (Attempt): awarded and
@@ -98,7 +98,7 @@ export const dataHandlingSections: DataHandlingSection[] = [
      * records that a quiz attempt carries no grade at all rather than an
      * invented one.
      */
-    body: "A scan is kept as a file in Supabase Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark.",
+    body: "A scan is kept as a file in Google Cloud Storage, along with its original filename, its type, its size and how many pages it has. What Lemely works out from it is stored separately: the marks for each question, a total, a grade where the grade boundaries for that paper are known, and how confident the marker was about each mark.",
   },
   {
     heading: "Your scan is sent to Google",

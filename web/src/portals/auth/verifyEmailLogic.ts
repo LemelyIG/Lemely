@@ -48,3 +48,20 @@ export function resendButtonLabel(state: { cooldownSeconds: number; isPending: b
   if (state.isPending) return "Sending…"
   return "Resend verification link"
 }
+
+/**
+ * DS15's typed-code companion to the link: whether the "Verify code" button
+ * in `SignedInPending` may be pressed. `/^\d{6}$/` rather than `code.length
+ * === 6` — six characters that are not all digits (a pasted fragment with a
+ * stray space, say) would satisfy a length check but never a real code, and
+ * the field itself only ever contains digits by construction, so this is a
+ * belt-and-suspenders check, not a redundant one: it stays correct even if a
+ * future caller feeds this function something the field's own `onChange`
+ * did not sanitise. The same two-part shape as `resendButtonLabel` above —
+ * format plus "not already in flight" — rather than duplicating the
+ * server's own attempt-cap or lockout logic, neither of which this function
+ * can see.
+ */
+export function canSubmitCode(code: string, isPending: boolean): boolean {
+  return /^\d{6}$/.test(code) && !isPending
+}

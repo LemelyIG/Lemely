@@ -5,8 +5,8 @@ cloud-deploy recipe. One GitHub Actions workflow
 ([`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)) deploys
 both environments; everything below is what it needs and how it behaves.
 Read `docs/deployment.md` first if you haven't — this doc assumes its
-architecture (Supabase Cloud, no CORS, single backend replica, gated
-migrations) rather than re-explaining it.
+architecture (Supabase Cloud, no CORS, GCS-backed uploads, gated migrations)
+rather than re-explaining it.
 
 ```
    push to `develop`                      push to `main`
@@ -76,36 +76,54 @@ Cloud Run requires a billing account linked even to stay within the Always
 Free tier (2M requests, 360k GiB-seconds, 180k vCPU-seconds/month — free
 only in `us-central1`/`us-east1`/`us-west1`, which is why `deploy.yml`
 targets `us-central1`). Create a project and link/create a billing account
-at [console.cloud.google.com](https://console.cloud.google.com). A budget
-alert (Billing → Budgets & alerts) is a good idea as a tripwire, not because
-this setup is expected to cost anything at low traffic.
+at [console.cloud.google.com](https://console.cloud.google.com).
 
 Then run the bootstrap script once (Cloud Shell is easiest — gcloud is
 already installed and authenticated there):
 
 ```bash
-PROJECT_ID=<your-gcp-project-id> ./scripts/gcp-bootstrap.sh
+PROJECT_ID=<your-gcp-project-id> \
+BILLING_ACCOUNT_ID=<your-billing-account-id> \
+BUDGET_USD=<a-plain-number-of-dollars> \
+./scripts/gcp-bootstrap.sh
 ```
 
-It creates the Artifact Registry repo, the Workload Identity Federation pool
-+ provider (locked to the `LemelyIG/Lemely` repo specifically — no other
-repo can impersonate anything), and the deploy service account, then prints
-three values for step 4.
+`BILLING_ACCOUNT_ID` and `BUDGET_USD` are optional, but matter more than a
+Cloud Run cost tripwire now: the web process enforces no Gemini spend cap of
+its own (`docs/deployment.md` §5.1/§5.4; spec DS3), so the billing budget
+this creates — alerts at 50/90/100%, named `lemely-<project-id>` — is the
+*only* guard left on that spend. Leave either unset and the script skips the
+budget and prints exactly what it skipped.
+
+For each of `staging` and `production` the script also creates, idempotently:
+
+- The upload bucket (`<project-id>-uploads-<env>`, `us-central1`, uniform
+  bucket-level access, public-access prevention enforced, a 90-day object
+  lifecycle from `scripts/gcs-lifecycle.json`).
+- The runtime service account Cloud Run deploys the revision as
+  (`lemely-backend-<env>@<project-id>.iam.gserviceaccount.com`), holding
+  `roles/storage.objectAdmin` on that bucket only — never a project-level
+  storage role.
+
+Plus, once per project: the Artifact Registry repo, the Workload Identity
+Federation pool + provider (locked to the `LemelyIG/Lemely` repo specifically
+— no other repo can impersonate anything), and the deploy service account.
+
+**No new GitHub secret or variable is needed for the buckets or the runtime
+identities** — `deploy.yml` derives both names itself from `GCP_PROJECT_ID`
+(step 4, below) and the environment it is deploying to, inputs it already
+has. The script's final output prints the three values step 4 actually asks
+you to set, plus the derived bucket/service-account names and the billing
+budget's outcome, for the record.
 
 **No GCP service-account key is ever created or stored anywhere.** WIF lets
 GitHub Actions exchange its own OIDC token for short-lived GCP credentials
 at run time — nothing long-lived to leak.
 
-Then run the object-storage bootstrap, once per environment:
-
-```bash
-PROJECT_ID=<your-gcp-project-id> ENVIRONMENT=staging    ./scripts/gcs_bootstrap.sh
-PROJECT_ID=<your-gcp-project-id> ENVIRONMENT=production ./scripts/gcs_bootstrap.sh
-```
-
-Different script, different identity: `gcp-bootstrap.sh` sets up how GitHub
-Actions *deploys*; `gcs_bootstrap.sh` sets up what the deployed service
-*stores*. It creates `<project-id>-uploads-<env>` and
+That one script covers both environments in a single run — there is no
+separate object-storage bootstrap. It sets up how GitHub Actions *deploys*
+(WIF, deployer roles, Artifact Registry) **and** what the deployed service
+*stores*: it creates `<project-id>-uploads-<env>` and
 `<project-id>-avatars-<env>` — the names `deploy.yml` computes by default, so
 no new GitHub variables are needed — and grants the Cloud Run **runtime**
 service account (the default compute SA, since `deploy.yml` pins none)
@@ -123,15 +141,23 @@ in this session, org `LemelyIG`):
 | Project ref | `ynrmqjiqcvmcakondjbp` | `respcqftujbbyvsbkibk` |
 | URL | `https://ynrmqjiqcvmcakondjbp.supabase.co` | `https://respcqftujbbyvsbkibk.supabase.co` |
 | Region | eu-west-1 | eu-west-1 |
-| `uploads` storage bucket | created (private, 50MiB, pdf/png/jpeg) | created (private, 50MiB, pdf/png/jpeg) |
+| `uploads` storage bucket | created, now **unused** | created, now **unused** |
+
+**The `uploads` Supabase Storage bucket in each project is unused.** Every upload this
+app keeps now goes to the GCS bucket step 1 provisions instead — the Supabase Storage
+client was removed from the codebase, not just deprecated (spec DS7). Supabase Cloud
+still does real work here (Postgres, GoTrue auth); only the Storage bucket in each
+project is dead weight. Deleting it (Dashboard → Storage → the `uploads` bucket) is
+optional and safe — nothing reads or writes it — and left undone here since removing
+it buys nothing at the free tier's storage allowance.
 
 > **These Supabase buckets are no longer the ones the deployed backend
 > writes to.** Object storage now defaults to Google Cloud Storage
-> (`LEMELY_STORAGE__PROVIDER=gcs`), and `deploy.yml` points each environment
+> (`LEMELY_STORAGE__BACKEND=gcs`), and `deploy.yml` points each environment
 > at its own pair of GCS buckets. The Supabase buckets above are kept because
-> the Supabase backend is still supported and switching back is one
-> environment variable. Create the GCS side with
-> `scripts/gcs_bootstrap.sh` — see the GCP section below and
+> there is no Supabase Storage backend any more — DS7 deleted it, and the
+> only backends are `gcs` and `local`. Create the buckets with
+> `scripts/gcp-bootstrap.sh` — see the GCP section below and
 > `docs/deployment.md` §3.2 step 5.
 
 Both are on the free tier (2 free projects/org — this uses both slots; a
@@ -268,6 +294,13 @@ these directly in GitHub — nothing here needs to be typed anywhere else.
 | `GEMINI_API_KEY` | Env secret (staging + production) | Reuse the key from your local `.env`, or mint a new one at [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Fine to reuse the same key for both environments. |
 | `RESEND_API_KEY` | Env secret (staging + production) — **optional** | [resend.com](https://resend.com) → API Keys → Create, with *Sending access* only. Leave it unset and the deploy still succeeds: an absent secret renders as the empty string, which the backend reads as *not configured* and falls back to the offline mock provider, so nothing sends. Setting it is the entire switch-on. **Reusing one key across both environments shares one 100/day free-tier allowance** — a staging smoke test spends production's quota, so mint a second Resend account for staging or leave staging unset. See `docs/email-delivery.md`. |
 
+**No new secret or variable for GCS.** The upload bucket and the runtime service
+account `deploy.yml` deploys as are both just names `deploy.yml` derives itself from
+`GCP_PROJECT_ID` (already in the table above) and the environment it is running
+against: `<GCP_PROJECT_ID>-uploads-<env>` and
+`lemely-backend-<env>@<GCP_PROJECT_ID>.iam.gserviceaccount.com`. `scripts/gcp-bootstrap.sh`
+provisions the real resources those two names point at (§1); nothing else to add here.
+
 Dashboard links for the two Supabase projects, since you'll need both pages
 open: [staging settings](https://supabase.com/dashboard/project/respcqftujbbyvsbkibk/settings/api) ·
 [production settings](https://supabase.com/dashboard/project/ynrmqjiqcvmcakondjbp/settings/api)
@@ -382,23 +415,18 @@ regressions this pipeline introduced, just not solved by it:
   a small FastAPI middleware checks — worth doing before this is handling
   real user traffic, deliberately left out here to avoid an app-code change
   beyond what a CI/CD setup needs.
-- **The $8 Gemini spend ledger resets on every Cloud Run cold start**
-  (`docs/deployment.md` §5.4) — it lives at `/app/.lemely-cache` on the
-  container's ephemeral filesystem, and `min-instances=0` means that
-  filesystem is thrown away constantly. A Cloud Run
-  [Cloud Storage volume mount](https://cloud.google.com/run/docs/configuring/services/cloud-storage-volume-mounts)
-  at that path (a small GCS bucket is free-tier eligible) would fix it;
-  not wired up here.
-- Everything else in `docs/deployment.md` §5 (single-replica constraint, no
-  scheduler, `/api/teacher/overview`'s N+1) is unchanged by this pipeline —
-  it deploys the app as-is, it doesn't fix it.
-- **The `migrate` job runs `alembic upgrade head` only — it does not run
-  `scripts/ingest_thresholds.py`** (`docs/deployment.md` §3.5). Migrations
-  create `component_thresholds`/`option_thresholds` empty; grading stays
-  refused (`GradeBoundaryStore` raises `EmptyGradeBoundaryStoreError` rather
-  than invent boundaries) until someone runs the ingest script by hand
-  against the target database, same as any other manual one-time step this
-  pipeline doesn't yet automate. `GET /api/health`'s `gradeBoundariesLoaded`
-  field is the way to confirm it before declaring a fresh environment ready.
-  Deliberately not wired into `deploy.yml` here — adding an ingest step to
-  the pipeline is a deploy-pipeline decision, not a doc change.
+- **A budget alert is not a cap.** The web process enforces no Gemini spend
+  ceiling of its own (`docs/deployment.md` §5.1/§5.4; spec DS3) — the Google
+  Cloud billing budget §1 above provisions is the only guard on that spend,
+  and it fires an alert at 50/90/100%, not a stop. Spend can pass it before
+  anyone acts. The CLI and Gradio are unaffected and still enforce their own
+  `$8.00` on-disk ledger.
+- **Queued is per instance.** The teacher grading pool is one worker per
+  Cloud Run instance (`docs/deployment.md` §5.1). With `--max-instances=3` a
+  paper can queue on one instance while another sits idle. Every instance
+  answers a paper's status from the same Postgres row, so this is a
+  scheduling gap, not a correctness one — and it has not been observed
+  either way, because this branch has not been deployed.
+- Everything else in `docs/deployment.md` §5 (no scheduler,
+  `/api/teacher/overview`'s N+1) is unchanged by this pipeline — it deploys
+  the app as-is, it doesn't fix it.

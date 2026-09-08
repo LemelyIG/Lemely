@@ -173,6 +173,20 @@ export const AUTH_LINK_EXPIRED =
   "That link has expired or already been used. Ask for a new one and we'll send it straight away."
 
 /**
+ * G-07's typed-code failure, the code-shaped counterpart to
+ * `AUTH_LINK_EXPIRED`.
+ *
+ * `POST /auth/verify-email/code` collapses wrong, expired and locked-out into
+ * one non-revealing 400 (deliberately — see the route's own docstring), so
+ * this names all three rather than guessing which applied, exactly as
+ * `AUTH_LINK_EXPIRED` does for its four causes. It exists at all because
+ * reusing `AUTH_LINK_EXPIRED` here told someone who had typed six digits that
+ * their *link* had expired, when they may never have opened one.
+ */
+export const AUTH_CODE_REJECTED =
+  "That code didn't work — it may be wrong, expired, or already used. Ask for a new email and we'll send one straight away."
+
+/**
  * D7.5's soft gate, reached from outside this module's own two routes — see
  * note 6 above. Written to make sense wherever `require_verified_email`
  * eventually guards something, not only today's one route.
@@ -289,7 +303,9 @@ export function signUpFailureMessage(err: unknown): string {
 /**
  * Turn a failed email-verification action into a sentence — G-07's own
  * `/auth/verify-email` (confirm) and `/auth/verify-email/resend`, plus any
- * other screen's 403 against D7.5's gate (note 6 above). Checked in that
+ * other screen's 403 against D7.5's gate (note 6 above). G-07's third route,
+ * `/auth/verify-email/code`, has its own `verificationCodeFailureMessage`
+ * below, because its 400 means something this one's 400 copy denies. Checked in that
  * order: the marker first, because it is the one status this function's own
  * two routes never themselves produce.
  */
@@ -304,6 +320,28 @@ export function verificationFailureMessage(err: unknown): string {
   }
   if (err instanceof TypeError) return AUTH_NETWORK_FAILURE
   return "We couldn't verify your email just then. Trying again usually sorts it."
+}
+
+/**
+ * Turn a failed `POST /auth/verify-email/code` into a sentence.
+ *
+ * Separate from `verificationFailureMessage` for one reason: the 400. That
+ * function's 400 is `AUTH_LINK_EXPIRED`, which is right for the two routes it
+ * serves and wrong here — the person typed a code and may never have opened a
+ * link, so being told the link expired is simply untrue. Every other status
+ * maps identically, and deliberately so: this is the same screen.
+ */
+export function verificationCodeFailureMessage(err: unknown): string {
+  if (err instanceof ApiError) {
+    if (err.status === 0) return AUTH_NETWORK_FAILURE
+    if (err.status === 403 && isEmailUnverifiedError(err.detail)) return AUTH_EMAIL_UNVERIFIED
+    if (err.status === 429) return AUTH_COOLDOWN_ACTIVE
+    if (err.status >= 500) return AUTH_SERVICE_FAILURE
+    if (err.status === 400) return AUTH_CODE_REJECTED
+    return "We couldn't check that code just then. Trying again usually sorts it."
+  }
+  if (err instanceof TypeError) return AUTH_NETWORK_FAILURE
+  return "We couldn't check that code just then. Trying again usually sorts it."
 }
 
 /**

@@ -101,6 +101,10 @@ class TokenResponseDTO(ApiModel):
     ``refresh``, ``otp/verify``), none of which mint a verification token at
     all. The UI must render it in an explicitly-labelled developer panel,
     never as ordinary product copy.
+
+    ``devCode`` (spec §4.4/DS15) is the typed code minted alongside the link,
+    under the exact same D3.16 rule — the two are always populated together
+    or both ``None``.
     """
 
     accessToken: str
@@ -108,6 +112,7 @@ class TokenResponseDTO(ApiModel):
     role: Role
     refreshToken: str | None = None
     devLink: str | None = None
+    devCode: str | None = None
 
 
 class OtpRequestResponseDTO(ApiModel):
@@ -132,6 +137,18 @@ class VerifyEmailRequestDTO(ApiModel):
     token: str
 
 
+class VerifyEmailCodeRequestDTO(ApiModel):
+    """Redeem the typed code sent alongside the link (spec §4.4/DS15).
+
+    Deliberately no matching address field: the caller's own email comes from
+    :class:`~lemely.web.deps.AuthContext` (the authenticated session), never a
+    body field — the same reason :class:`ResendVerificationResponseDTO`'s
+    request has none. The code alone is the credential.
+    """
+
+    code: str
+
+
 class VerifyEmailResponseDTO(ApiModel):
     """Acknowledgement that ``users.email_verified_at`` was stamped."""
 
@@ -139,7 +156,7 @@ class VerifyEmailResponseDTO(ApiModel):
 
 
 class ResendVerificationResponseDTO(ApiModel):
-    """Acknowledgement that a fresh verification token was minted and (re)sent.
+    """Acknowledgement that a fresh verification token and code were minted and (re)sent.
 
     Deliberately no matching request DTO: the caller is read from
     :class:`~lemely.web.deps.AuthContext`, never a body field (an attacker
@@ -147,10 +164,13 @@ class ResendVerificationResponseDTO(ApiModel):
 
     ``devLink`` — see :attr:`TokenResponseDTO.devLink`; the same D3.16-derived
     rule, applied to :meth:`~lemely.auth.service.AuthService.resend_verification`.
+    ``devCode`` carries the same rule for the code minted alongside it (spec
+    §4.4/DS15).
     """
 
     status: Literal["sent"] = "sent"
     devLink: str | None = None
+    devCode: str | None = None
 
 
 class PasswordResetRequestDTO(ApiModel):
@@ -213,6 +233,7 @@ __all__ = [
     "Role",
     "SignupRequestDTO",
     "TokenResponseDTO",
+    "VerifyEmailCodeRequestDTO",
     "VerifyEmailRequestDTO",
     "VerifyEmailResponseDTO",
 ]

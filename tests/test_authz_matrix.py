@@ -234,8 +234,14 @@ def test_teacher_route_accepts_school_admin_and_platform_admin(
 ) -> None:
     app, _ = app_and_store
     for role in (Role.school_admin, Role.platform_admin, Role.teacher):
+        # A real UUID, not the bare "staff" placeholder every other role check
+        # in this file uses: ``GET /papers`` now parses ``auth.user_id`` as a
+        # UUID for DS11 visibility (Task 6 — papers moved onto
+        # ``TeacherPaperRepository``), where a real token's ``sub`` always is
+        # one. This caller owns no papers, so the route still answers 200
+        # with an empty list; the point here is only the role gate.
         app.dependency_overrides[get_auth_context] = lambda role=role: AuthContext(  # type: ignore[attr-defined]
-            user_id="staff", role=role.value
+            user_id="00000000-0000-0000-0000-0000000000aa", role=role.value
         )
         resp = _client(app).get("/api/papers")
         assert resp.status_code == 200, role

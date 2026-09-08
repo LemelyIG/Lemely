@@ -1,6 +1,7 @@
 """Student upload persistence for the self-mark flow (P2.1).
 
-A student's scan (+ optional mark scheme) is uploaded to Supabase Storage by the
+A student's scan (+ optional mark scheme) is uploaded to object storage
+(:mod:`lemely.io.storage` — Google Cloud Storage in a deployment) by the
 router (P2.5); this repository owns the :class:`~lemely.db.models.attempts.Upload`
 row that records its storage object key, ownership, and processing status.
 ``storage_path`` holds the Storage object key, not a local filesystem path.

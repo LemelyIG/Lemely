@@ -8,12 +8,14 @@ only change required. This is deliberately the same shape as
 already reasoned through the dangerous part.
 
 Each provider declares :attr:`EmailProvider.delivers_out_of_band`: whether it
-actually gets the link to the recipient's inbox by a channel outside this API.
-That flag — **not** an environment string — is what gates whether the auth
-routes may hand the link back for §G-06/§G-07's developer affordance, exactly
-as D3.16 gates the OTP's ``devCode``. A provider that does deliver never leaks
-a live link through the API; a provider that does not deliver is the only
-situation in which the API is the sole way to obtain it.
+actually gets the link (and, for verification, the code sent alongside it —
+spec §4.4/DS15) to the recipient's inbox by a channel outside this API. That
+flag — **not** an environment string — is what gates whether the auth routes
+may hand the link or code back for §G-06/§G-07's developer affordance,
+exactly as D3.16 gates the OTP's ``devCode``. A provider that does deliver
+never leaks a live link or code through the API; a provider that does not
+deliver is the only situation in which the API is the sole way to obtain
+either.
 
 **The honesty rule that follows from it.** ``deps.py`` now wires
 :class:`ResendEmailProvider` when ``[email] api_key`` is configured and
@@ -56,10 +58,10 @@ class EmailProvider(Protocol):
     """Delivers an account-lifecycle link to an email address."""
 
     delivers_out_of_band: bool
-    """True when the link actually reaches the inbox by a channel outside this
-    API (a real mail service). False means the API is the only way to obtain
-    it, which is the sole condition under which a route may return it. Any real
-    provider added later **must** set this True.
+    """True when the link and code actually reach the inbox by a channel
+    outside this API (a real mail service). False means the API is the only
+    way to obtain them, which is the sole condition under which a route may
+    return either. Any real provider added later **must** set this True.
 
     Setting it True carries a second obligation: ``link`` arrives as a
     *frontend route* (``/verify-email/<token>``), and an inbox has no origin to
@@ -67,8 +69,14 @@ class EmailProvider(Protocol):
     onto a configured origin before sending. Skipping that step is not a
     cosmetic bug — it mails an unreachable ``http:///…`` URL."""
 
-    def send_verification(self, email: str, link: str) -> None:
-        """Deliver an email-verification ``link`` to ``email``. Raises on failure."""
+    def send_verification(self, email: str, link: str, code: str) -> None:
+        """Deliver an email-verification ``link`` and typed ``code`` to ``email``.
+
+        The two are independent, equivalent credentials (spec §4.4/DS15): a
+        recipient who cannot follow the link — a different device, a mangled
+        mail client — can instead type ``code`` into the app. Raises on
+        failure.
+        """
         ...
 
     def send_password_reset(self, email: str, link: str) -> None:
@@ -79,18 +87,18 @@ class EmailProvider(Protocol):
 class MockEmailProvider:
     """Offline :class:`EmailProvider` that logs the link instead of sending it.
 
-    Intended for local dev and tests: the link is written to the
-    ``lemely.auth.email`` logger at ``INFO`` so a developer can copy it from the
-    console. Because nothing reaches an inbox, :attr:`delivers_out_of_band` is
-    False and the auth routes may surface the link for the §G-06/§G-07 developer
+    Intended for local dev and tests: the link (and code) are written to the
+    ``lemely.auth.email`` logger at ``INFO`` so a developer can copy either from
+    the console. Because nothing reaches an inbox, :attr:`delivers_out_of_band`
+    is False and the auth routes may surface both for the §G-06/§G-07 developer
     affordance.
     """
 
     delivers_out_of_band = False
 
-    def send_verification(self, email: str, link: str) -> None:
-        """Log the verification link for ``email`` at INFO level."""
-        logger.info("Mock email to %s: verify your Lemely account at %s", email, link)
+    def send_verification(self, email: str, link: str, code: str) -> None:
+        """Log the verification link and code for ``email`` at INFO level."""
+        logger.info("Mock email to %s: verify at %s or enter code %s", email, link, code)
 
     def send_password_reset(self, email: str, link: str) -> None:
         """Log the reset link for ``email`` at INFO level."""
@@ -122,8 +130,13 @@ _TEMPLATES = {
 }
 
 
-def _render(purpose: str, link: str) -> tuple[str, str, str]:
+def _render(purpose: str, link: str, code: str | None = None) -> tuple[str, str, str]:
     """Return ``(subject, html_body, text_body)`` for ``purpose`` and ``link``.
+
+    ``code`` is DS15's typed six digits, shown beside the link when the
+    purpose has one (verification does; password reset does not). It is the
+    same credential in a form someone can retype on a second device, so it
+    appears in both the HTML and the plain-text alternative.
 
     The HTML is a single document with every style inlined: mail clients strip
     ``<style>`` blocks and external CSS unpredictably, so any rule that must
@@ -133,6 +146,17 @@ def _render(purpose: str, link: str) -> tuple[str, str, str]:
     """
     subject, lead, button, notice = _TEMPLATES[purpose]
     safe_link = html.escape(link, quote=True)
+    code_html = (
+        ""
+        if code is None
+        else (
+            '<p style="margin:0 0 24px;font-size:13px;line-height:1.5;color:#52606d;">'
+            "Or enter this code:</p>"
+            '<p style="margin:0 0 24px;font-size:22px;line-height:1.3;font-weight:600;'
+            f'letter-spacing:0.12em;">{html.escape(code)}</p>'
+        )
+    )
+    code_text = "" if code is None else f"Or enter this code: {code}\n\n"
 
     html_body = (
         '<!doctype html><html lang="en"><body style="margin:0;padding:24px;'
@@ -150,12 +174,13 @@ def _render(purpose: str, link: str) -> tuple[str, str, str]:
         "If the button does not work, copy this link into your browser:</p>"
         '<p style="margin:0 0 24px;font-size:13px;line-height:1.5;word-break:break-all;">'
         f'<a href="{safe_link}" style="color:#2563eb;">{safe_link}</a></p>'
+        f"{code_html}"
         '<p style="margin:0;font-size:13px;line-height:1.5;color:#52606d;">'
         f"{html.escape(notice)}</p>"
         "</div></body></html>"
     )
 
-    text_body = f"{subject}\n\n{lead}\n\n{link}\n\n{notice}\n"
+    text_body = f"{subject}\n\n{lead}\n\n{link}\n\n{code_text}{notice}\n"
     return subject, html_body, text_body
 
 
@@ -226,9 +251,16 @@ class ResendEmailProvider:
         """
         return urljoin(self._settings.app_base_url, link)
 
-    def send_verification(self, email: str, link: str) -> None:
-        """Send the email-verification ``link`` to ``email``."""
-        self._send(email, *_render("verification", self._absolute(link)))
+    def send_verification(self, email: str, link: str, code: str) -> None:
+        """Send the email-verification ``link`` and typed ``code`` to ``email``.
+
+        Both credentials go in one mail (spec §4.4/DS15). The signature gained
+        ``code`` when DS15 landed; #220 wrote this provider against the older
+        two-argument shape, and because ``AuthService._try_send_verification``
+        swallows delivery errors, a mismatch here would have meant signups
+        succeeding while no verification mail ever left the building.
+        """
+        self._send(email, *_render("verification", self._absolute(link), code))
 
     def send_password_reset(self, email: str, link: str) -> None:
         """Send the password-reset ``link`` to ``email``."""
