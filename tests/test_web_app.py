@@ -8,9 +8,9 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Iterator
 import threading
 import time
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 
 import pytest
@@ -446,6 +446,8 @@ def test_a_client_without_the_context_manager_never_starts_a_task(
     TestClient(create_app()).get("/api/health")
 
     assert seen["started"] == 0
+
+
 def test_health_reports_storage_backend_without_touching_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
