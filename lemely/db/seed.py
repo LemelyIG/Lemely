@@ -7,15 +7,21 @@ migrated (``alembic upgrade head``). Seeding is split into:
   (the three CAIE subjects this build actually supports: 0580, 0606, 0625).
   Safe to run on every deploy.
 * **demo accounts** — the five-role demo users used by local development and
-  the Phase-6 fresh-clone acceptance test, on stable ``.local`` emails/phone so
-  this module doubles as the one place their credentials are documented.
+  the Phase-6 fresh-clone acceptance test, on stable ``.local`` emails so this
+  module doubles as the one place their credentials are documented. The demo
+  parent is an ordinary email/password account like the other four (the
+  parent-invites redesign retired phone-OTP parent login), linked directly to
+  the demo student rather than through a redeemed invite — there is no other
+  student around for it to redeem one from.
 
 Both are idempotent — reference data by upsert (migration 0024 also writes
 these rows, so insert-if-absent could no longer correct a drifted one), demo
-accounts by insert-if-absent. The seeding *decisions* — which rows, which
+accounts by insert-if-absent, and the demo-parent link by the same
+check-then-insert :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`
+uses for a real redemption. The seeding *decisions* — which rows, which
 accounts, how a second run recognises what the first run already did, and the
-two recovery paths (GoTrue-has-it-but-the-mirror-does-not; the OTP provider
-that cannot hand back a code) — live in the pure/injected functions below
+one recovery path (GoTrue-has-it-but-the-mirror-does-not) — live in the
+pure/injected functions below
 (:func:`subjects_to_upsert`, :func:`create_demo_accounts`), which
 ``tests/test_seed.py`` drives hermetically through the same in-memory fakes
 :mod:`tests.auth_fakes` gives ``test_auth_service.py``. :func:`seed_reference_data`
@@ -41,13 +47,16 @@ from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
 from lemely.db.models.academic import Subject
 from lemely.db.models.enums import ExamBoard, QualificationLevel, Role
-from lemely.db.session import session_scope
+from lemely.db.parent_repo import ParentLinkService
+from lemely.db.session import get_sessionmaker, session_scope
 from lemely.io import syllabus_topics
 from lemely.runtime.config import Settings, load_settings
 from lemely.runtime.errors import AuthError, LemelyError
 
 if TYPE_CHECKING:
     import uuid
+
+    from sqlalchemy.orm import Session, sessionmaker
 
     from lemely.auth.mirror import UserMirror
 
@@ -111,15 +120,13 @@ class DemoAccount:
     email: str
     role: Role
     display_name: str
-
-
-@dataclass(frozen=True, slots=True)
-class DemoParent:
-    """The demo parent, reachable by phone-OTP rather than email/password."""
-
-    phone: str
-    display_name: str
-    role: Role = Role.parent
+    #: Whether :func:`_create_or_recover_email_account` signs this account up
+    #: already email-verified. ``False`` for every role except the parent:
+    #: a real parent-invite redemption stamps ``email_verified_at`` at signup
+    #: (the parent proves control of the address by verifying a code before
+    #: the account is even created, spec §2), so a demo/e2e parent seeded as
+    #: unverified would read as a shape no real parent account ever has.
+    email_verified: bool = False
 
 
 #: A password shared by every demo account. Stable and documented (rather than
@@ -127,9 +134,13 @@ class DemoParent:
 #: point of this table is a credential a human or a fresh-clone test can name.
 DEMO_PASSWORD = "Demo-Lemely-1!"  # noqa: S105 - a documented demo credential, not a real secret
 
-#: One account per non-parent :class:`Role`. Together with :data:`DEMO_PARENT`
-#: this covers all five roles exactly once (pinned by
-#: ``tests/test_seed.py::TestDemoAccountTable``).
+#: One account per :class:`Role`, all created the same email/password way —
+#: covers all five roles exactly once (pinned by
+#: ``tests/test_seed.py::TestDemoAccountTable``). The parent used to be a
+#: phone-OTP account (``DemoParent``); the parent-invites redesign retired
+#: phone login, so it is an ordinary row here like the other four, linked to
+#: the demo student by :func:`_link_demo_parent` rather than by a redeemed
+#: invite.
 DEMO_ACCOUNTS: tuple[DemoAccount, ...] = (
     DemoAccount(email="student@demo.lemely.local", role=Role.student, display_name="Demo Student"),
     DemoAccount(email="teacher@demo.lemely.local", role=Role.teacher, display_name="Demo Teacher"),
@@ -143,21 +154,22 @@ DEMO_ACCOUNTS: tuple[DemoAccount, ...] = (
         role=Role.platform_admin,
         display_name="Demo Platform Admin",
     ),
+    DemoAccount(
+        email="parent@demo.lemely.local",
+        role=Role.parent,
+        display_name="Demo Parent",
+        email_verified=True,
+    ),
 )
-
-#: The demo parent. ``.local`` is reserved (RFC 6762) so, like the email
-#: accounts above, this can never be a real handset number someone else owns.
-DEMO_PARENT = DemoParent(phone="+10000000000", display_name="Demo Parent")
 
 
 @dataclass(frozen=True, slots=True)
 class SeededAccount:
-    """One demo account's resulting mirrored identity, email or phone-only."""
+    """One demo account's resulting mirrored identity."""
 
     role: Role
     user_id: uuid.UUID
     email: str | None = None
-    phone: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,21 +181,32 @@ class DemoAccountsResult:
     accounts: tuple[SeededAccount, ...]
 
 
-def create_demo_accounts(*, auth_service: AuthService, mirror: UserMirror) -> DemoAccountsResult:
-    """Create (or recognise) every :data:`DEMO_ACCOUNTS` row plus :data:`DEMO_PARENT`.
+def create_demo_accounts(
+    *,
+    auth_service: AuthService,
+    mirror: UserMirror,
+    parent_link_service: ParentLinkService,
+    session_factory: sessionmaker[Session],
+) -> DemoAccountsResult:
+    """Create (or recognise) every :data:`DEMO_ACCOUNTS` row, then link the parent to the student.
 
-    Dependency-injected, no session of its own — ``auth_service`` and
-    ``mirror`` are the exact seams :class:`~lemely.auth.service.AuthService`
-    is built from, so this can be driven hermetically (``tests/test_seed.py``)
-    or against the live stack (:func:`seed_demo_accounts`) unchanged.
+    Dependency-injected, no session of its own for account creation —
+    ``auth_service`` and ``mirror`` are the exact seams
+    :class:`~lemely.auth.service.AuthService` is built from, so that half can
+    be driven hermetically (``tests/test_seed.py``) or against the live stack
+    (:func:`seed_demo_accounts`) unchanged. Linking the parent does need an
+    open session, because :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`
+    takes one rather than opening its own (its only production caller,
+    ``InviteService.redeem``, needs the link and the invite's redemption in one
+    transaction) — ``session_factory`` is that seam, and a fake in tests never
+    needs to be a real engine since the fake link service never touches it.
 
     Idempotent: a second call creates nothing and reports every account
-    skipped, with the same :class:`SeededAccount` ids as the first call.
-
-    Raises:
-        SeedError: The phone-OTP account cannot be seeded because the
-            configured SMS provider delivers out of band (D3.16) — see
-            :meth:`~lemely.auth.service.AuthService.request_otp`.
+    skipped, with the same :class:`SeededAccount` ids as the first call, and
+    re-links the same already-linked pair rather than duplicating it
+    (``link_in_session`` checks first). Raises nothing of its own today —
+    :class:`SeedError` is kept as the module's declared failure seam even
+    though the phone-OTP branch that used to raise it is gone.
     """
     created = 0
     skipped = 0
@@ -195,10 +218,9 @@ def create_demo_accounts(*, auth_service: AuthService, mirror: UserMirror) -> De
         created += was_created
         skipped += not was_created
 
-    parent_seeded, parent_created = _create_or_recover_parent(auth_service, mirror)
-    accounts.append(parent_seeded)
-    created += parent_created
-    skipped += not parent_created
+    student_id = next(a.user_id for a in accounts if a.role is Role.student)
+    parent_id = next(a.user_id for a in accounts if a.role is Role.parent)
+    _link_demo_parent(session_factory, parent_link_service, parent_id, student_id)
 
     return DemoAccountsResult(created=created, skipped=skipped, accounts=tuple(accounts))
 
@@ -217,10 +239,23 @@ def _create_or_recover_email_account(
     here verifies the credential via ``login`` and then explicitly mirrors the
     role :data:`DEMO_ACCOUNTS` declares, overwriting whatever ``login`` just
     wrote.
+
+    Also stamps ``email_verified_at`` for an ``account.email_verified`` row
+    (final review I-2): the happy path below passes
+    ``email_verified=account.email_verified`` straight into ``signup``, but
+    this recovery branch never calls ``signup`` at all, so without an
+    explicit stamp here the recovered parent would read
+    ``email_verified_at IS NULL`` — the exact account shape
+    :attr:`DemoAccount.email_verified`'s own comment says no real parent
+    account ever has — and then be 403'd by the verified-email dependency.
     """
     try:
         result = auth_service.signup(
-            account.email, DEMO_PASSWORD, account.role, display_name=account.display_name
+            account.email,
+            DEMO_PASSWORD,
+            account.role,
+            display_name=account.display_name,
+            email_verified=account.email_verified,
         )
         return (
             SeededAccount(email=account.email, role=account.role, user_id=result.user_id),
@@ -245,64 +280,35 @@ def _create_or_recover_email_account(
             role=account.role,
             display_name=account.display_name,
         )
+        if account.email_verified:
+            mirror.mark_email_verified(login_result.user_id, verified_at=datetime.now(UTC))
         return (
             SeededAccount(email=account.email, role=account.role, user_id=login_result.user_id),
             was_fresh,
         )
 
 
-def _create_or_recover_parent(
-    auth_service: AuthService, mirror: UserMirror
-) -> tuple[SeededAccount, bool]:
-    """Verify-or-recognise :data:`DEMO_PARENT` via the phone-OTP flow.
+def _link_demo_parent(
+    session_factory: sessionmaker[Session],
+    parent_link_service: ParentLinkService,
+    parent_id: uuid.UUID,
+    student_id: uuid.UUID,
+) -> None:
+    """Link the demo parent to the demo student, the same way a redeemed invite would.
 
-    Checked against the mirror *before* issuing a challenge, not by trying and
-    recovering from failure: re-requesting an OTP for an already-seeded phone
-    would needlessly cost a challenge (and, against a real gateway, an SMS)
-    for no observable effect, since :meth:`AuthService.verify_otp` already
-    reuses the existing mirrored row for a known phone.
+    :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` takes an
+    already-open session rather than opening one itself — its only production
+    caller, ``InviteService.redeem``, needs the link row and the invite's
+    redemption committed in one transaction. This seed has no invite to
+    redeem (there is no other party to have issued one), so it opens and
+    commits a single-purpose transaction of its own to reuse that exact
+    method, rather than reaching into ``parent_child_links`` directly.
+
+    Idempotent: re-linking an already-linked pair is a silent no-op
+    (``link_in_session`` checks first), so a second ``make seed`` run is safe.
     """
-    existing = mirror.get_by_phone(DEMO_PARENT.phone)
-    if existing is not None:
-        _apply_parent_display_name(mirror, existing.id)
-        return SeededAccount(phone=DEMO_PARENT.phone, role=Role.parent, user_id=existing.id), False
-
-    code = auth_service.request_otp(DEMO_PARENT.phone)
-    if code is None:
-        raise SeedError(
-            "Cannot seed the demo parent: the configured SMS provider delivers "
-            "the OTP out of band, so request_otp() returned no code to verify "
-            "with. Seed against a stack wired with an offline/mock SMS "
-            "provider, or seed the parent manually."
-        )
-    result = auth_service.verify_otp(DEMO_PARENT.phone, code)
-    _apply_parent_display_name(mirror, result.user_id)
-    return SeededAccount(phone=DEMO_PARENT.phone, role=Role.parent, user_id=result.user_id), True
-
-
-def _apply_parent_display_name(mirror: UserMirror, user_id: uuid.UUID) -> None:
-    """Give the mirrored demo-parent row :data:`DEMO_PARENT`'s display name.
-
-    The parent is the one demo account created through the OTP flow rather than
-    :meth:`AuthService.signup`, and ``verify_otp`` mirrors a row with no display
-    name — so ``DEMO_PARENT.display_name`` was declared and applied nowhere.
-    Found by P6.10's fresh-clone run: the four password roles answered
-    ``/api/me/profile`` with their demo names and the parent answered
-    ``displayName: null``.
-
-    Applied on the recognise path too, so a database seeded before this fix is
-    corrected by the next ``make seed`` rather than staying nameless forever.
-    """
-    user = mirror.get_by_id(user_id)
-    if user is None or user.display_name == DEMO_PARENT.display_name:
-        return
-    mirror.upsert(
-        user_id=user.id,
-        email=user.email,
-        role=Role.parent,
-        phone=user.phone,
-        display_name=DEMO_PARENT.display_name,
-    )
+    with session_factory() as session, session.begin():
+        parent_link_service.link_in_session(session, parent_id, student_id)
 
 
 # ---------------------------------------------------------------------------
@@ -365,9 +371,13 @@ def _build_auth_service(settings: Settings) -> tuple[AuthService, DbUserMirror]:
     """Wire a real :class:`AuthService` for seeding.
 
     Mirrors :func:`lemely.web.deps.get_auth_service`'s wiring, except the SMS
-    provider is always the offline :class:`MockSmsProvider`: demo/dev seeding
-    must never depend on a real gateway to hand back the OTP code
-    :func:`_create_or_recover_parent` verifies with.
+    provider is always the offline :class:`MockSmsProvider`. No demo account
+    seeded here goes through the phone-OTP path any more (the parent-invites
+    redesign moved the demo parent to email/password, see :data:`DEMO_ACCOUNTS`),
+    but ``AuthService`` still requires an ``sms``/``otp_store`` pair to
+    construct — :meth:`~lemely.auth.service.AuthService.request_otp`/``verify_otp``
+    are kept as a seam for a possible future paid SMS channel — and seeding
+    must never depend on a real gateway even for that unused path.
     """
     mirror = DbUserMirror(settings)
     otp_store = OtpStore(
@@ -392,11 +402,19 @@ def seed_demo_accounts(settings: Settings | None = None) -> int:
     """Create the five-role demo accounts against the live stack. Returns accounts created.
 
     Idempotent: an existing account is recognised (see
-    :func:`create_demo_accounts`) and skipped rather than re-created.
+    :func:`create_demo_accounts`) and skipped rather than re-created, and the
+    demo-parent link is re-linked into a no-op the same way.
     """
     settings = settings or load_settings()
     auth_service, mirror = _build_auth_service(settings)
-    result = create_demo_accounts(auth_service=auth_service, mirror=mirror)
+    session_factory = get_sessionmaker(settings)
+    parent_link_service = ParentLinkService(session_factory)
+    result = create_demo_accounts(
+        auth_service=auth_service,
+        mirror=mirror,
+        parent_link_service=parent_link_service,
+        session_factory=session_factory,
+    )
     return result.created
 
 
@@ -433,11 +451,9 @@ def main() -> None:
 __all__ = [
     "CATALOGUE_SUBJECTS",
     "DEMO_ACCOUNTS",
-    "DEMO_PARENT",
     "DEMO_PASSWORD",
     "DemoAccount",
     "DemoAccountsResult",
-    "DemoParent",
     "SeedError",
     "SeededAccount",
     "SubjectSpec",

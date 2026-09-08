@@ -145,13 +145,17 @@ access_token_ttl_seconds = 3600
 # out from the device list, or evicting it past the 3-device cap, kills it
 # immediately.
 refresh_token_ttl_seconds = 2592000  # 30 days
-# Parent phone-OTP challenge lifecycle.
+# OTP challenge lifecycle, shared by channel. The phone channel backs a
+# kept-but-unused seam (BUILD/DECISIONS.md D-2026-09-08) for a possible future
+# paid SMS channel; no route mints a phone code today.
 otp_ttl_seconds = 300
 otp_max_attempts = 5
 otp_length = 6
 otp_min_resend_seconds = 30
-# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the
-# phone code above; length, attempt cap and resend cooldown are shared.
+# Email-channel OTP challenge lifecycle (spec §4.4). This is the channel that
+# ships: parent sign-up codes and email verification codes both use it.
+# Longer-lived than the phone lifecycle above; length, attempt cap and resend
+# cooldown are shared.
 email_otp_ttl_seconds = 600
 
 [grading]

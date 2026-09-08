@@ -26,7 +26,7 @@ import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, NoReturn, TypedDict
 
 import anyio
 import structlog
@@ -51,9 +51,17 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
+from lemely.db.invite_repo import (
+    MAX_LIVE_PARENT_LINKS,
+    InviteError,
+    InviteLimitReachedError,
+    InviteNotFoundError,
+    InviteService,
+)
+from lemely.db.models import Invite
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
-from lemely.db.parent_repo import ParentLinkService, ParentUserNotFoundError
+from lemely.db.parent_repo import ParentLinkService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
 from lemely.db.upload_repo import StudentUploadRepository, UploadRun
@@ -71,6 +79,7 @@ from lemely.web.deps import (
     get_class_service,
     get_gemini_client,
     get_history_store,
+    get_invite_service,
     get_notification_service,
     get_parent_link_service,
     get_push_transport,
@@ -95,7 +104,13 @@ from lemely.web.notify import notify_safely
 from lemely.web.push import NotificationTransport
 from lemely.web.schemas import question_to_dto
 from lemely.web.schemas_classes import JoinClassRequestDTO, JoinClassResponseDTO
-from lemely.web.schemas_parent import LinkedParentDTO, LinkParentRequestDTO, ParentLinkListDTO
+from lemely.web.schemas_parent import (
+    LinkedParentDTO,
+    ParentCodeDTO,
+    ParentInviteLinkDTO,
+    ParentInvitesDTO,
+    ParentLinkListDTO,
+)
 from lemely.web.schemas_student import (
     CorrectRequest,
     IntegrityRowDTO,
@@ -1196,7 +1211,13 @@ def student_join_class(
     return JoinClassResponseDTO(classId=str(row.class_id), className=row.name)
 
 
-# ── Parent links (invite/list/revoke) ───────────────────────────────────────
+# ── Parent links (list/revoke) ──────────────────────────────────────────────
+#
+# Linking itself now happens only through a child-issued invite redeemed at
+# ``POST /api/invites/{code}/redeem`` (spec §4) — there is no
+# student-initiated "invite by phone" route any more (retired alongside
+# ``ParentLinkService.link``, D3.11's phone-OTP direction). These two routes
+# are what is left: reading and revoking the links that redemption created.
 
 
 @router.get("/student/parent-links", response_model=ParentLinkListDTO)
@@ -1212,37 +1233,14 @@ def student_list_parent_links(
     parents = service.list_parents(auth.user_id)
     return ParentLinkListDTO(
         parents=[
-            LinkedParentDTO(parentId=str(p.parent_id), displayName=p.display_name, phone=p.phone)
+            LinkedParentDTO(
+                parentId=str(p.parent_id),
+                displayName=p.display_name,
+                email=p.email,
+                phone=p.phone,
+            )
             for p in parents
         ]
-    )
-
-
-@router.post("/student/parent-links", response_model=LinkedParentDTO)
-def student_link_parent(
-    payload: LinkParentRequestDTO,
-    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
-    service: Annotated[ParentLinkService, Depends(get_parent_link_service)],
-) -> LinkedParentDTO:
-    """Invite an existing parent (by phone) to link to the authenticated student.
-
-    Resolves ``phone`` to an *existing* ``role=parent`` user only (D3.11) —
-    this never creates an account from a student-supplied phone (a stranger's
-    mistyped or spoofed number could otherwise be handed this student's
-    grades). No matching parent account is a clean 404: the parent must
-    OTP-login at least once (which auto-creates their ``role=parent`` user,
-    ``AuthService.verify_otp``) before this student can invite them again.
-    Idempotent: inviting an already-linked parent again is a no-op success,
-    not an error.
-    """
-    try:
-        parent = service.link(auth.user_id, payload.phone)
-    except ParentUserNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
-    except ValueError as exc:
-        raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return LinkedParentDTO(
-        parentId=str(parent.parent_id), displayName=parent.display_name, phone=parent.phone
     )
 
 
@@ -1261,3 +1259,196 @@ def student_unlink_parent(
         service.unlink(auth.user_id, parent_id)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ── Parent invites (child-issued, spec §4) ──────────────────────────────────
+
+
+def _parent_invite_url(code: str, settings: Settings) -> str:
+    """Build the ``/join/:code`` link a parent invite resolves to (spec §4).
+
+    ``settings.email.app_base_url`` is the same origin
+    ``ResendEmailProvider._absolute`` already joins every mailed link onto —
+    reused here rather than re-derived, so a parent invite's link and an
+    email-verification link always point at the same deployment.
+    """
+    return f"{settings.email.app_base_url}/join/{code}"
+
+
+def _invite_link_to_dto(invite: Invite, settings: Settings) -> ParentInviteLinkDTO:
+    """Convert a single-use parent-invite row to its wire DTO.
+
+    ``expires_at`` is guaranteed set on every row this converts:
+    :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite` is only
+    ever called here with ``reusable=False``, and ``list_parent_invites``
+    deals only in single-use links — both always carry the 7-day expiry
+    (spec §3). The reusable code, whose ``expires_at`` is ``NULL``, is
+    surfaced separately (:class:`~lemely.web.schemas_parent.ParentCodeDTO`)
+    and never passed to this converter.
+
+    Raises:
+        ValueError: ``invite.expires_at`` is ``None`` — the invariant above
+            does not hold for this row. An explicit raise rather than an
+            ``assert``: an assert vanishes under ``python -O``, turning a
+            documented invariant into a bare ``AttributeError`` on the
+            ``.isoformat()`` call below instead of a clear, intentional
+            failure.
+    """
+    if invite.expires_at is None:
+        raise ValueError(f"Single-use parent invite {invite.code!r} has no expiry")
+    return ParentInviteLinkDTO(
+        code=invite.code,
+        url=_parent_invite_url(invite.code, settings),
+        expiresAt=invite.expires_at.isoformat(),
+    )
+
+
+def _raise_for_invite_error(exc: InviteError) -> NoReturn:
+    """Map a bare :class:`~lemely.db.invite_repo.InviteError` to an HTTP failure.
+
+    :meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`,
+    :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite` and
+    :meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code` all raise
+    this one type for two different conditions, distinguished only by
+    message — the service module defines no dedicated subclass for either,
+    and this router does not own that module (D1.10-style layering) so it
+    cannot add one:
+
+    - "Unknown user" (the authenticated caller's own ``users`` row is gone).
+      Unreachable in practice — every caller here is ``auth.user_id`` from a
+      validated token — but a definite **404** rather than a fault if it
+      ever is reached.
+    - Everything else: a code-collision search exhausted after
+      ``_INVITE_CODE_MAX_ATTEMPTS`` attempts, or the rare reusable-code race
+      ``uq_invites_reusable_child`` itself catches. Both are retry-worthy,
+      mapped to **503** rather than a bare fault the client has no cue to
+      act on.
+    """
+    if str(exc).startswith("Unknown user:"):
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    raise HTTPException(
+        status_code=503, detail="Could not mint an invite code right now. Please try again."
+    ) from exc
+
+
+_SMALL_NUMBER_WORDS = {
+    1: "one",
+    2: "two",
+    3: "three",
+    4: "four",
+    5: "five",
+    6: "six",
+    7: "seven",
+    8: "eight",
+    9: "nine",
+    10: "ten",
+}
+
+
+def _spelled_out(n: int) -> str:
+    """Spell a small integer out in prose, falling back to the digit past ten.
+
+    Used only for :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` in the
+    409 detail below, so that constant's cap can change without also hunting
+    down a hard-coded English word for it — the failure mode a literal
+    ``"five"`` in the f-string would otherwise reintroduce.
+    """
+    return _SMALL_NUMBER_WORDS.get(n, str(n))
+
+
+@router.get("/student/parent-invites", response_model=ParentInvitesDTO)
+def student_parent_invites(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentInvitesDTO:
+    """Return the authenticated student's reusable parent code and pending links.
+
+    The reusable code is minted lazily
+    (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
+    so this screen never shows an empty state for it, mirroring the
+    "a class always has a join code" rule that method's own docstring cites.
+    ``links`` lists only live, unredeemed single-use links, oldest first.
+    """
+    try:
+        code_invite = service.get_or_create_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    links = service.list_parent_invites(auth.user_id)
+    return ParentInvitesDTO(
+        code=ParentCodeDTO(
+            code=code_invite.code, url=_parent_invite_url(code_invite.code, settings)
+        ),
+        links=[_invite_link_to_dto(link, settings) for link in links],
+    )
+
+
+@router.post("/student/parent-invites", response_model=ParentInviteLinkDTO)
+def student_mint_parent_invite(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentInviteLinkDTO:
+    """Mint a fresh single-use parent invite link (7-day expiry, spec §3).
+
+    Identity is always the authenticated caller (``auth.user_id``), never a
+    caller-supplied id (D1.6's IDOR discipline, matching every other route on
+    this router). Capped at
+    :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` live, unredeemed
+    links at a time (final review I-6) — each is independently revocable, so
+    a student who hits the cap can free a slot by revoking one rather than
+    waiting out an expiry.
+    """
+    try:
+        invite = service.mint_parent_invite(auth.user_id, reusable=False)
+    except InviteLimitReachedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"You already have {_spelled_out(MAX_LIVE_PARENT_LINKS)} unused links. "
+                "Revoke one or wait for it to expire."
+            ),
+        ) from exc
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    return _invite_link_to_dto(invite, settings)
+
+
+@router.delete("/student/parent-invites/{code}", status_code=204)
+def student_revoke_parent_invite(
+    code: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+) -> None:
+    """Revoke a single-use parent invite link belonging to the authenticated student.
+
+    An unknown code, another student's code, and the reusable code all map to
+    the identical 404 —
+    :meth:`~lemely.db.invite_repo.InviteService.revoke_parent_invite`'s own
+    disclosure discipline: a student learns nothing about a code they do not
+    own.
+    """
+    try:
+        service.revoke_parent_invite(auth.user_id, code)
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+
+
+@router.post("/student/parent-invites/code/rotate", response_model=ParentCodeDTO)
+def student_rotate_parent_code(
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentCodeDTO:
+    """Replace the authenticated student's reusable parent code with a fresh one.
+
+    The old code stops resolving the instant this returns
+    (:meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code` deletes
+    it in the same transaction the new one is inserted in) — a parent still
+    holding it must be given the new one directly, there is no grace period.
+    """
+    try:
+        invite = service.rotate_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
+    return ParentCodeDTO(code=invite.code, url=_parent_invite_url(invite.code, settings))

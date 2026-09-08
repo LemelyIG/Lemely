@@ -9,8 +9,11 @@ import { SkeletonLine } from "@/components/ui/skeleton"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
+import { withNext } from "@/lib/nextPath"
 import {
+  canRedeemInviteAs,
   describeInvitePreview,
+  INVITE_ROLE_MISMATCH_MESSAGE,
   isTerminalRedeemFailure,
   normalizeInviteCode,
   previewErrorCopy,
@@ -74,6 +77,15 @@ import { AuthFrame } from "./Login"
  * signed-in teacher who redeems a (today, always student-targeted) seat
  * invite to `/student`, straight into `RequireAuth`'s guard bouncing them
  * back out again. `confirmSignedIn` below reads `session.role`.
+ *
+ * The one exception is `result.childId` (design spec §5, parent-invites):
+ * still reading `session.role` to pick the *portal*, but once that portal is
+ * confirmed to be `parent`, `result.childId` — data only the redeemed invite
+ * itself carries — sends the reader straight to the child they just gained
+ * access to, rather than to the parent portal's own root. Not a
+ * contradiction of the reasoning above: `result.role` is still never trusted
+ * for *which portal*, this only reads one extra field once the portal is
+ * already settled.
  *
  * ── AuthFrame ─────────────────────────────────────────────────────────────
  *
@@ -152,6 +164,7 @@ function PreviewLoadingStep() {
 function InvitePreviewStep({
   preview,
   isSignedIn,
+  canRedeem,
   isRedeeming,
   redeemError,
   onConfirmSignedOut,
@@ -160,6 +173,11 @@ function InvitePreviewStep({
 }: {
   preview: InvitePreview
   isSignedIn: boolean
+  /** Whether the signed-in caller's own role can redeem this invite at all
+   * (`canRedeemInviteAs`, `useInvitesApi.ts`) — meaningless, and ignored,
+   * while signed out: a signed-out visitor's eventual role is whatever they
+   * sign up as, so there is nothing yet to mismatch. */
+  canRedeem: boolean
   isRedeeming: boolean
   redeemError: unknown
   onConfirmSignedOut: () => void
@@ -167,19 +185,27 @@ function InvitePreviewStep({
   onDifferentCode: () => void
 }) {
   const lines = describeInvitePreview(preview)
-  // Terminal failures (already redeemed, or the currently-unreachable seat-
-  // quota-full marker - see `useInvitesApi.ts`) replace the confirm button
-  // rather than sitting beside it: retrying the identical call reproduces the
-  // identical refusal, so offering "join now" again would be a dead end
-  // dressed up as an action. A transient failure (network, 5xx) is not
-  // terminal, and there the button stays so "try again" is one tap.
+  // Terminal failures (already redeemed, a role mismatch, or the currently-
+  // unreachable seat-quota-full marker - see `useInvitesApi.ts`) replace the
+  // confirm button rather than sitting beside it: retrying the identical call
+  // reproduces the identical refusal, so offering "join now" again would be a
+  // dead end dressed up as an action. A transient failure (network, 5xx) is
+  // not terminal, and there the button stays so "try again" is one tap.
   const terminal = isSignedIn && isTerminalRedeemFailure(redeemError)
+  // A role mismatch is caught before the request is even sent, not only after
+  // a 403 comes back — see `canRedeemInviteAs`'s own docstring for why this
+  // is checked ahead of, rather than instead of, `isTerminalRedeemFailure`.
+  const blocked = isSignedIn && !canRedeem
 
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-1.5">
         <div className="text-eyebrow text-ink-faint">
-          {preview.role === "teacher" ? "Teacher invite" : "Student invite"}
+          {preview.role === "teacher"
+            ? "Teacher invite"
+            : preview.role === "parent"
+              ? "Parent invite"
+              : "Student invite"}
         </div>
         <h1 className="text-display-lg text-ink">You're about to join</h1>
       </div>
@@ -197,14 +223,18 @@ function InvitePreviewStep({
         ))}
       </div>
 
-      {redeemError ? (
+      {blocked ? (
+        <p role="alert" className="text-body-sm text-err">
+          {INVITE_ROLE_MISMATCH_MESSAGE}
+        </p>
+      ) : redeemError ? (
         <p role="alert" className="text-body-sm text-err">
           {redeemFailureMessage(redeemError)}
         </p>
       ) : null}
 
       <div className="flex flex-col gap-3">
-        {terminal ? null : (
+        {blocked || terminal ? null : (
           <Button
             type="button"
             variant="accent"
@@ -212,7 +242,19 @@ function InvitePreviewStep({
             loading={isRedeeming}
             onClick={isSignedIn ? onConfirmSignedIn : onConfirmSignedOut}
           >
-            {isSignedIn ? (isRedeeming ? "Joining…" : "Join now") : "Continue"}
+            {isSignedIn
+              ? isRedeeming
+                ? "Joining…"
+                : "Join now"
+              : // Design spec §5's own wording for the parent branch: signed
+                // out, this button is a first account, not a return trip, and
+                // "Continue" undersells that. Every other role keeps the
+                // original copy — a student or teacher's signed-out path
+                // still lands on `SignupDetails.tsx`, which has its own
+                // heading ("Create your student account") once there.
+                preview.role === "parent"
+                ? "Create your parent account"
+                : "Continue"}
           </Button>
         )}
         <Button type="button" variant="ghost" size="md" onClick={onDifferentCode}>
@@ -263,12 +305,19 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
     redeem.mutate(
       { code: activeCode },
       {
-        onSuccess: () => {
-          // `session` is guaranteed non-null here: this handler is only ever
-          // wired up when `session !== null` below (`isSignedIn`). The
-          // fallback is defensive typing, not a real path — see the module
-          // docstring for why this reads the caller's own role rather than
-          // the redeemed invite's.
+        onSuccess: (result) => {
+          // A parent landing directly on the child they just gained access
+          // to (design spec §5) rather than the portal's own root — the one
+          // case where the *redeemed invite's* own data names a more useful
+          // destination than "the caller's portal home" does. Every other
+          // role keeps the module docstring's original reasoning: `session`
+          // is guaranteed non-null here (this handler is only ever wired up
+          // when `session !== null` below, `isSignedIn`), and the fallback is
+          // defensive typing, not a real path.
+          if (session?.role === "parent" && result.childId) {
+            navigate(`/parent/children/${result.childId}`, { replace: true })
+            return
+          }
           navigate(portalPathForRole(session?.role ?? "student"), { replace: true })
         },
       },
@@ -350,6 +399,7 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
           <InvitePreviewStep
             preview={data}
             isSignedIn={session !== null}
+            canRedeem={session === null || canRedeemInviteAs(data.role, session.role)}
             isRedeeming={redeem.isPending}
             redeemError={redeem.isError ? redeem.error : null}
             onConfirmSignedOut={confirmSignedOut}
@@ -368,8 +418,18 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
         session === null ? (
           <p className="text-body-sm text-ink-muted">
             Already have an account?{" "}
+            {/*
+             * `next` carries the reader back to this exact invite once
+             * they've signed in — spec §5's parent-invite bullet names this
+             * explicitly ("Already have an account? Sign in" →
+             * `/login?next=/join/<code>`), and there is no reason to withhold
+             * it from a student or teacher invite either: whoever redeems it
+             * wants to land back here regardless of which role the code is
+             * for. `activeCode` (not `codeInput`) because that is the code
+             * this screen is actually showing a preview of right now.
+             */}
             <Link
-              to="/login"
+              to={withNext("/login", activeCode ? `/join/${activeCode}` : null)}
               className="rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
             >
               Sign in

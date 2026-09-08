@@ -911,6 +911,120 @@ def test_invite_requires_a_target(pg_engine: sa.Engine) -> None:
             session.commit()
 
 
+def test_invite_supports_parent_target_and_reusable_flag(pg_engine: sa.Engine) -> None:
+    """Parent invites (spec §3): `child_id`/`reusable` widen the invite shape.
+
+    A parent invite targets a child rather than a school or a class, and
+    `reusable` distinguishes the rotatable short code from the single-use
+    link — both sharing this table per the spec's "two invite kinds, one
+    table" rule.
+    """
+    inspector = sa.inspect(pg_engine)
+    columns = {c["name"]: c for c in inspector.get_columns("invites")}
+    assert columns["child_id"]["nullable"] is True
+    assert columns["reusable"]["nullable"] is False
+
+    fk_by_column = {
+        fk["constrained_columns"][0]: fk for fk in inspector.get_foreign_keys("invites")
+    }
+    child_fk = fk_by_column["child_id"]
+    assert child_fk["referred_table"] == "users"
+    assert child_fk["referred_columns"] == ["id"]
+    assert child_fk["options"].get("ondelete") == "CASCADE"
+
+    index_names = {ix["name"] for ix in inspector.get_indexes("invites")}
+    assert "ix_invites_child_id" in index_names
+
+    with pg_engine.connect() as conn:
+        labels = (
+            conn.execute(
+                sa.text(
+                    "SELECT e.enumlabel FROM pg_enum e "
+                    "JOIN pg_type t ON t.oid = e.enumtypid "
+                    "WHERE t.typname = 'inviterole'"
+                )
+            )
+            .scalars()
+            .all()
+        )
+    assert "parent" in labels
+
+
+def test_invites_reusable_child_unique_only_when_reusable(pg_engine: sa.Engine) -> None:
+    """``uq_invites_reusable_child`` is a *partial* unique index (review round 3,
+    Important C): three rounds of application-level lock ordering in
+    :class:`~lemely.db.invite_repo.InviteService` each closed one race only to
+    reopen or leave another, so "a student has at most one reusable row at a
+    time" is now a fact the database enforces directly, not one derived from
+    getting every writer's lock order right.
+
+    Two reusable rows for the same child collide; two single-use links
+    (``reusable=false``) for that same child must not, since the index's
+    ``WHERE reusable`` excludes them - a student can hold many pending
+    single-use links at once (:meth:`~lemely.db.invite_repo.InviteService.list_parent_invites`),
+    just never more than one reusable code.
+    """
+    from lemely.db.models import Invite, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    inspector = sa.inspect(pg_engine)
+    index_by_name = {ix["name"]: ix for ix in inspector.get_indexes("invites")}
+    reusable_index = index_by_name["uq_invites_reusable_child"]
+    assert reusable_index["unique"] is True
+    assert reusable_index["column_names"] == ["child_id"]
+    assert reusable_index["dialect_options"]["postgresql_where"] == "reusable"
+
+    def _reusable_row(child_id: uuid.UUID, code: str, *, reusable: bool) -> Invite:
+        return Invite(
+            code=code,
+            role=InviteRole.parent,
+            child_id=child_id,
+            created_by=child_id,
+            reusable=reusable,
+        )
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="reusable-index@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+        student_id = student.id
+
+        session.add(_reusable_row(student_id, "FIRSTCODE1", reusable=True))
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(_reusable_row(student_id, "SECONDCODE", reusable=True))
+        session.commit()
+
+    # Two single-use links for the same child: the partial index only fires
+    # when `reusable` is true, so this must not collide even though both
+    # rows share `child_id`.
+    with Session(pg_engine) as session:
+        session.add(_reusable_row(student_id, "LINKCODE01", reusable=False))
+        session.add(_reusable_row(student_id, "LINKCODE02", reusable=False))
+        session.commit()
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="parent-invite-child@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+
+        parent_invite = Invite(
+            code="PARENTCODE",
+            role=InviteRole.parent,
+            child_id=student.id,
+            created_by=student.id,
+        )
+        session.add(parent_invite)
+        session.commit()
+        session.refresh(parent_invite)
+
+        assert parent_invite.child_id == student.id
+        assert parent_invite.school_id is None
+        assert parent_invite.class_id is None
+        assert parent_invite.reusable is False  # server_default false
+
+
 def test_teacher_paper_row_defaults(pg_engine: sa.Engine) -> None:
     """Spec §4.2: a fresh row is pending, unstaged, and reuses the uploadstatus enum."""
     from lemely.db.models import TeacherPaper, User

@@ -33,13 +33,62 @@ export interface LoginRequest {
   confirmDeviceEviction?: boolean
 }
 
-export interface OtpRequestBody {
-  phone: string
+/**
+ * `POST /auth/parent/request-code` body (design spec §4/§5, superseding the
+ * phone-OTP direction of D3.11). A parent proves an email address against a
+ * specific child-issued invite, never a bare "sign up" — `inviteCode` is
+ * required on this route precisely so a code cannot be requested for an
+ * email with no invite behind it at all.
+ */
+export interface ParentCodeRequestBody {
+  email: string
+  inviteCode: string
 }
 
-export interface OtpVerifyBody {
-  phone: string
+/** `POST /auth/parent/request-code` response. */
+export interface ParentCodeRequestResponse {
+  status: "sent"
+  /**
+   * §D3.16's developer affordance, applied to email the same way
+   * `TokenResponse.devCode` already is. Non-null only when the configured
+   * `EmailProvider` does not deliver out of band — render it in an
+   * explicitly-labelled developer panel, never as ordinary product copy.
+   */
+  devCode: string | null
+}
+
+/** `POST /auth/parent/verify-code` body. */
+export interface ParentCodeVerifyBody {
+  email: string
+  inviteCode: string
   code: string
+}
+
+/**
+ * `POST /auth/parent/verify-code` response. `proofToken` is a short-lived
+ * (900s), single-purpose token — its own audience keeps GoTrue and every
+ * other endpoint from ever accepting it as a bearer token — carried forward
+ * to `POST /auth/parent/signup` as proof the email was confirmed, so the
+ * signup call itself never has to re-verify a code.
+ */
+export interface ParentCodeVerifyResponse {
+  proofToken: string
+}
+
+/**
+ * `POST /auth/parent/signup` body. One call creates the account (email
+ * already verified, per the `proofToken`), links it to the child the invite
+ * names, and signs the parent in — no separate redeem step the way a
+ * self-service student/teacher signup needs one (`useInvitesApi.ts`'s
+ * `useRedeemInvite`).
+ */
+export interface ParentSignupBody {
+  proofToken: string
+  password: string
+  displayName?: string
+  /** D7.11, unchanged from `SignupRequest.acceptedTerms` — see that field's
+   * own comment for why this has no default. */
+  acceptedTerms: boolean
   deviceId?: string | null
 }
 
@@ -51,10 +100,10 @@ export interface TokenResponse {
   /**
    * The freshly minted email-verification link (D7.4/D7.6/D7.7), present only
    * on a `/auth/signup` response — every other flow returning this shape
-   * (`login`, `refresh`, `otp/verify`) mints no verification token and this
+   * (`login`, `refresh`, parent signup) mints no verification token and this
    * is always `null`. Non-`null` itself only when the configured
    * `EmailProvider` does not deliver out of band — the same D3.16 rule
-   * `OtpRequestResponse.devCode` below follows; with a real provider
+   * `ParentCodeRequestResponse.devCode` (above) follows; with a real provider
    * configured this is always `null` and no live link crosses the wire.
    * Render it in an explicitly-labelled developer panel, never as ordinary
    * product copy.
@@ -66,17 +115,6 @@ export interface TokenResponse {
    * `null` with a real provider configured, both non-null only when nothing
    * delivers out of band. Render it in the same developer panel as the
    * link, never as ordinary product copy.
-   */
-  devCode: string | null
-}
-
-export interface OtpRequestResponse {
-  status: "sent"
-  /**
-   * §G-05's developer affordance (D3.16). Non-null **only** when the configured
-   * SMS provider does not deliver out of band (the offline mock) — with a real
-   * gateway the backend always sends null. Render it in an explicitly-labelled
-   * developer panel, never as ordinary product copy.
    */
   devCode: string | null
 }
@@ -167,12 +205,22 @@ export interface PasswordResetConfirmResponse {
  * (`lemely/web/schemas_invites.py`): every field here is something the
  * holder already learned from whoever handed them the code, so there is
  * deliberately no id, no roster and no seat/enrolment count.
+ *
+ * `role: "parent"` and `childName` are the parent-invites addition (design
+ * spec §3-§4, superseding D3.11's phone-OTP direction): a parent invite is
+ * child-issued, never school/class-issued, so `schoolName`/`className`/
+ * `teacherName` are always `null` on that branch and `childName` carries the
+ * one fact this preview is willing to say about it — the backend's own
+ * fallback to "your child" when the child has no display name means this is
+ * rarely actually `null` in practice, but the type stays nullable rather than
+ * asserting a guarantee the DTO does not document.
  */
 export interface InvitePreview {
-  role: "student" | "teacher"
+  role: "student" | "teacher" | "parent"
   schoolName: string | null
   className: string | null
   teacherName: string | null
+  childName: string | null
 }
 
 /**

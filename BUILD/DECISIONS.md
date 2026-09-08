@@ -14302,6 +14302,110 @@ declined; the rollout order (spec §6) merges and verifies each stage on staging
 and the unpin is deliberately the last step precisely because it is the one that makes every
 earlier gap visible.
 
+## D-2026-09-08 — Parent identity is email + password via child-issued invites; SMS retired, seams kept
+
+**Context.** `D1.4` gave the parent portal its own login path because GoTrue's native phone OTP
+needs a real SMS gateway and the MISSION mandated a mock now with "one config switch to a real
+provider later." `D3.11` then had the *student* invite a parent by phone number, but only into an
+account that had already proven control of that number by completing OTP verification — the
+gate against a bored student mass-creating parent rows for arbitrary numbers. `D3.16` added the
+developer affordance that shows the OTP code on screen, gated on `SmsProvider.delivers_out_of_band`
+rather than an environment string. No real SMS gateway has ever been wired: every deployment of
+this code runs `MockSmsProvider` unconditionally (`lemely/web/deps.py`), and
+`web/src/routes.tsx` has carried a comment recording that fact since it was written. Every SMS
+API is metered and billed per message; retiring the phone-first path costs nothing in
+infrastructure that was ever actually spending money, and removes the last surface where
+shipping a real provider was a standing, unbudgeted line item.
+
+**The decision.** A parent is now an ordinary GoTrue email/password user with `role=parent`, no
+different in kind from a student or teacher account. There is no independent parent sign-up: a
+parent gets an identity only by redeeming a child-issued invite. The student mints either a
+single-use link (7-day expiry, revocable) or holds one reusable short code (rotatable); both live
+in the existing `invites` table (migration `0034_parent_invites` adds `child_id`, `reusable`, and
+extends `ck_invites_target`; `inviterole` gains `parent` by the additive `ALTER TYPE ... ADD
+VALUE` pattern `D1.2`/migration `0019` already established) and both resolve at the existing
+`/join/:code` screen. Redeeming as a new parent is one server call: the parent supplies an email,
+proves it with a six-digit code, sets a password, and the account is created with the email
+already marked verified, linked to the child, and signed in — no separate "prove the phone,
+then get invited" ordering `D3.11` required, because the proof now happens inside the signup
+call itself rather than as a precondition. A parent who already has an account accepts a second
+child's invite while signed in, or signs in first from the invite page and returns to it after.
+`/login/parent`, the two `/api/auth/otp/*` routes, `ParentLogin.tsx`, and `POST
+/api/student/parent-links` (link by phone) are deleted.
+
+**The reusable-code exception.** Every other invite in this table is single-use by construction —
+a seat invite (`D7.3`) and a class invite are both consumed on redemption. The parent invite adds
+a second kind that is never consumed: `reusable=true`, `expires_at NULL`, and redemption only
+inserts a `parent_child_links` row rather than marking `redeemed_by`/`redeemed_at`. This is a
+deliberate, named exception, not an oversight — a parent code behaves like `classes.join_code`
+(D7.3's "a class always has a join code" precedent) precisely because a family shares one code
+across occasions (a second parent, a re-installed phone) the way a class shares one join code
+across a term, and forcing a fresh single-use link for each occasion would just move the
+friction from "ask your child's school" (the outcome `D3.11` explicitly wanted to avoid) to "ask
+your child to mint another link." A student holds at most one reusable row at a time
+(`get_or_create_parent_code` mints lazily, `rotate_parent_code` deletes and re-mints); the
+single-use link kind sits alongside it for the "here, right now" sharing case and still expires
+in 7 days like every other time-boxed invite in the product.
+
+**The honest gap, stated rather than hidden.** `POST /api/auth/parent/signup` creates the GoTrue
+account and then calls `invite_service.redeem` to write the `parent_child_links` row — two writes,
+not one database transaction, the same non-atomic shape every route in this codebase that creates
+an auth account and then writes an application-side row already accepts (there is no two-phase
+commit between GoTrue and Postgres). A failure between the two leaves a parent account that
+exists but is not linked to any child. The route does not fail the request over it: `parent_signup`
+catches `InviteError`, logs a warning, and still returns a working `TokenResponseDTO`, because by
+that point the GoTrue account genuinely exists and no failure status would be true — reporting one
+would tell a parent whose signup in fact succeeded that it had not. The invite code is not marked
+redeemed unless the link write succeeds, so the same code still resolves, and re-presenting it at
+`/join/:code` while signed in tries the link again — but **no UI currently tells the parent this
+happened**; the closest cue today is the child's own P-01 "no parent yet" empty state, which reads
+as signup instructions rather than recovery instructions for a parent who already has an account.
+That gap is recorded, not fixed, here — see `CHANGELOG.md`'s "Known limitations" for the same
+wording. This is why `redeemed_by`/`redeemed_at` are stamped only after `link_in_session` succeeds
+inside the same transaction as the redemption marking, not before it.
+
+**Alternatives rejected.** *Keep phone OTP and wire a real SMS gateway* — rejected on cost alone;
+no gateway was ever budgeted for a channel with a working, free alternative. *Let the invite call
+mint the parent account directly from a student-supplied email, with no code back to that
+address* — rejected for the same reason `D3.11` gated the phone path on proof-of-control: an
+account a stranger's email address could be silently attached to is a worse privacy posture than
+the phone version it would replace, not a better one. *A second table for parent codes, separate
+from `invites`* — rejected; `D1.2`'s additive-only rule and `D7.3`'s "one box for every invite
+kind" already established that a new invite shape is a new nullable target column and a new role
+value, not a new table.
+
+**Supersedes.** `D3.11`'s phone-proof-then-link direction is retired in full — parents are linked
+exclusively through invite redemption now, and no route requires a parent to have completed a
+separate verification before a link can be created. Of `D1.4`, only the parts that wired
+`SmsProvider` into a live login route (`AuthService.request_otp`/`verify_otp` called from
+`/login/parent`) are retired — no route reaches them anymore; `D1.4`'s GoTrue email/password
+split is exactly what parent accounts now use, unchanged. Token issuance is untouched by this
+decision and was never phone-specific to begin with: `D1.5` already revised `D1.4` to make the
+backend self-sign every access token it hands out, for email/password login and phone OTP alike,
+and a parent's email/password login runs on that same universal HS256 path unchanged — there is
+nothing in it for this decision to retire. `D3.16` itself is not retired either: its
+capability-gated-not-environment-gated `devCode` rule is reapplied unchanged to the email
+channel's `devCode`/`devLink` (`lemely/auth/email.py::EmailProvider.send_signup_code`, mirroring
+`D7.6`'s `EmailProvider` seam); only the phone route it originally described is now unreachable.
+
+**Seams kept, nothing deleted from under them.** `SmsProvider`, `MockSmsProvider`,
+`OtpChannel.phone`, `AuthService.request_otp`/`verify_otp` and their unit tests, `users.phone`,
+the JWT `phone` claim, `UserMirror.get_by_phone`, `_phone_placeholder_email`,
+`AuthSettings.otp_*`, the disabled `[auth.sms.twilio]` block in `supabase/config.toml`, and
+`SignupRequestDTO.phone` all remain in the tree, exercised by their existing tests, reachable by
+nothing a user can click. They stay for the same reason `D1.4` built the `SmsProvider` seam in
+the first place: "one config switch to a real provider later" is still true, and a paid SMS
+channel remains a config switch away rather than a rewrite, should the product ever want a phone
+option beside email rather than instead of it.
+
+**Tests.** `tests/test_invite_repo.py` covers both invite kinds (mint, expiry, reusable-never-
+consumed, single-use-consumed, revoke ownership, rotate, role mismatch, and that `preview` never
+leaks the child's email or id); `tests/test_auth_router.py` covers the three new parent routes
+(happy path, wrong code, expired proof token, an email that already has an account, a dead
+invite, and the cooldown); the deleted OTP route tests are removed with the routes. The phone
+seam's own tests (`AuthService.request_otp`/`verify_otp`) are untouched — they still exercise a
+real code path, just not one any router calls.
+
 ### D7.14 — The review queue takes a second source rather than a fake student
 
 **What.** `review_queue` now hangs a row off **either** an `attempts.id` or a `teacher_papers.id`

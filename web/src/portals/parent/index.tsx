@@ -284,8 +284,12 @@ function Header() {
             type="button"
             aria-label="Sign out"
             onClick={() => {
+              // A parent is an ordinary email/password account since the
+              // parent-invites design superseded D3.11 — `/login`, not the
+              // retired top-level phone sign-in route, matching
+              // `loginPathForRole`'s own current answer.
               logout()
-              navigate("/login/parent", { replace: true })
+              navigate("/login", { replace: true })
             }}
             className="flex cursor-pointer items-center gap-1.5 rounded-md border-0 bg-transparent px-2 py-1.5 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >

@@ -8,7 +8,7 @@ import {
 import { request, streamActivity, uploadWithProgress, type UploadProgress } from "@/lib/api"
 import { CLASSES_KEY } from "@/lib/hooks/useLeaderboardApi"
 import type { JoinClassResponse } from "@/lib/leaderboardTypes"
-import type { LinkedParent, ParentLinkList } from "@/lib/parentTypes"
+import type { ParentInviteCode, ParentInviteLink, ParentInvites, ParentLinkList } from "@/lib/parentTypes"
 import type {
   CorrectRequest,
   Overview,
@@ -66,33 +66,29 @@ export function useResult(paperId: string): UseQueryResult<Result, Error> {
  */
 
 /*
- * Parent links (D3.11). The student is the initiator on both ends — a link row
- * IS the grant, there is no pending state and no approval step — so all three
- * of these live on the student side. The parent portal has no mutation for
- * them and must not grow one.
+ * Parent links and invites. The student is the initiator on both ends — a
+ * link row IS the grant, there is no pending state and no approval step — so
+ * every one of these lives on the student side. The parent portal has no
+ * mutation for any of them and must not grow one.
  *
  * The DTO mirrors are in `lib/parentTypes.ts` beside the parent-facing ones:
  * these are the two ends of one relationship, not two unrelated features.
+ *
+ * The mutation D3.11's "add a parent by phone number" used is gone: the
+ * parent-invites design (superseding D3.11, docs/superpowers/specs/2026-09-
+ * 08-parent-invites-design.md) replaced "the student types a phone number
+ * for an account that already exists" with "the student issues an invite,
+ * the parent redeems it" — a link is now only ever created by
+ * `InviteService.redeem`'s own parent branch, server-side, never by a
+ * student-supplied identifier reaching this file directly. `useParentLinks`/
+ * `useUnlinkParent` are unaffected: reading and revoking an existing link is
+ * the same operation regardless of how the link was made.
  */
 
 export function useParentLinks(): UseQueryResult<ParentLinkList, Error> {
   return useQuery({
     queryKey: ["student", "parent-links"],
     queryFn: () => request<ParentLinkList>("/student/parent-links"),
-  })
-}
-
-export function useLinkParent(): UseMutationResult<LinkedParent, Error, { phone: string }> {
-  const queryClient = useQueryClient()
-  return useMutation({
-    mutationFn: ({ phone }: { phone: string }) =>
-      request<LinkedParent>("/student/parent-links", {
-        method: "POST",
-        body: JSON.stringify({ phone }),
-      }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["student", "parent-links"] })
-    },
   })
 }
 
@@ -103,6 +99,66 @@ export function useUnlinkParent(): UseMutationResult<void, Error, { parentId: st
       request<void>(`/student/parent-links/${parentId}`, { method: "DELETE" }),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: ["student", "parent-links"] })
+    },
+  })
+}
+
+/**
+ * `GET /api/student/parent-invites` — the reusable code and the pending
+ * one-time links in one request, exactly what `Parents.tsx` needs to render
+ * both cards without a second round trip.
+ */
+export function useParentInvites(): UseQueryResult<ParentInvites, Error> {
+  return useQuery({
+    queryKey: ["student", "parent-invites"],
+    queryFn: () => request<ParentInvites>("/student/parent-invites"),
+  })
+}
+
+/**
+ * `POST /api/student/parent-invites` — mint a new single-use, 7-day link.
+ * Every mint produces a genuinely new, independent link (no dedup, no
+ * reuse-the-last-one concept, the same shape `useMintClassInviteCode`
+ * documents for the teacher side's own one-time invite), so a student
+ * minting several links for several devices just calls this again.
+ */
+export function useMintParentLink(): UseMutationResult<ParentInviteLink, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () => request<ParentInviteLink>("/student/parent-invites", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
+    },
+  })
+}
+
+/** `DELETE /api/student/parent-invites/{code}` — revoke a pending one-time
+ * link before it is used. 404s (already spent, already revoked, or never the
+ * caller's own) if `code` does not name a live link owned by this student —
+ * `InviteService.revoke_parent_invite`'s own binding rule, so a student
+ * learns nothing about another student's codes from this route's errors. */
+export function useRevokeParentLink(): UseMutationResult<void, Error, { code: string }> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: ({ code }: { code: string }) =>
+      request<void>(`/student/parent-invites/${encodeURIComponent(code)}`, { method: "DELETE" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
+    },
+  })
+}
+
+/** `POST /api/student/parent-invites/code/rotate` — replace the reusable
+ * code with a fresh one, invalidating whatever the old one was shared with.
+ * Unlike the one-time links, there is only ever one reusable code per
+ * student, so rotating needs no `code` argument to say which one. */
+export function useRotateParentCode(): UseMutationResult<ParentInviteCode, Error, void> {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: () =>
+      request<ParentInviteCode>("/student/parent-invites/code/rotate", { method: "POST" }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["student", "parent-invites"] })
     },
   })
 }

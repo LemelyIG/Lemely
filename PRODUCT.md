@@ -25,7 +25,7 @@ Five confirmed roles. Every surface is designed for the role it actually serves 
 
 - **Students (IGCSE / O-Level / AS / A-Level, launching in Egypt).** Photograph or upload an attempted past paper, get it marked, find out what to study next. Personal context — phone or laptop, often at home, often anxious about the result. A student may hold a school seat, a personal subscription, or both.
 - **Teachers / tutors** marking CAIE papers at their desk. Independent, employed by a school, or both. They need speed and defensible accuracy: parse a mark scheme, correct a paper, see where a class struggled, override a marking the system got wrong. Desktop, focus mode, task-oriented.
-- **Parents** checking on a linked child. Phone-OTP login, read-only performance and weakness views, notification preferences. Lowest tolerance for jargon, least frequent visits, mobile-first.
+- **Parents** checking on a linked child, linked when the child shares an invite code or link. Email + password account, read-only performance and weakness views, notification preferences. Lowest tolerance for jargon, least frequent visits, mobile-first.
 - **School admins** managing a school's seats, invited student accounts, and school-wide announcements.
 - **Platform admins** activating accounts (activation is a manual toggle while payments are out of scope) and holding cross-tenant visibility.
 

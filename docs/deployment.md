@@ -389,7 +389,7 @@ with a "now" column added:
 | Teacher paper store | `routers/teacher.py::_PaperStore` | In-process dict — a paper was visible only on the instance that received it, and lost on restart. | A `teacher_papers` Postgres row (migration `0024`). Every state change the grading worker makes is written to the row, so any instance's `GET /papers/{id}` sees it — including one that never ran the job. |
 | Grading pool + lock | `routers/teacher.py::_grading_pool` | Pinned to one worker per instance because the event bus had no per-run scoping — a regrade landing on another instance could start a second run of the same paper. | Still one worker per instance, for a different reason: run state now lives on the row, not the pool, so raising the worker count is a one-line change later (DS13). A `processing` row silent past `LEMELY_GRADING__STALE_RUN_AFTER_SECONDS` (default 900s) is reclaimable by the next regrade — its instance died mid-run. |
 | Job registry | `lemely/web/jobs.py` | An in-process `dict` behind a lock. Zero route callers — nothing ever read it. | **Deleted.** It backed nothing: `POST /student/correct` has always streamed over the event bus on the one HTTP connection the correction runs on, with no separate reconnect to lose. |
-| Parent phone-OTP challenge store | `lemely/auth/otp.py::OtpStore` | In-memory — issued on one replica, verified on another, verification fails. | Postgres-backed (`DbOtpStore`, migration `0025`) — a code minted on one instance verifies on any other. Email verification's own 6-digit code (alongside the existing link) shares the same table, keyed by channel. |
+| OTP challenge store | `lemely/auth/otp.py::OtpStore` | In-memory — issued on one replica, verified on another, verification fails. | Postgres-backed (`DbOtpStore`, migration `0025`) — a code minted on one instance verifies on any other, keyed by channel. Parent sign-up and email verification both key off `channel=email`, which is the live path since `BUILD/DECISIONS.md` D-2026-09-08; the phone channel still shares this table but backs a kept-but-unused seam that no route reaches. |
 | Auth cooldown store | `lemely/auth/cooldown.py::CooldownStore` | In-memory — the only abuse defence on public auth routes weakened by a factor of N instances. | Postgres-backed (`DbCooldownStore`, migration `0026`). |
 | Event bus | `lemely/runtime/events.py::bus` | Unscoped — two concurrent SSE streams on the same instance received each other's frames, and the first stream to finish ended both. This, not instance count, is why the grading pool above was pinned to one worker. | Per-run channels via a context variable. Still an in-process bus, not a cross-instance one — irrelevant to `/student/correct` (one HTTP connection, start to finish, never reconnected) and the reason the grading pool stays one worker per instance above. |
 | Scheme corpus | `output_dir/schemes` | A directory scan, per instance. | The existing `papers`/`mark_schemes` Postgres tables; the PDF itself lives in the storage bucket next to the scan. |
@@ -440,7 +440,9 @@ rows and created zero accounts while logging a cheerful `db.seed.done`).
 
 `make seed` now inserts the three supported subjects and creates one account per
 role, with **fixed, published credentials** — `<role>@demo.lemely.local` /
-`Demo-Lemely-1!`, plus a phone-OTP parent on `+10000000000`. The full table is in
+`Demo-Lemely-1!`, including the parent, created through the same email signup
+path as the other demo roles and linked directly to the demo student — no
+invite is minted or redeemed for it. The full table is in
 [`README.md`](../README.md).
 
 That is the deployment-relevant part: **these are documented credentials, so seeding

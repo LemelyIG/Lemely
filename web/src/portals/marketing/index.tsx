@@ -110,20 +110,23 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
             </Link>
             {/*
               Parents get their own entry in the header rather than a line in
-              the footer. G-05's framing is that the phone-code route is "the
-              lowest-friction entry in the product", and a parent who has been
-              sent a link by a teacher arrives here, not at /login, where every
-              field is a password field they were never given.
+              the footer. A parent account only ever comes from a child-issued
+              invite (the parent-invites design, superseding D3.11), never
+              from `/login` where every field asks for a credential they do
+              not have yet, so this points at `/join` — the screen built for
+              "I have a code" — exactly like `Login.tsx`'s own parent link and
+              `SignupRoleSelect.tsx`'s parent card.
 
               It was `hidden sm:inline-flex` in the first draft, which hid it
               below 640px — on the phone, which is where a parent who was sent
-              a link opens it, and the route whose whole selling point is that
-              a phone number is the entire login. The same reasoning the brief
-              applies to students ("students live on phones") applies harder
-              here. Two short labels fit at 320px; both stay.
+              a link opens it, and where G-05's original framing ("the
+              lowest-friction entry in the product") still holds even though
+              the login mechanism behind it changed. The same reasoning the
+              brief applies to students ("students live on phones") applies
+              harder here. Two short labels fit at 320px; both stay.
             */}
             <Link
-              to="/login/parent"
+              to="/join"
               className="text-label rounded-md px-3 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
               Parents
@@ -189,10 +192,10 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
               Sign in
             </Link>
             <Link
-              to="/login/parent"
+              to="/join"
               className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              Parent sign in
+              Parent access
             </Link>
           </div>
         </div>

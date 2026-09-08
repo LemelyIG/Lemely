@@ -50,7 +50,16 @@ export interface SeedContract {
   schoolWithSeats: { schoolId: string; name: string; seatQuota: number; admin: SeedAccount }
   class: { classId: string; name: string; joinCode: string }
   students: {
-    declining: SeedStudent
+    /**
+     * Carries `parentInviteCode`: this student's reusable parent code
+     * (`InviteService.get_or_create_parent_code`), minted but never
+     * redeemed by the seed itself — `parent-journey.spec.ts` drives the real
+     * `/join/:code` three-step signup flow through it. `parent` below is a
+     * SEPARATE account, already linked to this same student through a
+     * direct `ParentLinkService.link_in_session` call (no invite redeemed),
+     * for journeys that need a returning, already-linked parent instead.
+     */
+    declining: SeedStudent & { parentInviteCode: string }
     inactive: SeedStudent
     control: SeedStudent
     correctedPaper: SeedStudent
@@ -76,7 +85,7 @@ export interface SeedContract {
       className: string
     }
   }
-  parent: { userId: string; phone: string; accessToken: string; linkedStudent: string }
+  parent: SeedAccount & { linkedStudent: string }
   reviewItem: {
     itemId: string
     attemptId: string
@@ -99,7 +108,7 @@ export interface SeedContract {
   /** A teacher with no classes and no students — the empty-state account. */
   emptyTeacher: SeedAccount
   /** Unlike `parent`, this one carries **no** `linkedStudent`. */
-  emptyParent: { userId: string; phone: string; accessToken: string }
+  emptyParent: SeedAccount
   placement: {
     subjectCode: string
     paperNumber: number

@@ -45,8 +45,10 @@ import {
  * **`sign-in` resolves through `loginPathForRole`, not a bare `/login`**
  * (SHOULD-FIX 3, PR 2 adversarial review). A parent whose session expired
  * used to land on the email+password form here regardless — no field on it
- * is one they can fill in, since parents authenticate by phone OTP at
- * `/login/parent`. With a live session, the role to resolve is
+ * was one they could fill in, back when parents authenticated by phone at a
+ * separate top-level route (retired by the parent-invites design,
+ * superseding D3.11; `loginPathForRole` sends every role, parent included,
+ * to `/login` now). With a live session, the role to resolve is
  * `session.role`; the one variant this action fires from with `session ===
  * null` is `session-ended`, where `SessionEnded` passes `expiredRole` down
  * from `takeSessionExpired()` — the role of the session that just died,
@@ -135,8 +137,8 @@ function renderAction(
     )
   }
   if (action === "sign-in") {
-    // `ctx.signIn` is already `loginPathForRole`'s answer (`/login` or
-    // `/login/parent`) — `withNext` only has to append `?next=`, the same
+    // `ctx.signIn` is already `loginPathForRole`'s answer (`/login` for
+    // every role today) — `withNext` only has to append `?next=`, the same
     // allowlisted append every other `?next=` carrier in this app uses
     // (`RequireAuth`, `SessionEnded`), rather than this one control building
     // its own query string by hand as it used to.

@@ -26,8 +26,16 @@ function sourceOf(relative: string): string {
 }
 
 describe("loginPathForRole", () => {
-  it("sends a parent to the phone OTP form — parents have no password (G-05)", () => {
-    expect(loginPathForRole("parent")).toBe("/login/parent")
+  /**
+   * A parent used to be the one exception here, routed to the phone-OTP form
+   * at `/login/parent` (the old G-05). The parent-invites design (superseding
+   * D3.11) retired that route and made a parent an ordinary email/password
+   * account, so this is no longer a special case — pinned here so a future
+   * edit that reintroduces a parent-specific branch has to break this test on
+   * purpose rather than by accident.
+   */
+  it("sends a parent to the email+password form, like every other role (parent-invites design)", () => {
+    expect(loginPathForRole("parent")).toBe("/login")
   })
 
   it.each(["student", "teacher", "school_admin", "platform_admin", "some-future-role"])(
@@ -72,30 +80,29 @@ describe("RequireAuth.tsx — the three-way redirect shape (source-text gate, no
   })
 })
 
-describe("Login.tsx / ParentLogin.tsx — next is read only through safeNextPath", () => {
-  it.each([
-    ["src/portals/auth/Login.tsx", "Login"],
-    ["src/portals/auth/ParentLogin.tsx", "ParentLogin"],
-  ])("%s reads next through safeNextPath(searchParams.get(\"next\")), never a raw searchParams.get", (relative) => {
-    const stripped = stripComments(sourceOf(relative))
+describe("Login.tsx — next is read only through safeNextPath", () => {
+  // `ParentLogin.tsx` used to be this describe block's second file; it was
+  // deleted by the parent-invites design (superseding D3.11), and
+  // `SignupParent.tsx` — its replacement — reads `?code=`, not `?next=`, so
+  // it has nothing for this specific guard to check.
+  it.each([["src/portals/auth/Login.tsx", "Login"]])(
+    "%s reads next through safeNextPath(searchParams.get(\"next\")), never a raw searchParams.get",
+    (relative) => {
+      const stripped = stripComments(sourceOf(relative))
 
-    expect(stripped).toContain('safeNextPath(searchParams.get("next"))')
+      expect(stripped).toContain('safeNextPath(searchParams.get("next"))')
 
-    // Never handed a raw, un-validated `searchParams.get("next")` straight
-    // to `navigate()` or a JSX `to=`/`href=` prop — every use of `next` past
-    // this point in either file must be the already-validated local
-    // binding, not a second, un-sanitised read of the same query param.
-    expect(stripped).not.toMatch(/navigate\(\s*searchParams\.get\("next"\)/)
-    expect(stripped).not.toMatch(/\bto=\{?\s*searchParams\.get\("next"\)/)
-  })
+      // Never handed a raw, un-validated `searchParams.get("next")` straight
+      // to `navigate()` or a JSX `to=`/`href=` prop — every use of `next` past
+      // this point must be the already-validated local binding, not a second,
+      // un-sanitised read of the same query param.
+      expect(stripped).not.toMatch(/navigate\(\s*searchParams\.get\("next"\)/)
+      expect(stripped).not.toMatch(/\bto=\{?\s*searchParams\.get\("next"\)/)
+    },
+  )
 
   it("Login.tsx's success handler prefers next over the role-derived portal home", () => {
     const stripped = stripComments(sourceOf("src/portals/auth/Login.tsx"))
-    expect(stripped).toContain("navigate(next ?? portalPathForRole(result.role)")
-  })
-
-  it("ParentLogin.tsx's verify success handler prefers next over the role-derived portal home", () => {
-    const stripped = stripComments(sourceOf("src/portals/auth/ParentLogin.tsx"))
     expect(stripped).toContain("navigate(next ?? portalPathForRole(result.role)")
   })
 })

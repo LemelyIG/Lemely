@@ -1003,10 +1003,15 @@ def get_invite_service() -> InviteService:
     independently-derived enrolment path. Unlike :func:`get_seat_service`,
     this needs no account-creation seam: redemption always attaches an
     *existing* account (its route is authenticated), never creates one.
-    Tests override this dependency with a service built on a throwaway
-    Postgres database.
+    It is also wired with the same :class:`~lemely.db.parent_repo.ParentLinkService`
+    singleton :func:`get_parent_link_service` returns, since a parent
+    invite's redemption links an existing parent account to a child rather
+    than creating either one. Tests override this dependency with a service
+    built on a throwaway Postgres database.
     """
-    return InviteService(get_sessionmaker(get_settings()), get_class_service())
+    return InviteService(
+        get_sessionmaker(get_settings()), get_class_service(), get_parent_link_service()
+    )
 
 
 @dataclass(frozen=True, slots=True)

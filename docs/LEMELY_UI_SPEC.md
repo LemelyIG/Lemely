@@ -38,8 +38,9 @@ Physics (0625). Cambridge only. English-language interface only.
 | **Platform admin** (internal) | Activate accounts, watch the marking pipeline | Daily | Laptop |
 
 A student can hold a school-issued seat and a personal subscription at the same
-time. A teacher can be independent, attached to a school, or both. Parents log in
-with a phone number, not an email — many will not have a habitual email address.
+time. A teacher can be independent, attached to a school, or both. A parent gets
+an identity only through a code or link their child shares, then signs in with
+an email address and password like every other role.
 
 ## 1.3 The core loop, in the student's words
 
@@ -203,10 +204,10 @@ who is also a parent).
 | G-02 | Sign up — role selection | Public |
 | G-03 | Sign up — student/teacher details | Public |
 | G-04 | Log in (email) | Public |
-| G-05 | Parent log in (phone + OTP) | Parent |
+| G-05 | Parent join and sign in | Parent |
 | G-06 | Password reset | Public |
 | G-07 | Email verification pending | Public |
-| G-08 | Join with invite code | Student/Teacher |
+| G-08 | Join with invite code | Student/Teacher/Parent |
 | G-09 | Install app prompt (PWA) | All |
 | G-10 | Device limit reached | All |
 | G-11 | Account & devices settings | All |
@@ -284,18 +285,19 @@ on one side, the marked breakdown on the other. Supporting sections: how it
 works in three steps; who it's for (student / parent / teacher tabs); subjects
 covered (0580, 0606, 0625, stated plainly with "more coming"); pricing/plans;
 FAQ. Persistent header with "Log in" and "Get started."
-**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-05.
+**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-08 (parents
+have no independent sign-up; they need a code or link from their child).
 **States.** None special.
-**Exits.** G-02, G-04, G-05.
+**Exits.** G-02, G-04, G-08.
 
 ### G-02 · Sign up — role selection
 **Purpose.** Branch by role before asking for anything.
 **Contains.** Three large choices: *I'm a student*, *I'm a parent*, *I'm a
 teacher or tutor*. Each with one line of what they'll get. Secondary link: "I
 have an invite code from my school" → G-08.
-**Interactions.** Student/teacher → G-03. Parent → G-05 (parents authenticate by
-phone, so they skip the email form).
-**Exits.** G-03, G-05, G-08, G-04.
+**Interactions.** Student/teacher → G-03. Parent → G-08 (parents have no
+independent sign-up; they need a code or link from their child).
+**Exits.** G-03, G-08, G-04.
 
 ### G-03 · Sign up — details
 **Contains.** Name, email, password (with strength feedback and a show/hide
@@ -319,25 +321,34 @@ log in; submitting state on the button.
 
 ### G-04 · Log in (email)
 **Contains.** Email, password, "Stay signed in," forgot-password link, "Sign up"
-link, and a distinct "Parent? Sign in with your phone number" link.
+link, and a "Parent without an account? You'll need an invite from your child"
+link.
 **States.** Wrong credentials (do not reveal which field is wrong); locked or
 unverified account with a resend option; device-limit outcome → G-10.
-**Exits.** Role home (S-06 / T-01 / P-01 / K-01 / X-01), G-05, G-06, G-02, G-10.
+**Exits.** Role home (S-06 / T-01 / P-01 / K-01 / X-01), G-08, G-06, G-02, G-10.
 
-### G-05 · Parent log in (phone + OTP)
-**Purpose.** The lowest-friction entry in the product; many parents are not
-confident users.
-**Contains.** Country selector defaulting to Egypt (+20), phone number field,
-"Send code." Second step: six-digit code entry with auto-advance and paste
-support, a resend timer, and "Change number."
-**Interactions.** Code auto-submits when complete. In development the code is
-logged rather than sent by SMS — design a clearly-marked developer affordance
-that shows the code on screen in non-production environments, so this is
-testable without a real SMS provider.
-**States.** Invalid number; wrong code; expired code; resend cooldown; no
-account found for this number (offer: "Ask your child's school to link you," or
-route to a child-linking flow).
-**Exits.** P-01, G-06.
+### G-05 · Parent join and sign in
+**Purpose.** A parent gets an identity only through a child's invite; there is
+no independent parent sign-up. Returning parents with an account already sign
+in at G-04 like everyone else.
+**Contains.** Reached from a code or link a child shares at G-08 (`/join/:code`).
+Three steps: email address and display name; a six-digit code sent to that
+email, entered with a dedicated code-entry control (paste, auto-advance,
+auto-submit); then a password (with strength feedback) and the
+terms-acceptance checkbox.
+**Interactions.** Code auto-submits when complete. A 30-second, display-only
+resend cooldown; "Change email" returns to the first step. A visitor who
+already has an account sees "Already have an account? Sign in," which goes to
+G-04 and returns to the invite afterward. Whether the code is also shown on
+screen, rather than only sent by mail, is gated on the mail provider's own
+`delivers_out_of_band` capability, not on an environment string (the same
+D3.16 rule the G-07 note below applies) — with no configured provider, a
+clearly-marked developer affordance shows it, so the flow is testable without
+a real mail provider.
+**States.** Field errors; wrong or expired code; resend cooldown; email already
+registered (routes to the sign-in link above); invite code missing, expired, or
+already revoked — routes to G-08's plain `/join` entry instead of a bare error.
+**Exits.** P-01, G-04, G-08.
 
 ### G-06 · Password reset
 Standard: request by email → confirmation screen → reset form from link →
@@ -358,19 +369,29 @@ into a limited preview of the app rather than a hard wall.
 > wired unconditionally), so a heading claiming mail was sent or should be
 > checked would be false in every deployment of this code as written. The
 > shipped screen states plainly what verification unlocks and offers the
-> developer-only link affordance instead, mirroring how G-05 already handles
-> the SMS mock's own equivalent gap.
+> developer-only link affordance instead, the same posture G-05's own parent
+> signup code screen takes for its own mail-delivery gap — both gated on
+> `delivers_out_of_band` rather than an environment string (`BUILD/DECISIONS.md`
+> D3.16).
 
 **Exits.** Onboarding (S-01) once verified.
 
 ### G-08 · Join with invite code
-**Purpose.** A school-issued seat or a teacher's class link.
+**Purpose.** A school-issued seat, a teacher's class link, or a child's invite
+for a parent — one box for every invite kind.
 **Contains.** Code field (or arrives pre-filled from a deep link), a preview of
 what they're joining ("Al-Nasr Language School — Mr Hassan's Physics 0625
-class"), and a confirm action. If the person has no account yet, this flows into
-G-03 with the code retained.
-**States.** Invalid code, expired code, seat quota full (explain and tell them
-to contact their school).
+class", or "<child's name> invited you to follow their progress on Lemely" for
+a parent invite), and a confirm action. A signed-out visitor holding a
+student/teacher code flows into G-03 with the code retained; one holding a
+parent invite flows into G-05 instead. Either can sign in first instead
+("Already have an account? Sign in" → G-04) and return here afterward.
+**Interactions.** A signed-in parent redeeming a second child's invite lands
+directly on that child's overview (P-02), no fresh signup. A signed-in student
+or teacher holding a parent invite sees a refusal line instead of a redeem
+button — a parent invite names one specific role and is not transferable.
+**States.** Invalid code, expired code, revoked code (the child rotated or
+deleted it), seat quota full (explain and tell them to contact their school).
 
 > **Shipped divergence (`BUILD/DECISIONS.md` D7.3; see also `BUILD/BLOCKERS.md`
 > B9).** The **"seat quota full" state cannot occur on this screen**, by
@@ -385,7 +406,7 @@ to contact their school).
 > re-check is ever added at redemption — it is inert against the live backend
 > today, and that is expected, not a bug.
 
-**Exits.** G-03, S-01, S-06.
+**Exits.** G-03, G-05, G-04, S-01, S-06, P-02.
 
 ### G-09 · Install app prompt
 **Purpose.** Get the PWA onto the home screen, because camera capture and push
@@ -1085,7 +1106,8 @@ items without touching the mouse.
 ## 5.5 Parent
 
 ```
-G-05 Phone + OTP → P-01 Children
+Child's invite (code or link) → G-08 Join with code → G-05 Parent join → P-01 Children
+G-04 Login (returning parent) → P-01 Children
 P-01 → P-02 Child overview → P-03 Subject detail → P-04 Weaknesses
 Push notification (results ready / at-risk alert) → deep link → P-02
 P-01 → G-12 Notification preferences

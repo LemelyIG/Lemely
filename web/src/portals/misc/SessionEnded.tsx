@@ -27,8 +27,9 @@ import { peekExpiredRole, takeSessionExpired } from "@/lib/auth/storage"
  * exactly as untrusted as the `?next=` `Login.tsx` reads directly. `safeNextPath`
  * is the same same-origin-path allowlist either way (`lib/nextPath.ts`).
  * `FullPageState`'s own `sign-in` action then carries `returnTo` on to
- * `/login?next=…` or `/login/parent?next=…`, so the reader lands back where
- * they started only after they have actually signed in again.
+ * `/login?next=…` (`loginPathForRole`'s one answer today), so the reader
+ * lands back where they started only after they have actually signed in
+ * again.
  *
  * SHOULD-FIX 3/4 (adversarial review, PR 2): this screen used to leave the
  * expiry flag `RequireAuth` set entirely to `Login.tsx` to consume, which

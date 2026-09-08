@@ -33,6 +33,7 @@ from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import InviteService
 from lemely.db.models import School, SchoolClass, SchoolMembership, Seat, User
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
+from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web.app import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
@@ -120,7 +121,7 @@ def _seed_class(
 def _app(sm: sessionmaker[Session]) -> FastAPI:
     application = create_app()
     application.dependency_overrides[get_invite_service] = lambda: InviteService(
-        sm, ClassService(sm)
+        sm, ClassService(sm), ParentLinkService(sm)
     )
     return application
 
@@ -148,7 +149,9 @@ def _client(
 def test_preview_route_requires_no_authentication(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
 
     client = _client(pg_sessionmaker, role=None)
@@ -172,7 +175,7 @@ def test_preview_route_response_carries_no_extra_fields(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """``ApiModel``'s ``extra=\"forbid\"`` guarantees the DTO's shape; this
-    pins that shape to exactly the four disclosure-safe fields."""
+    pins that shape to exactly the five disclosure-safe fields."""
     teacher = _seed_user(pg_sessionmaker, Role.teacher, display_name="Mx Teacher")
     class_id = _seed_class(pg_sessionmaker, teacher_id=teacher)
     with pg_sessionmaker() as session:
@@ -182,7 +185,7 @@ def test_preview_route_response_carries_no_extra_fields(
     res = client.get(f"/api/invites/{join_code}")
 
     assert res.status_code == 200
-    assert set(res.json()) == {"role", "schoolName", "className", "teacherName"}
+    assert set(res.json()) == {"role", "schoolName", "className", "teacherName", "childName"}
 
 
 # ── POST /api/invites/{code}/redeem ─────────────────────────────────────────
@@ -199,7 +202,9 @@ def test_redeem_route_requires_authentication(pg_sessionmaker: sessionmaker[Sess
 def test_redeem_route_assigns_the_seat(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
     student = _seed_user(pg_sessionmaker, Role.student)
 
@@ -224,12 +229,111 @@ def test_redeem_route_of_an_unknown_code_is_404(pg_sessionmaker: sessionmaker[Se
     assert res.status_code == 404
 
 
+# ── Parent invites (spec §4): preview + redeem + role mismatch ─────────────
+
+
+def test_preview_route_of_a_parent_invite_shows_the_child_name(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=None)
+    res = client.get(f"/api/invites/{invite.code}")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["role"] == "parent"
+    assert body["childName"] == "Maya"
+    assert body["schoolName"] is None
+    assert body["className"] is None
+    assert body["teacherName"] is None
+
+
+def test_redeem_route_of_a_parent_invite_links_the_parent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    parent_link_service = ParentLinkService(pg_sessionmaker)
+    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker), parent_link_service)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=Role.parent, user_id=parent)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["role"] == "parent"
+    assert body["childId"] == str(student)
+    assert body["schoolId"] is None
+    assert body["classId"] is None
+    assert [row.child_id for row in parent_link_service.linked_children(parent)] == [student]
+
+
+def test_redeem_route_of_a_parent_invite_by_a_non_parent_is_403(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=Role.student, user_id=other_student)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 403
+    _assert_role_mismatch_detail_is_non_revealing(res.json()["detail"], invite.code)
+
+
+def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_seat_invite(admin, school)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+
+    client = _client(pg_sessionmaker, role=Role.parent, user_id=parent)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 403
+    _assert_role_mismatch_detail_is_non_revealing(res.json()["detail"], invite.code)
+
+
+def _assert_role_mismatch_detail_is_non_revealing(detail: str, code: str) -> None:
+    """A role-mismatch 403 must not be an enumeration oracle.
+
+    ``InviteRoleMismatchError.__str__`` names the code and states which kind
+    of invite it is (e.g. "Invite 'ABC123' is a parent invite; caller role is
+    Role.student") — a log line, not a response. Echoing it verbatim would
+    let an authenticated caller distinguish "this code exists and is a
+    parent invite" (403) from "this code does not exist" (404) by probing
+    arbitrary codes, even though they can never redeem either. The route
+    must answer with a fixed string that names neither the code nor which
+    invite kind it is.
+    """
+    assert code not in detail
+    assert "parent" not in detail.lower()
+    assert detail == "This invite is not for your account type."
+
+
 def test_redeem_route_already_redeemed_by_another_is_409(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=1, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     invite = service.mint_seat_invite(admin, school)
     first, second = (
         _seed_user(pg_sessionmaker, Role.student),
@@ -280,7 +384,9 @@ def test_mint_seat_invite_code_reserves_a_seat(pg_sessionmaker: sessionmaker[Ses
 def test_mint_seat_invite_code_at_quota_is_409(pg_sessionmaker: sessionmaker[Session]) -> None:
     admin = _seed_user(pg_sessionmaker, Role.school_admin)
     school = _seed_school(pg_sessionmaker, quota=1, admin_id=admin)
-    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker))
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
     service.mint_seat_invite(admin, school)
 
     client = _client(pg_sessionmaker, role=Role.school_admin, user_id=admin)

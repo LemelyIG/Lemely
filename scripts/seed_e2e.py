@@ -39,12 +39,19 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
 * a standalone **student** (``correctedPaper``, not enrolled in the class)
   with one persisted past-paper attempt, so grade/percentage surfaces on the
   student portal are non-empty without entangling the at-risk assertions.
-* a **parent**, OTP-verified and linked to the ``declining`` student. Linking
-  is student-initiated by phone (D3.11): the parent OTP-logs-in first (which
-  auto-creates their ``role=parent`` user, per
-  :meth:`~lemely.auth.service.AuthService.verify_otp`), then
-  :meth:`~lemely.db.parent_repo.ParentLinkService.link` is called exactly as
-  the student-facing router calls it.
+* a **parent**, an ordinary email/password account
+  (:meth:`~lemely.auth.service.AuthService.signup` with ``role=Role.parent``,
+  ``email_verified=True`` — a real invite redemption verifies the parent's
+  address before the account exists at all, spec §2, so this seed's account
+  matches that shape rather than the unverified default every other role
+  here signs up with) linked to the ``declining`` student through
+  :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` — the same
+  method a redeemed invite's server call uses (spec §3), called here inside
+  this script's own single-purpose transaction since there is no invite
+  redemption in the loop to piggyback on. The ``declining`` student's reusable
+  parent code (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
+  is minted and emitted too, so ``web/e2e/parent-journey.spec.ts`` can drive
+  the real join-by-code flow rather than starting from an already-linked pair.
 * a **school_admin**, minted directly via :meth:`AuthService.signup` (self-
   service signup is student-only; teacher/school_admin only ever come from a
   direct service call — this is what P3.7 chunk d did).
@@ -66,9 +73,8 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   calls" below.
 * (P3.10 chunk e1) two **genuinely empty** accounts for the ``empty``-state
   screenshot captures: a second teacher with no classes at all, and a second
-  parent (its own OTP challenge, on a phone namespaced to avoid the linked
-  parent's own 30s cooldown — see :func:`build_empty_parent_phone`) never
-  linked to any child.
+  parent (its own email/password signup, exactly like the linked parent
+  above) never linked to any child.
 
 Every scenario/corrected-paper attempt is persisted as ``origin=past_paper``
 (D3.9): every grade/percentage/paper claim in this codebase filters on
@@ -90,18 +96,10 @@ request reaches the network. Verified against the live stack's real cost
 ledger before/after a seed run, not merely asserted (see the P3.10 chunk e1
 report).
 
-Idempotent-friendly: every email and the parent phone number are namespaced
-under a per-run ``runTag`` (default: 12 random hex chars), so repeated runs
-never collide. Reruns do not delete previous runs' rows — there is no
-teardown here, by design (this is a seed script, not a fixture cleaner).
-
-The OTP resend cooldown (``otp_min_resend_seconds``, default 30s) is
-per-phone. This script requests exactly one challenge per phone (the linked
-parent's, and separately the empty parent's — see
-:func:`build_empty_parent_phone`) and returns the access token that verifying
-it already produced — a consumer (Playwright, ``audit.mjs``) must reuse that
-token rather than starting a second OTP challenge for the same phone, or it
-will hit the cooldown.
+Idempotent-friendly: every email (including both parents') is namespaced under
+a per-run ``runTag`` (default: 12 random hex chars), so repeated runs never
+collide. Reruns do not delete previous runs' rows — there is no teardown
+here, by design (this is a seed script, not a fixture cleaner).
 
 Output contract
 ----------------
@@ -120,7 +118,8 @@ path::
       "students": {
         "declining": {"userId": "...", "email": "...", "password": "...",
                       "displayName": "...", "accessToken": "...",
-                      "expectedAtRiskReasons": ["declining_trend"]},
+                      "expectedAtRiskReasons": ["declining_trend"],
+                      "parentInviteCode": "ABC123"},
         "inactive":  {..., "expectedAtRiskReasons": ["inactive"]},
         "control":   {..., "expectedAtRiskReasons": []},
         "correctedPaper": {..., "expectedAtRiskReasons": [],
@@ -130,15 +129,16 @@ path::
                         "positionsBelow": 3,
                         "classId": "...", "className": "..."}
       },
-      "parent": {"userId": "...", "phone": "+20...", "accessToken": "...",
-                 "linkedStudent": "declining"},
+      "parent": {"userId": "...", "email": "...", "password": "...",
+                 "accessToken": "...", "linkedStudent": "declining"},
       "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
                      "studentKey": "inactive"},
       "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
                         "displayName": "...", "accessToken": "..."},
-      "emptyParent": {"userId": "...", "phone": "+20...", "accessToken": "..."},
+      "emptyParent": {"userId": "...", "email": "...", "password": "...",
+                      "accessToken": "..."},
       "placement": {
         "subjectCode": "0625",
         "paperNumber": 2,
@@ -493,9 +493,10 @@ def build_placement_paper_stem(run_tag: str) -> str:
 
     **Why this is a function of ``run_tag`` rather than a constant.** A *fixed*
     stem would put every run's rows on one ``papers`` row; hashing ``run_tag``
-    into the session-year digits (mirrors :func:`build_phone`'s per-character
-    hashing) usually mints a distinct one per run. The resulting year is
-    filename shape only, never a claim about a real CAIE sitting — see
+    into the session-year digits (each character's ordinal mod 10, the same
+    technique the retired phone-based fixtures used) usually mints a distinct
+    one per run. The resulting year is filename shape only, never a claim
+    about a real CAIE sitting — see
     :func:`build_placement_bank_questions` for why the question text itself is
     honestly synthetic regardless.
 
@@ -612,20 +613,6 @@ def build_email(role_label: str, run_tag: str) -> str:
 def build_password(run_tag: str) -> str:
     """A deterministic, per-run-unique password (not a literal secret)."""
     return f"Seed-{run_tag}-Aa1!"
-
-
-def build_phone(run_tag: str) -> str:
-    """Derive a per-run-unique phone number from ``run_tag``.
-
-    Pure function of ``run_tag`` (no randomness of its own) so it is
-    trivially unit-testable: every character's ordinal maps to one decimal
-    digit (mod 10), giving a stable 10-digit national number behind a ``+20``
-    country code — shape only, never validated by the backend (``OtpRequestDTO
-    .phone`` is an unconstrained ``str``). Works for any ``run_tag`` string,
-    not just the default hex tag — ``--run-tag`` accepts arbitrary text.
-    """
-    digits = "".join(str(ord(ch) % 10) for ch in run_tag)
-    return "+20" + digits[:10].ljust(10, "0")
 
 
 def declining_recorded_ats(now: datetime) -> list[datetime]:
@@ -753,23 +740,6 @@ def accuracy_report_for_score(
         boundary_source="subject_default",
     )
     return AccuracyReport(correction=correction, weaknesses=weaknesses, grade_prediction=prediction)
-
-
-def build_empty_parent_phone(run_tag: str) -> str:
-    """A second, distinct phone for the genuinely-empty parent account.
-
-    **The trap this avoids:** :func:`build_phone` only reads a string's
-    *first 10 characters* (then pads/truncates to a national number). The
-    default ``run_tag`` is a 12-hex-char string, so a same-tag *suffix*
-    (``f"{run_tag}-empty"``) would leave those first 10 characters completely
-    unchanged and produce a phone number IDENTICAL to :func:`build_phone`'s —
-    silently colliding with the linked parent's own number and tripping the
-    30s per-phone OTP resend cooldown (module docstring) on this run's second
-    :meth:`~lemely.auth.service.AuthService.request_otp` call. Prefixing
-    instead of suffixing changes the leading characters and sidesteps this
-    for any ``run_tag`` (default or custom, any length).
-    """
-    return build_phone(f"empty-{run_tag}")
 
 
 def build_quiz_bank_questions(teacher_id: uuid.UUID) -> list[NewBankQuestion]:
@@ -1002,13 +972,27 @@ def _log(message: str) -> None:
     print(message, file=sys.stderr)
 
 
-def _signup_account(role_label: str, role: Role, run_tag: str) -> dict[str, Any]:
+def _signup_account(
+    role_label: str, role: Role, run_tag: str, *, email_verified: bool = False
+) -> dict[str, Any]:
+    """Sign up one seed account.
+
+    ``email_verified`` mirrors a real invite redemption's shape for a parent
+    (the parent proves control of the address by verifying a code before the
+    account exists at all, spec §2) — every other role here defaults to
+    unverified, same as the real self-service signup flow those roles
+    actually go through.
+    """
     auth_service = deps.get_auth_service()
     email = build_email(role_label, run_tag)
     password = build_password(run_tag)
     _log(f"Signing up {role.value} account: {email}")
     result: AuthResult = auth_service.signup(
-        email, password, role, display_name=f"Seed {role_label.replace('-', ' ').title()}"
+        email,
+        password,
+        role,
+        display_name=f"Seed {role_label.replace('-', ' ').title()}",
+        email_verified=email_verified,
     )
     return {
         "userId": str(result.user_id),
@@ -1129,7 +1113,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     class_service = deps.get_class_service()
     parent_link_service = deps.get_parent_link_service()
-    auth_service = deps.get_auth_service()
+    invite_service = deps.get_invite_service()
     attempt_repo = deps.get_attempt_repo()
     review_service = deps.get_review_service()
     question_bank_service = deps.get_question_bank_service()
@@ -1154,18 +1138,10 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     _log("Signing up the empty teacher (no classes) and empty parent (no linked children)")
     empty_teacher = _signup_account("empty-teacher", Role.teacher, run_tag)
-    empty_parent_phone = build_empty_parent_phone(run_tag)
-    _log(f"Requesting one OTP challenge for the empty parent's phone {empty_parent_phone}")
-    empty_dev_code = auth_service.request_otp(empty_parent_phone)
-    if empty_dev_code is None:
-        raise RuntimeError(
-            "AuthService.request_otp returned no code for the empty parent — the "
-            "configured SMS provider delivers out of band, so this script cannot "
-            "recover it to verify."
-        )
-    empty_parent_result = auth_service.verify_otp(empty_parent_phone, empty_dev_code)
-    # Deliberately no ParentLinkService.link call — this account must stay
-    # genuinely childless for the `empty` parent-portal screenshot capture.
+    empty_parent = _signup_account("empty-parent", Role.parent, run_tag, email_verified=True)
+    # Deliberately no ParentLinkService.link_in_session call — this account
+    # must stay genuinely childless for the `empty` parent-portal screenshot
+    # capture.
 
     _log("Creating class and enrolling the at-risk roster")
     class_row = class_service.create_class(
@@ -1232,17 +1208,21 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
 
-    parent_phone = build_phone(run_tag)
-    _log(f"Requesting one OTP challenge for parent phone {parent_phone}")
-    dev_code = auth_service.request_otp(parent_phone)
-    if dev_code is None:
-        raise RuntimeError(
-            "AuthService.request_otp returned no code — the configured SMS provider "
-            "delivers out of band, so this script cannot recover it to verify."
-        )
-    parent_result = auth_service.verify_otp(parent_phone, dev_code)
-    _log(f"Linking parent {parent_result.user_id} to the declining student")
-    parent_link_service.link(student_id=uuid.UUID(declining["userId"]), phone=parent_phone)
+    parent_account = _signup_account("parent", Role.parent, run_tag, email_verified=True)
+    declining_uuid = uuid.UUID(declining["userId"])
+    parent_uuid = uuid.UUID(parent_account["userId"])
+    _log(f"Linking parent {parent_uuid} to the declining student")
+    # `link_in_session` takes an already-open session because its one
+    # production caller, `InviteService.redeem`, needs the link and the
+    # invite's redemption committed in one transaction. This script has no
+    # invite to redeem here (the invite it mints below is deliberately
+    # reusable and left unredeemed, for `parent-journey.spec.ts` to redeem
+    # itself), so it opens and commits a single-purpose transaction of its own.
+    with get_sessionmaker()() as link_session, link_session.begin():
+        parent_link_service.link_in_session(link_session, parent_uuid, declining_uuid)
+
+    _log("Minting the declining student's reusable parent invite code")
+    declining_parent_invite = invite_service.get_or_create_parent_code(declining_uuid)
 
     _log("Locating the review-queue row the inactive attempt's fan-out created (T-08)")
     review_rows = review_service.list_queue(
@@ -1442,6 +1422,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "declining": {
             **declining,
             "expectedAtRiskReasons": [AtRiskReason.DECLINING_TREND.value],
+            "parentInviteCode": declining_parent_invite.code,
         },
         "inactive": {
             **inactive,
@@ -1468,12 +1449,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             "className": below_target_class_row.name,
         },
     }
-    parent = {
-        "userId": str(parent_result.user_id),
-        "phone": parent_phone,
-        "accessToken": parent_result.access_token,
-        "linkedStudent": "declining",
-    }
+    parent = {**parent_account, "linkedStudent": "declining"}
     class_dict = {
         "classId": str(class_row.class_id),
         "name": class_row.name,
@@ -1490,11 +1466,6 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "submissionId": str(submit_result.submission_id),
         "submittedBy": "control",
         "status": mark_result.status.value,
-    }
-    empty_parent_dict = {
-        "userId": str(empty_parent_result.user_id),
-        "phone": empty_parent_phone,
-        "accessToken": empty_parent_result.access_token,
     }
     placement_dict = {
         "subjectCode": PLACEMENT_SUBJECT_CODE,
@@ -1911,7 +1882,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         review_item=review_item,
         quiz=quiz,
         empty_teacher=empty_teacher,
-        empty_parent=empty_parent_dict,
+        empty_parent=empty_parent,
         placement=placement_dict,
         practice=practice_dict,
         study_plan=study_plan_dict,

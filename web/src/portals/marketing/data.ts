@@ -209,10 +209,11 @@ export const pillars: Pillar[] = [
   {
     kicker: "Parent",
     title: "One honest answer",
-    body: "A phone number is the whole login. No account to keep, no password to lose, and the same marked paper the teacher is looking at.",
+    body: "Your child sends the invite. You confirm your email, set a password, and see the same marked paper the teacher is looking at.",
     bullets: [
-      // routers/auth.py OTP flow, /login/parent. No password is ever set.
-      "A phone number and a code, and you are in",
+      // routers/auth.py parent signup: request-code, verify-code, signup —
+      // the child-issued invite flow that superseded D3.11's phone login.
+      "An invite from your child, an email code, and a password you set",
       // routers/parent.py: children, overview, subject drilldown.
       "Grades by subject, without waiting for a parent-teacher meeting",
       // routers/parent.py weaknesses endpoint.

@@ -194,12 +194,20 @@ export function Login() {
               Create an account
             </Link>
           </p>
-          {/* UI spec §G-04: "Parent → G-05 (parents authenticate by phone)".
-             Parents have no password to type here — this is the only way in. */}
+          {/*
+           * UI spec §G-04's parent link, retargeted by the parent-invites
+           * design (superseding D3.11): a parent is an ordinary email/
+           * password account now, so a returning parent uses the form above
+           * like everyone else. This link is for a parent who does not have
+           * an account yet — that always starts from a child-issued invite,
+           * never from this screen, so it points at `/join`, the screen
+           * built for "I have a code" (`JoinWithCode.tsx`), not at a form
+           * this product has no way to let a parent reach on their own.
+           */}
           <p className="text-body-sm text-ink-muted">
             Are you a parent?{" "}
-            <Link to="/login/parent" className={LINK_CLASS}>
-              Sign in with your phone
+            <Link to="/join" className={LINK_CLASS}>
+              Use the invite from your child
             </Link>
           </p>
         </div>

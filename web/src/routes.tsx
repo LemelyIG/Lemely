@@ -58,9 +58,6 @@ import { SessionEnded } from "@/portals/misc/SessionEnded"
 // that keeps a slow-loading DeviceSettings chunk from blanking an
 // already-rendered Login screen if a session is mid-navigation between them.
 const Login = lazy(() => import("@/portals/auth/Login").then((m) => ({ default: m.Login })))
-const ParentLogin = lazy(() =>
-  import("@/portals/auth/ParentLogin").then((m) => ({ default: m.ParentLogin })),
-)
 const DeviceSettings = lazy(() =>
   import("@/portals/settings/DeviceSettings").then((m) => ({ default: m.DeviceSettings })),
 )
@@ -99,6 +96,11 @@ const SignupRoleSelect = lazy(() =>
 )
 const SignupDetails = lazy(() =>
   import("@/portals/auth/SignupDetails").then((m) => ({ default: m.SignupDetails })),
+)
+// Parent-invites design (§4/§5), superseding D3.11's phone-OTP login this
+// same change retires. Same P6.1b reasoning as its four siblings above.
+const SignupParent = lazy(() =>
+  import("@/portals/auth/SignupParent").then((m) => ({ default: m.SignupParent })),
 )
 const VerifyEmail = lazy(() =>
   import("@/portals/auth/VerifyEmail").then((m) => ({ default: m.VerifyEmail })),
@@ -272,10 +274,10 @@ const errorElement = <RouteErrorScreen />
 /*
  * P6.5 · page metadata for the top-level routes.
  *
- * `/`, `/login`, `/login/parent` and the `*` catch-all carried a `description`
- * here directly before Task 19; the nine routes spec §4.4 registers below join
- * them the same way. `/landing` and `/data` carry one too, spread in from route
- * objects `portals/marketing/index.tsx` defines, so they do not show up as a
+ * `/`, `/login` and the `*` catch-all carried a `description` here directly
+ * before Task 19; the routes spec §4.4 registers below join them the same
+ * way. `/landing` and `/data` carry one too, spread in from route objects
+ * `portals/marketing/index.tsx` defines, so they do not show up as a
  * `handle` literal in this file the way the rest do. Together this is the
  * entire list of routes a signed-out reader can reach in the product, and the
  * only ones that get a `description` (the module note in
@@ -283,13 +285,13 @@ const errorElement = <RouteErrorScreen />
  * Everything behind `RequireAuth` gets a title only.
  *
  * The descriptions describe the screen and claim nothing about the product
- * that the product does not do (§3.2 item 10) — and, for the nine below in
- * particular, never that a mail or a text was sent. `deps.py` wires
- * `MockEmailProvider` unconditionally, exactly as it already wires
- * `MockSmsProvider`, so no deployment of this code as written delivers
- * either. The comment on `/login/parent` below records that finding for the
- * SMS side in full; the nine descriptions below follow its lead rather than
- * re-arguing it.
+ * that the product does not do (§3.2 item 10) — and never that a mail was
+ * sent. `deps.py` wires `MockEmailProvider` unconditionally, so no
+ * deployment of this code as written delivers one; the retired parent phone
+ * sign-in route's own comment used to record the identical finding on the
+ * SMS side of that same mock-provider wiring, before the parent-invites
+ * design (superseding D3.11) retired both that route and the phone-based
+ * login it backed.
  */
 const rootMeta: PageMeta = { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION }
 
@@ -321,41 +323,6 @@ export const appRoutes: RouteObject[] = [
     } satisfies PageMeta,
     element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}><Login /></Suspense></LoginRoute>,
   },
-  // G-05. A separate route rather than a tab on /login: the parent flow shares
-  // no field with email/password, and the spec's whole framing for it is
-  // "the lowest-friction entry in the product".
-  {
-    path: "/login/parent",
-    errorElement,
-    handle: {
-      title: "Parent sign in",
-      /*
-       * "a one-time code", not "a code sent by text", and the difference is
-       * load-bearing. The screen itself says "we'll text you a code" — and
-       * `lemely/web/deps.py` wires `sms=MockSmsProvider()` unconditionally,
-       * with no config switch, and `MockSmsProvider.send_code` *logs* the code
-       * rather than sending it. `SmsProvider` even documents a
-       * `delivers_out_of_band` flag that "any real provider added later must
-       * set True", i.e. none exists.
-       *
-       * So no deployment of this code as written can send an SMS. The screen's
-       * claim is a pre-existing defect recorded in D6.9 for the human, not
-       * something to fix from a route table. What this description will not do
-       * is carry the claim into a second file, and into the one place a
-       * scraper would index it. The OTP itself is real, so that is what it
-       * says.
-       */
-      description:
-        "Parents sign in to Lemely with a phone number and a one-time code. No password to set up.",
-    } satisfies PageMeta,
-    element: (
-      <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
-          <ParentLogin />
-        </Suspense>
-      </LoginRoute>
-    ),
-  },
   /*
    * PR 2 part A2 · `/session-ended`. `RequireAuth` sends a dead session here
    * (`lib/auth/RequireAuth.tsx`) instead of straight to `/login`, carrying
@@ -385,13 +352,16 @@ export const appRoutes: RouteObject[] = [
   },
   /*
    * ────────────────────────────────────────────────────────────────────────
-   * Task 19 (spec §4.4) · the nine signup/verify/reset/join routes.
+   * Task 19 (spec §4.4) · the ten signup/verify/reset/join routes (`/signup/
+   * parent` joined the other nine with the parent-invites design, superseding
+   * D3.11's phone-based parent sign-in and the top-level route it used to sit
+   * beside).
    *
-   * Five of the nine (`/signup`, `/signup/student`, `/signup/teacher`,
-   * `/reset`, `/reset/:token`) are wrapped in `LoginRoute` exactly like
-   * `/login` and `/login/parent` above: a signed-in visitor has an account
-   * already and belongs back in their own portal rather than on a form for
-   * creating one or recovering a password they can currently use.
+   * Six of the ten (`/signup`, `/signup/student`, `/signup/teacher`,
+   * `/signup/parent`, `/reset`, `/reset/:token`) are wrapped in `LoginRoute`
+   * exactly like `/login` above: a signed-in visitor has an account already
+   * and belongs back in their own portal rather than on a form for creating
+   * one or recovering a password they can currently use.
    *
    * The other four (`/verify-email`, `/verify-email/:token`, `/join`,
    * `/join/:code`) are deliberately NOT wrapped — each carries its own
@@ -475,6 +445,36 @@ export const appRoutes: RouteObject[] = [
     ),
   },
   /*
+   * G-05 (parent-invites design, §4/§5), superseding D3.11's phone-based
+   * login and the top-level route it used to occupy. Wrapped in `LoginRoute`
+   * like `/signup/student`/`/signup/teacher` above, and for the identical
+   * reason those two carry it (`SignupDetails.tsx`'s own module docstring):
+   * a signed-in visitor has an account already, so a freshly-created session
+   * racing this route's own `navigate()` is the exact defect that docstring
+   * records, not a hypothetical one.
+   *
+   * `SignupParent.tsx` reads `?code=` itself, matching
+   * `signupPathForInvite`'s `parent` branch (`useInvitesApi.ts`) exactly —
+   * this file adds no `:code` segment, the same choice spec §4.4 made for
+   * `/signup/student` and `/signup/teacher`.
+   */
+  {
+    path: "/signup/parent",
+    errorElement,
+    handle: {
+      title: "Parent sign up",
+      description:
+        "Create a Lemely parent account from an invite, and see how your child is doing.",
+    } satisfies PageMeta,
+    element: (
+      <LoginRoute>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <SignupParent />
+        </Suspense>
+      </LoginRoute>
+    ),
+  },
+  /*
    * G-07, pending. NOT wrapped in `LoginRoute`, unlike every other route in
    * this block, and deliberately so: `VerifyEmail.tsx` itself is reachable
    * both signed out (`SignedOutPending`) and signed in (`SignedInPending`),
@@ -502,9 +502,9 @@ export const appRoutes: RouteObject[] = [
   },
   // G-07, confirm. Same exception, same component: `VerifyEmail.tsx` reads
   // `useParams().token` itself to choose which of its two states to render,
-  // the same "one component, two RouteObjects" shape `/login`/`/login/parent`
-  // above already use. See the comment on `/verify-email` for why neither of
-  // this pair is wrapped.
+  // the same "one component, two RouteObjects" shape `/signup/student`/
+  // `/signup/teacher` above already use. See the comment on `/verify-email`
+  // for why neither of this pair is wrapped.
   {
     path: "/verify-email/:token",
     errorElement,

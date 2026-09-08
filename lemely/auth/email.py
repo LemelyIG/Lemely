@@ -83,6 +83,16 @@ class EmailProvider(Protocol):
         """Deliver a password-reset ``link`` to ``email``. Raises on failure."""
         ...
 
+    def send_signup_code(self, email: str, code: str) -> None:
+        """Deliver a parent-signup verification ``code`` to ``email`` (spec §4).
+
+        Unlike :meth:`send_verification`, there is no accompanying link: the
+        parent-invite signup flow proves an email address *before* any account
+        exists, so there is nothing yet for a link to point at — the typed
+        code is the only credential. Raises on failure.
+        """
+        ...
+
 
 class MockEmailProvider:
     """Offline :class:`EmailProvider` that logs the link instead of sending it.
@@ -103,6 +113,10 @@ class MockEmailProvider:
     def send_password_reset(self, email: str, link: str) -> None:
         """Log the reset link for ``email`` at INFO level."""
         logger.info("Mock email to %s: reset your Lemely password at %s", email, link)
+
+    def send_signup_code(self, email: str, code: str) -> None:
+        """Log the parent-signup code for ``email`` at INFO level."""
+        logger.info("Mock email to %s: your Lemely signup code is %s", email, code)
 
 
 #: Body copy per purpose: (subject, lead paragraph, button label, ignore-notice).
@@ -181,6 +195,45 @@ def _render(purpose: str, link: str, code: str | None = None) -> tuple[str, str,
     )
 
     text_body = f"{subject}\n\n{lead}\n\n{link}\n\n{code_text}{notice}\n"
+    return subject, html_body, text_body
+
+
+def _render_signup_code(code: str) -> tuple[str, str, str]:
+    """Return ``(subject, html_body, text_body)`` for a parent-signup code mail.
+
+    Deliberately not routed through :func:`_render`: that function's template
+    is built around a link and a button, and a signup code has neither — the
+    account this would link to does not exist yet (spec §4). Reusing it would
+    render an empty, broken button rather than simply omitting one.
+
+    States the expiry as ten minutes rather than reading
+    ``[auth] email_otp_ttl_seconds`` live, for the same reason
+    :data:`_TEMPLATES` states no duration at all: a number written here would
+    silently drift from the setting the first time it is tuned. Ten minutes is
+    that setting's default (spec §4/DS15's task brief), so it is accurate until
+    someone changes the default without also changing this copy.
+    """
+    subject = "Your Lemely code"
+    safe_code = html.escape(code)
+    lead = "Enter this code to continue setting up your Lemely account."
+    notice = (
+        "This code expires in ten minutes. If you did not request it, you can ignore this email."
+    )
+    html_body = (
+        '<!doctype html><html lang="en"><body style="margin:0;padding:24px;'
+        "background:#f6f7f9;font-family:-apple-system,BlinkMacSystemFont,"
+        "'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#1f2933;\">"
+        '<div style="max-width:480px;margin:0 auto;background:#ffffff;'
+        'border-radius:12px;padding:32px;">'
+        f'<h1 style="margin:0 0 16px;font-size:20px;line-height:1.3;">{html.escape(subject)}</h1>'
+        f'<p style="margin:0 0 24px;font-size:15px;line-height:1.55;">{html.escape(lead)}</p>'
+        '<p style="margin:0 0 24px;font-size:22px;line-height:1.3;font-weight:600;'
+        f'letter-spacing:0.12em;">{safe_code}</p>'
+        '<p style="margin:0;font-size:13px;line-height:1.5;color:#52606d;">'
+        f"{html.escape(notice)}</p>"
+        "</div></body></html>"
+    )
+    text_body = f"{subject}\n\n{lead}\n\n{code}\n\n{notice}\n"
     return subject, html_body, text_body
 
 
@@ -265,6 +318,14 @@ class ResendEmailProvider:
     def send_password_reset(self, email: str, link: str) -> None:
         """Send the password-reset ``link`` to ``email``."""
         self._send(email, *_render("password_reset", self._absolute(link)))
+
+    def send_signup_code(self, email: str, code: str) -> None:
+        """Send the parent-signup code to ``email`` (subject "Your Lemely code").
+
+        No link to absolutise here — see :func:`_render_signup_code` for why
+        this purpose has none.
+        """
+        self._send(email, *_render_signup_code(code))
 
     def _send(self, to: str, subject: str, html_body: str, text_body: str) -> None:
         """POST one mail to Resend, raising :class:`ExternalServiceError` on failure.

@@ -52,9 +52,7 @@ from scripts.seed_e2e import (
     accuracy_report_for_score,
     below_target_recorded_at,
     build_email,
-    build_empty_parent_phone,
     build_password,
-    build_phone,
     build_placement_bank_questions,
     build_placement_paper_stem,
     build_quiz_bank_questions,
@@ -90,18 +88,6 @@ class TestCredentialBuilders:
 
     def test_build_password_is_deterministic(self) -> None:
         assert build_password("tag1") == build_password("tag1")
-
-    def test_build_phone_shape(self) -> None:
-        phone = build_phone("abcdef123456")
-        assert phone.startswith("+20")
-        assert len(phone) == 13  # "+20" + 10 digits
-        assert phone[3:].isdigit()
-
-    def test_build_phone_is_deterministic(self) -> None:
-        assert build_phone("sametag0000") == build_phone("sametag0000")
-
-    def test_build_phone_differs_across_tags(self) -> None:
-        assert build_phone("tag-one-000") != build_phone("tag-two-111")
 
     def test_default_run_tag_is_unique_per_call(self) -> None:
         tags = {default_run_tag() for _ in range(20)}
@@ -625,37 +611,6 @@ class TestWrongMcqAnswer:
 
 
 # ---------------------------------------------------------------------------
-# build_empty_parent_phone — must never collide with build_phone(run_tag).
-# ---------------------------------------------------------------------------
-
-
-class TestBuildEmptyParentPhone:
-    def test_differs_from_the_linked_parents_phone_for_the_default_tag_length(self) -> None:
-        """The exact regression this function exists to prevent: a same-tag
-        *suffix* would leave build_phone's first-10-characters window
-        unchanged for any run_tag of length >= 10 (the default 12-hex-char
-        tag included), silently colliding with the linked parent's own
-        number and tripping the 30s per-phone OTP cooldown."""
-        run_tag = "abcdef123456"
-        assert build_empty_parent_phone(run_tag) != build_phone(run_tag)
-
-    def test_is_deterministic(self) -> None:
-        assert build_empty_parent_phone("tag1") == build_empty_parent_phone("tag1")
-
-    def test_differs_across_tags(self) -> None:
-        # Tags differing from their first character: build_phone only reads
-        # the first 10 characters, so two tags that only differ *after*
-        # position 10 - "empty-"'s own 6 chars would still collide (see
-        # test_differs_from_the_linked_parents_phone_for_the_default_tag_length).
-        assert build_empty_parent_phone("one-tag") != build_empty_parent_phone("two-tag")
-
-    def test_shape_matches_build_phone(self) -> None:
-        phone = build_empty_parent_phone("abcdef123456")
-        assert phone.startswith("+20")
-        assert len(phone) == 13
-
-
-# ---------------------------------------------------------------------------
 # Output contract shape.
 # ---------------------------------------------------------------------------
 
@@ -675,7 +630,11 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
         },
         "class_row": {"classId": "c1", "name": "n", "joinCode": "J1"},
         "students": {
-            "declining": {"userId": "d1", "expectedAtRiskReasons": ["declining_trend"]},
+            "declining": {
+                "userId": "d1",
+                "expectedAtRiskReasons": ["declining_trend"],
+                "parentInviteCode": "ABC123",
+            },
             "inactive": {"userId": "i1", "expectedAtRiskReasons": ["inactive"]},
             "control": {"userId": "c1", "expectedAtRiskReasons": []},
             "correctedPaper": {
@@ -684,7 +643,13 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
                 "correctedPaperId": "attempt-1",
             },
         },
-        "parent": {"userId": "p1", "phone": "+201000000000", "linkedStudent": "declining"},
+        "parent": {
+            "userId": "p1",
+            "email": "parent-tag123@e2e.lemely.local",
+            "password": "Seed-tag123-Aa1!",
+            "accessToken": "tok-p1",
+            "linkedStudent": "declining",
+        },
         "review_item": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
         "quiz": {
             "quizId": "q1",
@@ -694,7 +659,12 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
             "status": "marked",
         },
         "empty_teacher": {"userId": "et1"},
-        "empty_parent": {"userId": "ep1", "phone": "+201000000001"},
+        "empty_parent": {
+            "userId": "ep1",
+            "email": "empty-parent-tag123@e2e.lemely.local",
+            "password": "Seed-tag123-Aa1!",
+            "accessToken": "tok-ep1",
+        },
         "placement": {
             "subjectCode": "0625",
             "paperNumber": 2,
@@ -763,7 +733,11 @@ class TestBuildResultPayload:
             },
             "class": {"classId": "c1", "name": "n", "joinCode": "J1"},
             "students": {
-                "declining": {"userId": "d1", "expectedAtRiskReasons": ["declining_trend"]},
+                "declining": {
+                    "userId": "d1",
+                    "expectedAtRiskReasons": ["declining_trend"],
+                    "parentInviteCode": "ABC123",
+                },
                 "inactive": {"userId": "i1", "expectedAtRiskReasons": ["inactive"]},
                 "control": {"userId": "c1", "expectedAtRiskReasons": []},
                 "correctedPaper": {
@@ -772,7 +746,13 @@ class TestBuildResultPayload:
                     "correctedPaperId": "attempt-1",
                 },
             },
-            "parent": {"userId": "p1", "phone": "+201000000000", "linkedStudent": "declining"},
+            "parent": {
+                "userId": "p1",
+                "email": "parent-tag123@e2e.lemely.local",
+                "password": "Seed-tag123-Aa1!",
+                "accessToken": "tok-p1",
+                "linkedStudent": "declining",
+            },
             "reviewItem": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
             "quiz": {
                 "quizId": "q1",
@@ -782,7 +762,12 @@ class TestBuildResultPayload:
                 "status": "marked",
             },
             "emptyTeacher": {"userId": "et1"},
-            "emptyParent": {"userId": "ep1", "phone": "+201000000001"},
+            "emptyParent": {
+                "userId": "ep1",
+                "email": "empty-parent-tag123@e2e.lemely.local",
+                "password": "Seed-tag123-Aa1!",
+                "accessToken": "tok-ep1",
+            },
             "placement": {
                 "subjectCode": "0625",
                 "paperNumber": 2,
@@ -837,3 +822,18 @@ class TestBuildResultPayload:
 
         payload = build_result_payload(**_payload_kwargs())
         assert json.loads(json.dumps(payload)) == payload
+
+    def test_contract_carries_parent_invite_code_and_parent_email(self) -> None:
+        """Retiring phone-OTP parents (parent-invites redesign) means the
+        contract's ``parent``/``emptyParent`` are email/password accounts, and
+        ``students.declining`` carries the reusable code
+        ``parent-journey.spec.ts`` redeems through the real ``/join/:code``
+        flow instead of an already-linked pair."""
+        payload = build_result_payload(**_payload_kwargs())
+
+        assert payload["students"]["declining"]["parentInviteCode"] == "ABC123"
+        assert payload["parent"]["email"] == "parent-tag123@e2e.lemely.local"
+        assert "password" in payload["parent"]
+        assert "phone" not in payload["parent"]
+        assert payload["emptyParent"]["email"] == "empty-parent-tag123@e2e.lemely.local"
+        assert "phone" not in payload["emptyParent"]

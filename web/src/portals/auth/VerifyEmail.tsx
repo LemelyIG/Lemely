@@ -20,8 +20,8 @@ import { canSubmitCode, postVerifyPath, resendButtonLabel } from "./verifyEmailL
  * `VerifyEmail` below is the whole surface; which of `PendingScreen` or
  * `ConfirmScreen` renders is decided by `useParams().token` alone, so however
  * Task 19 mounts the two route entries (same element, two `RouteObject`s —
- * the pattern `/login` and `/login/parent` already use), this component
- * answers correctly.
+ * the pattern `PasswordReset.tsx`'s own `/reset` and `/reset/:token` pair
+ * already use), this component answers correctly.
  *
  * ── Binding requirement 1: a soft gate, not a wall (D7.4, D7.5) ─────────────
  *

@@ -28,6 +28,12 @@ GoTrue's own (ES256) token is discarded rather than forwarded (D1.5).
 * :meth:`request_password_reset` / :meth:`reset_password` — the anti-enumeration
   request step and the confirm step, the latter revoking every outstanding
   ``auth_tokens`` row and every device session for the account (D7.7 + D1.11).
+* :meth:`request_parent_signup_code` / :meth:`verify_parent_signup_code` — the
+  email-channel counterpart of :meth:`request_otp` / :meth:`verify_otp` (spec
+  §4): a parent proves an email address by code *before* any account exists,
+  so the router mints an email-proof token (:mod:`lemely.auth.tokens`) from a
+  successful verify and :meth:`signup` is called later with
+  ``email_verified=True``.
 
 Each of the three sign-in flows also hands back a refresh token bound to the
 device it just registered; only a flow that registers no device (hermetic tests,
@@ -243,6 +249,7 @@ class AuthService:
         device: DeviceContext | None = None,
         *,
         accepted_terms: bool = False,
+        email_verified: bool = False,
     ) -> AuthResult:
         """Create a GoTrue user, mirror it, and return a self-signed token.
 
@@ -281,6 +288,20 @@ class AuthService:
         was never shown the G-03 consent box, and it would be dishonest to stamp
         a timestamp for consent it never collected.
 
+        ``email_verified`` (spec §4) is for the parent-invite signup route: by
+        the time it calls this method the caller has already proven the address
+        via :meth:`request_parent_signup_code` /
+        :meth:`verify_parent_signup_code` and holds a redeemed email-proof
+        token, so asking them to re-verify a link mailed to that same address
+        would be asking them to prove it twice. When ``True``,
+        ``users.email_verified_at`` is stamped immediately after the mirror
+        upsert and the entire verification-link/code mint-and-send block below
+        is skipped — ``AuthResult.verification_dev_link`` and
+        ``verification_dev_code`` stay ``None``, honestly reflecting that
+        nothing was minted, not that a real provider swallowed the dev value.
+        Defaults to ``False`` so every other caller (password signup, the
+        seat-invite flow, every pre-existing test) is unaffected.
+
         A fresh account also gets a best-effort email-verification send (D7.4 /
         D7.7), a link **and** a typed code (spec §4.4/DS15):
         :meth:`_mint_verification_link` mints the link token,
@@ -313,6 +334,8 @@ class AuthService:
             display_name=display_name,
             terms_accepted_at=_utcnow() if accepted_terms else None,
         )
+        if email_verified:
+            self._mirror.mark_email_verified(created.id, verified_at=_utcnow())
         registration = self._register_device(created.id, device)
         access_token = self._mint_email_token(
             user_id=created.id,
@@ -323,7 +346,7 @@ class AuthService:
         )
         verification_dev_link: str | None = None
         verification_dev_code: str | None = None
-        if self._tokens is not None:
+        if not email_verified and self._tokens is not None:
             link = self._mint_verification_link(self._tokens, created.id)
             code = self._issue_email_code(created.email)
             self._try_send_verification(created.email, link, code)
@@ -674,8 +697,18 @@ class AuthService:
 
         This is the code half of DS15's link-and-code pair: a single-use,
         hashed-at-rest (in the Postgres-backed store), independently-expiring
-        credential verifying the exact same fact as the link —
-        :meth:`verify_email_code` is its only consumer.
+        credential verifying the exact same fact as the link.
+        :meth:`verify_email_code` is its intended consumer, but the OTP store
+        keys a challenge on ``(channel, address)`` alone — it does not know
+        which caller issued or is verifying it. :meth:`verify_parent_signup_code`
+        verifies against the identical ``email``-channel key for a *different*
+        purpose (a pre-account signup-code challenge, spec §4), so an
+        already-registered address's challenge here and a parent-invite
+        challenge for the same address share one slot and can be consumed —
+        or, on repeated wrong guesses, locked out — by either flow. See
+        :func:`~lemely.web.routers.auth.verify_parent_code`'s docstring
+        (final review I-1) for why the router, not this store, is what closes
+        that window.
         """
         return self._otp_store.issue(email, channel=OtpChannel.email)
 
@@ -730,6 +763,57 @@ class AuthService:
         code = self._otp_store.issue(phone)
         self._sms.send_code(phone, code)
         return None if self._sms.delivers_out_of_band else code
+
+    def request_parent_signup_code(self, email: str) -> str | None:
+        """Issue and send a parent-invite signup code, returning it only under D3.16.
+
+        The email-channel counterpart of :meth:`request_otp` (spec §4): a
+        parent proving an email address before any account exists gets a
+        six-digit code on the OTP store's ``email`` channel — the same channel
+        :meth:`_issue_email_code` uses for post-signup verification, since
+        both are "prove you control this inbox" challenges with no reason to
+        duplicate the machinery. Returns the code **iff** the configured
+        :class:`~lemely.auth.email.EmailProvider` does not deliver out of band
+        (:meth:`_dev_code_for`'s exact rule), i.e. only when this API is the
+        sole way to obtain it.
+
+        Unlike :meth:`signup`'s verification send, a delivery failure here is
+        allowed to **propagate**: no account exists yet for this call to
+        strand, so there is nothing for a swallowed exception to protect (the
+        opposite of :meth:`signup`'s rule 4, and unlike that method for
+        exactly the reason it does not apply here). A ``None`` email provider
+        (unconfigured — hermetic tests) is a silent no-op, matching every
+        other optional collaborator on this class.
+
+        Raises:
+            ~lemely.auth.otp.OtpRateLimitError: The caller re-requested a code
+                for ``email`` before the OTP store's resend cooldown elapsed.
+                Left to propagate uncaught, exactly as :meth:`request_otp`
+                already does — the router (Task 5) maps it to a 429.
+        """
+        code = self._otp_store.issue(email, channel=OtpChannel.email)
+        if self._email is not None:
+            self._email.send_signup_code(email, code)
+        return self._dev_code_for(code)
+
+    def verify_parent_signup_code(self, email: str, code: str) -> None:
+        """Verify a parent-invite signup code on the OTP store's ``email`` channel.
+
+        Consumes the challenge :meth:`request_parent_signup_code` issued.
+        Unlike :meth:`verify_email_code`, ``email`` is a caller-supplied
+        parameter rather than one read from an authenticated session — there
+        is no session yet, since the account this code precedes does not
+        exist. The caller (Task 5's ``/api/auth/parent/verify-code`` route)
+        mints an email-proof token from a successful call; this method itself
+        returns nothing, since what happens next (minting that token) belongs
+        one layer up rather than being this method's job too.
+
+        Raises:
+            AuthError: The code is unknown, expired, wrong, or locked out.
+        """
+        result = self._otp_store.verify(email, code, channel=OtpChannel.email)
+        if result is not OtpResult.ok:
+            raise AuthError(f"Email verification failed: {result.value}")
 
     def verify_otp(self, phone: str, code: str, device: DeviceContext | None = None) -> AuthResult:
         """Verify an OTP and mint a self-signed parent access token.

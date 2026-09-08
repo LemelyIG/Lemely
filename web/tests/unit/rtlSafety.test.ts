@@ -90,7 +90,10 @@ const RTL_CLEAN_FILES = [
   "src/lib/authOutcome.ts",
   "src/portals/auth/Login.tsx",
   "src/portals/auth/DeviceLimitNotice.tsx",
-  "src/portals/auth/ParentLogin.tsx",
+  // `ParentLogin.tsx` (the phone-OTP parent login this list used to cover)
+  // was deleted by the parent-invites design, which superseded D3.11.
+  // `SignupParent.tsx` and `CodeInput.tsx`, its replacements, join the list
+  // below (task 7, parent-invites design).
   // Kit components created in Phase 3.
   "src/components/ui/breadcrumbs.tsx",
   "src/components/ui/getting-started.tsx",
@@ -149,6 +152,9 @@ const RTL_CLEAN_FILES = [
   "src/portals/student/screens/Friends.tsx",
   "src/portals/student/screens/Profile.tsx",
   "src/portals/student/screens/Standings.tsx",
+  // Parent-invites design (task 7), replacing `ParentLogin.tsx` above.
+  "src/portals/auth/SignupParent.tsx",
+  "src/components/auth/CodeInput.tsx",
 ]
 
 /**
