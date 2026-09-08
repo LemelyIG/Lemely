@@ -14,10 +14,15 @@ preview-before-account (a visitor sees what they are about to join, then
 signs up or signs in to redeem), and :class:`~lemely.db.invite_repo.InviteService.preview`
 is written to be paranoid about disclosure precisely because this route
 carries no authentication at all. ``POST /api/invites/{code}/redeem`` is
-authenticated but role-agnostic (``get_auth_context`` alone, no
-``require_role``) — an invite's own ``role`` decides what redeeming it does,
-not the caller's platform role, mirroring the ``/api/me/*`` routes' AUTH_ANY
-shape.
+authenticated but role-agnostic at the **guard** level (``get_auth_context``
+alone, no ``require_role``) — an invite's own ``role`` decides what redeeming
+it does, not the caller's platform role, mirroring the ``/api/me/*`` routes'
+AUTH_ANY shape. The caller's role is still passed through to
+:meth:`~lemely.db.invite_repo.InviteService.redeem` as ``caller_role`` (spec
+§4): a parent invite redeemed by anyone else, or a student/teacher invite
+redeemed by a parent, is a **403**
+(:class:`~lemely.db.invite_repo.InviteRoleMismatchError`) — a business rule
+enforced in the service, not a route-level guard.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these type
@@ -31,9 +36,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from lemely.db.invite_repo import (
     InviteAlreadyRedeemedError,
     InviteNotFoundError,
+    InviteRoleMismatchError,
     InviteService,
 )
 from lemely.db.models import Invite
+from lemely.db.models.enums import Role
 from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
 
@@ -78,6 +85,7 @@ def preview_invite(
         schoolName=preview.school_name,
         className=preview.class_name,
         teacherName=preview.teacher_name,
+        childName=preview.child_name,
     )
 
 
@@ -95,17 +103,27 @@ def redeem_invite(
     is a **409**, never a second seat consumed or a stranger silently
     attached to a school — see
     :meth:`~lemely.db.invite_repo.InviteService.redeem`.
+
+    ``caller_role`` (spec §4) is passed through so the service can enforce a
+    parent invite against a non-parent caller, and a student/teacher invite
+    against a parent caller — either mismatch is a **403**
+    (:class:`~lemely.db.invite_repo.InviteRoleMismatchError`), not the 404 an
+    unknown code gets: the caller here is authenticated, so there is no
+    disclosure concern in telling them their own role is the problem.
     """
     try:
-        result = service.redeem(auth.user_id, code)
+        result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
     except InviteNotFoundError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except InviteAlreadyRedeemedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except InviteRoleMismatchError as exc:
+        raise HTTPException(status_code=403, detail=str(exc)) from exc
     return RedeemInviteResponseDTO(
         role=result.role.value,
         schoolId=str(result.school_id) if result.school_id is not None else None,
         classId=str(result.class_id) if result.class_id is not None else None,
+        childId=str(result.child_id) if result.child_id is not None else None,
     )
 
 

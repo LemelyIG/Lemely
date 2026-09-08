@@ -39,18 +39,21 @@ if TYPE_CHECKING:
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
+from lemely.db.class_repo import ClassService
+from lemely.db.invite_repo import InviteService
 from lemely.db.models import User
 from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.history_store import HistoryStore
-from lemely.runtime.config import DatabaseSettings
+from lemely.runtime.config import DatabaseSettings, Settings
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.web import create_app
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_history_store,
+    get_invite_service,
     get_parent_link_service,
     get_student_profile_service,
     get_user_mirror,
@@ -988,9 +991,26 @@ def parent_link_service(pg_sessionmaker: sessionmaker[Session]) -> ParentLinkSer
 
 
 @pytest.fixture
-def parent_links_client(parent_link_service: ParentLinkService) -> Iterator[TestClient]:
+def invite_service(
+    pg_sessionmaker: sessionmaker[Session], parent_link_service: ParentLinkService
+) -> InviteService:
+    """Postgres-backed ``InviteService``, wired the same way ``deps.get_invite_service``
+    wires its production singleton — the same ``ParentLinkService`` this
+    fixture module already builds, so a redemption through
+    ``/api/student/parent-invites``' sibling route (``/api/invites/{code}/redeem``)
+    and a direct ``parent_link_service.link_in_session`` call in a test are
+    both writing through the identical service.
+    """
+    return InviteService(pg_sessionmaker, ClassService(pg_sessionmaker), parent_link_service)
+
+
+@pytest.fixture
+def parent_links_client(
+    parent_link_service: ParentLinkService, invite_service: InviteService
+) -> Iterator[TestClient]:
     app = create_app()
     app.dependency_overrides[get_parent_link_service] = lambda: parent_link_service
+    app.dependency_overrides[get_invite_service] = lambda: invite_service
     yield TestClient(app)
     app.dependency_overrides.clear()
 
@@ -1033,56 +1053,39 @@ def test_student_lists_no_parents_when_none_linked(
     assert parent_links_client.get("/api/student/parent-links").json() == {"parents": []}
 
 
-def test_student_links_a_parent_by_phone_then_lists_it(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+def test_list_parents_carries_email(
+    parent_links_client: TestClient,
+    parent_link_service: ParentLinkService,
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """Linking is now child-issued-invite-only (spec §4); this list route's own
+    contract change — ``LinkedParentDTO`` gaining ``email`` — is proven directly
+    against the model, not through the now-removed phone-invite route."""
     student = _seed_pg_user(pg_sessionmaker, Role.student)
-    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum", phone="+15551230000")
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent, display_name="Mum")
+    with pg_sessionmaker.begin() as session:
+        parent_link_service.link_in_session(session, parent, student)
     _auth_as_pg(parent_links_client, student, Role.student)
-
-    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15551230000"})
-    assert resp.status_code == 200
-    assert resp.json() == {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
 
     listing = parent_links_client.get("/api/student/parent-links").json()
-    assert listing["parents"] == [
-        {"parentId": str(parent), "displayName": "Mum", "phone": "+15551230000"}
-    ]
 
-
-def test_student_link_unknown_phone_is_a_clean_404(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    """No existing ``role=parent`` account for this phone — never auto-created (D3.11)."""
-    student = _seed_pg_user(pg_sessionmaker, Role.student)
-    _auth_as_pg(parent_links_client, student, Role.student)
-
-    resp = parent_links_client.post("/api/student/parent-links", json={"phone": "+15559999999"})
-    assert resp.status_code == 404
-
-
-def test_student_link_is_idempotent_over_http(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
-) -> None:
-    student = _seed_pg_user(pg_sessionmaker, Role.student)
-    _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550001234")
-    _auth_as_pg(parent_links_client, student, Role.student)
-
-    first = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
-    second = parent_links_client.post("/api/student/parent-links", json={"phone": "+15550001234"})
-
-    assert first.status_code == second.status_code == 200
-    assert first.json() == second.json()
-    assert len(parent_links_client.get("/api/student/parent-links").json()["parents"]) == 1
+    assert len(listing["parents"]) == 1
+    row = listing["parents"][0]
+    assert row["parentId"] == str(parent)
+    assert row["displayName"] == "Mum"
+    assert row["email"] == f"{parent}@example.com"
 
 
 def test_student_unlink_then_list_shows_the_parent_gone(
-    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+    parent_links_client: TestClient,
+    parent_link_service: ParentLinkService,
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     student = _seed_pg_user(pg_sessionmaker, Role.student)
-    parent = _seed_pg_user(pg_sessionmaker, Role.parent, phone="+15550005678")
+    parent = _seed_pg_user(pg_sessionmaker, Role.parent)
+    with pg_sessionmaker.begin() as session:
+        parent_link_service.link_in_session(session, parent, student)
     _auth_as_pg(parent_links_client, student, Role.student)
-    parent_links_client.post("/api/student/parent-links", json={"phone": "+15550005678"})
 
     resp = parent_links_client.delete(f"/api/student/parent-links/{parent}")
 
@@ -1110,3 +1113,101 @@ def test_student_unlink_malformed_parent_id_is_422(
     resp = parent_links_client.delete("/api/student/parent-links/not-a-uuid")
 
     assert resp.status_code == 422
+
+
+# ── Parent invites (child-issued, spec §4) ──────────────────────────────────
+
+
+def _join_url(code: str) -> str:
+    return f"{Settings().email.app_base_url}/join/{code}"
+
+
+def test_student_parent_invites_get_mints_code_lazily(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """The reusable code appears on first read with no separate mint step
+    (mirrors ``classes.join_code``'s "a class always has a join code" rule)."""
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    body = parent_links_client.get("/api/student/parent-invites").json()
+
+    assert body["links"] == []
+    assert body["code"]["code"]
+    assert body["code"]["url"] == _join_url(body["code"]["code"])
+
+    # Reading again returns the identical code - lazy minting is not re-minting.
+    again = parent_links_client.get("/api/student/parent-invites").json()
+    assert again["code"]["code"] == body["code"]["code"]
+
+
+def test_student_mints_and_revokes_a_link(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    minted = parent_links_client.post("/api/student/parent-invites")
+    assert minted.status_code == 200, minted.text
+    body = minted.json()
+    assert body["code"]
+    assert body["url"] == _join_url(body["code"])
+    assert body["expiresAt"]
+
+    listed = parent_links_client.get("/api/student/parent-invites").json()
+    assert [link["code"] for link in listed["links"]] == [body["code"]]
+
+    revoke = parent_links_client.delete(f"/api/student/parent-invites/{body['code']}")
+    assert revoke.status_code == 204
+
+    after = parent_links_client.get("/api/student/parent-invites").json()
+    assert after["links"] == []
+
+
+def test_student_revoking_an_unknown_code_is_404(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+
+    resp = parent_links_client.delete("/api/student/parent-invites/NOSUCHCODE")
+
+    assert resp.status_code == 404
+
+
+def test_student_cannot_revoke_another_students_link(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    owner = _seed_pg_user(pg_sessionmaker, Role.student)
+    stranger = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, owner, Role.student)
+    minted = parent_links_client.post("/api/student/parent-invites").json()
+
+    _auth_as_pg(parent_links_client, stranger, Role.student)
+    resp = parent_links_client.delete(f"/api/student/parent-invites/{minted['code']}")
+
+    assert resp.status_code == 404
+
+    # The owner's own link survives the stranger's refused attempt.
+    _auth_as_pg(parent_links_client, owner, Role.student)
+    still_listed = parent_links_client.get("/api/student/parent-invites").json()
+    assert [link["code"] for link in still_listed["links"]] == [minted["code"]]
+
+
+def test_student_rotate_code_changes_it(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+    original = parent_links_client.get("/api/student/parent-invites").json()["code"]["code"]
+
+    rotated = parent_links_client.post("/api/student/parent-invites/code/rotate")
+
+    assert rotated.status_code == 200, rotated.text
+    body = rotated.json()
+    assert body["code"] != original
+    assert body["url"] == _join_url(body["code"])
+
+    # The old code is gone; the new one is what a fresh read now returns.
+    after = parent_links_client.get("/api/student/parent-invites").json()
+    assert after["code"]["code"] == body["code"]

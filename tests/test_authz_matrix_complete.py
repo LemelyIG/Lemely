@@ -125,10 +125,15 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/parent/children/{child_id}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/subjects/{code}"): PARENT,
     ("GET", "/api/parent/children/{child_id}/weaknesses"): PARENT,
-    # ── PUBLIC (10) ────────────────────
+    # ── PUBLIC (12) ────────────────────
     ("POST", "/api/auth/login"): PUBLIC,
-    ("POST", "/api/auth/otp/request"): PUBLIC,
-    ("POST", "/api/auth/otp/verify"): PUBLIC,
+    # spec §4: the child-issued parent signup, replacing the retired
+    # `/api/auth/otp/*` pair. Public by the same necessity as `/auth/signup`
+    # itself — there is no caller identity yet, only an invite code and (from
+    # step two on) a proof token that the email step minted.
+    ("POST", "/api/auth/parent/request-code"): PUBLIC,
+    ("POST", "/api/auth/parent/verify-code"): PUBLIC,
+    ("POST", "/api/auth/parent/signup"): PUBLIC,
     # Unauthenticated by necessity: it exists to replace an access token that
     # has already expired, so gating it behind one would make it unreachable at
     # exactly the moment it is needed. The refresh token in the body is the
@@ -248,7 +253,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (51) ────────────────────
+    # ── STUDENT (54) ────────────────────
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -278,8 +283,14 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("GET", "/api/student/leaderboard"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
-    ("POST", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
+    # spec §4: the child-issued parent-invite surface (P3.6a's "Your parent
+    # code" / "Send a one-time link" cards). Replaces the retired
+    # `POST /api/student/parent-links` (invite an existing parent by phone).
+    ("GET", "/api/student/parent-invites"): STUDENT,
+    ("POST", "/api/student/parent-invites"): STUDENT,
+    ("DELETE", "/api/student/parent-invites/{code}"): STUDENT,
+    ("POST", "/api/student/parent-invites/code/rotate"): STUDENT,
     ("POST", "/api/student/placement"): STUDENT,
     ("GET", "/api/student/placement/{assignment_id}/result"): STUDENT,
     ("GET", "/api/student/placement/{subject_code}/availability"): STUDENT,
@@ -498,10 +509,12 @@ def test_a_malformed_credential_is_401_not_a_pass(app: FastAPI, header: str) -> 
 def test_the_sweeps_actually_cover_the_surface() -> None:
     """Guard against a silently empty parametrization (P6.2's decoration lesson)."""
     assert len(ROUTES) == len(EXPECTED)
-    # 8 auth entrypoints (the original 5 + issue #10's verify-email,
-    # password-reset/request, password-reset/confirm) + /api/health + invite
-    # preview + PR 1 chunk C's client-error sink.
-    assert len(_NON_PUBLIC) == len(ROUTES) - 11
+    # 9 auth entrypoints (the original 5, minus the two retired
+    # `/api/auth/otp/*` routes, plus spec §4's three `/api/auth/parent/*`
+    # routes, plus issue #10's verify-email, password-reset/request,
+    # password-reset/confirm) + /api/health + invite preview + PR 1 chunk C's
+    # client-error sink.
+    assert len(_NON_PUBLIC) == len(ROUTES) - 12
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20

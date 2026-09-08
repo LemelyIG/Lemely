@@ -1,4 +1,9 @@
-"""FastAPI TestClient coverage of the /api/auth/* endpoints (hermetic)."""
+"""FastAPI TestClient coverage of the /api/auth/* endpoints.
+
+Mostly hermetic (in-memory GoTrue + user mirror), but the three
+``/auth/parent/*`` routes (spec §4) redeem a real, Postgres-backed
+``InviteService`` — see the ``context`` fixture's own docstring for why.
+"""
 
 from __future__ import annotations
 
@@ -8,27 +13,163 @@ from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 
 import pytest
+import sqlalchemy as sa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.auth.cooldown import CooldownStore
-from lemely.auth.otp import OtpChannel, OtpStore
+from lemely.auth.otp import OtpStore
 from lemely.auth.service import AuthService
 from lemely.auth.sms import MockSmsProvider
-from lemely.auth.tokens import decode_token, mint_access_token
+from lemely.auth.tokens import decode_token, mint_access_token, mint_email_proof_token
+from lemely.db.base import Base
+from lemely.db.class_repo import ClassService
+from lemely.db.invite_repo import InviteService
+from lemely.db.models import User
 from lemely.db.models.enums import Role
-from lemely.runtime.config import Settings
+from lemely.db.parent_repo import ParentLinkService
+from lemely.runtime.config import DatabaseSettings, Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.app import create_app
 from lemely.web.deps import (
     get_auth_service,
     get_device_registry,
+    get_invite_service,
     get_resend_verification_cooldown_store,
     get_signup_and_reset_cooldown_store,
     get_user_mirror,
     reset_singletons,
 )
-from tests.auth_fakes import FakeDeviceRegistry, FakeGoTrueBackend, FakeUserMirror
+from tests.auth_fakes import (
+    FakeDeviceRegistry,
+    FakeEmailProvider,
+    FakeGoTrueBackend,
+    FakeUserMirror,
+)
+
+# ── Postgres fixtures (the ``context`` fixture's InviteService override) ────
+#
+# Self-contained rather than shared via conftest, matching every other
+# ``test_web_*.py`` file's ``pg_sessionmaker`` duplication convention (see
+# ``tests/test_web_invites.py``, whose fixtures this mirrors exactly).
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+def _seed_user(sm: sessionmaker[Session], role: Role, display_name: str | None = None) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name=display_name))
+    return uid
+
+
+def _invite_service(sm: sessionmaker[Session]) -> InviteService:
+    return InviteService(sm, ClassService(sm), ParentLinkService(sm))
+
+
+class PgBackedUserMirror(FakeUserMirror):
+    """A :class:`~tests.auth_fakes.FakeUserMirror` that also writes real ``users`` rows.
+
+    Needed only for the parent-signup tests below. The three ``/auth/parent/*``
+    routes redeem the freshly signed-up parent through the **real**,
+    Postgres-backed ``InviteService`` this file's ``context`` fixture wires
+    (see its own docstring), and
+    :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` inserts a
+    genuine ``parent_child_links`` row whose ``parent_id`` foreign-keys to
+    ``users.id`` in that same database. ``FakeUserMirror``'s own in-memory
+    dict is invisible to Postgres and cannot satisfy that constraint on its
+    own, so this subclass keeps that dict (existing tests still read
+    ``service._mirror.rows`` directly) and mirrors every write into a real
+    row in the same throwaway database ``pg_sessionmaker`` built.
+    """
+
+    def __init__(self, sessionmaker_: sessionmaker[Session]) -> None:
+        super().__init__()
+        self._sessionmaker = sessionmaker_
+
+    def upsert(
+        self,
+        user_id: uuid.UUID,
+        email: str,
+        role: Role,
+        phone: str | None = None,
+        display_name: str | None = None,
+        terms_accepted_at: datetime | None = None,
+    ) -> None:
+        super().upsert(
+            user_id,
+            email=email,
+            role=role,
+            phone=phone,
+            display_name=display_name,
+            terms_accepted_at=terms_accepted_at,
+        )
+        with self._sessionmaker.begin() as session:
+            existing = session.get(User, user_id)
+            if existing is None:
+                session.add(
+                    User(
+                        id=user_id,
+                        email=email,
+                        role=role,
+                        phone=phone,
+                        display_name=display_name,
+                        terms_accepted_at=terms_accepted_at,
+                    )
+                )
+            else:
+                existing.email = email
+                existing.role = role
+                if phone is not None:
+                    existing.phone = phone
+                if display_name is not None:
+                    existing.display_name = display_name
+                if terms_accepted_at is not None:
+                    existing.terms_accepted_at = terms_accepted_at
+
+    def mark_email_verified(self, user_id: uuid.UUID, *, verified_at: datetime) -> None:
+        super().mark_email_verified(user_id, verified_at=verified_at)
+        with self._sessionmaker.begin() as session:
+            existing = session.get(User, user_id)
+            if existing is not None:
+                existing.email_verified_at = verified_at
 
 
 def _override_cooldowns(app: FastAPI, settings: Settings) -> None:
@@ -71,9 +212,23 @@ def _override_cooldowns(app: FastAPI, settings: Settings) -> None:
 
 
 @pytest.fixture
-def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
+def context(
+    pg_sessionmaker: sessionmaker[Session],
+) -> Iterator[tuple[TestClient, AuthService, Settings]]:
+    """A ``TestClient`` wired for both the hermetic auth flows and the parent ones.
+
+    GoTrue and the OTP store stay in-memory, as before. The **user mirror**
+    is now :class:`PgBackedUserMirror` rather than the plain
+    :class:`~tests.auth_fakes.FakeUserMirror` — see that class's own
+    docstring — and ``get_invite_service`` is overridden to a real,
+    Postgres-backed :class:`~lemely.db.invite_repo.InviteService` (the same
+    ``pg_sessionmaker`` pattern ``tests/test_web_invites.py`` uses), rather
+    than a fake with matching method names: the three ``/auth/parent/*``
+    routes' whole point is minting a genuine ``parent_child_links`` row, and
+    a fake service could not prove that row is real.
+    """
     settings = Settings()
-    mirror = FakeUserMirror()
+    mirror = PgBackedUserMirror(pg_sessionmaker)
     otp_store = OtpStore(
         clock=lambda: datetime.now(UTC),
         rng=random.Random(7),
@@ -87,6 +242,7 @@ def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
         sms=MockSmsProvider(),
         otp_store=otp_store,
         settings=settings,
+        email=FakeEmailProvider(),
     )
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
@@ -98,6 +254,7 @@ def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
     # never touch — which would see every address as unclaimed forever and
     # make `test_signup_duplicate_returns_400`'s second call spuriously 429.
     app.dependency_overrides[get_user_mirror] = lambda: mirror
+    app.dependency_overrides[get_invite_service] = lambda: _invite_service(pg_sessionmaker)
     _override_cooldowns(app, settings)
     client = TestClient(app)
     try:
@@ -202,65 +359,172 @@ def test_login_wrong_password_returns_401(
     assert resp.status_code == 401
 
 
-def test_otp_request_and_verify(context: tuple[TestClient, AuthService, Settings]) -> None:
-    client, service, settings = context
-    phone = "+201234500000"
-    resp = client.post("/api/auth/otp/request", json={"phone": phone})
-    assert resp.status_code == 200, resp.text
-    assert resp.json()["status"] == "sent"
-
-    # Recover the code from the store (test-only introspection).
-    code = service._otp_store._challenges[(OtpChannel.phone, phone)].code
-
-    verify = client.post("/api/auth/otp/verify", json={"phone": phone, "code": code})
-    assert verify.status_code == 200, verify.text
-    token = verify.json()["accessToken"]
-    claims = decode_token(token, settings)
-    assert claims.app_role == "parent"
-    assert claims.phone == phone
-
-
-def test_otp_request_surfaces_the_dev_code_for_the_offline_mock_provider(
+def test_parent_request_code_happy_path_returns_dev_code(
     context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """§G-05's developer affordance, end to end over the wire (D3.16).
+    client, service, _ = context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
 
-    The whole point is that the flow is testable without an SMS provider, so the
-    assertion is not "a field is present" but "the field's value logs a parent in".
-    """
-    client, _, _ = context
-    phone = "+201234533333"
-    resp = client.post("/api/auth/otp/request", json={"phone": phone})
+    resp = client.post(
+        "/api/auth/parent/request-code",
+        json={"email": "parent1@example.com", "inviteCode": invite.code},
+    )
+
     assert resp.status_code == 200, resp.text
-    dev_code = resp.json()["devCode"]
-    assert dev_code, "the offline mock provider is the only source of the code"
-
-    verify = client.post("/api/auth/otp/verify", json={"phone": phone, "code": dev_code})
-    assert verify.status_code == 200, verify.text
-    assert verify.json()["role"] == "parent"
+    body = resp.json()
+    assert body["status"] == "sent"
+    assert body["devCode"], "the offline mock provider is the only source of the code"
+    assert service._email.sent_signup_codes == [("parent1@example.com", body["devCode"])]
 
 
-def test_otp_verify_wrong_code_returns_401(
+def test_parent_request_code_dead_invite_is_404(
     context: tuple[TestClient, AuthService, Settings],
 ) -> None:
     client, _, _ = context
-    phone = "+201234511111"
-    client.post("/api/auth/otp/request", json={"phone": phone})
-    resp = client.post("/api/auth/otp/verify", json={"phone": phone, "code": "999999"})
+    resp = client.post(
+        "/api/auth/parent/request-code",
+        json={"email": "nobody@example.com", "inviteCode": "NOSUCHCODE"},
+    )
+    assert resp.status_code == 404
+
+
+def test_parent_request_code_taken_email_is_400(
+    context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client, _, _ = context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    signup = client.post(
+        "/api/auth/signup",
+        json={
+            "email": "taken@example.com",
+            "password": "pw-123456",
+            "role": "student",
+            "acceptedTerms": True,
+        },
+    )
+    assert signup.status_code == 200, signup.text
+
+    resp = client.post(
+        "/api/auth/parent/request-code",
+        json={"email": "taken@example.com", "inviteCode": invite.code},
+    )
+
+    assert resp.status_code == 400, resp.text
+
+
+def test_parent_request_code_cooldown_is_429(
+    context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client, _, _ = context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    payload = {"email": "cooldown@example.com", "inviteCode": invite.code}
+
+    first = client.post("/api/auth/parent/request-code", json=payload)
+    assert first.status_code == 200, first.text
+    second = client.post("/api/auth/parent/request-code", json=payload)
+    assert second.status_code == 429, second.text
+
+
+def test_parent_verify_code_wrong_is_401(
+    context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client, _, _ = context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    email = "wrong@example.com"
+    request = client.post(
+        "/api/auth/parent/request-code", json={"email": email, "inviteCode": invite.code}
+    )
+    dev_code = request.json()["devCode"]
+    # Guaranteed different from the real code regardless of its value.
+    wrong_last_digit = "0" if dev_code[-1] != "0" else "1"
+    wrong_code = dev_code[:-1] + wrong_last_digit
+
+    resp = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email, "inviteCode": invite.code, "code": wrong_code},
+    )
+
     assert resp.status_code == 401
 
 
-def test_otp_resend_within_cooldown_returns_429(
+def test_parent_signup_creates_verified_parent_and_links(
     context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    # The default resend cooldown (>0s) throttles a rapid second request for the
-    # same phone; the two calls here land well inside the window → 429, not 500.
-    client, _, _ = context
-    phone = "+201234522222"
-    first = client.post("/api/auth/otp/request", json={"phone": phone})
-    assert first.status_code == 200, first.text
-    second = client.post("/api/auth/otp/request", json={"phone": phone})
-    assert second.status_code == 429, second.text
+    client, service, settings = context
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    email = "newparent@example.com"
+
+    request = client.post(
+        "/api/auth/parent/request-code", json={"email": email, "inviteCode": invite.code}
+    )
+    assert request.status_code == 200, request.text
+    dev_code = request.json()["devCode"]
+
+    verify = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email, "inviteCode": invite.code, "code": dev_code},
+    )
+    assert verify.status_code == 200, verify.text
+    proof_token = verify.json()["proofToken"]
+
+    signup = client.post(
+        "/api/auth/parent/signup",
+        json={
+            "proofToken": proof_token,
+            "password": "pw-123456",
+            "acceptedTerms": True,
+            "displayName": "New Parent",
+        },
+    )
+
+    assert signup.status_code == 200, signup.text
+    body = signup.json()
+    assert body["role"] == "parent"
+    # Verified immediately from the proof token - no verification link/code minted.
+    assert body["devLink"] is None
+    assert body["devCode"] is None
+    claims = decode_token(body["accessToken"], settings)
+    assert claims.app_role == "parent"
+    assert claims.email == email
+
+    mirrored = service._mirror.get_by_id(uuid.UUID(body["userId"]))
+    assert mirrored is not None
+    assert mirrored.email_verified_at is not None
+
+    children = ParentLinkService(pg_sessionmaker).linked_children(uuid.UUID(body["userId"]))
+    assert [c.child_id for c in children] == [student]
+
+
+def test_parent_signup_expired_proof_is_401(
+    context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    client, _, settings = context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+    expired_proof = mint_email_proof_token(
+        email="expired@example.com",
+        invite_code=invite.code,
+        settings=settings,
+        now=datetime.now(UTC) - timedelta(hours=1),
+    )
+
+    resp = client.post(
+        "/api/auth/parent/signup",
+        json={"proofToken": expired_proof, "password": "pw-123456", "acceptedTerms": True},
+    )
+
+    assert resp.status_code == 401, resp.text
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────

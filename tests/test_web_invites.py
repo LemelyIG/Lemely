@@ -175,7 +175,7 @@ def test_preview_route_response_carries_no_extra_fields(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """``ApiModel``'s ``extra=\"forbid\"`` guarantees the DTO's shape; this
-    pins that shape to exactly the four disclosure-safe fields."""
+    pins that shape to exactly the five disclosure-safe fields."""
     teacher = _seed_user(pg_sessionmaker, Role.teacher, display_name="Mx Teacher")
     class_id = _seed_class(pg_sessionmaker, teacher_id=teacher)
     with pg_sessionmaker() as session:
@@ -185,7 +185,7 @@ def test_preview_route_response_carries_no_extra_fields(
     res = client.get(f"/api/invites/{join_code}")
 
     assert res.status_code == 200
-    assert set(res.json()) == {"role", "schoolName", "className", "teacherName"}
+    assert set(res.json()) == {"role", "schoolName", "className", "teacherName", "childName"}
 
 
 # ── POST /api/invites/{code}/redeem ─────────────────────────────────────────
@@ -227,6 +227,84 @@ def test_redeem_route_of_an_unknown_code_is_404(pg_sessionmaker: sessionmaker[Se
     client = _client(pg_sessionmaker, role=Role.student)
     res = client.post("/api/invites/NOSUCHCODE/redeem")
     assert res.status_code == 404
+
+
+# ── Parent invites (spec §4): preview + redeem + role mismatch ─────────────
+
+
+def test_preview_route_of_a_parent_invite_shows_the_child_name(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=None)
+    res = client.get(f"/api/invites/{invite.code}")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["role"] == "parent"
+    assert body["childName"] == "Maya"
+    assert body["schoolName"] is None
+    assert body["className"] is None
+    assert body["teacherName"] is None
+
+
+def test_redeem_route_of_a_parent_invite_links_the_parent(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    parent_link_service = ParentLinkService(pg_sessionmaker)
+    service = InviteService(pg_sessionmaker, ClassService(pg_sessionmaker), parent_link_service)
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=Role.parent, user_id=parent)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 200
+    body = res.json()
+    assert body["role"] == "parent"
+    assert body["childId"] == str(student)
+    assert body["schoolId"] is None
+    assert body["classId"] is None
+    assert [row.child_id for row in parent_link_service.linked_children(parent)] == [student]
+
+
+def test_redeem_route_of_a_parent_invite_by_a_non_parent_is_403(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker, Role.student)
+    other_student = _seed_user(pg_sessionmaker, Role.student)
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_parent_invite(student, reusable=False)
+
+    client = _client(pg_sessionmaker, role=Role.student, user_id=other_student)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 403
+
+
+def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school = _seed_school(pg_sessionmaker, quota=5, admin_id=admin)
+    service = InviteService(
+        pg_sessionmaker, ClassService(pg_sessionmaker), ParentLinkService(pg_sessionmaker)
+    )
+    invite = service.mint_seat_invite(admin, school)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+
+    client = _client(pg_sessionmaker, role=Role.parent, user_id=parent)
+    res = client.post(f"/api/invites/{invite.code}/redeem")
+
+    assert res.status_code == 403
 
 
 def test_redeem_route_already_redeemed_by_another_is_409(

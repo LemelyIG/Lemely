@@ -2,11 +2,12 @@
 
 Covers ``docs/LEMELY_UI_SPEC.md`` §4.8's four parent screens — P-01 (children
 list), P-02 (child overview), P-03 (child subject detail), P-04 (child
-weaknesses) — plus the parent-link request/response DTOs shared by the
-student-side invite/list/revoke routes (``lemely.web.routers.student``) and
-the parent-side routes (``lemely.web.routers.parent``). Kept out of
-``lemely.web.schemas_student`` deliberately: these are not student-portal-
-shaped, they are the two ends of one relationship.
+weaknesses) — plus the linked-parent list DTOs and the child-issued
+parent-invite DTOs (spec §4) shared by the student-side invite/list/revoke
+routes (``lemely.web.routers.student``) and the parent-side routes
+(``lemely.web.routers.parent``). Kept out of ``lemely.web.schemas_student``
+deliberately: these are not student-portal-shaped, they are the two ends of
+one relationship.
 
 **Data provenance.** Every field is documented as data-backed (computed from
 :class:`~lemely.core.history.StudentHistory` via
@@ -30,12 +31,18 @@ from lemely.web.schemas import ApiModel
 class LinkedParentDTO(ApiModel):
     """One parent linked to the authenticated student.
 
-    Data-backed: ``parentId``/``displayName``/``phone`` come straight off the
-    linked ``users`` row (:class:`~lemely.db.parent_repo.ParentRow`).
+    Data-backed: ``parentId``/``displayName``/``email``/``phone`` come
+    straight off the linked ``users`` row
+    (:class:`~lemely.db.parent_repo.ParentRow`). ``email`` is never absent —
+    every parent authenticates by email/password now (spec §4) — while
+    ``phone`` stays nullable, a fact this codebase still records but no
+    longer authenticates against (D3.11's decisions, kept in
+    ``lemely.db.parent_repo``'s own docstring).
     """
 
     parentId: str
     displayName: str
+    email: str
     phone: str | None = None
 
 
@@ -45,14 +52,46 @@ class ParentLinkListDTO(ApiModel):
     parents: list[LinkedParentDTO] = Field(default_factory=list)
 
 
-class LinkParentRequestDTO(ApiModel):
-    """Body for ``POST /api/student/parent-links`` — invite an existing parent by phone.
+# ── Parent-invite DTOs (child-issued, spec §4) ───────────────────────────────
 
-    Resolves to an *existing* ``role=parent`` user only (D3.11) — this never
-    creates an account from a student-supplied phone.
+
+class ParentCodeDTO(ApiModel):
+    """A student's reusable parent code, ready to share (spec §3/§4).
+
+    ``url`` is the ``/join/:code`` link (G-08) the code also resolves at —
+    handed out beside the bare ``code`` so a student can share either the
+    short code (read aloud, typed in) or the link (tapped), per
+    ``lemely.web.routers.student``'s own URL-building helper.
     """
 
-    phone: str
+    code: str
+    url: str
+
+
+class ParentInviteLinkDTO(ApiModel):
+    """One single-use parent invite link (spec §3): mint response and list row alike.
+
+    ``expiresAt`` is always set — a single-use link always carries the
+    7-day :data:`~lemely.db.invite_repo.PARENT_INVITE_TTL` expiry, unlike the
+    reusable code (:class:`ParentCodeDTO`), which never expires.
+    """
+
+    code: str
+    url: str
+    expiresAt: str
+
+
+class ParentInvitesDTO(ApiModel):
+    """Response for ``GET /api/student/parent-invites`` (spec §4).
+
+    ``code`` is the student's one standing reusable code, minted lazily on
+    first read (:meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`)
+    so this screen never shows an empty state for it. ``links`` lists only
+    live (unexpired), unredeemed single-use links, oldest first.
+    """
+
+    code: ParentCodeDTO
+    links: list[ParentInviteLinkDTO] = Field(default_factory=list)
 
 
 # ── P-01: parent home / children ─────────────────────────────────────────────
@@ -289,9 +328,11 @@ __all__ = [
     "ChildSummaryDTO",
     "ChildWeaknessesDTO",
     "GradeBoundaryDistanceDTO",
-    "LinkParentRequestDTO",
     "LinkedParentDTO",
     "ParentAtRiskFlagDTO",
+    "ParentCodeDTO",
+    "ParentInviteLinkDTO",
+    "ParentInvitesDTO",
     "ParentLinkListDTO",
     "RecentPaperDTO",
     "SubjectDetailDTO",

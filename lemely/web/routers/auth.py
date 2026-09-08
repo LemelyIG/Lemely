@@ -1,9 +1,11 @@
 """Authentication endpoints under ``/api/auth``.
 
 Thin HTTP layer over :class:`~lemely.auth.service.AuthService`: signup and login
-delegate to GoTrue email/password, and the two OTP routes drive the parent
-phone-OTP lifecycle. Domain :class:`~lemely.runtime.errors.AuthError` maps to a
-400/401 ``HTTPException`` so credential/OTP failures never surface as a 500.
+delegate to GoTrue email/password, and the three ``/auth/parent/*`` routes drive
+the child-issued parent signup (spec §4) — a six-digit email code, then a
+password, in place of the retired phone-OTP flow. Domain
+:class:`~lemely.runtime.errors.AuthError` maps to a 400/401 ``HTTPException`` so
+credential failures never surface as a 500.
 """
 
 # FastAPI ``Depends``/``response_model`` and pydantic construction need these
@@ -19,23 +21,30 @@ from lemely.auth.cooldown import CooldownError, CooldownStoreProtocol
 from lemely.auth.mirror import UserMirror
 from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
+from lemely.auth.tokens import TokenError, decode_email_proof_token, mint_email_proof_token
 from lemely.db.device_repo import MAX_DEVICES, DeviceLimitReachedError
-from lemely.db.models.enums import Role
+from lemely.db.invite_repo import InviteNotFoundError, InviteService
+from lemely.db.models.enums import InviteRole, Role
+from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
 from lemely.web.deps import (
     AuthContext,
     get_auth_context,
     get_auth_service,
+    get_invite_service,
     get_resend_verification_cooldown_store,
+    get_settings,
     get_signup_and_reset_cooldown_store,
     get_user_mirror,
 )
 from lemely.web.devices import to_device_dto
 from lemely.web.schemas_auth import (
     LoginRequestDTO,
-    OtpRequestDTO,
-    OtpRequestResponseDTO,
-    OtpVerifyDTO,
+    ParentCodeRequestDTO,
+    ParentCodeRequestResponseDTO,
+    ParentCodeVerifyDTO,
+    ParentCodeVerifyResponseDTO,
+    ParentSignupDTO,
     PasswordResetConfirmDTO,
     PasswordResetConfirmResponseDTO,
     PasswordResetRequestDTO,
@@ -57,7 +66,9 @@ router = APIRouter(prefix="/api")
 # an anonymous caller — otherwise anyone could POST role="platform_admin" and
 # mint an admin token (D1.7). Those two are created by an authenticated admin:
 # school_admin via the platform-admin schools surface, teacher-in-a-school via
-# the seat/invite flow. Parents authenticate via phone-OTP, not signup.
+# the seat/invite flow. Parents authenticate via the three ``/auth/parent/*``
+# routes below (spec §4), gated on holding a live parent invite rather than
+# on this allowlist — `/auth/signup` itself never creates one.
 #
 # D7.1 added `teacher` and did not weaken D1.7's rule. D1.7's stated risk is
 # *escalation*, and a self-registered teacher escalates nothing: every teacher
@@ -123,6 +134,28 @@ def _cooldown_detail(exc: CooldownError) -> str:
     it.
     """
     return f"Please wait {exc.retry_after:.0f}s before trying again."
+
+
+def _require_live_parent_invite(invite_service: InviteService, code: str) -> None:
+    """Refuse a dead or non-parent invite with the same 404 an unknown code gets.
+
+    Used by all three ``/auth/parent/*`` routes (spec §4): a code that does
+    not resolve at all and a code that resolves to something other than a
+    live parent invite (a seat/class invite, or one already expired) must
+    read identically, so an anonymous caller learns nothing about *why* a
+    given code failed — the same disclosure discipline
+    :meth:`~lemely.db.invite_repo.InviteService.preview`'s own docstring
+    binds itself to (rule 4), extended here to "is this a parent invite" as
+    well as "does the code exist". The detail wording matches
+    :class:`~lemely.db.invite_repo.InviteNotFoundError`'s own exactly, for
+    the identical reason.
+    """
+    try:
+        preview = invite_service.preview(code)
+    except InviteNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    if preview.role is not InviteRole.parent:
+        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
 
 
 @router.post("/auth/signup", response_model=TokenResponseDTO)
@@ -246,45 +279,128 @@ def refresh(
     return _to_token_dto(result)
 
 
-@router.post("/auth/otp/request", response_model=OtpRequestResponseDTO)
-def request_otp(
-    body: OtpRequestDTO,
+@router.post("/auth/parent/request-code", response_model=ParentCodeRequestResponseDTO)
+def request_parent_code(
+    body: ParentCodeRequestDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
-) -> OtpRequestResponseDTO:
-    """Issue a parent phone-OTP challenge (the code is delivered via SMS).
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
+    invite_service: Annotated[InviteService, Depends(get_invite_service)],
+    cooldown: Annotated[CooldownStoreProtocol, Depends(get_signup_and_reset_cooldown_store)],
+) -> ParentCodeRequestResponseDTO:
+    """Issue a signup code to the email address opening a parent invite (spec §4).
 
-    A re-request inside the resend cooldown is a 429 (not a 500): the cooldown
-    stops a caller resetting the brute-force attempt counter by spamming issues.
+    The invite named by ``inviteCode`` must resolve to a live parent invite —
+    any other outcome (unknown code, expired, or a seat/class invite) is the
+    same **404** an unknown code gets, via
+    :func:`_require_live_parent_invite`.
 
-    ``devCode`` is populated only by an SMS provider that does not deliver out of
-    band (the offline mock) — see :class:`OtpRequestResponseDTO` and D3.16.
+    **Duplicate-address check runs before the cooldown, mirroring
+    :func:`signup`'s own ordering exactly** (see that function's docstring for
+    the reasoning in full): ``mirror.get_by_email`` is read-only and free, so
+    an address that already has an account gets the same actionable **400**
+    on every attempt rather than a 429 it can never wait out — only once the
+    address is confirmed unclaimed does ``cooldown.check_and_stamp`` run,
+    throttling the genuinely costly path (a real code mint plus a send) to a
+    **429**.
+
+    ``devCode`` is populated only when the configured
+    :class:`~lemely.auth.email.EmailProvider` does not deliver out of band —
+    see :class:`~lemely.web.schemas_auth.ParentCodeRequestResponseDTO` and
+    D3.16.
     """
+    _require_live_parent_invite(invite_service, body.inviteCode)
+    if mirror.get_by_email(body.email) is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="This email already has an account. Sign in, then open the invite again.",
+        )
     try:
-        dev_code = service.request_otp(body.phone)
+        cooldown.check_and_stamp(body.email)
+    except CooldownError as exc:
+        raise HTTPException(status_code=429, detail=_cooldown_detail(exc)) from exc
+    try:
+        dev_code = service.request_parent_signup_code(body.email)
     except OtpRateLimitError as exc:
         raise HTTPException(status_code=429, detail=str(exc)) from exc
-    return OtpRequestResponseDTO(devCode=dev_code)
+    return ParentCodeRequestResponseDTO(devCode=dev_code)
 
 
-@router.post("/auth/otp/verify", response_model=TokenResponseDTO)
-def verify_otp(
-    body: OtpVerifyDTO,
+@router.post("/auth/parent/verify-code", response_model=ParentCodeVerifyResponseDTO)
+def verify_parent_code(
+    body: ParentCodeVerifyDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
-    user_agent: Annotated[str | None, Header()] = None,
-) -> TokenResponseDTO:
-    """Verify an OTP code and return a self-signed parent access token.
+    invite_service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+) -> ParentCodeVerifyResponseDTO:
+    """Verify a parent-signup code and mint the proof token for the final step (spec §4).
 
-    Registers the login against the 3-device limit, evicting the oldest session
-    beyond three (D1.11).
+    A wrong, expired, or locked-out code is a **401** carrying the service's
+    own detail (mirrors every other credential failure this router maps).
+    The invite is re-checked live *after* the code verifies — never before —
+    so a caller who mistypes the code never learns anything about the
+    invite's state from a response that only depends on the code.
     """
     try:
-        result = service.verify_otp(
-            body.phone,
-            body.code,
-            device=_device_context(body.deviceId, user_agent),
-        )
+        service.verify_parent_signup_code(body.email, body.code)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _require_live_parent_invite(invite_service, body.inviteCode)
+    proof_token = mint_email_proof_token(
+        email=body.email, invite_code=body.inviteCode, settings=settings
+    )
+    return ParentCodeVerifyResponseDTO(proofToken=proof_token)
+
+
+@router.post("/auth/parent/signup", response_model=TokenResponseDTO)
+def parent_signup(
+    body: ParentSignupDTO,
+    service: Annotated[AuthService, Depends(get_auth_service)],
+    invite_service: Annotated[InviteService, Depends(get_invite_service)],
+    settings: Annotated[Settings, Depends(get_settings)],
+    user_agent: Annotated[str | None, Header()] = None,
+) -> TokenResponseDTO:
+    """Create the parent's account from a verified proof token and link it (spec §4).
+
+    Three steps, each able to fail independently: decoding ``proofToken``
+    (→ **401** on any failure — expired, wrong audience, tampered — via
+    :class:`~lemely.auth.tokens.TokenError`), re-checking the invite it names
+    is still live (→ **404**, :func:`_require_live_parent_invite` again — a
+    code can expire or be revoked in the minutes between verifying the email
+    and completing this step), then :meth:`~lemely.auth.service.AuthService.signup`
+    itself (→ **400** on an ``AuthError`` — chiefly the address being taken,
+    though that should be rare given step one already checked it).
+    ``email_verified=True`` is passed because the proof token *is* that
+    verification — asking the parent to also click a mailed link would be
+    asking them to prove the same address twice.
+
+    **Honest gap, the same shape seat invites already carry.** The GoTrue
+    account creation and :meth:`~lemely.db.invite_repo.InviteService.redeem`
+    (which performs the actual link, inside its own transaction with
+    :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`) are two
+    separate calls, not one database transaction — a failure between them
+    leaves a real, working parent account that is not yet linked to the
+    child. There is no special recovery path for this: the account exists,
+    and re-presenting the exact same code at ``/join/:code`` while signed in
+    (spec §2 rule 4) redeems it the normal way.
+    """
+    try:
+        claims = decode_email_proof_token(body.proofToken, settings)
+    except TokenError as exc:
+        raise HTTPException(status_code=401, detail=str(exc)) from exc
+    _require_live_parent_invite(invite_service, claims.invite_code)
+    try:
+        result = service.signup(
+            claims.email,
+            body.password,
+            Role.parent,
+            display_name=body.displayName,
+            device=_device_context(body.deviceId, user_agent),
+            accepted_terms=body.acceptedTerms,
+            email_verified=True,
+        )
+    except AuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    invite_service.redeem(result.user_id, claims.invite_code, caller_role=Role.parent)
     return _to_token_dto(result)
 
 
@@ -349,21 +465,22 @@ def resend_verification(
     not by platform role.
 
     A per-user cooldown (D7.12) throttles repeat resends to a **429**,
-    mirroring ``/auth/otp/request``'s existing resend-cooldown mapping.
+    mirroring ``/auth/parent/request-code``'s own resend-cooldown mapping.
 
     **A second, independent 429 source.** ``AuthService.resend_verification``
     now also issues a fresh email-channel code
     (:meth:`~lemely.auth.service.AuthService._issue_email_code`), and the OTP
-    store's own resend cooldown (shared with the phone flow,
-    ``otp_min_resend_seconds``) can reject that issue with
+    store's own resend cooldown (``otp_min_resend_seconds`` — shared with the
+    parent-signup-code challenge, since both are "prove you control this
+    inbox" challenges on the same channel) can reject that issue with
     :class:`~lemely.auth.otp.OtpRateLimitError` — distinct from, and not
     prevented by, the ``cooldown`` check above: the D7.12 store is stamped
     only *on* a resend call, so a caller's very first resend (no D7.12 stamp
     yet) can still land inside the OTP store's own window if it follows the
     ``signup`` that already issued a code for the same address moments
-    earlier. Mapped to the same 429 :func:`request_otp` already uses for the
-    identical exception on the phone channel, rather than left to surface as
-    an unhandled 500.
+    earlier. Mapped to the same 429 :func:`request_parent_code` already uses
+    for the identical exception on the parent-signup-code channel, rather
+    than left to surface as an unhandled 500.
     """
     try:
         cooldown.check_and_stamp(auth.user_id)
