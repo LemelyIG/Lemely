@@ -24,26 +24,63 @@ from lemely.db.models.enums import (
 
 
 class ReviewQueueItem(TimestampMixin, Base):
-    """A question result that requires teacher review."""
+    """A marked question that requires teacher review, from either source.
+
+    A row hangs off **exactly one** of two sources (``ck_review_queue_one_source``,
+    migration ``0034``):
+
+    * ``attempt_id`` — a student submission, written by
+      ``AttemptRepository.persist_correction``. Its question is a real
+      ``question_results`` row (``question_result_id``), which is where a
+      teacher's mark override is persisted.
+    * ``teacher_paper_id`` — a scan uploaded through the grading console,
+      written by ``TeacherPaperRepository.finish``. A console paper is never
+      attributed to a student (``teacher_papers.student_id`` is always NULL,
+      D1.12) so it has no ``Attempt`` and no ``question_results`` rows at all;
+      its per-question marks live inside ``teacher_papers.report_json`` and the
+      flagged question is named by the mark scheme's own ``question_id``.
+
+    The two FKs are the discriminator — there is no separate "source" column
+    that could disagree with them.
+    """
 
     __tablename__ = "review_queue"
-    __table_args__ = (sa.Index("ix_review_queue_status", "status"),)
+    __table_args__ = (
+        sa.Index("ix_review_queue_status", "status"),
+        sa.Index(
+            "ix_review_queue_teacher_paper",
+            "teacher_paper_id",
+            postgresql_where=sa.text("teacher_paper_id IS NOT NULL"),
+        ),
+        sa.CheckConstraint(
+            "(attempt_id IS NOT NULL) <> (teacher_paper_id IS NOT NULL)",
+            name="one_source",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
         primary_key=True,
         server_default=sa.text("gen_random_uuid()"),
     )
-    attempt_id: Mapped[uuid.UUID] = mapped_column(
+    attempt_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("attempts.id", ondelete="CASCADE"),
-        nullable=False,
+        nullable=True,
+    )
+    teacher_paper_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("teacher_papers.id", ondelete="CASCADE"),
+        nullable=True,
     )
     question_result_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True),
         sa.ForeignKey("question_results.id"),
         nullable=True,
     )
+    #: The mark scheme's question id, for a console-sourced row only — there is
+    #: no ``question_results`` row to point ``question_result_id`` at.
+    question_id: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     reason: Mapped[ReviewReason] = mapped_column(
         sa.Enum(ReviewReason, name="reviewreason"),
         nullable=False,

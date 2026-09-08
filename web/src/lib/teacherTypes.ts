@@ -637,15 +637,31 @@ export interface AcknowledgeAtRiskRequest {
  * `paperVariant`/`sessionMonth`/`sessionYear` are all `null` together for a
  * quiz-originated item (a quiz `Attempt` carries no paper identity) — render
  * as "Quiz question", never a blank paper-identity line.
+ *
+ * `source` says which half of the queue the row came from, and is the field
+ * to branch on — never "is `studentId` null":
+ *
+ * - `student_attempt` — a student submission. `attemptId` and the
+ *   `studentId`/`classId`/`className` trio are set; `paperId` is `null`.
+ * - `console_paper` — a scan the teacher uploaded through the grading console
+ *   (migration `0034`). `paperId` is set and `attemptId` is `null`. A console
+ *   upload is never attributed to a student (D1.12), so the student and class
+ *   fields are `null` rather than filled with a guess, and
+ *   `studentDisplayName` carries the paper's own label — the same one its
+ *   card shows in the grading console. Such an item can be accepted as-is or
+ *   dismissed, but **not re-marked**: there is no `QuestionResult` to record
+ *   an override on, and `resolve` with `overrideMarks` is a 422.
  */
 export interface ReviewQueueItem {
   itemId: string
-  attemptId: string
+  source: string
+  attemptId: string | null
+  paperId: string | null
   questionResultId: string | null
-  studentId: string
+  studentId: string | null
   studentDisplayName: string
-  classId: string
-  className: string
+  classId: string | null
+  className: string | null
   subjectCode: string | null
   paperNumber: number | null
   paperVariant: number | null

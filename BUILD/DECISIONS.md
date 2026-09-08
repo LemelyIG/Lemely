@@ -14405,3 +14405,47 @@ leaks the child's email or id); `tests/test_auth_router.py` covers the three new
 invite, and the cooldown); the deleted OTP route tests are removed with the routes. The phone
 seam's own tests (`AuthService.request_otp`/`verify_otp`) are untouched — they still exercise a
 real code path, just not one any router calls.
+
+### D7.14 — The review queue takes a second source rather than a fake student
+
+**What.** `review_queue` now hangs a row off **either** an `attempts.id` or a `teacher_papers.id`
+(migration `0034`: `attempt_id` nullable, `teacher_paper_id` + `question_id` added, with
+`ck_review_queue_one_source` enforcing exactly one). `TeacherPaperRepository.finish` writes the
+flagged questions of a console-graded paper in the same transaction as its report, and
+`ReviewService` lists, resolves, dismisses and bulk-approves them alongside student items.
+
+**Why.** A paper uploaded through the grading console showed `REVIEW` on its card while
+`/teacher/review` said "Nothing waiting for review". The console derives that badge from
+`teacher_papers.report_json` (`_paper_kind`); the queue lists `review_queue` rows, whose only
+writer was `AttemptRepository.persist_correction` — the *student* submission path. A console
+upload is never attributed to a student (D1.12), so it creates no `Attempt` and could therefore
+never create a queue row. This was not a missed call site; the queue could not represent the thing
+at all.
+
+**The rejected fix: mint an `Attempt` for console papers.** It would have needed a `user_id`, and
+the only candidates are a fabricated student or the teacher themselves. Either one puts a paper
+nobody submitted into `attempts` — the table `DbHistoryStore`, every `PaperRecord`, the class
+heatmap and the at-risk assessment all read — so a teacher's own bulk marking would surface as a
+student's performance. D1.12 dropped the caller-supplied `student_id` for a security reason and
+this would have re-introduced the same fiction through the back door. The queue was widened
+instead, because "a review item is not always about a student" is the truth the data already had.
+
+**Two tenancy rules, deliberately.** Student items stay scoped by the caller's roster union
+(D3.1). Console items are scoped by `teacher_paper_visible` — lifted out of
+`TeacherPaperRepository._visible` to a module-level function so the console and the queue cannot
+drift apart on what "visible paper" means. They could not share one rule: a console paper has no
+student and no class for the roster rule to reach.
+
+**`platform_admin` is excluded from the console half explicitly.** `teacher_paper_visible` grants
+it every paper (DS11, the console's rule), but this queue has no super-role bypass at all
+(D1.6/D1.10) — inheriting DS11 here would have handed the one deliberately empty-scoped role a
+view of every teacher's marking as a side effect of a bug fix. Widening an endpoint is not fixing
+it.
+
+**No backfill, and no re-marking.** Papers graded before `0034` get no rows retroactively: marks a
+teacher has already looked at in the console should not reappear as unreviewed work weeks later.
+And a console item can be accepted as-is or dismissed but **never re-marked** — its per-question
+marks live inside `report_json` with no `QuestionResult` for `0005_review_overrides` to record a
+correction on, so `resolve` refuses `override_marks` with a 422 rather than accepting a re-mark it
+would have to drop. Changing a console paper's marks means re-running it from the console. Stated
+as a limit rather than papered over with a control that silently does nothing.

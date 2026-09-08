@@ -78,11 +78,13 @@ def _raise_for(exc: ReviewError) -> NoReturn:
 def _row_to_dto(row: ReviewQueueRow) -> ReviewQueueItemDTO:
     return ReviewQueueItemDTO(
         itemId=str(row.item_id),
-        attemptId=str(row.attempt_id),
+        source=row.source,
+        attemptId=str(row.attempt_id) if row.attempt_id else None,
+        paperId=str(row.paper_id) if row.paper_id else None,
         questionResultId=str(row.question_result_id) if row.question_result_id else None,
-        studentId=str(row.student_id),
+        studentId=str(row.student_id) if row.student_id else None,
         studentDisplayName=row.student_display_name,
-        classId=str(row.class_id),
+        classId=str(row.class_id) if row.class_id else None,
         className=row.class_name,
         subjectCode=row.subject_code,
         paperNumber=row.paper_number,
@@ -110,11 +112,13 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
     row = detail.row
     return ReviewItemDetailDTO(
         itemId=str(row.item_id),
-        attemptId=str(row.attempt_id),
+        source=row.source,
+        attemptId=str(row.attempt_id) if row.attempt_id else None,
+        paperId=str(row.paper_id) if row.paper_id else None,
         questionResultId=str(row.question_result_id) if row.question_result_id else None,
-        studentId=str(row.student_id),
+        studentId=str(row.student_id) if row.student_id else None,
         studentDisplayName=row.student_display_name,
-        classId=str(row.class_id),
+        classId=str(row.class_id) if row.class_id else None,
         className=row.class_name,
         subjectCode=row.subject_code,
         paperNumber=row.paper_number,

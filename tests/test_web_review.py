@@ -10,6 +10,7 @@ or bulk-approve another teacher's review item.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -36,6 +37,7 @@ from lemely.db.models import User
 from lemely.db.models.enums import Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import ReviewService
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
 from lemely.web.deps import AuthContext, get_auth_context, get_review_service
@@ -562,3 +564,321 @@ def test_overview_need_your_eyes_scoped_to_callers_review_queue(
     assert stats_b["Need your eyes"] == "0"
 
     app.dependency_overrides.clear()
+
+
+# ---------------------------------------------------------------------------
+# Console-sourced items (migration 0034). Regression cover for the split that
+# let a grading-console paper show "Review" on its card while the review queue
+# stayed empty: the console read ``teacher_papers.report_json`` and the queue
+# read ``review_queue``, and only the student path ever wrote the latter.
+# ---------------------------------------------------------------------------
+
+
+def _seed_console_paper(
+    pg_sessionmaker: sessionmaker[Session],
+    *,
+    uploader: uuid.UUID,
+    questions: list[CorrectedQuestion] | None = None,
+) -> uuid.UUID:
+    """Grade a paper through the console repository, as a finished run would."""
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10))
+    paper_id = uuid.uuid4()
+    repo.create(
+        paper_id=paper_id,
+        uploaded_by=uploader,
+        storage_path=f"teacher/{uploader}/{paper_id.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=15,
+    )
+    repo.claim_run(paper_id)
+    repo.finish(
+        paper_id,
+        _report(questions if questions is not None else [_question("5b", awarded=1, maximum=4)]),
+    )
+    return paper_id
+
+
+def test_console_graded_paper_reaches_the_review_queue(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """The bug this migration exists for: a flagged console paper must be listed."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    body = client.get("/api/teacher/review").json()
+    assert len(body["items"]) == 1
+    row = body["items"][0]
+    assert row["source"] == "console_paper"
+    assert row["paperId"] == str(paper_id)
+    # No student, no class — a console upload is attributed to neither (D1.12),
+    # and the queue must say so rather than inventing one.
+    assert row["attemptId"] is None
+    assert row["studentId"] is None
+    assert row["classId"] is None
+    assert row["className"] is None
+    assert row["questionResultId"] is None
+    # The paper's own label is its identity, matching its grading-console card.
+    assert row["studentDisplayName"] == "Paper 1 V1 May/June 2020 - " + (
+        datetime.now(UTC).date().isoformat()
+    )
+    assert row["questionId"] == "5b"
+    assert row["reason"] == "low_confidence"
+    assert row["aiAwardedMarks"] == 1
+    assert row["maximumMarks"] == 4
+    assert row["confidenceScore"] == pytest.approx(0.3)
+
+
+def test_console_item_detail_carries_the_reports_marking_evidence(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    item_id = client.get("/api/teacher/review").json()["items"][0]["itemId"]
+    detail = client.get(f"/api/teacher/review/{item_id}").json()
+    assert detail["source"] == "console_paper"
+    assert detail["studentAnswer"] == "answer-5b"
+    assert detail["expectedAnswer"] == "expected-5b"
+    assert detail["topic"] == "Waves"
+    assert detail["matchedPointIds"] == ["p1"]
+    assert detail["markerSource"] == "ai"
+    # Nowhere to persist an override, so every override field stays empty.
+    assert detail["isOverridden"] is False
+    assert detail["teacherAwardedMarks"] is None
+
+
+def test_console_item_accepts_as_is_but_refuses_a_mark_override(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """A console item can be closed, never re-marked — there is no row to write to."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    item_id = client.get("/api/teacher/review").json()["items"][0]["itemId"]
+
+    # Refused rather than accepted-and-dropped: telling the teacher their
+    # re-mark landed when nothing changed is the worse failure.
+    refused = client.post(f"/api/teacher/review/{item_id}/resolve", json={"overrideMarks": 3})
+    assert refused.status_code == 422
+    assert client.get("/api/teacher/review").json()["items"], "still open after a refused override"
+
+    accepted = client.post(f"/api/teacher/review/{item_id}/resolve", json={})
+    assert accepted.status_code == 200
+    assert accepted.json()["status"] == "resolved"
+    assert client.get("/api/teacher/review").json()["items"] == []
+
+
+def test_console_integrity_flag_can_be_dismissed(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_console_paper(
+        pg_sessionmaker,
+        uploader=teacher,
+        questions=[
+            _question(
+                "2a",
+                awarded=0,
+                maximum=3,
+                confidence_score=1.0,
+                needs_review=False,
+                plagiarism_flagged=True,
+            )
+        ],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    rows = client.get("/api/teacher/review").json()["items"]
+    assert [r["reason"] for r in rows] == ["plagiarism_flag"]
+    resp = client.post(f"/api/teacher/review/{rows[0]['itemId']}/dismiss", json={})
+    assert resp.status_code == 200
+    assert resp.json()["status"] == "dismissed"
+
+
+def test_console_items_are_bulk_approvable(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_console_paper(
+        pg_sessionmaker,
+        uploader=teacher,
+        questions=[
+            _question("1a", awarded=1, maximum=2),
+            _question("1b", awarded=0, maximum=2),
+        ],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    ids = [r["itemId"] for r in client.get("/api/teacher/review").json()["items"]]
+    assert len(ids) == 2
+    resp = client.post("/api/teacher/review/bulk-approve", json={"itemIds": ids})
+    assert resp.status_code == 200
+    assert sorted(resp.json()["approved"]) == sorted(ids)
+    assert resp.json()["skipped"] == []
+    assert client.get("/api/teacher/review").json()["items"] == []
+
+
+def test_regrade_replaces_open_console_rows_and_preserves_closed_ones(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """A second run replaces the open queue without stacking duplicates.
+
+    A question the teacher already signed off is re-queued when the re-mark
+    flags it again, and that is correct rather than an undo: the sign-off was
+    for the *previous* marking, and a re-run replaced it with a mark nobody has
+    reviewed. What must not happen is the resolved row being deleted — it is
+    the record that a decision was made, so it survives alongside the new one.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    paper_id = _seed_console_paper(
+        pg_sessionmaker,
+        uploader=teacher,
+        questions=[
+            _question("1a", awarded=1, maximum=2),
+            _question("1b", awarded=0, maximum=2),
+        ],
+    )
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    rows = {r["questionId"]: r["itemId"] for r in client.get("/api/teacher/review").json()["items"]}
+    assert client.post(f"/api/teacher/review/{rows['1a']}/resolve", json={}).status_code == 200
+
+    # Re-mark the same paper.
+    TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10)).finish(
+        paper_id,
+        _report([_question("1a", awarded=2, maximum=2), _question("1b", awarded=1, maximum=2)]),
+    )
+
+    after = client.get("/api/teacher/review").json()["items"]
+    # Both questions are flagged by the new run, so both are open again — each
+    # exactly once. "1b" is the duplicate-stacking guard: it had an open row
+    # before the re-run and must still have exactly one after it.
+    assert sorted(r["questionId"] for r in after) == ["1a", "1b"]
+    with pg_sessionmaker() as session:
+        rows = session.scalars(
+            sa.select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).all()
+    # Three rows, not four: the resolved "1a" is kept as the record of that
+    # decision, the two open rows are the current run's, and nothing is doubled.
+    assert sorted(i.status.value for i in rows) == ["open", "open", "resolved"]
+    assert sorted(i.question_id for i in rows if i.status.value == "open") == ["1a", "1b"]
+
+
+def test_console_items_are_scoped_to_the_uploading_teacher(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """Another teacher's console paper is invisible, and unactionable, not a 404 oracle."""
+    owner = _seed_user(pg_sessionmaker, Role.teacher)
+    other = _seed_user(pg_sessionmaker, Role.teacher)
+    _seed_console_paper(pg_sessionmaker, uploader=owner)
+    _use_review_service(client, review_service)
+
+    _auth_as(client, owner, Role.teacher)
+    item_id = client.get("/api/teacher/review").json()["items"][0]["itemId"]
+
+    _auth_as(client, other, Role.teacher)
+    assert client.get("/api/teacher/review").json()["items"] == []
+    assert client.get(f"/api/teacher/review/{item_id}").status_code == 403
+    assert client.post(f"/api/teacher/review/{item_id}/resolve", json={}).status_code == 403
+    bulk = client.post("/api/teacher/review/bulk-approve", json={"itemIds": [item_id]})
+    assert bulk.json()["approved"] == []
+    assert [s["reason"] for s in bulk.json()["skipped"]] == ["forbidden"]
+
+
+def test_console_items_honour_the_queues_no_super_role_bypass(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """`platform_admin` sees no console rows either.
+
+    ``teacher_paper_visible`` grants a platform admin every paper — that is the
+    grading console's rule (DS11). This queue has no super-role bypass at all
+    (D1.6/D1.10), and adding the console source must not quietly hand the one
+    deliberately empty-scoped role a view of every teacher's marking.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    admin = _seed_user(pg_sessionmaker, Role.platform_admin)
+    _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+
+    _auth_as(client, teacher, Role.teacher)
+    item_id = client.get("/api/teacher/review").json()["items"][0]["itemId"]
+
+    _auth_as(client, admin, Role.platform_admin)
+    assert client.get("/api/teacher/review").json()["items"] == []
+    assert client.get(f"/api/teacher/review/{item_id}").status_code == 403
+
+
+def test_class_filter_excludes_console_items(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A console paper belongs to no class, so "this class only" excludes it."""
+    teacher, class_id, _ = _seed_teacher_with_flagged_item(pg_sessionmaker, class_service)
+    _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    unfiltered = client.get("/api/teacher/review").json()["items"]
+    assert sorted(r["source"] for r in unfiltered) == ["console_paper", "student_attempt"]
+
+    filtered = client.get(f"/api/teacher/review?class_id={class_id}").json()["items"]
+    assert [r["source"] for r in filtered] == ["student_attempt"]
+
+
+def test_both_sources_merge_oldest_first(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Ordering holds across the merged list, not just within each half."""
+    teacher, _, attempt_item = _seed_teacher_with_flagged_item(pg_sessionmaker, class_service)
+    _seed_console_paper(pg_sessionmaker, uploader=teacher)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    # Age the console row past the attempt-backed one so a naive
+    # "attempts first, then papers" concatenation would order them wrongly.
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(ReviewQueueItem)
+            .where(ReviewQueueItem.teacher_paper_id.is_not(None))
+            .values(created_at=datetime.now(UTC) - timedelta(hours=48))
+        )
+
+    rows = client.get("/api/teacher/review").json()["items"]
+    assert [r["source"] for r in rows] == ["console_paper", "student_attempt"]
+    assert rows[1]["itemId"] == str(attempt_item)
+
+    # `min_age_hours` filters the merged list, not one half of it.
+    aged = client.get("/api/teacher/review?min_age_hours=24").json()["items"]
+    assert [r["source"] for r in aged] == ["console_paper"]
