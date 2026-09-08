@@ -38,6 +38,16 @@ import { isEmailUnverifiedError } from "@/lib/authTypes"
  * rather than to the raw string, so a new enum member added server-side cannot
  * leak through this function.
  *
+ * The parent-invites design (superseding D3.11's phone flow) added a second
+ * caller of the identical shape: `AuthService.verify_parent_signup_code`
+ * raises `AuthError(f"Email verification failed: {result.value}")`, the same
+ * four `OtpResult` members behind an email-shaped prefix instead of a phone-
+ * shaped one. `otpVerifyFailureMessage` now checks both prefixes against the
+ * same table rather than gaining a sibling function — see that function's own
+ * comment, and `OTP_FAILURES`'s, for why the table's wording was also made
+ * channel-neutral at the same time (it used to say "text", which would be a
+ * false claim from the email caller).
+ *
  * ── 2. The OTP request 429 is genuinely well written, and is kept ───────────
  *
  * `OtpRateLimitError` says "OTP already sent; retry in 12s."
@@ -206,22 +216,43 @@ export const AUTH_INVITE_ALREADY_USED =
  * `OtpResult` (`lemely/auth/otp.py`) to a sentence, keeping the backend's
  * distinction and losing its vocabulary.
  *
- * `no_challenge` is the odd one: it means the server has no live code for this
- * number at all, which from the reader's side is indistinguishable from an
- * expired one, so it says the thing that is true either way and offers the
- * action that fixes both.
+ * `no_challenge` is the odd one: it means the server has no live code waiting
+ * at all, which from the reader's side is indistinguishable from an expired
+ * one, so it says the thing that is true either way and offers the action
+ * that fixes both.
+ *
+ * Channel-neutral on purpose, and that is a change from this constant's
+ * original wording. `AuthService.verify_parent_signup_code` (the
+ * parent-invites design, superseding D3.11's phone-OTP login) raises the
+ * identical `AuthError(f"Email verification failed: {result.value}")` shape
+ * `verify_otp` does, with the same four `OtpResult` members — see
+ * `otpVerifyFailureMessage` below, which now maps both prefixes onto this one
+ * table. The original wording said "we'll text it" and "that number", which
+ * would be a false claim on the email-shaped call: nobody is texted anything.
+ * Genericising to "send"/dropping the phone-specific noun keeps one sentence
+ * honest for both callers, rather than forking the table in two for a
+ * difference of one word.
  */
 const OTP_FAILURES: Record<string, string> = {
-  wrong_code: "That code doesn't match. Check the message and type it again.",
-  expired: "That code has expired. Ask for a new one and we'll text it straight away.",
+  wrong_code: "That code doesn't match. Check it and type it again.",
+  expired: "That code has expired. Ask for a new one and we'll send it straight away.",
   locked_out:
     "Too many tries with that code. Ask for a new one, and it will start counting again.",
-  no_challenge:
-    "We don't have a code waiting for that number. Ask for a new one and we'll text it straight away.",
+  no_challenge: "We don't have a code waiting for you. Ask for a new one and we'll send it straight away.",
 }
 
 /** The prefix `AuthService.verify_otp` puts in front of the enum value. */
 const OTP_PREFIX = "OTP verification failed:"
+
+/**
+ * The prefix `AuthService.verify_parent_signup_code` puts in front of the
+ * same enum value, for the parent-invites email-code step (design spec §4).
+ * Not a new vocabulary to map separately — `otpVerifyFailureMessage` treats
+ * this as `OTP_PREFIX`'s email-shaped sibling and reuses the identical
+ * `OTP_FAILURES` sentences for both, which is why that table's wording was
+ * genericised away from "text"/"number" (see its own comment).
+ */
+const EMAIL_CODE_PREFIX = "Email verification failed:"
 
 /**
  * Turn a failed sign-in into a sentence.
@@ -243,18 +274,33 @@ export function signInFailureMessage(err: unknown): string {
 }
 
 /**
- * Turn a failed OTP *verify* into a sentence, mapping the enum the backend
- * sends rather than printing it.
+ * Turn a failed OTP/email-code *verify* into a sentence, mapping the enum the
+ * backend sends rather than printing it.
+ *
+ * Two callers, one table: the phone-OTP `OTP verification failed: <member>`
+ * this function was written for, and the parent-invites email code's `Email
+ * verification failed: <member>` (`useParentSignupApi.ts`'s
+ * `useVerifyParentCode`), which reuses the identical four `OtpResult`
+ * members under a different prefix. Checking both prefixes here, rather than
+ * giving the email one its own function, is what keeps "four situations, four
+ * sentences" a single source of truth instead of two copies that could drift.
  */
 export function otpVerifyFailureMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 0) return AUTH_NETWORK_FAILURE
     if (err.status >= 500) return AUTH_SERVICE_FAILURE
-    if (typeof err.detail === "string" && err.detail.startsWith(OTP_PREFIX)) {
-      const reason = err.detail.slice(OTP_PREFIX.length).trim()
-      // An unmapped value falls through to the generic sentence rather than
-      // being shown: a member added to `OtpResult` later must not become copy.
-      if (reason in OTP_FAILURES) return OTP_FAILURES[reason]
+    if (typeof err.detail === "string") {
+      const prefix = err.detail.startsWith(OTP_PREFIX)
+        ? OTP_PREFIX
+        : err.detail.startsWith(EMAIL_CODE_PREFIX)
+          ? EMAIL_CODE_PREFIX
+          : null
+      if (prefix) {
+        const reason = err.detail.slice(prefix.length).trim()
+        // An unmapped value falls through to the generic sentence rather than
+        // being shown: a member added to `OtpResult` later must not become copy.
+        if (reason in OTP_FAILURES) return OTP_FAILURES[reason]
+      }
     }
     if (err.status === 401) return OTP_FAILURES.wrong_code
   }

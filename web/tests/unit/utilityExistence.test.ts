@@ -143,7 +143,10 @@ const SCANNED_FILES = [
   "src/lib/authOutcome.ts",
   "src/portals/auth/Login.tsx",
   "src/portals/auth/DeviceLimitNotice.tsx",
-  "src/portals/auth/ParentLogin.tsx",
+  // `ParentLogin.tsx` was deleted by the parent-invites design (task 7),
+  // superseding D3.11 — `SignupParent.tsx` and `CodeInput.tsx` replace it.
+  "src/portals/auth/SignupParent.tsx",
+  "src/components/auth/CodeInput.tsx",
 ]
 
 const CSS_PATH = "src/index.css"

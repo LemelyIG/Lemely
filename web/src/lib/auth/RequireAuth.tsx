@@ -78,26 +78,30 @@ export function portalPathForRole(role: string): string {
 /**
  * The sign-in screen a role uses.
  *
- * Only `parent` differs: parents authenticate by phone + OTP at
- * `/login/parent` (G-05), not with a password, so sending one to `/login`
- * puts them in front of a form with no field they can fill in. Every other
- * role — and an unknown or absent one, `undefined` included — uses the
- * email+password form at `/login`. That undefined case is not a hole: a
+ * Every role — parent included, and an unknown or absent one, `undefined`
+ * included — uses the email+password form at `/login`. A parent used to be
+ * the one exception, authenticating by phone at a since-retired top-level
+ * route (the old G-05); the parent-invites design (superseding D3.11)
+ * retired that route along with the screen behind it and made a parent an
+ * ordinary email/password account like every other role, so this function
+ * no longer has a branch to take. It is kept, rather than inlined at its one
+ * caller, because the `undefined` case is still worth naming explicitly: a
  * reader with no session and no recorded expiry (`RequireAuth`'s own
  * `!session` branch, `FullPageStateBody` outside `session-ended`) was never
  * some particular role to begin with, and `/login` is the one sign-in
  * screen every role can always use, so it is the honest default rather than
- * a guess.
+ * a guess — not a fact that happens to be true only while the function body
+ * is a single line.
  *
- * SHOULD-FIX 3 (adversarial review, PR 2): a parent whose session expired
- * used to land on this same `/login` regardless of role, unconditionally,
- * because nothing upstream of it tracked which role had just been signed
- * out. `markSessionExpired`/`SessionEnded` now carry that role forward so
- * `FullPageStateBody`'s `sign-in` action can resolve through this function
- * instead.
+ * SHOULD-FIX 3 (adversarial review, PR 2) is why this function exists at
+ * all rather than every caller writing `/login` directly: a reader whose
+ * session expired needs the same answer this function gives for a fresh
+ * sign-in, and `markSessionExpired`/`SessionEnded` carry the expired
+ * session's role forward so `FullPageStateBody`'s `sign-in` action can
+ * resolve through this one function instead of duplicating the mapping.
  */
 export function loginPathForRole(role: string | undefined): string {
-  if (role === "parent") return "/login/parent"
+  void role
   return "/login"
 }
 

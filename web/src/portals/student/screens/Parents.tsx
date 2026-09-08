@@ -1,88 +1,261 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useState, type FormEvent } from "react"
+import { useState } from "react"
 import { Trash } from "@phosphor-icons/react"
-import { useLinkParent, useParentLinks, useUnlinkParent } from "@/lib/hooks/useStudentApi"
-import { ApiError } from "@/lib/api"
+import {
+  useMintParentLink,
+  useParentInvites,
+  useParentLinks,
+  useRevokeParentLink,
+  useRotateParentCode,
+  useUnlinkParent,
+} from "@/lib/hooks/useStudentApi"
 import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
-import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 
 /*
- * Student-side parent-link management.
+ * Student-side parent access (design spec §4/§5, superseding D3.11's "add a
+ * parent by phone number" — the mutation that hit that route, its request
+ * DTO and the service method behind it are all gone; see `useStudentApi.ts`'s
+ * own module comment on why granting is now entirely invite-based, never a
+ * student-typed identifier for an account assumed to already exist).
  *
- * Not one of the numbered screens: `parent_child_links` rows are created here
- * and nowhere else, so without this surface the entire parent portal is
- * reachable only from a seed script — "a read surface with no way to grant it
- * is not a delivered feature" (D3.11's scope note). Kept deliberately small;
- * the full G-11 profile/settings screen this will eventually live inside is a
- * later phase.
+ * Not one of the numbered screens: `parent_child_links` rows are still
+ * created here and nowhere else, so without this surface the entire parent
+ * portal is reachable only from a seed script — "a read surface with no way
+ * to grant it is not a delivered feature" (D3.11's scope note, unchanged by
+ * the redesign of *how* it is granted).
+ *
+ * ── Two invite kinds, one screen (design spec §2/§4) ────────────────────────
+ *
+ * A student holds exactly one reusable code at a time (minted lazily on
+ * first load, the same "a class always has a join code" rule
+ * `classes.join_code` follows) and any number of single-use, 7-day links.
+ * Both resolve at the existing `/join/:code` screen — this screen only mints,
+ * shares, and revokes them, it does not itself decide what redeeming one
+ * does.
  *
  * ── Why the student owns this ───────────────────────────────────────────────
  * The data being shared is theirs (UI spec §1.4: grades are private to the
  * student, their linked parents and their teachers), so they grant and revoke
- * it. D3.11 also fixes the ordering: the backend links only to a `role=parent`
- * user that **already exists**, i.e. one who has completed a phone-OTP login.
- * That is what stops a student-supplied phone number becoming an
- * account-creation primitive, and it is why a 404 here is not a failure to
- * report generically — it is the single most actionable message on the screen
- * ("they haven't signed in yet"), so it is surfaced as its own state.
- *
- * ── P4.10, the Study Notebook pass ────────────────────────────────────────
- *
- * **`linkErrorMessage`'s own comment was wrong about what it did.** It said
- * anything but a 404 "keeps the backend's own `detail`", implying the backend
- * had written one worth keeping. It has not: `routers/student.py:1071/1073`
- * both answer `str(exc)`, and the only `ValueError` the parent-link repo
- * raises reads `f"Identifier must be a UUID, got {value!r}"`. So the sentence
- * a student saw when adding a parent went wrong could be a Python repr. This
- * is the third time this phase a docstring has described an intention the code
- * did not meet (surface 2's `MarkDisplay`, surface 8's `ParentLogin`).
- *
- * The 404 copy stays exactly as it was, and that is the family rule working
- * rather than an exception to it: that sentence is ours, written here for a
- * fifteen-year-old, and it is the only one on the screen that tells them what
- * to do next.
- *
- * **A failed removal reported itself below every section.** `unlink.isError`
- * rendered as the last element on the page, so failing to remove the first of
- * five parents put the message under the fifth. Surface 4 found the identical
- * shape on Friends. It sits with its own row now (§12).
- *
- * **The avatar was a hand-rolled circle.** §6 reserves the circle for status
- * and live dots "so a dot never reads as a person", and the kit's `Avatar` is
- * a squircle for exactly that reason. This was the seventh call site of the
- * same violation found across this phase, and the last one.
+ * it. `useParentLinks`/`useUnlinkParent` are unchanged from the phone-linking
+ * era: reading and revoking an existing link is the same operation
+ * regardless of how the link was made.
  */
 
-/** A 404 from POST /student/parent-links means precisely one thing, and it is
- * fixable by the student — so it keeps its own sentence. Everything else goes
- * through the shared student wording; see the module note for why the previous
- * "keep the backend's detail" fallback was not safe. */
-function linkErrorMessage(error: Error): string {
-  if (error instanceof ApiError && error.status === 404) {
-    return "No Lemely account is using that number yet. Ask them to sign in with their phone first, then add them here."
+/** A pending one-time link's expiry, phrased forward rather than borrowing
+ * `relativeTime` (`lib/utils.ts`), which is written for a past timestamp
+ * ("2d ago") and would read backwards applied to a future one. */
+function expiryLabel(expiresAt: string): string {
+  const ms = new Date(expiresAt).getTime() - Date.now()
+  if (ms <= 0) return "Expired"
+  const days = Math.floor(ms / 86_400_000)
+  if (days >= 1) return `Expires in ${days}d`
+  const hours = Math.max(1, Math.floor(ms / 3_600_000))
+  return `Expires in ${hours}h`
+}
+
+/** Copy `text` to the clipboard, calling `onCopied` only on success. Silent
+ * on failure (permissions, a non-secure context) — the code or link is still
+ * visible on screen, so hand-copying it still works. */
+async function copyToClipboard(text: string, onCopied: () => void) {
+  try {
+    await navigator.clipboard.writeText(text)
+    onCopied()
+  } catch {
+    // Clipboard API unavailable — nothing to recover from here.
   }
-  return studentSaveFailureMessage(error)
+}
+
+/** Share `url` via the platform share sheet when one exists, falling back to
+ * the clipboard otherwise — the spec's own "Share via `navigator.share` with
+ * clipboard fallback" bullet. A visitor cancelling a real share sheet also
+ * lands here having done nothing, which is the correct outcome for a
+ * cancelled share, not a failure to report. */
+async function shareOrCopy(url: string, onCopied: () => void) {
+  if (navigator.share) {
+    try {
+      await navigator.share({ title: "Follow my progress on Lemely", url })
+      return
+    } catch {
+      // Cancelled by the visitor, or unsupported at runtime despite the
+      // feature check — either way, fall through to the clipboard.
+    }
+  }
+  await copyToClipboard(url, onCopied)
+}
+
+/** "Your parent code" — the one reusable, rotatable code every student
+ * always has. Copy, Share and Reset per the spec; reset (rotate) invalidates
+ * whatever the old code was shared with, so it is offered plainly rather
+ * than hidden behind a confirmation the spec does not ask for. */
+function ParentCodeCard({ code, url }: { code: string; url: string }) {
+  const rotate = useRotateParentCode()
+  const [copied, setCopied] = useState(false)
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+      <div className="flex flex-col gap-1">
+        <div className="text-body-md font-medium text-ink">Your parent code</div>
+        <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          Anyone with this code can follow your progress. Reset it if you shared it with the
+          wrong person.
+        </p>
+      </div>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="rounded-md border border-rule bg-paper-sunk px-3 py-1.5 font-mono text-data-md tracking-[0.06em] text-ink">
+          {code}
+        </span>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => copyToClipboard(url, () => setCopied(true))}
+        >
+          {copied ? "Copied" : "Copy"}
+        </Button>
+        <Button
+          type="button"
+          variant="secondary"
+          size="sm"
+          onClick={() => shareOrCopy(url, () => setCopied(true))}
+        >
+          Share
+        </Button>
+        <Button
+          type="button"
+          variant="ghost"
+          size="sm"
+          loading={rotate.isPending}
+          onClick={() => rotate.mutate()}
+        >
+          Reset code
+        </Button>
+      </div>
+      {rotate.isError ? (
+        <p role="alert" className="text-body-sm text-err">
+          {studentSaveFailureMessage(rotate.error)}
+        </p>
+      ) : null}
+    </div>
+  )
+}
+
+/** "Send a one-time link" — mint a single-use, 7-day link and manage the
+ * ones still pending. Revoking one only removes it from this list; it never
+ * touches an already-linked parent (that is the section below). */
+function OneTimeLinkCard({
+  links,
+}: {
+  links: { code: string; url: string; expiresAt: string }[]
+}) {
+  const mint = useMintParentLink()
+  const revoke = useRevokeParentLink()
+  const [copiedCode, setCopiedCode] = useState<string | null>(null)
+  const [revokingCode, setRevokingCode] = useState<string | null>(null)
+  const [revokeError, setRevokeError] = useState<{ code: string; message: string } | null>(null)
+
+  const handleRevoke = (code: string) => {
+    setRevokingCode(code)
+    setRevokeError(null)
+    revoke.mutate(
+      { code },
+      {
+        onError: (err) => setRevokeError({ code, message: studentSaveFailureMessage(err) }),
+        onSettled: () => setRevokingCode(null),
+      },
+    )
+  }
+
+  return (
+    <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5">
+      <div className="flex flex-col gap-1">
+        <div className="text-body-md font-medium text-ink">Send a one-time link</div>
+        <p className="max-w-[65ch] text-body-sm text-ink-muted">
+          A link works once and stops working after 7 days, even if nobody uses it.
+        </p>
+      </div>
+
+      <Button
+        type="button"
+        variant="accent"
+        size="sm"
+        className="w-fit"
+        loading={mint.isPending}
+        onClick={() => mint.mutate()}
+      >
+        Create a link
+      </Button>
+      {mint.isError ? (
+        <p role="alert" className="text-body-sm text-err">
+          {studentSaveFailureMessage(mint.error)}
+        </p>
+      ) : null}
+      {mint.data ? (
+        <div className="flex flex-wrap items-center gap-2 rounded-md border border-rule bg-paper-sunk px-3 py-2">
+          <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{mint.data.url}</span>
+          <Button
+            type="button"
+            variant="secondary"
+            size="sm"
+            onClick={() =>
+              mint.data && copyToClipboard(mint.data.url, () => setCopiedCode(mint.data!.code))
+            }
+          >
+            {copiedCode === mint.data.code ? "Copied" : "Copy"}
+          </Button>
+        </div>
+      ) : null}
+
+      {links.length === 0 ? (
+        <p className="text-body-sm text-ink-faint">No pending links right now.</p>
+      ) : (
+        <ul className="flex flex-col gap-2">
+          {links.map((link) => {
+            const failed = revokeError?.code === link.code ? revokeError.message : null
+            return (
+              <li
+                key={link.code}
+                className="flex flex-col gap-1 rounded-md border border-rule bg-paper-sunk px-3 py-2"
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span className="min-w-0 flex-1 truncate text-data-sm text-ink">{link.url}</span>
+                  <div className="flex items-center gap-2">
+                    <span className="text-body-sm text-ink-faint">{expiryLabel(link.expiresAt)}</span>
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="sm"
+                      disabled={revokingCode === link.code}
+                      onClick={() => handleRevoke(link.code)}
+                    >
+                      {revokingCode === link.code ? "Revoking…" : "Revoke"}
+                    </Button>
+                  </div>
+                </div>
+                {failed ? (
+                  <p role="alert" className="text-body-sm text-err">
+                    {failed}
+                  </p>
+                ) : null}
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
 }
 
 export function Parents() {
-  const query = useParentLinks()
-  const link = useLinkParent()
+  const invites = useParentInvites()
+  const parents = useParentLinks()
   const unlink = useUnlinkParent()
-  const [phone, setPhone] = useState("")
-  /** A failed removal, kept against the parent it failed on. */
   const [unlinkError, setUnlinkError] = useState<{ id: string; message: string } | null>(null)
   const [removingId, setRemovingId] = useState<string | null>(null)
-
-  const handleSubmit = (event: FormEvent<HTMLFormElement>) => {
-    event.preventDefault()
-    if (!phone.trim()) return
-    link.mutate({ phone: phone.trim() }, { onSuccess: () => setPhone("") })
-  }
 
   const handleRemove = (parentId: string) => {
     setRemovingId(parentId)
@@ -100,110 +273,80 @@ export function Parents() {
   return (
     <div className="lm-screen flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-2">
-        <h1 className="text-display-md text-ink">Your parents</h1>
+        <h1 className="text-display-md text-ink">Parent access</h1>
         <p className="max-w-[65ch] text-body-md text-ink-muted">
-          Anyone you add here can see your marks, predicted grades and weak topics. They can't
-          change anything, and you can remove them at any time.
+          Share your code or a one-time link so a parent can see your marks, predicted grades
+          and weak topics. They can't change anything, and you can remove access at any time.
         </p>
       </div>
 
-      <form
-        onSubmit={handleSubmit}
-        className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-5"
-      >
-        <div className="flex flex-col gap-1">
-          <div className="text-body-md font-medium text-ink">Add a parent by phone number</div>
-          <p className="max-w-[65ch] text-body-sm text-ink-muted">
-            Use the number they signed in with, including the country code. For example
-            +201234567890.
-          </p>
-        </div>
-        <div className="flex flex-wrap items-start gap-2">
-          <Input
-            label="Parent's phone number"
-            // The label is visible and the heading above is a separate
-            // sentence, so the two do not duplicate: one says what this form
-            // does, the other names the field.
-            type="tel"
-            inputMode="tel"
-            autoComplete="off"
-            placeholder="+20…"
-            value={phone}
-            onChange={(event) => setPhone(event.target.value)}
-            error={link.isError ? linkErrorMessage(link.error) : undefined}
-            wrapperClassName="min-w-0 flex-1"
-          />
-          <Button
-            type="submit"
-            variant="accent"
-            size="md"
-            disabled={link.isPending || !phone.trim()}
-            // Aligns the button with the field rather than its label.
-            className="mt-6"
-          >
-            {link.isPending ? "Adding…" : "Add parent"}
-          </Button>
-        </div>
-      </form>
-
-      {/* A panel inside the screen above, not a whole-route load: the page's own
-          `<h1>` and the add-parent form both render unconditionally above this,
-          so no `srHeading` is needed here — there is already a landmark to land
-          on mid-load or mid-failure. */}
       <QueryState
-        query={query}
-        skeleton={<ListSkeleton rows={2} avatar />}
-        error={{ heading: "We couldn't load your parents", body: studentLoadFailureMessage }}
-        isEmpty={(data) => data.parents.length === 0}
-        empty={
-          <EmptyState
-            heading="Nobody is linked to your account yet"
-            body="Only you can add someone. Nothing is shared until you do."
-          />
-        }
+        query={invites}
+        srHeading="Your parent code"
+        skeleton={<PanelSkeleton />}
+        error={{ heading: "We couldn't load your parent code", body: studentLoadFailureMessage }}
       >
         {(data) => (
-          <ul className="flex flex-col gap-2">
-            {data.parents.map((parent) => {
-              const failed = unlinkError?.id === parent.parentId ? unlinkError.message : null
-              return (
-                <li
-                  key={parent.parentId}
-                  className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
-                >
-                  <div className="flex items-center gap-3">
-                    <Avatar name={parent.displayName} size="md" />
-                    <div className="flex min-w-0 flex-1 flex-col">
-                      <span className="text-body-md text-ink">{parent.displayName}</span>
-                      {/* `phone` is nullable on the wire; absence is left blank
-                          rather than filled with a placeholder number. */}
-                      {parent.phone ? (
-                        <span className="text-data-sm text-ink-muted">{parent.phone}</span>
-                      ) : null}
-                    </div>
-                    <Button
-                      type="button"
-                      variant="ghost"
-                      size="sm"
-                      aria-label={`Remove ${parent.displayName}`}
-                      disabled={removingId === parent.parentId}
-                      onClick={() => handleRemove(parent.parentId)}
-                    >
-                      <Trash size={15} aria-hidden="true" />
-                      {removingId === parent.parentId ? "Removing…" : "Remove"}
-                    </Button>
-                  </div>
-                  {failed ? (
-                    <p role="alert" className="text-body-sm text-err">
-                      {failed}
-                    </p>
-                  ) : null}
-                </li>
-              )
-            })}
-          </ul>
+          <div className="flex flex-col gap-4">
+            <ParentCodeCard code={data.code.code} url={data.code.url} />
+            <OneTimeLinkCard links={data.links} />
+          </div>
         )}
       </QueryState>
+
+      <div className="flex flex-col gap-3">
+        <h2 className="text-display-sm text-ink">Linked parents</h2>
+        <QueryState
+          query={parents}
+          skeleton={<ListSkeleton rows={2} avatar />}
+          error={{ heading: "We couldn't load your parents", body: studentLoadFailureMessage }}
+          isEmpty={(data) => data.parents.length === 0}
+          empty={
+            <EmptyState
+              heading="Nobody is linked to your account yet"
+              body="Share your code or a link above. Nothing is shared until someone uses it."
+            />
+          }
+        >
+          {(data) => (
+            <ul className="flex flex-col gap-2">
+              {data.parents.map((parent) => {
+                const failed = unlinkError?.id === parent.parentId ? unlinkError.message : null
+                return (
+                  <li
+                    key={parent.parentId}
+                    className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4"
+                  >
+                    <div className="flex items-center gap-3">
+                      <Avatar name={parent.displayName} size="md" />
+                      <div className="flex min-w-0 flex-1 flex-col">
+                        <span className="text-body-md text-ink">{parent.displayName}</span>
+                        <span className="text-data-sm text-ink-muted">{parent.email}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        size="sm"
+                        aria-label={`Remove ${parent.displayName}`}
+                        disabled={removingId === parent.parentId}
+                        onClick={() => handleRemove(parent.parentId)}
+                      >
+                        <Trash size={15} aria-hidden="true" />
+                        {removingId === parent.parentId ? "Removing…" : "Remove"}
+                      </Button>
+                    </div>
+                    {failed ? (
+                      <p role="alert" className="text-body-sm text-err">
+                        {failed}
+                      </p>
+                    ) : null}
+                  </li>
+                )
+              })}
+            </ul>
+          )}
+        </QueryState>
+      </div>
     </div>
   )
 }

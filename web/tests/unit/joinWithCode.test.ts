@@ -3,6 +3,7 @@ import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
 import { AUTH_INVITE_ALREADY_USED, AUTH_INVITE_NOT_FOUND } from "@/lib/authOutcome"
 import {
+  canRedeemInviteAs,
   describeInvitePreview,
   isSeatQuotaExceededError,
   isTerminalRedeemFailure,
@@ -41,6 +42,7 @@ describe("describeInvitePreview", () => {
       schoolName: "Al-Nasr Language School",
       className: "Physics 0625",
       teacherName: "Mr Hassan",
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual([
       "Al-Nasr Language School",
@@ -54,6 +56,7 @@ describe("describeInvitePreview", () => {
       schoolName: "Al-Nasr Language School",
       className: null,
       teacherName: null,
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual([
       "Al-Nasr Language School",
@@ -67,6 +70,7 @@ describe("describeInvitePreview", () => {
       schoolName: "Al-Nasr Language School",
       className: null,
       teacherName: null,
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual([
       "Al-Nasr Language School",
@@ -80,6 +84,7 @@ describe("describeInvitePreview", () => {
       schoolName: null,
       className: "Y11 Physics",
       teacherName: "Ms Ahmed",
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual(["Ms Ahmed's Y11 Physics class"])
   })
@@ -90,6 +95,7 @@ describe("describeInvitePreview", () => {
       schoolName: null,
       className: "Y11 Physics",
       teacherName: null,
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual(["Y11 Physics class"])
   })
@@ -100,6 +106,7 @@ describe("describeInvitePreview", () => {
       schoolName: null,
       className: null,
       teacherName: null,
+      childName: null,
     }
     expect(describeInvitePreview(preview)).toEqual(["An invite to Lemely"])
   })
@@ -110,10 +117,43 @@ describe("describeInvitePreview", () => {
       schoolName: "Al-Nasr Language School",
       className: "Physics 0625",
       teacherName: "Mr Hassan",
+      childName: null,
     }
     for (const line of describeInvitePreview(preview)) {
       expect(line).not.toContain("—")
     }
+  })
+
+  /**
+   * Parent-invites design (§4/§5, superseding D3.11): a parent invite is
+   * child-issued, never school/class-issued, so this branch reads only
+   * `childName` and ignores the school/class/teacher fields entirely — they
+   * are always `null` on a live parent preview.
+   */
+  it("names the child on a parent invite", () => {
+    const preview: InvitePreview = {
+      role: "parent",
+      schoolName: null,
+      className: null,
+      teacherName: null,
+      childName: "Aisha",
+    }
+    expect(describeInvitePreview(preview)).toEqual([
+      "Aisha invited you to follow their progress on Lemely",
+    ])
+  })
+
+  it("falls back to 'Your child' when the invite carries no name", () => {
+    const preview: InvitePreview = {
+      role: "parent",
+      schoolName: null,
+      className: null,
+      teacherName: null,
+      childName: null,
+    }
+    expect(describeInvitePreview(preview)).toEqual([
+      "Your child invited you to follow their progress on Lemely",
+    ])
   })
 })
 
@@ -132,6 +172,38 @@ describe("signupPathForInvite", () => {
 
   it("percent-encodes a code that needs it", () => {
     expect(signupPathForInvite("AB CD", "student")).toBe("/signup/student?code=AB%20CD")
+  })
+
+  it("builds the parent signup path (parent-invites design)", () => {
+    expect(signupPathForInvite("7HKPX2WCQY", "parent")).toBe(
+      "/signup/parent?code=7HKPX2WCQY",
+    )
+  })
+})
+
+describe("canRedeemInviteAs", () => {
+  it("lets a parent redeem a parent invite", () => {
+    expect(canRedeemInviteAs("parent", "parent")).toBe(true)
+  })
+
+  it("blocks a non-parent from redeeming a parent invite", () => {
+    expect(canRedeemInviteAs("parent", "student")).toBe(false)
+    expect(canRedeemInviteAs("parent", "teacher")).toBe(false)
+  })
+
+  it("blocks a parent from redeeming a non-parent invite", () => {
+    expect(canRedeemInviteAs("student", "parent")).toBe(false)
+    expect(canRedeemInviteAs("teacher", "parent")).toBe(false)
+  })
+
+  /** Every other combination is untouched by the new rule and stays allowed
+   * — D1.10's seat/school-linking case, e.g. a teacher redeeming a student
+   * invite, must not regress into a new refusal. */
+  it("leaves every non-parent combination allowed", () => {
+    expect(canRedeemInviteAs("student", "teacher")).toBe(true)
+    expect(canRedeemInviteAs("teacher", "student")).toBe(true)
+    expect(canRedeemInviteAs("student", "student")).toBe(true)
+    expect(canRedeemInviteAs("teacher", "teacher")).toBe(true)
   })
 })
 
@@ -173,6 +245,14 @@ describe("isTerminalRedeemFailure", () => {
   it("treats 404 and 409 as terminal", () => {
     expect(isTerminalRedeemFailure(new ApiError(404, "Unknown code"))).toBe(true)
     expect(isTerminalRedeemFailure(new ApiError(409, "Already redeemed"))).toBe(true)
+  })
+
+  /** `InviteRoleMismatchError` → 403 (design spec §4). Defensive: the screen
+   * already hides the button via `canRedeemInviteAs` before this could be
+   * sent, but a 403 that somehow arrives anyway must not be offered a retry
+   * that can only fail the same way again. */
+  it("treats 403 as terminal", () => {
+    expect(isTerminalRedeemFailure(new ApiError(403, "Role mismatch"))).toBe(true)
   })
 
   it("treats a network failure and a 5xx as retryable, not terminal", () => {

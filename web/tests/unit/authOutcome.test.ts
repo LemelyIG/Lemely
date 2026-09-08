@@ -127,6 +127,38 @@ describe("otpVerifyFailureMessage", () => {
     expect(otpVerifyFailureMessage(new ApiError(0, "x"))).toBe(AUTH_NETWORK_FAILURE)
     expect(otpVerifyFailureMessage(new ApiError(503, "x"))).toBe(AUTH_SERVICE_FAILURE)
   })
+
+  /**
+   * Design spec §4's parent-invites signup code step
+   * (`useParentSignupApi.ts`'s `useVerifyParentCode`) hits the identical
+   * `AuthError` shape as the phone-OTP verify this function was written for,
+   * just under `AuthService.verify_parent_signup_code`'s own prefix. Same
+   * four members, same function, same sentences — not a second table.
+   */
+  it("maps 'Email verification failed: <member>' to the identical sentences as the OTP prefix", () => {
+    const EMAIL_CODE_DETAILS = [
+      "Email verification failed: wrong_code",
+      "Email verification failed: expired",
+      "Email verification failed: locked_out",
+      "Email verification failed: no_challenge",
+    ]
+    for (const [i, detail] of EMAIL_CODE_DETAILS.entries()) {
+      const emailMessage = otpVerifyFailureMessage(new ApiError(401, detail, detail))
+      const otpMessage = otpVerifyFailureMessage(new ApiError(401, OTP_DETAILS[i], OTP_DETAILS[i]))
+      expect(emailMessage, detail).toBe(otpMessage)
+      expect(emailMessage, detail).not.toContain("Email verification failed")
+      expect(emailMessage, detail).not.toMatch(/wrong_code|no_challenge|locked_out/)
+    }
+  })
+
+  /** The genericised wording (this task's own fix): the shared table used to
+   * say "text" and "that number", which is a false claim from the email-code
+   * caller — nobody was texted anything. */
+  it("never claims a text message was sent, from either prefix", () => {
+    const detail = "Email verification failed: expired"
+    const message = otpVerifyFailureMessage(new ApiError(401, detail, detail))
+    expect(message).not.toMatch(/text|phone|number/i)
+  })
 })
 
 describe("otpRequestFailureMessage", () => {

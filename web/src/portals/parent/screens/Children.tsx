@@ -97,16 +97,18 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * list", and P3.6 chunk a deliberately shipped the API returning a plain empty
  * list with no copy, handing that explanation here.
  *
- * The flow described is D3.11's real one and nothing else: the parent logs in
- * by phone **first** (they just did — that is why they are reading this), and
- * then the child sends the invite from their own account. There is no
- * parent-initiated request to offer, because no such route exists; inventing a
- * "Request access" button that posts nowhere would be the exact failure mode
- * this build has fixed repeatedly.
+ * The flow described is the parent-invites design's real one (design spec
+ * §2, superseding D3.11's phone-login account): the child mints a code or
+ * link from their own account's Parent access screen and shares it; the
+ * parent redeems it at `/join`, confirms an email code, and sets a password
+ * — the account and the link are created by the same server call. There is
+ * no parent-initiated request to offer, because no such route exists;
+ * inventing a "Request access" button that posts nowhere would be the exact
+ * failure mode this build has fixed repeatedly.
  *
- * "Or via the school" is likewise omitted rather than stubbed — D3.11 rejected
- * school-side linking outright (no school child-registry surface exists), so
- * naming it here would promise a path a parent cannot take.
+ * "Or via the school" is likewise omitted rather than stubbed — the design
+ * rejects school-side linking outright (no school child-registry surface
+ * exists), so naming it here would promise a path a parent cannot take.
  *
  * P3.2 reviewed this as the parent role's first-run flow and deliberately left
  * its structure alone. It is already the composed getting-started view that
@@ -116,13 +118,6 @@ function ChildCard({ child }: { child: ChildSummary }) {
  * somebody else takes on another device. Forcing it into a shape built around
  * "here is your next button" would mean either three inert steps or three
  * buttons that go nowhere.
- *
- * Step 2 says "the number you signed in with" rather than printing it back.
- * `ProfileDTO` carries no phone, and adding one to `/api/me/profile` to
- * sharpen a line of copy would put a second source beside the OTP flow that
- * already owns that fact — the same call P3.8 chunk d made about school
- * memberships. The parent typed the number moments ago; the generic phrasing
- * costs them nothing.
  *
  * P4.6 changed the surface and not the structure: tokens, the margin rule
  * (§8.5), the step numbers on the data face, and one line of Caveat marginalia
@@ -148,8 +143,8 @@ function NoChildrenLinked() {
       <ol className="flex flex-col gap-4">
         {[
           "Ask your child to open Lemely and sign in.",
-          "In their account, they add a parent using the phone number you just signed in with.",
-          "Their results appear here straight away. There is no code to enter and nothing to accept.",
+          "In their account, they open Parent access and share their code or link with you.",
+          "Enter it at lemely.app/join, confirm your email, and you're in.",
         ].map((step, index) => (
           <li key={index} className="flex items-start gap-3">
             <span

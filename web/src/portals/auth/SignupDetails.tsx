@@ -31,9 +31,9 @@ import {
  * `:role` segment, so whichever of the two Task 19 mounts this element on is
  * already the single source of truth for which variant is which
  * (`<SignupDetails role="student" />` / `<SignupDetails role="teacher" />`,
- * the same "same element, two RouteObjects" shape `/login` and
- * `/login/parent` already use, and that `VerifyEmail.tsx`'s own docstring
- * names as the pattern for `/verify-email` vs `/verify-email/:token`).
+ * the same "same element, two RouteObjects" shape `VerifyEmail.tsx`'s own
+ * docstring names as the pattern for `/verify-email` vs
+ * `/verify-email/:token`).
  *
  * ── Binding requirement 1 — no school field on the teacher variant (D7.2) ──
  *

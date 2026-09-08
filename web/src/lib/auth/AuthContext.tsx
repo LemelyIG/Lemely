@@ -3,9 +3,7 @@ import { useMutation, type UseMutationResult } from "@tanstack/react-query"
 import { request } from "@/lib/api"
 import type {
   LoginRequest,
-  OtpRequestBody,
-  OtpRequestResponse,
-  OtpVerifyBody,
+  ParentSignupBody,
   PasswordResetConfirmBody,
   PasswordResetConfirmResponse,
   PasswordResetRequestBody,
@@ -40,14 +38,22 @@ import {
  * `requestPasswordReset` and `confirmPasswordReset` (Task 13, spec §4.4's
  * G-07/G-06) join the group below without an `onSuccess: applySession` of
  * their own: none of the five returns a token, so none of them has a
- * session to mint — that is
- * `login`/`signup`/`verifyOtp`'s shape, not this one, exactly the same
- * distinction `requestOtp` already draws against those three. Nothing here
- * clears the session on `confirmPasswordReset` either, even though
- * `AuthService.reset_password` revokes every device server-side: G-06 is one
- * of the nine routes `LoginRoute` bounces a signed-in visitor away from
- * (spec §4.4), so this mutation is never reachable with a session in this
- * context to clear in the first place.
+ * session to mint — that is `login`/`signup`/`parentSignup`'s shape, not
+ * this one. Nothing here clears the session on `confirmPasswordReset`
+ * either, even though `AuthService.reset_password` revokes every device
+ * server-side: G-06 is one of the nine routes `LoginRoute` bounces a
+ * signed-in visitor away from (spec §4.4), so this mutation is never
+ * reachable with a session in this context to clear in the first place.
+ *
+ * The phone-code parent login's own two mutations (D3.11) are retired as of
+ * the parent-invites design (docs/superpowers/specs/2026-09-08-parent-
+ * invites-design.md): `parentSignup` below is their replacement's only
+ * session-minting call. The pre-account steps of that flow — requesting and
+ * verifying an email code against a specific invite — mint no session of
+ * their own and live in `lib/hooks/useParentSignupApi.ts` instead, the same
+ * "no `applySession`, because there is nothing to mint yet" split
+ * `useInvitesApi.ts`'s own module docstring already draws for
+ * `useInvitePreview`/`useRedeemInvite`.
  */
 
 /**
@@ -100,8 +106,19 @@ interface AuthContextValue {
   session: Session | null
   login: UseMutationResult<TokenResponse, Error, LoginVariables>
   signup: UseMutationResult<TokenResponse, Error, SignupVariables>
-  requestOtp: UseMutationResult<OtpRequestResponse, Error, { phone: string }>
-  verifyOtp: UseMutationResult<TokenResponse, Error, { phone: string; code: string }>
+  /**
+   * `POST /auth/parent/signup` — the session-minting last step of the
+   * parent-invites flow (spec §4/§5). `proofToken` (from
+   * `useVerifyParentCode`, `useParentSignupApi.ts`) stands in for a password
+   * the account does not have yet, the same way the retired phone flow's own
+   * code-verify mutation used to stand in for one before D3.11 was
+   * superseded. One call both creates the
+   * account and links it to the inviting child server-side — see
+   * `ParentSignupBody`'s own comment (`authTypes.ts`) — so, unlike
+   * `SignupDetails.tsx`'s student/teacher path, nothing here calls
+   * `useRedeemInvite` afterwards.
+   */
+  parentSignup: UseMutationResult<TokenResponse, Error, ParentSignupBody>
   verifyEmail: UseMutationResult<VerifyEmailResponse, Error, { token: string }>
   verifyEmailCode: UseMutationResult<VerifyEmailResponse, Error, { code: string }>
   resendVerification: UseMutationResult<ResendVerificationResponse, Error, void>
@@ -172,23 +189,17 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     onSuccess: applySession,
   })
 
-  const requestOtp = useMutation({
-    mutationFn: ({ phone }: { phone: string }) =>
-      request<OtpRequestResponse>("/auth/otp/request", {
-        method: "POST",
-        body: JSON.stringify({ phone } satisfies OtpRequestBody),
-      }),
-  })
-
-  const verifyOtp = useMutation({
-    mutationFn: ({ phone, code }: { phone: string; code: string }) =>
-      request<TokenResponse>("/auth/otp/verify", {
+  // `deviceId` is always freshly read here, exactly like `login`/`signup`
+  // above — a caller-supplied value in `ParentSignupBody` is overwritten
+  // rather than trusted, the same "this context owns the device id" rule.
+  const parentSignup = useMutation({
+    mutationFn: (variables: ParentSignupBody) =>
+      request<TokenResponse>("/auth/parent/signup", {
         method: "POST",
         body: JSON.stringify({
-          phone,
-          code,
+          ...variables,
           deviceId: getDeviceId(),
-        } satisfies OtpVerifyBody),
+        } satisfies ParentSignupBody),
       }),
     onSuccess: applySession,
   })
@@ -259,8 +270,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     session,
     login,
     signup,
-    requestOtp,
-    verifyOtp,
+    parentSignup,
     verifyEmail,
     verifyEmailCode,
     resendVerification,

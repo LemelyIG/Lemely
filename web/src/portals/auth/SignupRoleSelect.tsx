@@ -35,17 +35,22 @@ import { AuthFrame } from "./Login"
  * `<Card>` nested inside one, which would draw two borders around the same
  * tap target.
  *
- * ── Parent routes to /login/parent, not a fourth /signup/* (spec, D7.2) ────
+ * ── Parent routes to /join, not straight to a form (parent-invites design) ─
  *
- * This is the spec's own exit, stated twice. G-02's "Interactions" line reads
+ * D7.2's original exit here was a now-retired top-level phone sign-in route:
  * "Parent → G-05 (parents authenticate by phone, so they skip the email
- * form)", and the design spec's §3.1 lists "Parent sign-up" as explicitly out
- * of scope: "Nothing changes for them beyond G-02 routing them to
- * /login/parent." There is no parent signup form to route to in the first
- * place — `AuthService` creates the `role=parent` row on first verified OTP
- * (D3.11), so the phone screen this links to (`ParentLogin.tsx`, G-05) *is*
- * the parent's account creation. Sending them anywhere else would be a detour
- * to a form that cannot exist without duplicating that auto-creation here.
+ * form)", because
+ * `AuthService` created the `role=parent` row on first verified OTP (D3.11)
+ * and that phone screen *was* the parent's account creation. The
+ * parent-invites design superseded that: a parent account now only ever
+ * comes from a child-issued invite (`docs/superpowers/specs/2026-09-08-
+ * parent-invites-design.md` §2), so there is still no parent signup form to
+ * route to from *this* screen — a visitor who lands here with no code in
+ * hand cannot create a parent account regardless of which link is offered.
+ * `/join` is the honest destination: it is the screen built for "I have a
+ * code" (`JoinWithCode.tsx`), and it hands a parent invite on to
+ * `/signup/parent?code=` itself once a live code is entered
+ * (`signupPathForInvite`, `useInvitesApi.ts`).
  *
  * ── Why the teacher line never mentions a school ────────────────────────────
  *
@@ -62,9 +67,9 @@ import { AuthFrame } from "./Login"
  * coined for this screen: the student line is the core loop (§1.1 and
  * Positioning #1); the teacher line is the "corrects 30 papers in the time it
  * used to take 5" success framing plus the override-authority principle; the
- * parent line reuses the exact idea `ParentLogin.tsx`'s own phone step
- * already states ("No password to remember"), so a parent reading this
- * screen and then G-05 is not told the same fact twice in different words.
+ * parent line states plainly what `/join` actually is for this role — a code
+ * or link handed over by the child, not a form this screen or `/join` could
+ * ever ask a parent to fill in without one.
  *
  * ── Ordering ─────────────────────────────────────────────────────────────
  *
@@ -106,13 +111,13 @@ const ROLE_CHOICES: RoleChoice[] = [
     description: "Mark papers fast, and keep the final say on every grade.",
   },
   {
-    // Not a typo: parents never sign up here. See the docstring above — G-05
-    // (phone + OTP) both authenticates and creates the account on first
-    // verified code, so it is this role's only destination.
-    to: "/login/parent",
+    // Not a typo: parents never sign up here. See the docstring above — a
+    // parent account only ever comes from a child-issued invite, so `/join`
+    // (enter the code) is this role's only destination from this screen.
+    to: "/join",
     icon: UsersFour,
     title: "I'm a parent",
-    description: "Check on your child's progress. No password, just your phone number.",
+    description: "Use the invite code or link your child sent you to see how they're doing.",
   },
 ]
 
@@ -171,8 +176,10 @@ export function SignupRoleSelect() {
 
         {/* Secondary, not a fourth peer of the three choices above: the spec
             calls this a "Secondary link", so it reads smaller and quieter,
-            styled after the equivalent utility link in ParentLogin.tsx rather
-            than as a fourth role card. */}
+            styled after the equivalent utility link `PasswordReset.tsx`'s
+            `BackToSignIn` uses rather than as a fourth role card. Leads to
+            the same `/join` screen the parent card above does — this is for
+            a student or teacher with a code, that is for a parent with one. */}
         <Link
           to="/join"
           className="flex items-center gap-1.5 self-start rounded-sm pointer-coarse:min-h-11 text-body-sm text-ink-muted transition-colors hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"

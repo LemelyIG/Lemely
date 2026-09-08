@@ -166,6 +166,11 @@ const ALLOWLIST: { path: string; reason: string }[] = [
       "loads no data: `useRedeemInvite` is a mutation and `signup` comes from `useAuth()`, not the hooks layer",
   },
   {
+    path: "src/portals/auth/SignupParent.tsx",
+    reason:
+      "loads no data: `useRequestParentCode`/`useVerifyParentCode` are mutations and `parentSignup` comes from `useAuth()`, not the hooks layer — the same shape `SignupDetails.tsx` above is allowlisted for",
+  },
+  {
     path: "src/portals/auth/VerifyEmail.tsx",
     reason:
       "loads data, but its one consumer degrades: a failed profile read renders `the email on your account`, a complete sentence, where an error panel would announce a failure the reader does not need to act on",

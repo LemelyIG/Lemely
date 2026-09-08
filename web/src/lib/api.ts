@@ -151,9 +151,10 @@ async function refreshSession(): Promise<string | null> {
   const outcome = await refreshInFlight
   if (outcome.status === "renewed") return outcome.accessToken
   if (outcome.status === "refused") {
-    // Read the role before clearing: `SessionEnded` sends a parent back to
-    // `/login/parent`, not the email form, and only the dying session knows
-    // which one this reader was.
+    // Read the role before clearing: `SessionEnded` carries it forward so
+    // `loginPathForRole` resolves the right sign-in screen for whichever
+    // role this reader was, and only the dying session still knows which
+    // one that is once it's cleared.
     const role = getSession()?.role
     clearSession()
     markSessionExpired(role)
