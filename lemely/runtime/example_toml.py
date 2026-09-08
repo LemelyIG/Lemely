@@ -194,13 +194,17 @@ def render_example_toml() -> str:
         f"refresh_token_ttl_seconds = {s.auth.refresh_token_ttl_seconds}"
         f"  # {s.auth.refresh_token_ttl_seconds // 86400} days"
     )
-    lines.append("# Parent phone-OTP challenge lifecycle.")
+    lines.append("# OTP challenge lifecycle, shared by channel. The phone channel backs a")
+    lines.append("# kept-but-unused seam (BUILD/DECISIONS.md D-2026-09-08) for a possible future")
+    lines.append("# paid SMS channel; no route mints a phone code today.")
     lines.append(f"otp_ttl_seconds = {s.auth.otp_ttl_seconds}")
     lines.append(f"otp_max_attempts = {s.auth.otp_max_attempts}")
     lines.append(f"otp_length = {s.auth.otp_length}")
     lines.append(f"otp_min_resend_seconds = {s.auth.otp_min_resend_seconds}")
-    lines.append("# Email-channel OTP challenge lifecycle (spec §4.4). Longer-lived than the")
-    lines.append("# phone code above; length, attempt cap and resend cooldown are shared.")
+    lines.append("# Email-channel OTP challenge lifecycle (spec §4.4). This is the channel that")
+    lines.append("# ships: parent sign-up codes and email verification codes both use it.")
+    lines.append("# Longer-lived than the phone lifecycle above; length, attempt cap and resend")
+    lines.append("# cooldown are shared.")
     lines.append(f"email_otp_ttl_seconds = {s.auth.email_otp_ttl_seconds}")
     lines.append("")
 
