@@ -58,6 +58,7 @@ const SHAPE: Record<string, "string" | "number"> = {
   "class.joinCode": "string",
 
   ...account("students.declining"),
+  "students.declining.parentInviteCode": "string",
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),
@@ -72,16 +73,12 @@ const SHAPE: Record<string, "string" | "number"> = {
   // `expectedAtRiskReasons` is an array on all five — both are checked
   // separately below, since neither is a primitive leaf.
 
-  "parent.userId": "string",
-  "parent.phone": "string",
-  "parent.accessToken": "string",
+  ...account("parent"),
   "parent.linkedStudent": "string",
 
   // Deliberately no `emptyParent.linkedStudent` — the empty parent has no
   // linked child, and asserting one here would demand the seed fabricate it.
-  "emptyParent.userId": "string",
-  "emptyParent.phone": "string",
-  "emptyParent.accessToken": "string",
+  ...account("emptyParent"),
 
   "reviewItem.itemId": "string",
   "reviewItem.attemptId": "string",
