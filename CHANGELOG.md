@@ -51,6 +51,21 @@ this entry is the user-visible summary.
 - Marketing CTAs and the login screen now point at `/signup` and `/reset` instead of dead-ending
   at `/login`.
 
+#### Parent invites replace phone sign-in
+
+- **Parent identity is now email + password, like every other role.** A parent gets an account
+  only by redeeming a child's invite: the student mints a single-use link (7-day expiry,
+  revocable) or a reusable short code (rotatable), the parent opens `/join/:code`, verifies an
+  email address with a six-digit code, sets a password, and in one call the account is created,
+  linked to the child, and signed in. `/login/parent`, the phone-OTP routes, and linking a parent
+  by phone number are all deleted. Full detail and the decision record are in
+  `BUILD/DECISIONS.md` (`D-2026-09-08`).
+- The demo parent (`parent@demo.lemely.local` / `Demo-Lemely-1!`) is seeded through this same
+  path, already linked to the demo student, rather than as a phone account.
+- **Kept, not deleted:** the phone-OTP seam (`SmsProvider`, `OtpChannel.phone`,
+  `AuthService.request_otp`/`verify_otp`, `users.phone`) stays in the tree for a possible future
+  paid SMS channel — it backs no route today.
+
 #### Deployment and CI/CD
 
 - Automated CI/CD: GitHub Actions deploys staging (`develop`) and production
@@ -112,6 +127,10 @@ this entry is the user-visible summary.
 - **The invite-code *mint* action has no screen yet.** The redemption side (`/join`) is fully
   wired; a school admin or teacher can mint a code today only via a direct API call, not a button
   in the product. See `BUILD/BLOCKERS.md` B8.
+- **Parent signup is two writes, not one transaction.** `POST /api/auth/parent/signup` creates the
+  GoTrue account and then links it to the child; a failure between the two leaves an account with
+  no link. Not silently swallowed — the invite is not marked redeemed until the link succeeds, so
+  the parent re-presents the same code and tries again. See `BUILD/DECISIONS.md` `D-2026-09-08`.
 
 ### Changed
 
