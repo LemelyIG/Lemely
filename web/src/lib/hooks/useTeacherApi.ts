@@ -726,16 +726,30 @@ export function useCreateAnnouncement(): UseMutationResult<
   })
 }
 
-/** `DELETE /teacher/announcements/{announcementId}` (T-12) — 204, so
- * `request()` must not try to parse a body (fixed in P3.7 chunk b). */
+/**
+ * `DELETE /teacher/announcements/{announcementId}` (T-12) — 204, so
+ * `request()` must not try to parse a body (fixed in P3.7 chunk b).
+ *
+ * **The invalidation is returned, not fired and forgotten.** react-query keeps
+ * a mutation `isPending` until whatever `onSuccess` returns settles, so
+ * returning the refetch is what makes "deleting" mean *deleted and gone from
+ * the list* rather than *the DELETE came back*. Without the `return`, the
+ * pending state ended at the 204 while the row the teacher had just deleted was
+ * still on screen, waiting for a refetch nothing on the page indicated — the
+ * confirmation closed, the button un-greyed, and the announcement sat there
+ * looking as though the delete had silently failed.
+ *
+ * Deliberately not applied to every mutation in this file: the ones whose
+ * screens do not key any visible state off `isPending` would only be made
+ * slower by it. This one's confirmation dialog is exactly that visible state.
+ */
 export function useDeleteAnnouncement(): UseMutationResult<void, Error, string> {
   const queryClient = useQueryClient()
   return useMutation({
     mutationFn: (announcementId: string) =>
       request<void>(`/teacher/announcements/${announcementId}`, { method: "DELETE" }),
-    onSuccess: () => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] })
-    },
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["teacher", "announcements"] }),
   })
 }
 

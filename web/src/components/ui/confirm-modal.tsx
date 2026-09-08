@@ -84,7 +84,12 @@ export function ConfirmModal({
           <Button variant="secondary" size="sm" onClick={onCancel} disabled={pending}>
             {cancelLabel}
           </Button>
-          <Button variant="accent" size="sm" onClick={onConfirm} disabled={pending}>
+          {/* `loading` rather than `disabled`: the button already disables
+              itself while loading, and the spinner is the part a label swap
+              alone was missing. A destructive action that greys out and
+              changes its wording, with nothing moving, reads as a button that
+              refused the press rather than one that is working. */}
+          <Button variant="accent" size="sm" onClick={onConfirm} loading={pending}>
             {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
           </Button>
         </div>
