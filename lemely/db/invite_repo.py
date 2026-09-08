@@ -162,6 +162,11 @@ _INVITE_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 _INVITE_CODE_LENGTH = 10
 _INVITE_CODE_MAX_ATTEMPTS = 8
 
+#: Name of the partial unique index `Invite.__table_args__` declares on
+#: ``(child_id) WHERE reusable`` — the DB-level backstop for "a student has
+#: at most one reusable row at a time" (review round 3, Important C).
+_REUSABLE_CHILD_CONSTRAINT_NAME = "uq_invites_reusable_child"
+
 
 @dataclass(frozen=True, slots=True)
 class InvitePreview:
@@ -347,12 +352,24 @@ class InviteService:
         now plus :data:`PARENT_INVITE_TTL`; ``reusable=True`` mints the
         rotatable code, ``expires_at`` left ``NULL`` (spec §3's table).
         Prefer :meth:`get_or_create_parent_code`/:meth:`rotate_parent_code`
-        over calling this directly with ``reusable=True`` — they are what
-        keeps "a student has at most one reusable row at a time" true.
+        over calling this directly with ``reusable=True`` — calling this
+        directly still cannot leave two live reusable rows for one child
+        (``uq_invites_reusable_child`` refuses the second insert outright,
+        surfaced as :class:`InviteError`), but it skips the locked
+        read-then-insert those two methods use to make the *common* case a
+        clean "here is your existing code" rather than an avoidable error.
+
+        Raises:
+            InviteError: ``student_id`` names no ``users`` row (see
+                :meth:`get_or_create_parent_code`'s identical check —
+                review round 3, Minor 2), or (``reusable=True`` only) the
+                child already has a live reusable row.
         """
         student_uuid = _as_uuid(student_id)
         expires_at = None if reusable else datetime.now(UTC) + PARENT_INVITE_TTL
         with self._sessionmaker() as session, session.begin():
+            if session.get(User, student_uuid) is None:
+                raise InviteError(f"Unknown user: {student_uuid}")
             return self._insert_invite(
                 session,
                 role=InviteRole.parent,
@@ -367,17 +384,30 @@ class InviteService:
 
         Mirrors ``classes.join_code``'s "a class always has a join code"
         rule: a student never sees an empty state for their code, only a
-        value. There is no unique index enforcing "at most one reusable row
-        per child" (the schema constrains ``code`` uniqueness only), so this
-        method locks the child's own ``users`` row ``FOR UPDATE`` for the
-        duration of the read-then-insert (mirroring
-        :meth:`mint_seat_invite`'s school-row lock for the identical
-        TOCTOU reason): two concurrent calls for the same student serialise
-        on that lock rather than both reading "no row yet" and each minting
-        their own, which would make the code this method promises to be
-        stable in fact unstable (review round 1, Important 1). The second
-        caller to acquire the lock sees the first's committed row and
-        returns it, never inserting a duplicate.
+        value. ``uq_invites_reusable_child`` (a partial unique index on
+        ``invites (child_id) WHERE reusable``) is what finally guarantees
+        "at most one reusable row per child" at the database, closing the
+        saga review rounds 1 through 3 ran through pure lock ordering. This
+        method still locks the child's own ``users`` row ``FOR UPDATE`` for
+        the duration of the read-then-insert (mirroring
+        :meth:`mint_seat_invite`'s school-row lock for the identical TOCTOU
+        reason) so the *common* case — two concurrent calls for the same
+        student — serialises into "the second caller sees the first's
+        committed row and returns it", a clean read, rather than relying on
+        the index to turn every race into a caught :class:`InviteError` no
+        one asked for.
+
+        **This method's lock order is ``users`` first, then a lock-free
+        read of the reusable row — the opposite of** :meth:`rotate_parent_code`,
+        **which locks the reusable row first and ``users`` second.** That
+        is safe only because :meth:`_find_reusable_parent_code` is a plain
+        ``SELECT`` with no ``FOR UPDATE``, so it never blocks waiting for a
+        row lock (MVCC hands it a snapshot instead) — this method's lock
+        set is ``users`` alone. Adding ``.with_for_update()`` to that
+        lookup would make this method also want the invites row while
+        holding ``users``, which is exactly :meth:`rotate_parent_code`'s
+        order in reverse and would reopen the deadlock cycle review round 2
+        closed (review round 3, Minor 1). Do not "harden" that lookup.
 
         Raises:
             InviteError: ``student_id`` names no ``users`` row. Unreachable
@@ -424,6 +454,26 @@ class InviteService:
         rotation with no existing reusable row locks and deletes nothing,
         so a first-ever mint via this path takes no unnecessary lock beyond
         the ``users`` row itself.
+
+        **The ``DELETE`` runs twice.** Under READ COMMITTED, a statement
+        only sees rows committed as of *its own start* — so the first
+        ``DELETE`` above can run, find nothing (or find and remove a stale
+        row), then this transaction blocks waiting for the ``users`` lock a
+        concurrent :meth:`rotate_parent_code`/:meth:`get_or_create_parent_code`
+        call holds; by the time that lock frees up, the other transaction
+        may have committed a *new* reusable row this statement's snapshot
+        cannot see. Taking the ``users`` lock and stopping there left
+        exactly that race able to produce two live reusable rows (review
+        round 3, Important C) — the same instability review round 1's
+        Important 1 first described, reopened by round 2's own deadlock
+        fix. Re-issuing the ``DELETE`` immediately after the lock is held
+        starts a fresh statement with a fresh snapshot, and nothing else
+        can insert a reusable row for this child while that lock stands, so
+        it cannot miss a racer's row. ``uq_invites_reusable_child`` (the
+        partial unique index review round 3 added) is the backstop behind
+        even this: if some future caller still finds a way to slip past
+        both ``DELETE``s, the insert below fails loudly with a clear
+        :class:`InviteError` rather than silently doubling the row.
         """
         student_uuid = _as_uuid(student_id)
         with self._sessionmaker() as session, session.begin():
@@ -432,6 +482,12 @@ class InviteService:
             )
             if session.get(User, student_uuid, with_for_update=True) is None:
                 raise InviteError(f"Unknown user: {student_uuid}")
+            # Re-run now that the `users` lock is held (see the docstring):
+            # a fresh statement, a fresh snapshot, nothing else can insert
+            # a reusable row for this child while we hold that lock.
+            session.execute(
+                delete(Invite).where(Invite.child_id == student_uuid, Invite.reusable.is_(True))
+            )
             return self._insert_invite(
                 session,
                 role=InviteRole.parent,
@@ -493,14 +549,20 @@ class InviteService:
     ) -> Invite | None:
         """Look up the reusable row for ``student_uuid``, oldest first.
 
-        The ``ORDER BY`` is not merely tidy: with no unique index on
-        ``(child_id, reusable)``, a caller of :meth:`get_or_create_parent_code`
-        outside the lock this method is normally called under (or a stray
-        row from before this fix) could leave two live rows behind. An
-        unordered ``.first()`` would then let Postgres return either one on
-        different calls — the exact "unstable code" failure review round 1's
-        Important 1 described. Ordering degrades that to a stable choice
-        (the oldest row wins) rather than an unstable one.
+        The ``ORDER BY`` guards a case ``uq_invites_reusable_child`` cannot:
+        a stray second row from before that index existed, or from a caller
+        that predates it entirely. An unordered ``.first()`` would let
+        Postgres return either one on different calls — the exact
+        "unstable code" failure review round 1's Important 1 described.
+        Ordering degrades that to a stable choice (the oldest row wins)
+        rather than an unstable one.
+
+        **Deliberately a plain ``SELECT``, no ``.with_for_update()``.** See
+        :meth:`get_or_create_parent_code`'s docstring: that method locks
+        ``users`` first and calls this lock-free, the opposite order
+        :meth:`rotate_parent_code` uses for the same two resources. Locking
+        here would reopen the exact deadlock cycle review round 2 closed
+        (review round 3, Minor 1).
         """
         stmt = (
             select(Invite)
@@ -821,7 +883,15 @@ class InviteService:
             InviteError: A unique code could not be generated after several
                 attempts (astronomically unlikely; mirrors
                 ``ClassService.create_class``'s identical retry for join
-                codes).
+                codes) — or, for a ``reusable=True`` insert,
+                ``uq_invites_reusable_child`` (the child already has a live
+                reusable row). The retry loop must not treat that second
+                case as a code collision: retrying with a fresh *code*
+                changes nothing about the child already having a reusable
+                row, so it would exhaust all ``_INVITE_CODE_MAX_ATTEMPTS``
+                attempts and still report the misleading "could not
+                generate a unique invite code" (review round 3, Important
+                C) instead of the real, immediate cause.
         """
         for _ in range(_INVITE_CODE_MAX_ATTEMPTS):
             invite = Invite(
@@ -839,7 +909,11 @@ class InviteService:
                 with session.begin_nested():
                     session.add(invite)
                     session.flush()
-            except IntegrityError:
+            except IntegrityError as exc:
+                if _is_reusable_child_violation(exc):
+                    raise InviteError(
+                        f"Child {child_id} already has a reusable parent code"
+                    ) from exc
                 continue
             return invite
         raise InviteError("Could not generate a unique invite code; please retry")
@@ -848,6 +922,28 @@ class InviteService:
 def _generate_invite_code() -> str:
     """Generate a random invite code from a non-ambiguous alphabet."""
     return "".join(secrets.choice(_INVITE_CODE_ALPHABET) for _ in range(_INVITE_CODE_LENGTH))
+
+
+def _is_reusable_child_violation(exc: IntegrityError) -> bool:
+    """``True`` only for a violation of ``uq_invites_reusable_child``.
+
+    Any other ``IntegrityError`` — a code collision on ``ix_invites_code``,
+    chiefly — must keep being retried by :meth:`InviteService._insert_invite`'s
+    caller. Treating every ``IntegrityError`` alike would either retry a
+    reusable-row collision (that repeats every time, since a new code changes
+    nothing about it) or, the other way round, stop retrying a genuine,
+    fixable code collision (mirrors ``notification_repo``'s and ``xp_repo``'s
+    identical narrow-match discipline for the same reason).
+    """
+    return _constraint_name(exc) == _REUSABLE_CHILD_CONSTRAINT_NAME
+
+
+def _constraint_name(exc: IntegrityError) -> str | None:
+    """Best-effort constraint name off a psycopg ``IntegrityError``."""
+    orig = getattr(exc, "orig", None)
+    diag = getattr(orig, "diag", None)
+    name = getattr(diag, "constraint_name", None)
+    return str(name) if name is not None else None
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

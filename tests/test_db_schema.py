@@ -919,9 +919,6 @@ def test_invite_supports_parent_target_and_reusable_flag(pg_engine: sa.Engine) -
     link — both sharing this table per the spec's "two invite kinds, one
     table" rule.
     """
-    from lemely.db.models import Invite, User
-    from lemely.db.models.enums import InviteRole, Role
-
     inspector = sa.inspect(pg_engine)
     columns = {c["name"]: c for c in inspector.get_columns("invites")}
     assert columns["child_id"]["nullable"] is True
@@ -951,6 +948,61 @@ def test_invite_supports_parent_target_and_reusable_flag(pg_engine: sa.Engine) -
             .all()
         )
     assert "parent" in labels
+
+
+def test_invites_reusable_child_unique_only_when_reusable(pg_engine: sa.Engine) -> None:
+    """``uq_invites_reusable_child`` is a *partial* unique index (review round 3,
+    Important C): three rounds of application-level lock ordering in
+    :class:`~lemely.db.invite_repo.InviteService` each closed one race only to
+    reopen or leave another, so "a student has at most one reusable row at a
+    time" is now a fact the database enforces directly, not one derived from
+    getting every writer's lock order right.
+
+    Two reusable rows for the same child collide; two single-use links
+    (``reusable=false``) for that same child must not, since the index's
+    ``WHERE reusable`` excludes them - a student can hold many pending
+    single-use links at once (:meth:`~lemely.db.invite_repo.InviteService.list_parent_invites`),
+    just never more than one reusable code.
+    """
+    from lemely.db.models import Invite, User
+    from lemely.db.models.enums import InviteRole, Role
+
+    inspector = sa.inspect(pg_engine)
+    index_by_name = {ix["name"]: ix for ix in inspector.get_indexes("invites")}
+    reusable_index = index_by_name["uq_invites_reusable_child"]
+    assert reusable_index["unique"] is True
+    assert reusable_index["column_names"] == ["child_id"]
+    assert reusable_index["dialect_options"]["postgresql_where"] == "reusable"
+
+    def _reusable_row(child_id: uuid.UUID, code: str, *, reusable: bool) -> Invite:
+        return Invite(
+            code=code,
+            role=InviteRole.parent,
+            child_id=child_id,
+            created_by=child_id,
+            reusable=reusable,
+        )
+
+    with Session(pg_engine) as session:
+        student = User(id=uuid.uuid4(), email="reusable-index@example.com", role=Role.student)
+        session.add(student)
+        session.flush()
+        student_id = student.id
+
+        session.add(_reusable_row(student_id, "FIRSTCODE1", reusable=True))
+        session.commit()
+
+    with Session(pg_engine) as session, pytest.raises(IntegrityError):
+        session.add(_reusable_row(student_id, "SECONDCODE", reusable=True))
+        session.commit()
+
+    # Two single-use links for the same child: the partial index only fires
+    # when `reusable` is true, so this must not collide even though both
+    # rows share `child_id`.
+    with Session(pg_engine) as session:
+        session.add(_reusable_row(student_id, "LINKCODE01", reusable=False))
+        session.add(_reusable_row(student_id, "LINKCODE02", reusable=False))
+        session.commit()
 
     with Session(pg_engine) as session:
         student = User(id=uuid.uuid4(), email="parent-invite-child@example.com", role=Role.student)

@@ -30,6 +30,22 @@ class Invite(TimestampMixin, Base):
     the row, for the same reason ``AuthToken.used_at`` does: a school admin
     asking "did that code ever get used, and by whom" is a question the
     schema should be able to answer.
+
+    ``uq_invites_reusable_child`` (partial, ``WHERE reusable``) is what
+    finally retires review round 1/2/3's lock-ordering saga in
+    :class:`~lemely.db.invite_repo.InviteService`: "a student has at most
+    one reusable row at a time" is now a fact the database enforces, not
+    one three successive rounds of application-level lock reordering tried
+    and failed to guarantee under every interleaving. The two locked
+    writers (``get_or_create_parent_code``/``rotate_parent_code``) still
+    serialise for a smooth, error-free path; this index is the backstop
+    that turns any writer that skips that discipline — a direct
+    ``mint_parent_invite(reusable=True)`` call, or a bug in a future one —
+    into a clean, immediate ``IntegrityError`` instead of a second live
+    reusable row. Partial, not a plain unique index on ``child_id``,
+    because every single-use link for the same child must remain
+    insertable (they are ``reusable=false`` and outnumber the one
+    standing code).
     """
 
     __tablename__ = "invites"
@@ -40,6 +56,12 @@ class Invite(TimestampMixin, Base):
         ),
         sa.Index("ix_invites_code", "code", unique=True),
         sa.Index("ix_invites_child_id", "child_id"),
+        sa.Index(
+            "uq_invites_reusable_child",
+            "child_id",
+            unique=True,
+            postgresql_where=sa.text("reusable"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(

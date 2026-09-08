@@ -28,6 +28,16 @@ class" the way migration `0023` originally worded the constraint.
 single-use school/class invites — keeps its current, correct meaning without
 a backfill.
 
+`uq_invites_reusable_child` (partial unique index, `WHERE reusable`) enforces
+"a student has at most one reusable row at a time" at the database, closing
+the review round 1/2/3 saga in `InviteService` where every attempt to
+guarantee that invariant purely through application-level lock ordering
+either left a duplicate-row race open or introduced a deadlock cycle with a
+different writer. Partial rather than a plain unique index on `child_id`,
+since every single-use link for a child (`reusable=false`) must remain
+insertable alongside it. This migration is unreleased and only on this
+branch, so the index is added here rather than in a follow-up migration.
+
 Revision ID: 0034_parent_invites
 Revises: 0033_announcement_notified_at
 Create Date: 2026-09-08 00:00:00.000000
@@ -50,7 +60,7 @@ depends_on: str | Sequence[str] | None = None
 
 
 def upgrade() -> None:
-    """Add the `parent` invite role, `child_id`, and `reusable`."""
+    """Add the `parent` invite role, `child_id`, `reusable`, and its partial unique index."""
     op.execute("ALTER TYPE inviterole ADD VALUE IF NOT EXISTS 'parent'")
     op.add_column(
         "invites",
@@ -66,6 +76,13 @@ def upgrade() -> None:
         sa.Column("reusable", sa.Boolean(), nullable=False, server_default=sa.false()),
     )
     op.create_index("ix_invites_child_id", "invites", ["child_id"])
+    op.create_index(
+        "uq_invites_reusable_child",
+        "invites",
+        ["child_id"],
+        unique=True,
+        postgresql_where=sa.text("reusable"),
+    )
     op.drop_constraint(op.f("ck_invites_target"), "invites", type_="check")
     op.create_check_constraint(
         op.f("ck_invites_target"),
@@ -75,13 +92,16 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Drop the columns/index/constraint. The enum value stays — see the module docstring."""
+    """Drop the columns/indexes/constraint. The enum value stays — see the module docstring."""
     op.drop_constraint(op.f("ck_invites_target"), "invites", type_="check")
     op.create_check_constraint(
         op.f("ck_invites_target"),
         "invites",
         "school_id IS NOT NULL OR class_id IS NOT NULL",
     )
+    # Both indexes on `reusable`/`child_id` must go before the columns they
+    # reference, the partial index included.
+    op.drop_index("uq_invites_reusable_child", table_name="invites")
     op.drop_index("ix_invites_child_id", table_name="invites")
     op.drop_column("invites", "reusable")
     op.drop_column("invites", "child_id")

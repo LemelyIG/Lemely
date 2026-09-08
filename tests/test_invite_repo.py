@@ -979,3 +979,96 @@ def test_rotate_parent_code_then_redeem_links_the_new_code(
             )
         ).first()
         assert link is not None
+
+
+# ── review round 3 fix: rotate's re-issued DELETE closes the reopened race ──
+
+
+def test_rotate_parent_code_race_leaves_exactly_one_reusable_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Reproduces review round 3's Important C exactly: under READ COMMITTED
+    a ``DELETE`` only sees rows committed as of its own start, so a rotation
+    whose first ``DELETE`` ran *before* a rival transaction committed a new
+    reusable row, then blocked on the ``users`` lock that rival held, must
+    not skip straight to inserting once it wakes up - it has to look again.
+
+    Simulates the rival ("T1") by hand, with the identical delete-then-lock
+    order the real method uses, holding its transaction open until this
+    test has proven the real :meth:`InviteService.rotate_parent_code` call
+    ("T2") is genuinely blocked behind it (not merely fast) before letting
+    T1 commit a fresh reusable row. Without the fix in
+    ``rotate_parent_code`` (re-running the ``DELETE`` after the lock), T2
+    would insert its own row without ever seeing T1's, leaving two live
+    reusable rows for one child - the exact instability review round 1's
+    Important 1 first described.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    original = service.get_or_create_parent_code(student)
+
+    t1_holds_lock = threading.Event()
+    release_t1 = threading.Event()
+    rival_row: dict[str, uuid.UUID] = {}
+
+    def rival_rotation() -> None:
+        """Stands in for a concurrent ``rotate_parent_code``/
+        ``get_or_create_parent_code`` call: deletes the existing reusable
+        row (locking it, as ``DELETE`` always does), takes the child's
+        ``users`` lock, mints a fresh reusable row, and holds everything
+        open until told to commit."""
+        with pg_sessionmaker() as session, session.begin():
+            session.execute(
+                sa.delete(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+            session.get(User, student, with_for_update=True)
+            rival = Invite(
+                code="RIVALCODE1",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                reusable=True,
+            )
+            session.add(rival)
+            session.flush()
+            rival_row["id"] = rival.id
+            t1_holds_lock.set()
+            assert release_t1.wait(timeout=5), "test setup failed to signal release in time"
+        # `session.begin()` commits here, making the rival row visible.
+
+    t1 = threading.Thread(target=rival_rotation)
+    t1.start()
+    assert t1_holds_lock.wait(timeout=5), "rival thread failed to take its locks in time"
+
+    t2_result: dict[str, Invite] = {}
+
+    def call_rotate() -> None:
+        t2_result["invite"] = service.rotate_parent_code(student)
+
+    t2 = threading.Thread(target=call_rotate)
+    t2.start()
+    # T2's own first DELETE targets the same row the rival is deleting
+    # (still uncommitted), so it must block on that row's lock - prove it
+    # is genuinely stuck, not just slow, before releasing the rival.
+    t2.join(timeout=0.5)
+    assert t2.is_alive(), (
+        "rotate_parent_code's first DELETE must block behind the rival's "
+        "uncommitted delete of the same row"
+    )
+
+    release_t1.set()
+    t1.join(timeout=5)
+    t2.join(timeout=5)
+
+    with pg_sessionmaker() as session:
+        rows = list(
+            session.scalars(
+                sa.select(Invite).where(Invite.child_id == student, Invite.reusable.is_(True))
+            )
+        )
+        assert len(rows) == 1, "a rotation racing a rival must not leave two reusable rows"
+        assert rows[0].id == t2_result["invite"].id
+        assert session.get(Invite, original.id) is None
+        assert session.get(Invite, rival_row["id"]) is None, (
+            "the rival's row must have been deleted by rotate's re-issued DELETE"
+        )
