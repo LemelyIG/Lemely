@@ -288,6 +288,7 @@ def test_redeem_route_of_a_parent_invite_by_a_non_parent_is_403(
     res = client.post(f"/api/invites/{invite.code}/redeem")
 
     assert res.status_code == 403
+    _assert_role_mismatch_detail_is_non_revealing(res.json()["detail"], invite.code)
 
 
 def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
@@ -305,6 +306,24 @@ def test_redeem_route_of_a_non_parent_invite_by_a_parent_is_403(
     res = client.post(f"/api/invites/{invite.code}/redeem")
 
     assert res.status_code == 403
+    _assert_role_mismatch_detail_is_non_revealing(res.json()["detail"], invite.code)
+
+
+def _assert_role_mismatch_detail_is_non_revealing(detail: str, code: str) -> None:
+    """A role-mismatch 403 must not be an enumeration oracle.
+
+    ``InviteRoleMismatchError.__str__`` names the code and states which kind
+    of invite it is (e.g. "Invite 'ABC123' is a parent invite; caller role is
+    Role.student") — a log line, not a response. Echoing it verbatim would
+    let an authenticated caller distinguish "this code exists and is a
+    parent invite" (403) from "this code does not exist" (404) by probing
+    arbitrary codes, even though they can never redeem either. The route
+    must answer with a fixed string that names neither the code nor which
+    invite kind it is.
+    """
+    assert code not in detail
+    assert "parent" not in detail.lower()
+    assert detail == "This invite is not for your account type."
 
 
 def test_redeem_route_already_redeemed_by_another_is_409(

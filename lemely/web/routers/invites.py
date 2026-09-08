@@ -107,9 +107,34 @@ def redeem_invite(
     ``caller_role`` (spec §4) is passed through so the service can enforce a
     parent invite against a non-parent caller, and a student/teacher invite
     against a parent caller — either mismatch is a **403**
-    (:class:`~lemely.db.invite_repo.InviteRoleMismatchError`), not the 404 an
-    unknown code gets: the caller here is authenticated, so there is no
-    disclosure concern in telling them their own role is the problem.
+    (:class:`~lemely.db.invite_repo.InviteRoleMismatchError`).
+
+    **The 403 body is a fixed, non-revealing string — never ``str(exc)``.**
+    ``InviteRoleMismatchError``'s own message names the code and states which
+    kind of invite it is (e.g. "Invite 'ABC123' is a parent invite; caller
+    role is Role.student") — exactly the log-line-not-a-response shape
+    ``_cooldown_detail`` in ``routers/auth.py`` already documents the
+    reasoning for. Echoing it here would be an enumeration oracle even though
+    the caller is authenticated: a signed-in student could otherwise probe
+    arbitrary codes and learn "this one exists and is a parent invite" from
+    the 403 alone, distinct from the 404 an unknown code gets. This is a
+    stronger case than ``_cooldown_detail``'s: not just impolite wording, an
+    actual information leak. Naming neither the code nor the invite kind is
+    what fixes it; a caller who already possesses the code they submitted
+    learns nothing new from a body that only repeats it back to them.
+
+    **Fixing the body does not close the channel entirely, and that is a
+    recorded decision, not an oversight.** The status split itself —
+    403 (exists, wrong role), 404 (does not exist), 409 (already redeemed by
+    someone else) — still lets an authenticated caller learn "this code
+    exists" from the status code alone, independent of the body. Accepted
+    here because the caller already has an account and a bearer token: the
+    anonymous-caller disclosure discipline binding rule 4 requires
+    (:meth:`~lemely.db.invite_repo.InviteService.preview`, and the identical
+    404-only collapse :func:`~lemely.web.routers.auth._require_live_parent_invite`
+    applies for the three pre-account ``/auth/parent/*`` routes) does not
+    extend to a signed-in caller probing a code they could, at best, learn
+    is real but still cannot redeem.
     """
     try:
         result = service.redeem(auth.user_id, code, caller_role=Role(auth.role))
@@ -118,7 +143,9 @@ def redeem_invite(
     except InviteAlreadyRedeemedError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except InviteRoleMismatchError as exc:
-        raise HTTPException(status_code=403, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=403, detail="This invite is not for your account type."
+        ) from exc
     return RedeemInviteResponseDTO(
         role=result.role.value,
         schoolId=str(result.school_id) if result.school_id is not None else None,

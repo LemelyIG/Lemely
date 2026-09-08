@@ -15,6 +15,7 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
+import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException
 
 from lemely.auth.cooldown import CooldownError, CooldownStoreProtocol
@@ -23,7 +24,7 @@ from lemely.auth.otp import OtpRateLimitError
 from lemely.auth.service import AuthResult, AuthService, DeviceContext
 from lemely.auth.tokens import TokenError, decode_email_proof_token, mint_email_proof_token
 from lemely.db.device_repo import MAX_DEVICES, DeviceLimitReachedError
-from lemely.db.invite_repo import InviteNotFoundError, InviteService
+from lemely.db.invite_repo import InviteError, InviteNotFoundError, InviteService
 from lemely.db.models.enums import InviteRole, Role
 from lemely.runtime.config import Settings
 from lemely.runtime.errors import AuthError
@@ -60,6 +61,7 @@ from lemely.web.schemas_auth import (
 from lemely.web.schemas_devices import DeviceLimitChallengeDTO
 
 router = APIRouter(prefix="/api")
+log = structlog.get_logger(__name__)
 
 # Self-service signup may create a student or a teacher. Elevated roles
 # (school_admin / platform_admin) are privileged and MUST NOT be obtainable by
@@ -136,26 +138,36 @@ def _cooldown_detail(exc: CooldownError) -> str:
     return f"Please wait {exc.retry_after:.0f}s before trying again."
 
 
+_UNKNOWN_PARENT_INVITE_DETAIL = "Unknown or expired invite code."
+"""Fixed 404 detail for :func:`_require_live_parent_invite` — deliberately not
+``str(exc)`` and deliberately not built from ``code`` at all. These three
+routes are reachable with no bearer token, so a caller can retry with
+arbitrary codes; if the body ever echoed the code back, or reused
+:class:`~lemely.db.invite_repo.InviteNotFoundError`'s own message (which
+does), two different failing codes would produce two different response
+bodies — nothing an attacker needs, but a needless tell all the same. A
+single constant, reused verbatim by both branches below, is what makes "dead
+code" and "live code, wrong role" produce byte-identical responses."""
+
+
 def _require_live_parent_invite(invite_service: InviteService, code: str) -> None:
     """Refuse a dead or non-parent invite with the same 404 an unknown code gets.
 
     Used by all three ``/auth/parent/*`` routes (spec §4): a code that does
     not resolve at all and a code that resolves to something other than a
     live parent invite (a seat/class invite, or one already expired) must
-    read identically, so an anonymous caller learns nothing about *why* a
-    given code failed — the same disclosure discipline
-    :meth:`~lemely.db.invite_repo.InviteService.preview`'s own docstring
-    binds itself to (rule 4), extended here to "is this a parent invite" as
-    well as "does the code exist". The detail wording matches
-    :class:`~lemely.db.invite_repo.InviteNotFoundError`'s own exactly, for
-    the identical reason.
+    read identically — same status, same body, byte for byte — so an
+    anonymous caller learns nothing about *why* a given code failed. The
+    same disclosure discipline :meth:`~lemely.db.invite_repo.InviteService.preview`'s
+    own docstring binds itself to (rule 4), extended here to "is this a
+    parent invite" as well as "does the code exist".
     """
     try:
         preview = invite_service.preview(code)
     except InviteNotFoundError as exc:
-        raise HTTPException(status_code=404, detail=str(exc)) from exc
+        raise HTTPException(status_code=404, detail=_UNKNOWN_PARENT_INVITE_DETAIL) from exc
     if preview.role is not InviteRole.parent:
-        raise HTTPException(status_code=404, detail=f"Unknown code: {code!r}")
+        raise HTTPException(status_code=404, detail=_UNKNOWN_PARENT_INVITE_DETAIL)
 
 
 @router.post("/auth/signup", response_model=TokenResponseDTO)
@@ -294,14 +306,18 @@ def request_parent_code(
     same **404** an unknown code gets, via
     :func:`_require_live_parent_invite`.
 
-    **Duplicate-address check runs before the cooldown, mirroring
-    :func:`signup`'s own ordering exactly** (see that function's docstring for
-    the reasoning in full): ``mirror.get_by_email`` is read-only and free, so
-    an address that already has an account gets the same actionable **400**
-    on every attempt rather than a 429 it can never wait out — only once the
-    address is confirmed unclaimed does ``cooldown.check_and_stamp`` run,
-    throttling the genuinely costly path (a real code mint plus a send) to a
-    **429**.
+    **Duplicate-address check runs before the cooldown — the same *reasoning*
+    as :func:`signup`'s, not the identical mechanism.** ``signup`` uses its
+    read-only ``mirror.get_by_email`` check only to decide whether the
+    cooldown applies at all, then lets GoTrue itself produce the 400 from its
+    own uniqueness constraint; this route has no GoTrue call to defer to (no
+    account exists yet to attempt), so it short-circuits with its own
+    hard-coded 400 the moment the address is found taken. The shared
+    rationale still holds: an address that already has an account gets the
+    same actionable **400** on every attempt rather than a 429 it can never
+    wait out — only once the address is confirmed unclaimed does
+    ``cooldown.check_and_stamp`` run, throttling the genuinely costly path (a
+    real code mint plus a send) to a **429**.
 
     ``devCode`` is populated only when the configured
     :class:`~lemely.auth.email.EmailProvider` does not deliver out of band —
@@ -373,15 +389,28 @@ def parent_signup(
     verification — asking the parent to also click a mailed link would be
     asking them to prove the same address twice.
 
-    **Honest gap, the same shape seat invites already carry.** The GoTrue
-    account creation and :meth:`~lemely.db.invite_repo.InviteService.redeem`
-    (which performs the actual link, inside its own transaction with
+    **Honest gap, the same shape seat invites already carry — and made
+    explicit here rather than left to surface as a 500.** The GoTrue account
+    creation above and :meth:`~lemely.db.invite_repo.InviteService.redeem`
+    below (which performs the actual link, inside its own transaction with
     :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session`) are two
-    separate calls, not one database transaction — a failure between them
-    leaves a real, working parent account that is not yet linked to the
-    child. There is no special recovery path for this: the account exists,
-    and re-presenting the exact same code at ``/join/:code`` while signed in
-    (spec §2 rule 4) redeems it the normal way.
+    separate calls, not one database transaction. A single-use link can be
+    redeemed by a *different* parent in the window between this parent's own
+    ``verify-code`` and this call — :func:`_require_live_parent_invite` two
+    lines up cannot see a race that happens after it runs — so ``redeem`` can
+    still raise even though the invite was live moments ago. This route does
+    **not** fail the request over it: ``redeem``'s ``InviteError`` (every
+    subclass, ``InviteAlreadyRedeemedError`` chief among them) is caught and
+    logged as a warning, never surfaced as an HTTP error, because by this
+    point ``signup`` has already succeeded — there is no failure status that
+    would undo a GoTrue account and mirrored ``users`` row that genuinely
+    exist, and reporting one would tell this parent their signup failed when
+    it did not. The token this route returns is real and lets them sign in;
+    only the link to this particular child failed. Recovery: re-presenting
+    the exact same code at ``/join/:code`` while signed in (spec §2 rule 4)
+    tries the link again, or — if it was a single-use link someone else
+    already claimed — the child mints a fresh one; P-01's "no parent yet"
+    empty state on the child's own portal already points here.
     """
     try:
         claims = decode_email_proof_token(body.proofToken, settings)
@@ -400,7 +429,14 @@ def parent_signup(
         )
     except AuthError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    invite_service.redeem(result.user_id, claims.invite_code, caller_role=Role.parent)
+    try:
+        invite_service.redeem(result.user_id, claims.invite_code, caller_role=Role.parent)
+    except InviteError:
+        log.warning(
+            "parent_signup_redeem_failed",
+            invite_code=claims.invite_code,
+            user_id=str(result.user_id),
+        )
     return _to_token_dto(result)
 
 

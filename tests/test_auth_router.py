@@ -1,8 +1,9 @@
 """FastAPI TestClient coverage of the /api/auth/* endpoints.
 
-Mostly hermetic (in-memory GoTrue + user mirror), but the three
-``/auth/parent/*`` routes (spec §4) redeem a real, Postgres-backed
-``InviteService`` — see the ``context`` fixture's own docstring for why.
+Fully hermetic (in-memory GoTrue + user mirror) via the ``context`` fixture,
+except for the seven ``/auth/parent/*`` tests (spec §4), which redeem a real,
+Postgres-backed ``InviteService`` via the separate ``parent_context`` fixture
+— see that fixture's own docstring for why it is kept apart from ``context``.
 """
 
 from __future__ import annotations
@@ -28,9 +29,14 @@ from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token, mint_access_token, mint_email_proof_token
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
-from lemely.db.invite_repo import InviteService
-from lemely.db.models import User
-from lemely.db.models.enums import Role
+from lemely.db.invite_repo import (
+    InviteAlreadyRedeemedError,
+    InvitePreview,
+    InviteService,
+    RedeemResult,
+)
+from lemely.db.models import Invite, School, SchoolMembership, User
+from lemely.db.models.enums import MembershipRole, Role
 from lemely.db.parent_repo import ParentLinkService
 from lemely.runtime.config import DatabaseSettings, Settings
 from lemely.runtime.errors import AuthError
@@ -44,6 +50,7 @@ from lemely.web.deps import (
     get_user_mirror,
     reset_singletons,
 )
+from lemely.web.routers.auth import _UNKNOWN_PARENT_INVITE_DETAIL
 from tests.auth_fakes import (
     FakeDeviceRegistry,
     FakeEmailProvider,
@@ -51,7 +58,7 @@ from tests.auth_fakes import (
     FakeUserMirror,
 )
 
-# ── Postgres fixtures (the ``context`` fixture's InviteService override) ────
+# ── Postgres fixtures (``parent_context``'s InviteService override) ────────
 #
 # Self-contained rather than shared via conftest, matching every other
 # ``test_web_*.py`` file's ``pg_sessionmaker`` duplication convention (see
@@ -109,8 +116,8 @@ class PgBackedUserMirror(FakeUserMirror):
 
     Needed only for the parent-signup tests below. The three ``/auth/parent/*``
     routes redeem the freshly signed-up parent through the **real**,
-    Postgres-backed ``InviteService`` this file's ``context`` fixture wires
-    (see its own docstring), and
+    Postgres-backed ``InviteService`` this file's ``parent_context`` fixture
+    wires (see its own docstring), and
     :meth:`~lemely.db.parent_repo.ParentLinkService.link_in_session` inserts a
     genuine ``parent_child_links`` row whose ``parent_id`` foreign-keys to
     ``users.id`` in that same database. ``FakeUserMirror``'s own in-memory
@@ -212,20 +219,71 @@ def _override_cooldowns(app: FastAPI, settings: Settings) -> None:
 
 
 @pytest.fixture
-def context(
+def context() -> Iterator[tuple[TestClient, AuthService, Settings]]:
+    """Fully hermetic: in-memory GoTrue, mirror, OTP store — no database at all.
+
+    Deliberately carries **no** ``pg_sessionmaker`` dependency. Every test in
+    this file except the seven ``/auth/parent/*`` ones (see
+    :func:`parent_context`) uses this fixture, and none of them touch an
+    invite — a Postgres dependency here would silently *skip* (not fail) the
+    whole file's signup/login/refresh/password-reset/device-limit coverage
+    wherever local Postgres is unreachable, which is exactly the "green run,
+    no signal" failure mode a CI lane without a database would hit.
+    """
+    settings = Settings()
+    mirror = FakeUserMirror()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(7),
+        ttl_seconds=settings.auth.otp_ttl_seconds,
+        max_attempts=settings.auth.otp_max_attempts,
+        code_length=settings.auth.otp_length,
+    )
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=mirror,
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+    )
+    app = create_app()
+    app.dependency_overrides[get_auth_service] = lambda: service
+    # Issue #10: /auth/signup now reads the mirror directly (a read-only
+    # duplicate-address pre-check gating whether D7.12's cooldown applies at
+    # all — see routers/auth.py's `signup` docstring). Override it to the
+    # SAME mirror `service` is built on, or this app would fall back to the
+    # real, unoverridden DbUserMirror against a database these hermetic tests
+    # never touch — which would see every address as unclaimed forever and
+    # make `test_signup_duplicate_returns_400`'s second call spuriously 429.
+    app.dependency_overrides[get_user_mirror] = lambda: mirror
+    _override_cooldowns(app, settings)
+    client = TestClient(app)
+    try:
+        yield client, service, settings
+    finally:
+        app.dependency_overrides.clear()
+        reset_singletons()
+
+
+@pytest.fixture
+def parent_context(
     pg_sessionmaker: sessionmaker[Session],
 ) -> Iterator[tuple[TestClient, AuthService, Settings]]:
-    """A ``TestClient`` wired for both the hermetic auth flows and the parent ones.
+    """Layers a real, Postgres-backed ``InviteService`` on top of :func:`context`'s shape.
 
-    GoTrue and the OTP store stay in-memory, as before. The **user mirror**
-    is now :class:`PgBackedUserMirror` rather than the plain
+    Used only by the seven ``/auth/parent/*`` tests below, so only those
+    tests pay for (and require) a throwaway Postgres database — every other
+    test in this file uses the fully hermetic :func:`context` instead.
+
+    GoTrue and the OTP store stay in-memory, exactly as in :func:`context`.
+    The **user mirror** is :class:`PgBackedUserMirror` rather than the plain
     :class:`~tests.auth_fakes.FakeUserMirror` — see that class's own
     docstring — and ``get_invite_service`` is overridden to a real,
     Postgres-backed :class:`~lemely.db.invite_repo.InviteService` (the same
     ``pg_sessionmaker`` pattern ``tests/test_web_invites.py`` uses), rather
-    than a fake with matching method names: the three ``/auth/parent/*``
-    routes' whole point is minting a genuine ``parent_child_links`` row, and
-    a fake service could not prove that row is real.
+    than a fake with matching method names: these routes' whole point is
+    minting a genuine ``parent_child_links`` row, and a fake service could
+    not prove that row is real.
     """
     settings = Settings()
     mirror = PgBackedUserMirror(pg_sessionmaker)
@@ -246,13 +304,6 @@ def context(
     )
     app = create_app()
     app.dependency_overrides[get_auth_service] = lambda: service
-    # Issue #10: /auth/signup now reads the mirror directly (a read-only
-    # duplicate-address pre-check gating whether D7.12's cooldown applies at
-    # all — see routers/auth.py's `signup` docstring). Override it to the
-    # SAME mirror `service` is built on, or this app would fall back to the
-    # real, unoverridden DbUserMirror against a database these hermetic tests
-    # never touch — which would see every address as unclaimed forever and
-    # make `test_signup_duplicate_returns_400`'s second call spuriously 429.
     app.dependency_overrides[get_user_mirror] = lambda: mirror
     app.dependency_overrides[get_invite_service] = lambda: _invite_service(pg_sessionmaker)
     _override_cooldowns(app, settings)
@@ -360,10 +411,10 @@ def test_login_wrong_password_returns_401(
 
 
 def test_parent_request_code_happy_path_returns_dev_code(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, service, _ = context
+    client, service, _ = parent_context
     student = _seed_user(pg_sessionmaker, Role.student)
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
 
@@ -380,21 +431,79 @@ def test_parent_request_code_happy_path_returns_dev_code(
 
 
 def test_parent_request_code_dead_invite_is_404(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
 ) -> None:
-    client, _, _ = context
+    client, _, _ = parent_context
     resp = client.post(
         "/api/auth/parent/request-code",
         json={"email": "nobody@example.com", "inviteCode": "NOSUCHCODE"},
     )
     assert resp.status_code == 404
+    assert resp.json() == {"detail": _UNKNOWN_PARENT_INVITE_DETAIL}
+    assert "NOSUCHCODE" not in resp.text
+
+
+def test_parent_request_code_404_is_byte_identical_across_dead_invite_kinds(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Unknown, non-parent, expired and already-redeemed codes must be
+    indistinguishable (spec §4's own binding disclosure rule) — same status,
+    same body, byte for byte, across all four. A caller who could tell any
+    one of these apart from "unknown code" would learn something about a
+    code they have no business redeeming, and none of the four detail
+    strings may contain the code that produced them."""
+    client, _, _ = parent_context
+    invite_service = _invite_service(pg_sessionmaker)
+
+    admin = _seed_user(pg_sessionmaker, Role.school_admin)
+    school_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(School(id=school_id, name="Dead-Invite Test School", seat_quota=5))
+        session.add(
+            SchoolMembership(
+                school_id=school_id, user_id=admin, membership_role=MembershipRole.school_admin
+            )
+        )
+    non_parent_invite = invite_service.mint_seat_invite(admin, school_id)
+
+    expired_student = _seed_user(pg_sessionmaker, Role.student)
+    expired_invite = invite_service.mint_parent_invite(expired_student, reusable=False)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(Invite, expired_invite.id)
+        assert row is not None
+        row.expires_at = datetime.now(UTC) - timedelta(days=1)
+
+    redeemed_student = _seed_user(pg_sessionmaker, Role.student)
+    redeemed_invite = invite_service.mint_parent_invite(redeemed_student, reusable=False)
+    redeeming_parent = _seed_user(pg_sessionmaker, Role.parent)
+    invite_service.redeem(redeeming_parent, redeemed_invite.code, caller_role=Role.parent)
+
+    codes = {
+        "unknown": "NOSUCHCODE",
+        "non_parent": non_parent_invite.code,
+        "expired": expired_invite.code,
+        "redeemed": redeemed_invite.code,
+    }
+    responses = {
+        name: client.post(
+            "/api/auth/parent/request-code",
+            json={"email": "nobody@example.com", "inviteCode": code},
+        )
+        for name, code in codes.items()
+    }
+
+    for name, resp in responses.items():
+        assert resp.status_code == 404, f"{name}: {resp.text}"
+        assert resp.json() == {"detail": _UNKNOWN_PARENT_INVITE_DETAIL}, name
+        assert codes[name] not in resp.text, name
 
 
 def test_parent_request_code_taken_email_is_400(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, _, _ = context
+    client, _, _ = parent_context
     student = _seed_user(pg_sessionmaker, Role.student)
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
     signup = client.post(
@@ -417,10 +526,10 @@ def test_parent_request_code_taken_email_is_400(
 
 
 def test_parent_request_code_cooldown_is_429(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, _, _ = context
+    client, _, _ = parent_context
     student = _seed_user(pg_sessionmaker, Role.student)
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
     payload = {"email": "cooldown@example.com", "inviteCode": invite.code}
@@ -432,10 +541,10 @@ def test_parent_request_code_cooldown_is_429(
 
 
 def test_parent_verify_code_wrong_is_401(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, _, _ = context
+    client, _, _ = parent_context
     student = _seed_user(pg_sessionmaker, Role.student)
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
     email = "wrong@example.com"
@@ -456,10 +565,10 @@ def test_parent_verify_code_wrong_is_401(
 
 
 def test_parent_signup_creates_verified_parent_and_links(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, service, settings = context
+    client, service, settings = parent_context
     student = _seed_user(pg_sessionmaker, Role.student, display_name="Maya")
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
     email = "newparent@example.com"
@@ -506,10 +615,10 @@ def test_parent_signup_creates_verified_parent_and_links(
 
 
 def test_parent_signup_expired_proof_is_401(
-    context: tuple[TestClient, AuthService, Settings],
+    parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    client, _, settings = context
+    client, _, settings = parent_context
     student = _seed_user(pg_sessionmaker, Role.student)
     invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
     expired_proof = mint_email_proof_token(
@@ -525,6 +634,160 @@ def test_parent_signup_expired_proof_is_401(
     )
 
     assert resp.status_code == 401, resp.text
+
+
+def test_parent_signup_proof_token_only_redeems_its_own_invite(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Pins ``claims.invite_code`` (never any other source) as what ``redeem`` uses.
+
+    Two students, two live parent invites. The proof token here is minted
+    for invite A alone; completing signup with it must link only child A.
+    ``ParentSignupDTO`` carries no ``inviteCode`` field today precisely so
+    there is nothing for a caller to supply, but a future refactor that read
+    one from the body (or otherwise stopped trusting the token's own claim)
+    would defeat this test by linking the wrong child or none at all.
+    """
+    client, _, settings = parent_context
+    student_a = _seed_user(pg_sessionmaker, Role.student, display_name="A")
+    student_b = _seed_user(pg_sessionmaker, Role.student, display_name="B")
+    invite_service = _invite_service(pg_sessionmaker)
+    invite_a = invite_service.mint_parent_invite(student_a, reusable=False)
+    invite_service.mint_parent_invite(student_b, reusable=False)
+    proof_token = mint_email_proof_token(
+        email="pinned@example.com", invite_code=invite_a.code, settings=settings
+    )
+
+    signup = client.post(
+        "/api/auth/parent/signup",
+        json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+    )
+
+    assert signup.status_code == 200, signup.text
+    parent_id = uuid.UUID(signup.json()["userId"])
+    children = ParentLinkService(pg_sessionmaker).linked_children(parent_id)
+    assert [c.child_id for c in children] == [student_a]
+
+
+def test_parent_signup_link_redeemed_by_another_parent_before_signup_is_404(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A single-use link forwarded to two parents: whichever completes
+    signup second must not get a stray account. Parent A redeems the link
+    in the window between parent B's own ``verify-code`` and ``signup``
+    calls — by the time B's ``signup`` runs, ``_require_live_parent_invite``'s
+    ``preview`` call sees the row as already redeemed (spec §3: a redeemed
+    single-use link previews as unknown) and refuses **before** any GoTrue
+    account is created for B, with the identical detail an unknown code
+    gets. See ``test_parent_signup_survives_a_redeem_that_fails_after_account_creation``
+    for the narrower window this cannot close (the account already created
+    by the time ``redeem`` itself is what raises).
+    """
+    client, service, _ = parent_context
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Kid")
+    invite_service = _invite_service(pg_sessionmaker)
+    invite = invite_service.mint_parent_invite(student, reusable=False)
+    parent_a = _seed_user(pg_sessionmaker, Role.parent)
+    email_b = "parent-b@example.com"
+
+    request = client.post(
+        "/api/auth/parent/request-code", json={"email": email_b, "inviteCode": invite.code}
+    )
+    dev_code = request.json()["devCode"]
+    verify = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email_b, "inviteCode": invite.code, "code": dev_code},
+    )
+    proof_token = verify.json()["proofToken"]
+
+    # Parent A redeems the same single-use link in the window between B's
+    # verify-code and signup calls (simulating two parents racing one link).
+    invite_service.redeem(parent_a, invite.code, caller_role=Role.parent)
+
+    signup = client.post(
+        "/api/auth/parent/signup",
+        json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+    )
+
+    assert signup.status_code == 404, signup.text
+    assert signup.json() == {"detail": _UNKNOWN_PARENT_INVITE_DETAIL}
+    assert invite.code not in signup.text
+    # No account was created for B - the check ran before GoTrue create.
+    assert service._mirror.get_by_email(email_b) is None
+
+
+def test_parent_signup_survives_a_redeem_that_fails_after_account_creation(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """C1: if ``redeem`` itself fails *after* the GoTrue account already
+    exists, the route must not 500 or strand the caller with no way back.
+
+    The previous test closes the window where the race is won early enough
+    for ``_require_live_parent_invite``'s own ``preview`` check to catch it.
+    This test exercises the narrower window that check cannot see — the
+    invite is redeemed by someone else in the instant *between* that check
+    and ``InviteService.redeem`` itself, inside the same request — which is
+    not reproducible sequentially against the real service (the exact same
+    lookup both calls share would simply see the same state). A stub
+    ``InviteService`` whose ``redeem`` always fails, swapped in only for the
+    final call, stands in for that instant.
+    """
+    client, service, _ = parent_context
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Kid")
+    invite_service = _invite_service(pg_sessionmaker)
+    invite = invite_service.mint_parent_invite(student, reusable=False)
+    email = "raced-parent@example.com"
+
+    request = client.post(
+        "/api/auth/parent/request-code", json={"email": email, "inviteCode": invite.code}
+    )
+    dev_code = request.json()["devCode"]
+    verify = client.post(
+        "/api/auth/parent/verify-code",
+        json={"email": email, "inviteCode": invite.code, "code": dev_code},
+    )
+    proof_token = verify.json()["proofToken"]
+
+    class _RedeemAlwaysFails:
+        """Stands in for a ``redeem`` that loses a genuine same-instant race.
+
+        ``preview`` delegates to the real, still-live invite (so
+        ``_require_live_parent_invite`` passes exactly as it would in
+        production up to this point); only ``redeem`` is replaced, with the
+        exact exception a real race would produce.
+        """
+
+        def __init__(self, real: InviteService) -> None:
+            self._real = real
+
+        def preview(self, code: str) -> InvitePreview:
+            return self._real.preview(code)
+
+        def redeem(
+            self, user_id: uuid.UUID | str, code: str, *, caller_role: Role | None = None
+        ) -> RedeemResult:
+            raise InviteAlreadyRedeemedError(f"Invite {code!r} has already been redeemed")
+
+    client.app.dependency_overrides[get_invite_service] = lambda: _RedeemAlwaysFails(  # type: ignore[union-attr]
+        invite_service
+    )
+    try:
+        signup = client.post(
+            "/api/auth/parent/signup",
+            json={"proofToken": proof_token, "password": "pw-123456", "acceptedTerms": True},
+        )
+    finally:
+        client.app.dependency_overrides[get_invite_service] = lambda: invite_service  # type: ignore[union-attr]
+
+    assert signup.status_code == 200, signup.text
+    body = signup.json()
+    parent_id = uuid.UUID(body["userId"])
+    # The account is real and the token works, even though the link failed.
+    assert service._mirror.get_by_id(parent_id) is not None
+    assert ParentLinkService(pg_sessionmaker).linked_children(parent_id) == []
 
 
 # ── Refresh ───────────────────────────────────────────────────────────────────

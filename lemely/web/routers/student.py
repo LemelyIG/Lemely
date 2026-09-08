@@ -26,7 +26,7 @@ import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
-from typing import Annotated, TypedDict
+from typing import Annotated, NoReturn, TypedDict
 
 import anyio
 import structlog
@@ -51,7 +51,7 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.invite_repo import InviteNotFoundError, InviteService
+from lemely.db.invite_repo import InviteError, InviteNotFoundError, InviteService
 from lemely.db.models import Invite
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
@@ -1279,13 +1279,50 @@ def _invite_link_to_dto(invite: Invite, settings: Settings) -> ParentInviteLinkD
     (spec §3). The reusable code, whose ``expires_at`` is ``NULL``, is
     surfaced separately (:class:`~lemely.web.schemas_parent.ParentCodeDTO`)
     and never passed to this converter.
+
+    Raises:
+        ValueError: ``invite.expires_at`` is ``None`` — the invariant above
+            does not hold for this row. An explicit raise rather than an
+            ``assert``: an assert vanishes under ``python -O``, turning a
+            documented invariant into a bare ``AttributeError`` on the
+            ``.isoformat()`` call below instead of a clear, intentional
+            failure.
     """
-    assert invite.expires_at is not None  # noqa: S101 - guaranteed by the caller, see docstring
+    if invite.expires_at is None:
+        raise ValueError(f"Single-use parent invite {invite.code!r} has no expiry")
     return ParentInviteLinkDTO(
         code=invite.code,
         url=_parent_invite_url(invite.code, settings),
         expiresAt=invite.expires_at.isoformat(),
     )
+
+
+def _raise_for_invite_error(exc: InviteError) -> NoReturn:
+    """Map a bare :class:`~lemely.db.invite_repo.InviteError` to an HTTP failure.
+
+    :meth:`~lemely.db.invite_repo.InviteService.get_or_create_parent_code`,
+    :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite` and
+    :meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code` all raise
+    this one type for two different conditions, distinguished only by
+    message — the service module defines no dedicated subclass for either,
+    and this router does not own that module (D1.10-style layering) so it
+    cannot add one:
+
+    - "Unknown user" (the authenticated caller's own ``users`` row is gone).
+      Unreachable in practice — every caller here is ``auth.user_id`` from a
+      validated token — but a definite **404** rather than a fault if it
+      ever is reached.
+    - Everything else: a code-collision search exhausted after
+      ``_INVITE_CODE_MAX_ATTEMPTS`` attempts, or the rare reusable-code race
+      ``uq_invites_reusable_child`` itself catches. Both are retry-worthy,
+      mapped to **503** rather than a bare fault the client has no cue to
+      act on.
+    """
+    if str(exc).startswith("Unknown user:"):
+        raise HTTPException(status_code=404, detail="Unknown user.") from exc
+    raise HTTPException(
+        status_code=503, detail="Could not mint an invite code right now. Please try again."
+    ) from exc
 
 
 @router.get("/student/parent-invites", response_model=ParentInvitesDTO)
@@ -1302,7 +1339,10 @@ def student_parent_invites(
     "a class always has a join code" rule that method's own docstring cites.
     ``links`` lists only live, unredeemed single-use links, oldest first.
     """
-    code_invite = service.get_or_create_parent_code(auth.user_id)
+    try:
+        code_invite = service.get_or_create_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
     links = service.list_parent_invites(auth.user_id)
     return ParentInvitesDTO(
         code=ParentCodeDTO(
@@ -1325,7 +1365,10 @@ def student_mint_parent_invite(
     this router). A student may mint as many single-use links as they hold
     pending — each is independently revocable.
     """
-    invite = service.mint_parent_invite(auth.user_id, reusable=False)
+    try:
+        invite = service.mint_parent_invite(auth.user_id, reusable=False)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
     return _invite_link_to_dto(invite, settings)
 
 
@@ -1362,5 +1405,8 @@ def student_rotate_parent_code(
     it in the same transaction the new one is inserted in) — a parent still
     holding it must be given the new one directly, there is no grace period.
     """
-    invite = service.rotate_parent_code(auth.user_id)
+    try:
+        invite = service.rotate_parent_code(auth.user_id)
+    except InviteError as exc:
+        _raise_for_invite_error(exc)
     return ParentCodeDTO(code=invite.code, url=_parent_invite_url(invite.code, settings))
