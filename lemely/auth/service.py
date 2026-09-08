@@ -697,8 +697,18 @@ class AuthService:
 
         This is the code half of DS15's link-and-code pair: a single-use,
         hashed-at-rest (in the Postgres-backed store), independently-expiring
-        credential verifying the exact same fact as the link —
-        :meth:`verify_email_code` is its only consumer.
+        credential verifying the exact same fact as the link.
+        :meth:`verify_email_code` is its intended consumer, but the OTP store
+        keys a challenge on ``(channel, address)`` alone — it does not know
+        which caller issued or is verifying it. :meth:`verify_parent_signup_code`
+        verifies against the identical ``email``-channel key for a *different*
+        purpose (a pre-account signup-code challenge, spec §4), so an
+        already-registered address's challenge here and a parent-invite
+        challenge for the same address share one slot and can be consumed —
+        or, on repeated wrong guesses, locked out — by either flow. See
+        :func:`~lemely.web.routers.auth.verify_parent_code`'s docstring
+        (final review I-1) for why the router, not this store, is what closes
+        that window.
         """
         return self._otp_store.issue(email, channel=OtpChannel.email)
 

@@ -163,29 +163,45 @@ describe("otpVerifyFailureMessage", () => {
 
 describe("otpRequestFailureMessage", () => {
   /**
-   * The other half of the judgement. `OtpRateLimitError` says "OTP already
-   * sent; retry in 12s." — a real sentence with a real number, written by a
-   * human for a human. Replacing it would lose the seconds, which is the only
-   * fact the reader wants.
+   * Final review I-4: this function's only production caller left is the
+   * parent-invites email-code request (`parentRequestCodeFailure`,
+   * `signupParentLogic.ts`) — the phone-OTP route it was written for is
+   * retired. `OtpRateLimitError` still says "OTP already sent; retry in
+   * 12s." (`lemely/auth/otp.py:112`), but showing the word "OTP" to a parent
+   * typing an email address is exactly the machine-text-as-copy defect this
+   * module otherwise exists to prevent, so only the seconds — the one fact
+   * the reader wants — are kept, wrapped in a sentence for this reader.
    */
-  it("keeps the 429's own wording, because a human wrote it", () => {
+  it("extracts the seconds from the 429 detail rather than showing it verbatim", () => {
     const detail = "OTP already sent; retry in 12s."
-    expect(otpRequestFailureMessage(new ApiError(429, detail, detail))).toBe(detail)
+    const message = otpRequestFailureMessage(new ApiError(429, detail, detail))
+    expect(message).not.toContain("OTP")
+    expect(message).toContain("12")
   })
 
-  it("does not keep a 429 with an empty detail", () => {
-    const message = otpRequestFailureMessage(new ApiError(429, "429 Too Many Requests", ""))
-    expect(message).not.toContain("429")
-    expect(message).toMatch(/code/i)
+  it("falls back to a numberless sentence when the 429 detail is empty or unparsable", () => {
+    for (const detail of ["", "429 Too Many Requests"]) {
+      const message = otpRequestFailureMessage(new ApiError(429, "429 Too Many Requests", detail))
+      expect(message, JSON.stringify(detail)).not.toContain("OTP")
+      expect(message, JSON.stringify(detail)).toMatch(/code/i)
+    }
   })
 
-  it("writes its own sentence for a rejected number", () => {
+  /**
+   * The 400/422 sentence used to be phone copy ("check the digits and the
+   * country") reaching a parent typing an email address — M22/I-4. A 400 on
+   * the real route is intercepted upstream as `hasAccount`
+   * (`parentRequestCodeFailure`), but a 422 falls through to this function,
+   * so both statuses are asserted here the way the phone-number test used to.
+   */
+  it("writes its own sentence for a rejected email address, not phone copy", () => {
     for (const status of [400, 422]) {
       const message = otpRequestFailureMessage(
-        new ApiError(status, "e", "value is not a valid phone number"),
+        new ApiError(status, "e", "value is not a valid email address"),
       )
-      expect(message, String(status)).not.toContain("valid phone number")
-      expect(message, String(status)).toMatch(/country/i)
+      expect(message, String(status)).not.toContain("valid email address")
+      expect(message, String(status)).not.toMatch(/country|digits|phone|number/i)
+      expect(message, String(status)).toMatch(/email/i)
     }
   })
 

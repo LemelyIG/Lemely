@@ -12,6 +12,7 @@ credential failures never surface as a 500.
 # type imports at runtime (see the per-file-ignore in pyproject.toml).
 from __future__ import annotations
 
+import hashlib
 import uuid
 from typing import Annotated
 
@@ -137,6 +138,28 @@ def _cooldown_detail(exc: CooldownError) -> str:
     """
     return f"Please wait {exc.retry_after:.0f}s before trying again."
 
+
+def _invite_code_fingerprint(code: str) -> str:
+    """Return a short, non-reversible fingerprint of an invite code, for logs only.
+
+    Final review I-5: the redeem-failure warning in :func:`parent_signup` used
+    to log ``invite_code`` verbatim. For a single-use link the code is
+    near-dead by the time that log fires, but a **reusable** parent code is
+    never marked redeemed and never expires — logging it verbatim would write
+    a still-live credential, one that grants access to a child's academic
+    record, into structured logs that ship to an aggregator. The first 12 hex
+    characters of a SHA-256 digest are enough to correlate repeated failures
+    for the same code across log lines without the log itself becoming a way
+    to redeem one.
+    """
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()[:12]
+
+
+_EMAIL_TAKEN_DETAIL = "This email already has an account. Sign in, then open the invite again."
+"""Fixed 400 detail for "this address is already registered", shared by
+:func:`request_parent_code` and :func:`verify_parent_code` (final review I-1)
+so the two routes cannot drift into two different sentences for the identical
+fact."""
 
 _UNKNOWN_PARENT_INVITE_DETAIL = "Unknown or expired invite code."
 """Fixed 404 detail for :func:`_require_live_parent_invite` — deliberately not
@@ -326,10 +349,7 @@ def request_parent_code(
     """
     _require_live_parent_invite(invite_service, body.inviteCode)
     if mirror.get_by_email(body.email) is not None:
-        raise HTTPException(
-            status_code=400,
-            detail="This email already has an account. Sign in, then open the invite again.",
-        )
+        raise HTTPException(status_code=400, detail=_EMAIL_TAKEN_DETAIL)
     try:
         cooldown.check_and_stamp(body.email)
     except CooldownError as exc:
@@ -345,6 +365,7 @@ def request_parent_code(
 def verify_parent_code(
     body: ParentCodeVerifyDTO,
     service: Annotated[AuthService, Depends(get_auth_service)],
+    mirror: Annotated[UserMirror, Depends(get_user_mirror)],
     invite_service: Annotated[InviteService, Depends(get_invite_service)],
     settings: Annotated[Settings, Depends(get_settings)],
 ) -> ParentCodeVerifyResponseDTO:
@@ -352,15 +373,36 @@ def verify_parent_code(
 
     A wrong, expired, or locked-out code is a **401** carrying the service's
     own detail (mirrors every other credential failure this router maps).
-    The invite is re-checked live *after* the code verifies — never before —
-    so a caller who mistypes the code never learns anything about the
-    invite's state from a response that only depends on the code.
+
+    **Order matters, and this route's order changed in final review (I-1).**
+    The invite is checked live *first*, and a taken email is refused with the
+    same **400** :func:`request_parent_code` already uses *before either*
+    :meth:`~lemely.auth.service.AuthService.verify_parent_signup_code` is
+    called. The previous order — code first, invite check after — checked the
+    code against an unauthenticated, unthrottled body with no other guard at
+    all: ``verify_parent_signup_code`` verifies on the OTP store's ``email``
+    channel keyed by the plain address, the *identical* ``(channel, address)``
+    key :meth:`~lemely.auth.service.AuthService._issue_email_code` uses for
+    post-signup email verification and for ``resend_verification``, and the
+    store deletes a challenge on its fifth wrong guess. An anonymous caller
+    could therefore post a stranger's already-registered address here and
+    burn out that stranger's own pending email-verification code, five wrong
+    guesses at a time, forever — an unauthenticated write against another
+    user's auth state, not merely a failed parent signup. Refusing a taken
+    email before the code is ever checked closes that off: the address is
+    confirmed unclaimed before this route touches the OTP store at all. The
+    caller who mistypes the code still learns nothing about the invite's
+    state *the code check itself* could not already tell them (the invite was
+    already re-checked live moments earlier), so nothing about D-2026-09-08's
+    disclosure discipline is weakened by moving this ahead of the code check.
     """
+    _require_live_parent_invite(invite_service, body.inviteCode)
+    if mirror.get_by_email(body.email) is not None:
+        raise HTTPException(status_code=400, detail=_EMAIL_TAKEN_DETAIL)
     try:
         service.verify_parent_signup_code(body.email, body.code)
     except AuthError as exc:
         raise HTTPException(status_code=401, detail=str(exc)) from exc
-    _require_live_parent_invite(invite_service, body.inviteCode)
     proof_token = mint_email_proof_token(
         email=body.email, invite_code=body.inviteCode, settings=settings
     )
@@ -434,7 +476,7 @@ def parent_signup(
     except InviteError:
         log.warning(
             "parent_signup_redeem_failed",
-            invite_code=claims.invite_code,
+            invite_code_fingerprint=_invite_code_fingerprint(claims.invite_code),
             user_id=str(result.user_id),
         )
     return _to_token_dto(result)

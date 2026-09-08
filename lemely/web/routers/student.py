@@ -51,7 +51,12 @@ from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import ExamMetadata, WeaknessReport
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
-from lemely.db.invite_repo import InviteError, InviteNotFoundError, InviteService
+from lemely.db.invite_repo import (
+    InviteError,
+    InviteLimitReachedError,
+    InviteNotFoundError,
+    InviteService,
+)
 from lemely.db.models import Invite
 from lemely.db.models.enums import NotificationType, Role, UploadStatus, XpSource
 from lemely.db.notification_repo import NotificationService
@@ -1362,11 +1367,19 @@ def student_mint_parent_invite(
 
     Identity is always the authenticated caller (``auth.user_id``), never a
     caller-supplied id (D1.6's IDOR discipline, matching every other route on
-    this router). A student may mint as many single-use links as they hold
-    pending — each is independently revocable.
+    this router). Capped at
+    :data:`~lemely.db.invite_repo.MAX_LIVE_PARENT_LINKS` live, unredeemed
+    links at a time (final review I-6) — each is independently revocable, so
+    a student who hits the cap can free a slot by revoking one rather than
+    waiting out an expiry.
     """
     try:
         invite = service.mint_parent_invite(auth.user_id, reusable=False)
+    except InviteLimitReachedError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail="You already have five unused links. Revoke one or wait for it to expire.",
+        ) from exc
     except InviteError as exc:
         _raise_for_invite_error(exc)
     return _invite_link_to_dto(invite, settings)

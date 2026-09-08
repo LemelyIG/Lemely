@@ -130,8 +130,11 @@ this entry is the user-visible summary.
   in the product. See `BUILD/BLOCKERS.md` B8.
 - **Parent signup is two writes, not one transaction.** `POST /api/auth/parent/signup` creates the
   GoTrue account and then links it to the child; a failure between the two leaves an account with
-  no link. Not silently swallowed — the invite is not marked redeemed until the link succeeds, so
-  the parent re-presents the same code and tries again. See `BUILD/DECISIONS.md` `D-2026-09-08`.
+  no link. The route does not fail the request over it — the GoTrue account already exists by that
+  point, so it returns a working session and only logs a warning. The invite is not marked redeemed
+  until the link succeeds, so re-presenting the same code at `/join/:code` while signed in completes
+  it — but **no UI currently tells the parent this happened**. See `BUILD/DECISIONS.md`
+  `D-2026-09-08`.
 
 ### Changed
 

@@ -103,10 +103,20 @@ describe("parentRequestCodeFailure", () => {
     expect(failure.message.length).toBeGreaterThan(0)
   })
 
-  it("keeps a 429's own human-written wording", () => {
-    const detail = "Cooldown active; retry in 12s."
+  /**
+   * `otpRequestFailureMessage`'s 429 branch (final review I-4) no longer
+   * forwards the server detail verbatim — one of its two possible sources
+   * is `OtpRateLimitError`'s "OTP already sent; retry in 12s.", and "OTP" is
+   * not a word this screen may show a parent typing an email address. Only
+   * the seconds carry through, wrapped in a sentence written for this
+   * reader; see `authOutcome.test.ts` for the full behaviour.
+   */
+  it("keeps the seconds from a 429's own detail, without echoing raw server wording", () => {
+    const detail = "OTP already sent; retry in 12s."
     const failure = parentRequestCodeFailure(new ApiError(429, detail, detail))
-    expect(failure.message).toBe(detail)
+    expect(failure.message).not.toBe(detail)
+    expect(failure.message).not.toContain("OTP")
+    expect(failure.message).toContain("12")
   })
 
   it("maps transport and server failures to the shared sentences", () => {

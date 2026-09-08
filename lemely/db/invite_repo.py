@@ -118,6 +118,16 @@ PARENT_INVITE_TTL = timedelta(days=7)
 (spec §3). The reusable parent code carries no expiry at all — it lives
 until rotated."""
 
+MAX_LIVE_PARENT_LINKS = 5
+"""Cap on a child's live (unexpired, unredeemed) single-use parent links
+(final review I-6). Every other mint path in this module is bounded — a seat
+invite against the school's seat quota, the reusable code to exactly one live
+row per child by database index — while this one was bounded by nothing: a
+student could loop :meth:`InviteService.mint_parent_invite` and insert
+unbounded ``invites`` rows, which :meth:`InviteService.list_parent_invites`
+then returns unpaginated. Five is generous for the real use case — one link
+per parent, per device — while still being a real bound."""
+
 
 class InviteError(Exception):
     """Base class for invite failures."""
@@ -137,6 +147,10 @@ class InviteNotFoundError(InviteError):
 
 class InviteAlreadyRedeemedError(InviteError):
     """The invite was already redeemed by a different user (→ 409)."""
+
+
+class InviteLimitReachedError(InviteError):
+    """The child holds :data:`MAX_LIVE_PARENT_LINKS` live single-use parent links (→ 409)."""
 
 
 class InviteRoleMismatchError(InviteError):
@@ -359,17 +373,38 @@ class InviteService:
         read-then-insert those two methods use to make the *common* case a
         clean "here is your existing code" rather than an avoidable error.
 
+        **The single-use path is capped** (:data:`MAX_LIVE_PARENT_LINKS`,
+        final review I-6): the ``users`` row is locked ``FOR UPDATE`` for the
+        duration so two concurrent mints for the same child cannot both read
+        "four live links" and both insert a fifth, mirroring
+        :meth:`get_or_create_parent_code`'s identical lock for the identical
+        TOCTOU reason. The reusable path takes no such lock — its own
+        invariant is already the database's job via
+        ``uq_invites_reusable_child``, and a second concurrent
+        ``reusable=True`` call here is not a production path (see that
+        parameter's own docstring warning).
+
         Raises:
             InviteError: ``student_id`` names no ``users`` row (see
                 :meth:`get_or_create_parent_code`'s identical check —
                 review round 3, Minor 2), or (``reusable=True`` only) the
                 child already has a live reusable row.
+            InviteLimitReachedError: (``reusable=False`` only) the child
+                already holds :data:`MAX_LIVE_PARENT_LINKS` live,
+                unredeemed single-use links (→ 409).
         """
         student_uuid = _as_uuid(student_id)
         expires_at = None if reusable else datetime.now(UTC) + PARENT_INVITE_TTL
         with self._sessionmaker() as session, session.begin():
-            if session.get(User, student_uuid) is None:
+            user = session.get(User, student_uuid, with_for_update=not reusable)
+            if user is None:
                 raise InviteError(f"Unknown user: {student_uuid}")
+            if not reusable and self._count_live_parent_links(session, student_uuid) >= (
+                MAX_LIVE_PARENT_LINKS
+            ):
+                raise InviteLimitReachedError(
+                    f"Child {student_uuid} already has {MAX_LIVE_PARENT_LINKS} live parent links"
+                )
             return self._insert_invite(
                 session,
                 role=InviteRole.parent,
@@ -520,6 +555,27 @@ class InviteService:
                 .order_by(Invite.created_at, Invite.id)
             )
             return list(session.scalars(stmt).all())
+
+    def _count_live_parent_links(self, session: Session, student_uuid: uuid.UUID) -> int:
+        """Count ``student_uuid``'s live, unredeemed single-use parent links.
+
+        The same filter :meth:`list_parent_invites` applies, as a ``COUNT``
+        rather than a full row fetch, and run against the caller's own
+        session/transaction (:meth:`mint_parent_invite`'s cap check) rather
+        than opening a second one.
+        """
+        now = datetime.now(UTC)
+        stmt = (
+            select(func.count())
+            .select_from(Invite)
+            .where(
+                Invite.child_id == student_uuid,
+                Invite.reusable.is_(False),
+                Invite.redeemed_by.is_(None),
+                or_(Invite.expires_at.is_(None), Invite.expires_at > now),
+            )
+        )
+        return int(session.scalar(stmt) or 0)
 
     def revoke_parent_invite(self, student_id: uuid.UUID | str, code: str) -> None:
         """Delete a single-use parent link that belongs to ``student_id``.
@@ -976,9 +1032,11 @@ def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
 
 
 __all__ = [
+    "MAX_LIVE_PARENT_LINKS",
     "PARENT_INVITE_TTL",
     "InviteAlreadyRedeemedError",
     "InviteError",
+    "InviteLimitReachedError",
     "InviteNotFoundError",
     "InviteOwnershipError",
     "InvitePreview",

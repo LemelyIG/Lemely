@@ -413,6 +413,18 @@ def mint_email_proof_token(
 def decode_email_proof_token(token: str, settings: Settings) -> EmailProofClaims:
     """Verify an email-proof token and return its typed :class:`EmailProofClaims`.
 
+    ``options={"require": [...]}`` (final review I-7) makes PyJWT itself
+    refuse a token missing any of ``exp``/``iat``/``aud``/``typ`` — without it,
+    PyJWT only enforces ``exp`` *when the claim is present*, so a token minted
+    with no ``exp`` at all would otherwise decode successfully forever. The
+    module's other two decoders never had this gap: :func:`decode_token`
+    subscripts ``payload["exp"]`` directly (a missing claim raises
+    ``KeyError``, caught below it) and :func:`decode_refresh_token` checks
+    ``exp is None`` explicitly. This is defence in depth rather than a live
+    hole — :func:`mint_email_proof_token` always sets ``exp``, and forging a
+    token without it needs the signing secret — but it closes the one token
+    type in this module that lacked the guard its siblings already had.
+
     Raises:
         TokenError: The signature is invalid, the token is expired, it was not
             minted as an email-proof token (including an access or refresh
@@ -425,6 +437,7 @@ def decode_email_proof_token(token: str, settings: Settings) -> EmailProofClaims
             secret,
             algorithms=[_ALGORITHM],
             audience=_EMAIL_PROOF_AUDIENCE,
+            options={"require": ["exp", "iat", "aud", "typ"]},
         )
     except jwt.PyJWTError as exc:
         raise TokenError(f"Invalid email proof token: {exc}") from exc

@@ -14352,12 +14352,17 @@ account and then calls `invite_service.redeem` to write the `parent_child_links`
 not one database transaction, the same non-atomic shape every route in this codebase that creates
 an auth account and then writes an application-side row already accepts (there is no two-phase
 commit between GoTrue and Postgres). A failure between the two leaves a parent account that
-exists but is not linked to any child. Nothing about this is silently swallowed: the invite code
-is not marked redeemed unless the link write succeeds, so the same failure mode has the same
-recovery as any other dead redemption — the parent re-presents the same code at `/join/:code` and
-tries again. This is recorded here, in the route's own docstring, and is why `redeemed_by`/
-`redeemed_at` are stamped only after `link_in_session` succeeds inside the same transaction as the
-redemption marking, not before it.
+exists but is not linked to any child. The route does not fail the request over it: `parent_signup`
+catches `InviteError`, logs a warning, and still returns a working `TokenResponseDTO`, because by
+that point the GoTrue account genuinely exists and no failure status would be true — reporting one
+would tell a parent whose signup in fact succeeded that it had not. The invite code is not marked
+redeemed unless the link write succeeds, so the same code still resolves, and re-presenting it at
+`/join/:code` while signed in tries the link again — but **no UI currently tells the parent this
+happened**; the closest cue today is the child's own P-01 "no parent yet" empty state, which reads
+as signup instructions rather than recovery instructions for a parent who already has an account.
+That gap is recorded, not fixed, here — see `CHANGELOG.md`'s "Known limitations" for the same
+wording. This is why `redeemed_by`/`redeemed_at` are stamped only after `link_in_session` succeeds
+inside the same transaction as the redemption marking, not before it.
 
 **Alternatives rejected.** *Keep phone OTP and wire a real SMS gateway* — rejected on cost alone;
 no gateway was ever budgeted for a channel with a working, free alternative. *Let the invite call

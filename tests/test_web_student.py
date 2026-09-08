@@ -40,7 +40,7 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
-from lemely.db.invite_repo import InviteService
+from lemely.db.invite_repo import MAX_LIVE_PARENT_LINKS, InviteService
 from lemely.db.models import User
 from lemely.db.models.enums import QualificationLevel, Role
 from lemely.db.parent_repo import ParentLinkService
@@ -1162,6 +1162,24 @@ def test_student_mints_and_revokes_a_link(
 
     after = parent_links_client.get("/api/student/parent-invites").json()
     assert after["links"] == []
+
+
+def test_student_minting_past_the_cap_is_409(
+    parent_links_client: TestClient, pg_sessionmaker: sessionmaker[Session]
+) -> None:
+    """Final review I-6: the sixth live single-use link is refused with a 409
+    a student can act on, rather than an unbounded mint loop.
+    """
+    student = _seed_pg_user(pg_sessionmaker, Role.student)
+    _auth_as_pg(parent_links_client, student, Role.student)
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        minted = parent_links_client.post("/api/student/parent-invites")
+        assert minted.status_code == 200, minted.text
+
+    resp = parent_links_client.post("/api/student/parent-invites")
+
+    assert resp.status_code == 409, resp.text
+    assert "five" in resp.json()["detail"].lower()
 
 
 def test_student_revoking_an_unknown_code_is_404(

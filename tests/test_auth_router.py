@@ -564,6 +564,58 @@ def test_parent_verify_code_wrong_is_401(
     assert resp.status_code == 401
 
 
+def test_parent_verify_code_taken_email_never_reaches_the_otp_store(
+    parent_context: tuple[TestClient, AuthService, Settings],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Final review I-1: an already-registered email must be refused with the
+    same 400 :func:`request_parent_code` uses *before*
+    ``AuthService.verify_parent_signup_code`` is ever called — that method
+    verifies on the OTP store's ``email`` channel keyed by the plain address,
+    the identical ``(channel, address)`` key ``AuthService._issue_email_code``
+    uses for a signed-up user's own pending email-verification challenge.
+    Reaching it with a taken email would let an anonymous caller lock out a
+    stranger's challenge after five wrong guesses. Proven here by driving five
+    wrong guesses through the public route and then showing the victim's own
+    challenge still verifies.
+    """
+    client, service, _ = parent_context
+    student = _seed_user(pg_sessionmaker, Role.student)
+    invite = _invite_service(pg_sessionmaker).mint_parent_invite(student, reusable=False)
+
+    victim_email = "victim@example.com"
+    signup = client.post(
+        "/api/auth/signup",
+        json={
+            "email": victim_email,
+            "password": "pw-123456",
+            "role": "student",
+            "acceptedTerms": True,
+        },
+    )
+    assert signup.status_code == 200, signup.text
+    victim_id = uuid.UUID(signup.json()["userId"])
+
+    # `parent_context`'s `AuthService` is built with no `tokens=`, so `signup`
+    # itself never mints a verification challenge (see `signup`'s own
+    # docstring, "Both `email` and `tokens` are optional collaborators").
+    # Issuing one directly here stands in for the challenge a real deployment
+    # would already have minted, or `resend_verification` would mint fresh.
+    real_code = service._issue_email_code(victim_email)
+
+    for _ in range(5):
+        resp = client.post(
+            "/api/auth/parent/verify-code",
+            json={"email": victim_email, "inviteCode": invite.code, "code": "000000"},
+        )
+        assert resp.status_code == 400, resp.text
+
+    # The victim's own challenge survives untouched: the real code still
+    # verifies, proving the router never reached `verify_parent_signup_code`
+    # (which would have consumed or, after five wrong guesses, locked it out).
+    service.verify_email_code(victim_id, real_code)
+
+
 def test_parent_signup_creates_verified_parent_and_links(
     parent_context: tuple[TestClient, AuthService, Settings],
     pg_sessionmaker: sessionmaker[Session],

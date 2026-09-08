@@ -46,9 +46,11 @@ from sqlalchemy.orm import Session, sessionmaker
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.invite_repo import (
+    MAX_LIVE_PARENT_LINKS,
     PARENT_INVITE_TTL,
     InviteAlreadyRedeemedError,
     InviteError,
+    InviteLimitReachedError,
     InviteNotFoundError,
     InviteOwnershipError,
     InviteQuotaExceededError,
@@ -583,6 +585,59 @@ def test_rotate_parent_code_replaces_the_row(pg_sessionmaker: sessionmaker[Sessi
             )
         )
         assert len(rows) == 1
+
+
+def test_mint_parent_invite_caps_live_single_use_links(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Final review I-6: every other mint path is bounded (a seat invite by
+    the school's seat quota, the reusable code to one live row per child by
+    database index) — the single-use link had no cap at all before this.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    service = _service(pg_sessionmaker)
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteLimitReachedError):
+        service.mint_parent_invite(student, reusable=False)
+
+    # The reusable code is a separate, unbounded-by-this-cap kind (spec §3's
+    # documented exception to "single-use") and must still mint cleanly.
+    service.mint_parent_invite(student, reusable=True)
+
+
+def test_mint_parent_invite_cap_counts_only_live_links(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A redeemed, expired, or revoked link frees its slot — the cap is on
+    *live* links, not on how many a child has ever minted.
+    """
+    student = _seed_user(pg_sessionmaker, Role.student)
+    parent = _seed_user(pg_sessionmaker, Role.parent)
+    service = _service(pg_sessionmaker)
+    redeemed = service.mint_parent_invite(student, reusable=False)
+    service.redeem(parent, redeemed.code, caller_role=Role.parent)
+    revoked = service.mint_parent_invite(student, reusable=False)
+    service.revoke_parent_invite(student, revoked.code)
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Invite(
+                code="EXPIREDCAPTST",
+                role=InviteRole.parent,
+                child_id=student,
+                created_by=student,
+                expires_at=datetime.now(UTC) - timedelta(hours=1),
+            )
+        )
+
+    # Three slots are "used up" (redeemed, revoked, expired) but none is
+    # live, so the full cap is still available.
+    for _ in range(MAX_LIVE_PARENT_LINKS):
+        service.mint_parent_invite(student, reusable=False)
+
+    with pytest.raises(InviteLimitReachedError):
+        service.mint_parent_invite(student, reusable=False)
 
 
 # ── list_parent_invites / revoke_parent_invite ──────────────────────────────

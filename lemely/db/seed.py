@@ -239,6 +239,15 @@ def _create_or_recover_email_account(
     here verifies the credential via ``login`` and then explicitly mirrors the
     role :data:`DEMO_ACCOUNTS` declares, overwriting whatever ``login`` just
     wrote.
+
+    Also stamps ``email_verified_at`` for an ``account.email_verified`` row
+    (final review I-2): the happy path below passes
+    ``email_verified=account.email_verified`` straight into ``signup``, but
+    this recovery branch never calls ``signup`` at all, so without an
+    explicit stamp here the recovered parent would read
+    ``email_verified_at IS NULL`` — the exact account shape
+    :attr:`DemoAccount.email_verified`'s own comment says no real parent
+    account ever has — and then be 403'd by the verified-email dependency.
     """
     try:
         result = auth_service.signup(
@@ -271,6 +280,8 @@ def _create_or_recover_email_account(
             role=account.role,
             display_name=account.display_name,
         )
+        if account.email_verified:
+            mirror.mark_email_verified(login_result.user_id, verified_at=datetime.now(UTC))
         return (
             SeededAccount(email=account.email, role=account.role, user_id=login_result.user_id),
             was_fresh,

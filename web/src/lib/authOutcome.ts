@@ -48,15 +48,27 @@ import { isEmailUnverifiedError } from "@/lib/authTypes"
  * channel-neutral at the same time (it used to say "text", which would be a
  * false claim from the email caller).
  *
- * ── 2. The OTP request 429 is genuinely well written, and is kept ───────────
+ * ── 2. The OTP request 429 was genuinely well written for the route it applied to ──
  *
  * `OtpRateLimitError` says "OTP already sent; retry in 12s."
  * (`lemely/auth/otp.py:112`) — a real sentence with a real number in it, and
- * nothing written here could improve on it. This is the same call
- * `teacherOutcome.ts` made for its 422 and `friendOutcome.ts` for its send
- * path. The family's rule has never been "always keep the detail" or "never
- * keep it"; it is "keep it where a human wrote it for a human", and that has
- * to be decided per endpoint by reading the endpoint.
+ * this note used to say nothing written here could improve on it, so
+ * `otpRequestFailureMessage`'s 429 branch kept the detail verbatim. That was
+ * true of the phone-OTP request route this function was written for
+ * (`POST /api/auth/otp/request`, since retired alongside the rest of D3.11's
+ * phone flow). It stopped being true the moment this function's only
+ * surviving production caller became `parentRequestCodeFailure`
+ * (`signupParentLogic.ts`), for the parent-invites email-code request: the
+ * word "OTP" is product copy nobody chose to show a parent typing an email
+ * address, against this project's own UI-copy rule (final review I-4). The
+ * 429 branch now extracts just the number from that same sentence — the one
+ * fact the reader wants — and writes an email-appropriate sentence around
+ * it, falling back to a numberless one if the detail's shape ever changes
+ * server-side. The underlying rule is unchanged from before: "keep the fact
+ * a human sentence carries, in words a human wrote for *this* reader", it
+ * simply now means extracting the number rather than keeping the sentence
+ * whole, because the sentence itself was written for a caller this route no
+ * longer has.
  *
  * ── 3. The password 401 is deliberately vague, and that is a security call ──
  *
@@ -309,20 +321,41 @@ export function otpVerifyFailureMessage(err: unknown): string {
 }
 
 /**
+ * Extract the retry-after seconds from `OtpRateLimitError`'s own wording
+ * ("OTP already sent; retry in 12s.", `lemely/auth/otp.py:112`), or `null`
+ * if the detail does not carry a number in that shape. The number, not the
+ * sentence, is the one fact worth keeping — see note 2 above.
+ */
+function secondsFromOtpRateLimitDetail(detail: string): number | null {
+  const match = detail.match(/(\d+)\s*s\b/)
+  if (match === null) return null
+  const seconds = Number(match[1])
+  return Number.isFinite(seconds) ? seconds : null
+}
+
+/**
  * Turn a failed OTP *request* into a sentence.
  *
- * The 429 keeps the server's own wording, which names the seconds remaining
- * and is better than anything written here. Everything else is ours.
+ * `otpRequestFailureMessage` was written for the phone-OTP request route and
+ * has exactly one production caller left: `parentRequestCodeFailure`
+ * (`signupParentLogic.ts`), for the parent-invites email-code request. Both
+ * the 429 and the 400/422 branches below are worded for that caller now, not
+ * the retired phone flow — see note 2 above for the 429, and note 2's own
+ * history for why "that number" would be simply false for an email address.
  */
 export function otpRequestFailureMessage(err: unknown): string {
   if (err instanceof ApiError) {
     if (err.status === 0) return AUTH_NETWORK_FAILURE
-    if (err.status === 429 && typeof err.detail === "string" && err.detail.trim() !== "") {
-      return err.detail.trim()
+    if (err.status === 429) {
+      const seconds =
+        typeof err.detail === "string" ? secondsFromOtpRateLimitDetail(err.detail) : null
+      return seconds === null
+        ? "We just sent you a code. Wait a few seconds and try again."
+        : `We just sent you a code. Try again in ${seconds} seconds.`
     }
     if (err.status >= 500) return AUTH_SERVICE_FAILURE
     if (err.status === 400 || err.status === 422) {
-      return "We couldn't send a code to that number. Check the digits and the country, then try again."
+      return "We couldn't send a code to that email address. Check it and try again."
     }
     return "We couldn't send your code just then. Trying again usually sorts it."
   }

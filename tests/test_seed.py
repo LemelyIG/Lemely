@@ -285,6 +285,27 @@ class TestCreateDemoAccounts:
         # demote the teacher and the demo teacher portal would 403.
         assert recovered.role is Role.teacher
 
+    def test_recovery_branch_stamps_email_verified_for_the_parent(self) -> None:
+        """Final review I-2: the 422 recovery branch (GoTrue survives a wiped
+        ``public.users``) must stamp ``email_verified_at`` for an account
+        :data:`DEMO_ACCOUNTS` declares verified — the demo parent is the only
+        such account. Without the stamp, a recovered parent reads
+        ``email_verified_at IS NULL``, the exact shape
+        ``DemoAccount.email_verified``'s own comment says no real parent
+        account ever has, and would then be 403'd by the verified-email
+        dependency.
+        """
+        gotrue = FakeGoTrueBackend()
+        parent = next(a for a in DEMO_ACCOUNTS if a.role is Role.parent)
+        gotrue.admin_create_user(parent.email, DEMO_PASSWORD, parent.role.value, None)
+
+        result, _auth_service, mirror, _link_service = _create_demo_accounts(gotrue=gotrue)
+
+        assert result.created == len(DEMO_ACCOUNTS)
+        recovered = mirror.get_by_email(parent.email)
+        assert recovered is not None
+        assert recovered.email_verified_at is not None
+
     def test_demo_parent_is_linked_to_demo_student(self) -> None:
         """The demo parent must be a real, usable fixture, not just an account
         that exists — so ``create_demo_accounts`` links it to the demo student

@@ -293,6 +293,31 @@ def test_email_proof_token_expires() -> None:
         decode_email_proof_token(token, settings)
 
 
+def test_email_proof_token_without_exp_is_rejected() -> None:
+    """Final review I-7: PyJWT only enforces ``exp`` when the claim is
+    present, so an exp-less token would otherwise decode successfully
+    forever. Hand-mints a token identical to :func:`mint_email_proof_token`'s
+    own shape except for the missing ``exp``, under the real signing secret
+    and the correct audience/``typ`` — the only thing wrong with it is the
+    missing claim `options={"require": [...]}` now catches.
+    """
+    settings = _settings()
+    secret = settings.supabase.jwt_secret.get_secret_value()
+    issued = datetime.now(UTC)
+    payload = {
+        "email": "parent@example.com",
+        "invite_code": "ABC123",
+        "aud": "lemely-email-proof",
+        "typ": "email_proof",
+        "iat": int(issued.timestamp()),
+        # No "exp" claim at all.
+    }
+    token = jwt.encode(payload, secret, algorithm="HS256")
+
+    with pytest.raises(TokenError):
+        decode_email_proof_token(token, settings)
+
+
 def test_email_proof_token_ttl_defaults_to_900_seconds() -> None:
     settings = _settings()
     issued = datetime.now(UTC)
