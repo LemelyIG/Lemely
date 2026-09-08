@@ -331,7 +331,7 @@ class FakeEmailProvider:
     ``tests/test_auth_service.py``, which does the same for the analogous OTP
     rule).
 
-    ``raise_on_send``, if set, makes both send methods raise instead of
+    ``raise_on_send``, if set, makes all three send methods raise instead of
     recording — for the tests proving a delivery failure never fails the
     operation that triggered it (D7's binding rule, stated on
     :meth:`~lemely.auth.service.AuthService.signup`).
@@ -341,6 +341,7 @@ class FakeEmailProvider:
     raise_on_send: bool = False
     sent_verifications: list[tuple[str, str, str]] = field(default_factory=list)
     sent_resets: list[tuple[str, str]] = field(default_factory=list)
+    sent_signup_codes: list[tuple[str, str]] = field(default_factory=list)
 
     def send_verification(self, email: str, link: str, code: str) -> None:
         if self.raise_on_send:
@@ -351,3 +352,8 @@ class FakeEmailProvider:
         if self.raise_on_send:
             raise RuntimeError("simulated password-reset-email delivery failure")
         self.sent_resets.append((email, link))
+
+    def send_signup_code(self, email: str, code: str) -> None:
+        if self.raise_on_send:
+            raise RuntimeError("simulated signup-code-email delivery failure")
+        self.sent_signup_codes.append((email, code))

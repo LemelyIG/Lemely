@@ -21,6 +21,17 @@ refresh token is *only* a claim to a ``devices`` row — it names one in its
 ``session_id`` and carries the row's current ``refresh_token_id`` as its ``jti``
 — so authority to mint a new access token is re-derived from the database on
 every redemption, never read out of the token itself.
+
+A third, unrelated kind lives here too: :func:`mint_email_proof_token` /
+:func:`decode_email_proof_token` (spec §4). A parent proving an email address
+before any account exists has nothing to authenticate as — no user row, no
+session — so this is neither an access nor a refresh token; it is a short-lived
+receipt that ``email`` completed the signup-code challenge for ``invite_code``,
+handed back to the client so the final ``POST /api/auth/parent/signup`` call
+can present it instead of the (single-use, already-consumed) code. Same
+mechanism as the other two: its own audience (``lemely-email-proof``) and
+``typ`` (``"email_proof"``) keep it out of every other token's validator, in
+both directions.
 """
 
 from __future__ import annotations
@@ -47,6 +58,33 @@ a second, explicit signal so a future change to the audience scheme cannot
 silently collapse them.
 """
 
+_EMAIL_PROOF_AUDIENCE = "lemely-email-proof"
+"""The ``aud`` every email-proof token is minted under (spec §4).
+
+A literal, unlike :func:`refresh_audience`, rather than derived from
+``supabase.jwt_audience``: an email-proof token authenticates nothing (there is
+no user yet), so it has no relationship to the access-token audience to stay
+adjacent to — it only needs to be a value no other token kind uses.
+"""
+
+_EMAIL_PROOF_TYP = "email_proof"
+"""Value of an email-proof token's ``typ`` claim, the same belt-and-braces
+signal :data:`_REFRESH_TYP` is for refresh tokens."""
+
+
+class TokenError(Exception):
+    """Raised by :func:`decode_email_proof_token` on any decode failure.
+
+    Deliberately this module's own exception rather than
+    :class:`~lemely.runtime.errors.AuthError`: an email-proof token is not a
+    login credential (see the module docstring), so its failures are not an
+    *authentication* failure in the sense every other ``AuthError`` site means
+    — the caller (the parent-signup route, Task 5) decides what HTTP status
+    that becomes, exactly as :class:`~lemely.auth.otp.OtpRateLimitError` and
+    :class:`~lemely.auth.cooldown.CooldownError` are raised as their own types
+    for their callers to map.
+    """
+
 
 def refresh_audience(settings: Settings) -> str:
     """Return the ``aud`` refresh tokens are minted under.
@@ -70,6 +108,20 @@ class Claims:
     phone: str | None = None
     email: str | None = None
     session_id: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EmailProofClaims:
+    """Decoded, validated claims from an email-proof token (spec §4).
+
+    ``invite_code`` is carried through unchanged from :func:`mint_email_proof_token`
+    so the signup route can re-check the invite is still live at the final step,
+    without trusting the client to resend it honestly — the token is the one
+    place that binds "this email" to "this invite" together.
+    """
+
+    email: str
+    invite_code: str
 
 
 @dataclass(frozen=True, slots=True)
@@ -315,12 +367,88 @@ def decode_token(token: str, settings: Settings) -> Claims:
     )
 
 
+def mint_email_proof_token(
+    *,
+    email: str,
+    invite_code: str,
+    settings: Settings,
+    ttl_seconds: int = 900,
+    now: datetime | None = None,
+) -> str:
+    """Mint a short-lived receipt that ``email`` completed the signup-code challenge.
+
+    Handed back to the client by ``POST /api/auth/parent/verify-code`` (Task 5)
+    so ``POST /api/auth/parent/signup`` can prove the email without re-presenting
+    the (single-use, already-consumed) code. Minted under the module's own
+    audience and ``typ`` — see the module docstring — so it can never be
+    accepted where an access or refresh token is expected, or vice versa.
+
+    Args:
+        email: The address that verified. Carried as a plain claim (not a
+            ``sub``): there is no user id yet, since the account this proves
+            an email for does not exist until signup succeeds.
+        invite_code: The parent invite this proof is scoped to, so the
+            eventual signup call re-checks the exact same invite is still live
+            rather than trusting the client's own claim of which one it used.
+        settings: Provides the shared ``jwt_secret``.
+        ttl_seconds: Token lifetime; defaults to 900s (fifteen minutes) — long
+            enough to fill in the password/name step, short enough that a
+            leaked proof token is not a standing liability.
+        now: Injectable clock for deterministic tests (defaults to ``now(UTC)``).
+    """
+    issued = now or datetime.now(UTC)
+    expires = issued + timedelta(seconds=ttl_seconds)
+    payload: dict[str, Any] = {
+        "email": email,
+        "invite_code": invite_code,
+        "aud": _EMAIL_PROOF_AUDIENCE,
+        "typ": _EMAIL_PROOF_TYP,
+        "iat": int(issued.timestamp()),
+        "exp": int(expires.timestamp()),
+    }
+    secret = settings.supabase.jwt_secret.get_secret_value()
+    return jwt.encode(payload, secret, algorithm=_ALGORITHM)
+
+
+def decode_email_proof_token(token: str, settings: Settings) -> EmailProofClaims:
+    """Verify an email-proof token and return its typed :class:`EmailProofClaims`.
+
+    Raises:
+        TokenError: The signature is invalid, the token is expired, it was not
+            minted as an email-proof token (including an access or refresh
+            token presented here), or it is missing a required claim.
+    """
+    secret = settings.supabase.jwt_secret.get_secret_value()
+    try:
+        payload = jwt.decode(
+            token,
+            secret,
+            algorithms=[_ALGORITHM],
+            audience=_EMAIL_PROOF_AUDIENCE,
+        )
+    except jwt.PyJWTError as exc:
+        raise TokenError(f"Invalid email proof token: {exc}") from exc
+
+    if payload.get("typ") != _EMAIL_PROOF_TYP:
+        raise TokenError("Invalid email proof token: not an email proof token")
+
+    email = payload.get("email")
+    invite_code = payload.get("invite_code")
+    if not email or not invite_code:
+        raise TokenError("Invalid email proof token: missing required claim")
+    return EmailProofClaims(email=str(email), invite_code=str(invite_code))
+
+
 __all__ = [
     "Claims",
+    "EmailProofClaims",
     "RefreshClaims",
+    "TokenError",
+    "decode_email_proof_token",
     "decode_refresh_token",
     "decode_token",
     "mint_access_token",
+    "mint_email_proof_token",
     "mint_otp_token",
     "mint_refresh_token",
     "refresh_audience",

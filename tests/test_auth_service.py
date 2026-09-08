@@ -21,7 +21,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from lemely.auth.otp import OtpChannel, OtpStore
+from lemely.auth.otp import OtpChannel, OtpRateLimitError, OtpStore
 from lemely.auth.service import AuthService, DeviceContext
 from lemely.auth.sms import MockSmsProvider
 from lemely.auth.tokens import decode_token
@@ -644,3 +644,94 @@ def test_dev_code_is_none_when_provider_delivers(
     assert result.verification_dev_code is None
     ((_addr, _link, code),) = email_provider.sent_verifications
     assert len(code) == 6  # it was still issued and handed to the provider
+
+
+# ── Parent-invite email-proof signup primitives (spec §4) ───────────────────
+#
+# The parent-invite flow proves an email address by code BEFORE any account
+# exists (`request_parent_signup_code` / `verify_parent_signup_code`), then
+# calls `signup(..., email_verified=True)` once the router has exchanged that
+# proof for an email-proof token (`lemely.auth.tokens`, Task 4's other half).
+# These tests cover the `AuthService` primitives only; minting/decoding the
+# proof token itself is `tests/test_auth_tokens.py`'s job, and the HTTP routes
+# that wire the three together are Task 5's.
+
+
+def test_signup_email_verified_stamps_and_sends_nothing() -> None:
+    """``email_verified=True`` already proved the address by code, so signup
+    must not mint or send a second verification credential for it.
+    """
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    email = FakeEmailProvider()
+    tokens = FakeAuthTokenService(clock=clock)
+    service, mirror, _ = _service(clock, email=email, tokens=tokens)
+
+    result = service.signup("parent@example.com", "hunter2pw", Role.parent, email_verified=True)
+
+    assert mirror.rows[result.user_id].email_verified_at is not None
+    assert result.verification_dev_link is None
+    assert result.verification_dev_code is None
+    assert not email.sent_verifications
+
+
+def test_request_parent_signup_code_returns_code_only_when_provider_does_not_deliver() -> None:
+    """D3.16 applied to the parent-signup code: assert both directions, exactly
+    as ``test_request_otp_returns_the_code_only_for_a_non_delivering_provider``
+    does for the phone-OTP analogue.
+    """
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+
+    mock_email = FakeEmailProvider(delivers_out_of_band=False)
+    mock_service, _, _ = _service(clock, email=mock_email)
+    mock_code = mock_service.request_parent_signup_code("parent-a@example.com")
+    assert mock_code is not None
+    assert mock_email.sent_signup_codes == [("parent-a@example.com", mock_code)]
+
+    real_email = FakeEmailProvider(delivers_out_of_band=True)
+    real_service, _, _ = _service(clock, email=real_email)
+    real_code = real_service.request_parent_signup_code("parent-b@example.com")
+    assert real_code is None
+    # ...and the provider still received it — only the *return* is withheld.
+    assert real_email.sent_signup_codes
+    assert len(real_email.sent_signup_codes[-1][1]) == 6
+
+
+def test_request_parent_signup_code_propagates_resend_cooldown() -> None:
+    """Unlike a swallowed send failure, the OTP store's resend cooldown must
+    reach the caller uncaught — the same guarantee ``request_otp`` already
+    leaves unhandled, exercised here on the ``email`` channel.
+    """
+    settings = Settings()
+    otp_store = OtpStore(
+        clock=lambda: datetime.now(UTC),
+        rng=random.Random(7),
+        email_ttl_seconds=settings.auth.email_otp_ttl_seconds,
+        min_resend_seconds=30,
+    )
+    service = AuthService(
+        gotrue=FakeGoTrueBackend(),
+        mirror=FakeUserMirror(),  # type: ignore[arg-type]
+        sms=MockSmsProvider(),
+        otp_store=otp_store,
+        settings=settings,
+        email=FakeEmailProvider(),
+    )
+    service.request_parent_signup_code("cooldown@example.com")
+    with pytest.raises(OtpRateLimitError):
+        service.request_parent_signup_code("cooldown@example.com")
+
+
+def test_verify_parent_signup_code_wrong_and_ok() -> None:
+    clock = _Clock(datetime(2026, 1, 1, tzinfo=UTC))
+    email = FakeEmailProvider()
+    service, _, _ = _service(clock, email=email)
+    code = service.request_parent_signup_code("verifyme@example.com")
+    assert code is not None
+
+    with pytest.raises(AuthError):
+        service.verify_parent_signup_code("verifyme@example.com", "000000-wrong")
+
+    service.verify_parent_signup_code("verifyme@example.com", code)  # does not raise
+    # Single-use: the challenge was consumed by the successful verify above.
+    with pytest.raises(AuthError):
+        service.verify_parent_signup_code("verifyme@example.com", code)
