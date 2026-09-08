@@ -13,15 +13,16 @@ already established for ``ClassEnrollment``). A row in ``parent_child_links``
 "a row exists" are the same fact everywhere in this module.
 
 **Linking direction is fixed (D3.11), decided upstream of this module — do
-not redesign it here.** The student invites a parent by phone
-(:meth:`ParentLinkService.link`), which resolves that phone to an *existing*
-``role=parent`` user and links to it. It never creates a user from a
-student-supplied phone: a stranger's mistyped or spoofed number could
-otherwise be handed a child's grades on the strength of nothing but a phone
-number the student typed in. A phone with no matching parent account raises
-:class:`ParentUserNotFoundError` — the parent must OTP-login at least once
-(which auto-creates their ``role=parent`` user, :meth:`AuthService.verify_otp`)
-before a student can invite them.
+not redesign it here.** The student mints an invite
+(:meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite`); the parent
+proves control of an email address via a one-time code before redeeming it
+(:meth:`~lemely.auth.service.AuthService.verify_parent_signup_code`). This
+module never resolves an identity from anything the student typed — by the
+time :meth:`ParentLinkService.link_in_session` runs, the invite service has
+already decided the link is safe to create. It is the sole caller, invoking
+``link_in_session`` inside the same transaction that marks the invite
+redeemed, which is why this method takes an open ``Session`` instead of
+opening its own.
 """
 
 from __future__ import annotations
@@ -33,7 +34,6 @@ from typing import TYPE_CHECKING
 from sqlalchemy import delete, select
 
 from lemely.db.models import ParentChildLink, User
-from lemely.db.models.enums import Role
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -41,10 +41,6 @@ if TYPE_CHECKING:
 
 class ParentLinkError(Exception):
     """Base class for parent-link-model failures."""
-
-
-class ParentUserNotFoundError(ParentLinkError):
-    """No ``role=parent`` user exists with the supplied phone (→ 404)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,6 +59,7 @@ class ParentRow:
 
     parent_id: uuid.UUID
     display_name: str
+    email: str
     phone: str | None
 
 
@@ -178,6 +175,7 @@ class ParentLinkService:
                 ParentRow(
                     parent_id=parent_id,
                     display_name=_parent_display_name(display_name, email, phone),
+                    email=email,
                     phone=phone,
                 )
                 for parent_id, display_name, email, phone in session.execute(stmt).all()
@@ -185,40 +183,23 @@ class ParentLinkService:
 
     # -- Linking --------------------------------------------------------------
 
-    def link(self, student_id: uuid.UUID | str, phone: str) -> ParentRow:
-        """Link an existing ``role=parent`` user (found by ``phone``) to this child.
+    def link_in_session(self, session: Session, parent_id: uuid.UUID, child_id: uuid.UUID) -> None:
+        """Create the ``(parent_id, child_id)`` link row if absent.
 
-        Idempotent: re-linking an already-linked pair does not attempt a
-        duplicate insert (checked first, mirroring
+        Runs inside the caller's own transaction rather than opening one of
+        its own — :meth:`~lemely.db.invite_repo.InviteService.redeem` is the
+        only caller, and it needs the invite marked redeemed and the link row
+        created atomically. No role check: the caller (the invite service)
+        has already verified ``parent_id`` is a ``role=parent`` user by the
+        time it gets here, per :class:`~lemely.db.invite_repo.InviteRoleMismatchError`.
+
+        Idempotent: re-linking an already-linked pair, or redeeming a
+        reusable invite a second time, does not attempt a duplicate insert
+        (checked first, mirroring
         :meth:`~lemely.db.class_repo.ClassService._enrol_if_absent` rather
-        than relying on catching the unique-constraint violation) and simply
-        returns the existing link's :class:`ParentRow`.
-
-        Never creates a user. When multiple ``role=parent`` users somehow
-        share a phone, the tie-break mirrors
-        :meth:`~lemely.auth.mirror.DbUserMirror.get_by_phone`: the
-        most-recently-created one wins, so both lookups agree on "the"
-        parent for a phone.
-
-        Raises:
-            ParentUserNotFoundError: No ``role=parent`` user has ``phone``.
+        than relying on catching the unique-constraint violation).
         """
-        student_uuid = _as_uuid(student_id)
-        with self._sessionmaker() as session, session.begin():
-            parent = session.scalars(
-                select(User)
-                .where(User.phone == phone, User.role == Role.parent)
-                .order_by(User.created_at.desc())
-                .limit(1)
-            ).first()
-            if parent is None:
-                raise ParentUserNotFoundError(f"No parent account found for phone {phone!r}")
-            self._link_if_absent(session, parent.id, student_uuid)
-            return ParentRow(
-                parent_id=parent.id,
-                display_name=_parent_display_name(parent.display_name, parent.email, parent.phone),
-                phone=parent.phone,
-            )
+        self._link_if_absent(session, parent_id, child_id)
 
     def unlink(self, student_id: uuid.UUID | str, parent_id: uuid.UUID | str) -> None:
         """Delete the ``(parent_id, child_id)`` link row. Idempotent.
@@ -267,5 +248,4 @@ __all__ = [
     "ParentLinkError",
     "ParentLinkService",
     "ParentRow",
-    "ParentUserNotFoundError",
 ]
