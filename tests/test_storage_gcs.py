@@ -168,10 +168,14 @@ def test_signed_url_signs_locally_for_a_service_account_json_key() -> None:
     assert kwargs["method"] == "GET"
 
 
-def test_signed_url_uses_iam_signblob_for_a_workload_identity_credential(
+def _workload_identity_client(
     monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """A Cloud Run credential carries no ``signer``, so it must sign via signBlob."""
+) -> tuple[MagicMock, MagicMock, MagicMock, Any]:
+    """A Cloud Run-shaped setup: no ``signer``, a devstorage-scoped client token.
+
+    Returns ``(client, blob, default, credentials)`` where ``default`` is the
+    patched :func:`google.auth.default` that mints the *signing* credential.
+    """
     import google.auth.compute_engine as compute_engine
 
     credentials = compute_engine.Credentials(
@@ -181,18 +185,71 @@ def test_signed_url_uses_iam_signblob_for_a_workload_identity_credential(
     blob.generate_signed_url.return_value = "https://signed.example/x.png"
 
     def _fake_refresh(request: object) -> None:
-        credentials.token = "fresh-access-token"
+        # What `storage.Client` itself holds: a token narrowed to
+        # `Client.SCOPE` (devstorage.*), which IAM signBlob rejects.
+        credentials.token = "devstorage-scoped-token"
 
-    refresh = MagicMock(side_effect=_fake_refresh)
-    monkeypatch.setattr(credentials, "refresh", refresh)
+    monkeypatch.setattr(credentials, "refresh", MagicMock(side_effect=_fake_refresh))
     monkeypatch.setattr("google.auth.transport.requests.Request", lambda: MagicMock())
+
+    signing_credentials = MagicMock()
+    signing_credentials.token = "cloud-platform-scoped-token"
+    default = MagicMock(return_value=(signing_credentials, "a-project"))
+    monkeypatch.setattr("google.auth.default", default)
+    return client, blob, default, credentials
+
+
+def test_signed_url_uses_iam_signblob_for_a_workload_identity_credential(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A Cloud Run credential carries no ``signer``, so it must sign via signBlob."""
+    client, blob, _, _ = _workload_identity_client(monkeypatch)
 
     GcsStorageBackend(_client=client).create_signed_url("avatars", "x.png", 3600)
 
-    refresh.assert_called_once()
     _, kwargs = blob.generate_signed_url.call_args
     assert kwargs["service_account_email"] == "sa@a-project.iam.gserviceaccount.com"
-    assert kwargs["access_token"] == "fresh-access-token"
+
+
+def test_signed_url_signs_with_a_cloud_platform_token_not_the_storage_one(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The signBlob token must be minted for ``cloud-platform``, not reused from the client.
+
+    ``storage.Client.SCOPE`` is the three ``devstorage.*`` scopes only, so on
+    Cloud Run the credential the client holds refreshes to a token narrowed to
+    those. Handing that token to IAM signBlob is refused:
+
+        Error calling the IAM signBytes API: 403 "Request had insufficient
+        authentication scopes." reason: ACCESS_TOKEN_SCOPE_INSUFFICIENT,
+        method: google.iam.credentials.v1.IAMCredentials.SignBlob
+
+    `_avatar_url_for` swallows that by design, so every profile in staging
+    rendered its initials and a picture the user had just uploaded was never
+    visible anywhere. Observed in `lemely-backend-staging` logs (2026-09-05
+    and 2026-09-08), with `roles/iam.serviceAccountTokenCreator` bound and
+    `iamcredentials.googleapis.com` enabled — the scope was the only thing
+    missing.
+    """
+    client, blob, default, _ = _workload_identity_client(monkeypatch)
+
+    GcsStorageBackend(_client=client).create_signed_url("avatars", "x.png", 3600)
+
+    assert default.call_args.kwargs["scopes"] == ["https://www.googleapis.com/auth/cloud-platform"]
+    _, kwargs = blob.generate_signed_url.call_args
+    assert kwargs["access_token"] == "cloud-platform-scoped-token"
+    assert kwargs["access_token"] != "devstorage-scoped-token"
+
+
+def test_signed_url_reports_missing_adc_when_minting_the_signing_token(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """No ADC at all for the signing token is a named error, not a bare traceback."""
+    client, _, default, _ = _workload_identity_client(monkeypatch)
+    default.side_effect = DefaultCredentialsError("no ADC")
+
+    with pytest.raises(ExternalServiceError, match="signed URL"):
+        GcsStorageBackend(_client=client).create_signed_url("avatars", "x.png", 3600)
 
 
 def test_signed_url_for_user_adc_raises_rather_than_attribute_error() -> None:
