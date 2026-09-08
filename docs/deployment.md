@@ -440,9 +440,10 @@ rows and created zero accounts while logging a cheerful `db.seed.done`).
 
 `make seed` now inserts the three supported subjects and creates one account per
 role, with **fixed, published credentials** — `<role>@demo.lemely.local` /
-`Demo-Lemely-1!`, including the parent, seeded already linked to the demo
-student through the same child-issued invite path a real parent redeems. The
-full table is in [`README.md`](../README.md).
+`Demo-Lemely-1!`, including the parent, created through the same email signup
+path as the other demo roles and linked directly to the demo student — no
+invite is minted or redeemed for it. The full table is in
+[`README.md`](../README.md).
 
 That is the deployment-relevant part: **these are documented credentials, so seeding
 a real deployment hands anyone who has read this repository a `platform_admin`

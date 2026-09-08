@@ -109,9 +109,10 @@ supported subjects (0580, 0606, 0625) and creates one demo account per role:
 
 These are **local demo credentials on a reserved `.local` domain** (RFC 6762) —
 they are not secrets, and nothing here should ever be seeded into a real
-deployment. The parent account is seeded already linked to the demo student,
-through the same child-issued invite a real parent redeems at `/join/:code`;
-sign in with the password above at `/login` like every other role.
+deployment. The parent account is created through the same email signup path
+as the other demo roles and linked directly to the demo student — no invite is
+minted or redeemed for it; sign in with the password above at `/login` like
+every other role.
 
 These accounts are empty. For a database populated with realistic marked
 papers, classes and analytics, use `scripts/seed_e2e.py` — but note its emails

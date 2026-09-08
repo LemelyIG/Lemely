@@ -14310,8 +14310,8 @@ provider later." `D3.11` then had the *student* invite a parent by phone number,
 account that had already proven control of that number by completing OTP verification — the
 gate against a bored student mass-creating parent rows for arbitrary numbers. `D3.16` added the
 developer affordance that shows the OTP code on screen, gated on `SmsProvider.delivers_out_of_band`
-rather than an environment string. No real SMS gateway was ever wired in the two years since: every
-deployment of this code runs `MockSmsProvider` unconditionally (`lemely/web/deps.py`), and
+rather than an environment string. No real SMS gateway has ever been wired: every deployment of
+this code runs `MockSmsProvider` unconditionally (`lemely/web/deps.py`), and
 `web/src/routes.tsx` has carried a comment recording that fact since it was written. Every SMS
 API is metered and billed per message; retiring the phone-first path costs nothing in
 infrastructure that was ever actually spending money, and removes the last surface where
@@ -14371,13 +14371,17 @@ value, not a new table.
 
 **Supersedes.** `D3.11`'s phone-proof-then-link direction is retired in full — parents are linked
 exclusively through invite redemption now, and no route requires a parent to have completed a
-separate verification before a link can be created. The SMS-delivery portions of `D1.4` (the
-self-signed HS256 session token minted on phone-OTP verify) and `D3.16` (the `devCode` affordance
-keyed on `SmsProvider.delivers_out_of_band`) no longer back any route a user can reach. Both
-decisions otherwise stand: `D1.4`'s GoTrue email/password split is exactly what parent accounts
-now use, and `D3.16`'s capability-gated-not-environment-gated rule is reapplied unchanged to the
-email channel's `devCode`/`devLink` (`lemely/auth/email.py::EmailProvider.send_signup_code`,
-mirroring `D7.6`'s `EmailProvider` seam).
+separate verification before a link can be created. Of `D1.4`, only the parts that wired
+`SmsProvider` into a live login route (`AuthService.request_otp`/`verify_otp` called from
+`/login/parent`) are retired — no route reaches them anymore; `D1.4`'s GoTrue email/password
+split is exactly what parent accounts now use, unchanged. Token issuance is untouched by this
+decision and was never phone-specific to begin with: `D1.5` already revised `D1.4` to make the
+backend self-sign every access token it hands out, for email/password login and phone OTP alike,
+and a parent's email/password login runs on that same universal HS256 path unchanged — there is
+nothing in it for this decision to retire. `D3.16` itself is not retired either: its
+capability-gated-not-environment-gated `devCode` rule is reapplied unchanged to the email
+channel's `devCode`/`devLink` (`lemely/auth/email.py::EmailProvider.send_signup_code`, mirroring
+`D7.6`'s `EmailProvider` seam); only the phone route it originally described is now unreachable.
 
 **Seams kept, nothing deleted from under them.** `SmsProvider`, `MockSmsProvider`,
 `OtpChannel.phone`, `AuthService.request_otp`/`verify_otp` and their unit tests, `users.phone`,

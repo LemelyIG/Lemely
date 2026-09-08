@@ -38,8 +38,9 @@ Physics (0625). Cambridge only. English-language interface only.
 | **Platform admin** (internal) | Activate accounts, watch the marking pipeline | Daily | Laptop |
 
 A student can hold a school-issued seat and a personal subscription at the same
-time. A teacher can be independent, attached to a school, or both. Parents log in
-with a phone number, not an email — many will not have a habitual email address.
+time. A teacher can be independent, attached to a school, or both. A parent gets
+an identity only through a code or link their child shares, then signs in with
+an email address and password like every other role.
 
 ## 1.3 The core loop, in the student's words
 
@@ -284,9 +285,10 @@ on one side, the marked breakdown on the other. Supporting sections: how it
 works in three steps; who it's for (student / parent / teacher tabs); subjects
 covered (0580, 0606, 0625, stated plainly with "more coming"); pricing/plans;
 FAQ. Persistent header with "Log in" and "Get started."
-**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-05.
+**Interactions.** CTA → G-02. "Log in" → G-04. "I'm a parent" → G-08 (parents
+have no independent sign-up; they need a code or link from their child).
 **States.** None special.
-**Exits.** G-02, G-04, G-05.
+**Exits.** G-02, G-04, G-08.
 
 ### G-02 · Sign up — role selection
 **Purpose.** Branch by role before asking for anything.
@@ -331,15 +333,18 @@ no independent parent sign-up. Returning parents with an account already sign
 in at G-04 like everyone else.
 **Contains.** Reached from a code or link a child shares at G-08 (`/join/:code`).
 Three steps: email address and display name; a six-digit code sent to that
-email, entered with auto-advance and paste support (the same code-entry
-component G-08's own invite redemption does not need but this screen does);
-then a password (with strength feedback) and the terms-acceptance checkbox.
+email, entered with a dedicated code-entry control (paste, auto-advance,
+auto-submit); then a password (with strength feedback) and the
+terms-acceptance checkbox.
 **Interactions.** Code auto-submits when complete. A 30-second, display-only
 resend cooldown; "Change email" returns to the first step. A visitor who
 already has an account sees "Already have an account? Sign in," which goes to
-G-04 and returns to the invite afterward. In development the code is shown in
-a clearly-marked developer affordance instead of sent by mail, so the flow is
-testable without a real mail provider.
+G-04 and returns to the invite afterward. Whether the code is also shown on
+screen, rather than only sent by mail, is gated on the mail provider's own
+`delivers_out_of_band` capability, not on an environment string (the same
+D3.16 rule the G-07 note below applies) — with no configured provider, a
+clearly-marked developer affordance shows it, so the flow is testable without
+a real mail provider.
 **States.** Field errors; wrong or expired code; resend cooldown; email already
 registered (routes to the sign-in link above); invite code missing, expired, or
 already revoked — routes to G-08's plain `/join` entry instead of a bare error.

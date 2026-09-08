@@ -60,8 +60,9 @@ this entry is the user-visible summary.
   linked to the child, and signed in. `/login/parent`, the phone-OTP routes, and linking a parent
   by phone number are all deleted. Full detail and the decision record are in
   `BUILD/DECISIONS.md` (`D-2026-09-08`).
-- The demo parent (`parent@demo.lemely.local` / `Demo-Lemely-1!`) is seeded through this same
-  path, already linked to the demo student, rather than as a phone account.
+- The demo parent (`parent@demo.lemely.local` / `Demo-Lemely-1!`) is created through the same
+  email signup path as the other demo roles and linked directly to the demo student, rather than
+  as a phone account — no invite is minted or redeemed for it.
 - **Kept, not deleted:** the phone-OTP seam (`SmsProvider`, `OtpChannel.phone`,
   `AuthService.request_otp`/`verify_otp`, `users.phone`) stays in the tree for a possible future
   paid SMS channel — it backs no route today.
