@@ -3,6 +3,7 @@ import { useState, type FormEvent } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ApiError } from "@/lib/api"
@@ -94,7 +95,7 @@ export function AuthFrame({
       {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
           "Lemely", so describing the mark too announces the brand twice. */}
       <div className="flex items-center gap-2.5">
-        <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-7 w-7 shrink-0" />
+        <BrandMark className="h-7 w-9 shrink-0" />
         <span className="text-display-md text-ink">Lemely</span>
       </div>
       {children}

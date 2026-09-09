@@ -1,23 +1,99 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<!--
-  Lemely mark, single-colour cut.
-
-  For anywhere the accent cannot be relied on: one-colour print, an embossed or
-  engraved application, a foreground-colour context, or a surface where the warm
-  red would clash. Uses `currentColor` throughout, so in HTML it inherits the
-  surrounding text colour and needs no variant per background.
-
-  The hairline/heavy weight contrast does all the work here, since the colour
-  contrast between printed rule and handwritten mark is gone. That is why the
-  ratio matters more than either absolute width.
--->
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64"
      role="img" aria-label="Lemely">
   <title>Lemely</title>
-  <g fill="none" stroke="currentColor" stroke-linecap="butt">
-    <path d="M20 10 V46" stroke-width="2" />
-    <path d="M20 46 H44" stroke-width="2" />
+  <!--
+    Lemely mark, single-colour cut.
+
+    GENERATED FILE. Do not edit by hand — `npm run mark` overwrites it.
+    The coordinates live in `src/lib/brandMark.ts`; the colours are resolved
+    from the oklch tokens in `src/index.css` by `vite/brandTokens.ts`.
+
+    For anywhere the accent cannot be relied on: one-colour print, an embossed
+    or engraved application, a foreground-colour context, or a surface where the
+    warm red would clash. `currentColor` throughout, so in HTML it inherits the
+    surrounding text colour and needs no variant per background.
+
+    Same geometry as mark.svg, coordinate for coordinate, with two differences
+    the generator applies:
+
+    - No fills. A one-colour mark has to work on a surface whose colour it does
+      not know, so it cannot paint its own paper; and filling the pages in
+      currentColor would weld the stack into one blob. Nothing is lost, because
+      this drawing hides nothing behind a fill: the backing sheets are already
+      only the edges of themselves, and the coil is drawn over the pages rather
+      than through them.
+
+    - The ruling is thinner. It is `rule-strong` in the colour cut — pale grey,
+      held back by hue — and recolouring it to the foreground makes it a
+      full-strength line. Everything else keeps its width, because with one hue
+      the ratio between the widths is the entire design.
+
+    Keep the opening tag at the top: libvips sniffs only the first bytes of a
+    file to detect SVG, and a long leading comment would push it out of range.
+  -->
+  <g transform="rotate(-2 32 32)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- The block of sheets under each page, drawn as the two edges of it that
+         show. Depth by offset and tone, never by shadow (DESIGN.md §7). -->
+    <g transform="translate(64,0) scale(-1,1)">
+      <path d="M58.4 14 C59.1 23.6, 58.4 33.4, 58.6 42 C58.7 46, 58.5 49.2, 58.4 51.6 C49 52.4, 41 51.5, 33.4 52.2"
+            fill="none" stroke="currentColor" stroke-width="1" />
+      <path d="M59.4 15.2 C60.1 24.6, 59.4 34.2, 59.6 42.8 C59.7 46.6, 59.5 49.8, 59.4 52.4 C50 53.2, 42 52.3, 34.4 53"
+            fill="none" stroke="currentColor" stroke-width="1" />
+    </g>
+    <path d="M58.4 14 C59.1 23.6, 58.4 33.4, 58.6 42 C58.7 46, 58.5 49.2, 58.4 51.6 C49 52.4, 41 51.5, 33.4 52.2"
+          fill="none" stroke="currentColor" stroke-width="1" />
+    <path d="M59.4 15.2 C60.1 24.6, 59.4 34.2, 59.6 42.8 C59.7 46.6, 59.5 49.8, 59.4 52.4 C50 53.2, 42 52.3, 34.4 53"
+          fill="none" stroke="currentColor" stroke-width="1" />
+
+    <!-- The left page: the sheet already turned, and marked. Right-half
+         geometry mirrored about the spine, which is why its tick is authored
+         backwards. -->
+    <g transform="translate(64,0) scale(-1,1)">
+      <path d="M32 12.8 C39 12.1, 46 13, 53 12.4 C55 12.2, 56.4 12.6, 57.4 12.3 C58.1 22, 57.3 32, 57.5 41.4 C57.6 45.4, 57.4 48.5, 57.3 50.7 C48 51.5, 40 50.6, 32 51.3 Z"
+            fill="none" stroke="currentColor" stroke-width="1.15" />
+      <path d="M53.6 15.2 C53.9 24, 53.5 33, 53.8 41.6 C53.9 45, 53.7 47.4, 53.8 48.8"
+            fill="none" stroke="currentColor" stroke-width="0.8" />
+      <path d="M51.4 19.5 C47 18.9, 40.4 20, 35.2 19.2"
+            fill="none" stroke="currentColor" stroke-width="0.7" />
+      <path d="M51.3 25 C48 24.5, 42.6 25.4, 38.6 24.7"
+            fill="none" stroke="currentColor" stroke-width="0.7" />
+      <path d="M51.4 30.5 C47.5 29.9, 41.2 31, 36.4 30.2"
+            fill="none" stroke="currentColor" stroke-width="0.7" />
+      <path d="M51.3 36 C48.6 35.5, 45 36.2, 42.5 35.7"
+            fill="none" stroke="currentColor" stroke-width="0.7" />
+      <path d="M51.4 41.5 C49.8 41.1, 48.4 41.6, 47 41.2"
+            fill="none" stroke="currentColor" stroke-width="0.7" />
+      <path d="M46.4 41 C45.5 42.2, 44.4 43.7, 43.4 45 C41.8 41.9, 40.4 37.6, 39 33.6"
+            fill="none" stroke="currentColor" stroke-width="1.9" />
+    </g>
+
+    <!-- The right page: work, unmarked, dog-eared at its outer corner. -->
+    <path d="M32 12.8 C39 12.1, 46 13, 53 12.4 C55 12.2, 56.4 12.6, 57.4 12.3 C58.1 22, 57.3 32, 57.5 41.4 C57.6 43.2, 57.5 44.5, 57.4 45.6 C55.6 47.5, 53.4 49.4, 51.2 51.2 C44.6 51.6, 38.4 50.7, 32 51.3 Z"
+          fill="none" stroke="currentColor" stroke-width="1.15" />
+    <path d="M57.4 45.6 C55.8 46.6, 54 47.2, 52.4 47.6 C52.1 48.9, 51.6 50.2, 51.2 51.2 Z"
+          fill="none" stroke="currentColor" stroke-width="1" />
+    <path d="M39.4 19.5 C43.6 18.9, 49 20, 54.2 19.2"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+    <path d="M39.5 25 C42.8 24.5, 47 25.4, 50.6 24.7"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+    <path d="M39.4 30.5 C44 29.9, 49.6 31, 54.8 30.2"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+    <path d="M39.5 36 C42.4 35.5, 45.6 36.3, 49 35.7"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+    <path d="M39.4 41.5 C42.6 41, 46.4 41.9, 52.4 41.1"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+    <path d="M39.5 47 C41.2 46.6, 43 47.2, 45.4 46.7"
+          fill="none" stroke="currentColor" stroke-width="0.7" />
+
+    <!-- The coil, over both pages, because it wraps over them. -->
+    <path d="M27.9 20.7 C27.1 17.599999999999998, 29.2 15.6, 32 15.7 C34.8 15.799999999999999, 36.7 17.7, 35.9 20.7"
+          fill="none" stroke="currentColor" stroke-width="1.5" />
+    <path d="M27.9 29.7 C27.1 26.599999999999998, 29.2 24.599999999999998, 32 24.7 C34.8 24.8, 36.7 26.7, 35.9 29.7"
+          fill="none" stroke="currentColor" stroke-width="1.5" />
+    <path d="M27.9 38.7 C27.1 35.6, 29.2 33.6, 32 33.7 C34.8 33.800000000000004, 36.7 35.7, 35.9 38.7"
+          fill="none" stroke="currentColor" stroke-width="1.5" />
+    <path d="M27.9 47.7 C27.1 44.6, 29.2 42.6, 32 42.7 C34.8 42.800000000000004, 36.7 44.7, 35.9 47.7"
+          fill="none" stroke="currentColor" stroke-width="1.5" />
   </g>
-  <path d="M27 37 L33 46 L47 19" fill="none" stroke="currentColor" stroke-width="6"
-        stroke-linecap="round" stroke-linejoin="round" />
 </svg>

@@ -18,7 +18,8 @@
     "contact-sheets": "node scripts/contact_sheets.mjs",
     "preview:kit": "vite --config vite.preview.config.ts",
     "build:kit": "vite build --config vite.preview.config.ts",
-    "icons": "node --experimental-strip-types scripts/generate_icons.mjs",
+    "mark": "node --experimental-strip-types scripts/generate_mark_svg.mjs",
+    "icons": "npm run mark && node --experimental-strip-types scripts/generate_icons.mjs",
     "cf:dev": "wrangler dev",
     "cf:deploy:staging": "wrangler deploy --env staging",
     "cf:deploy:production": "wrangler deploy --env production"

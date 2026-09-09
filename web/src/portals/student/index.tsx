@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
@@ -448,7 +449,9 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
  * The real mark, replacing the accent dot that stood in for it (audit M9: "the
  * logo is a lowercase italic *l* in a filled circle, stamped in three places"
  * — the student sidebar's dot was a fourth variant of the same placeholder).
- * `web/public/brand/mark.svg` is the asset Phase 2 authored.
+ * `BrandMark` draws the mark inline from `lib/brandMark.ts`; the same
+ * geometry is written out to `web/public/brand/mark.svg` for the favicon and
+ * the generated icons.
  *
  * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
  * already says "Lemely", so describing the mark too makes a screen reader
@@ -458,7 +461,7 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
 function BrandLockup() {
   return (
     <div className="flex items-center gap-2.5 px-2">
-      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <BrandMark className="h-6 w-8 shrink-0" />
       <span className="text-display-sm text-ink">Lemely</span>
     </div>
   )
