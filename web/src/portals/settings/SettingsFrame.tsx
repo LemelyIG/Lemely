@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { Link, NavLink } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { cn } from "@/lib/utils"
@@ -97,7 +98,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
             {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
                 "Lemely", so describing the mark too announces the brand twice
                 (the same treatment as the parent header). */}
-            <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+            <BrandMark className="h-6 w-8 shrink-0" />
             <span className="text-display-sm text-ink">Lemely</span>
           </Link>
         </div>

@@ -2,6 +2,7 @@
 import { lazy, Suspense } from "react"
 import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteFallback } from "@/components/ui/state-views"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
@@ -95,10 +96,10 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
             to="/"
             className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
-            {/* `alt=""` + `aria-hidden`: the wordmark beside it already says
-                "Lemely", so describing the mark too announces it twice. Same
-                reasoning as `AuthFrame`. */}
-            <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+            {/* `BrandMark` sets its own `aria-hidden`: the wordmark beside it
+                already says "Lemely", so describing the mark too announces it
+                twice. Same reasoning as `AuthFrame`. */}
+            <BrandMark className="h-6 w-8 shrink-0" />
             <span className="text-display-sm text-ink">Lemely</span>
           </Link>
           <nav aria-label="Marketing" className="flex items-center gap-1.5">
@@ -139,7 +140,7 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
       <footer className="border-t border-rule">
         <div className="mx-auto flex w-full max-w-marketing flex-col gap-3 px-page-mobile py-8 text-body-sm text-ink-faint md:flex-row md:items-center md:justify-between md:px-page-tablet lg:px-page-desktop">
           <div className="flex items-center gap-2.5">
-            <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-5 w-5 shrink-0" />
+            <BrandMark className="h-5 w-7 shrink-0" />
             <span>Lemely, marking for CAIE papers.</span>
           </div>
           {/*

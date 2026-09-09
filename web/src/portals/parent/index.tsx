@@ -5,6 +5,7 @@ import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-
 import { Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -186,14 +187,16 @@ function ParentTrail() {
  * the class resolves to Tailwind's default Georgia stack, so the placeholder
  * was not even rendering in the display face it was reaching for.
  *
- * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
- * already says "Lemely", so describing the mark too makes a screen reader
- * announce the brand twice.
+ * The mark carries its own `aria-hidden`: the wordmark beside it already says
+ * "Lemely", so describing the mark too makes a screen reader announce the brand
+ * twice. It is a component rather than an `<img>` because it animates, and a
+ * `prefers-reduced-motion` guard cannot reach inside an image — `BrandMark`
+ * states the measurement.
  */
 function BrandLockup() {
   return (
     <>
-      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <BrandMark className="h-6 w-8 shrink-0" />
       <span className="text-display-sm text-ink">Lemely</span>
     </>
   )

@@ -15,6 +15,7 @@ import {
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteFallback } from "@/components/ui/state-views"
@@ -268,7 +269,7 @@ function SidebarFooter({ lane }: { lane: AdminLane }) {
 function BrandLockup({ lane }: { lane: AdminLane }) {
   return (
     <div className="flex items-center gap-2.5 px-2">
-      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <BrandMark className="h-6 w-8 shrink-0" />
       <div className="min-w-0">
         <div className="text-display-sm text-ink">Lemely</div>
         <div className="text-eyebrow text-ink-faint">

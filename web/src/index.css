@@ -974,6 +974,138 @@ body {
   }
 }
 
+/* ── The brand mark's page turn ────────────────────────────────────────── */
+/* The geometry lives in `components/ui/brand-mark.tsx`; this is the motion.
+   It is here rather than in the component, and the mark is drawn inline rather
+   than loaded from `public/brand/mark.svg`, for one reason: the global
+   reduced-motion block at the bottom of this file cannot reach inside an
+   `<img>`. Neither can a `prefers-reduced-motion` query written inside the SVG
+   file — Chromium does not propagate the preference into an SVG-as-image at
+   all, measured with a probe whose fill changes under the query. Inline, the
+   mark is covered by the same rule as everything else and needs no special
+   case. `brand-mark.tsx` states the whole finding.
+
+   Only `transform` and `opacity` animate (§9.2), and the two halves of a turn
+   carry §9.1 easings explicitly rather than inheriting a browser default: the
+   sheet accelerates off the stack under `ease-in-soft` and settles onto the
+   facing page under `ease-out-soft`, so the two halves meet at the same speed
+   where they hand over instead of stalling at the top of the arc. */
+
+.lm-mark {
+  /* SVG's default `overflow: hidden` on the root is what keeps a turning sheet
+     inside the mark's own box; without it a page mid-turn would sweep across
+     whatever sits beside the logo. Stated because it is load-bearing and
+     invisible. */
+  display: block;
+}
+
+.lm-leaf {
+  /* The pivot is the spine, named in artboard coordinates, for both faces.
+
+     `fill-box` + `left center` is the tempting shorthand and it is wrong here.
+     A front face's bounding box does start at the spine, so it works; a back
+     face's does not, because the mirror that puts it on the left page has
+     already moved its box to the left half of the artboard. Its "left edge" is
+     then the notebook's outer edge, and the sheet swings about the wrong side
+     of the page. `view-box` resolves the origin against the artboard's own
+     64x64 box instead, so both faces pivot on the same point. The ancestor
+     `rotate(-2 32 32)` does not disturb it: that rotation is about (32,32)
+     itself, so the spine is at the same coordinate either side of it. */
+  transform-box: view-box;
+  transform-origin: 32px 32px;
+  animation-duration: 6s;
+  animation-iteration-count: infinite;
+}
+
+/* A back face is the underside of a sheet that has not been turned yet, so its
+   resting state is "not there". This is also what it falls back to when the
+   animation is removed — by reduced motion, by `animated={false}`, or by a
+   renderer that ignores the keyframes — which is why the still mark shows two
+   plain pages and not a third stacked on the right. */
+.lm-leaf-back {
+  opacity: 0;
+}
+
+.lm-leaf-front {
+  animation-name: lm-leaf-front;
+}
+.lm-leaf-back {
+  animation-name: lm-leaf-back;
+}
+
+/* One half-turn of stagger, so a sheet is always coming down on the left while
+   the next is going up on the right. */
+.lm-leaf-1 {
+  animation-delay: 0.84s;
+}
+.lm-leaf-2 {
+  animation-delay: 1.68s;
+}
+
+.lm-mark-still .lm-leaf {
+  animation: none;
+}
+
+/* 0 → -90deg: off the right stack and up onto its edge. It is cut at exactly
+   -90deg, where a rotated plane projects to zero width and is therefore
+   invisible, which is what makes the handover to the back face free. The
+   17.1% → 60% hold is the sheet waiting out of sight at 0deg; it fades back in
+   over an identical right page during the cycle's quiet quarter, when nothing
+   is passing over that page to cross-fade against. */
+@keyframes lm-leaf-front {
+  0%,
+  3% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 1;
+    animation-timing-function: var(--ease-in-soft);
+  }
+  16.9% {
+    transform: perspective(150px) rotateY(-89.4deg);
+    opacity: 1;
+  }
+  17% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 0;
+  }
+  17.1%,
+  60% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 0;
+  }
+  72%,
+  100% {
+    transform: perspective(150px) rotateY(0deg);
+    opacity: 1;
+  }
+}
+
+/* -90 → -180deg: over the gutter and down onto the left page, arriving exactly
+   on top of it. Because the face is pre-mirrored about the spine, -180deg lands
+   it un-mirrored, pixel-identical to the left page beneath — so the fade-out
+   that follows is a cross-fade between two identical images, and there is
+   nothing to see. */
+@keyframes lm-leaf-back {
+  0%,
+  17% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 0;
+  }
+  17.1% {
+    transform: perspective(150px) rotateY(-90deg);
+    opacity: 1;
+    animation-timing-function: var(--ease-out-soft);
+  }
+  31% {
+    transform: perspective(150px) rotateY(-180deg);
+    opacity: 1;
+  }
+  36%,
+  100% {
+    transform: perspective(150px) rotateY(-180deg);
+    opacity: 0;
+  }
+}
+
 /* ── §9.3 The celebration register ─────────────────────────────────────── */
 /* Reserved for the five moments §9.3 names, and nothing else. The rules that
    decide when these run live in `lib/celebration.ts`; these are only how they
