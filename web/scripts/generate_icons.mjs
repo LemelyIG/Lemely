@@ -58,19 +58,22 @@ const MARK = path.join(PUBLIC, "brand/mark.svg")
 const PAPER = tokenHex("paper")
 
 /**
- * How much of the icon's width the mark spans.
+ * How much of the icon's width the mark's ARTBOARD spans.
  *
- * `0.62` for the square cuts: the mark's own artboard already carries roughly
- * 15% padding (its strokes run x=20..47 in a 64-unit box), so a larger figure
- * reads as cramped at 192px on a home screen.
+ * Both figures moved when the mark became an open notebook. The old mark was a
+ * tall glyph using about 42% of its artboard's width, so 0.62 here left it
+ * genuinely small on a home screen; the notebook is landscape and nearly fills
+ * its artboard across, so the same number would have shrunk it further.
  *
- * `0.46` for maskable. The guaranteed-visible region is a circle of diameter
- * 0.8w centred on the icon, so a square of side s is fully inside it only when
- * s * sqrt(2) <= 0.8w, i.e. s <= 0.566w. 0.46 sits comfortably under that with
- * room for the launcher shapes that crop harder than a circle.
+ * `0.72` for the square cuts, which puts the drawn mark at about 64% of the
+ * icon's width and 49% of its height — a normal figure for an app icon, and one
+ * that still leaves the outer edge clear on a rounded-rectangle mask.
+ *
+ * `0.60` for maskable, against a measured ceiling of 0.71 (see below). The
+ * margin is for the launcher shapes that crop harder than a circle.
  */
-const SQUARE_SCALE = 0.62
-const MASKABLE_SCALE = 0.46
+const SQUARE_SCALE = 0.72
+const MASKABLE_SCALE = 0.6
 
 const ICONS = [
   { file: "pwa-192x192.png", size: 192, scale: SQUARE_SCALE },
@@ -78,22 +81,65 @@ const ICONS = [
   { file: "maskable-icon-512x512.png", size: 512, scale: MASKABLE_SCALE },
 ]
 
-/*
- * Guard the safe-zone arithmetic in the file that depends on it, so a future
- * edit to MASKABLE_SCALE cannot quietly push the mark under an Android crop.
- * `tests/unit/brandTokens.test.ts` asserts the same bound; this is the belt to
- * its braces, and it runs in the one place someone editing the number is
- * actually looking.
+const markSvg = readFileSync(MARK)
+
+/**
+ * The mark's drawn extent, as a fraction of its artboard, measured from the
+ * rendered alpha rather than read off the coordinates.
+ *
+ * The safe-zone arithmetic below needs this, and the previous version of this
+ * file assumed the artboard was filled edge to edge. That was conservative for
+ * the old mark and it is conservative for this one — but conservative by an
+ * unknown amount, which is the same thing as not knowing. An open notebook is
+ * two thirds as tall as it is wide, and a bound derived from a square it does
+ * not occupy would have kept the maskable icon a third smaller than it needs to
+ * be for no stated reason.
  */
-const MAX_MASKABLE_SCALE = 0.8 / Math.SQRT2
-if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
-  throw new Error(
-    `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)}, ` +
-      "so the mark's corners fall outside Android's guaranteed-visible circle and will be cropped.",
-  )
+async function drawnExtent() {
+  const N = 512
+  const { data } = await sharp(markSvg, { density: 384 })
+    .resize(N, N)
+    .ensureAlpha()
+    .raw()
+    .toBuffer({ resolveWithObject: true })
+  let left = N
+  let top = N
+  let right = -1
+  let bottom = -1
+  for (let y = 0; y < N; y += 1) {
+    for (let x = 0; x < N; x += 1) {
+      // 8/255, so a stroke's outermost antialiased fringe does not count as ink.
+      if (data[(y * N + x) * 4 + 3] <= 8) continue
+      if (x < left) left = x
+      if (x > right) right = x
+      if (y < top) top = y
+      if (y > bottom) bottom = y
+    }
+  }
+  return { width: (right - left + 1) / N, height: (bottom - top + 1) / N }
 }
 
-const markSvg = readFileSync(MARK)
+/*
+ * Guard the safe-zone arithmetic in the file that depends on it, so a future
+ * edit to MASKABLE_SCALE — or to the mark's own proportions — cannot quietly
+ * push it under an Android crop. Nothing else in the repo checks this: it runs
+ * here because here is where someone editing the number is actually looking.
+ *
+ * Android crops a maskable icon to whatever shape the launcher wants and
+ * guarantees only the central circle of diameter 0.8w. A rectangle of w x h
+ * (as fractions of the icon) is fully inside it only when its diagonal fits,
+ * i.e. hypot(w, h) <= 0.8.
+ */
+const EXTENT = await drawnExtent()
+const MAX_MASKABLE_SCALE =
+  0.8 / Math.hypot(EXTENT.width, EXTENT.height)
+if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
+  throw new Error(
+    `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)} ` +
+      `for a mark drawn ${EXTENT.width.toFixed(3)} x ${EXTENT.height.toFixed(3)} of its artboard, ` +
+      "so its corners fall outside Android's guaranteed-visible circle and will be cropped.",
+  )
+}
 
 /*
  * The Open Graph card (P6.5), 1200x630 as every scraper expects.
