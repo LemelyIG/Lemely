@@ -461,52 +461,78 @@
         border-color: %LEMELY_COLOR_INK_MUTED%;
       }
 
-      /* The mark's self-draw loop. `stroke-dashoffset` on three short paths is
-         DESIGN.md §9.2's one documented exception, granted for this tier only —
-         see that section. Same dasharray/timing split as `components/ui/mark.tsx`'s
-         `lm-draw-*` classes: L1 draws over 0-18% of the loop, L2 over 18-32%,
-         the tick over 38-62%, then the drawn mark holds until the 2.8s loop
-         restarts. */
-      .lm-shell-l1 {
-        stroke-dasharray: 36;
-        stroke-dashoffset: 36;
-        animation: lm-shell-draw-l1 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+      /* The mark's self-draw loop. `stroke-dashoffset` is DESIGN.md §9.2's one
+         documented exception, granted for this tier only — see that section.
+         Same four steps and timing split as `components/ui/mark.tsx`'s
+         `lm-draw-*` classes: the right page draws over 0-20% of the loop, the
+         left page over 18-38%, the coil over 36-56%, the tick over 54-76%,
+         then the drawn mark holds until the 2.8s loop restarts.
+
+         No `stroke-dasharray` length, and there must not be one: every path
+         carries `pathLength="1"` (set by `preMountShell.ts` when it injects
+         them), which renormalises its length for every stroke-dash
+         calculation, so 1 is the whole path whatever its real length. This
+         block used to hardcode 36, 24 and 42, matching three numbers in
+         `index.css` that described three curves in a mark that no longer
+         exists. */
+      .lm-shell-page-right,
+      .lm-shell-page-left,
+      .lm-shell-coil,
+      .lm-shell-tick {
+        stroke-dasharray: 1;
+        stroke-dashoffset: 1;
+        animation-duration: 2.8s;
+        animation-timing-function: cubic-bezier(0.22, 0.61, 0.36, 1);
+        animation-iteration-count: infinite;
+        animation-fill-mode: both;
       }
-      .lm-shell-l2 {
-        stroke-dasharray: 24;
-        stroke-dashoffset: 24;
-        animation: lm-shell-draw-l2 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+      .lm-shell-page-right {
+        animation-name: lm-shell-draw-page-right;
+      }
+      .lm-shell-page-left {
+        animation-name: lm-shell-draw-page-left;
+      }
+      .lm-shell-coil {
+        animation-name: lm-shell-draw-coil;
       }
       .lm-shell-tick {
-        stroke-dasharray: 42;
-        stroke-dashoffset: 42;
-        animation: lm-shell-draw-tick 2.8s cubic-bezier(0.22, 0.61, 0.36, 1) infinite;
+        animation-name: lm-shell-draw-tick;
       }
-      @keyframes lm-shell-draw-l1 {
+      @keyframes lm-shell-draw-page-right {
         0% {
-          stroke-dashoffset: 36;
+          stroke-dashoffset: 1;
         }
-        18%,
+        20%,
         100% {
           stroke-dashoffset: 0;
         }
       }
-      @keyframes lm-shell-draw-l2 {
+      @keyframes lm-shell-draw-page-left {
         0%,
         18% {
-          stroke-dashoffset: 24;
+          stroke-dashoffset: 1;
         }
-        32%,
+        38%,
+        100% {
+          stroke-dashoffset: 0;
+        }
+      }
+      @keyframes lm-shell-draw-coil {
+        0%,
+        36% {
+          stroke-dashoffset: 1;
+        }
+        56%,
         100% {
           stroke-dashoffset: 0;
         }
       }
       @keyframes lm-shell-draw-tick {
         0%,
-        38% {
-          stroke-dashoffset: 42;
+        54% {
+          stroke-dashoffset: 1;
         }
-        62%,
+        76%,
         100% {
           stroke-dashoffset: 0;
         }
@@ -534,8 +560,9 @@
           animation: none;
           opacity: 0.6;
         }
-        .lm-shell-l1,
-        .lm-shell-l2,
+        .lm-shell-page-right,
+        .lm-shell-page-left,
+        .lm-shell-coil,
         .lm-shell-tick {
           animation: none;
           stroke-dashoffset: 0;
@@ -571,32 +598,18 @@
         <div class="lm-shell-tier2" aria-hidden="true">
           <aside class="lm-shell-sidebar">
             <div class="lm-shell-brand">
+              <!-- Injected by `vite/preMountShell.ts` from `src/lib/brandMark.ts`.
+                   The shell used to carry its own copy of the mark's paths; when the
+                   mark was redesigned that copy kept drawing the old logo, here and
+                   on tier 3, with nothing watching. -->
               <svg
                 class="lm-shell-mark"
-                style="width: 24px; height: 24px"
-                viewBox="0 0 64 64"
+                style="width: 32px; height: 24px"
+                viewBox="2 9.5 60 45"
                 fill="none"
                 aria-hidden="true"
               >
-                <path
-                  d="M20 10V46"
-                  stroke="%LEMELY_COLOR_INK%"
-                  stroke-width="2"
-                  stroke-linecap="butt"
-                />
-                <path
-                  d="M20 46H44"
-                  stroke="%LEMELY_COLOR_INK%"
-                  stroke-width="2"
-                  stroke-linecap="butt"
-                />
-                <path
-                  d="M27 37L33 46L47 19"
-                  stroke="%LEMELY_COLOR_ACCENT%"
-                  stroke-width="6"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                />
+                %LEMELY_MARK_STATIC%
               </svg>
               <span class="lm-shell-wordmark">Lemely</span>
             </div>
@@ -676,29 +689,14 @@
              is not aria-hidden — a reader who has waited five seconds gets a
              named mark, a heading, an explanation, and a working button. -->
         <div class="lm-shell-tier3">
-          <svg class="lm-shell-mark" viewBox="0 0 64 64" fill="none" role="img" aria-label="Lemely is still loading">
-            <path
-              class="lm-shell-l1"
-              d="M20 10V46"
-              stroke="%LEMELY_COLOR_INK%"
-              stroke-width="2"
-              stroke-linecap="butt"
-            />
-            <path
-              class="lm-shell-l2"
-              d="M20 46H44"
-              stroke="%LEMELY_COLOR_INK%"
-              stroke-width="2"
-              stroke-linecap="butt"
-            />
-            <path
-              class="lm-shell-tick"
-              d="M27 37L33 46L47 19"
-              stroke="%LEMELY_COLOR_ACCENT%"
-              stroke-width="6"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-            />
+          <svg
+            class="lm-shell-mark"
+            viewBox="2 9.5 60 45"
+            fill="none"
+            role="img"
+            aria-label="Lemely is still loading"
+          >
+            %LEMELY_MARK_DRAWN%
           </svg>
           <h1 class="lm-shell-heading">Still loading</h1>
           <p class="lm-shell-body-copy">

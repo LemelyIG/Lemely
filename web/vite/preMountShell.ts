@@ -1,5 +1,6 @@
 import type { Plugin } from "vite"
 import { readFileSync } from "node:fs"
+import { MARK_MIRROR, MARK_OUTLINE, MARK_TILT } from "../src/lib/brandMark.ts"
 import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
 
 /*
@@ -17,7 +18,7 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  * problem `themeColor.ts` solves for `<meta name="theme-color">`, one more
  * consumer that is not the CSS cascade.
  *
- * So `index.html` carries seven colour placeholders (`%LEMELY_COLOR_PAPER%`
+ * So `index.html` carries six colour placeholders (`%LEMELY_COLOR_PAPER%`
  * and six siblings) and two duration placeholders
  * (`%LEMELY_LOADING_TIER_SKELETON%` / `%LEMELY_LOADING_TIER_SLOW%`), and this
  * plugin is the one place that resolves all nine, at build time, from the same
@@ -60,7 +61,55 @@ const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
   "%LEMELY_COLOR_RULE%": "rule",
   "%LEMELY_COLOR_INK%": "ink",
   "%LEMELY_COLOR_INK_MUTED%": "ink-muted",
-  "%LEMELY_COLOR_ACCENT%": "accent",
+  // No `%LEMELY_COLOR_ACCENT%`. The accent's only use in the shell was the
+  // mark's tick, and the mark is now injected whole by `markOutlineMarkup`,
+  // which resolves its own colours through `tokenHex` — the same guarantee by
+  // a shorter route. A placeholder kept here for a string index.html no longer
+  // contains would make this plugin throw on every build.
+}
+
+/**
+ * The two places the pre-mount shell draws the brand mark: the skeleton
+ * sidebar's lockup (static, 24px) and the slow-load screen's (drawing itself).
+ *
+ * They are injected rather than written into `index.html` because they were the
+ * last hand-transcription of the mark in the repo. The shell carried its own
+ * copy of the PREVIOUS mark's three paths, and when the mark was redesigned as
+ * an open notebook that copy kept drawing a logo nothing else in the product
+ * had any more — on the one screen no test that renders the real app ever
+ * exercises, which is exactly the class of drift the colour placeholders above
+ * exist to prevent. Same mechanism, same reason.
+ *
+ * `MARK_OUTLINE` is the mark's silhouette, not the whole drawing: this markup
+ * sits inline in the critical path, and twenty-six paths is real weight for a
+ * difference nobody can see at 24px.
+ */
+const MARK_PLACEHOLDERS: Readonly<Record<string, { animated: boolean }>> = {
+  "%LEMELY_MARK_STATIC%": { animated: false },
+  "%LEMELY_MARK_DRAWN%": { animated: true },
+}
+
+/**
+ * The mark's silhouette as SVG markup, for inlining into the shell.
+ *
+ * `pathLength="1"` on every path, so the shell's `stroke-dashoffset` keyframes
+ * need no length: 1 is the whole path whatever its real length. The version
+ * this replaced hardcoded 36, 24 and 42 in both `index.html` and
+ * `components/ui/mark.tsx`, six numbers describing three curves.
+ */
+export function markOutlineMarkup(animated: boolean): string {
+  const groups = MARK_OUTLINE.map(({ step, paths, stroke, width, mirrored }) => {
+    const drawn = paths
+      .map(
+        (d) =>
+          `<path${animated ? ` class="lm-shell-${step}"` : ""} d="${d.replace(/\s+/g, " ").trim()}" ` +
+          `pathLength="1" stroke="${tokenHex(stroke)}" stroke-width="${width}" ` +
+          `stroke-linecap="round" stroke-linejoin="round" />`,
+      )
+      .join("")
+    return mirrored ? `<g transform="${MARK_MIRROR}">${drawn}</g>` : drawn
+  }).join("")
+  return `<g transform="${MARK_TILT}">${groups}</g>`
 }
 
 /** Placeholder -> the `--token-name` `index.css` declares it under. */
@@ -120,6 +169,18 @@ export function fillPreMountShell(html: string): string {
     out = out.replaceAll(placeholder, tokenHex(tokenName))
   }
 
+  for (const [placeholder, { animated }] of Object.entries(MARK_PLACEHOLDERS)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "brand mark is injected from src/lib/brandMark.ts at build time, never transcribed " +
+          "— a copy of the geometry there kept drawing the previous logo after the mark was " +
+          "redesigned, on the one screen nothing renders in a test.",
+      )
+    }
+    out = out.replaceAll(placeholder, markOutlineMarkup(animated))
+  }
+
   const durations = readLoadingTierDurations(readFileSync(INDEX_CSS, "utf8"))
   for (const [placeholder, value] of Object.entries(durations)) {
     if (!out.includes(placeholder)) {
@@ -141,14 +202,14 @@ export function fillPreMountShell(html: string): string {
   // page — a browser painting `%LEMELY_COLOR_FOO%` where a colour belongs, on
   // the one screen no test that renders the real app ever exercises. This is
   // the backstop: after every known substitution has run, nothing shaped
-  // like one of THIS plugin's two placeholder families may remain.
+  // like one of THIS plugin's three placeholder families may remain.
   //
   // Scoped to those two prefixes, not every `%LEMELY_..._%` in the document:
   // `themeColor.ts` owns a third placeholder, `%LEMELY_THEME_COLOR%`, on the
   // same `<meta name="theme-color">` line, resolved by its own plugin in its
   // own build step — a bare `%LEMELY_[A-Z_]+%` sweep here would misreport
   // that one as this plugin's failure to resolve.
-  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER)_[A-Z_]+%/g)
+  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER|MARK)_[A-Z_]+%/g)
   if (leftover) {
     throw new Error(
       `preMountShell: index.html still contains unresolved placeholder(s) after every known ` +

@@ -95,15 +95,29 @@ export const MARK_MIRROR = "translate(64,0) scale(-1,1)"
  * instead it runs into the dog-ear. The left page carries the one margin rule
  * in the mark, where it has a clear edge to itself and a tick to hold.
  */
+/** The right page's outline. Named because the loading cut redraws it. */
+const RIGHT_SHEET = `M32 12.8 C39 12.1, 46 13, 53 12.4
+  C55 12.2, 56.4 12.6, 57.4 12.3
+  C58.1 22, 57.3 32, 57.5 41.4
+  C57.6 43.2, 57.5 44.5, 57.4 45.6
+  C55.6 47.5, 53.4 49.4, 51.2 51.2
+  C44.6 51.6, 38.4 50.7, 32 51.3 Z`
+
+/** The left page's outline: no dog-ear, so its outer edge runs straight down. */
+const LEFT_SHEET = `M32 12.8 C39 12.1, 46 13, 53 12.4
+  C55 12.2, 56.4 12.6, 57.4 12.3
+  C58.1 22, 57.3 32, 57.5 41.4
+  C57.6 45.4, 57.4 48.5, 57.3 50.7
+  C48 51.5, 40 50.6, 32 51.3 Z`
+
+/** The tick, authored backwards because its face is mirrored into place. */
+const TICK = `M46.4 41 C45.5 42.2, 44.4 43.7, 43.4 45
+  C41.8 41.9, 40.4 37.6, 39 33.6`
+
 export const RIGHT_FACE: MarkPath[] = [
   // The sheet. Its outer bottom corner is cut for the dog-ear that follows.
   {
-    d: `M32 12.8 C39 12.1, 46 13, 53 12.4
-        C55 12.2, 56.4 12.6, 57.4 12.3
-        C58.1 22, 57.3 32, 57.5 41.4
-        C57.6 43.2, 57.5 44.5, 57.4 45.6
-        C55.6 47.5, 53.4 49.4, 51.2 51.2
-        C44.6 51.6, 38.4 50.7, 32 51.3 Z`,
+    d: RIGHT_SHEET,
     fill: "paper-raised",
     stroke: "ink",
     width: 1.15,
@@ -142,11 +156,7 @@ export const RIGHT_FACE: MarkPath[] = [
  */
 export const LEFT_FACE: MarkPath[] = [
   {
-    d: `M32 12.8 C39 12.1, 46 13, 53 12.4
-        C55 12.2, 56.4 12.6, 57.4 12.3
-        C58.1 22, 57.3 32, 57.5 41.4
-        C57.6 45.4, 57.4 48.5, 57.3 50.7
-        C48 51.5, 40 50.6, 32 51.3 Z`,
+    d: LEFT_SHEET,
     fill: "paper-raised",
     stroke: "ink",
     width: 1.15,
@@ -176,13 +186,7 @@ export const LEFT_FACE: MarkPath[] = [
   // as an ordinary tick. Everything else on this face is close enough to
   // symmetrical that the mirror does not show; a tick is not, and a reversed
   // one is the single thing here a reader would notice.
-  {
-    d: `M46.4 41 C45.5 42.2, 44.4 43.7, 43.4 45
-        C41.8 41.9, 40.4 37.6, 39 33.6`,
-    fill: "none",
-    stroke: "accent",
-    width: 1.9,
-  },
+  { d: TICK, fill: "none", stroke: "accent", width: 1.9 },
 ]
 
 /**
@@ -221,10 +225,49 @@ export const STACK_EDGES: MarkPath[] = [
  * units tall at 9 apart — because a ring as tall as its own gap reads as a
  * ladder rung rather than as wire crossing a gutter.
  */
-export const COIL: MarkPath[] = [15.7, 24.7, 33.7, 42.7].map((y) => ({
-  d: `M27.9 ${y + 5} C27.1 ${y + 1.9}, 29.2 ${y - 0.1}, 32 ${y}
-      C34.8 ${y + 0.1}, 36.7 ${y + 2}, 35.9 ${y + 5}`,
+const COIL_RINGS = [15.7, 24.7, 33.7, 42.7].map(
+  (y) => `M27.9 ${y + 5} C27.1 ${y + 1.9}, 29.2 ${y - 0.1}, 32 ${y}
+    C34.8 ${y + 0.1}, 36.7 ${y + 2}, 35.9 ${y + 5}`,
+)
+
+export const COIL: MarkPath[] = COIL_RINGS.map((d) => ({
+  d,
   fill: "none" as const,
   stroke: "accent" as const,
   width: 1.5,
 }))
+
+/**
+ * The mark reduced to its silhouette, in the order a hand would draw it.
+ *
+ * This is the loading cut. `components/ui/mark.tsx` draws it stroke by stroke
+ * for the slow-load tier, and `vite/preMountShell.ts` writes it into
+ * `index.html`'s pre-mount shell — the two surfaces that were still carrying
+ * the PREVIOUS mark, each as its own hand-transcription of an SVG file that no
+ * longer contains that geometry. They read from here now, so there is one mark
+ * in the product rather than three drawings of two different ones.
+ *
+ * It is the silhouette and not the whole mark on purpose. Watching eleven
+ * hairlines of ruling draw themselves is noise, not reassurance, and the shell
+ * version sits in `index.html`'s critical path where twenty-six paths is real
+ * weight for a difference nobody can see at 24px. Four steps say "notebook,
+ * bound, marked", which is the whole job.
+ *
+ * `mirrored` means the step belongs inside the `MARK_MIRROR` group: the left
+ * page and the tick are authored on the right half like everything else here.
+ */
+export interface MarkOutlineStep {
+  /** Identifies the step's animation class: `lm-draw-<step>`, `lm-shell-<step>`. */
+  step: "page-right" | "page-left" | "coil" | "tick"
+  paths: string[]
+  stroke: MarkPaint
+  width: number
+  mirrored: boolean
+}
+
+export const MARK_OUTLINE: MarkOutlineStep[] = [
+  { step: "page-right", paths: [RIGHT_SHEET], stroke: "ink", width: 1.6, mirrored: false },
+  { step: "page-left", paths: [LEFT_SHEET], stroke: "ink", width: 1.6, mirrored: true },
+  { step: "coil", paths: COIL_RINGS, stroke: "accent", width: 2, mirrored: false },
+  { step: "tick", paths: [TICK], stroke: "accent", width: 2.6, mirrored: true },
+]
