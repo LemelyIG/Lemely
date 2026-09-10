@@ -213,14 +213,18 @@ function SessionEndedRoute({ children }: { children: React.ReactNode }) {
  * their own (P4.10's `SettingsFrame` remains their only route to it), so this
  * is a no-op for them and they keep rendering the framed screen exactly as
  * they always have.
+ *
+ * `"install"` (A7 review fix HIGH 2) redirects only for `student`/`teacher`,
+ * same as its three siblings — the two roles `InstallBanner` targets, and
+ * the two roles `PortalSettingsLayout` now lists an install pill for.
  */
 function SettingsLaneRedirect({
   segment,
   children,
 }: {
   /** The path under a portal's own `settings` root: `""` for the profile
-   * index, `"devices"` or `"notifications"` for its two siblings. */
-  segment: "" | "devices" | "notifications"
+   * index, `"devices"`, `"notifications"`, or `"install"` for its siblings. */
+  segment: "" | "devices" | "notifications" | "install"
   children: React.ReactNode
 }) {
   const { session } = useAuth()
@@ -666,19 +670,21 @@ export const appRoutes: RouteObject[] = [
       </RequireAuth>
     ),
   },
-  // Packet A7. Top-level only, unlike its three siblings above — no
-  // `SettingsLaneRedirect`, because there is no portal-scoped
-  // `/student/settings/install` or `/teacher/settings/install` to redirect
-  // to (see `InstallSettings.tsx`'s own header for why).
+  // Packet A7, wrapped in `SettingsLaneRedirect` as of the A7 review fix
+  // (HIGH 2): `PortalSettingsLayout` now lists an install pill, so
+  // `/student/settings/install` and `/teacher/settings/install` exist too
+  // (see `InstallSettings.tsx`'s own header for why this screen needs one).
   {
     path: "/settings/install",
     errorElement,
     handle: { title: "Install Lemely" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
-          <InstallSettings />
-        </Suspense>
+        <SettingsLaneRedirect segment="install">
+          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+            <InstallSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
       </RequireAuth>
     ),
   },

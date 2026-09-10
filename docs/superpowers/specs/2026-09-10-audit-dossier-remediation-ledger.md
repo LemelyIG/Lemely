@@ -172,7 +172,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 152 | `sw-periodic-background-sync` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 153 | `sw-push-currently-unavailable` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 154 | `sw-push-listener-real` | pwa | PASS | A | A7 | no-action | dossier: no change — push listener already correctly implemented (A7 re-verify) |
-| 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) but ROOT-CAUSE-UNVERIFIED — current source shows no code path from the audited URL to this endpoint | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
+| 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) — root cause confirmed: `PushAutoEnable` (mounted unconditionally in `main.tsx`, above the router) called `usePushConfig()` with no auth gate, firing `GET /api/notifications/push/config` on a cold, logged-out `/login` load | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
 | 156 | `parent-paid-tutoring-marketplace-ui` | ui | critical |  |  | skipped | exploration-only paid tutoring marketplace — skip marketplace/bookings/checkout |
 | 157 | `brand-color-system-superseded` | ui | high | C | C3 | pending |  |
 | 158 | `brand-cover-headline-and-stats-fabricated` | ui | high |  |  | skipped | skip: cover stat trio / fabricated headline not built |

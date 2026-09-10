@@ -124,6 +124,12 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
+// A7 review fix (HIGH 2): PortalSettingsLayout now lists an install pill.
+const InstallSettingsSection = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({
+    default: m.InstallSettingsSection,
+  })),
+)
 
 /**
  * Sidebar identity block. Wired to `GET /api/me/profile` (`useProfile()`) —
@@ -839,6 +845,11 @@ export const studentRoute: RouteObject = {
           path: "notifications",
           element: <NotificationSettingsSection />,
           handle: { title: "Notification settings" },
+        },
+        {
+          path: "install",
+          element: <InstallSettingsSection />,
+          handle: { title: "Install Lemely" },
         },
       ],
     },

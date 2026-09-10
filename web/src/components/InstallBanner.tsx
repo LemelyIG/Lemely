@@ -1,5 +1,5 @@
 import { DownloadSimple, Export, X } from "@phosphor-icons/react"
-import { useInstallPrompt } from "@/lib/pwa/useInstallPrompt"
+import { shouldShowInstallAffordance, useInstallPrompt } from "@/lib/pwa/useInstallPrompt"
 
 /*
  * Packet A7 — install affordance (`no-install-affordance` /
@@ -75,18 +75,30 @@ export function InstallBannerView({
 export function InstallBanner() {
   const { canInstall, promptInstall, isIos, isStandalone, dismissed, dismiss } = useInstallPrompt()
 
-  if (isStandalone || dismissed) return null
+  // A7 review fix (MEDIUM 1): the show/hide gate now delegates to
+  // `shouldShowInstallAffordance` rather than reimplementing it inline —
+  // `canInstall` already factors in `dismissed` (`deferredEvent !== null &&
+  // !dismissed`), so passing it as `hasPromptEvent` alongside `dismissed`
+  // itself agrees with the raw, undismissed event state in every case: when
+  // dismissed, `shouldShowInstallAffordance` returns false before ever
+  // reading `hasPromptEvent`. Only the prompt-vs-ios variant choice stays
+  // local — that is presentation, not the show/hide decision itself.
+  const show = shouldShowInstallAffordance({
+    hasPromptEvent: canInstall,
+    isIos,
+    isStandalone,
+    dismissedWithinCooldown: dismissed,
+  })
+  if (!show) return null
+
   if (canInstall) {
     return (
       <InstallBannerView
         variant="prompt"
-        onInstall={() => void promptInstall()}
+        onInstall={() => void promptInstall().catch(() => {})}
         onDismiss={dismiss}
       />
     )
   }
-  if (isIos) {
-    return <InstallBannerView variant="ios" onDismiss={dismiss} />
-  }
-  return null
+  return <InstallBannerView variant="ios" onDismiss={dismiss} />
 }

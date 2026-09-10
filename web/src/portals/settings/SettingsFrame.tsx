@@ -112,10 +112,10 @@ export function SettingsNav({ items }: { items: readonly SettingsNavItem[] }) {
   )
 }
 
-/** The three screens in this lane, in the order they appear in the nav.
+/** The four screens in this lane, in the order they appear in the nav.
  * Profile leads because it is the identity screen a reader expects first;
  * `end: true` on every entry keeps the old top-level behaviour unchanged —
- * none of these three routes has a sub-route to distinguish itself from. */
+ * none of these four routes has a sub-route to distinguish itself from. */
 const SETTINGS_NAV = [
   { to: "/settings/profile", label: "Profile", end: true },
   { to: "/settings/devices", label: "Account and devices", end: true },

@@ -1,14 +1,18 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
-import { describe, expect, it } from "vitest"
+import { afterEach, describe, expect, it, vi } from "vitest"
 import {
+  clearDeferredEvent,
   DISMISS_COOLDOWN_MS,
+  getDeferredEventSnapshot,
+  handleBeforeInstallPrompt,
   INSTALL_DISMISS_KEY,
   isIosUserAgent,
   isStandaloneDisplay,
   isWithinCooldown,
   readDismissedAt,
   shouldShowInstallAffordance,
+  subscribeToDeferredEvent,
   writeDismissedAt,
   type InstallPromptStorage,
 } from "@/lib/pwa/useInstallPrompt"
@@ -196,21 +200,126 @@ describe("shouldShowInstallAffordance", () => {
   })
 })
 
+/**
+ * A7 review fix (HIGH 1) — `beforeinstallprompt` fires at most once per page
+ * load, so the deferred event now lives in a module-level store shared by
+ * every `useInstallPrompt()` call, rather than per-hook-instance `useState`.
+ * `handleBeforeInstallPrompt`, `clearDeferredEvent`, `getDeferredEventSnapshot`
+ * and `subscribeToDeferredEvent` ARE the production wiring (the real
+ * `window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt)`
+ * call — guarded by `typeof window !== "undefined"` for this exact plain-Node
+ * suite — passes `handleBeforeInstallPrompt` straight through), so they are
+ * directly testable with a fake `Event`-shaped object, no `window` required.
+ */
+describe("shared beforeinstallprompt store (A7 review fix HIGH 1)", () => {
+  afterEach(() => {
+    clearDeferredEvent()
+  })
+
+  function fakeBeforeInstallPromptEvent() {
+    return {
+      preventDefault: vi.fn(),
+      prompt: vi.fn(),
+      userChoice: Promise.resolve({ outcome: "accepted" as const }),
+    } as unknown as Event
+  }
+
+  it("suppresses the browser's own mini-infobar and stashes the event", () => {
+    const event = fakeBeforeInstallPromptEvent()
+    handleBeforeInstallPrompt(event)
+    expect(event.preventDefault).toHaveBeenCalledOnce()
+    expect(getDeferredEventSnapshot()).toBe(event)
+  })
+
+  it("notifies every subscriber, not just the first to attach — the HIGH 1 bug", () => {
+    const seen: string[] = []
+    const unsubA = subscribeToDeferredEvent(() => seen.push("A"))
+    const unsubB = subscribeToDeferredEvent(() => seen.push("B"))
+
+    handleBeforeInstallPrompt(fakeBeforeInstallPromptEvent())
+
+    expect(seen).toEqual(["A", "B"])
+    unsubA()
+    unsubB()
+  })
+
+  it("a subscriber that attaches AFTER the event already fired still reads it via the snapshot — the exact HIGH 1 regression (a lazy-loaded settings screen mounting minutes after the banner already consumed the event)", () => {
+    const event = fakeBeforeInstallPromptEvent()
+    handleBeforeInstallPrompt(event)
+
+    // Simulates a second, later `useInstallPrompt()` call: subscribing does
+    // not itself deliver the past event, but `useSyncExternalStore` also
+    // reads `getDeferredEventSnapshot()` on mount, which is what this pins.
+    expect(getDeferredEventSnapshot()).toBe(event)
+  })
+
+  it("an unsubscribed listener stops receiving notifications", () => {
+    const seen: string[] = []
+    const unsubscribe = subscribeToDeferredEvent(() => seen.push("x"))
+    unsubscribe()
+
+    handleBeforeInstallPrompt(fakeBeforeInstallPromptEvent())
+
+    expect(seen).toEqual([])
+  })
+
+  it("clearDeferredEvent resets the snapshot to null and notifies subscribers", () => {
+    handleBeforeInstallPrompt(fakeBeforeInstallPromptEvent())
+    let notified = false
+    const unsubscribe = subscribeToDeferredEvent(() => {
+      notified = true
+    })
+
+    clearDeferredEvent()
+
+    expect(getDeferredEventSnapshot()).toBeNull()
+    expect(notified).toBe(true)
+    unsubscribe()
+  })
+})
+
 describe("useInstallPrompt source-text gates (hook body only — not exercised by a test)", () => {
   const source = readFileSync(
     join(import.meta.dirname, "..", "..", "src", "lib", "pwa", "useInstallPrompt.ts"),
     "utf8",
   )
 
-  it("prevents the browser's own mini-infobar and stashes the event", () => {
-    expect(source).toMatch(/event\.preventDefault\(\)/)
+  it("attaches the beforeinstallprompt listener once at module scope, guarded for this no-window suite", () => {
+    expect(source).toMatch(/typeof window !== "undefined"/)
+    expect(source).toMatch(
+      /addEventListener\(\s*"beforeinstallprompt",\s*handleBeforeInstallPrompt\s*\)/,
+    )
   })
 
-  it("listens for beforeinstallprompt", () => {
-    expect(source).toMatch(/addEventListener\(\s*"beforeinstallprompt"/)
+  it("reads the shared deferred-event store via useSyncExternalStore — A7 review fix HIGH 1", () => {
+    expect(source).toMatch(/useSyncExternalStore\(\s*subscribeToDeferredEvent/)
   })
 
   it("writes the dismissal timestamp when dismiss() is called", () => {
     expect(source).toMatch(/writeDismissedAt\(/)
+  })
+})
+
+/**
+ * A7 review fix (MEDIUM 1) — before this fix, `shouldShowInstallAffordance`
+ * was dead code: `InstallBanner.tsx` reimplemented the same show/hide
+ * decision inline, and not even identically (it ordered the prompt-vs-ios
+ * check before the dismissed check, rather than after). This pins that the
+ * banner's gate is now the real function, not a hand-copy of it — same
+ * "not exercised by a test, pinned as a source-text gate" reasoning as the
+ * hook itself, since `InstallBanner` needs jsdom to render.
+ */
+describe("InstallBanner source-text gate — delegates its show/hide decision to shouldShowInstallAffordance (A7 review fix MEDIUM 1)", () => {
+  const bannerSource = readFileSync(
+    join(import.meta.dirname, "..", "..", "src", "components", "InstallBanner.tsx"),
+    "utf8",
+  )
+
+  it("imports shouldShowInstallAffordance from the hook module", () => {
+    expect(bannerSource).toMatch(/import\s*{[^}]*shouldShowInstallAffordance[^}]*}\s*from\s*"@\/lib\/pwa\/useInstallPrompt"/)
+  })
+
+  it("calls it to decide whether to render at all", () => {
+    expect(bannerSource).toMatch(/shouldShowInstallAffordance\(\{/)
   })
 })

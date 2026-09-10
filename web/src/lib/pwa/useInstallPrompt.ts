@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react"
+import { useState, useSyncExternalStore } from "react"
 
 /*
  * Packet A7 — install prompt and iOS install sheet (the
@@ -105,22 +105,72 @@ export function shouldShowInstallAffordance(input: InstallPromptDecisionInput): 
   return input.hasPromptEvent || input.isIos
 }
 
+/*
+ * A7 review fix (HIGH 1): `beforeinstallprompt` fires at most once per page
+ * load. The previous version stashed it in per-instance `useState`, with the
+ * `window` listener attached from a per-instance `useEffect` — so the first
+ * `useInstallPrompt()` call to mount after the event fires wins it, and every
+ * other instance (a second hook call, or one that mounts later, like a lazy
+ * settings screen loaded minutes after `InstallBanner` already consumed the
+ * event) never sees it and reports `canInstall: false` forever, even though
+ * the browser really did offer to install.
+ *
+ * Fixed by moving the captured event to module scope — one listener,
+ * attached once, shared by every `useInstallPrompt()` call via
+ * `useSyncExternalStore`. A late subscriber reads the current snapshot
+ * immediately on mount, rather than only future notifications.
+ */
+type DeferredEventListener = () => void
+
+let deferredEvent: BeforeInstallPromptEvent | null = null
+const deferredEventListeners = new Set<DeferredEventListener>()
+
+function notifyDeferredEventListeners(): void {
+  for (const listener of deferredEventListeners) listener()
+}
+
+/** The real `beforeinstallprompt` handler — also called directly with a fake
+ * event in tests, since it needs no `window`/jsdom of its own to run. */
+export function handleBeforeInstallPrompt(event: Event): void {
+  // Stops Chromium's own default mini-infobar; this hook owns presenting the
+  // affordance instead (`InstallBanner`/`InstallSettings`).
+  event.preventDefault()
+  deferredEvent = event as BeforeInstallPromptEvent
+  notifyDeferredEventListeners()
+}
+
+/** Spent either way once `.prompt()` resolves — a browser never replays the
+ * same event twice. */
+export function clearDeferredEvent(): void {
+  deferredEvent = null
+  notifyDeferredEventListeners()
+}
+
+export function getDeferredEventSnapshot(): BeforeInstallPromptEvent | null {
+  return deferredEvent
+}
+
+export function subscribeToDeferredEvent(listener: DeferredEventListener): () => void {
+  deferredEventListeners.add(listener)
+  return () => deferredEventListeners.delete(listener)
+}
+
+// Guarded rather than unconditional: this module is imported directly, with
+// no `window` at all, by this suite's plain-Node vitest environment (no
+// jsdom, D3.20) to exercise the pure functions above.
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeinstallprompt", handleBeforeInstallPrompt)
+}
+
 export function useInstallPrompt(): InstallPromptState {
-  const [deferredEvent, setDeferredEvent] = useState<BeforeInstallPromptEvent | null>(null)
+  const deferredEvent = useSyncExternalStore(
+    subscribeToDeferredEvent,
+    getDeferredEventSnapshot,
+    () => null,
+  )
   const [dismissedAt, setDismissedAt] = useState<number | null>(() =>
     readDismissedAt(typeof window === "undefined" ? undefined : window.localStorage),
   )
-
-  useEffect(() => {
-    const onBeforeInstallPrompt = (event: Event) => {
-      // Stops Chromium's own default mini-infobar; this hook owns presenting
-      // the affordance instead (`InstallBanner`/`InstallSettings`).
-      event.preventDefault()
-      setDeferredEvent(event as BeforeInstallPromptEvent)
-    }
-    window.addEventListener("beforeinstallprompt", onBeforeInstallPrompt)
-    return () => window.removeEventListener("beforeinstallprompt", onBeforeInstallPrompt)
-  }, [])
 
   const isIos = isIosUserAgent(window.navigator.userAgent)
   const isStandalone = isStandaloneDisplay(
@@ -133,8 +183,7 @@ export function useInstallPrompt(): InstallPromptState {
     if (!deferredEvent) return
     await deferredEvent.prompt()
     await deferredEvent.userChoice
-    // Spent either way — a browser never replays the same event twice.
-    setDeferredEvent(null)
+    clearDeferredEvent()
   }
 
   const dismiss = () => {

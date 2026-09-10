@@ -101,6 +101,12 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
+// A7 review fix (HIGH 2): PortalSettingsLayout now lists an install pill.
+const InstallSettingsSection = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({
+    default: m.InstallSettingsSection,
+  })),
+)
 
 const NAV_ICON: Record<NavItem["icon"], Icon> = {
   overview: SquaresFour,
@@ -675,6 +681,11 @@ export const teacherRoute: RouteObject = {
           path: "notifications",
           element: <NotificationSettingsSection />,
           handle: { title: "Notification settings" },
+        },
+        {
+          path: "install",
+          element: <InstallSettingsSection />,
+          handle: { title: "Install Lemely" },
         },
       ],
     },
