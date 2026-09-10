@@ -435,10 +435,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
     // exists below `md`, so it belongs on the nav layer with the sidebar rather
     // than on the sticky-table-header layer beneath it — and DESIGN.md §7 wants
     // the rung named, not reached through an arbitrary value.
-    <div
-      className="lm-app-header lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop"
-      style={{ "--lm-app-header-pt": "0.625rem" } as React.CSSProperties}
-    >
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"

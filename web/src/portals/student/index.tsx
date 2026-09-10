@@ -566,10 +566,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
     // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
     // `z-20`: same number, but the z-index scale is a gate and a literal
     // bypasses it.
-    <header
-      className="lm-app-header lm-nav-chrome flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop pb-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav"
-      style={{ "--lm-app-header-pt": "1rem" } as React.CSSProperties}
-    >
+    <header className="lm-app-header lm-app-header-pt-4 lm-nav-chrome flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop pb-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
       {/* P3.1: the only navigation entry point below 820px, which is where the
           sidebar stops existing. `-ms-2` pulls the 44px target back level with
           the crumb's text edge without shrinking the target itself. */}

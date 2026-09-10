@@ -314,10 +314,7 @@ function AdminTopBar({ lane, onOpenNav }: { lane: AdminLane; onOpenNav: () => vo
   const trail = resolveAdminTrail(location.pathname, lane)
 
   return (
-    <div
-      className="lm-app-header lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop"
-      style={{ "--lm-app-header-pt": "0.625rem" } as React.CSSProperties}
-    >
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label={lane === "school" ? "Open school admin navigation" : "Open platform navigation"}

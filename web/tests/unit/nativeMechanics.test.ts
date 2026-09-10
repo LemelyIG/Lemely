@@ -120,6 +120,20 @@ describe(".lm-app-header standalone inset is additive, not destructive", () => {
   })
 })
 
+describe(".lm-app-header-pt-* named utilities", () => {
+  // §14 rule 3 forbids an arbitrary value, and an inline `style` prop setting
+  // a raw spacing literal is the same violation in a different syntax — the
+  // .lm-safe-bottom utility a few lines below this one in index.css exists
+  // for exactly this reason. Named classes instead, matching how Tailwind's
+  // own `py-4`/`py-2.5` resolve their spacing.
+  it("index.css defines lm-app-header-pt-4 and lm-app-header-pt-2\\.5 off the --spacing scale", () => {
+    expect(css).toContain(".lm-app-header-pt-4 {")
+    expect(css).toContain("--lm-app-header-pt: calc(var(--spacing) * 4)")
+    expect(css).toContain(".lm-app-header-pt-2\\.5 {")
+    expect(css).toContain("--lm-app-header-pt: calc(var(--spacing) * 2.5)")
+  })
+})
+
 describe("headers keep their existing padding while opting into the additive inset", () => {
   function headerLine(file: string): string {
     const source = readFileSync(join(SRC, file), "utf8")
@@ -128,33 +142,36 @@ describe("headers keep their existing padding while opting into the additive ins
     return line ?? ""
   }
 
-  it("student's header replaces py-4 with pb-4 and sets --lm-app-header-pt: 1rem", () => {
+  it("student's header replaces py-4 with pb-4 and lm-app-header-pt-4, no inline style", () => {
     const line = headerLine("portals/student/index.tsx")
     expect(line).toContain("pb-4")
     expect(line).not.toMatch(/(?<!p)\bpy-4\b/)
+    expect(line).toContain("lm-app-header-pt-4")
     const source = readFileSync(join(SRC, "portals/student/index.tsx"), "utf8")
-    expect(source).toContain('"--lm-app-header-pt": "1rem"')
+    expect(source).not.toContain("--lm-app-header-pt")
   })
 
-  it("teacher's header replaces py-2.5 with pb-2.5 and sets --lm-app-header-pt: 0.625rem", () => {
+  it("teacher's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
     const line = headerLine("portals/teacher/index.tsx")
     expect(line).toContain("pb-2.5")
     expect(line).not.toMatch(/\bpy-2\.5\b/)
+    expect(line).toContain("lm-app-header-pt-2.5")
     const source = readFileSync(join(SRC, "portals/teacher/index.tsx"), "utf8")
-    expect(source).toContain('"--lm-app-header-pt": "0.625rem"')
+    expect(source).not.toContain("--lm-app-header-pt")
   })
 
-  it("admin's header replaces py-2.5 with pb-2.5 and sets --lm-app-header-pt: 0.625rem", () => {
+  it("admin's header replaces py-2.5 with pb-2.5 and lm-app-header-pt-2.5, no inline style", () => {
     const line = headerLine("portals/admin/index.tsx")
     expect(line).toContain("pb-2.5")
     expect(line).not.toMatch(/\bpy-2\.5\b/)
+    expect(line).toContain("lm-app-header-pt-2.5")
     const source = readFileSync(join(SRC, "portals/admin/index.tsx"), "utf8")
-    expect(source).toContain('"--lm-app-header-pt": "0.625rem"')
+    expect(source).not.toContain("--lm-app-header-pt")
   })
 
   it("marketing's header is untouched — it had no py-* to lose", () => {
     const line = headerLine("portals/marketing/index.tsx")
-    expect(line).not.toContain("--lm-app-header-pt")
+    expect(line).not.toContain("lm-app-header-pt")
   })
 })
 

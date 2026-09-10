@@ -1209,6 +1209,18 @@ body {
   }
 }
 
+/* §14 rule 3 forbids an arbitrary value — an inline `style` prop setting a
+   raw spacing literal is the same violation in a different syntax, so these
+   are named classes instead, off the same `--spacing` scale `py-4`/`py-2.5`
+   themselves resolve through. One rung per header that needs to opt into
+   `--lm-app-header-pt`; add another here if a fifth header ever does. */
+.lm-app-header-pt-4 {
+  --lm-app-header-pt: calc(var(--spacing) * 4);
+}
+.lm-app-header-pt-2\.5 {
+  --lm-app-header-pt: calc(var(--spacing) * 2.5);
+}
+
 /* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
    home-indicator clearance `BottomNav` and the toast rail both need. */
 .lm-safe-bottom {
