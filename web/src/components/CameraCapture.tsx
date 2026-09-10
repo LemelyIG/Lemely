@@ -23,14 +23,15 @@ import { cn } from "@/lib/utils"
  * never leaves the camera light on.
  *
  * A4 review (HIGH) · `getUserMedia` must never fire without a user gesture
- * behind it. `autoStart` (default `true`, the pre-existing behaviour for a
- * caller that only ever mounts this component in direct response to a tap —
- * `CorrectPaper`'s "Camera" toggle and "Rescan") lets a caller that can
- * mount this with NO such gesture (`CorrectPaper`'s device-based default
- * source) say so; `started` then gates both the "live"-phase acquisition
- * effect and what the "live" phase renders, so that caller instead sees an
- * explicit "Take a photo" prompt and the camera is acquired only once the
- * student taps it — itself now the gesture.
+ * behind it. `autoStart` is required, with no default — permission-sensitive
+ * enough that a caller forgetting it must be a compile error, not a silent
+ * fail-open back to auto-starting. `true` when the mount is itself the
+ * direct result of a tap (`CorrectPaper`'s "Camera" toggle and "Rescan");
+ * `false` when the caller can mount this with NO such gesture (`CorrectPaper`'s
+ * device-based default source); `started` then gates both the "live"-phase
+ * acquisition effect and what the "live" phase renders, so a `false` mount
+ * instead shows an explicit "Take a photo" prompt and the camera is
+ * acquired only once the student taps it — itself now the gesture.
  */
 
 interface CapturedPage {
@@ -45,12 +46,17 @@ export interface CameraCaptureProps {
   /** Called when the student backs out of the capture flow entirely. */
   onCancel: () => void
   className?: string
-  /** Whether to acquire the camera immediately on mount. Default `true` — the
-   * existing behaviour for a caller that only ever mounts this component in
-   * direct response to a tap, which is itself the gesture. `false` when the
-   * caller can mount this with no such gesture (`CorrectPaper`'s device-based
-   * default source, `shouldAutoStartCamera`) — see the module header. */
-  autoStart?: boolean
+  /** Whether to acquire the camera immediately on mount. Required, with no
+   * default: `getUserMedia` is permission-sensitive enough that a caller
+   * forgetting this prop must be a type error, not a silent fail-open back
+   * to auto-starting (which is exactly the HIGH-severity bug this prop
+   * exists to prevent — a future second call site is one omitted prop away
+   * from reintroducing it). `true` when the mount is itself the direct
+   * result of a tap (`CorrectPaper`'s "Camera" toggle, "Rescan"). `false`
+   * when it can be mounted with no such gesture (`CorrectPaper`'s
+   * device-based default source, `shouldAutoStartCamera`) — see the module
+   * header. */
+  autoStart: boolean
 }
 
 /** Turn a getUserMedia rejection into a specific, actionable message. */
@@ -105,7 +111,7 @@ export function CameraCapture({
   onComplete,
   onCancel,
   className,
-  autoStart = true,
+  autoStart,
 }: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
