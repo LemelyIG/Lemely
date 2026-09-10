@@ -11,7 +11,7 @@ study-plan generation themselves, which have their own suites
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -27,9 +27,10 @@ from lemely.db.models import Subject
 from lemely.db.models.attempts import Attempt, WeaknessRecord
 from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import AttemptOrigin, Role, XpSource
+from lemely.db.models.study_plan import StudyPlanActivityType
 from lemely.db.models.users import User
 from lemely.db.student_profile_repo import StudentProfileService
-from lemely.db.study_plan_repo import StudyPlanService
+from lemely.db.study_plan_repo import PlanView, SessionView, StudyPlanService
 from lemely.db.xp_repo import XpService
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -44,10 +45,14 @@ from lemely.web.deps import (
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-# A fixed Cairo-noon Wednesday, clear of any week boundary — same fixed
-# instant ``test_web_xp.py`` and ``test_web_study_plan.py`` use.
-_NOON_UTC = datetime(2026, 8, 5, 12, 0, 0, tzinfo=UTC)
-_TODAY = date(2026, 8, 5)
+# The real current date at noon UTC, not a fixed historical instant like
+# ``test_web_xp.py``/``test_web_study_plan.py`` use: `widget.py`'s own
+# `_next_session` filters `session.date >= today` against the real wall
+# clock (`datetime.now(UTC).date()`, A5 review fix — a past, uncompleted
+# session must never render as "next"), so a fixed date in the past would
+# make every session this file generates look overdue and get filtered out.
+_TODAY = datetime.now(UTC).date()
+_NOON_UTC = datetime.combine(_TODAY, time(12, 0), tzinfo=UTC)
 
 
 # ---------------------------------------------------------------------------
@@ -194,6 +199,22 @@ def _seed_weakness(
         )
 
 
+class _FakeStudyPlanService:
+    """Duck-typed stand-in exposing only `.get_current`, for tests that need
+    to pin exact session dates rather than depend on real scheduling
+    heuristics and the real calendar day. The router calls nothing else on
+    its `StudyPlanService` dependency."""
+
+    def __init__(self, plans: dict[str, PlanView]) -> None:
+        self._plans = plans
+
+    def get_current(
+        self, user_id: object, subject_code: str, *, now: object = None
+    ) -> PlanView | None:
+        del user_id, now
+        return self._plans.get(subject_code)
+
+
 # ---------------------------------------------------------------------------
 # Authorization.
 # ---------------------------------------------------------------------------
@@ -224,18 +245,34 @@ class TestAuthz:
         study_plan_service: StudyPlanService,
         profile_service: StudentProfileService,
     ) -> None:
-        """Identity is structural, mirroring ``xp.py``'s own route."""
+        """Identity is structural, mirroring ``xp.py``'s own route.
+
+        Regression-tests the actual IDOR, not just self-consistency: `mine`
+        and `theirs` get genuinely different, non-zero streaks (via
+        `xp_service.award`, the real award path — see `TestStreak`'s own
+        comment for why a raw `_award` DB insert can't distinguish them,
+        since it never touches the streak table at all), so a route that
+        leaked `theirs`'s data would fail this assertion rather than pass it
+        vacuously on a 0 == 0 coincidence.
+        """
         _use_services(client, xp_service, study_plan_service, profile_service)
         mine = _seed_user(pg_sessionmaker)
         theirs = _seed_user(pg_sessionmaker)
-        _award(pg_sessionmaker, mine, 10)
-        _award(pg_sessionmaker, theirs, 999)
+        xp_service.award(mine, XpSource.flashcard_reviewed, "dk-mine-1")
+        xp_service.award(
+            theirs, XpSource.flashcard_reviewed, "dk-theirs-1", now=_NOON_UTC - timedelta(days=1)
+        )
+        xp_service.award(theirs, XpSource.flashcard_reviewed, "dk-theirs-2")
         _auth_as(client, mine, Role.student)
 
         response = client.get(f"/api/student/widget?user_id={theirs}&userId={theirs}")
 
         assert response.status_code == 200
-        assert response.json()["streak"] == xp_service.profile(mine).streak.current_length
+        mine_streak = xp_service.profile(mine).streak.current_length
+        theirs_streak = xp_service.profile(theirs).streak.current_length
+        assert mine_streak != theirs_streak, "fixture assumption: the two streaks must differ"
+        assert response.json()["streak"] == mine_streak
+        assert response.json()["streak"] != theirs_streak
 
     def test_the_openapi_path_is_registered(self, client: TestClient) -> None:
         assert "/api/student/widget" in client.app.openapi()["paths"]  # type: ignore[union-attr]
@@ -255,7 +292,7 @@ class TestBrandNewStudent:
         study_plan_service: StudyPlanService,
         profile_service: StudentProfileService,
     ) -> None:
-        """"Nothing yet" is a state to render, never a 404."""
+        """ "Nothing yet" is a state to render, never a 404."""
         _use_services(client, xp_service, study_plan_service, profile_service)
         _auth_as(client, _seed_user(pg_sessionmaker), Role.student)
 
@@ -359,9 +396,7 @@ class TestNextSession:
         _seed_weakness(
             pg_sessionmaker, student, subject_code="0625", topic="1 Motion", lost_marks=5
         )
-        _seed_weakness(
-            pg_sessionmaker, student, subject_code="0620", topic="2 Atoms", lost_marks=5
-        )
+        _seed_weakness(pg_sessionmaker, student, subject_code="0620", topic="2 Atoms", lost_marks=5)
         plan_a = study_plan_service.generate(student, "0625")
         plan_b = study_plan_service.generate(student, "0620")
         _auth_as(client, student, Role.student)
@@ -416,3 +451,64 @@ class TestNextSession:
         else:
             assert body is not None
             assert body["title"] == sessions_by_date[1].topic
+
+    def test_an_uncompleted_past_session_never_renders_as_next(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        """A5 review fix: `_next_session` must filter `session.date >= today`.
+
+        Pins exact session dates via a fake `StudyPlanService` exposing only
+        `get_current`, rather than depending on real scheduling heuristics
+        and the real calendar day — a session dated before today, if never
+        completed, is simply overdue, not "next" (the Adaptive Card
+        template's `$when: ${nextSession != null}` would otherwise render a
+        session as scheduled at a moment already in the past).
+        """
+        past_session = SessionView(
+            id=uuid.uuid4(),
+            date=_TODAY - timedelta(days=1),
+            topic="Overdue topic",
+            activity_type=StudyPlanActivityType.review,
+            duration_minutes=30,
+            focus="",
+            completed_at=None,
+            subject_code="0625",
+        )
+        future_session = SessionView(
+            id=uuid.uuid4(),
+            date=_TODAY + timedelta(days=1),
+            topic="Upcoming topic",
+            activity_type=StudyPlanActivityType.review,
+            duration_minutes=30,
+            focus="",
+            completed_at=None,
+            subject_code="0625",
+        )
+        plan = PlanView(
+            id=uuid.uuid4(),
+            student_id=uuid.uuid4(),
+            subject_code="0625",
+            week_start=_TODAY - timedelta(days=_TODAY.weekday()),
+            weekly_hours=2.0,
+            available=True,
+            reason=None,
+            generated_at=_NOON_UTC,
+            sessions=[past_session, future_session],
+        )
+        study_plan_service = _FakeStudyPlanService({"0625": plan})
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625")
+        profile_service.upsert_enrolment(student, "0625")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        body = response.json()["nextSession"]
+        assert body is not None
+        assert body["title"] == "Upcoming topic"
