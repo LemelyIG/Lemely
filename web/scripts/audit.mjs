@@ -158,6 +158,7 @@ import { fileURLToPath } from "node:url"
 import puppeteer from "puppeteer"
 import lighthouse from "lighthouse"
 import { assertPortFree } from "./serve_guard.mjs"
+import { gotoWithRetry, withRetry } from "./nav_retry.mjs"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const webRoot = path.resolve(__dirname, "..")
@@ -648,18 +649,29 @@ async function runLighthouseAudit(url, page, slug, { authed }) {
       }, rawSession)
     }
 
-    const result = await lighthouse(
-      url,
-      {
-        onlyCategories: LIGHTHOUSE_CATEGORIES,
-        logLevel: "error",
-        // Preserve the localStorage session across the audit's own internal
-        // navigation for authenticated routes — Lighthouse clears all origin
-        // storage before each run by default (Storage.clearDataForOrigin).
-        disableStorageReset: authed,
-      },
-      undefined,
-      lhPage,
+    // `withRetry` (packet A8, `emp-env-navigation-flakiness`): `lighthouse()`
+    // drives its own internal navigation of `lhPage` — there is no
+    // `page.goto` call site here to wrap with `gotoWithRetry` — so a
+    // transient failure in that internal navigation gets the same 3-attempt
+    // resilience as this file's other page navigations, rather than sending
+    // the route straight to the outer `catch`'s null-scores fallback below
+    // on the first flake.
+    const result = await withRetry(
+      () =>
+        lighthouse(
+          url,
+          {
+            onlyCategories: LIGHTHOUSE_CATEGORIES,
+            logLevel: "error",
+            // Preserve the localStorage session across the audit's own internal
+            // navigation for authenticated routes — Lighthouse clears all origin
+            // storage before each run by default (Storage.clearDataForOrigin).
+            disableStorageReset: authed,
+          },
+          undefined,
+          lhPage,
+        ),
+      { label: `lighthouse ${slug}` },
     )
     const lhr = result.lhr
     fs.writeFileSync(path.join(LH_DIR, `${slug}.json`), JSON.stringify(lhr, null, 2))
@@ -819,23 +831,30 @@ async function injectSession(page, { accessToken, userId, role }) {
   )
 }
 
-/** `goto` + the route's readiness wait, with one retry on a detached-frame
- * error. The very first navigation on a freshly-created page in an origin
- * that already has an active PWA service worker (every route after the
- * first) can race a `controllerchange`-driven reload, which detaches the
- * frame mid-`waitForFunction` — a real Puppeteer/vite-plugin-pwa
- * interaction, not a flaky test to paper over with a longer timeout. One
- * clean re-navigation resolves it; a second failure is a real bug and still
- * throws. */
+/** `goto` + the route's readiness wait, retried up to 3 times
+ * (`nav_retry.mjs`'s `withRetry`, packet A8 — `emp-env-navigation-flakiness`)
+ * on any failure.
+ *
+ * Originally a single hand-rolled retry scoped to one specific error: the
+ * very first navigation on a freshly-created page in an origin that already
+ * has an active PWA service worker (every route after the first) can race a
+ * `controllerchange`-driven reload, which detaches the frame mid-
+ * `waitForFunction` — a real Puppeteer/vite-plugin-pwa interaction, not a
+ * flaky test to paper over with a longer timeout. Generalised to the shared
+ * helper's 3-attempt, any-failure retry: a detached frame is still one clean
+ * re-navigation away from resolving (now attempt 2 of 3 rather than a
+ * bespoke special case), and the same resilience now also covers the
+ * ordinary network/timeout flakiness this finding named — a dropped
+ * connection or a `vite preview` server that hasn't quite finished coming
+ * up — which the detached-frame-only check never retried at all. */
 async function gotoReady(page, url, ready, waitUntil = "networkidle0") {
-  try {
-    await page.goto(url, { waitUntil })
-    if (ready) await ready(page)
-  } catch (err) {
-    if (!/detached/i.test(String(err?.message))) throw err
-    await page.goto(url, { waitUntil })
-    if (ready) await ready(page)
-  }
+  await withRetry(
+    async () => {
+      await page.goto(url, { waitUntil })
+      if (ready) await ready(page)
+    },
+    { label: `goto ${url}` },
+  )
 }
 
 /** Races `promise` against a plain timer — `page.evaluate()` has no timeout
@@ -2529,7 +2548,7 @@ async function main() {
     log("G-04 /login — default state (3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       await waitForText(page, "Lemely")
       const violation = await checkNoHorizontalScroll(page, "login", bp.width)
       if (violation) responsiveViolations.push(violation)
@@ -2539,7 +2558,7 @@ async function main() {
     log("G-04 /login — error state (invalid credentials, 3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       const emailInput = await page.$("input[type=email]")
       const passwordInput = await page.$("input[type=password]")
       await emailInput.type("nonexistent-audit-user@example.com")
@@ -2554,7 +2573,7 @@ async function main() {
     log("G-04 /login — loading state (delayed submit, 3 breakpoints)...")
     for (const bp of BREAKPOINTS) {
       await page.setViewport(bp)
-      await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
       await page.setRequestInterception(true)
       const onRequest = (req) => {
         if (req.url().includes("/api/auth/login")) {
@@ -2579,7 +2598,7 @@ async function main() {
 
     log("G-04 /login — axe + Lighthouse (default state)...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
     await waitForText(page, "Lemely")
     axeSummary.push(await runAxe(page, "login"))
     lighthouseSummary.push(
@@ -2602,7 +2621,7 @@ async function main() {
 
     log("Logging in through the real UI...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
     const emailInput = await page.$("input[type=email]")
     const passwordInput = await page.$("input[type=password]")
     await emailInput.type(email)
@@ -2614,13 +2633,13 @@ async function main() {
     // ── S-10 · Correct a paper — entry/default state audit, before upload ──
     log("S-10 /student/correct — responsive check (380px) + axe + Lighthouse (entry state)...")
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     const correctViolation = await checkNoHorizontalScroll(page, "student-correct", 380)
     if (correctViolation) responsiveViolations.push(correctViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     axeSummary.push(await runAxe(page, "student-correct"))
     lighthouseSummary.push({
@@ -2631,7 +2650,7 @@ async function main() {
     })
 
     log("Uploading the golden fixture to reach a real corrected-paper state...")
-    await page.goto(`${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     const fileInput = await page.$("#scan-file")
     await fileInput.uploadFile(SCAN_PATH)
     await clickButtonByText(page, "mark this paper")
@@ -2650,13 +2669,13 @@ async function main() {
     // accessible attribute directly instead (mirrors Playwright's
     // getByLabel(/out of .* marks/) in web/e2e/screenshots.spec.ts).
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(resultUrl, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     const resultViolation = await checkNoHorizontalScroll(page, "student-result", 380)
     if (resultViolation) responsiveViolations.push(resultViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(resultUrl, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     axeSummary.push(await runAxe(page, "student-result"))
     lighthouseSummary.push({
@@ -2682,7 +2701,7 @@ async function main() {
     // rows directly, which is the one thing the notification path does not do.
     log("G-13 /student/notifications — axe (POPULATED, via the grade_ready fan-out above)...")
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
     await waitForText(page, "Your paper has been marked")
     axeSummary.push(await runAxe(page, "student-notifications-populated"))
     await shoot(page, "G-13", "populated", AUDIT_VIEWPORT.width)
@@ -2690,13 +2709,13 @@ async function main() {
     // ── S-06 · Student overview — now non-empty (one corrected paper) ──────
     log("S-06 /student — responsive check (380px) + axe + Lighthouse (non-empty, after correction)...")
     await page.setViewport({ width: 380, height: 844 })
-    await page.goto(`${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     const overviewViolation = await checkNoHorizontalScroll(page, "student-overview", 380)
     if (overviewViolation) responsiveViolations.push(overviewViolation)
 
     await page.setViewport(AUDIT_VIEWPORT)
-    await page.goto(`${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+    await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     axeSummary.push(await runAxe(page, "student-overview"))
     lighthouseSummary.push({

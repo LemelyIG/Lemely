@@ -107,7 +107,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 87 | `apple-touch-icon-reuses-192` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` — real 180px cut, index.html apple-touch-icon link updated |
 | 88 | `Id` | pwa | FAIL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (id) |
 | 89 | `Screenshots` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
-| 90 | `emp-env-navigation-flakiness` | pwa | PARTIAL | A | A8 | pending |  |
+| 90 | `emp-env-navigation-flakiness` | pwa | PARTIAL | A | A8 | done A8 | `scripts/nav_retry.mjs`'s `withRetry`/`gotoWithRetry` (3 attempts), wired into every `audit.mjs` page.goto (13 sites) + `gotoReady` + the Lighthouse pass; `npx vitest run tests/unit/navRetry.test.ts` (6/6) |
 | 91 | `emp-robots-txt-spa-fallback` | pwa | FAIL | A | A5 | done A5 | `ls dist/robots.txt` — web/public/robots.txt |
 | 92 | `no-favicon-ico-fallback` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` + `file dist/favicon.ico` — index.html favicon.ico link added |
 | 93 | `manifest-categories` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (categories) |
@@ -209,7 +209,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 189 | `content-flashcard-interval-hints-omitted` | ui | medium | D | D2 | pending |  |
 | 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | pending |  |
 | 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | pending |  |
-| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | pending | primary C4 (full extension to ClassAnalytics+Review); A8 did the initial per-screen floor (part) |
+| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline |
 | 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | pending |  |
 | 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |

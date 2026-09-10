@@ -6,7 +6,8 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
-    "lint": "oxlint",
+    "postbuild": "npm run check:bundle",
+    "lint": "oxlint && npm run check:native",
     "typecheck": "tsc -b --force --noEmit",
     "preview": "vite preview",
     "test": "vitest run",
@@ -20,6 +21,8 @@
     "build:kit": "vite build --config vite.preview.config.ts",
     "icons": "node --experimental-strip-types scripts/generate_icons.mjs",
     "screenshots:manifest": "node scripts/manifest_screenshots.mjs",
+    "check:native": "node scripts/check-native-invariants.mjs",
+    "check:bundle": "node scripts/check-bundle-budget.mjs",
     "cf:dev": "wrangler dev",
     "cf:deploy:staging": "wrangler deploy --env staging",
     "cf:deploy:production": "wrangler deploy --env production"
