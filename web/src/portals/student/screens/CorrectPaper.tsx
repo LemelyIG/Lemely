@@ -430,6 +430,25 @@ export function CorrectPaper() {
   }, [])
 
   /**
+   * File Handling API (manifest's `file_handlers`): the OS "open with"
+   * counterpart to the share target above, for a browser that launched this
+   * app directly with a file rather than routing through `/share-target`.
+   * `window.launchQueue` is undefined outside Chromium, so this is a no-op
+   * everywhere else.
+   */
+  useEffect(() => {
+    window.launchQueue?.setConsumer((launchParams) => {
+      const handle = launchParams.files[0]
+      if (!handle) return
+      handle.getFile().then((file) => {
+        setScanSource("file")
+        chooseScan(file)
+      })
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`
    * so the retry path and the first-run path are literally the same code:
    * a retry that took a different route through the pipeline would be a second

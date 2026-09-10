@@ -195,5 +195,32 @@ export function buildManifest(mode: string) {
         ],
       },
     ],
+    // Web Share Target: lets a student share a photo straight out of the OS
+    // camera roll or another app into Lemely instead of opening the app first
+    // and picking a file. `src/sw/shareTarget.ts`'s `handleShareTargetFetch`
+    // is the `/share-target` handler this POST actually reaches; the `scan`
+    // field name here and the `formData.get("scan")` read there have to
+    // agree, since nothing else pins that string to both places.
+    share_target: {
+      action: "/share-target",
+      method: "POST" as const,
+      enctype: "multipart/form-data",
+      params: {
+        files: [{ name: "scan", accept: ["image/*", "application/pdf"] }],
+      },
+    },
+    // File Handling API: the OS "open with Lemely" counterpart to
+    // share_target above, for the same two scan formats. `/file-handler`
+    // (routes.tsx) redirects into the same marking flow; `launchQueue` in
+    // `CorrectPaper.tsx` is what actually receives the launched file.
+    file_handlers: [
+      {
+        action: "/file-handler",
+        accept: {
+          "image/*": [".png", ".jpg", ".jpeg"],
+          "application/pdf": [".pdf"],
+        },
+      },
+    ],
   }
 }

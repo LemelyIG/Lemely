@@ -107,6 +107,41 @@ describe("manifest.screenshots", () => {
   })
 })
 
+describe("manifest.share_target", () => {
+  // Packet A6. The `/share-target` POST body is handled by
+  // `src/sw/shareTarget.ts`'s `handleShareTargetFetch`, which reads the file
+  // under this exact field name (`formData.get("scan")`) — the two have to
+  // agree, and only this member's declaration is checked by the OS.
+  it("POSTs multipart form data to /share-target with the file under the scan field", () => {
+    expect(manifest.share_target.action).toBe("/share-target")
+    expect(manifest.share_target.method).toBe("POST")
+    expect(manifest.share_target.enctype).toBe("multipart/form-data")
+    expect(manifest.share_target.params.files).toHaveLength(1)
+    expect(manifest.share_target.params.files[0].name).toBe("scan")
+  })
+
+  it("accepts images and PDFs — the two scan formats CorrectPaper already takes", () => {
+    expect(manifest.share_target.params.files[0].accept).toEqual(["image/*", "application/pdf"])
+  })
+})
+
+describe("manifest.file_handlers", () => {
+  // The File Handling API counterpart to share_target: an OS "open with"
+  // launch instead of an OS share sheet, routed to the same /file-handler
+  // redirect (`routes.tsx`) into the same marking flow.
+  it("registers exactly one handler, routed through /file-handler", () => {
+    expect(manifest.file_handlers).toHaveLength(1)
+    expect(manifest.file_handlers[0].action).toBe("/file-handler")
+  })
+
+  it("accepts the same two scan formats as share_target, by extension", () => {
+    expect(manifest.file_handlers[0].accept).toEqual({
+      "image/*": [".png", ".jpg", ".jpeg"],
+      "application/pdf": [".pdf"],
+    })
+  })
+})
+
 describe("manifest.widgets", () => {
   it("declares the Streak widget backed by the Adaptive Card templates", () => {
     expect(manifest.widgets).toEqual([

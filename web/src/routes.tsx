@@ -696,6 +696,19 @@ export const appRoutes: RouteObject[] = [
     errorElement,
     element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
   },
+  // File Handling API (manifest's `file_handlers`, packet A6): the OS hands a
+  // launched image/PDF to this path via `window.launchQueue`, which forwards
+  // it into the same marking flow the Web Share Target (`/share-target`) and
+  // the in-app "Camera"/"File" pickers already use. No `RequireAuth` here —
+  // `/student/correct` is itself inside the (already `RequireAuth`-wrapped)
+  // student portal subtree above, so a signed-out reader launching a file
+  // still lands on `/login` by the normal route rather than a second guard.
+  {
+    path: "/file-handler",
+    errorElement,
+    handle: { title: "Opening your scan" } satisfies PageMeta,
+    element: <Navigate to="/student/correct" replace />,
+  },
   /*
    * Catch-all, last so it only matches what nothing above did.
    *
