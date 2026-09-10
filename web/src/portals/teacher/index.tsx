@@ -544,7 +544,7 @@ function TeacherLayout() {
     // which is why it read as the generic dashboard the anti-references name.
     // `bg-paper`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen min-h-dvh bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar />
 

@@ -89,7 +89,7 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="paper-grain flex min-h-screen min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
+      className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
     >
       {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
           "Lemely", so describing the mark too announces the brand twice. */}

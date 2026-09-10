@@ -343,7 +343,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
     // gets it: "consistent with the system" is 4.10's own instruction.
     // `bg-paper`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen min-h-dvh bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar lane={lane} />
 

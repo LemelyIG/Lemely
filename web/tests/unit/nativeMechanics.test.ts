@@ -188,7 +188,14 @@ describe("apple-mobile-web-app-status-bar-style", () => {
   })
 })
 
-describe("min-h-screen always pairs with min-h-dvh", () => {
+describe("min-h-dvh alone, no min-h-screen fallback", () => {
+  // dvh has been baseline-supported (Safari 15.4+, Chrome 108+) for years by
+  // 2026, so pairing it with a min-h-screen "fallback" bought nothing — worse,
+  // it was a silent no-op: Tailwind v4 emits `.min-h-screen` after
+  // `.min-h-dvh` in its own sorted utilities output regardless of source
+  // order, both are single-class selectors at equal specificity with neither
+  // behind @media/@supports, and later-in-cascade wins at equal specificity.
+  // `.min-h-screen`'s 100vh always applied; `.min-h-dvh` never did anything.
   function* walk(dir: string): Generator<string> {
     for (const entry of readdirSync(dir)) {
       const full = join(dir, entry)
@@ -205,15 +212,30 @@ describe("min-h-screen always pairs with min-h-dvh", () => {
       if (line.includes("<aside")) return
       const trimmed = line.trim()
       // Prose in JSDoc/// comments quotes `min-h-screen` as a class name
-      // without applying it; only a real class list needs the dvh pairing.
+      // without applying it — not a live class list to flag.
       if (trimmed.startsWith("*") || trimmed.startsWith("//")) return
-      if (!line.includes("min-h-dvh")) {
-        offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
-      }
+      offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
     })
   }
 
-  it("has no bare min-h-screen outside an <aside> sidebar", () => {
+  it("has no class-list min-h-screen left outside an <aside> sidebar", () => {
     expect(offenders).toEqual([])
+  })
+
+  const DVH_SITES = [
+    "components/route-error.tsx",
+    "portals/misc/FullPageState.tsx",
+    "portals/parent/index.tsx",
+    "portals/auth/Login.tsx",
+    "portals/student/index.tsx",
+    "portals/settings/SettingsFrame.tsx",
+    "portals/teacher/index.tsx",
+    "portals/admin/index.tsx",
+    "portals/marketing/index.tsx",
+  ]
+
+  it.each(DVH_SITES)("%s still sizes with min-h-dvh", (file) => {
+    const source = readFileSync(join(SRC, file), "utf8")
+    expect(source).toContain("min-h-dvh")
   })
 })

@@ -68,7 +68,7 @@ const DataHandling = lazy(() =>
  */
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="paper-grain flex min-h-screen min-h-dvh flex-col bg-paper">
+    <div className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
       <header className="lm-app-header lm-nav-chrome sticky top-0 z-nav border-b border-rule bg-paper/85 backdrop-blur-nav">
         {/*

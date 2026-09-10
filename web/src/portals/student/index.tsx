@@ -715,7 +715,7 @@ function StudentLayout() {
     // own ground rather than depend on what is behind it (`body`'s own paint,
     // in this case — correct today, but a fragile thing for a portal root to
     // lean on) matching the warm `--paper` token by coincidence.
-    <div data-portal="student" className="paper-grain flex min-h-screen min-h-dvh bg-paper">
+    <div data-portal="student" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar />
 
