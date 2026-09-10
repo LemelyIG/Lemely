@@ -74,15 +74,27 @@ function extractBalancedBlock(source, startPattern) {
 }
 
 /**
- * Blanks `//`/`/* *\/` comments and every string/template literal,
- * preserving character offsets and newlines, so a brace or a keyword
- * appearing only inside a comment or a string cannot be mistaken for real
- * code — the same shape as `tests/unit/support/jsxSource.ts`'s
- * `stripComments`, duplicated locally (not imported) because this script
- * runs as plain Node ESM with no TypeScript loader, and that helper lives
- * in a `.ts` file.
+ * Blanks `//`/`/* *\/` comments, preserving character offsets, newlines, and
+ * — unlike `stripCommentsAndStrings` below — every string/template literal's
+ * real content, so a quoted event name like `"message"` stays visible for
+ * pattern matching. String-*aware* rather than string-blanking: `//`/`/&#42;`
+ * appearing inside a string (a URL, say) is correctly left alone rather than
+ * mistaken for a real comment start, but the string's own characters pass
+ * through unchanged. Same length and character offsets as
+ * `stripCommentsAndStrings`'s output for the same input, which is what lets
+ * `isSkipWaitingGated` locate a pattern in this function's output and then
+ * brace-match from that same index in the other's.
+ *
+ * Neither this nor `stripCommentsAndStrings` tracks regex-literal state —
+ * a `/pattern/` containing an unescaped quote or brace can desynchronise
+ * both lexers' state machines. Out of proportion to fix properly (a real
+ * regex/string disambiguator needs to know whether the preceding token
+ * could start an expression, i.e. needs an actual parser) for a CI guard
+ * over one small, human-reviewed file — `sw.ts`'s one regex today
+ * (`/^\/api/`) is quote/brace-free and does not trigger this. Noted here
+ * rather than fixed so nobody mistakes this for airtight.
  */
-function stripCommentsAndStrings(source) {
+function stripComments(source, { blankStrings }) {
   let out = ""
   let i = 0
   let state = "code"
@@ -104,7 +116,7 @@ function stripCommentsAndStrings(source) {
       }
       if (c === "'" || c === '"' || c === "`") {
         state = c === "'" ? "single" : c === '"' ? "double" : "template"
-        out += " "
+        out += blankStrings ? " " : c
         i += 1
         continue
       }
@@ -131,7 +143,7 @@ function stripCommentsAndStrings(source) {
     }
     // single | double | template — inside a string/template literal.
     if (c === "\\") {
-      out += "  "
+      out += blankStrings ? "  " : source.slice(i, i + 2)
       i += 2
       continue
     }
@@ -142,46 +154,80 @@ function stripCommentsAndStrings(source) {
     ) {
       state = "code"
     }
-    out += c === "\n" ? "\n" : " "
+    out += blankStrings ? (c === "\n" ? "\n" : " ") : c
     i += 1
   }
   return out
 }
 
+const stripCommentsAndStrings = (source) => stripComments(source, { blankStrings: true })
+const stripCommentsOnly = (source) => stripComments(source, { blankStrings: false })
+
 /**
- * True if no `skipWaiting(...)` call — bare or `self.`-qualified, since
+ * True if every `skipWaiting(...)` call — bare or `self.`-qualified, since
  * `workbox-core` exports a `skipWaiting` helper importable either way —
- * appears at brace depth 0 (module scope) in `swSource`. A call nested
- * inside any block (most plausibly a `message` event listener) is gated by
- * construction: it cannot run until whatever wraps it does. A call at
- * depth 0 runs unconditionally the moment the worker script itself executes
- * — install time, before any client has agreed to anything — which is
- * exactly the regression this guards.
+ * sits specifically inside a `self.addEventListener("message", ...)`
+ * callback body. Such a call is gated on the client explicitly asking to
+ * skip waiting; anything else — module scope, or nested in some other block
+ * that still runs unconditionally at install time
+ * (`if (import.meta.env.PROD) { self.skipWaiting() }`,
+ * `try { self.skipWaiting() } catch {}`) — is exactly the regression this
+ * guards, and previously slipped through a looser "nested inside *any*
+ * block counts as gated" version of this check (A8 review fix): being
+ * nested proves nothing about *when* the block runs.
  *
- * Comment/string-aware (`stripCommentsAndStrings`) and depth-only, rather
- * than the earlier hand-rolled "find the nearest `addEventListener` and
- * brace-match its callback" matcher: that approach false-failed on a
- * destructured handler param (`({ data }) =>`, whose own balanced braces
- * confused the "find the first `{` after the match" step) and false-passed
- * on a commented-out listener contributing a stray, uncounted brace. Pure
- * depth-0 detection has neither failure mode and degrades safely — a call
- * this can't prove is gated is reported as a failure, never silently
- * accepted.
+ * Two comment/string-aware lexer passes locate this precisely:
+ * `stripCommentsOnly` finds the real `addEventListener("message", ...)`
+ * call sites (string content has to stay visible to match the quoted event
+ * name), and `stripCommentsAndStrings` — character-offset-aligned with the
+ * first pass — brace-matches each one's callback body so a brace inside an
+ * unrelated string or comment can't corrupt the range. A call is gated only
+ * if its position falls inside one of those specific ranges — not merely
+ * "inside some brace, somewhere."
+ *
+ * This replaces an even earlier hand-rolled matcher that anchored to
+ * `addEventListener` too, but found a callback's body via a bare
+ * `indexOf("{", match.index)` — which matched a destructured handler
+ * param's own `{` (`({ data }) =>`) before the real block, false-failing.
+ * The fix here anchors to the arrow (`=>`) first, then requires a `{`
+ * immediately after it (only whitespace between): a parameter list's own
+ * braces sit *before* the arrow, so they're never candidates, regardless of
+ * what the parameter list contains. An arrow with an implicit-return
+ * expression (no `{` right after `=>`) has no block to bound and is
+ * treated as ungated — fails safe, the same choice as an unrecognised
+ * `skipWaiting` call anywhere else. The arrow search is bounded to a short
+ * window after the `addEventListener` match (a parameter list is never
+ * remotely that long) so a call passing a *named* handler reference
+ * instead of an inline arrow — `addEventListener("message", handler)`,
+ * not currently used anywhere in this codebase — cannot accidentally latch
+ * onto some unrelated arrow much later in the file.
  */
 function isSkipWaitingGated(swSource) {
-  const cleaned = stripCommentsAndStrings(swSource)
-  const callPattern = /(?:self\.)?skipWaiting\s*\(/g
-  const callStarts = new Set([...cleaned.matchAll(callPattern)].map((m) => m.index))
-  if (callStarts.size === 0) return true
+  const forPatterns = stripCommentsOnly(swSource)
+  const forBraces = stripCommentsAndStrings(swSource)
 
-  let depth = 0
-  for (let i = 0; i < cleaned.length; i++) {
-    if (callStarts.has(i) && depth === 0) return false
-    const c = cleaned[i]
-    if (c === "{") depth++
-    else if (c === "}") depth--
+  const callPattern = /(?:self\.)?skipWaiting\s*\(/g
+  const callStarts = [...forBraces.matchAll(callPattern)].map((m) => m.index)
+  if (callStarts.length === 0) return true
+
+  const ARROW_SEARCH_WINDOW = 200
+  const gatedRanges = []
+  const listenerPattern = /addEventListener\(\s*["']message["']/g
+  let match
+  while ((match = listenerPattern.exec(forPatterns))) {
+    const windowEnd = match.index + ARROW_SEARCH_WINDOW
+    const arrowIndex = forPatterns.indexOf("=>", match.index)
+    if (arrowIndex === -1 || arrowIndex > windowEnd) continue
+    let cursor = arrowIndex + 2
+    while (/\s/.test(forPatterns[cursor] ?? "")) cursor++
+    if (forPatterns[cursor] !== "{") continue
+    const braceStart = cursor
+    const braceEnd = findMatchingBrace(forBraces, braceStart)
+    if (braceEnd === -1) continue
+    gatedRanges.push([braceStart, braceEnd])
   }
-  return true
+
+  return callStarts.every((start) => gatedRanges.some(([s, e]) => start > s && start < e))
 }
 
 /** `min-h-screen` in a class list, outside an `<aside>` sidebar (desktop-only,
@@ -237,14 +283,59 @@ function classNameScopedTags(source) {
   return tags
 }
 
-/** Every `components/ui/*.tsx` element with both `onClick` and `hover:` on
- * its own opening tag must also carry `active:` on that same tag — the
- * 8-state component contract (DESIGN.md §12) applied mechanically to the
- * one state most likely to be forgotten. Scoped per element
- * (`classNameScopedTags`), not file-wide substring matching: a file with
- * two `hover:`+`onClick` elements where only one also has `active:` must
- * still fail on the other, which a bare `source.includes("active:")` check
- * cannot see. */
+/** Every balanced-paren `cva(...)` call's full argument list in `source` —
+ * base classes array, the variants object, all of it — as one string per
+ * call. `class-variance-authority` recipes (e.g. `button.tsx`'s `button =
+ * cva([...], { variants: {...} })`) hold their `hover:`/`active:` classes as
+ * plain string literals inside that structure, not on a JSX tag at all;
+ * `classNameScopedTags` above cannot see them. */
+function cvaScopedBlocks(source) {
+  const blocks = []
+  const pattern = /\bcva\(/g
+  let match
+  while ((match = pattern.exec(source))) {
+    const parenStart = match.index + match[0].length - 1
+    let depth = 0
+    let parenEnd = -1
+    for (let i = parenStart; i < source.length; i++) {
+      const c = source[i]
+      if (c === "(") depth++
+      else if (c === ")") {
+        depth--
+        if (depth === 0) {
+          parenEnd = i
+          break
+        }
+      }
+    }
+    if (parenEnd === -1) continue
+    blocks.push(source.slice(parenStart, parenEnd + 1))
+  }
+  return blocks
+}
+
+/**
+ * Every interactive `components/ui/*.tsx` control must pair `hover:` with
+ * `active:` — the 8-state component contract (DESIGN.md §12) applied
+ * mechanically to the one state most likely to be forgotten. Two
+ * complementary scopes, since this codebase styles interactive elements two
+ * different ways:
+ *
+ * - **Inline on the JSX tag** (`classNameScopedTags`): an element with both
+ *   `onClick` and `hover:` on its own opening tag must also carry `active:`
+ *   there. Scoped per element, not file-wide substring matching — a file
+ *   with two such elements where only one also has `active:` still fails on
+ *   the other, which a bare `source.includes("active:")` check cannot see.
+ * - **A `cva(...)` variant recipe** (`cvaScopedBlocks`, A8 follow-up):
+ *   `button.tsx` — this product's primary interactive control — declares no
+ *   `onClick` of its own (it's a reusable primitive; callers pass one via
+ *   props spreading) and keeps `hover:`/`active:` inside a `cva(...)` call's
+ *   base array and variant strings rather than on a literal JSX tag, so the
+ *   first scope alone never even looks at it. A `cva(...)` call with
+ *   `hover:` anywhere in its argument list must also have `active:`
+ *   somewhere in that same call — not necessarily the same variant string,
+ *   since a recipe's base array applies to every variant.
+ */
 function checkHoverRequiresActive(files) {
   const offenders = new Set()
   for (const [relPath, source] of Object.entries(files)) {
@@ -253,6 +344,10 @@ function checkHoverRequiresActive(files) {
       if (!tag.includes("onClick")) continue
       if (!tag.includes("hover:")) continue
       if (!tag.includes("active:")) offenders.add(relPath)
+    }
+    for (const block of cvaScopedBlocks(source)) {
+      if (!block.includes("hover:")) continue
+      if (!block.includes("active:")) offenders.add(relPath)
     }
   }
   return [...offenders]
@@ -410,7 +505,7 @@ export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource
 
   const hoverActiveOffenders = checkHoverRequiresActive(allFiles)
   checks.push({
-    name: "components/ui/*.tsx: every onClick + hover: element also has active:",
+    name: "components/ui/*.tsx: every hover: (inline tag or cva recipe) also has active:",
     pass: hoverActiveOffenders.length === 0,
     detail: hoverActiveOffenders.join(", "),
   })
@@ -428,7 +523,7 @@ export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource
   })
 
   checks.push({
-    name: "sw.ts: skipWaiting() never runs at module scope (depth 0)",
+    name: 'sw.ts: skipWaiting() only runs inside addEventListener("message", ...)',
     pass: isSkipWaitingGated(swSource ?? ""),
   })
 

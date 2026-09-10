@@ -356,6 +356,41 @@ describe("runChecks — hover: requires active: on the same element", () => {
     const result = run(input)
     expect(result.checks.find((c) => c.name.includes("also has active:"))?.pass).toBe(true)
   })
+
+  describe("cva(...) variant recipes (A8 follow-up)", () => {
+    // button.tsx's actual shape: no onClick of its own (a reusable
+    // primitive; callers pass one via props spreading), hover: in a variant
+    // string, active: in the base array — classNameScopedTags alone can't
+    // see any of this, since there's no JSX tag with className= at all.
+    const CVA_BUTTON = `
+const button = cva(
+  ["active:scale-[0.98]", "disabled:opacity-50"],
+  {
+    variants: {
+      variant: {
+        primary: "bg-accent hover:bg-accent-hover",
+      },
+    },
+  },
+)
+`
+
+    it("passes a real cva recipe with hover: in a variant and active: in the base array", () => {
+      const input = goodInput()
+      input.files["components/ui/button.tsx"] = CVA_BUTTON
+      const result = run(input)
+      expect(result.checks.find((c) => c.name.includes("also has active:"))?.pass).toBe(true)
+    })
+
+    it("fails a cva recipe with hover: but no active: anywhere in the call (the review's own mutation test)", () => {
+      const input = goodInput()
+      input.files["components/ui/button.tsx"] = CVA_BUTTON.replace("active:scale-[0.98]", "focus:scale-[0.98]")
+      const result = run(input)
+      const check = result.checks.find((c) => c.name.includes("also has active:"))
+      expect(check?.pass).toBe(false)
+      expect(check?.detail).toContain("components/ui/button.tsx")
+    })
+  })
 })
 
 describe("runChecks — lm-nav-chrome coverage", () => {
@@ -420,6 +455,35 @@ self.addEventListener("message", ({ data }) => {
 self.skipWaiting()`
     const result = run(input)
     expect(result.checks.find((c) => c.name.includes("skipWaiting"))?.pass).toBe(false)
+  })
+
+  it("fails on a module-scope conditional that always runs, even though it's brace-nested (A8 follow-up)", () => {
+    // Being nested inside *some* block proves nothing about when that block
+    // runs — an `if` gated on a build-time constant, not a client message,
+    // still executes unconditionally the moment the worker evaluates.
+    const input = goodInput()
+    input.swSource = `if (import.meta.env.PROD) { self.skipWaiting() }`
+    const result = run(input)
+    expect(result.checks.find((c) => c.name.includes("skipWaiting"))?.pass).toBe(false)
+  })
+
+  it("fails on a module-scope try/catch that always runs (A8 follow-up)", () => {
+    const input = goodInput()
+    input.swSource = `try { self.skipWaiting() } catch {}`
+    const result = run(input)
+    expect(result.checks.find((c) => c.name.includes("skipWaiting"))?.pass).toBe(false)
+  })
+
+  it("passes the real sw.ts pattern: a typed event param, nested inside an if inside the listener", () => {
+    const input = goodInput()
+    input.swSource = `
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if ((event.data as { type?: unknown } | undefined)?.type === "SKIP_WAITING") {
+    self.skipWaiting().catch(() => {})
+  }
+})`
+    const result = run(input)
+    expect(result.checks.find((c) => c.name.includes("skipWaiting"))?.pass).toBe(true)
   })
 })
 

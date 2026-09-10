@@ -695,9 +695,15 @@ class-list `min-h-screen` outside a desktop `<aside>` (there is no
 Tailwind v4 emits `.min-h-screen` after `.min-h-dvh` regardless of source
 order and both sit at equal specificity, so `min-h-screen` always wins the
 cascade when both are present), the 8-state `active:` requirement on every
-interactive `components/ui/*.tsx` control (scoped per element, not merely
-present somewhere in the file), and that `skipWaiting` never runs at
-module scope. `scripts/check-bundle-budget.mjs` (wired into `npm run
+interactive `components/ui/*.tsx` control — whether its classes sit inline
+on the JSX tag or inside a `cva(...)` variant recipe (`button.tsx`'s own
+shape: a reusable primitive with no `onClick` of its own, its `hover:`/
+`active:` split across a base array and a variant string rather than on
+any literal tag) — scoped per element/recipe, not merely present somewhere
+in the file, and that `skipWaiting` only ever runs inside `self.
+addEventListener("message", ...)`, never at module scope or inside some
+other block that still executes unconditionally at install time.
+`scripts/check-bundle-budget.mjs` (wired into `npm run
 build` via `postbuild` — which means it now also gates every production
 deploy, not only CI, since `deploy.yml`'s frontend build step runs through
 the same `npm run build`) fails the build if any shipped JS chunk exceeds
