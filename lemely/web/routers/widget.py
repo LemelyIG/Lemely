@@ -72,7 +72,13 @@ def _next_session(
                 earliest_date = session.date
                 earliest = WidgetNextSessionDTO(
                     title=session.topic,
-                    startsAt=datetime.combine(session.date, time.min, tzinfo=UTC).isoformat(),
+                    # Noon UTC, not `time.min` (A5 review fix): Adaptive
+                    # Cards' `DATE()` formatting (`public/widgets/streak.json`)
+                    # converts to the viewer's local timezone before
+                    # rendering, so a midnight-UTC timestamp shifts back a
+                    # calendar day for any student west of UTC. Noon UTC is
+                    # the correct calendar date at every realistic offset.
+                    startsAt=datetime.combine(session.date, time(12, 0), tzinfo=UTC).isoformat(),
                 )
     return earliest
 

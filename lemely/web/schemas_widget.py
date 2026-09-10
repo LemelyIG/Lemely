@@ -23,10 +23,14 @@ class WidgetNextSessionDTO(ApiModel):
     """The session's topic (`StudyPlanSessionDTO.topic`'s own field)."""
 
     startsAt: str
-    """ISO 8601, UTC. `SessionView.date` (the underlying record) carries no
-    time of day — this is midnight UTC of that date, never a fabricated
-    hour: representing the real day-granularity schedule honestly beats
-    inventing a time nothing chose."""
+    """ISO 8601, UTC, noon. `SessionView.date` (the underlying record)
+    carries no time of day — this is noon UTC of that date, not midnight
+    (A5 review fix): the Adaptive Card template converts to the viewer's
+    local timezone before rendering just the date, and midnight UTC shifts
+    back a calendar day for anyone west of UTC. Noon is the time of day
+    every realistic timezone offset still renders as the same date, so it
+    represents the real day-granularity schedule without either fabricating
+    an hour or being wrong for half the world."""
 
 
 class StudentWidgetDTO(ApiModel):
