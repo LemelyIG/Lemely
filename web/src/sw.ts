@@ -38,8 +38,55 @@ import {
   type PushNotificationContent,
 } from "@/lib/push/pushDecision"
 import { SHARE_CACHE, handleShareTargetFetch } from "@/sw/shareTarget"
+import { fetchWidgetDataOrStub } from "@/sw/widgetBridge"
 
-declare const self: ServiceWorkerGlobalScope
+/*
+ * The PWA Widgets API (Windows 11 Widgets Board / Android home-screen
+ * widgets) is Chromium-experimental and not yet in TypeScript's own
+ * `lib.webworker.d.ts` — same situation `vite-env.d.ts` documents for the
+ * File Handling API's `LaunchParams`. Declared narrow, to exactly what this
+ * file calls: `getByInstanceId`, `matchAll`, `updateByInstanceId`,
+ * `widgetuninstall` and `periodicsync`-driven updates are real parts of the
+ * API this app does not use.
+ *
+ * Augmenting `ServiceWorkerGlobalScopeEventMap` (rather than typing the
+ * listener's `event` parameter by hand at each call site) is what lets
+ * `self.addEventListener("widgetinstall", ...)` below infer `WidgetEvent`
+ * through the same generic overload `"push"`/`"message"` already use, so a
+ * typo'd event name or a wrong property on `event.widget` is still a
+ * `tsc -b` error, not a runtime one.
+ */
+interface WidgetDefinition {
+  tag: string
+  /** camelCased from the manifest's `ms_ac_template` at the browser level —
+   * the Adaptive Card template's URL. */
+  msAcTemplate: string
+  /** camelCased from the manifest's `data` — a URL the browser expects to
+   * return JSON, per the spec, not the JSON payload itself. */
+  data: string
+}
+
+interface WidgetObject {
+  definition: WidgetDefinition
+}
+
+interface WidgetsNamespace {
+  getByTag(tag: string): Promise<WidgetObject | undefined>
+  updateByTag(tag: string, payload: { template: string; data: string }): Promise<void>
+}
+
+interface WidgetEvent extends ExtendableEvent {
+  widget: WidgetObject
+}
+
+declare global {
+  interface ServiceWorkerGlobalScopeEventMap {
+    widgetinstall: WidgetEvent
+    widgetresume: WidgetEvent
+  }
+}
+
+declare const self: ServiceWorkerGlobalScope & { widgets: WidgetsNamespace }
 
 // --- App shell (the generateSW half, reproduced) ----------------------------
 
@@ -265,5 +312,76 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
       }
       await self.clients.openWindow(target)
     })(),
+  )
+})
+
+// --- Widgets (Windows 11 / Android widget surface, packet A5's backend) -----
+//
+// No `widgetclick` listener: that event only fires for an `Action.Execute`
+// verb-based action, and `public/widgets/streak.json`'s one action is
+// `Action.OpenUrl` — the widget host opens it directly, so this worker never
+// sees a click at all. A listener here would be dead code for a template
+// that carries no verb to trigger it.
+
+/**
+ * The tag `vite/manifest.ts`'s `widgets` member declares for the one widget
+ * this app ships. Hardcoded rather than read from anywhere importable here:
+ * `vite/manifest.ts` is a Vite-config module, not part of this file's own
+ * narrow `tsconfig.sw.json` project (see that file's own comment on why the
+ * include list stays explicit), and there is exactly one widget to name.
+ */
+const STREAK_WIDGET_TAG = "lemely-streak"
+
+/**
+ * Render one widget instance with the caller's current data.
+ *
+ * The template is always fetched fresh from `widget.definition.msAcTemplate`
+ * (never inlined) because the Adaptive Cards spec requires the *rendered*
+ * template text in every `updateByTag` call, not just the data — there is no
+ * "keep the template, only update the data" call in this API. The stub
+ * fallback's URL comes from `widget.definition.data` — the exact value
+ * `vite/manifest.ts`'s `widgets[0].data` declares — rather than a second,
+ * hand-typed copy of that path living here too.
+ */
+async function renderWidget(widget: WidgetObject): Promise<void> {
+  const template = await (await fetch(widget.definition.msAcTemplate)).text()
+  const data = await fetchWidgetDataOrStub(
+    self.clients,
+    CLIENT_REPLY_TIMEOUT_MS,
+    widget.definition.data,
+    fetch,
+  )
+  await self.widgets.updateByTag(widget.definition.tag, { template, data })
+}
+
+// A widget is added to the dashboard without necessarily being rendered yet
+// (Microsoft's own docs: "it is not automatically rendered using the
+// ms_ac_template and data fields") — this is the event that asks this worker
+// to actually draw it for the first time.
+self.addEventListener("widgetinstall", (event) => {
+  event.waitUntil(renderWidget(event.widget))
+})
+
+// Fired when the widget host resumes rendering installed widgets after
+// suspending them to save resources — the moment this worker gets another
+// chance at fresher data than whatever was last pushed, which may by now be
+// the stub if no tab was open at install time.
+self.addEventListener("widgetresume", (event) => {
+  event.waitUntil(renderWidget(event.widget))
+})
+
+// A widget instance can already be installed — from before this worker code
+// shipped, or from an install that landed with no page open to answer the
+// handshake — with nothing to make it re-render on its own once one is.
+// `activate` is the same moment `sw.ts`'s non-precache branch already uses to
+// bring a returning visitor onto a fresh deploy (above); doing the same for
+// an already-installed widget here means a reader never has to remove and
+// re-add it just to see real data for the first time.
+self.addEventListener("activate", (event) => {
+  event.waitUntil(
+    self.widgets.getByTag(STREAK_WIDGET_TAG).then((widget) => {
+      if (widget === undefined) return
+      return renderWidget(widget)
+    }),
   )
 })

@@ -89,3 +89,35 @@ describe("sw.ts — non-precache activate handler spares the share-target cache 
     expect(body).toMatch(/\.filter\(/)
   })
 })
+
+/*
+ * Widget SW bridge (blocking, Phase A) — wiring only, not exercised by a
+ * test: `renderWidget`/the three listeners below reach `self.widgets` and
+ * `self.clients`, both WebWorker-only, so this suite pins them the same way
+ * it pins the push listener and the share-target CSRF guard above. The
+ * handshake logic and the fallback-to-stub path themselves ARE exercised
+ * directly — see `widgetBridge.test.ts` — because that logic was
+ * deliberately pulled into `sw/widgetBridge.ts` (self-free) for exactly this
+ * reason, mirroring `sw/shareTarget.ts`'s own split.
+ */
+describe("sw.ts — widget bridge wiring (Windows 11 / Android widget surface)", () => {
+  it("renders the widget on widgetinstall and widgetresume, via the same fetchWidgetDataOrStub handshake", () => {
+    expect(source).toMatch(/self\.addEventListener\(\s*"widgetinstall"/)
+    expect(source).toMatch(/self\.addEventListener\(\s*"widgetresume"/)
+    expect(source).toMatch(/fetchWidgetDataOrStub\(/)
+    expect(source).toMatch(/self\.widgets\.updateByTag\(/)
+  })
+
+  it("re-renders an already-installed widget on activate, not only on a fresh widgetinstall", () => {
+    expect(source).toMatch(/self\.widgets\.getByTag\(/)
+  })
+
+  it("fetches the Adaptive Card template fresh from the widget's own definition, never a hand-typed copy of the URL", () => {
+    expect(source).toMatch(/widget\.definition\.msAcTemplate/)
+  })
+
+  it("passes the fallback stub URL from the widget's own definition.data, not a second hardcoded copy of the path", () => {
+    expect(source).toMatch(/widget\.definition\.data/)
+    expect(source).not.toMatch(/["'`]\/?widgets\/streak-data\.json["'`]/)
+  })
+})
