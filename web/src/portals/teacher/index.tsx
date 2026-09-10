@@ -435,7 +435,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
     // exists below `md`, so it belongs on the nav layer with the sidebar rather
     // than on the sticky-table-header layer beneath it — and DESIGN.md §7 wants
     // the rung named, not reached through an arbitrary value.
-    <div className="sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile py-2.5 backdrop-blur-nav md:px-page-desktop">
+    <div className="lm-app-header lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile py-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"
@@ -541,7 +541,7 @@ function TeacherLayout() {
     // which is why it read as the generic dashboard the anti-references name.
     // `bg-paper`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-screen min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar />
 

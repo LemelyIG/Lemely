@@ -141,7 +141,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
   const homeLabel = session ? portalLabelForRole(session.role) : "Sign in"
 
   return (
-    <div className="paper-grain flex min-h-screen flex-col bg-paper">
+    <div className="paper-grain flex min-h-screen min-h-dvh flex-col bg-paper">
       <SkipLink />
 
       <header className="border-b border-rule bg-paper-raised">

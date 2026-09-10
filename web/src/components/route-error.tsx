@@ -238,7 +238,7 @@ function renderFailure(
     // honest "paper" of its own to paint (the portal's own chrome already
     // is), so this renders nothing at all rather than a mismatched full-page
     // block sitting inside the content slot.
-    return frame === "standalone" ? <div className="min-h-screen bg-paper" /> : null
+    return frame === "standalone" ? <div className="min-h-screen min-h-dvh bg-paper" /> : null
   }
 
   if (failure.variant === "service-trouble") {

@@ -215,6 +215,11 @@
   --fs-data-md: 15px;
   --fs-data-sm: 11px;
   --fs-hand: 19px;
+  /* Not a §4.2 type rung: iOS Safari auto-zooms the viewport on focusing any
+     text input under 16px, so this is a platform floor for native form
+     fields, applied via `.text-field` regardless of what the surrounding
+     copy scale would otherwise call for. */
+  --fs-field: 16px;
 }
 
 @theme inline {
@@ -576,6 +581,15 @@ html,
 body {
   /* Hallmark mobile non-negotiable: no horizontal scroll, anywhere, ever. */
   overflow-x: clip;
+  /* Kills the grey tap flash Chrome/Android and older Safari paint on every
+     touch, which reads as a "hit" on the phone regardless of whether the
+     tapped element responds — real focus/active states already carry the
+     feedback. */
+  -webkit-tap-highlight-color: transparent;
+  /* Stops a swipe-to-scroll gesture at the page top/bottom from bleeding into
+     the browser's pull-to-refresh/back-navigation chrome; each scrollable
+     region below still rubber-bands to its own edges. */
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -635,6 +649,9 @@ body {
   select,
   textarea {
     min-block-size: 44px;
+    /* Removes the ~300ms double-tap-to-zoom delay a finger otherwise pays on
+       every one of these controls before the browser commits to a single tap. */
+    touch-action: manipulation;
   }
 
   /* Checkbox and radio are excluded above, and the exclusion is load-bearing
@@ -763,6 +780,12 @@ body {
   font-size: var(--fs-body-sm);
   font-weight: 400;
   line-height: 1.5;
+}
+/* The `--fs-field` platform floor (see its token comment). Font-size only —
+   it composes with whichever `.text-body-*` a field would otherwise carry
+   for family/weight/line-height, not a replacement for one. */
+.text-field {
+  font-size: var(--fs-field);
 }
 .text-label {
   font-family: var(--font-sans);
@@ -1140,6 +1163,37 @@ body {
    the column to 65ch instead would shrink every card to match the prose. */
 .lm-prose {
   max-width: 65ch;
+}
+
+/* Keeps a scroll region's own rubber-band from handing off to the page (or,
+   inside a drawer/sheet, to the backdrop behind it) once it hits its end. */
+.lm-scroll {
+  overscroll-behavior: contain;
+}
+
+/* Standalone-app chrome: the nav drawer panel and trigger, `BottomNav`, and
+   the four portal top bars. These are navigation furniture, not content — a
+   long-press or drag-select on them (callout menu, text selection) is a
+   browser reflex with nothing useful to act on here, and on a home-screen
+   app it reads as a bug rather than a browser feature. */
+.lm-nav-chrome {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* Only paints in standalone/home-screen mode — in a normal browser tab the
+   OS chrome already reserves the notch/status-bar area, and adding this
+   padding there would double it. */
+@media (display-mode: standalone) {
+  .lm-app-header {
+    padding-top: env(safe-area-inset-top);
+  }
+}
+
+/* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
+   home-indicator clearance `BottomNav` and the toast rail both need. */
+.lm-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .lm-scroll::-webkit-scrollbar {

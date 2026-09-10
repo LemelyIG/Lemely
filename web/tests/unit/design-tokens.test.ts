@@ -96,6 +96,16 @@ describe("lib/utils.ts and index.css agree in both directions", () => {
   })
 })
 
+describe("--fs-field platform floor", () => {
+  it("is defined at 16px", () => {
+    expect(css).toContain("--fs-field: 16px")
+  })
+
+  it("is a registered font-size class, not a display/body/data type rung", () => {
+    expect(registered).toContain("field")
+  })
+})
+
 describe("no arbitrary literals in the retrofitted portals", () => {
   // `portals/student/` is deliberately absent: only its shell (index.tsx) was
   // retrofitted in P3.10 chunk c. Its screens still carry ~120 literals, which

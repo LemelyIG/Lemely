@@ -21,11 +21,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 1 | `no-optimistic-flashcard-grading` | native | critical | B | B5 | pending |  |
 | 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | pending |  |
 | 3 | `silent-update-swap` | native | critical | A | A7 | pending |  |
-| 4 | `kb-1` | native | critical | A | A1 | pending |  |
+| 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 5 | `nav-1` | native | critical | B | B2 | pending |  |
 | 6 | `offline-1` | native | critical | B | B6 | pending |  |
-| 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | pending |  |
-| 8 | `tap-highlight-color` | native | critical | A | A1 | pending |  |
+| 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
+| 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 9 | `T1` | native | critical | B | B2 | pending |  |
 | 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | pending |  |
 | 11 | `zero-haptics-anywhere` | native | high | B | B5 | pending |  |
@@ -46,13 +46,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 26 | `camera-scanner-basics-only` | native | high | B | B5 | pending |  |
 | 27 | `web-share-unused-on-result-screen` | native | high | B | B5 | pending |  |
 | 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login.tsx LINK_CLASS gains `inline-flex min-h-11 items-center` |
-| 29 | `no-safe-area-insets` | native | high | A | A1 | pending |  |
+| 29 | `no-safe-area-insets` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 30 | `no-ios-splash-screens` | native | high | B | B1 | pending |  |
-| 31 | `safe-area-viewport-cover` | native | high | A | A1 | pending |  |
-| 32 | `status-bar-style-default-mismatch` | native | high | A | A1 | pending |  |
-| 33 | `double-tap-zoom-unneutralized` | native | high | A | A1 | pending |  |
+| 31 | `safe-area-viewport-cover` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
+| 32 | `status-bar-style-default-mismatch` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
+| 33 | `double-tap-zoom-unneutralized` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 34 | `modal-drawer-scroll-lock-fragile` | native | high | B | B2 | pending |  |
-| 35 | `overscroll-behavior-absent` | native | high | A | A1 | pending |  |
+| 35 | `overscroll-behavior-absent` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 36 | `TT-1` | native | high | B | B3 | pending |  |
 | 37 | `T2` | native | high | B | B1 | pending |  |
 | 38 | `T3` | native | high | B | B2 | pending |  |
@@ -68,21 +68,21 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — QueryState's error branch renders OfflineState for ApiError(0,...)/TypeError |
 | 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer |
 | 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | pending |  |
-| 51 | `no-overscroll-behavior` | native | medium | A | A1 | pending |  |
+| 51 | `no-overscroll-behavior` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 52 | `no-orientation-policy` | native | medium | B | B5 | pending |  |
-| 53 | `no-standalone-media-query` | native | medium | A | A1 | pending |  |
-| 54 | `touch-callout-select-on-chrome` | native | medium | A | A1 | pending |  |
+| 53 | `no-standalone-media-query` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
+| 54 | `touch-callout-select-on-chrome` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 55 | `T4` | native | medium | B | B2 | pending |  |
 | 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | pending |  |
 | 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | pending |  |
-| 58 | `kb-6` | native | low | A | A1 | pending |  |
+| 58 | `kb-6` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 59 | `nav-6` | native | low | B | B2 | pending |  |
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
 | 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | done A4 | `npm run build` (web/) — `Grading.tsx` thumbnail `<img>` now has `decoding="async"` |
 | 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | pending |  |
 | 63 | `silent-401-push-config-every-load` | native | low | A | A7 | pending |  |
 | 64 | `sw-registers-on-staging-but-no-fetch-handling` | native | low | A | A7 | pending |  |
-| 65 | `min-h-screen-no-dvh-fallback` | native | low | A | A1 | pending |  |
+| 65 | `min-h-screen-no-dvh-fallback` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 66 | `T5` | native | low |  |  | no-action | dossier: motion-rule compliance verified; regression guard lands in A8 check-native-invariants |
 | 67 | `auth-gated-capture-method-sound` | pwa | PASS |  |  | no-action | PASS check |
 | 68 | `capture-pipeline-choice` | pwa | PARTIAL | A | A5 | pending |  |

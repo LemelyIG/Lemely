@@ -333,6 +333,7 @@ with the wrong family.
 | `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
 | `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
 | `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
+| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` sets only `font-size`; it composes with whatever `.text-body-*` a field otherwise carries. |
 
 **Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
 below 768px. Everything else holds; the body scale is already comfortable on a
@@ -343,6 +344,16 @@ students actually use.
 display headings and no italic emphasis inside a heading (§3.2 item 12);
 emphasis is weight, accent colour, or a drawn underline. Italic is body-copy
 only, plus Caveat, which is its own thing.
+
+**Platform chrome.** `index.html`'s `apple-mobile-web-app-status-bar-style` is
+`"default"`, not `"black-translucent"`, on purpose: `"black-translucent"` draws
+the status bar text over the page instead of reserving space for it, which is
+the exact "phone drew a dark address bar over a light app" defect the
+`theme-color` fix above this meta tag exists to prevent. `"default"` keeps the
+status bar its own opaque row, matching the light `--paper` ground everywhere
+this product renders. Do not "fix" the mismatch between this note's location
+and a stale `§5` reference elsewhere — this is the correct, current home for
+it.
 
 ---
 

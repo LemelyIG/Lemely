@@ -74,7 +74,7 @@ export function BottomNav({ items, className, ...props }: BottomNavProps) {
         // P6.3: `z-nav`. The raw `z-30` put a *navigation* bar in the dropdown
         // band, above every menu and popover that would ever need to open over
         // it — the exact inversion the §7 scale exists to prevent.
-        "fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-border bg-surface",
+        "lm-nav-chrome lm-safe-bottom fixed inset-x-0 bottom-0 z-nav flex items-stretch border-t border-border bg-surface",
         className,
       )}
       {...props}
