@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S4 R5 V4 */
 import { useEffect, useRef } from "react"
 import { useServiceWorkerUpdate } from "@/lib/pwa/useServiceWorkerUpdate"
 import { useToast } from "@/components/ui/toast"

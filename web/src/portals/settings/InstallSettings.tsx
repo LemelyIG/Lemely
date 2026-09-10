@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R5 V4 */
 import { DownloadSimple, Export } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { useInstallPrompt } from "@/lib/pwa/useInstallPrompt"
