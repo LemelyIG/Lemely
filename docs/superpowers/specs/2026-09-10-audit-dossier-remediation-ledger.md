@@ -20,7 +20,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 |---|---|---|---|---|---|---|---|
 | 1 | `no-optimistic-flashcard-grading` | native | critical | B | B5 | pending |  |
 | 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | pending |  |
-| 3 | `silent-update-swap` | native | critical | A | A7 | pending |  |
+| 3 | `silent-update-swap` | native | critical | A | A7 | done A7 | `npx vitest run tests/unit/swSource.test.ts tests/unit/serviceWorkerUpdate.test.ts` |
 | 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 5 | `nav-1` | native | critical | B | B2 | pending |  |
 | 6 | `offline-1` | native | critical | B | B6 | pending |  |
@@ -30,7 +30,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 11 | `zero-haptics-anywhere` | native | high | B | B5 | pending |  |
 | 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
-| 13 | `no-install-affordance` | native | high | A | A7 | pending |  |
+| 13 | `no-install-affordance` | native | high | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
 | 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | pending |  |
 | 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
 | 16 | `nav-2` | native | high | B | B3 | pending |  |
@@ -61,7 +61,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |
 | 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | pending |  |
 | 43 | `no-launch-handler` | native | medium | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
-| 44 | `no-periodic-update-check` | native | medium | A | A7 | pending |  |
+| 44 | `no-periodic-update-check` | native | medium | A | A7 | done A7 | `npx vitest run tests/unit/serviceWorkerUpdate.test.ts (scheduleUpdateChecks: visibilitychange + 60min interval)` |
 | 45 | `kb-3` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 46 | `kb-4` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 47 | `nav-5` | native | medium | B | B3 | pending |  |
@@ -80,8 +80,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
 | 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | done A4 | `npm run build` (web/) — `Grading.tsx` thumbnail `<img>` now has `decoding="async"` |
 | 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | pending |  |
-| 63 | `silent-401-push-config-every-load` | native | low | A | A7 | pending |  |
-| 64 | `sw-registers-on-staging-but-no-fetch-handling` | native | low | A | A7 | pending |  |
+| 63 | `silent-401-push-config-every-load` | native | low | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
+| 64 | `sw-registers-on-staging-but-no-fetch-handling` | native | low | A | A7 | done A7 | `already satisfied by A6's unconditional share-target fetch listener (sw.ts, outside precacheEnabled) — verified via tests/unit/swSource.test.ts` |
 | 65 | `min-h-screen-no-dvh-fallback` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 66 | `T5` | native | low |  |  | no-action | dossier: motion-rule compliance verified; regression guard lands in A8 check-native-invariants |
 | 67 | `auth-gated-capture-method-sound` | pwa | PASS |  |  | no-action | PASS check |
@@ -151,7 +151,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 131 | `ThemeColor` | pwa | PASS |  |  | no-action | PASS check |
 | 132 | `sec-02-cert-validity` | pwa | PASS |  |  | no-action | PASS check |
 | 133 | `sec-03-mixed-content` | pwa | PASS | A | A6 | no-action | dossier: no change — sec-03 already correct on develop (A6 re-verify) |
-| 134 | `emp-beforeinstallprompt-not-observed` | pwa | PARTIAL | A | A7 | pending |  |
+| 134 | `emp-beforeinstallprompt-not-observed` | pwa | PARTIAL | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
 | 135 | `emp-lighthouse-no-pwa-audits` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 136 | `emp-offline-staging-by-design` | pwa | FAILS-ON-STAGING-ONLY | B | B6 | pending |  |
 | 137 | `brand-assets-og-card` | pwa | PASS |  |  | no-action | PASS check |
@@ -172,7 +172,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 152 | `sw-periodic-background-sync` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 153 | `sw-push-currently-unavailable` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 154 | `sw-push-listener-real` | pwa | PASS | A | A7 | no-action | dossier: no change — push listener already correctly implemented (A7 re-verify) |
-| 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) but ROOT-CAUSE-UNVERIFIED — current source shows no code path from the audited URL to this endpoint | A | A7 | pending |  |
+| 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) but ROOT-CAUSE-UNVERIFIED — current source shows no code path from the audited URL to this endpoint | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
 | 156 | `parent-paid-tutoring-marketplace-ui` | ui | critical |  |  | skipped | exploration-only paid tutoring marketplace — skip marketplace/bookings/checkout |
 | 157 | `brand-color-system-superseded` | ui | high | C | C3 | pending |  |
 | 158 | `brand-cover-headline-and-stats-fabricated` | ui | high |  |  | skipped | skip: cover stat trio / fabricated headline not built |
