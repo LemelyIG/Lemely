@@ -80,7 +80,7 @@ export function QuestionRow({
           aria-expanded={open}
           className={cn(
             "flex-1 min-w-0 flex items-center gap-3 text-start rounded-md cursor-pointer",
-            "hover:bg-surface-2 active:bg-surface-2 transition-colors",
+            "hover:bg-surface-2 active:scale-[0.98] transition-[background-color,transform]",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           )}
         >
@@ -102,7 +102,7 @@ export function QuestionRow({
             aria-expanded={open}
             aria-label={open ? "Collapse question detail" : "Expand question detail"}
             className={cn(
-              "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:bg-surface-2 transition-colors cursor-pointer",
+              "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             )}
           >

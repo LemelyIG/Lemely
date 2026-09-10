@@ -460,12 +460,22 @@ describe("no raw white text utility", () => {
  * `className="..."` / `className={...}` text — it does not look inside a
  * `cva(...)` recipe string, which is exactly where `weakness-chip.tsx`'s
  * `text-left` was hiding. This gate is deliberately narrower in scope
- * (`components/ui`, the two physical utilities the dossier's sweep named) but
- * wider in what it reads: the same `cn`/`cva`/`buttonVariants`-aware class-
- * group walk `contrastRules.test.ts` and `hoverTransition.test.ts` use, so a
- * physical utility cannot hide inside a variant recipe here either.
+ * (`components/ui`, the physical-direction utilities the dossier's sweep and
+ * the A3 review named) but wider in what it reads: the same
+ * `cn`/`cva`/`buttonVariants`-aware class-group walk `contrastRules.test.ts`
+ * and `hoverTransition.test.ts` use, so a physical utility cannot hide inside
+ * a variant recipe here either.
+ *
+ * Widened after the A3 review found `role-switcher.tsx`'s own dropdown menu
+ * positioned with `right-0` in the same commit that fixed this exact class of
+ * bug elsewhere in that file — the original two-entry list (`ml-auto`,
+ * `text-left`) could not see it, since `right-0` is neither. `left-`/`right-`
+ * are prefix entries (catching `right-0`, `left-4`, …), unlike the exact-token
+ * entries above them, which is why they get their own trailing-boundary rule
+ * below (mirroring `rtlSafety.test.ts`'s `PHYSICAL` table) rather than the
+ * bare negative-lookahead the exact tokens use.
  */
-describe("RTL: no ml-auto or text-left survives in components/ui", () => {
+describe("RTL: no physical-direction leak survives in components/ui", () => {
   function classGroups(source: string): { text: string; index: number }[] {
     const out: { text: string; index: number }[] = []
     const opener = /\b(?:cn|cva|buttonVariants)\s*\(/g
@@ -486,20 +496,31 @@ describe("RTL: no ml-auto or text-left survives in components/ui", () => {
     return out
   }
 
+  /** Exact tokens (no value suffix) vs. prefixes (`left-0`, `right-4`, …). */
+  const EXACT_BAD = ["ml-auto", "mr-auto", "text-left", "text-right"]
+  const PREFIX_BAD = ["left-", "right-"]
+
   const uiFiles = sourceFiles(join(SRC, "components", "ui"))
 
   it("finds components/ui files to check", () => {
     expect(uiFiles.length).toBeGreaterThan(10)
   })
 
-  it("no class expression carries ml-auto or text-left", () => {
+  it("no class expression carries a physical-direction utility", () => {
     const offenders: string[] = []
     for (const file of uiFiles) {
       const source = stripComments(readFileSync(file, "utf8"))
       for (const group of classGroups(source)) {
-        for (const bad of ["ml-auto", "text-left"]) {
+        for (const bad of EXACT_BAD) {
           if (new RegExp(`(?:^|[\\s:"'\`])${bad}(?![\\w-])`).test(group.text)) {
             offenders.push(`${relativeTo(file)}:${lineOf(source, group.index)} — ${bad}`)
+          }
+        }
+        for (const bad of PREFIX_BAD) {
+          const re = new RegExp(`(?:^|[\\s:"'\`])(${bad}[a-z0-9.\\[\\]/-]*)`, "g")
+          let hit: RegExpExecArray | null
+          while ((hit = re.exec(group.text)) !== null) {
+            offenders.push(`${relativeTo(file)}:${lineOf(source, group.index)} — ${hit[1]}`)
           }
         }
       }

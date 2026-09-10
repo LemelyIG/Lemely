@@ -132,9 +132,10 @@ describe("a hover that changes colour also transitions to it", () => {
 })
 
 /*
- * Packet A3 (audit-dossier remediation). DESIGN.md §9.2's press affordance
- * ("scale(0.98) over dur-fast, or a colour/bg shift") is stated the same way
- * the hover rule above is, and had the same failure mode: a control that
+ * Packet A3 (audit-dossier remediation). DESIGN.md §9.2 states the press
+ * affordance in one sentence with no colour alternative: "Press: `scale(0.98)`
+ * over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`."
+ * — the colour-or-translate option is HOVER's, not press's. A control that
  * hovers has visibly opted into a "this reacts to you" contract, and a click
  * with no visible press reply reads as a dead button for the one frame that
  * matters most — the one the reader is looking at when they commit to the
