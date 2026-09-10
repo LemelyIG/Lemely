@@ -120,6 +120,9 @@ const SETTINGS_NAV = [
   { to: "/settings/profile", label: "Profile", end: true },
   { to: "/settings/devices", label: "Account and devices", end: true },
   { to: "/settings/notifications", label: "Notifications", end: true },
+  // Packet A7. `end: true` for the same reason as its three siblings: none
+  // of these four routes has a sub-route to distinguish itself from.
+  { to: "/settings/install", label: "Install Lemely", end: true },
 ] as const satisfies readonly SettingsNavItem[]
 
 /**

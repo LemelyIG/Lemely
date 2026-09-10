@@ -191,9 +191,10 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
 describe("the settings lane stays reachable by every role — P4.10", () => {
   const settingsRoutes = appRoutes.filter((route) => route.path?.startsWith("/settings/"))
 
-  it("mounts all three screens at the top level", () => {
+  it("mounts all four screens at the top level", () => {
     expect(settingsRoutes.map((route) => route.path).sort()).toEqual([
       "/settings/devices",
+      "/settings/install",
       "/settings/notifications",
       "/settings/profile",
     ])
@@ -212,7 +213,7 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
     expect(containsComponent(route?.element, "RequireAuth")).toBe(true)
   })
 
-  it("admits all five roles to all three settings screens", () => {
+  it("admits all five roles to all four settings screens", () => {
     const source = sourceOf("src/routes.tsx")
     // Every `/settings/*` route must name ALL_ROLES, which is the union of the
     // three role lists — asserted here rather than trusting the name, because
@@ -226,7 +227,7 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
     // appears in this file's prose, and counting comments as routes is how a
     // gate ends up asserting something other than what it claims to.
     const settingsBlocks = source.split('path: "/settings/').slice(1)
-    expect(settingsBlocks).toHaveLength(3)
+    expect(settingsBlocks).toHaveLength(4)
     for (const block of settingsBlocks) {
       expect(block.slice(0, 400)).toContain("ALL_ROLES")
     }

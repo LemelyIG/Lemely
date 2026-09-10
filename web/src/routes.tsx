@@ -69,6 +69,9 @@ const NotificationSettings = lazy(() =>
 const ProfileSettings = lazy(() =>
   import("@/portals/settings/ProfileSettings").then((m) => ({ default: m.ProfileSettings })),
 )
+const InstallSettings = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({ default: m.InstallSettings })),
+)
 
 /*
  * Task 19 (spec §4.4) · lazy consts for the five G-02/G-03/G-06/G-07/G-08
@@ -660,6 +663,22 @@ export const appRoutes: RouteObject[] = [
             <ProfileSettings />
           </Suspense>
         </SettingsLaneRedirect>
+      </RequireAuth>
+    ),
+  },
+  // Packet A7. Top-level only, unlike its three siblings above — no
+  // `SettingsLaneRedirect`, because there is no portal-scoped
+  // `/student/settings/install` or `/teacher/settings/install` to redirect
+  // to (see `InstallSettings.tsx`'s own header for why).
+  {
+    path: "/settings/install",
+    errorElement,
+    handle: { title: "Install Lemely" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <InstallSettings />
+        </Suspense>
       </RequireAuth>
     ),
   },
