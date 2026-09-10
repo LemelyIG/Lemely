@@ -18,7 +18,7 @@
     },
     {
       "type": "TextBlock",
-      "text": "${nextSession.startsAt}",
+      "text": "{{DATE(${nextSession.startsAt}, SHORT)}}",
       "isSubtle": true,
       "spacing": "None",
       "$when": "${nextSession != null}"

@@ -6,10 +6,11 @@
  * docstring for why the unit-test runner is deliberately not an extension of
  * `vite.config.ts`).
  *
- * `VitePWA({ manifest })` in `vite.config.ts` imports this object unchanged;
- * this file has no Vite-specific code of its own; the token/colour reads
- * still just call `tokenHex`, the ordinary shared entry point everything in
- * `vite/` already uses for a manifest colour.
+ * `VitePWA({ manifest: buildManifest(mode) })` in `vite.config.ts` calls this
+ * with the Vite build's own `mode` (see `defineConfig`'s function form
+ * there); this file has no other Vite-specific code of its own — the
+ * token/colour reads still just call `tokenHex`, the ordinary shared entry
+ * point everything in `vite/` already uses for a manifest colour.
  *
  * ── The members below the original name/short_name/icons/theme_color set ────
  *
@@ -53,13 +54,23 @@
  *   surface; 400px comfortably fits this app's `max-w-100` (400px) auth/card
  *   column without introducing a second breakpoint.
  * - `scope_extensions` — associates the staging origin with this app's
- *   scope, per `docs/agent-tooling.md`'s deploy target, so a staging link
- *   opened from an installed prod app still stays "inside" the app rather
- *   than escaping to a browser tab.
- * - `note_taking: { new_note_url: "/student/practice" }` — the closest
- *   existing surface to "jot something down and start working" this product
- *   has; an OS's own "new note" affordance lands a student on Practice
- *   rather than nowhere.
+ *   scope, so a staging link opened from an installed prod app still stays
+ *   "inside" the app rather than escaping to a browser tab. **Gated to a
+ *   staging build only** (A5 review fix): an installed *production* PWA
+ *   must never treat `staging.lemelyig.com` navigations as trusted in-app
+ *   content with no origin indicator, so `buildManifest`'s `mode` parameter
+ *   — sourced from Vite's own build mode, `"production"` unless a build
+ *   explicitly passes `--mode staging` — decides whether this member is
+ *   present at all. `.github/workflows/deploy.yml`'s frontend build step
+ *   passes `--mode ${{ needs.resolve-env.outputs.environment }}`, so the
+ *   staging deploy job is the only one that ever produces a manifest
+ *   carrying it.
+ * - `note_taking: { new_note_url: "/student" }` — **not** `/student/practice`
+ *   (A5 review fix): that path is not mounted (only `practice/:subjectCode`,
+ *   `practice/set/:assignmentId` etc. are — `student/index.tsx`), and
+ *   `student/data.ts`'s own comment already documents linking it as
+ *   manufacturing a dead end. `/student`, the dashboard, is always mounted
+ *   and is where a student would navigate to Practice from anyway.
  * - `shortcuts` — jump list / long-press entries for the three actions a
  *   returning student is most likely to want without opening the app first:
  *   marking a paper, the dashboard, and notifications.
@@ -73,106 +84,116 @@
 
 import { tokenHex } from "./brandTokens.ts"
 
-export const manifest = {
-  name: "Lemely",
-  short_name: "Lemely",
-  description:
-    "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
-  start_url: "/",
-  id: "/",
-  dir: "ltr" as const,
-  display: "standalone" as const,
-  orientation: "any" as const,
-  // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
-  // were computed from index.css via culori. Every clause of that comment
-  // was false by the time it was read: `--ink` is `oklch(0.321 0.009
-  // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
-  // not a dependency of this project, and both hexes were build-era
-  // Material-3 values that no token has produced since Phase 2 rewrote
-  // the palette. Nothing failed, because an OS reads these and no test
-  // does. Now computed at build time from the token file itself; see
-  // web/vite/brandTokens.ts.
-  //
-  // Both are `--paper`. `theme_color` tints the app's own title bar and
-  // `background_color` paints the splash screen shown before the first
-  // frame renders, so making them the page colour means the launch reads
-  // as the app appearing rather than as a flash of some other colour.
-  theme_color: tokenHex("paper"),
-  background_color: tokenHex("paper"),
-  icons: [
-    {
-      src: "pwa-192x192.png",
-      sizes: "192x192",
-      type: "image/png",
-    },
-    {
-      src: "pwa-512x512.png",
-      sizes: "512x512",
-      type: "image/png",
-    },
-    {
-      src: "maskable-icon-512x512.png",
-      sizes: "512x512",
-      type: "image/png",
-      purpose: "maskable",
-    },
-  ],
-  prefer_related_applications: false,
-  display_override: ["standalone", "minimal-ui"] as ("standalone" | "minimal-ui")[],
-  categories: ["education", "productivity"],
-  launch_handler: { client_mode: "navigate-existing" as const },
-  handle_links: "preferred" as const,
-  protocol_handlers: [{ protocol: "web+lemely", url: "/join/%s" }],
-  edge_side_panel: { preferred_width: 400 },
-  scope_extensions: [{ origin: "https://staging.lemelyig.com" }],
-  note_taking: { new_note_url: "/student/practice" },
-  shortcuts: [
-    {
-      name: "Mark a paper",
-      short_name: "Mark",
-      url: "/student/correct",
-      icons: [{ src: "shortcut-mark-96.png", sizes: "96x96", type: "image/png" }],
-    },
-    {
-      name: "Dashboard",
-      url: "/student",
-      icons: [{ src: "shortcut-dashboard-96.png", sizes: "96x96", type: "image/png" }],
-    },
-    {
-      name: "Notifications",
-      url: "/student/notifications",
-      icons: [{ src: "shortcut-notifications-96.png", sizes: "96x96", type: "image/png" }],
-    },
-  ],
-  // Generated by `scripts/manifest_screenshots.mjs` — that script's stdout is
-  // pasted here verbatim, never hand-typed (see its own header).
-  screenshots: [
-    {
-      src: "screenshots/dashboard-wide.jpg",
-      sizes: "2880x1800",
-      type: "image/jpeg",
-      form_factor: "wide" as const,
-      label:
-        "The student dashboard: subjects this session with predicted grades, a momentum chart, and weakest topics.",
-    },
-    {
-      src: "screenshots/dashboard-narrow.jpg",
-      sizes: "780x1688",
-      type: "image/jpeg",
-      form_factor: "narrow" as const,
-      label: "The student dashboard on a phone: subjects this session and predicted grades.",
-    },
-  ],
-  widgets: [
-    {
-      name: "Streak",
-      tag: "lemely-streak",
-      ms_ac_template: "widgets/streak.json",
-      data: "widgets/streak-data.json",
-      description: "Your study streak and next session",
-      screenshots: [
-        { src: "screenshots/dashboard-narrow.jpg", sizes: "780x1688", label: "Streak widget preview" },
-      ],
-    },
-  ],
+/**
+ * The PWA manifest, built for a given Vite `mode`.
+ *
+ * `mode` decides exactly one thing: whether `scope_extensions` is present —
+ * see that member's own docstring paragraph, above, for why it must never
+ * ship in a production build.
+ */
+export function buildManifest(mode: string) {
+  return {
+    name: "Lemely",
+    short_name: "Lemely",
+    description:
+      "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
+    start_url: "/",
+    id: "/",
+    dir: "ltr" as const,
+    display: "standalone" as const,
+    orientation: "any" as const,
+    // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
+    // were computed from index.css via culori. Every clause of that comment
+    // was false by the time it was read: `--ink` is `oklch(0.321 0.009
+    // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
+    // not a dependency of this project, and both hexes were build-era
+    // Material-3 values that no token has produced since Phase 2 rewrote
+    // the palette. Nothing failed, because an OS reads these and no test
+    // does. Now computed at build time from the token file itself; see
+    // web/vite/brandTokens.ts.
+    //
+    // Both are `--paper`. `theme_color` tints the app's own title bar and
+    // `background_color` paints the splash screen shown before the first
+    // frame renders, so making them the page colour means the launch reads
+    // as the app appearing rather than as a flash of some other colour.
+    theme_color: tokenHex("paper"),
+    background_color: tokenHex("paper"),
+    icons: [
+      {
+        src: "pwa-192x192.png",
+        sizes: "192x192",
+        type: "image/png",
+      },
+      {
+        src: "pwa-512x512.png",
+        sizes: "512x512",
+        type: "image/png",
+      },
+      {
+        src: "maskable-icon-512x512.png",
+        sizes: "512x512",
+        type: "image/png",
+        purpose: "maskable",
+      },
+    ],
+    prefer_related_applications: false,
+    display_override: ["standalone", "minimal-ui"] as ("standalone" | "minimal-ui")[],
+    categories: ["education", "productivity"],
+    launch_handler: { client_mode: "navigate-existing" as const },
+    handle_links: "preferred" as const,
+    protocol_handlers: [{ protocol: "web+lemely", url: "/join/%s" }],
+    edge_side_panel: { preferred_width: 400 },
+    // Staging-only — see this member's own docstring paragraph above.
+    ...(mode === "staging" ? { scope_extensions: [{ origin: "https://staging.lemelyig.com" }] } : {}),
+    note_taking: { new_note_url: "/student" },
+    shortcuts: [
+      {
+        name: "Mark a paper",
+        short_name: "Mark",
+        url: "/student/correct",
+        icons: [{ src: "shortcut-mark-96.png", sizes: "96x96", type: "image/png" }],
+      },
+      {
+        name: "Dashboard",
+        url: "/student",
+        icons: [{ src: "shortcut-dashboard-96.png", sizes: "96x96", type: "image/png" }],
+      },
+      {
+        name: "Notifications",
+        url: "/student/notifications",
+        icons: [{ src: "shortcut-notifications-96.png", sizes: "96x96", type: "image/png" }],
+      },
+    ],
+    // Generated by `scripts/manifest_screenshots.mjs` — that script's stdout is
+    // pasted here verbatim, never hand-typed (see its own header).
+    screenshots: [
+      {
+        src: "screenshots/dashboard-wide.jpg",
+        sizes: "2880x1800",
+        type: "image/jpeg",
+        form_factor: "wide" as const,
+        label:
+          "The student dashboard: subjects this session with predicted grades, a momentum chart, and weakest topics.",
+      },
+      {
+        src: "screenshots/dashboard-narrow.jpg",
+        sizes: "780x1688",
+        type: "image/jpeg",
+        form_factor: "narrow" as const,
+        label: "The student dashboard on a phone: subjects this session and predicted grades.",
+      },
+    ],
+    widgets: [
+      {
+        name: "Streak",
+        tag: "lemely-streak",
+        ms_ac_template: "widgets/streak.json",
+        data: "widgets/streak-data.json",
+        description: "Your study streak and next session",
+        screenshots: [
+          { src: "screenshots/dashboard-narrow.jpg", sizes: "780x1688", label: "Streak widget preview" },
+        ],
+      },
+    ],
+  }
 }

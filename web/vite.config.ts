@@ -8,10 +8,15 @@ import { VitePWA } from "vite-plugin-pwa"
 import { fontPreload } from "./vite/fontPreload.ts"
 import { themeColor } from "./vite/themeColor.ts"
 import { preMountShell } from "./vite/preMountShell.ts"
-import { manifest } from "./vite/manifest.ts"
+import { buildManifest } from "./vite/manifest.ts"
 
 // https://vite.dev/config/
-export default defineConfig({
+// Function form (packet A5 review fix), not a plain object: `mode` — plain
+// `vite build` defaults to `"production"`; `.github/workflows/deploy.yml`'s
+// staging job passes `--mode staging` — decides whether the manifest's
+// `scope_extensions` is present at all. See `vite/manifest.ts`'s own
+// docstring for why that one member must never ship in a production build.
+export default defineConfig(({ mode }) => ({
   // PR 1B (client error reporting): stamps every build with a short id so a
   // `POST /api/client-errors` report can be traced back to the code that
   // produced it. `GITHUB_SHA` is set by every GitHub Actions run (`deploy.yml`
@@ -69,10 +74,10 @@ export default defineConfig({
       // SSE/POST endpoints under it aren't meaningfully cacheable anyway.
       //
       // Factored out to `web/vite/manifest.ts` (packet A5) so
-      // `tests/unit/manifest.test.ts` can import and assert on the manifest
-      // object directly, without pulling in this whole config file — see
+      // `tests/unit/manifest.test.ts` can import and assert on the built
+      // manifest directly, without pulling in this whole config file — see
       // that module's own docstring for the full member-by-member rationale.
-      manifest,
+      manifest: buildManifest(mode),
       // Only the manifest is configured here now. `navigateFallback` and its
       // `/^\/api/` denylist are no longer plugin options under injectManifest —
       // they are the `NavigationRoute` in `src/sw.ts`, and the denylist is
@@ -138,4 +143,4 @@ export default defineConfig({
       },
     },
   },
-})
+}))

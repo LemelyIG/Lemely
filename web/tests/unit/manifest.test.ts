@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest"
-import { manifest } from "../../vite/manifest.ts"
+import { buildManifest } from "../../vite/manifest.ts"
 
 /*
  * Packet A5 — pins the manifest members the audit dossier's `manifest-*`
- * findings asked for, now that `manifest` is a plain, importable object
- * (`vite/manifest.ts`) rather than only reachable through `vite.config.ts`.
- * See that module's own docstring for why each member exists.
+ * findings asked for, now that `buildManifest` is a plain, importable
+ * function (`vite/manifest.ts`) rather than only reachable through
+ * `vite.config.ts`. See that module's own docstring for why each member
+ * exists. `manifest` here is `buildManifest("production")` — the mode every
+ * real build uses except the one CI passes explicitly for the staging
+ * deploy job (see `manifest mode gating`, below, and `buildManifest`'s own
+ * docstring for why `scope_extensions` is the one member that varies).
  */
+
+const manifest = buildManifest("production")
 
 describe("manifest identity and layout", () => {
   it("id is a stable install identity independent of start_url", () => {
@@ -51,12 +57,23 @@ describe("manifest capability members", () => {
     expect(manifest.edge_side_panel).toEqual({ preferred_width: 400 })
   })
 
-  it("scope_extensions associates the staging origin", () => {
-    expect(manifest.scope_extensions).toEqual([{ origin: "https://staging.lemelyig.com" }])
+  it("note_taking's new_note_url lands on the dashboard, an always-mounted path", () => {
+    // Not `/student/practice`: `student/data.ts`'s own comment already
+    // documents that path as unmounted ("linking it would manufacture a
+    // dead end") — `/student` is the safe, always-real fallback.
+    expect(manifest.note_taking).toEqual({ new_note_url: "/student" })
+  })
+})
+
+describe("manifest mode gating", () => {
+  it("omits scope_extensions from a production build", () => {
+    expect(buildManifest("production").scope_extensions).toBeUndefined()
   })
 
-  it("note_taking's new_note_url lands on Practice", () => {
-    expect(manifest.note_taking).toEqual({ new_note_url: "/student/practice" })
+  it("includes the staging origin only in a staging build", () => {
+    expect(buildManifest("staging").scope_extensions).toEqual([
+      { origin: "https://staging.lemelyig.com" },
+    ])
   })
 })
 
