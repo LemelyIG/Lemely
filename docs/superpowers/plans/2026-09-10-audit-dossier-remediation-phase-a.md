@@ -185,8 +185,8 @@ launch_handler: { client_mode: "navigate-existing" },
 handle_links: "preferred",
 protocol_handlers: [{ protocol: "web+lemely", url: "/join/%s" }],
 edge_side_panel: { preferred_width: 400 },
-scope_extensions: [{ origin: "https://staging.lemelyig.com" }],
-note_taking: { new_note_url: "/student/practice" },
+scope_extensions: [{ origin: "https://staging.lemelyig.com" }], // staging-build only; never ship in the production manifest (opus review, A5)
+note_taking: { new_note_url: "/student" }, // "/student/practice" is unmounted — 404 (opus review, A5); data.ts:282 already documents this
 shortcuts: [
   { name: "Mark a paper", short_name: "Mark", url: "/student/correct", icons: [{ src: "shortcut-mark-96.png", sizes: "96x96", type: "image/png" }] },
   { name: "Dashboard", url: "/student", icons: [{ src: "shortcut-dashboard-96.png", sizes: "96x96", type: "image/png" }] },
@@ -195,6 +195,8 @@ shortcuts: [
 screenshots: [ /* exact array printed by scripts/manifest_screenshots.mjs — never hand-typed */ ],
 widgets: [{ name: "Streak", tag: "lemely-streak", ms_ac_template: "widgets/streak.json", data: "widgets/streak-data.json", description: "Your study streak and next session", screenshots: [{ src: "screenshots/dashboard-narrow.jpg", sizes: "780x1688", label: "Streak widget preview" }] }],
 ```
+NOTE (opus review, A5): the `widgets` manifest member alone does not make the widget live — it requires a `sw.ts` bridge (`widgetinstall`/`widgetresume` handlers calling `fetch("/api/student/widget")` then `self.widgets.updateByTag("lemely-streak", {...})`), which this packet's brief does not scope. Without it every installed widget shows a permanent hardcoded "0-day streak". Land the bridge as an explicit follow-up (e.g. folded into A6/A7's sw.ts work) before considering this finding closed — do not treat the manifest member alone as done.
+`web/public/widgets/streak.json`'s `${nextSession.startsAt}` field must use Adaptive Cards date formatting (`{{DATE(${nextSession.startsAt}, SHORT)}}`), not a raw ISO string — the backend intentionally encodes day-only granularity and a raw timestamp misrepresents it as a specific time.
 `globIgnores` (single array): existing font entry + `"screenshots/**"`, `"widgets/**"`, `"store-icon-1024.png"`. `web-app-origin-association` content: `{ "web_apps": [{ "web_app_identity": "https://lemelyig.com/" }] }`. `robots.txt`: `User-agent: *`, `Allow: /`, `Disallow:` for `/api/`, `/student`, `/teacher`, `/parent`, `/admin`, `/settings`, `/join`, plus `Sitemap:` only if one exists (grep `sitemap` first; else omit).
 
 **Skills:** `pwa-expert`; backend part `rest-api-design`.
