@@ -45,7 +45,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 25 | `badging-api-unused-despite-ready-data` | native | high | B | B5 | pending |  |
 | 26 | `camera-scanner-basics-only` | native | high | B | B5 | pending |  |
 | 27 | `web-share-unused-on-result-screen` | native | high | B | B5 | pending |  |
-| 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login.tsx LINK_CLASS gains `inline-flex min-h-11 items-center` |
+| 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login.tsx LINK_CLASS gains `pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11` (gated, not unconditional — see commit 57de3959), applied identically across Login/SignupDetails/SignupParent |
 | 29 | `no-safe-area-insets` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 30 | `no-ios-splash-screens` | native | high | B | B1 | pending |  |
 | 31 | `safe-area-viewport-cover` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
@@ -87,8 +87,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 67 | `auth-gated-capture-method-sound` | pwa | PASS |  |  | no-action | PASS check |
 | 68 | `capture-pipeline-choice` | pwa | PARTIAL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
 | 69 | `form-factor-wide-and-narrow` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
-| 70 | `screenshots-label-field` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 71 | `screenshots-member-absent` | pwa | FAIL (unchanged on staging), but the fix pathway already half-exists in-repo, untracked and unwired. | A | A5 | pending |  |
+| 70 | `screenshots-label-field` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] (whole-branch review confirmed shipped with sibling rows 68/69/89) |
+| 71 | `screenshots-member-absent` | pwa | FAIL (unchanged on staging), but the fix pathway already half-exists in-repo, untracked and unwired. | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (screenshots), same evidence as row 89 |
 | 72 | `sec-05-headers-missing` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts tests/unit/headerParity.test.ts (A6 review fix); docker: curl -sI /, /sw.js, /manifest.webmanifest, /robots.txt, /shell-init.js, /assets/*, /api/* all show all 5 headers (was 3 of 7 paths before the fix)` |
 | 73 | `sec-06-header-hsts` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts tests/unit/headerParity.test.ts (A6 review fix); docker: curl -sI /, /sw.js, /manifest.webmanifest, /robots.txt, /shell-init.js, /assets/*, /api/* all show all 5 headers (was 3 of 7 paths before the fix)` |
 | 74 | `sec-07-header-x-content-type-options` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts tests/unit/headerParity.test.ts (A6 review fix); docker: curl -sI /, /sw.js, /manifest.webmanifest, /robots.txt, /shell-init.js, /assets/*, /api/* all show all 5 headers (was 3 of 7 paths before the fix)` |
@@ -129,7 +129,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 109 | `Name` | pwa | PASS |  |  | no-action | PASS check |
 | 110 | `ServesHtml` | pwa | PASS |  |  | no-action | PASS check |
 | 111 | `ShortName` | pwa | PASS |  |  | no-action | PASS check |
-| 112 | `ShortcutIconsAreFetchable` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 112 | `ShortcutIconsAreFetchable` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs shortcut-*-96.png; same evidence as row 83 |
 | 113 | `StartUrl` | pwa | PASS |  |  | no-action | PASS check |
 | 114 | `sec-01-https-scheme` | pwa | PASS |  |  | no-action | PASS check |
 | 115 | `emp-sw-registers-and-controls` | pwa | PASS |  |  | no-action | PASS check |
@@ -141,13 +141,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 121 | `HasSquare512PngAny` | pwa | PASS |  |  | no-action | PASS check |
 | 122 | `IconSizesAreValid` | pwa | PASS |  |  | no-action | PASS check |
 | 123 | `Lang` | pwa | PASS |  |  | no-action | PASS check |
-| 124 | `Orientation` | pwa | FAIL | A | A5 | pending |  |
-| 125 | `ScreenshotSizesAreValid` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 126 | `ScreenshotTypesAreValid` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 127 | `ScreenshotsAreFetchable` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 124 | `Orientation` | pwa | FAIL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (orientation), same evidence as row 116 |
+| 125 | `ScreenshotSizesAreValid` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run screenshots:manifest`; dist/screenshots/*.jpg sizes match manifest entries, same evidence as row 89 |
+| 126 | `ScreenshotTypesAreValid` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run screenshots:manifest`; dist/screenshots/*.jpg are image/jpeg, same evidence as row 89 |
+| 127 | `ScreenshotsAreFetchable` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run screenshots:manifest`; dist/screenshots/*.jpg present and served, same evidence as row 89 |
 | 128 | `ServiceWorkerIsNotEmpty` | pwa | PASS |  |  | no-action | PASS check |
-| 129 | `ShortcutIconSizesAreValid` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 130 | `ShortcutIconTypesAreValid` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 129 | `ShortcutIconSizesAreValid` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs shortcut-*-96.png, same evidence as row 83 |
+| 130 | `ShortcutIconTypesAreValid` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs shortcut-*-96.png are image/png, same evidence as row 83 |
 | 131 | `ThemeColor` | pwa | PASS |  |  | no-action | PASS check |
 | 132 | `sec-02-cert-validity` | pwa | PASS |  |  | no-action | PASS check |
 | 133 | `sec-03-mixed-content` | pwa | PASS | A | A6 | no-action | dossier: no change — sec-03 already correct on develop (A6 re-verify) |
@@ -326,11 +326,14 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 
 | status | rows |
 |---|---|
-| pending | 187 |
+| pending | 103 |
+| done | 84 |
 | no-action | 92 |
 | skipped | 21 |
-| already-fixed? | 1 |
+| already-fixed | 1 |
 | **total** | **301** |
+
+(Recomputed 2026-09-10 after a whole-branch review found this table stale — it previously reported 187 pending with no `done` bucket at all, overstating remaining Phase A scope. `pending` rows above include Phase B/C/D rows not yet started, plus 3 whole-branch-review follow-ups (InstallSettings gating, widget SW bridge, teacher share-target routing) dispatched as fix commits and not yet reflected here.)
 
 ### By lane
 
