@@ -48,6 +48,10 @@ describe("activeScanGuard wiring (source-text gate — component rendering is ou
     expect(correctPaperSource).toMatch(/setHasUnsubmittedScan\(/)
   })
 
+  it("CorrectPaper releases the guard once the scan reaches the server (paperId set) — it never clears scanFile itself on success (retry-in-place depends on it), so scanFile alone would latch the guard true forever after a successful correction", () => {
+    expect(correctPaperSource).toMatch(/setHasUnsubmittedScan\(\s*scanFile !== null && paperId === null\s*\)/)
+  })
+
   it("Grading reports its scan to the guard", () => {
     expect(gradingSource).toMatch(/setHasUnsubmittedScan\(/)
   })

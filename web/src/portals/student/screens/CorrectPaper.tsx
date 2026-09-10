@@ -454,11 +454,19 @@ export function CorrectPaper() {
    * yet — read by `UpdateToast.tsx`'s "Reload" action so a reload can't
    * silently drop a shared/launched scan that only exists in this
    * component's own state. See `activeScanGuard.ts`'s own doc for why.
+   *
+   * Gated on `paperId === null` too, not `scanFile !== null` alone: unlike
+   * `Grading.tsx`, this screen deliberately never clears `scanFile` on a
+   * successful run (M5's retry-in-place depends on it staying set) — the
+   * guard has to release once the scan actually reaches the server, or it
+   * would latch `true` for the rest of the mount and the reload refusal
+   * would keep telling a reader to "finish" a scan whose result is already
+   * on screen.
    */
   useEffect(() => {
-    setHasUnsubmittedScan(scanFile !== null)
+    setHasUnsubmittedScan(scanFile !== null && paperId === null)
     return () => setHasUnsubmittedScan(false)
-  }, [scanFile])
+  }, [scanFile, paperId])
 
   /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`

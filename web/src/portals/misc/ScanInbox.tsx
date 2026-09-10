@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E5 S4 R5 V4 */
 import { Navigate } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { scanInboxDestination } from "@/lib/scanInboxDestination"
+import { scanInboxLandingFor } from "@/lib/scanInboxDestination"
 
 /*
  * Role-aware landing for the Web Share Target (`sw/shareTarget.ts`'s
@@ -12,13 +12,13 @@ import { scanInboxDestination } from "@/lib/scanInboxDestination"
  * gated to students only) while the stashed file quietly expired on its
  * 10-minute TTL.
  *
- * Deliberately outside `RequireAuth` — `routes.tsx`'s own registration of
- * this route explains why, the same reasoning the old `/file-handler` route
- * comment gave: `scanInboxDestination` degrades to `/student/correct` with
- * no session, and that route's own guard is what actually sends a
- * signed-out reader to `/login`.
+ * Deliberately outside `RequireAuth` — `scanInboxLandingFor` sends a
+ * signed-out reader to `/login?next=/scan-inbox` itself, re-resolving the
+ * role on the second pass through this same route after sign-in, rather
+ * than freezing early to a role-specific destination (`scanInboxLandingFor`'s
+ * own doc explains why that matters for a teacher).
  */
 export function ScanInbox() {
   const { session } = useAuth()
-  return <Navigate to={scanInboxDestination(session?.role ?? null)} replace />
+  return <Navigate to={scanInboxLandingFor(session?.role ?? null)} replace />
 }
