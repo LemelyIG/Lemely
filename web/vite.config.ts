@@ -8,7 +8,7 @@ import { VitePWA } from "vite-plugin-pwa"
 import { fontPreload } from "./vite/fontPreload.ts"
 import { themeColor } from "./vite/themeColor.ts"
 import { preMountShell } from "./vite/preMountShell.ts"
-import { tokenHex } from "./vite/brandTokens.ts"
+import { manifest } from "./vite/manifest.ts"
 
 // https://vite.dev/config/
 export default defineConfig({
@@ -67,48 +67,12 @@ export default defineConfig({
       // offline. Never cache /api/* — student/teacher marks, grades, and
       // review-queue data are live and must not be served stale, and the
       // SSE/POST endpoints under it aren't meaningfully cacheable anyway.
-      manifest: {
-        name: "Lemely",
-        short_name: "Lemely",
-        description:
-          "Lemely marks a student's photographed or uploaded past-paper attempt against the official marking scheme with method-mark awareness, returning per-question marks, grade, and weakness topics.",
-        start_url: "/",
-        display: "standalone",
-        // P6.5. These were `#1e1310` / `#faf4f2` under a comment claiming they
-        // were computed from index.css via culori. Every clause of that comment
-        // was false by the time it was read: `--ink` is `oklch(0.321 0.009
-        // 234)` not `oklch(0.2 0.02 35)`, there is no `--bg` token, culori is
-        // not a dependency of this project, and both hexes were build-era
-        // Material-3 values that no token has produced since Phase 2 rewrote
-        // the palette. Nothing failed, because an OS reads these and no test
-        // does. Now computed at build time from the token file itself; see
-        // web/vite/brandTokens.ts.
-        //
-        // Both are `--paper`. `theme_color` tints the app's own title bar and
-        // `background_color` paints the splash screen shown before the first
-        // frame renders, so making them the page colour means the launch reads
-        // as the app appearing rather than as a flash of some other colour.
-        theme_color: tokenHex("paper"),
-        background_color: tokenHex("paper"),
-        icons: [
-          {
-            src: "pwa-192x192.png",
-            sizes: "192x192",
-            type: "image/png",
-          },
-          {
-            src: "pwa-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-          },
-          {
-            src: "maskable-icon-512x512.png",
-            sizes: "512x512",
-            type: "image/png",
-            purpose: "maskable",
-          },
-        ],
-      },
+      //
+      // Factored out to `web/vite/manifest.ts` (packet A5) so
+      // `tests/unit/manifest.test.ts` can import and assert on the manifest
+      // object directly, without pulling in this whole config file — see
+      // that module's own docstring for the full member-by-member rationale.
+      manifest,
       // Only the manifest is configured here now. `navigateFallback` and its
       // `/^\/api/` denylist are no longer plugin options under injectManifest —
       // they are the `NavigationRoute` in `src/sw.ts`, and the denylist is
@@ -130,7 +94,19 @@ export default defineConfig({
         // needs it, e.g. a student whose name is not in latin. Offline, such a
         // name renders in the fallback face. Precache is the app *shell*, and a
         // subset reachable only through particular user data is not shell.
-        globIgnores: ["**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2"],
+        //
+        // `screenshots/**` and `widgets/**` (packet A5): the manifest
+        // install-screenshot JPEGs and the widget Adaptive Card
+        // JSON/data — both read only by an OS's own install/widget surface,
+        // never by the running app, the same "not shell" reasoning as the
+        // font subsets above. `store-icon-1024.png`: the 1024px store
+        // listing icon, likewise never fetched by the app itself.
+        globIgnores: [
+          "**/*-{cyrillic,cyrillic-ext,greek,greek-ext,vietnamese}-*.woff2",
+          "screenshots/**",
+          "widgets/**",
+          "store-icon-1024.png",
+        ],
       },
     }),
   ],

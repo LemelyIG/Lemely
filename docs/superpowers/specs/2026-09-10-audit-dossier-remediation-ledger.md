@@ -60,7 +60,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
 | 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |
 | 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | pending |  |
-| 43 | `no-launch-handler` | native | medium | A | A5 | pending |  |
+| 43 | `no-launch-handler` | native | medium | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
 | 44 | `no-periodic-update-check` | native | medium | A | A7 | pending |  |
 | 45 | `kb-3` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 46 | `kb-4` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
@@ -85,8 +85,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 65 | `min-h-screen-no-dvh-fallback` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 66 | `T5` | native | low |  |  | no-action | dossier: motion-rule compliance verified; regression guard lands in A8 check-native-invariants |
 | 67 | `auth-gated-capture-method-sound` | pwa | PASS |  |  | no-action | PASS check |
-| 68 | `capture-pipeline-choice` | pwa | PARTIAL | A | A5 | pending |  |
-| 69 | `form-factor-wide-and-narrow` | pwa | FAIL | A | A5 | pending |  |
+| 68 | `capture-pipeline-choice` | pwa | PARTIAL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
+| 69 | `form-factor-wide-and-narrow` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
 | 70 | `screenshots-label-field` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
 | 71 | `screenshots-member-absent` | pwa | FAIL (unchanged on staging), but the fix pathway already half-exists in-repo, untracked and unwired. | A | A5 | pending |  |
 | 72 | `sec-05-headers-missing` | pwa | FAIL | A | A6 | pending |  |
@@ -96,21 +96,21 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 76 | `sec-09-header-permissions-policy` | pwa | FAIL | A | A6 | pending |  |
 | 77 | `sec-10-csp-discrepancy-resolved` | pwa | FAIL | A | A6 | pending |  |
 | 78 | `sec-11-header-delivery-mechanism` | pwa | FAIL | A | A6 | pending |  |
-| 79 | `manifest-dir` | pwa | PARTIAL | A | A5 | pending |  |
-| 80 | `manifest-id` | pwa | PARTIAL | A | A5 | pending |  |
-| 81 | `manifest-launch-handler` | pwa | PARTIAL | A | A5 | pending |  |
+| 79 | `manifest-dir` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (dir) |
+| 80 | `manifest-id` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (id) |
+| 81 | `manifest-launch-handler` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
 | 82 | `manifest-share-target` | pwa | PARTIAL | A | A6 | pending |  |
-| 83 | `manifest-shortcuts` | pwa | PARTIAL | A | A5 | pending |  |
-| 84 | `MaskableSafeZone` | pwa | PASS | A | A5 | pending |  |
-| 85 | `precache-glob-cost` | pwa | PASS-by-construction today (jpg extension already excludes these files); recommend the explicit globIgnores as documented hardening. | A | A5 | pending |  |
+| 83 | `manifest-shortcuts` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (shortcuts) + `npm run icons` for shortcut-*-96.png |
+| 84 | `MaskableSafeZone` | pwa | PASS | A | A5 | done A5 | `npx vitest run tests/unit/brandTokens.test.ts` — MASKABLE_SCALE <= MAX_MASKABLE_SCALE, now in vite/brandTokens.ts |
+| 85 | `precache-glob-cost` | pwa | PASS-by-construction today (jpg extension already excludes these files); recommend the explicit globIgnores as documented hardening. | A | A5 | done A5 | `grep -c 'screenshots/\|widgets/\|store-icon' dist/sw.js` == 0 — vite.config.ts globIgnores |
 | 86 | `emp-lighthouse-scores` | pwa | PARTIAL | A | A5 | pending |  |
-| 87 | `apple-touch-icon-reuses-192` | pwa | PARTIAL | A | A5 | pending |  |
-| 88 | `Id` | pwa | FAIL | A | A5 | pending |  |
-| 89 | `Screenshots` | pwa | FAIL | A | A5 | pending |  |
+| 87 | `apple-touch-icon-reuses-192` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` — real 180px cut, index.html apple-touch-icon link updated |
+| 88 | `Id` | pwa | FAIL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (id) |
+| 89 | `Screenshots` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
 | 90 | `emp-env-navigation-flakiness` | pwa | PARTIAL | A | A8 | pending |  |
-| 91 | `emp-robots-txt-spa-fallback` | pwa | FAIL | A | A5 | pending |  |
-| 92 | `no-favicon-ico-fallback` | pwa | PARTIAL | A | A5 | pending |  |
-| 93 | `manifest-categories` | pwa | PARTIAL | A | A5 | pending |  |
+| 91 | `emp-robots-txt-spa-fallback` | pwa | FAIL | A | A5 | done A5 | `ls dist/robots.txt` — web/public/robots.txt |
+| 92 | `no-favicon-ico-fallback` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` + `file dist/favicon.ico` — index.html favicon.ico link added |
+| 93 | `manifest-categories` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (categories) |
 | 94 | `manifest-file-handlers` | pwa | PARTIAL | A | A6 | pending |  |
 | 95 | `sec-12-worker-api-response-headers` | pwa | FAIL | A | A6 | pending |  |
 | 96 | `sw-background-sync-upload-candidate` | pwa | NOT-APPLICABLE | B | B6 | pending |  |
@@ -133,7 +133,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 113 | `StartUrl` | pwa | PASS |  |  | no-action | PASS check |
 | 114 | `sec-01-https-scheme` | pwa | PASS |  |  | no-action | PASS check |
 | 115 | `emp-sw-registers-and-controls` | pwa | PASS |  |  | no-action | PASS check |
-| 116 | `manifest-orientation` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 116 | `manifest-orientation` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (orientation) |
 | 117 | `BackgroundColor` | pwa | PASS |  |  | no-action | PASS check |
 | 118 | `Description` | pwa | PASS |  |  | no-action | PASS check |
 | 119 | `Display` | pwa | PASS |  |  | no-action | PASS check |
@@ -155,17 +155,17 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 135 | `emp-lighthouse-no-pwa-audits` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
 | 136 | `emp-offline-staging-by-design` | pwa | FAILS-ON-STAGING-ONLY | B | B6 | pending |  |
 | 137 | `brand-assets-og-card` | pwa | PASS |  |  | no-action | PASS check |
-| 138 | `no-1024-store-icon` | pwa | FAIL | A | A5 | pending |  |
-| 139 | `manifest-display-override` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 140 | `manifest-edge-side-panel` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 141 | `manifest-handle-links` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 138 | `no-1024-store-icon` | pwa | FAIL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` — 1024px, alpha removed |
+| 139 | `manifest-display-override` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (display_override) |
+| 140 | `manifest-edge-side-panel` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (edge_side_panel) |
+| 141 | `manifest-handle-links` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (handle_links) |
 | 142 | `manifest-iarc-rating-id` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
-| 143 | `manifest-note-taking` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 144 | `manifest-prefer-related-applications` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 145 | `manifest-protocol-handlers` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 143 | `manifest-note-taking` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (note_taking) |
+| 144 | `manifest-prefer-related-applications` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (prefer_related_applications) |
+| 145 | `manifest-protocol-handlers` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (protocol_handlers) + `npx vitest run tests/unit/joinProtocol.test.ts` |
 | 146 | `manifest-related-applications` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
-| 147 | `manifest-scope-extensions` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
-| 148 | `manifest-widgets` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
+| 147 | `manifest-scope-extensions` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (scope_extensions) |
+| 148 | `manifest-widgets` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (widgets) + `pytest --no-cov tests/test_widget_router.py` |
 | 149 | `Scope` | pwa | PASS |  |  | no-action | PASS check |
 | 150 | `sec-04-fonts-self-hosted` | pwa | PASS |  |  | no-action | PASS check |
 | 151 | `sw-offline-staging-proof` | pwa | FAIL |  |  | skipped | skip: widening PRECACHE_HOSTS / offline-on-staging explicitly excluded |

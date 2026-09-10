@@ -11,7 +11,19 @@
       optical cut (thicker strokes, snapped to the 16px pixel grid).
     -->
     <link rel="icon" type="image/svg+xml" href="/brand/mark-favicon.svg" />
-    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
+    <!--
+      packet A5 (`no-favicon-ico-fallback`): a UA that ignores `<link rel="icon">`
+      entirely (Firefox reader mode, RSS readers, and others) falls back to
+      `/favicon.ico` by convention — `scripts/generate_icons.mjs` writes a real
+      one rather than leaving a 404 there.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <!--
+      packet A5 (`apple-touch-icon-reuses-192`): a real 180px cut
+      (`scripts/generate_icons.mjs`), not the 192px PWA icon downsampled by iOS
+      itself.
+    -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <!--
       Injected from the `--paper` token at build time by `vite/themeColor.ts`,

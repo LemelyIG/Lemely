@@ -9,6 +9,7 @@ import { SkeletonLine } from "@/components/ui/skeleton"
 import { QueryState, type QueryStateQuery } from "@/components/ui/query-state"
 import { ApiError } from "@/lib/api"
 import type { InvitePreview } from "@/lib/authTypes"
+import { parseJoinCode } from "@/lib/joinProtocol"
 import { withNext } from "@/lib/nextPath"
 import {
   canRedeemInviteAs,
@@ -454,9 +455,16 @@ function JoinWithCodeScreen({ initialCode }: { initialCode: string }) {
  * whenever the *code itself* changes rather than only when the component
  * first mounts, which a plain prop would not do for two different deep links
  * opened in the same tab without an intervening unmount.
+ *
+ * `parseJoinCode` (packet A5) runs on the raw param before
+ * `normalizeInviteCode`: `vite/manifest.ts`'s `protocol_handlers` registers
+ * `web+lemely://join/<code>` against this exact route, and the OS fills its
+ * `%s` placeholder with the whole invoked URL, not just the code — see that
+ * function's own docstring. A plain `/join/ABC123` navigation is unaffected;
+ * `parseJoinCode` passes a bare code straight through.
  */
 export function JoinWithCode() {
   const { code } = useParams<{ code?: string }>()
-  const initialCode = normalizeInviteCode(code ?? "")
+  const initialCode = normalizeInviteCode(parseJoinCode(code ?? ""))
   return <JoinWithCodeScreen key={initialCode} initialCode={initialCode} />
 }

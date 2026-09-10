@@ -41,7 +41,7 @@ import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
-import { tokenHex } from "../vite/brandTokens.ts"
+import { MASKABLE_SCALE, MAX_MASKABLE_SCALE, SQUARE_SCALE, tokenHex } from "../vite/brandTokens.ts"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(HERE, "../public")
@@ -57,25 +57,33 @@ const MARK = path.join(PUBLIC, "brand/mark.svg")
  */
 const PAPER = tokenHex("paper")
 
-/**
- * How much of the icon's width the mark spans.
- *
- * `0.62` for the square cuts: the mark's own artboard already carries roughly
- * 15% padding (its strokes run x=20..47 in a 64-unit box), so a larger figure
- * reads as cramped at 192px on a home screen.
- *
- * `0.46` for maskable. The guaranteed-visible region is a circle of diameter
- * 0.8w centred on the icon, so a square of side s is fully inside it only when
- * s * sqrt(2) <= 0.8w, i.e. s <= 0.566w. 0.46 sits comfortably under that with
- * room for the launcher shapes that crop harder than a circle.
+/*
+ * The icon-sizing constants (`SQUARE_SCALE`, `MASKABLE_SCALE`,
+ * `MAX_MASKABLE_SCALE`) now live in `vite/brandTokens.ts` (packet A5), so
+ * this script and `tests/unit/brandTokens.test.ts` share one definition
+ * apiece rather than a transcription each could drift from.
  */
-const SQUARE_SCALE = 0.62
-const MASKABLE_SCALE = 0.46
-
 const ICONS = [
   { file: "pwa-192x192.png", size: 192, scale: SQUARE_SCALE },
   { file: "pwa-512x512.png", size: 512, scale: SQUARE_SCALE },
   { file: "maskable-icon-512x512.png", size: 512, scale: MASKABLE_SCALE },
+  // packet A5 (`apple-touch-icon-reuses-192`): a real 180px cut for iOS's own
+  // home-screen icon, rather than `index.html` pointing an
+  // `apple-touch-icon` link at the 192px PWA icon and letting iOS downsample
+  // it itself.
+  { file: "apple-touch-icon.png", size: 180, scale: SQUARE_SCALE },
+  // packet A5 (`no-1024-store-icon`): the 1024px listing icon some install
+  // surfaces (and app-store-style listings) expect. `alpha: false` because a
+  // store icon must be fully opaque with no alpha channel at all — some
+  // validators reject one even when every pixel happens to be opaque.
+  { file: "store-icon-1024.png", size: 1024, scale: SQUARE_SCALE, alpha: false },
+  // packet A5 (`manifest-shortcuts`): the three manifest `shortcuts` entries
+  // (`vite/manifest.ts`) need an icon apiece. Same mark-on-paper treatment as
+  // the square PWA icons for now — these are jump-list glyphs, not full
+  // screenshots, so one shared look is correct rather than three bespoke cuts.
+  { file: "shortcut-mark-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-dashboard-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-notifications-96.png", size: 96, scale: SQUARE_SCALE },
 ]
 
 /*
@@ -85,7 +93,6 @@ const ICONS = [
  * its braces, and it runs in the one place someone editing the number is
  * actually looking.
  */
-const MAX_MASKABLE_SCALE = 0.8 / Math.SQRT2
 if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
   throw new Error(
     `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)}, ` +
@@ -133,25 +140,81 @@ const ogCard = await sharp({
 writeFileSync(path.join(PUBLIC, OG.file), ogCard)
 console.log(`${OG.file}  ${OG.width}x${OG.height}  mark 300px on ${PAPER}, no text (see comment)`)
 
-for (const { file, size, scale } of ICONS) {
+/**
+ * Wraps a PNG buffer in a minimal single-image ICO container.
+ *
+ * ICO has allowed an embedded PNG directly (no BMP re-encoding) since Vista —
+ * an `ICONDIRENTRY` whose image data starts with the PNG magic bytes is a
+ * PNG, full stop. So this needs no image-format dependency beyond the PNG
+ * `sharp` already produces: a 6-byte `ICONDIR` header, one 16-byte
+ * `ICONDIRENTRY`, then the PNG bytes verbatim.
+ */
+function pngToIco(png, size) {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0) // reserved
+  header.writeUInt16LE(1, 2) // type: 1 = icon
+  header.writeUInt16LE(1, 4) // one image
+
+  const entry = Buffer.alloc(16)
+  // Width/height: 0 means "256"; this repo's favicon is always <256, so the
+  // literal size is always the correct byte.
+  entry.writeUInt8(size, 0)
+  entry.writeUInt8(size, 1)
+  entry.writeUInt8(0, 2) // colour count: 0 = not palette-indexed
+  entry.writeUInt8(0, 3) // reserved
+  entry.writeUInt16LE(1, 4) // colour planes
+  entry.writeUInt16LE(32, 6) // bits per pixel (RGBA)
+  entry.writeUInt32LE(png.length, 8) // image data size
+  entry.writeUInt32LE(header.length + entry.length, 12) // offset to image data
+
+  return Buffer.concat([header, entry, png])
+}
+
+for (const { file, size, scale, alpha } of ICONS) {
   // Render the vector at its final pixel size rather than rasterising once and
   // resampling: the mark is two hairlines and a stroke, and a downsampled
   // hairline turns grey.
   const markPx = Math.round(size * scale)
   const mark = await sharp(markSvg, { density: 384 }).resize(markPx, markPx).png().toBuffer()
 
-  const out = await sharp({
+  let pipeline = sharp({
     create: {
       width: size,
       height: size,
       channels: 4,
       background: PAPER,
     },
-  })
-    .composite([{ input: mark, gravity: "centre" }])
-    .png({ compressionLevel: 9 })
-    .toBuffer()
+  }).composite([{ input: mark, gravity: "centre" }])
+  // `alpha: false` (the store-listing icon): drop the alpha channel entirely
+  // rather than relying on every pixel already being opaque — some store
+  // validators reject a PNG that carries an alpha channel at all.
+  if (alpha === false) pipeline = pipeline.removeAlpha()
+
+  const out = await pipeline.png({ compressionLevel: 9 }).toBuffer()
 
   writeFileSync(path.join(PUBLIC, file), out)
-  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${PAPER}`)
+  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${PAPER}${alpha === false ? "  (no alpha)" : ""}`)
 }
+
+/*
+ * packet A5 (`no-favicon-ico-fallback`): a real `favicon.ico` alongside the
+ * SVG favicon `index.html` already links. Firefox reader mode, RSS readers
+ * and other UAs that never look at `<link rel="icon">` still fall back to
+ * `/favicon.ico` by convention — see `pngToIco`'s own docstring for why this
+ * needs no new dependency.
+ */
+const FAVICON_SIZE = 32
+const faviconMarkPx = Math.round(FAVICON_SIZE * SQUARE_SCALE)
+const faviconMark = await sharp(markSvg, { density: 384 })
+  .resize(faviconMarkPx, faviconMarkPx)
+  .png()
+  .toBuffer()
+const faviconPng = await sharp({
+  create: { width: FAVICON_SIZE, height: FAVICON_SIZE, channels: 4, background: PAPER },
+})
+  .composite([{ input: faviconMark, gravity: "centre" }])
+  .png({ compressionLevel: 9 })
+  .toBuffer()
+const faviconIco = pngToIco(faviconPng, FAVICON_SIZE)
+writeFileSync(path.join(PUBLIC, "favicon.ico"), faviconIco)
+console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${PAPER}`)

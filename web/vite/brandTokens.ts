@@ -134,6 +134,35 @@ export function parseRootTokens(css: string): Map<string, [number, number, numbe
 }
 
 /**
+ * How much of a square icon's width the mark spans (`scripts/generate_icons.mjs`).
+ *
+ * `0.62`: the mark's own artboard already carries roughly 15% padding (its
+ * strokes run x=20..47 in a 64-unit box), so a larger figure reads as
+ * cramped at 192px on a home screen.
+ */
+export const SQUARE_SCALE = 0.62
+
+/**
+ * How much of a maskable icon's width the mark spans.
+ *
+ * The guaranteed-visible region is a circle of diameter 0.8w centred on the
+ * icon, so a square of side s is fully inside it only when s * sqrt(2) <=
+ * 0.8w, i.e. s <= 0.566w (`MAX_MASKABLE_SCALE`, below). `0.46` sits
+ * comfortably under that with room for launcher shapes that crop harder
+ * than a circle.
+ */
+export const MASKABLE_SCALE = 0.46
+
+/**
+ * The safe-zone ceiling `MASKABLE_SCALE` must never exceed — see its own
+ * docstring for the arithmetic. Exported so both `generate_icons.mjs` (which
+ * throws if `MASKABLE_SCALE` exceeds it) and `tests/unit/brandTokens.test.ts`
+ * (which pins the same bound) read one definition rather than two that could
+ * drift apart.
+ */
+export const MAX_MASKABLE_SCALE = 0.8 / Math.SQRT2
+
+/**
  * One token, as a hex string, read fresh off disk.
  *
  * Not cached. This runs a handful of times in a build, and a cache would mean a
