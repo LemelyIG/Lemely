@@ -104,11 +104,17 @@ export function AuthFrame({
 }
 
 /**
- * Matches `SignupRoleSelect.tsx` and `SignupDetails.tsx`'s own link recipe
- * exactly, so every text link on a signed-out auth screen looks and behaves
- * like the same control. Extracted here (Task 19) now that this file uses it
- * three times over rather than once: the existing parent link below, plus the
- * two G-04 spec names this screen as missing, "Sign up" and forgot-password.
+ * Shares `SignupRoleSelect.tsx` and `SignupDetails.tsx`'s own link recipe —
+ * same colour, underline and focus ring — but deliberately diverges on tap
+ * target: `inline-flex min-h-11 items-center` (packet A2, tap-target finding
+ * `login-links-under-44px-tap-target`) gives this screen's links a real 44px
+ * minimum height, since these are the sign-up/forgot-password/parent links a
+ * reader is most likely to tap on a phone, right below the primary CTA. The
+ * other two files' `LINK_CLASS` constants are unchanged; the divergence is
+ * intentional, not drift to reconcile. Extracted here (Task 19) now that this
+ * file uses it three times over rather than once: the existing parent link
+ * below, plus the two G-04 spec names this screen as missing, "Sign up" and
+ * forgot-password.
  */
 const LINK_CLASS =
   "inline-flex min-h-11 items-center rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
