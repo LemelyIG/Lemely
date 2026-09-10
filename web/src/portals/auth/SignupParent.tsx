@@ -339,6 +339,7 @@ export function SignupParent() {
                 label="Email"
                 type="email"
                 autoComplete="email"
+                enterKeyHint="send"
                 required
                 disabled={requestCode.isPending}
                 value={email}

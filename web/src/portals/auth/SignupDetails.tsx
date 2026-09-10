@@ -293,6 +293,8 @@ export function SignupDetails({ role }: SignupDetailsProps) {
         <Input
           label="Name"
           autoComplete="name"
+          autoCapitalize="words"
+          autoCorrect="off"
           required
           disabled={busy}
           value={values.name}

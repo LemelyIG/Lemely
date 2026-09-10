@@ -121,6 +121,7 @@ function CodeEntryStep({
         required
         autoComplete="off"
         spellCheck={false}
+        enterKeyHint="go"
         placeholder="e.g. 7HKPX2WCQY"
         value={code}
         onChange={(event) => onChangeCode(event.target.value)}
