@@ -23,6 +23,7 @@ import { safeNextPath } from "@/lib/nextPath"
  * It is a small screen, and it is the one worth carrying in the entry bundle.
  */
 import { NotFound } from "@/portals/misc/NotFound"
+import { ScanInbox } from "@/portals/misc/ScanInbox"
 /*
  * PR 2 part A2. Static for the identical reason `NotFound` above is: this is
  * the router's `errorElement`, so a lazy import of it would have to fetch a
@@ -721,18 +722,30 @@ export const appRoutes: RouteObject[] = [
     errorElement,
     element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
   },
+  // Role-aware landing for the Web Share Target (`sw/shareTarget.ts`'s
+  // redirect) and the File Handling API route below — `ScanInbox` reads the
+  // session itself and forwards to whichever portal's upload surface fits
+  // the role. No `RequireAuth` here: its own destinations
+  // (`scanInboxDestination.ts`) are themselves inside `RequireAuth`-wrapped
+  // portal subtrees, so a signed-out reader still lands on `/login` by the
+  // normal route rather than a second guard.
+  {
+    path: "/scan-inbox",
+    errorElement,
+    handle: { title: "Opening your scan" } satisfies PageMeta,
+    element: <ScanInbox />,
+  },
   // File Handling API (manifest's `file_handlers`, packet A6): the OS hands a
   // launched image/PDF to this path via `window.launchQueue`, which forwards
   // it into the same marking flow the Web Share Target (`/share-target`) and
-  // the in-app "Camera"/"File" pickers already use. No `RequireAuth` here —
-  // `/student/correct` is itself inside the (already `RequireAuth`-wrapped)
-  // student portal subtree above, so a signed-out reader launching a file
-  // still lands on `/login` by the normal route rather than a second guard.
+  // the in-app "Camera"/"File" pickers already use. Routed through
+  // `/scan-inbox` (not straight to `/student/correct`) so a teacher launching
+  // a file lands on their own upload surface too — see that route above.
   {
     path: "/file-handler",
     errorElement,
     handle: { title: "Opening your scan" } satisfies PageMeta,
-    element: <Navigate to="/student/correct" replace />,
+    element: <Navigate to="/scan-inbox" replace />,
   },
   /*
    * Catch-all, last so it only matches what nothing above did.

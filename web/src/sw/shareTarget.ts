@@ -64,21 +64,27 @@ export async function stashSharedFile(file: File): Promise<void> {
  * redirect is not optional.
  */
 export async function handleShareTargetFetch(event: ShareTargetFetchEvent): Promise<Response> {
-  const formData = await event.request.formData()
-  const file = formData.get("scan")
+  // The try now opens before `formData()`, not just around `stashSharedFile`
+  // — a malformed multipart body can reject there too, and this function's
+  // own "always redirects" contract has to hold for that case as well.
+  try {
+    const formData = await event.request.formData()
+    const file = formData.get("scan")
 
-  if (file instanceof File) {
-    try {
+    if (file instanceof File) {
       await stashSharedFile(file)
-    } catch {
-      // Deliberately empty. See this function's own doc comment.
     }
+  } catch {
+    // Deliberately empty. See this function's own doc comment.
   }
 
   // An absolute URL, built off the request's own origin, rather than the bare
-  // path `Response.redirect("/student/correct", 303)` accepts in a browser:
+  // path `Response.redirect("/scan-inbox", 303)` accepts in a browser:
   // Node's `Response.redirect` (used by `swShareTarget.test.ts`, which has no
   // page origin to resolve a relative path against) requires one, and
   // resolving explicitly works identically in a real service worker too.
-  return Response.redirect(new URL("/student/correct", event.request.url), 303)
+  // `/scan-inbox` (not the student-only `/student/correct`) is the
+  // role-aware landing `scanInboxDestination.ts` resolves per session —
+  // this handler has no session/role visibility of its own to do that here.
+  return Response.redirect(new URL("/scan-inbox", event.request.url), 303)
 }

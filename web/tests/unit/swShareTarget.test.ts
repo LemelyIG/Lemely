@@ -58,7 +58,7 @@ describe("handleShareTargetFetch", () => {
     expect(new Date(stashed.headers.get("x-shared-at") ?? "").toString()).not.toBe("Invalid Date")
   })
 
-  it("returns a 303 redirect to /student/correct", async () => {
+  it("returns a 303 redirect to /scan-inbox — the role-aware landing, not the student-only /student/correct", async () => {
     const file = new File(["x"], "scan.png", { type: "image/png" })
     const event: ShareTargetFetchEvent = { request: fakeRequest(file) }
 
@@ -66,7 +66,7 @@ describe("handleShareTargetFetch", () => {
 
     expect(response.status).toBe(303)
     expect(new URL(response.headers.get("location") ?? "", "https://lemely.test").pathname).toBe(
-      "/student/correct",
+      "/scan-inbox",
     )
   })
 
@@ -91,6 +91,20 @@ describe("handleShareTargetFetch", () => {
     const response = await handleShareTargetFetch(event)
 
     expect(response.status).toBe(303)
+  })
+
+  it("still redirects — never throws — when the request body itself can't be read as form data (fold-in fix: the try now wraps formData() too)", async () => {
+    const event: ShareTargetFetchEvent = {
+      request: {
+        url: "https://lemely.test/share-target",
+        formData: () => Promise.reject(new Error("malformed multipart body")),
+      } as unknown as Request,
+    }
+
+    const response = await handleShareTargetFetch(event)
+
+    expect(response.status).toBe(303)
+    expect(put).not.toHaveBeenCalled()
   })
 })
 

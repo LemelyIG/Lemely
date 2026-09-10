@@ -37,6 +37,7 @@ import { uploadStageProgress } from "@/lib/uploadProgress"
 import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import { readSharedScan } from "@/lib/sharedScan"
+import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -434,13 +435,30 @@ export function CorrectPaper() {
   useEffect(() => {
     if (sharedScanAttempted.current) return
     sharedScanAttempted.current = true
-    readSharedScan().then((file) => {
-      if (!file) return
-      setScanSource("file")
-      chooseScan(file)
-    })
+    readSharedScan()
+      .then((file) => {
+        if (!file) return
+        setScanSource("file")
+        chooseScan(file)
+      })
+      .catch(() => {
+        // Best-effort, matching handleShareTargetFetch's own contract — a
+        // non-secure context (no `caches`) or any other rejection here must
+        // not surface as an unhandled promise rejection on every mount.
+      })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  /*
+   * Reports whether this screen holds a scan the reader hasn't submitted
+   * yet — read by `UpdateToast.tsx`'s "Reload" action so a reload can't
+   * silently drop a shared/launched scan that only exists in this
+   * component's own state. See `activeScanGuard.ts`'s own doc for why.
+   */
+  useEffect(() => {
+    setHasUnsubmittedScan(scanFile !== null)
+    return () => setHasUnsubmittedScan(false)
+  }, [scanFile])
 
   /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`
