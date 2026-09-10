@@ -139,6 +139,16 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      # A8 review fix (BLOCKING): this job previously ran typecheck/lint/
+      # build only — `npm test` (`"test": "vitest run"`, package.json) was
+      # never invoked anywhere in CI, on any job, so `tests/unit/
+      # nativeMechanics.test.ts` and every other unit test in this repo were
+      # enforced nowhere. `check:native` (below) is a second, independent
+      # encoding of a subset of those same rules for exactly this gap, but
+      # it is not a substitute for the real suite.
+      - name: Unit tests
+        run: npm test
+
       # `npm run lint` now also runs `check:native` (packet A8) — see
       # web/package.json's own comment on that script.
       - name: Lint (oxlint + native invariants)

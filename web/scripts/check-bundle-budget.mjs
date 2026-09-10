@@ -49,9 +49,22 @@ function main() {
     process.exit(1)
   }
 
-  const budgetKb = process.env.BUNDLE_BUDGET_KB
-    ? Number(process.env.BUNDLE_BUDGET_KB)
-    : DEFAULT_BUDGET_KB
+  let budgetKb = DEFAULT_BUDGET_KB
+  if (process.env.BUNDLE_BUDGET_KB) {
+    const parsed = Number(process.env.BUNDLE_BUDGET_KB)
+    // A malformed override (empty string already excluded above; anything
+    // non-numeric) must not silently become `NaN`, which makes every
+    // `gzipKb > budgetKb` comparison false and reports "all chunks within
+    // budget" with exit 0 — the guard passing when it should refuse to run
+    // is worse than the guard simply refusing to run.
+    if (!Number.isFinite(parsed)) {
+      console.error(
+        `check-bundle-budget: BUNDLE_BUDGET_KB="${process.env.BUNDLE_BUDGET_KB}" is not a number.`,
+      )
+      process.exit(1)
+    }
+    budgetKb = parsed
+  }
 
   const jsFiles = readdirSync(DIST_ASSETS).filter((f) => f.endsWith(".js"))
   const entries = jsFiles

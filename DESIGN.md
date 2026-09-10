@@ -686,11 +686,22 @@ should be read as gesture content Phase A already implements.
 
 **Mechanical enforcement.** The mechanics sections above are guarded, not
 just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
-lint`) asserts the viewport meta, the touch/tap/overscroll CSS rules, the
-`--fs-field` token, the safe-area rules, the `min-h-dvh`/`min-h-screen`
-pairing, the 8-state `active:` requirement on every interactive
-`components/ui/*.tsx` control, and the gated `skipWaiting`.
-`scripts/check-bundle-budget.mjs` (wired into `npm run build` via
-`postbuild`) fails the build if any shipped JS chunk exceeds its gzip
-budget. Neither script replaces this document; both exist because a rule
-stated only in prose is a rule the next edit can silently break.
+lint` and CI's own unit-test step) asserts the viewport meta, the
+touch/tap/overscroll CSS rules, the `--fs-field` token, the safe-area
+rules, the additive `.lm-app-header` inset and its named utilities, the
+`lm-nav-chrome` coverage, the status-bar style meta, the absence of
+class-list `min-h-screen` outside a desktop `<aside>` (there is no
+"paired with `min-h-dvh`" exemption — the class must be gone, since
+Tailwind v4 emits `.min-h-screen` after `.min-h-dvh` regardless of source
+order and both sit at equal specificity, so `min-h-screen` always wins the
+cascade when both are present), the 8-state `active:` requirement on every
+interactive `components/ui/*.tsx` control (scoped per element, not merely
+present somewhere in the file), and that `skipWaiting` never runs at
+module scope. `scripts/check-bundle-budget.mjs` (wired into `npm run
+build` via `postbuild` — which means it now also gates every production
+deploy, not only CI, since `deploy.yml`'s frontend build step runs through
+the same `npm run build`) fails the build if any shipped JS chunk exceeds
+its gzip budget. Neither script replaces this document, nor `tests/unit/
+nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
+all three exist because a rule stated only in prose is a rule the next
+edit can silently break.
