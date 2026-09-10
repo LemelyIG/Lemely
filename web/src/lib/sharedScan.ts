@@ -1,4 +1,4 @@
-import { SHARE_CACHE, SHARE_KEY } from "@/sw/shareTarget"
+import { SHARE_CACHE, SHARE_KEY, stashSharedFile } from "@/sw/shareTarget"
 
 /**
  * How long a shared file waits in Cache Storage for `CorrectPaper.tsx` to
@@ -32,4 +32,48 @@ export async function readSharedScan(): Promise<File | null> {
   const name = response.headers.get("x-shared-name") ?? "shared-scan"
   const type = response.headers.get("content-type") ?? blob.type
   return new File([blob], name, { type })
+}
+
+/**
+ * File Handling API (manifest's `file_handlers`) — the OS "open with
+ * Lemely" counterpart to the Web Share Target. Registered once, at the app
+ * root (`main.tsx`), the same "call once, before the app renders" shape
+ * `installStaleChunkReload`/`registerPushClientBridge` already use there —
+ * not inside `CorrectPaper.tsx` (A6 review fix MEDIUM 4): that screen can
+ * unmount (the reader navigates away) while still registered as
+ * `launchQueue`'s only consumer, since the File Handling API has no
+ * matching "unset consumer" call — a REPEAT OS launch arriving after that
+ * would reach a consumer closed over an unmounted component's now-inert
+ * state setters and silently no-op.
+ *
+ * Stashes into the exact same Cache Storage entry the share-target flow
+ * uses (`stashSharedFile`, `src/sw/shareTarget.ts`), so `readSharedScan` on
+ * `CorrectPaper.tsx`'s mount picks it up regardless of which OS mechanism
+ * actually delivered the file — one bridge, two OS entry points.
+ *
+ * `window.launchQueue` is undefined outside Chromium, so this is a no-op
+ * everywhere else.
+ */
+export function installFileHandlerBridge(): void {
+  window.launchQueue?.setConsumer((launchParams) => {
+    const handle = launchParams.files[0]
+    // `files` is `FileSystemHandle[]` (vite-env.d.ts's own doc explains
+    // why) — only the "file" kind has `.getFile()`; the manifest's
+    // `file_handlers` never declares a directory accept type, but the
+    // narrowing still has to happen somewhere, and it belongs here.
+    // `FileSystemHandle` is a plain base interface, not a discriminated
+    // union of `FileSystemFileHandle | FileSystemDirectoryHandle`, so
+    // checking `.kind` alone doesn't let TS narrow the type on its own —
+    // the cast is what the DOM lib's own shape requires here, once the
+    // runtime check above has actually confirmed it.
+    if (!handle || handle.kind !== "file") return
+    const fileHandle = handle as FileSystemFileHandle
+    void fileHandle.getFile().then((file) =>
+      stashSharedFile(file).catch(() => {
+        // Best-effort, matching handleShareTargetFetch's own contract for
+        // the share-target half of this bridge — a malformed name must not
+        // crash the launch consumer.
+      }),
+    )
+  })
 }

@@ -54,8 +54,22 @@ export default {
 		// already describes keep streaming — only the header set changes.
 		const res = await fetch(proxyRequest);
 		const out = new Response(res.body, res);
+		// A7 review fix (addendum L1): was only nosniff + Referrer-Policy — the
+		// other three headers `public/_headers`/`nginx.conf` both set were
+		// missing on this path entirely, so the Cloudflare deploy target wasn't
+		// actually equivalent to the other two despite the ledger claiming it
+		// was. Same five values as the other two deploy targets.
 		out.headers.set("X-Content-Type-Options", "nosniff");
 		out.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+		out.headers.set("Strict-Transport-Security", "max-age=31536000; includeSubDomains");
+		out.headers.set(
+			"Permissions-Policy",
+			"camera=(self), microphone=(), geolocation=(), interest-cohort=()",
+		);
+		out.headers.set(
+			"Content-Security-Policy",
+			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+		);
 		return out;
 	},
 } satisfies ExportedHandler<Env>;

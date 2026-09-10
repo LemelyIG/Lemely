@@ -25,6 +25,33 @@ export interface ShareTargetFetchEvent {
 }
 
 /**
+ * Stashes `file` into Cache Storage under `SHARE_KEY`, with the three
+ * headers `readSharedScan` (`src/lib/sharedScan.ts`) reads back out.
+ *
+ * Exported on its own — not just inlined into `handleShareTargetFetch` —
+ * because it is also the File Handling API's stash path: `main.tsx`'s
+ * file-handler bridge calls this directly for a file that arrived via
+ * `window.launchQueue`, not a share-target POST, so both delivery
+ * mechanisms funnel into the same one Cache Storage entry `CorrectPaper.tsx`
+ * reads on mount.
+ *
+ * Can throw: `Headers` validates its values against the Fetch spec's
+ * forbidden-byte set, and `file.name` is attacker- or OS-controlled input —
+ * `handleShareTargetFetch` below is what catches this, not this function,
+ * so a page-side caller (the file-handler bridge) sees a real rejection
+ * rather than a silently-dropped file.
+ */
+export async function stashSharedFile(file: File): Promise<void> {
+  const cache = await caches.open(SHARE_CACHE)
+  const headers = new Headers({
+    "content-type": file.type || "application/octet-stream",
+    "x-shared-name": file.name,
+    "x-shared-at": new Date().toISOString(),
+  })
+  await cache.put(SHARE_KEY, new Response(file, { headers }))
+}
+
+/**
  * Stashes the shared file into Cache Storage and redirects to the marking
  * flow. `CorrectPaper.tsx`'s `readSharedScan` (src/lib/sharedScan.ts) is the
  * other half — it reads this exact cache/key on mount.
@@ -32,19 +59,20 @@ export interface ShareTargetFetchEvent {
  * Always redirects, file or not: a share sheet is not somewhere to render an
  * error, and a share with no file (or a browser that omitted it) still needs
  * to leave the reader somewhere real rather than on a blank POST response.
+ * The same holds for a file whose name `stashSharedFile` can't turn into a
+ * header value (A6 review fix MEDIUM 2) — stashing is best-effort, but the
+ * redirect is not optional.
  */
 export async function handleShareTargetFetch(event: ShareTargetFetchEvent): Promise<Response> {
   const formData = await event.request.formData()
   const file = formData.get("scan")
 
   if (file instanceof File) {
-    const cache = await caches.open(SHARE_CACHE)
-    const headers = new Headers({
-      "content-type": file.type || "application/octet-stream",
-      "x-shared-name": file.name,
-      "x-shared-at": new Date().toISOString(),
-    })
-    await cache.put(SHARE_KEY, new Response(file, { headers }))
+    try {
+      await stashSharedFile(file)
+    } catch {
+      // Deliberately empty. See this function's own doc comment.
+    }
   }
 
   // An absolute URL, built off the request's own origin, rather than the bare

@@ -37,7 +37,7 @@ import {
   pickClientToFocus,
   type PushNotificationContent,
 } from "@/lib/push/pushDecision"
-import { handleShareTargetFetch } from "@/sw/shareTarget"
+import { SHARE_CACHE, handleShareTargetFetch } from "@/sw/shareTarget"
 
 declare const self: ServiceWorkerGlobalScope
 
@@ -87,7 +87,12 @@ if (precacheEnabled) {
     event.waitUntil(
       caches
         .keys()
-        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        // A6 review fix (addendum L4): was every key. `SHARE_CACHE` holds a
+        // share-target/file-handler stash that may be sitting between the OS
+        // delivering a file and `CorrectPaper.tsx` reading it on mount — a
+        // worker update activating in that window must not discard it out
+        // from under the reader.
+        .then((keys) => Promise.all(keys.filter((key) => key !== SHARE_CACHE).map((key) => caches.delete(key))))
         .then(() => undefined),
     )
   })
@@ -120,9 +125,21 @@ clientsClaim()
 // to `/share-target`, which needs its own listener.
 self.addEventListener("fetch", (event: FetchEvent) => {
   const url = new URL(event.request.url)
-  if (event.request.method === "POST" && url.pathname === "/share-target") {
-    event.respondWith(handleShareTargetFetch(event))
-  }
+  if (event.request.method !== "POST" || url.pathname !== "/share-target") return
+
+  // A6 review fix (MEDIUM 1): a hostile page can auto-submit a cross-site
+  // form straight to this exact URL — the worker only sees the request's
+  // destination, which is this origin either way, so `url.pathname` alone
+  // cannot distinguish that from the OS's own share sheet. `Sec-Fetch-Site`
+  // is set by the browser, not readable-or-writable from page JS: "cross-site"
+  // for a hostile page's form, "none" (no referring page at all) for the
+  // OS-level share-sheet launch this handler actually exists for. Falling
+  // through to the network (no `event.respondWith`) rather than answering
+  // with an error keeps this indistinguishable from a route this worker
+  // never registered at all.
+  if (event.request.headers.get("Sec-Fetch-Site") === "cross-site") return
+
+  event.respondWith(handleShareTargetFetch(event))
 })
 
 // --- Push (the reason this file exists) -------------------------------------

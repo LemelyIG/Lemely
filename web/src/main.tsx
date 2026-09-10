@@ -8,6 +8,7 @@ import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
 import { currentBuildId, reportClientError } from "./lib/clientErrors"
 import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
+import { installFileHandlerBridge } from "./lib/sharedScan"
 import { PushAutoEnable } from "./components/push-auto-enable"
 import { RecoveryEffects } from "./components/recovery-effects"
 import { TimezoneSync } from "./components/timezone-sync"
@@ -21,6 +22,14 @@ import "./index.css"
 // happened to be mounted. Without this every push falls back to the generic
 // notification even with the app open.
 registerPushClientBridge()
+
+// A6 review fix (MEDIUM 4): was registered inside CorrectPaper.tsx, which
+// unmounts on navigation and orphans the launchQueue consumer for any
+// repeat OS "open with" launch after that. See
+// `installFileHandlerBridge`'s own doc (src/lib/sharedScan.ts) for the
+// full reasoning — same "call once, before the app renders" shape as
+// `registerPushClientBridge`/`installStaleChunkReload` above and below.
+installFileHandlerBridge()
 
 /*
  * PR 1B (client error reporting): the two failure classes `ErrorBoundary`

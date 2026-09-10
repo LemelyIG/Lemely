@@ -64,3 +64,28 @@ describe("sw.ts — gated skip-waiting (A7)", () => {
     expect(source).toMatch(/^clientsClaim\(\)/m)
   })
 })
+
+describe("sw.ts — share-target CSRF guard (A6 review fix MEDIUM 1)", () => {
+  // A cross-site form (a hostile page auto-submitting to
+  // https://lemelyig.com/share-target) is intercepted by this worker just
+  // like the OS's own share sheet is — the worker only sees the request's
+  // destination, not who initiated it, so `url.pathname === "/share-target"`
+  // alone can't tell them apart. `Sec-Fetch-Site` is the browser-set,
+  // unspoofable-by-JS signal that can: "cross-site" for a hostile page's
+  // form, "none" (no referring page at all) for the OS's own share-sheet
+  // launch.
+  it("rejects a request explicitly marked cross-site before handing it to handleShareTargetFetch", () => {
+    expect(source).toMatch(/Sec-Fetch-Site/)
+    expect(source).toMatch(/cross-site/)
+  })
+})
+
+describe("sw.ts — non-precache activate handler spares the share-target cache (A6 review fix addendum L4)", () => {
+  it("filters SHARE_CACHE out of the full cache wipe", () => {
+    const activateMatch = source.match(/self\.addEventListener\("activate",[\s\S]*?\n {2}\}\)/)
+    expect(activateMatch, 'no self.addEventListener("activate", ...) block found').not.toBeNull()
+    const body = activateMatch ? activateMatch[0] : ""
+    expect(body).toMatch(/SHARE_CACHE/)
+    expect(body).toMatch(/\.filter\(/)
+  })
+})

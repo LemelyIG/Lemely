@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -409,41 +409,35 @@ export function CorrectPaper() {
   }
 
   /**
-   * Web Share Target (manifest's `share_target`): a scan shared from the OS
-   * share sheet lands in Cache Storage (`src/sw/shareTarget.ts`) before this
-   * screen even mounts, so the file is picked up here rather than passed
-   * through router state. Mount-only: a share consumed once should not keep
-   * reappearing on every later visit, which is also why `readSharedScan`
-   * deletes the cache entry it reads.
+   * Web Share Target (manifest's `share_target`) AND File Handling API
+   * (manifest's `file_handlers`): both funnel through the same Cache
+   * Storage bridge (`installFileHandlerBridge`, mounted once in `main.tsx`,
+   * and `handleShareTargetFetch` in the service worker both call the same
+   * `stashSharedFile`), so `readSharedScan` here picks up a file regardless
+   * of which OS mechanism delivered it. Mount-only: a share consumed once
+   * should not keep reappearing on every later visit, which is also why
+   * `readSharedScan` deletes the cache entry it reads.
+   *
+   * Guarded by a ref, not the `let cancelled` pattern this effect used to
+   * use (A6 review fix MEDIUM 3): React 18 StrictMode's dev-only double
+   * effect invoke called `readSharedScan` twice in the same tick, and since
+   * it deletes the cache entry as part of reading it, the two invocations
+   * raced — the first read (and deleted) the real file, then discarded it
+   * because its own cleanup had already flipped `cancelled` to true by the
+   * time its promise resolved; the second found nothing left to read
+   * either way. The ref persists across both invocations of the same
+   * effect (this is the same fiber, not a real unmount/remount), so it
+   * makes sure `readSharedScan` — and the cache delete inside it — only
+   * ever runs once no matter how many times the effect itself runs.
    */
+  const sharedScanAttempted = useRef(false)
   useEffect(() => {
-    let cancelled = false
+    if (sharedScanAttempted.current) return
+    sharedScanAttempted.current = true
     readSharedScan().then((file) => {
-      if (cancelled || !file) return
+      if (!file) return
       setScanSource("file")
       chooseScan(file)
-    })
-    return () => {
-      cancelled = true
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
-
-  /**
-   * File Handling API (manifest's `file_handlers`): the OS "open with"
-   * counterpart to the share target above, for a browser that launched this
-   * app directly with a file rather than routing through `/share-target`.
-   * `window.launchQueue` is undefined outside Chromium, so this is a no-op
-   * everywhere else.
-   */
-  useEffect(() => {
-    window.launchQueue?.setConsumer((launchParams) => {
-      const handle = launchParams.files[0]
-      if (!handle) return
-      handle.getFile().then((file) => {
-        setScanSource("file")
-        chooseScan(file)
-      })
     })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])

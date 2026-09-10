@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import { SHARE_CACHE, SHARE_KEY } from "../../src/sw/shareTarget.ts"
 import { readSharedScan } from "../../src/lib/sharedScan.ts"
@@ -77,5 +79,24 @@ describe("readSharedScan", () => {
 
     expect(file).toBeNull()
     expect(deleteEntry).not.toHaveBeenCalled()
+  })
+})
+
+describe("installFileHandlerBridge source-text gate (A6 review fix MEDIUM 4 — wiring only, not exercised by a test)", () => {
+  // Same shape as `staleChunk.ts`'s `installStaleChunkReload`, which
+  // `staleChunk.test.ts`'s own header says outright it does not exercise
+  // (`window.addEventListener`, `location.reload()` are real-browser wiring
+  // with nothing to inject under this suite's plain-Node environment,
+  // D3.20). `stashSharedFile`, what this function actually delegates to, is
+  // the tested half (`swShareTarget.test.ts`); this just pins that the
+  // delegation is real.
+  const source = readFileSync(
+    join(import.meta.dirname, "..", "..", "src", "lib", "sharedScan.ts"),
+    "utf8",
+  )
+
+  it("registers a launchQueue consumer that stashes the launched file", () => {
+    expect(source).toMatch(/window\.launchQueue\?\.setConsumer/)
+    expect(source).toMatch(/stashSharedFile\(/)
   })
 })

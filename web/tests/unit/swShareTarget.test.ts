@@ -3,6 +3,7 @@ import {
   SHARE_CACHE,
   SHARE_KEY,
   handleShareTargetFetch,
+  stashSharedFile,
   type ShareTargetFetchEvent,
 } from "../../src/sw/shareTarget.ts"
 
@@ -76,5 +77,51 @@ describe("handleShareTargetFetch", () => {
 
     expect(put).not.toHaveBeenCalled()
     expect(response.status).toBe(303)
+  })
+
+  it("still redirects — never throws — when the file's name can't become a header value (A6 review fix MEDIUM 2)", async () => {
+    // `Headers` validates values against the Fetch spec's forbidden-byte set
+    // (CR/LF among them); a filename an attacker chooses ends up as the
+    // x-shared-name header value, so it must not be able to crash the
+    // handler — the "always redirects" contract in this function's own doc
+    // comment has to hold even here.
+    const file = new File(["x"], "evil\r\nX-Injected: 1", { type: "image/jpeg" })
+    const event: ShareTargetFetchEvent = { request: fakeRequest(file) }
+
+    const response = await handleShareTargetFetch(event)
+
+    expect(response.status).toBe(303)
+  })
+})
+
+describe("stashSharedFile", () => {
+  let put: ReturnType<typeof vi.fn>
+  let open: ReturnType<typeof vi.fn>
+
+  beforeEach(() => {
+    put = vi.fn().mockResolvedValue(undefined)
+    open = vi.fn().mockResolvedValue({ put })
+    vi.stubGlobal("caches", { open })
+  })
+
+  afterEach(() => {
+    vi.unstubAllGlobals()
+  })
+
+  it("is the same stash logic handleShareTargetFetch uses — exported so main.tsx's file-handler bridge can call it directly for a launchQueue file, not just a share-target POST", async () => {
+    const file = new File(["fake bytes"], "launched.pdf", { type: "application/pdf" })
+
+    await stashSharedFile(file)
+
+    expect(open).toHaveBeenCalledWith(SHARE_CACHE)
+    const [key, stashed] = put.mock.calls[0] as [string, Response]
+    expect(key).toBe(SHARE_KEY)
+    expect(stashed.headers.get("content-type")).toBe("application/pdf")
+    expect(stashed.headers.get("x-shared-name")).toBe("launched.pdf")
+  })
+
+  it("throws on a malformed name — handleShareTargetFetch is what catches it, this function does not swallow", async () => {
+    const file = new File(["x"], "evil\r\nX-Injected: 1", { type: "image/jpeg" })
+    await expect(stashSharedFile(file)).rejects.toThrow()
   })
 })
