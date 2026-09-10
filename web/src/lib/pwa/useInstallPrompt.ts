@@ -18,8 +18,16 @@ interface BeforeInstallPromptEvent extends Event {
 }
 
 export interface InstallPromptState {
-  /** True once a real, replayable `beforeinstallprompt` event is stashed. */
+  /** True once a real, replayable `beforeinstallprompt` event is stashed
+   * AND the 14-day dismissal cooldown has elapsed — the "don't keep
+   * nagging" show/hide decision `InstallBanner` wants. `hasPromptEvent`
+   * below is the same signal without the `dismissed` fold-in, for a caller
+   * (`InstallSettingsSection`) where a reader reaching this screen on
+   * purpose is not who the cooldown is protecting from being nagged. */
   canInstall: boolean
+  /** True once a real, replayable `beforeinstallprompt` event is stashed —
+   * `canInstall` minus the `dismissed` fold-in. See `canInstall`'s own doc. */
+  hasPromptEvent: boolean
   promptInstall: () => Promise<void>
   /** UA fact — iOS Safari/WebKit, which never fires `beforeinstallprompt`. */
   isIos: boolean
@@ -206,6 +214,7 @@ export function useInstallPrompt(): InstallPromptState {
 
   return {
     canInstall: promptEvent !== null && !dismissed,
+    hasPromptEvent: promptEvent !== null,
     promptInstall,
     isIos,
     isStandalone,
