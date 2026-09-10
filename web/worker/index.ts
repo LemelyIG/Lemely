@@ -49,6 +49,13 @@ export default {
 		}
 		proxyRequest.headers.set("X-Forwarded-Proto", "https");
 
-		return fetch(proxyRequest);
+		// `new Response(res.body, res)` streams `res.body` through unread rather
+		// than buffering it, so the SSE progress endpoints this comment block
+		// already describes keep streaming — only the header set changes.
+		const res = await fetch(proxyRequest);
+		const out = new Response(res.body, res);
+		out.headers.set("X-Content-Type-Options", "nosniff");
+		out.headers.set("Referrer-Policy", "strict-origin-when-cross-origin");
+		return out;
 	},
 } satisfies ExportedHandler<Env>;

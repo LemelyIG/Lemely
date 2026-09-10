@@ -36,6 +36,7 @@ import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
 import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
+import { readSharedScan } from "@/lib/sharedScan"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -406,6 +407,27 @@ export function CorrectPaper() {
     chooseScan(null)
     if (source === "camera") setCameraSessionKey((k) => k + 1)
   }
+
+  /**
+   * Web Share Target (manifest's `share_target`): a scan shared from the OS
+   * share sheet lands in Cache Storage (`src/sw/shareTarget.ts`) before this
+   * screen even mounts, so the file is picked up here rather than passed
+   * through router state. Mount-only: a share consumed once should not keep
+   * reappearing on every later visit, which is also why `readSharedScan`
+   * deletes the cache entry it reads.
+   */
+  useEffect(() => {
+    let cancelled = false
+    readSharedScan().then((file) => {
+      if (cancelled || !file) return
+      setScanSource("file")
+      chooseScan(file)
+    })
+    return () => {
+      cancelled = true
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`

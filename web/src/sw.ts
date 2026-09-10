@@ -37,6 +37,7 @@ import {
   pickClientToFocus,
   type PushNotificationContent,
 } from "@/lib/push/pushDecision"
+import { handleShareTargetFetch } from "@/sw/shareTarget"
 
 declare const self: ServiceWorkerGlobalScope
 
@@ -67,10 +68,12 @@ if (precacheEnabled) {
 
   // `navigateFallback: "/index.html"` with `navigateFallbackDenylist: [/^\/api/]`.
   // The SPA serves every navigation from the precached shell — except anything
-  // under /api, which must reach the network.
+  // under /api, which must reach the network, and now /share-target (below):
+  // a precached-shell navigation response would out-race the redirect the
+  // share-target handler itself returns.
   registerRoute(
     new NavigationRoute(createHandlerBoundToURL("/index.html"), {
-      denylist: [/^\/api/],
+      denylist: [/^\/api/, /^\/share-target/],
     }),
   )
 } else {
@@ -97,6 +100,20 @@ self.skipWaiting().catch(() => {
   // nothing here is worth failing the install over.
 })
 clientsClaim()
+
+// --- Web Share Target (manifest's `share_target`) ---------------------------
+
+// File-scope and unconditional — registered regardless of `precacheEnabled`,
+// because the OS share sheet reaches this worker on staging and localhost
+// too, not only on the production hosts precaching is scoped to. Workbox's
+// `registerRoute` only ever matches navigations (GET); the share sheet POSTs
+// to `/share-target`, which needs its own listener.
+self.addEventListener("fetch", (event: FetchEvent) => {
+  const url = new URL(event.request.url)
+  if (event.request.method === "POST" && url.pathname === "/share-target") {
+    event.respondWith(handleShareTargetFetch(event))
+  }
+})
 
 // --- Push (the reason this file exists) -------------------------------------
 
