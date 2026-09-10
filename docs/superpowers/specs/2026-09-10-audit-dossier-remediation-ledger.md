@@ -89,17 +89,17 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 69 | `form-factor-wide-and-narrow` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
 | 70 | `screenshots-label-field` | pwa | NOT-APPLICABLE | A | A5 | pending |  |
 | 71 | `screenshots-member-absent` | pwa | FAIL (unchanged on staging), but the fix pathway already half-exists in-repo, untracked and unwired. | A | A5 | pending |  |
-| 72 | `sec-05-headers-missing` | pwa | FAIL | A | A6 | pending |  |
-| 73 | `sec-06-header-hsts` | pwa | FAIL | A | A6 | pending |  |
-| 74 | `sec-07-header-x-content-type-options` | pwa | FAIL | A | A6 | pending |  |
-| 75 | `sec-08-header-referrer-policy` | pwa | FAIL | A | A6 | pending |  |
-| 76 | `sec-09-header-permissions-policy` | pwa | FAIL | A | A6 | pending |  |
-| 77 | `sec-10-csp-discrepancy-resolved` | pwa | FAIL | A | A6 | pending |  |
-| 78 | `sec-11-header-delivery-mechanism` | pwa | FAIL | A | A6 | pending |  |
+| 72 | `sec-05-headers-missing` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 73 | `sec-06-header-hsts` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 74 | `sec-07-header-x-content-type-options` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 75 | `sec-08-header-referrer-policy` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 76 | `sec-09-header-permissions-policy` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 77 | `sec-10-csp-discrepancy-resolved` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
+| 78 | `sec-11-header-delivery-mechanism` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headers.test.ts; docker: curl -sI / , /sw.js, /assets/* all show 5 headers` |
 | 79 | `manifest-dir` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (dir) |
 | 80 | `manifest-id` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (id) |
 | 81 | `manifest-launch-handler` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
-| 82 | `manifest-share-target` | pwa | PARTIAL | A | A6 | pending |  |
+| 82 | `manifest-share-target` | pwa | PARTIAL | A | A6 | done A6 | `npx vitest run tests/unit/manifest.test.ts` |
 | 83 | `manifest-shortcuts` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (shortcuts) + `npm run icons` for shortcut-*-96.png |
 | 84 | `MaskableSafeZone` | pwa | PASS | A | A5 | done A5 | `npx vitest run tests/unit/brandTokens.test.ts` — MASKABLE_SCALE <= MAX_MASKABLE_SCALE, now in vite/brandTokens.ts |
 | 85 | `precache-glob-cost` | pwa | PASS-by-construction today (jpg extension already excludes these files); recommend the explicit globIgnores as documented hardening. | A | A5 | done A5 | `grep -c 'screenshots/\|widgets/\|store-icon' dist/sw.js` == 0 — vite.config.ts globIgnores |
@@ -111,8 +111,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 91 | `emp-robots-txt-spa-fallback` | pwa | FAIL | A | A5 | done A5 | `ls dist/robots.txt` — web/public/robots.txt |
 | 92 | `no-favicon-ico-fallback` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` + `file dist/favicon.ico` — index.html favicon.ico link added |
 | 93 | `manifest-categories` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (categories) |
-| 94 | `manifest-file-handlers` | pwa | PARTIAL | A | A6 | pending |  |
-| 95 | `sec-12-worker-api-response-headers` | pwa | FAIL | A | A6 | pending |  |
+| 94 | `manifest-file-handlers` | pwa | PARTIAL | A | A6 | done A6 | `npx vitest run tests/unit/manifest.test.ts` |
+| 95 | `sec-12-worker-api-response-headers` | pwa | FAIL | A | A6 | done A6 | `npm run typecheck && npm run build (worker/index.ts sets X-Content-Type-Options/Referrer-Policy on every proxied response)` |
 | 96 | `sw-background-sync-upload-candidate` | pwa | NOT-APPLICABLE | B | B6 | pending |  |
 | 97 | `sw-offline-production-trace` | pwa | PARTIAL | B | B6 | pending |  |
 | 98 | `any-vs-maskable-distinct-art` | pwa | PASS |  |  | no-action | PASS check |
