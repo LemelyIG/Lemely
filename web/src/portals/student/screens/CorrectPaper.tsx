@@ -35,6 +35,7 @@ import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
 import { defaultScanSource } from "@/lib/scanSource"
+import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -679,6 +680,7 @@ export function CorrectPaper() {
             ) : (
               <CameraCapture
                 key={cameraSessionKey}
+                autoStart={shouldAutoStartCamera(cameraSessionKey)}
                 onComplete={chooseScan}
                 onCancel={() => chooseScanSource("file")}
                 className="border-0 bg-transparent p-0"

@@ -226,9 +226,9 @@ export function QueryState<T>({
       typeof error.body === "function"
         ? error.body(query.error)
         : (error.body ?? describeQueryFailure(query.error))
-    // A dropped connection (`ApiError(0, ...)` or a bare `TypeError` — see
-    // `isOfflineFailure`'s own doc) is not the same fact as a real failure:
-    // `OfflineState` says "you're not connected", `ErrorState` says
+    // A dropped connection (`ApiError(0, ...)` — see `isOfflineFailure`'s own
+    // doc for why that and only that) is not the same fact as a real
+    // failure: `OfflineState` says "you're not connected", `ErrorState` says
     // "something broke", and conflating them tells a reader on a bad train
     // connection that Lemely is broken when it is not.
     const StateComponent = isOfflineFailure(query.error) ? OfflineState : ErrorState

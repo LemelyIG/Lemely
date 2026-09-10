@@ -36,7 +36,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 16 | `nav-2` | native | high | B | B3 | pending |  |
 | 17 | `nav-3` | native | high | B | B2 | pending |  |
 | 18 | `nav-4` | native | high | B | B2 | pending |  |
-| 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — QueryState's error branch renders OfflineState for ApiError(0,...)/TypeError |
+| 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 20 | `offline-3` | native | high | B | B6 | pending |  |
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
 | 22 | `no-pre-mount-shell` | native | high | B | B1 | pending |  |
@@ -65,8 +65,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 45 | `kb-3` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 46 | `kb-4` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 47 | `nav-5` | native | medium | B | B3 | pending |  |
-| 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — QueryState's error branch renders OfflineState for ApiError(0,...)/TypeError |
-| 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer |
+| 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
+| 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts tests/unit/cameraAutoStart.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer, but per review HIGH finding does not auto-acquire the device on that unprompted mount: `shouldAutoStartCamera` predicate tested directly, gesture-gating wiring (CorrectPaper→CameraCapture `autoStart` prop, CameraCapture's getUserMedia effect gated on `started`) verified by source-level check |
 | 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | pending |  |
 | 51 | `no-overscroll-behavior` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 52 | `no-orientation-policy` | native | medium | B | B5 | pending |  |
@@ -179,7 +179,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 159 | `content-classified-practice-mental-model` | ui | high | C | C3 | pending |  |
 | 160 | `x-completeness-admin-portals-uncovered` | ui | high |  |  | no-action | production already better |
 | 161 | `x-completeness-auth-funnel-uncovered` | ui | high |  |  | no-action | production already better |
-| 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `OfflineState` is now reachable from `QueryState`'s error branch |
+| 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly; `OfflineState` reachability from QueryState's error branch verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending |  |
 | 164 | `gamification-no-leaderboard-climb-celebration` | ui | high | D | D1 | pending |  |
 | 165 | `onboarding-semantic-sliders-no-personalization-signal` | ui | high | D | D3 | pending |  |
