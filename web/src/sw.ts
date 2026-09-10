@@ -93,11 +93,21 @@ if (precacheEnabled) {
   })
 }
 
-// `registerType: "autoUpdate"` meant the new worker took over without asking.
-// Preserved explicitly, because injectManifest does not imply it.
-self.skipWaiting().catch(() => {
-  // A browser that refuses the skip simply activates on the next navigation;
-  // nothing here is worth failing the install over.
+// Packet A7 (`silent-update-swap`): `registerType` is now `"prompt"`, not
+// `"autoUpdate"`, and a new worker must stay in `waiting` — not take over —
+// until the reader clicks "Reload" on `<UpdateToast>` (`useServiceWorkerUpdate`).
+// An unconditional call at install time defeated that regardless of the
+// page-side gate: it advanced this worker straight past `waiting` on every
+// install, so `wb.addEventListener("waiting", ...)` (vite-plugin-pwa's own
+// `registerSW.ts`) never even fired. Skipping now happens only on request,
+// via the `SKIP_WAITING` message `updateServiceWorker(true)` sends.
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if ((event.data as { type?: unknown } | undefined)?.type === "SKIP_WAITING") {
+    self.skipWaiting().catch(() => {
+      // A browser that refuses the skip simply activates on the next
+      // navigation; nothing here is worth failing the message handler over.
+    })
+  }
 })
 clientsClaim()
 

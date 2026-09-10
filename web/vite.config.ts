@@ -43,18 +43,35 @@ export default defineConfig(({ mode }) => ({
     // web/vite/preMountShell.ts.
     preMountShell(),
     VitePWA({
-      registerType: "autoUpdate",
-      // P6.3. The default (`injectRegister: "auto"`) emits a bare
-      // `<script src="/registerSW.js">` as the last thing in `<head>` — no
-      // `defer`, no `async`, not a module — so it is parser-blocking, and the
-      // parser has not reached `<body>` yet when it stops. Lighthouse measured
-      // it at **301ms of render blocking on every one of the 41 audited
-      // routes**, for 403 bytes whose entire job is to register a service
-      // worker that has nothing to do until after first paint. Deferring it
-      // changes nothing about when the worker becomes useful and takes the
-      // whole product off the second entry in its own render-blocking list
-      // (the first is the stylesheet, which has to block).
-      injectRegister: "script-defer",
+      // Packet A7 (`silent-update-swap`): "autoUpdate" is vite-plugin-pwa's
+      // own registerSW.ts short-circuiting straight to a silent
+      // `location.reload()` the moment a new worker activates — its
+      // `onNeedRefresh` callback is never even called in that mode, so
+      // `useServiceWorkerUpdate`'s `needRefresh` could never become true no
+      // matter what the app built around it. "prompt" is what makes
+      // vite-plugin-pwa call `onNeedRefresh` (and hold the new worker in
+      // `waiting`) instead, which is the gate `<UpdateToast>` needs to exist
+      // at all.
+      registerType: "prompt",
+      // Packet A7: was `"script-defer"` (P6.3, kept below). Now `false` —
+      // `useServiceWorkerUpdate` registers via `virtual:pwa-register/react`'s
+      // `useRegisterSW`, mounted in `main.tsx`; injecting a second,
+      // independent registration script alongside it would double-register
+      // the worker (two separate Workbox instances, each with its own
+      // `updateServiceWorker`), and only the React-driven one is wired to
+      // `needRefresh`/`<UpdateToast>`. The parser-blocking concern below is
+      // moot with no injected script at all: registration now happens from
+      // React, after hydration, the same general timing `script-defer` gave.
+      //
+      // P6.3, preserved for the history: the default (`injectRegister:
+      // "auto"`) emits a bare `<script src="/registerSW.js">` as the last
+      // thing in `<head>` — no `defer`, no `async`, not a module — so it is
+      // parser-blocking, and the parser has not reached `<body>` yet when it
+      // stops. Lighthouse measured it at **301ms of render blocking on every
+      // one of the 41 audited routes**, for 403 bytes whose entire job is to
+      // register a service worker that has nothing to do until after first
+      // paint.
+      injectRegister: false,
       // `injectManifest`, not the default `generateSW` (D5.15 §1). A generated
       // worker has no `push` listener at all, so D5.10's payload-less push had
       // nowhere to land — the backend could send a notification and nothing on

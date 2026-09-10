@@ -48,6 +48,14 @@ export interface ToastOptions {
   /** ms before auto-dismiss. `0` disables auto-dismiss (the toast stays
    * until closed). Defaults to 5000. */
   duration?: number
+  /** A single inline control (packet A7's "Reload" on `<UpdateToast>`).
+   * Clicking it does not itself dismiss the toast — a caller whose action
+   * navigates away (a reload) has no need to, and one that doesn't wants
+   * the toast to stay until its own timer or the X does. */
+  action?: {
+    label: string
+    onClick: () => void
+  }
 }
 
 interface ToastRecord extends ToastOptions {
@@ -175,6 +183,7 @@ function ToastItem({
       title={record.title}
       description={record.description}
       variant={record.variant}
+      action={record.action}
       onDismiss={() => onDismiss(record.id)}
       onPause={handlePause}
       onResume={handleResume}
@@ -193,6 +202,7 @@ export function ToastCard({
   title,
   description,
   variant = "default",
+  action,
   onDismiss,
   onPause,
   onResume,
@@ -200,6 +210,7 @@ export function ToastCard({
   title: string
   description?: string
   variant?: ToastVariant
+  action?: ToastOptions["action"]
   onDismiss: () => void
   onPause?: () => void
   onResume?: () => void
@@ -229,6 +240,15 @@ export function ToastCard({
         <p className="text-body-sm font-medium text-ink">{title}</p>
         {description ? (
           <p className="text-body-sm text-ink-muted">{description}</p>
+        ) : null}
+        {action ? (
+          <button
+            type="button"
+            onClick={action.onClick}
+            className="self-start text-body-sm font-medium text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover active:scale-[0.98]"
+          >
+            {action.label}
+          </button>
         ) : null}
       </div>
       <button

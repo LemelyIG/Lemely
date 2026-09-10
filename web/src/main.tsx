@@ -11,6 +11,7 @@ import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
 import { PushAutoEnable } from "./components/push-auto-enable"
 import { RecoveryEffects } from "./components/recovery-effects"
 import { TimezoneSync } from "./components/timezone-sync"
+import { UpdateToast } from "./components/UpdateToast"
 import { ToastProvider } from "./components/ui/toast"
 import "./index.css"
 
@@ -87,6 +88,10 @@ createRoot(document.getElementById("root")!).render(
               a push. Mounted here rather than in a screen for the same reason
               `TimezoneSync` is: it must run wherever the reader lands. */}
           <PushAutoEnable />
+          {/* Packet A7: same "renders nothing, fires a toast" shape as the
+              three effects above — mounted here so a service-worker update
+              is noticed and offered regardless of which screen is open. */}
+          <UpdateToast />
           <RouterProvider router={router} />
         </ToastProvider>
       </AuthProvider>

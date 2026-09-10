@@ -1,4 +1,5 @@
 /// <reference types="vite/client" />
+/// <reference types="vite-plugin-pwa/react" />
 
 /**
  * Short build/commit id, injected by `vite.config.ts`'s `define` block at
