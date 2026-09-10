@@ -97,6 +97,97 @@ describe("safe-area insets", () => {
   })
 })
 
+describe(".lm-app-header standalone inset is additive, not destructive", () => {
+  // Unlayered CSS beats a layered Tailwind utility (py-4, py-2.5) regardless
+  // of specificity, so a bare `padding-top: env(...)` here would zero out a
+  // header's existing padding-top instead of adding to it. The fix reads a
+  // custom property with a 0px fallback in both rules, so a header that
+  // never sets the property is unaffected and one that does gets base + inset.
+  const blocks = [...css.matchAll(/\.lm-app-header\s*\{([\s\S]*?)\}/g)].map((m) => m[1])
+
+  it("declares exactly a base rule and a standalone rule", () => {
+    expect(blocks.length).toBe(2)
+  })
+
+  it("the base rule reads --lm-app-header-pt instead of a fixed value", () => {
+    expect(blocks[0]).toContain("padding-top: var(--lm-app-header-pt, 0px)")
+  })
+
+  it("the standalone rule adds the safe-area inset to the custom property", () => {
+    expect(blocks[1]).toContain(
+      "padding-top: calc(var(--lm-app-header-pt, 0px) + env(safe-area-inset-top))",
+    )
+  })
+})
+
+describe("headers keep their existing padding while opting into the additive inset", () => {
+  function headerLine(file: string): string {
+    const source = readFileSync(join(SRC, file), "utf8")
+    const line = source.split("\n").find((l) => l.includes("lm-app-header"))
+    expect(line, `${file}: no line contains lm-app-header`).toBeDefined()
+    return line ?? ""
+  }
+
+  it("student's header replaces py-4 with pb-4 and sets --lm-app-header-pt: 1rem", () => {
+    const line = headerLine("portals/student/index.tsx")
+    expect(line).toContain("pb-4")
+    expect(line).not.toMatch(/(?<!p)\bpy-4\b/)
+    const source = readFileSync(join(SRC, "portals/student/index.tsx"), "utf8")
+    expect(source).toContain('"--lm-app-header-pt": "1rem"')
+  })
+
+  it("teacher's header replaces py-2.5 with pb-2.5 and sets --lm-app-header-pt: 0.625rem", () => {
+    const line = headerLine("portals/teacher/index.tsx")
+    expect(line).toContain("pb-2.5")
+    expect(line).not.toMatch(/\bpy-2\.5\b/)
+    const source = readFileSync(join(SRC, "portals/teacher/index.tsx"), "utf8")
+    expect(source).toContain('"--lm-app-header-pt": "0.625rem"')
+  })
+
+  it("admin's header replaces py-2.5 with pb-2.5 and sets --lm-app-header-pt: 0.625rem", () => {
+    const line = headerLine("portals/admin/index.tsx")
+    expect(line).toContain("pb-2.5")
+    expect(line).not.toMatch(/\bpy-2\.5\b/)
+    const source = readFileSync(join(SRC, "portals/admin/index.tsx"), "utf8")
+    expect(source).toContain('"--lm-app-header-pt": "0.625rem"')
+  })
+
+  it("marketing's header is untouched — it had no py-* to lose", () => {
+    const line = headerLine("portals/marketing/index.tsx")
+    expect(line).not.toContain("--lm-app-header-pt")
+  })
+})
+
+describe("lm-nav-chrome coverage", () => {
+  const CHROME_FILES = [
+    "components/ui/nav-drawer.tsx",
+    "components/ui/nav-shells.tsx",
+    "portals/student/index.tsx",
+    "portals/teacher/index.tsx",
+    "portals/admin/index.tsx",
+    "portals/marketing/index.tsx",
+  ]
+
+  it.each(CHROME_FILES)("%s applies lm-nav-chrome", (file) => {
+    const source = readFileSync(join(SRC, file), "utf8")
+    expect(source).toContain("lm-nav-chrome")
+  })
+
+  it("nav-drawer.tsx applies it to both the dialog panel and the trigger", () => {
+    const source = readFileSync(join(SRC, "components/ui/nav-drawer.tsx"), "utf8")
+    const count = (source.match(/lm-nav-chrome/g) ?? []).length
+    expect(count).toBe(2)
+  })
+})
+
+describe("apple-mobile-web-app-status-bar-style", () => {
+  it("is declared as default, not black-translucent", () => {
+    expect(html).toContain(
+      '<meta name="apple-mobile-web-app-status-bar-style" content="default" />',
+    )
+  })
+})
+
 describe("min-h-screen always pairs with min-h-dvh", () => {
   function* walk(dir: string): Generator<string> {
     for (const entry of readdirSync(dir)) {

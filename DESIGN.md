@@ -333,7 +333,7 @@ with the wrong family.
 | `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
 | `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
 | `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
-| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` sets only `font-size`; it composes with whatever `.text-body-*` a field otherwise carries. |
+| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` is a standalone `font-size` override for native form fields, not a modifier layered on top of a `.text-body-*` class — both are in the same twMerge font-size group, so `cn("text-body-md", "text-field")` always collapses to `text-field` alone; family/weight/line-height come from whatever the field inherits, not from a `.text-body-*` rung. |
 
 **Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
 below 768px. Everything else holds; the body scale is already comfortable on a

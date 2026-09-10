@@ -781,9 +781,12 @@ body {
   font-weight: 400;
   line-height: 1.5;
 }
-/* The `--fs-field` platform floor (see its token comment). Font-size only —
-   it composes with whichever `.text-body-*` a field would otherwise carry
-   for family/weight/line-height, not a replacement for one. */
+/* The `--fs-field` platform floor (see its token comment). A standalone
+   override, not a modifier meant to combine with a `.text-body-*` class:
+   both live in the same twMerge font-size group (lib/utils.ts), so
+   cn("text-body-md", "text-field") always collapses to "text-field" alone —
+   a field using it gets family/weight/line-height from whatever it inherits,
+   not from a `.text-body-*` rung. */
 .text-field {
   font-size: var(--fs-field);
 }
@@ -1181,12 +1184,22 @@ body {
   user-select: none;
 }
 
-/* Only paints in standalone/home-screen mode — in a normal browser tab the
-   OS chrome already reserves the notch/status-bar area, and adding this
-   padding there would double it. */
+/* `padding-top` here is unlayered CSS, and unlayered always beats a layered
+   Tailwind utility (a header's own `py-4`/`py-2.5`) regardless of
+   specificity — so this has to be additive, not a bare `env(...)`, or it
+   would zero out a header's existing top padding on every route rather than
+   supplementing it. `--lm-app-header-pt` is the one place a header opts in;
+   a header that never sets it falls back to 0px and this rule is a no-op. */
+.lm-app-header {
+  padding-top: var(--lm-app-header-pt, 0px);
+}
+
+/* Only adds the inset in standalone/home-screen mode — in a normal browser
+   tab the OS chrome already reserves the notch/status-bar area, and adding
+   this on top of it would double the gap. */
 @media (display-mode: standalone) {
   .lm-app-header {
-    padding-top: env(safe-area-inset-top);
+    padding-top: calc(var(--lm-app-header-pt, 0px) + env(safe-area-inset-top));
   }
 }
 
