@@ -102,13 +102,15 @@ const RESEND_COOLDOWN_SECONDS = 30
 
 const CODE_LENGTH = 6
 
-/** Matches `SignupDetails.tsx`/`SignupRoleSelect.tsx`'s own link recipe.
- * `Login.tsx`'s own `LINK_CLASS` diverges from this one on purpose (packet
- * A2): it adds `inline-flex min-h-11 items-center` for a 44px tap target on
- * that screen's sign-up/forgot-password/parent links. This file's links
- * were not part of that finding, so this recipe is unchanged. */
+/** Matches `SignupDetails.tsx`/`SignupRoleSelect.tsx`'s own link recipe
+ * exactly, so every link on a signed-out auth screen looks and behaves like
+ * the same control. Shares `Login.tsx`'s `pointer-coarse:inline-flex
+ * pointer-coarse:items-center pointer-coarse:min-h-11` tap-target gating
+ * (packet A2 review fix, `login-links-under-44px-tap-target`) — see that
+ * file's own docstring for why it's gated to touch/coarse pointers rather
+ * than unconditional. */
 const LINK_CLASS =
-  "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
 
 /** The "this invite doesn't work" panel — rendered instead of the whole
  * three-step form when `?code=` is missing, or once any of the three calls

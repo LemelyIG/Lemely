@@ -59,14 +59,25 @@ function constStringValue(source: string, name: string): string {
   return source.slice(quoteStart + 1, quoteEnd)
 }
 
+/**
+ * The 44px tap target this packet's `login-links-under-44px-tap-target`
+ * finding asks for, gated to touch/coarse pointers only (packet A2 review
+ * fix) — matching `SubjectDetail.tsx:182`'s own recipe, and not applied
+ * unconditionally, which would inflate desktop link line-height for mouse
+ * users and turn a sentence-inline link into an unwrappable flex item under
+ * text zoom (WCAG 1.4.4/1.4.10).
+ */
+function expectGatedTapTarget(value: string): void {
+  expect(value).toContain("pointer-coarse:inline-flex")
+  expect(value).toContain("pointer-coarse:items-center")
+  expect(value).toContain("pointer-coarse:min-h-11")
+}
+
 describe("Login.tsx", () => {
   const source = readSource("Login.tsx")
 
-  it("LINK_CLASS gives every text link a real touch target", () => {
-    const value = constStringValue(source, "LINK_CLASS")
-    expect(value).toContain("inline-flex")
-    expect(value).toContain("min-h-11")
-    expect(value).toContain("items-center")
+  it("LINK_CLASS gives every text link a real touch target, gated to coarse pointers", () => {
+    expectGatedTapTarget(constStringValue(source, "LINK_CLASS"))
   })
 
   it("the password field submits on Enter", () => {
@@ -92,6 +103,10 @@ describe("SignupDetails.tsx", () => {
     expect(field).toContain('autoCapitalize="words"')
     expect(field).toContain('autoCorrect="off"')
   })
+
+  it("LINK_CLASS shares Login.tsx's gated tap target", () => {
+    expectGatedTapTarget(constStringValue(source, "LINK_CLASS"))
+  })
 })
 
 describe("SignupParent.tsx", () => {
@@ -100,5 +115,9 @@ describe("SignupParent.tsx", () => {
   it("the email-step Email field submits on Enter", () => {
     const field = elementContaining(source, 'label="Email"')
     expect(field).toContain('enterKeyHint="send"')
+  })
+
+  it("LINK_CLASS shares Login.tsx's gated tap target", () => {
+    expectGatedTapTarget(constStringValue(source, "LINK_CLASS"))
   })
 })
