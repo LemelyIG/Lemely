@@ -101,7 +101,6 @@ const NotificationSettingsSection = lazy(() =>
     default: m.NotificationSettingsSection,
   })),
 )
-// A7 review fix (HIGH 2): PortalSettingsLayout now lists an install pill.
 const InstallSettingsSection = lazy(() =>
   import("@/portals/settings/InstallSettings").then((m) => ({
     default: m.InstallSettingsSection,
