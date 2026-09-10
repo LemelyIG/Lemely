@@ -34,6 +34,7 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
+import { defaultScanSource } from "@/lib/scanSource"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -332,7 +333,12 @@ export function CorrectPaper() {
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(initialStages)
   const [error, setError] = useState<string | null>(null)
-  const [scanSource, setScanSource] = useState<ScanSource>("file")
+  // Touch devices (phone, tablet) open straight to the camera — see
+  // `defaultScanSource`'s own doc for why. Lazy initializer so `matchMedia`
+  // runs once, not on every render.
+  const [scanSource, setScanSource] = useState<ScanSource>(() =>
+    defaultScanSource(window.matchMedia?.bind(window)),
+  )
   const [cameraSessionKey, setCameraSessionKey] = useState(0)
   /*
    * The uploaded paper, held past a failure so the run can be retried without

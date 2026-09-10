@@ -185,6 +185,7 @@ function PaperCard({
           <img
             src={previewUrl}
             alt=""
+            decoding="async"
             className="w-full h-full object-cover object-top"
           />
         ) : null}

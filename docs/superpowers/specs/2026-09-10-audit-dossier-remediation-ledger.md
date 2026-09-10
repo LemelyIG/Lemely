@@ -32,11 +32,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
 | 13 | `no-install-affordance` | native | high | A | A7 | pending |  |
 | 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | pending |  |
-| 15 | `kb-2` | native | high | A | A2 | pending |  |
+| 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
 | 16 | `nav-2` | native | high | B | B3 | pending |  |
 | 17 | `nav-3` | native | high | B | B2 | pending |  |
 | 18 | `nav-4` | native | high | B | B2 | pending |  |
-| 19 | `offline-2` | native | high | A | A4 | pending |  |
+| 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — QueryState's error branch renders OfflineState for ApiError(0,...)/TypeError |
 | 20 | `offline-3` | native | high | B | B6 | pending |  |
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
 | 22 | `no-pre-mount-shell` | native | high | B | B1 | pending |  |
@@ -45,7 +45,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 25 | `badging-api-unused-despite-ready-data` | native | high | B | B5 | pending |  |
 | 26 | `camera-scanner-basics-only` | native | high | B | B5 | pending |  |
 | 27 | `web-share-unused-on-result-screen` | native | high | B | B5 | pending |  |
-| 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | pending |  |
+| 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login.tsx LINK_CLASS gains `inline-flex min-h-11 items-center` |
 | 29 | `no-safe-area-insets` | native | high | A | A1 | pending |  |
 | 30 | `no-ios-splash-screens` | native | high | B | B1 | pending |  |
 | 31 | `safe-area-viewport-cover` | native | high | A | A1 | pending |  |
@@ -62,11 +62,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | pending |  |
 | 43 | `no-launch-handler` | native | medium | A | A5 | pending |  |
 | 44 | `no-periodic-update-check` | native | medium | A | A7 | pending |  |
-| 45 | `kb-3` | native | medium | A | A2 | pending |  |
-| 46 | `kb-4` | native | medium | A | A2 | pending |  |
+| 45 | `kb-3` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
+| 46 | `kb-4` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 47 | `nav-5` | native | medium | B | B3 | pending |  |
-| 48 | `offline-4` | native | medium | A | A4 | pending |  |
-| 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | pending |  |
+| 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — QueryState's error branch renders OfflineState for ApiError(0,...)/TypeError |
+| 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer |
 | 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | pending |  |
 | 51 | `no-overscroll-behavior` | native | medium | A | A1 | pending |  |
 | 52 | `no-orientation-policy` | native | medium | B | B5 | pending |  |
@@ -78,7 +78,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 58 | `kb-6` | native | low | A | A1 | pending |  |
 | 59 | `nav-6` | native | low | B | B2 | pending |  |
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
-| 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | pending |  |
+| 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | done A4 | `npm run build` (web/) — `Grading.tsx` thumbnail `<img>` now has `decoding="async"` |
 | 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | pending |  |
 | 63 | `silent-401-push-config-every-load` | native | low | A | A7 | pending |  |
 | 64 | `sw-registers-on-staging-but-no-fetch-handling` | native | low | A | A7 | pending |  |
@@ -179,7 +179,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 159 | `content-classified-practice-mental-model` | ui | high | C | C3 | pending |  |
 | 160 | `x-completeness-admin-portals-uncovered` | ui | high |  |  | no-action | production already better |
 | 161 | `x-completeness-auth-funnel-uncovered` | ui | high |  |  | no-action | production already better |
-| 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | pending |  |
+| 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `OfflineState` is now reachable from `QueryState`'s error branch |
 | 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending |  |
 | 164 | `gamification-no-leaderboard-climb-celebration` | ui | high | D | D1 | pending |  |
 | 165 | `onboarding-semantic-sliders-no-personalization-signal` | ui | high | D | D3 | pending |  |
