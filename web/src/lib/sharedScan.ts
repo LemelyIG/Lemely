@@ -18,6 +18,11 @@ const SHARED_SCAN_TTL_MS = 10 * 60 * 1000
  * visit to this screen, and a stale one is not worth keeping past its TTL.
  */
 export async function readSharedScan(): Promise<File | null> {
+  // A file-handler launch may still be mid-stash (`installFileHandlerBridge`
+  // below) — see `pendingStash`'s own doc for why this has to wait rather
+  // than racing it.
+  if (pendingStash) await pendingStash
+
   const cache = await caches.open(SHARE_CACHE)
   const response = await cache.match(SHARE_KEY)
   if (!response) return null
@@ -33,6 +38,21 @@ export async function readSharedScan(): Promise<File | null> {
   const type = response.headers.get("content-type") ?? blob.type
   return new File([blob], name, { type })
 }
+
+/**
+ * The file-handler bridge's in-flight stash, if one is currently running.
+ *
+ * `readSharedScan()` awaits this before touching the cache — without it, a
+ * reader that mounts while a stash is still in progress (a multi-MB photo's
+ * `getFile()` -> `caches.open` -> `cache.put` chain has several async hops)
+ * races it instead of waiting for it, and a reader whose `cache.match` runs
+ * first finds nothing: the launched file is silently dropped with no retry,
+ * since the File Handling API delivers a launch exactly once. Reset to
+ * `null` once the stash settles (success or failure) so a later, unrelated
+ * call to `readSharedScan` never lines up behind a stale promise nobody
+ * started a wait for.
+ */
+let pendingStash: Promise<void> | null = null
 
 /**
  * File Handling API (manifest's `file_handlers`) — the OS "open with
@@ -68,12 +88,22 @@ export function installFileHandlerBridge(): void {
     // runtime check above has actually confirmed it.
     if (!handle || handle.kind !== "file") return
     const fileHandle = handle as FileSystemFileHandle
-    void fileHandle.getFile().then((file) =>
-      stashSharedFile(file).catch(() => {
+    const stash = fileHandle
+      .getFile()
+      .then((file) => stashSharedFile(file))
+      .catch(() => {
         // Best-effort, matching handleShareTargetFetch's own contract for
-        // the share-target half of this bridge — a malformed name must not
-        // crash the launch consumer.
-      }),
-    )
+        // the share-target half of this bridge — a malformed name (or a
+        // `getFile()` failure) must not crash the launch consumer, and must
+        // not reject `pendingStash` out from under a concurrent
+        // `readSharedScan()` awaiting it either.
+      })
+    pendingStash = stash
+    void stash.finally(() => {
+      // Only clear if nothing newer has already taken over — a second
+      // launch arriving before this one's cleanup runs must not have its
+      // own in-flight `pendingStash` erased by the first one settling late.
+      if (pendingStash === stash) pendingStash = null
+    })
   })
 }

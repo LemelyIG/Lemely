@@ -53,6 +53,27 @@ function valueFromWorkerSource(name: string): string | null {
   return match ? match[1] : null
 }
 
+/**
+ * Every `location ... { ... }` block body in an nginx config — a plain,
+ * non-nested match (nginx.conf has no location block nested inside another),
+ * so a body is just "everything between this block's braces."
+ */
+function parseLocationBlocks(conf: string): string[] {
+  return [...conf.matchAll(/location\s+[^{]*\{([^}]*)\}/g)].map((m) => m[1])
+}
+
+/** True when `block` sets its own `Cache-Control` — nginx's `add_header`
+ * inheritance is all-or-nothing per context (see nginx.conf's own comment
+ * on the server block), so a location that does this does NOT inherit the
+ * server-scope security headers and must repeat every one of them itself. */
+function setsOwnCacheControl(block: string): boolean {
+  return /add_header Cache-Control/.test(block)
+}
+
+function blockDeclaresHeader(block: string, name: string): boolean {
+  return new RegExp(`add_header ${name} `).test(block)
+}
+
 describe("security header parity across the three deploy targets", () => {
   it.each(HEADER_NAMES)("%s is defined in all three files", (name) => {
     expect(valueFromHeadersFile(name), `missing from public/_headers`).not.toBeNull()
@@ -75,13 +96,63 @@ describe("security header parity across the three deploy targets", () => {
     )
   })
 
-  it("nginx.conf declares every header at server scope, plus once more in each of the three Cache-Control locations (HIGH 2 regression guard)", () => {
-    for (const name of HEADER_NAMES) {
-      // 1 at server scope (inherited by /api/ and the SPA-fallback /) + 3
-      // repeats (index.html, sw.js, /assets/ — each sets its own
-      // Cache-Control, which per nginx's inheritance rule means it does NOT
-      // inherit the server-level headers and must repeat them).
-      expect(valuesFromNginxConf(name).length, `${name} should appear 4 times`).toBe(4)
+  /*
+   * The predecessor of this test asserted `valuesFromNginxConf(name).length
+   * === 4` — a file-wide COUNT with no check of which location block each
+   * occurrence sits inside. That is provably too weak to be the HIGH 2
+   * regression guard it claimed to be: a 4th Cache-Control location added
+   * with all 5 security headers omitted leaves every header's total count
+   * at 4 (unchanged), so the count-based test would still pass while
+   * silently reintroducing HIGH 2's exact partial-coverage bug. This
+   * asserts the actual invariant structurally instead — per location
+   * block, not per file.
+   */
+  it("every nginx.conf location that sets its own Cache-Control repeats all 5 security headers (HIGH 2 regression guard, structural)", () => {
+    const cacheControlBlocks = parseLocationBlocks(nginxConf).filter(setsOwnCacheControl)
+    // A parser that silently matched nothing would make every assertion
+    // below vacuously true — this is what stops that from reading as green.
+    expect(
+      cacheControlBlocks.length,
+      "expected to find at least one Cache-Control location in nginx.conf",
+    ).toBeGreaterThan(0)
+
+    for (const block of cacheControlBlocks) {
+      for (const name of HEADER_NAMES) {
+        expect(
+          blockDeclaresHeader(block, name),
+          `a Cache-Control location in nginx.conf is missing add_header ${name}`,
+        ).toBe(true)
+      }
     }
+  })
+
+  /*
+   * Canary for the structural check itself — the same discipline
+   * `queryStateGate.test.ts`'s "detects Overview.tsx" test and
+   * `failureCopy.test.ts` apply to their own detectors: prove the detector
+   * actually flags the exact bug shape (HIGH 2 — a Cache-Control location
+   * missing a security header) rather than trusting it silently. Built from
+   * a string literal, not read from disk, because the point is the parsing
+   * functions' own behaviour on a known-bad shape.
+   */
+  it("the structural check actually catches a Cache-Control location missing a security header (canary)", () => {
+    const badConf = `
+      server {
+        add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+
+        location = /bad.js {
+          add_header Cache-Control "no-cache";
+          add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+          add_header X-Content-Type-Options "nosniff" always;
+          add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+          add_header Permissions-Policy "camera=(self)" always;
+          # Content-Security-Policy omitted — the exact HIGH 2 shape.
+        }
+      }
+    `
+    const cacheControlBlocks = parseLocationBlocks(badConf).filter(setsOwnCacheControl)
+    expect(cacheControlBlocks.length).toBe(1)
+    expect(blockDeclaresHeader(cacheControlBlocks[0], "Content-Security-Policy")).toBe(false)
+    expect(blockDeclaresHeader(cacheControlBlocks[0], "X-Content-Type-Options")).toBe(true)
   })
 })
