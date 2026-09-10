@@ -125,6 +125,7 @@ export async function requestWidgetDataFromClients(
     const finish = (value: unknown): void => {
       if (settled) return
       settled = true
+      clearTimeout(timer)
       resolve(value)
     }
 
@@ -134,15 +135,22 @@ export async function requestWidgetDataFromClients(
       finish(null)
     }, timeoutMs)
 
-    const channel = new MessageChannel()
-    channel.port1.onmessage = (event: MessageEvent) => {
-      clearTimeout(timer)
-      finish(event.data)
-    }
-
-    // Only the first answer is used, so asking every page costs nothing and
-    // avoids guessing which one is able to reply.
+    // Widget bridge review fix (HIGH 1): one `MessageChannel` PER CLIENT, not
+    // one shared channel whose `port2` was transferred to every client in
+    // the loop. Structured-clone-with-transfer detaches a port on its first
+    // transfer, so transferring the same already-detached `port2` to a
+    // second client threw `DataCloneError` — inside this executor, which
+    // rejected the whole promise instead of resolving null, so
+    // `fetchWidgetDataOrStub` propagated the rejection and the widget
+    // rendered NOTHING at all (not even the stub) whenever two or more tabs
+    // were open — defeating the one guarantee this handshake exists to keep.
+    // Only the first answer is used, so asking every page still costs
+    // nothing; `finish`'s `settled` guard is what enforces that.
     for (const client of matched) {
+      const channel = new MessageChannel()
+      channel.port1.onmessage = (event: MessageEvent) => {
+        finish(event.data)
+      }
       client.postMessage({ type: WIDGET_DATA_REQUEST }, [channel.port2])
     }
   })

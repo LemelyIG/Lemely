@@ -105,11 +105,11 @@ describe("sw.ts — widget bridge wiring (Windows 11 / Android widget surface)",
     expect(source).toMatch(/self\.addEventListener\(\s*"widgetinstall"/)
     expect(source).toMatch(/self\.addEventListener\(\s*"widgetresume"/)
     expect(source).toMatch(/fetchWidgetDataOrStub\(/)
-    expect(source).toMatch(/self\.widgets\.updateByTag\(/)
+    expect(source).toMatch(/widgets\.updateByTag\(/)
   })
 
   it("re-renders an already-installed widget on activate, not only on a fresh widgetinstall", () => {
-    expect(source).toMatch(/self\.widgets\.getByTag\(/)
+    expect(source).toMatch(/widgets\.getByTag\(/)
   })
 
   it("fetches the Adaptive Card template fresh from the widget's own definition, never a hand-typed copy of the URL", () => {
@@ -119,5 +119,29 @@ describe("sw.ts — widget bridge wiring (Windows 11 / Android widget surface)",
   it("passes the fallback stub URL from the widget's own definition.data, not a second hardcoded copy of the path", () => {
     expect(source).toMatch(/widget\.definition\.data/)
     expect(source).not.toMatch(/["'`]\/?widgets\/streak-data\.json["'`]/)
+  })
+})
+
+/*
+ * Widget bridge review fix (HIGH 2) — `self.widgets` is optional (the
+ * Widgets API only ships in Edge on Windows 11 with WinAppSDK), and
+ * `activate` runs in every browser, so it is the one listener among the
+ * three above that must not dereference `self.widgets` unguarded — the
+ * regression this pins was a synchronous `TypeError` on every single
+ * `activate` in every non-Edge browser.
+ */
+describe("sw.ts — widget API feature detection (widget bridge review fix HIGH 2)", () => {
+  it("declares self.widgets as optional, not asserted always present", () => {
+    expect(source).toMatch(/declare const self: ServiceWorkerGlobalScope & \{ widgets\?:/)
+  })
+
+  it("the activate listener bails out before touching self.widgets when it is undefined", () => {
+    const activateBlocks = [
+      ...source.matchAll(/self\.addEventListener\("activate",[\s\S]*?\n\}\)/g),
+    ].map((m) => m[0])
+    const widgetActivateBlock = activateBlocks.find((block) => block.includes("STREAK_WIDGET_TAG"))
+    expect(widgetActivateBlock, "no widget-related activate listener found").toBeDefined()
+    expect(widgetActivateBlock).toMatch(/const widgets = self\.widgets/)
+    expect(widgetActivateBlock).toMatch(/if \(widgets === undefined\) return/)
   })
 })
