@@ -79,8 +79,8 @@ export function QuestionRow({
           onClick={toggle}
           aria-expanded={open}
           className={cn(
-            "flex-1 min-w-0 flex items-center gap-3 text-left rounded-md cursor-pointer",
-            "hover:bg-surface-2 transition-colors",
+            "flex-1 min-w-0 flex items-center gap-3 text-start rounded-md cursor-pointer",
+            "hover:bg-surface-2 active:bg-surface-2 transition-colors",
             "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           )}
         >
@@ -94,7 +94,7 @@ export function QuestionRow({
             <span className="hidden sm:inline text-sm text-t3 truncate min-w-0">{topic}</span>
           )}
         </button>
-        <span className="ml-auto flex items-center gap-2 flex-none">
+        <span className="ms-auto flex items-center gap-2 flex-none">
           <ConfidenceIndicator tier={confidence} />
           <button
             type="button"
@@ -102,7 +102,7 @@ export function QuestionRow({
             aria-expanded={open}
             aria-label={open ? "Collapse question detail" : "Expand question detail"}
             className={cn(
-              "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 transition-colors cursor-pointer",
+              "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:bg-surface-2 transition-colors cursor-pointer",
               "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             )}
           >

@@ -27,7 +27,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 9 | `T1` | native | critical | B | B2 | pending |  |
-| 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | pending |  |
+| 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 11 | `zero-haptics-anywhere` | native | high | B | B5 | pending |  |
 | 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
 | 13 | `no-install-affordance` | native | high | A | A7 | pending |  |
@@ -56,7 +56,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 36 | `TT-1` | native | high | B | B3 | pending |  |
 | 37 | `T2` | native | high | B | B1 | pending |  |
 | 38 | `T3` | native | high | B | B2 | pending |  |
-| 39 | `role-switcher-no-active-state` | native | medium | A | A3 | pending |  |
+| 39 | `role-switcher-no-active-state` | native | medium | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
 | 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |
 | 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | pending |  |
@@ -200,7 +200,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 180 | `x-copy-fabricated-metrics-must-not-adopt` | ui | high |  |  | no-action | production already better |
 | 181 | `x-copy-onboarding-grade-guarantee` | ui | high |  |  | skipped | skip: grade-guarantee headline not built |
 | 182 | `x-ia-tutoring-center-cluster-unscoped` | ui | high |  |  | skipped | skip: tutoring-center cluster explicitly unscoped |
-| 183 | `x-motion-width-transition-gate-violation` | ui | high | A | A3 | pending |  |
+| 183 | `x-motion-width-transition-gate-violation` | ui | high | A | A3 | done A3 | `npx vitest run tests/unit/motionDefaults.test.ts` — pass |
 | 184 | `x-responsive-canvas-blind-production-full-breakpoint-system` | ui | high |  |  | no-action | production already better |
 | 185 | `x-tokens-canvas-accents-fail-wcag` | ui | high |  |  | no-action | production already better |
 | 186 | `brand-corner-tick-vs-texture-budget` | ui | medium |  |  | no-action | dossier: no production change |
@@ -211,7 +211,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | pending |  |
 | 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | pending | primary C4 (full extension to ClassAnalytics+Review); A8 did the initial per-screen floor (part) |
 | 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | pending |  |
-| 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | pending |  |
+| 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |
 | 196 | `gamification-no-daily-quests` | ui | medium | D | D1 | pending |  |
 | 197 | `gamification-production-states-exceed-canvas` | ui | medium |  |  | no-action | production already better |
@@ -235,7 +235,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 215 | `trust-ops-suspicious-login-geoip-rejected` | ui | medium |  |  | skipped | skip: suspicious-login geo-IP explicitly rejected |
 | 216 | `x-a11y-canvas-icon-buttons-unlabeled` | ui | medium |  |  | no-action | production already better |
 | 217 | `x-a11y-canvas-touch-targets-undersized` | ui | medium |  |  | no-action | production already better |
-| 218 | `x-a11y-prod-accent-small-text-below-own-floor` | ui | medium | A | A3 | pending |  |
+| 218 | `x-a11y-prod-accent-small-text-below-own-floor` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/contrastRules.test.ts` — pass |
 | 219 | `x-confidence-weakness-superset` | ui | medium |  |  | no-action | production already better |
 | 220 | `x-imageplaceholder-vs-honest-fallback` | ui | medium |  |  | no-action | production already better |
 | 221 | `x-mark-grade-boundary-family-superset` | ui | medium |  |  | no-action | production already better |
@@ -252,9 +252,9 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 232 | `x-responsive-phone-locked-surfaces-get-real-desktop-containers` | ui | medium |  |  | no-action | production already better |
 | 233 | `x-responsive-teacher-dense-tables-scoped-overflow` | ui | medium |  |  | no-action | production already better |
 | 234 | `x-tokens-card-pure-white` | ui | medium |  |  | no-action | production already better |
-| 235 | `x-tokens-sky-info-subject-collision-persists` | ui | medium | A | A3 | pending |  |
+| 235 | `x-tokens-sky-info-subject-collision-persists` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/design-tokens.test.ts` — pass |
 | 236 | `x-tokens-subject-remap-collision` | ui | medium |  |  | no-action | dossier: no production change |
-| 237 | `x-type-dead-font-packages-stale-docs` | ui | medium | A | A3 | pending |  |
+| 237 | `x-type-dead-font-packages-stale-docs` | ui | medium | A | A3 | done A3 | `npm install && npm run build` — pass |
 | 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | pending |  |
 | 239 | `brand-mark-a11y-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 240 | `brand-mark-geometry-diverges` | ui | low |  |  | no-action | dossier: no production change |
@@ -266,7 +266,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 246 | `content-flashcard-card-stack-visual-simplified` | ui | low |  |  | no-action | dossier: no production change |
 | 247 | `content-flashcard-session-summary-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 248 | `content-tutor-marketplace-absent` | ui | low |  |  | skipped | skip: paid tutoring marketplace out of scope |
-| 249 | `x-completeness-kbd-primitive-bypassed` | ui | low | A | A3 | pending |  |
+| 249 | `x-completeness-kbd-primitive-bypassed` | ui | low | A | A3 | done A3 | `npm run typecheck && npm run build` — pass |
 | 250 | `gamification-frozen-streak-unwired` | ui | low | D | D1 | pending |  |
 | 251 | `gamification-restrained-visual-register` | ui | low |  |  | no-action | dossier: no production change |
 | 252 | `onboarding-14day-framing-vs-perpetual-week` | ui | low | C | C3 | pending |  |
@@ -300,7 +300,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 280 | `x-copy-bulk-approve-honesty` | ui | low |  |  | no-action | production already better |
 | 281 | `x-copy-error-state-canvas-gap` | ui | low |  |  | no-action | production already better |
 | 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | pending |  |
-| 283 | `x-dark-nav-badge-raw-white` | ui | low | A | A3 | pending |  |
+| 283 | `x-dark-nav-badge-raw-white` | ui | low | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | pending |  |
 | 285 | `x-density-canvas-knob-is-decorative` | ui | low |  |  | no-action | dossier: no production change |
 | 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | pending |  |

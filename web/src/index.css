@@ -114,8 +114,14 @@
   --warn-wash: oklch(0.945 0.045 85);
   --err: oklch(0.38 0.145 27);
   --err-wash: oklch(0.94 0.035 27);
-  --info: oklch(0.44 0.08 240);
-  --info-wash: oklch(0.94 0.03 235);
+  /* P8 (audit-dossier remediation): was hue 240/235, identical to
+     --pastel-sky-ink's hue (240) and --focus-ring's hue (240), and
+     --info-wash was byte-identical to --pastel-sky. A neutral notice painted
+     in the Math subject's colour, or in the focus ring's colour, reads as a
+     false cue. Hue 265 clears both by >=25deg while keeping L/C unchanged, so
+     the AA measurements below are unaffected. */
+  --info: oklch(0.44 0.08 265);
+  --info-wash: oklch(0.94 0.03 265);
 
   /* ── §3.7 Product scales ─────────────────────────────────────────────── */
   /* Load-bearing product semantics, not decoration. They alias the semantic

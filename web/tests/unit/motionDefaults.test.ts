@@ -213,3 +213,28 @@ describe("reduced motion has a real path, including where CSS cannot reach", () 
     expect(offenders).toEqual([])
   })
 })
+
+/*
+ * Packet A3 (audit-dossier remediation). DESIGN.md §9.2 bans animating
+ * anything but `transform`/`opacity` — the same rule `progress-bar.tsx`'s own
+ * header cites for why its fill uses `transform: scaleX()` rather than a
+ * resized `width`. `processing-state.tsx`'s per-stage counter bar had not
+ * adopted that: its width-transitioning fill (`transition-[width]`) is the
+ * literal violation the shared `<ProgressBar>` component exists to replace.
+ */
+describe("no width-transition remains in components/ui (DESIGN.md §9.2)", () => {
+  it("has no transition-[width] or transition: width in components/ui", () => {
+    const dir = join(process.cwd(), "src", "components", "ui")
+    const offenders: string[] = []
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (!entry.isFile() || !/\.tsx?$/.test(entry.name)) continue
+      const full = join(dir, entry.name)
+      const source = stripComments(readFileSync(full, "utf8"))
+      for (const m of source.matchAll(/transition-\[width\]|transition:\s*width\b/g)) {
+        const line = source.slice(0, m.index).split("\n").length
+        offenders.push(`${relative(process.cwd(), full).split("\\").join("/")}:${line}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})

@@ -106,8 +106,8 @@ TOKENS: dict[str, tuple[float, float, float]] = {
     "warn-wash": (0.945, 0.045, 85),
     "err": (0.38, 0.145, 27),
     "err-wash": (0.94, 0.035, 27),
-    "info": (0.44, 0.080, 240),
-    "info-wash": (0.94, 0.030, 235),
+    "info": (0.44, 0.080, 265),
+    "info-wash": (0.94, 0.030, 265),
 }
 
 AA_NORMAL = 4.5

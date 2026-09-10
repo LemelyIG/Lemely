@@ -4,6 +4,7 @@ import { useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { Kbd } from "@/components/ui/kbd"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { relativeTime } from "@/lib/utils"
@@ -483,15 +484,15 @@ export function ReviewItem() {
               <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
                 <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">
                   <span className="flex items-center gap-1.5">
-                    <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">A</kbd>
+                    <Kbd>A</Kbd>
                     accept as-is
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">N</kbd>
+                    <Kbd>N</Kbd>
                     next item
                   </span>
                   <span className="flex items-center gap-1.5">
-                    <kbd className="px-1.5 py-0.5 rounded border border-rule bg-paper-sunk text-ink-muted">Esc</kbd>
+                    <Kbd>Esc</Kbd>
                     back to queue
                   </span>
                 </div>

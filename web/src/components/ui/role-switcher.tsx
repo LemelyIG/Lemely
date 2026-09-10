@@ -67,7 +67,7 @@ export function RoleSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-body-md text-t1 transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-body-md text-t1 transition-colors hover:bg-surface-2 active:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         {current.icon}
         <span className="font-medium">{current.label}</span>
@@ -95,7 +95,7 @@ export function RoleSwitcher({
                 }}
                 className={cn(
                   // §6.1 touch floor — see the note in nav-shells.tsx.
-                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors hover:bg-surface-2",
+                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors hover:bg-surface-2 active:bg-surface-2",
                   active ? "font-medium text-t1" : "text-t2",
                 )}
               >

@@ -199,7 +199,7 @@ system and it is carried forward on purpose.
 | `--ok` / `--ok-wash` | `oklch(0.48 0.075 175)` `#256B5B` | `oklch(0.945 0.030 175)` `#D9F4EC` | 5.41:1 | Correct, complete, saved, on track. |
 | `--warn` / `--warn-wash` | `oklch(0.45 0.085 70)` `#734C17` | `oklch(0.945 0.045 85)` `#FBEBCB` | 6.45:1 | Partial credit, uncertain, borderline, needs attention. |
 | `--err` / `--err-wash` | `oklch(0.38 0.145 27)` `#7E0D10` | `oklch(0.94 0.035 27)` `#FFE3DF` | 8.86:1 | Wrong, failed, destructive, blocked. |
-| `--info` / `--info-wash` | `oklch(0.44 0.080 240)` `#22587A` | `oklch(0.94 0.030 235)` `#D9EFFD` | 6.47:1 | Neutral notices, tips, "how this works". |
+| `--info` / `--info-wash` | `oklch(0.44 0.080 265)` `#3D517F` | `oklch(0.94 0.030 265)` `#E1EBFF` | 6.56:1 | Neutral notices, tips, "how this works". Hue 265 (was 240/235, which collided with `--pastel-sky-ink`'s hue and `--focus-ring`'s hue — see D-A3.1). |
 
 Every semantic text colour is also AA on `--paper` (5.38:1 to 10.04:1) and on
 `--paper-sunk`.

@@ -230,7 +230,7 @@ export function StateView({
                   type="button"
                   onClick={action.onClick}
                   className={cn(
-                    "self-start text-label text-accent-ink underline decoration-1 underline-offset-2 transition-colors",
+                    "self-start text-label text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
                     "hover:text-accent-hover",
                   )}
                 >
@@ -242,7 +242,7 @@ export function StateView({
                   type="button"
                   onClick={secondaryAction.onClick}
                   className={cn(
-                    "self-start text-label text-ink-muted underline decoration-1 underline-offset-2 transition-colors",
+                    "self-start text-label text-ink-muted underline decoration-1 underline-offset-2 transition-[color,transform] active:scale-[0.98]",
                     "hover:text-ink",
                   )}
                 >

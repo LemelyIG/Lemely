@@ -91,7 +91,7 @@ export function BottomNav({ items, className, ...props }: BottomNavProps) {
           <span className="relative flex items-center justify-center">
             {item.icon}
             {item.badge ? (
-              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-err px-0.5 text-metadata leading-none text-white">
+              <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-err px-0.5 text-metadata leading-none text-accent-on">
                 {item.badge}
               </span>
             ) : null}
@@ -121,7 +121,7 @@ export function SidebarNav({ items, className, ...props }: SidebarNavProps) {
             // tall on every mobile width, and this is the control a student on
             // a phone touches most. Safe as a min because the row already
             // centres its content.
-            "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+            "flex w-full items-center gap-2.5 rounded-md px-9px py-2 pointer-coarse:min-h-11 text-start text-body-md transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
             item.active
               ? "bg-surface-2 font-medium text-t1"
               : "font-normal text-t2 hover:bg-surface-2",
