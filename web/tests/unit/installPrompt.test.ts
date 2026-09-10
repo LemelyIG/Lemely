@@ -298,6 +298,28 @@ describe("useInstallPrompt source-text gates (hook body only — not exercised b
   it("writes the dismissal timestamp when dismiss() is called", () => {
     expect(source).toMatch(/writeDismissedAt\(/)
   })
+
+  /*
+   * A7 follow-up (post-approval MEDIUM) — the shared store (HIGH 1, above)
+   * lets `InstallBanner` and `InstallSettingsSection` both render a button
+   * for the same reader at once. Chromium throws if `.prompt()` is called a
+   * second time on an already-spent event, and without `finally` that throw
+   * skipped `clearDeferredEvent()` — leaving the module-level event
+   * non-null (so `canInstall` stayed true) for an event that will never
+   * resolve again: the surviving button went permanently inert with no
+   * feedback.
+   */
+  it("clears the spent event in a finally block, even if prompt()/userChoice rejects", () => {
+    const fnMatch = source.match(/const promptInstall = async \(\) => \{[\s\S]*?\n  \}/)
+    expect(fnMatch).not.toBeNull()
+    const body = fnMatch ? fnMatch[0] : ""
+    expect(body).toMatch(/finally\s*\{/)
+    // clearDeferredEvent() must be inside the finally block, not just
+    // present anywhere in the function.
+    const finallyMatch = body.match(/finally\s*\{([\s\S]*?)\}/)
+    expect(finallyMatch).not.toBeNull()
+    expect(finallyMatch ? finallyMatch[1] : "").toMatch(/clearDeferredEvent\(\)/)
+  })
 })
 
 /**

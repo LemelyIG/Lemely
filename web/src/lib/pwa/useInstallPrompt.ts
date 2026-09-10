@@ -163,11 +163,10 @@ if (typeof window !== "undefined") {
 }
 
 export function useInstallPrompt(): InstallPromptState {
-  const deferredEvent = useSyncExternalStore(
-    subscribeToDeferredEvent,
-    getDeferredEventSnapshot,
-    () => null,
-  )
+  // Named distinctly from the module-level `deferredEvent` above: same
+  // value (this IS that snapshot), but a local shadowing a module binding of
+  // the same name reads as a bug at a glance even where it isn't one.
+  const promptEvent = useSyncExternalStore(subscribeToDeferredEvent, getDeferredEventSnapshot, () => null)
   const [dismissedAt, setDismissedAt] = useState<number | null>(() =>
     readDismissedAt(typeof window === "undefined" ? undefined : window.localStorage),
   )
@@ -180,10 +179,23 @@ export function useInstallPrompt(): InstallPromptState {
   const dismissed = isWithinCooldown(dismissedAt, Date.now())
 
   const promptInstall = async () => {
-    if (!deferredEvent) return
-    await deferredEvent.prompt()
-    await deferredEvent.userChoice
-    clearDeferredEvent()
+    if (!promptEvent) return
+    // A7 follow-up (post-approval MEDIUM): the shared store now lets
+    // `InstallBanner` and `InstallSettingsSection` both render a button for
+    // the same reader at once, and Chromium throws if `.prompt()` is called
+    // a second time on an already-spent event. Without `finally`, that
+    // throw skipped `clearDeferredEvent()` — leaving the module-level event
+    // non-null and `canInstall` true for an event that will never resolve
+    // again, so the surviving button went permanently inert with no
+    // feedback. Spent either way, same as the comment on
+    // `clearDeferredEvent` already says — this is what makes that true on
+    // the rejection path too.
+    try {
+      await promptEvent.prompt()
+      await promptEvent.userChoice
+    } finally {
+      clearDeferredEvent()
+    }
   }
 
   const dismiss = () => {
@@ -193,7 +205,7 @@ export function useInstallPrompt(): InstallPromptState {
   }
 
   return {
-    canInstall: deferredEvent !== null && !dismissed,
+    canInstall: promptEvent !== null && !dismissed,
     promptInstall,
     isIos,
     isStandalone,
