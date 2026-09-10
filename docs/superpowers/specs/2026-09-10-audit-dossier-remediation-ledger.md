@@ -183,7 +183,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending |  |
 | 164 | `gamification-no-leaderboard-climb-celebration` | ui | high | D | D1 | pending |  |
 | 165 | `onboarding-semantic-sliders-no-personalization-signal` | ui | high | D | D3 | pending |  |
-| 166 | `parent-no-notifications-inbox` | ui | high | D | D2 | already-fixed? | web/src/portals/parent/screens/Notifications.tsx exists on develop — confirm |
+| 166 | `parent-no-notifications-inbox` | ui | high | D | D2 | already-fixed | web/src/portals/parent/screens/Notifications.tsx exists on develop, ToastProvider mounted main.tsx:14/toast.tsx:90 — confirmed A-Task0 |
 | 167 | `student-home-weak-topic-no-cta` | ui | high | D | D2 | pending |  |
 | 168 | `paper-no-ai-remediation-quiz` | ui | high | D | D3 | pending | split: D2 ships the cheap DTO half, D3 ships the full Gemini-backed quiz (assigned here to D3) |
 | 169 | `paper-no-student-transcript` | ui | high | D | D3 | pending |  |
