@@ -103,7 +103,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 83 | `manifest-shortcuts` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (shortcuts) + `npm run icons` for shortcut-*-96.png |
 | 84 | `MaskableSafeZone` | pwa | PASS | A | A5 | done A5 | `npx vitest run tests/unit/brandTokens.test.ts` — MASKABLE_SCALE <= MAX_MASKABLE_SCALE, now in vite/brandTokens.ts |
 | 85 | `precache-glob-cost` | pwa | PASS-by-construction today (jpg extension already excludes these files); recommend the explicit globIgnores as documented hardening. | A | A5 | done A5 | `grep -c 'screenshots/\|widgets/\|store-icon' dist/sw.js` == 0 — vite.config.ts globIgnores |
-| 86 | `emp-lighthouse-scores` | pwa | PARTIAL | A | A5 | pending |  |
+| 86 | `emp-lighthouse-scores` | pwa | PARTIAL | A | A5 | done A5 | Lighthouse (mobile, /login, dist build): Accessibility 100, Best Practices 100, SEO 100 — chrome-devtools MCP `lighthouse_audit` against a local `vite preview` of the phase-A build |
 | 87 | `apple-touch-icon-reuses-192` | pwa | PARTIAL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` — real 180px cut, index.html apple-touch-icon link updated |
 | 88 | `Id` | pwa | FAIL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (id) |
 | 89 | `Screenshots` | pwa | FAIL | A | A5 | done A5 | `npm run screenshots:manifest` — scripts/manifest_screenshots.mjs; dist/screenshots/*.jpg form_factor sorted == [narrow, wide] |
@@ -326,8 +326,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 
 | status | rows |
 |---|---|
-| pending | 103 |
-| done | 84 |
+| pending | 102 |
+| done | 85 |
 | no-action | 92 |
 | skipped | 21 |
 | already-fixed | 1 |
