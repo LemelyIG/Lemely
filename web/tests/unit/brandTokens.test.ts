@@ -1,20 +1,23 @@
+import { readFileSync } from "node:fs"
+import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
-import { MASKABLE_SCALE, MAX_MASKABLE_SCALE, SQUARE_SCALE, tokenHex } from "../../vite/brandTokens.ts"
+import { tokenHex } from "../../vite/brandTokens.ts"
+import { MASKABLE_SCALE, SQUARE_SCALE, maxMaskableScale, measureDrawnExtent } from "../../vite/iconSafeZone.ts"
 
 /*
- * Packet A5 — pins the icon-sizing constants `generate_icons.mjs` depends on,
- * now that they live in `vite/brandTokens.ts` rather than being declared
- * (and duplicated) inside the script itself. See that module's own
- * docstring for the safe-zone arithmetic `MAX_MASKABLE_SCALE` encodes.
+ * Packet A5 — pins the icon-sizing constants `generate_icons.mjs` depends on.
+ * `SQUARE_SCALE`/`MASKABLE_SCALE` live in `vite/iconSafeZone.ts` rather than
+ * being declared (and duplicated) inside the script itself; the maskable
+ * ceiling is measured against the real mark SVG here, not assumed, because
+ * the mark's artboard is not square (see that module's own docstring).
  */
 
-describe("MASKABLE_SCALE", () => {
-  it("stays under the safe-zone ceiling, so the mark's corners survive an Android crop", () => {
-    expect(MASKABLE_SCALE).toBeLessThanOrEqual(MAX_MASKABLE_SCALE)
-  })
+const MARK = fileURLToPath(new URL("../../public/brand/mark.svg", import.meta.url))
 
-  it("MAX_MASKABLE_SCALE is exactly 0.8 / sqrt(2)", () => {
-    expect(MAX_MASKABLE_SCALE).toBeCloseTo(0.8 / Math.SQRT2, 10)
+describe("MASKABLE_SCALE", () => {
+  it("stays under the safe-zone ceiling for the real mark, so its corners survive an Android crop", async () => {
+    const extent = await measureDrawnExtent(readFileSync(MARK))
+    expect(MASKABLE_SCALE).toBeLessThanOrEqual(maxMaskableScale(extent))
   })
 })
 

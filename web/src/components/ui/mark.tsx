@@ -1,22 +1,49 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V5 */
-import { cn } from "@/lib/utils"
+import { MARK_MIRROR, MARK_OUTLINE, MARK_TILT, MARK_VIEW_BOX_TIGHT } from "@/lib/brandMark"
 
 /*
- * The Lemely brand mark, inline (PR 2 part A1).
- *
- * Geometry is `web/public/brand/mark.svg`'s, transcribed rather than
- * `<img src>`'d: an inline `<svg>` can be recoloured with `currentColor`/text
- * tokens and, here, animated per-path, neither of which a static asset file
- * allows. Same two-weight idea the asset's own comment describes — "the
- * printed page, and the human correction on top of it" — carried through as
- * `text-ink` on the two ruled strokes and `text-accent` on the tick.
+ * The Lemely mark, drawing itself.
  *
  * `animated` is the "still loading" reading: a single small mark redrawing
- * itself in place is a legitimate one-glance answer to "is this stuck?" for
- * the rare case a whole page has nothing else to show yet (`slow-load`, PR 2's
+ * itself in place is a legitimate one-glance answer to "is this stuck?" for the
+ * rare case a whole page has nothing else to show yet (`slow-load`, PR 2's
  * `FullPageState`). It is not a general-purpose spinner — `Button`'s `loading`
  * prop and `RouteFallback` already own the ordinary in-flight cases — and its
- * one call site is deliberately kept to that single rare case.
+ * one call site is deliberately kept to that single rare case. The
+ * `stroke-dashoffset` this needs is DESIGN.md §9.2's one documented exception
+ * to "animate only transform and opacity".
+ *
+ * ── What changed when the mark did ─────────────────────────────────────────
+ *
+ * This file used to carry its own transcription of `public/brand/mark.svg` —
+ * the previous mark, an `L` of two hairlines with a tick across it — with a
+ * comment saying so. `index.html`'s pre-mount shell carried a second
+ * transcription of the same three paths. When the mark was redesigned as an
+ * open notebook, both kept drawing a logo that no longer existed anywhere else
+ * in the product, and neither had anything watching. That is the transcription
+ * hazard `lib/brandMark.ts` exists to end: the geometry has one home, and this
+ * reads it.
+ *
+ * It draws `MARK_OUTLINE` — the mark's silhouette rather than the whole
+ * drawing. Watching eleven hairlines of ruling draw themselves is noise, not
+ * reassurance; four strokes say "notebook, bound, marked" and stop.
+ *
+ * ── Why there are no dasharray numbers here ────────────────────────────────
+ *
+ * ── Why the colours are `var()` and not Tailwind classes ───────────────────
+ *
+ * The previous version set `text-ink` / `text-accent` and painted with
+ * `currentColor`. Driving that from the geometry module would mean building the
+ * class name — `text-${stroke}` — and Tailwind's scanner only sees class names
+ * that appear literally in the source, so those two utilities would silently
+ * stop being generated and the mark would render in whatever colour it
+ * inherited. `var(--ink)` needs no scanner and tracks the same token.
+ *
+ * stroke-dash* calculation, so `stroke-dasharray: 1; stroke-dashoffset: 1` is
+ * "fully undrawn" for any path regardless of its real length. The previous
+ * version hardcoded 36, 24 and 42 — three measurements of three specific paths,
+ * copied into two files, silently wrong the moment a curve moved. Nothing here
+ * needs to know how long anything is.
  */
 
 export function Mark({
@@ -30,9 +57,9 @@ export function Mark({
 }) {
   return (
     <svg
-      viewBox="0 0 64 64"
+      viewBox={MARK_VIEW_BOX_TIGHT}
       width={size}
-      height={size}
+      height={(size * 45) / 60}
       fill="none"
       className={className}
       // Animated: this IS the content (a screen reader user needs to know the
@@ -43,32 +70,29 @@ export function Mark({
       aria-label={animated ? "Lemely is still loading" : undefined}
       aria-hidden={animated ? undefined : "true"}
     >
-      {/* The printed page: two hairline strokes, butt caps — ruled by a
-          machine, not drawn by a hand. */}
-      <path
-        d="M20 10V46"
-        className={cn("text-ink", animated && "lm-draw-l1")}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="butt"
-      />
-      <path
-        d="M20 46H44"
-        className={cn("text-ink", animated && "lm-draw-l2")}
-        stroke="currentColor"
-        strokeWidth="2"
-        strokeLinecap="butt"
-      />
-      {/* The correction: one stroke, round caps and joins — drawn by a hand
-          holding a felt pen, laid across the corner last. */}
-      <path
-        d="M27 37L33 46L47 19"
-        className={cn("text-accent", animated && "lm-draw-tick")}
-        stroke="currentColor"
-        strokeWidth="6"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      />
+      <g transform={MARK_TILT}>
+        {MARK_OUTLINE.map(({ step, paths, stroke, width, mirrored }) => {
+          const drawn = paths.map((d) => (
+            <path
+              key={d}
+              d={d}
+              pathLength="1"
+              className={animated ? `lm-draw-${step}` : undefined}
+              stroke={`var(--${stroke})`}
+              strokeWidth={width}
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          ))
+          return mirrored ? (
+            <g key={step} transform={MARK_MIRROR}>
+              {drawn}
+            </g>
+          ) : (
+            <g key={step}>{drawn}</g>
+          )
+        })}
+      </g>
     </svg>
   )
 }

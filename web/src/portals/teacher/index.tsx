@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
+import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
@@ -393,7 +394,7 @@ function SidebarFooter() {
 function BrandLockup() {
   return (
     <div className="flex items-center gap-2.5 px-2">
-      <img src="/brand/mark.svg" alt="" aria-hidden="true" className="h-6 w-6 shrink-0" />
+      <BrandMark className="h-6 w-8 shrink-0" />
       <span className="text-display-sm text-ink">Lemely</span>
     </div>
   )

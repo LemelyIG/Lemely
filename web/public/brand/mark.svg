@@ -3,44 +3,126 @@
      role="img" aria-label="Lemely">
   <title>Lemely</title>
   <!--
-    Lemely mark, "the margin and the mark".
+    Lemely mark: an open spiral notebook, drawn by hand.
 
-    Concept a3 from BUILD/BRAND.md §3: the letter L drawn as the corner of a
-    ruled page (a thin PRINTED hairline rule) with a heavy warm-red tick laid
-    across the corner as the teacher's HANDWRITTEN mark. The contrast between
-    the two weights is the whole idea: the printed page, and the human
-    correction on top of it.
+    GENERATED FILE. Do not edit by hand — `npm run mark` overwrites it.
+    The coordinates live in `src/lib/brandMark.ts`; the colours are resolved
+    from the oklch tokens in `src/index.css` by `vite/brandTokens.ts`.
 
-    Hand-authored rather than traced from the Gemini renders. Four candidates
-    and one targeted refinement pass were generated (BUILD/brand/*.png, with
-    receipts in the sibling .json files); the refinement named five specific
-    defects and the model fixed none of them. The geometry is simple enough to
-    state exactly, so it is stated exactly here, which also makes it a real
-    vector at every size instead of a raster approximation.
+    ── The idea ───────────────────────────────────────────────────────────────
 
-    Colours are duplicated in DESIGN.md's token block (the ink and accent
-    tokens) and must stay in sync. This file is the only place they appear as
-    literals in an asset.
+    The previous mark was concept a3 from BUILD/BRAND.md §3: a printed hairline
+    L — a margin rule meeting a baseline — with a heavy accent tick laid across
+    it. That idea survives here. The margin is still drawn, the tick is still
+    the heaviest stroke in the mark and still the one thing a hand made; what
+    has changed is that the page they are on is now the artefact itself instead
+    of two lines implying it. BRAND.md §2 lists the margin, the tick, the ruled
+    line, the stacked sheet and the dog-ear all in territory; this is those five
+    resolved into one object, and the hard bans in §2 are untouched — no cap, no
+    open book of the graduation-clipart kind, no lightbulb, no sparkle, no
+    swoosh.
 
-    Two notes for editors:
-    - XML comments cannot contain a double hyphen, so CSS custom-property names
-      are spelled out in words here rather than written with their dashes.
-    - This comment sits INSIDE the svg element on purpose. libvips (and so
-      sharp, and so the screenshot tooling) sniffs only the first bytes of a
-      file to detect SVG; a long leading comment pushes the opening tag out of
-      that window and the file is rejected as an unknown format. Keep the
-      opening tag at the top.
+    The notebook is open, and that is load-bearing rather than decorative. It
+    gives the mark a left page and a right page: work on the right, unmarked;
+    the same sheet on the left, turned over, carrying the tick. The mark is not
+    an ornament sitting on the drawing, it is the state a page arrives in once
+    it has been through the product. It is also what lets the inline cut animate
+    — a page turn needs somewhere to land, and a closed notebook has nowhere.
+
+    ── Why this file does not animate ─────────────────────────────────────────
+
+    The mark riffles its pages. That happens in
+    `src/components/ui/brand-mark.tsx`, which draws this same geometry inline,
+    and it happens there rather than here for a measured reason.
+
+    An SVG referenced by `<img>` is a separate document. It runs no script, and
+    the host page's CSS — including index.css's global
+    `prefers-reduced-motion: reduce` block, which flattens every animation in
+    the product — cannot reach it. Carrying the media query inside this file
+    instead does not work either: Chromium does not propagate the preference
+    into an SVG-as-image at all. Measured directly, with a probe SVG whose fill
+    changes under the query and an `<img>` on a page whose own
+    `matchMedia("(prefers-reduced-motion: reduce)")` returns true — the image
+    rendered the no-preference branch in both states.
+
+    So an animated `mark.svg` would move in every header of the product for a
+    reader who had asked it not to, with a reassuring-looking media query
+    sitting in the file appearing to prevent it. That is the exact shape of
+    defect this build keeps finding, and it is not worth shipping for the
+    convenience of an `<img>` tag.
+
+    This file therefore stays still, and stays the source for everything that
+    cannot render a React component: the favicon `<link>` in index.html, and the
+    PWA icons and OG card that `npm run icons` rasterises from it.
+
+    One note for editors: this comment sits INSIDE the svg element on purpose.
+    libvips (and so sharp, and so the screenshot tooling) sniffs only the first
+    bytes of a file to detect SVG; a long leading comment pushes the opening tag
+    out of that window and the file is rejected as an unknown format. Keep the
+    opening tag at the top.
   -->
-  <!-- The printed page: one hairline margin rule meeting one hairline baseline.
-       Butt caps, not round: this is ruled by a machine, not by a hand. -->
-  <g fill="none" stroke="#2F3437" stroke-width="2" stroke-linecap="butt">
-    <path d="M20 10 V46" />
-    <path d="M20 46 H44" />
+  <g transform="rotate(-2 32 32)" stroke-linecap="round" stroke-linejoin="round">
+    <!-- The block of sheets under each page, drawn as the two edges of it that
+         show. Depth by offset and tone, never by shadow (DESIGN.md §7). -->
+    <g transform="translate(64,0) scale(-1,1)">
+      <path d="M58.4 14 C59.1 23.6, 58.4 33.4, 58.6 42 C58.7 46, 58.5 49.2, 58.4 51.6 C49 52.4, 41 51.5, 33.4 52.2"
+            fill="none" stroke="#2f3437" stroke-width="1" />
+      <path d="M59.4 15.2 C60.1 24.6, 59.4 34.2, 59.6 42.8 C59.7 46.6, 59.5 49.8, 59.4 52.4 C50 53.2, 42 52.3, 34.4 53"
+            fill="none" stroke="#2f3437" stroke-width="1" />
+    </g>
+    <path d="M58.4 14 C59.1 23.6, 58.4 33.4, 58.6 42 C58.7 46, 58.5 49.2, 58.4 51.6 C49 52.4, 41 51.5, 33.4 52.2"
+          fill="none" stroke="#2f3437" stroke-width="1" />
+    <path d="M59.4 15.2 C60.1 24.6, 59.4 34.2, 59.6 42.8 C59.7 46.6, 59.5 49.8, 59.4 52.4 C50 53.2, 42 52.3, 34.4 53"
+          fill="none" stroke="#2f3437" stroke-width="1" />
+
+    <!-- The left page: the sheet already turned, and marked. Right-half
+         geometry mirrored about the spine, which is why its tick is authored
+         backwards. -->
+    <g transform="translate(64,0) scale(-1,1)">
+      <path d="M32 12.8 C39 12.1, 46 13, 53 12.4 C55 12.2, 56.4 12.6, 57.4 12.3 C58.1 22, 57.3 32, 57.5 41.4 C57.6 45.4, 57.4 48.5, 57.3 50.7 C48 51.5, 40 50.6, 32 51.3 Z"
+            fill="#fdfcfa" stroke="#2f3437" stroke-width="1.15" />
+      <path d="M53.6 15.2 C53.9 24, 53.5 33, 53.8 41.6 C53.9 45, 53.7 47.4, 53.8 48.8"
+            fill="none" stroke="#c0523c" stroke-width="0.8" />
+      <path d="M51.4 19.5 C47 18.9, 40.4 20, 35.2 19.2"
+            fill="none" stroke="#cdccc8" stroke-width="0.95" />
+      <path d="M51.3 25 C48 24.5, 42.6 25.4, 38.6 24.7"
+            fill="none" stroke="#cdccc8" stroke-width="0.95" />
+      <path d="M51.4 30.5 C47.5 29.9, 41.2 31, 36.4 30.2"
+            fill="none" stroke="#cdccc8" stroke-width="0.95" />
+      <path d="M51.3 36 C48.6 35.5, 45 36.2, 42.5 35.7"
+            fill="none" stroke="#cdccc8" stroke-width="0.95" />
+      <path d="M51.4 41.5 C49.8 41.1, 48.4 41.6, 47 41.2"
+            fill="none" stroke="#cdccc8" stroke-width="0.95" />
+      <path d="M46.4 41 C45.5 42.2, 44.4 43.7, 43.4 45 C41.8 41.9, 40.4 37.6, 39 33.6"
+            fill="none" stroke="#c0523c" stroke-width="1.9" />
+    </g>
+
+    <!-- The right page: work, unmarked, dog-eared at its outer corner. -->
+    <path d="M32 12.8 C39 12.1, 46 13, 53 12.4 C55 12.2, 56.4 12.6, 57.4 12.3 C58.1 22, 57.3 32, 57.5 41.4 C57.6 43.2, 57.5 44.5, 57.4 45.6 C55.6 47.5, 53.4 49.4, 51.2 51.2 C44.6 51.6, 38.4 50.7, 32 51.3 Z"
+          fill="#fdfcfa" stroke="#2f3437" stroke-width="1.15" />
+    <path d="M57.4 45.6 C55.8 46.6, 54 47.2, 52.4 47.6 C52.1 48.9, 51.6 50.2, 51.2 51.2 Z"
+          fill="#f8f7f4" stroke="#2f3437" stroke-width="1" />
+    <path d="M39.4 19.5 C43.6 18.9, 49 20, 54.2 19.2"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+    <path d="M39.5 25 C42.8 24.5, 47 25.4, 50.6 24.7"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+    <path d="M39.4 30.5 C44 29.9, 49.6 31, 54.8 30.2"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+    <path d="M39.5 36 C42.4 35.5, 45.6 36.3, 49 35.7"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+    <path d="M39.4 41.5 C42.6 41, 46.4 41.9, 52.4 41.1"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+    <path d="M39.5 47 C41.2 46.6, 43 47.2, 45.4 46.7"
+          fill="none" stroke="#cdccc8" stroke-width="0.95" />
+
+    <!-- The coil, over both pages, because it wraps over them. -->
+    <path d="M27.9 20.7 C27.1 17.599999999999998, 29.2 15.6, 32 15.7 C34.8 15.799999999999999, 36.7 17.7, 35.9 20.7"
+          fill="none" stroke="#c0523c" stroke-width="1.5" />
+    <path d="M27.9 29.7 C27.1 26.599999999999998, 29.2 24.599999999999998, 32 24.7 C34.8 24.8, 36.7 26.7, 35.9 29.7"
+          fill="none" stroke="#c0523c" stroke-width="1.5" />
+    <path d="M27.9 38.7 C27.1 35.6, 29.2 33.6, 32 33.7 C34.8 33.800000000000004, 36.7 35.7, 35.9 38.7"
+          fill="none" stroke="#c0523c" stroke-width="1.5" />
+    <path d="M27.9 47.7 C27.1 44.6, 29.2 42.6, 32 42.7 C34.8 42.800000000000004, 36.7 44.7, 35.9 47.7"
+          fill="none" stroke="#c0523c" stroke-width="1.5" />
   </g>
-  <!-- The correction: one stroke, short upstroke into a long one, its lower
-       vertex landing exactly on the baseline at x=33 so the tick sits ON the
-       page rather than floating above it. Round joins: this one is drawn by a
-       hand holding a felt pen. -->
-  <path d="M27 37 L33 46 L47 19" fill="none" stroke="#C0523D" stroke-width="6"
-        stroke-linecap="round" stroke-linejoin="round" />
 </svg>

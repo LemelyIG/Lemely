@@ -497,12 +497,15 @@ watch it perform. Expressive motion is rationed to genuine wins (§9.2).
 - Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
 - **Nothing blocks input.** No animation gates a click.
 - **The one documented exception.** The brand mark's self-drawing stroke
-  (`stroke-dashoffset` on three short paths, in `components/ui/mark.tsx` and
-  again, inline, in the pre-mount shell in `index.html`) is the one permitted
+  (`stroke-dashoffset` on the mark's silhouette — four steps: the right page,
+  the left page, the coil, the tick — in `components/ui/mark.tsx` and, inline,
+  in the pre-mount shell in `index.html`) is the one permitted
   non-transform/opacity animation. Granted by the product owner for the
-  slow-load tier (§12) on the grounds that a single short path is not the jank
+  slow-load tier (§12) on the grounds that a few short paths are not the jank
   this rule exists to prevent, and it renders fully drawn and still under
-  `prefers-reduced-motion` rather than animating.
+  `prefers-reduced-motion` rather than animating. Both surfaces read their
+  geometry from `lib/brandMark.ts` and set `pathLength="1"`, so neither carries
+  a path length; the drawn mark is the mark, not a copy of it.
 
 ### 9.3 The celebration register
 

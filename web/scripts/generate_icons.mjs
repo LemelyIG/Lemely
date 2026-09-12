@@ -41,7 +41,8 @@ import { readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
-import { MASKABLE_SCALE, MAX_MASKABLE_SCALE, SQUARE_SCALE, tokenHex } from "../vite/brandTokens.ts"
+import { tokenHex } from "../vite/brandTokens.ts"
+import { MASKABLE_SCALE, SQUARE_SCALE, maxMaskableScale, measureDrawnExtent } from "../vite/iconSafeZone.ts"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(HERE, "../public")
@@ -58,10 +59,12 @@ const MARK = path.join(PUBLIC, "brand/mark.svg")
 const PAPER = tokenHex("paper")
 
 /*
- * The icon-sizing constants (`SQUARE_SCALE`, `MASKABLE_SCALE`,
- * `MAX_MASKABLE_SCALE`) now live in `vite/brandTokens.ts` (packet A5), so
- * this script and `tests/unit/brandTokens.test.ts` share one definition
- * apiece rather than a transcription each could drift from.
+ * `SQUARE_SCALE`, `MASKABLE_SCALE`, and the safe-zone arithmetic
+ * (`measureDrawnExtent`/`maxMaskableScale`) live in `vite/iconSafeZone.ts`
+ * rather than being declared here: the maskable ceiling is mark-shape-
+ * dependent (an open notebook is not square), so it has to be measured
+ * against the real SVG rather than assumed. `tests/unit/brandTokens.test.ts`
+ * imports the same module so the two never drift apart.
  */
 const ICONS = [
   { file: "pwa-192x192.png", size: 192, scale: SQUARE_SCALE },
@@ -86,21 +89,25 @@ const ICONS = [
   { file: "shortcut-notifications-96.png", size: 96, scale: SQUARE_SCALE },
 ]
 
+const markSvg = readFileSync(MARK)
+
 /*
  * Guard the safe-zone arithmetic in the file that depends on it, so a future
- * edit to MASKABLE_SCALE cannot quietly push the mark under an Android crop.
- * `tests/unit/brandTokens.test.ts` asserts the same bound; this is the belt to
- * its braces, and it runs in the one place someone editing the number is
+ * edit to `MASKABLE_SCALE` — or to the mark's own proportions — cannot
+ * quietly push it under an Android crop. `tests/unit/brandTokens.test.ts`
+ * asserts the same bound against the real mark; this is the belt to its
+ * braces, and it runs in the one place someone editing the number is
  * actually looking.
  */
+const EXTENT = await measureDrawnExtent(markSvg)
+const MAX_MASKABLE_SCALE = maxMaskableScale(EXTENT)
 if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
   throw new Error(
-    `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)}, ` +
-      "so the mark's corners fall outside Android's guaranteed-visible circle and will be cropped.",
+    `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)} ` +
+      `for a mark drawn ${EXTENT.width.toFixed(3)} x ${EXTENT.height.toFixed(3)} of its artboard, ` +
+      "so its corners fall outside Android's guaranteed-visible circle and will be cropped.",
   )
 }
-
-const markSvg = readFileSync(MARK)
 
 /*
  * The Open Graph card (P6.5), 1200x630 as every scraper expects.
