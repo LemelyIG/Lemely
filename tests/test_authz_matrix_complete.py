@@ -312,6 +312,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/student/uploads"): STUDENT,
     ("GET", "/api/student/uploads/active"): STUDENT,
     ("GET", "/api/student/uploads/{paper_id}"): STUDENT,
+    ("GET", "/api/student/widget"): STUDENT,
     ("GET", "/api/student/xp"): STUDENT,
 }
 

@@ -1,0 +1,514 @@
+"""Route tests for ``GET /api/student/widget`` (packet A5).
+
+Self-contained, mirroring ``tests/test_web_xp.py``: a throwaway Postgres DB
+per test, skipped cleanly when unreachable. This file tests the HTTP layer —
+DTO shape, the authz matrix, the cross-subject "earliest incomplete session"
+selection, and the well-formed empty state — not the streak resolution or
+study-plan generation themselves, which have their own suites
+(``tests/test_xp_repo.py``, ``tests/test_study_plan_repo.py``).
+"""
+
+from __future__ import annotations
+
+import uuid
+from datetime import UTC, date, datetime, time, timedelta
+from typing import TYPE_CHECKING
+
+import pytest
+import sqlalchemy as sa
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine
+from sqlalchemy.engine import make_url
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.orm import Session, sessionmaker
+
+from lemely.db.base import Base
+from lemely.db.models import Subject
+from lemely.db.models.attempts import Attempt, WeaknessRecord
+from lemely.db.models.engagement import XpEvent
+from lemely.db.models.enums import AttemptOrigin, Role, XpSource
+from lemely.db.models.study_plan import StudyPlanActivityType
+from lemely.db.models.users import User
+from lemely.db.student_profile_repo import StudentProfileService
+from lemely.db.study_plan_repo import PlanView, SessionView, StudyPlanService
+from lemely.db.xp_repo import XpService
+from lemely.runtime.config import DatabaseSettings
+from lemely.web import create_app
+from lemely.web.deps import (
+    AuthContext,
+    get_auth_context,
+    get_student_profile_service,
+    get_study_plan_service,
+    get_xp_service,
+)
+
+if TYPE_CHECKING:
+    from collections.abc import Iterator
+
+# The real current date at noon UTC, not a fixed historical instant like
+# ``test_web_xp.py``/``test_web_study_plan.py`` use: `widget.py`'s own
+# `_next_session` filters `session.date >= today` against the real wall
+# clock (`datetime.now(UTC).date()`, A5 review fix — a past, uncompleted
+# session must never render as "next"), so a fixed date in the past would
+# make every session this file generates look overdue and get filtered out.
+_TODAY = datetime.now(UTC).date()
+_NOON_UTC = datetime.combine(_TODAY, time(12, 0), tzinfo=UTC)
+
+
+# ---------------------------------------------------------------------------
+# Fixtures.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def client() -> Iterator[TestClient]:
+    app = create_app()
+    yield TestClient(app)
+    app.dependency_overrides.clear()
+
+
+def _server_reachable(url: str) -> bool:
+    server_url = make_url(url).set(database="postgres")
+    engine = create_engine(server_url)
+    try:
+        with engine.connect():
+            return True
+    except OperationalError:
+        return False
+    finally:
+        engine.dispose()
+
+
+@pytest.fixture
+def pg_sessionmaker() -> Iterator[sessionmaker[Session]]:
+    base_url = DatabaseSettings().url
+    if not _server_reachable(base_url):
+        pytest.skip("local Postgres not reachable")
+
+    server_url = make_url(base_url).set(database="postgres")
+    admin = create_engine(server_url, isolation_level="AUTOCOMMIT")
+    dbname = f"lemely_test_{uuid.uuid4().hex[:12]}"
+    with admin.connect() as conn:
+        conn.execute(sa.text(f'CREATE DATABASE "{dbname}"'))
+
+    engine = create_engine(make_url(base_url).set(database=dbname))
+    Base.metadata.create_all(engine)
+    try:
+        yield sessionmaker(bind=engine, expire_on_commit=False, future=True)
+    finally:
+        engine.dispose()
+        with admin.connect() as conn:
+            conn.execute(sa.text(f'DROP DATABASE IF EXISTS "{dbname}" WITH (FORCE)'))
+        admin.dispose()
+
+
+@pytest.fixture
+def xp_service(pg_sessionmaker: sessionmaker[Session]) -> XpService:
+    return XpService(pg_sessionmaker, now=lambda: _NOON_UTC)
+
+
+@pytest.fixture
+def study_plan_service(pg_sessionmaker: sessionmaker[Session]) -> StudyPlanService:
+    return StudyPlanService(pg_sessionmaker, now=lambda: _NOON_UTC)
+
+
+@pytest.fixture
+def profile_service(pg_sessionmaker: sessionmaker[Session]) -> StudentProfileService:
+    return StudentProfileService(pg_sessionmaker, now=lambda: _NOON_UTC)
+
+
+def _use_services(
+    client: TestClient,
+    xp: XpService,
+    study_plan: StudyPlanService,
+    profile: StudentProfileService,
+) -> None:
+    client.app.dependency_overrides[get_xp_service] = lambda: xp  # type: ignore[union-attr]
+    client.app.dependency_overrides[get_study_plan_service] = lambda: study_plan  # type: ignore[union-attr]
+    client.app.dependency_overrides[get_student_profile_service] = lambda: profile  # type: ignore[union-attr]
+
+
+def _auth_as(client: TestClient, user_id: uuid.UUID, role: Role) -> None:
+    client.app.dependency_overrides[get_auth_context] = lambda: AuthContext(  # type: ignore[union-attr]
+        user_id=str(user_id), role=role.value
+    )
+
+
+def _seed_user(sm: sessionmaker[Session], role: Role = Role.student) -> uuid.UUID:
+    uid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=role, display_name="Student"))
+    return uid
+
+
+def _award(
+    sm: sessionmaker[Session], user_id: uuid.UUID, amount: int, *, awarded_on: date = _TODAY
+) -> None:
+    with sm.begin() as session:
+        session.add(
+            XpEvent(
+                user_id=user_id,
+                source=XpSource.flashcard_reviewed,
+                amount=amount,
+                awarded_on=awarded_on,
+                dedupe_key=f"dk-{uuid.uuid4()}",
+            )
+        )
+
+
+def _seed_subject(sm: sessionmaker[Session], code: str = "0625", name: str = "Physics") -> str:
+    """Seed a ``subjects`` row: required for a real enrolment —
+    :meth:`StudentProfileService.upsert_enrolment` validates ``subject_code``
+    against this table rather than trusting the caller (same helper
+    ``tests/test_web_parent.py`` uses)."""
+    with sm.begin() as session:
+        session.add(Subject(code=code, name=name))
+    return code
+
+
+def _seed_weakness(
+    sm: sessionmaker[Session],
+    student_id: uuid.UUID,
+    *,
+    subject_code: str = "0625",
+    topic: str,
+    lost_marks: int,
+    maximum_marks: int = 10,
+) -> None:
+    with sm.begin() as session:
+        attempt = Attempt(
+            user_id=student_id,
+            subject_code=subject_code,
+            awarded_marks=maximum_marks - lost_marks,
+            maximum_marks=maximum_marks,
+            percentage=100.0 * (maximum_marks - lost_marks) / maximum_marks,
+            recorded_at=datetime.now(UTC),
+            origin=AttemptOrigin.quiz,
+        )
+        session.add(attempt)
+        session.flush()
+        session.add(
+            WeaknessRecord(
+                user_id=student_id,
+                attempt_id=attempt.id,
+                topic=topic,
+                lost_marks=lost_marks,
+                maximum_marks=maximum_marks,
+                accuracy=1.0 - lost_marks / maximum_marks,
+            )
+        )
+
+
+class _FakeStudyPlanService:
+    """Duck-typed stand-in exposing only `.get_current`, for tests that need
+    to pin exact session dates rather than depend on real scheduling
+    heuristics and the real calendar day. The router calls nothing else on
+    its `StudyPlanService` dependency."""
+
+    def __init__(self, plans: dict[str, PlanView]) -> None:
+        self._plans = plans
+
+    def get_current(
+        self, user_id: object, subject_code: str, *, now: object = None
+    ) -> PlanView | None:
+        del user_id, now
+        return self._plans.get(subject_code)
+
+
+# ---------------------------------------------------------------------------
+# Authorization.
+# ---------------------------------------------------------------------------
+
+
+class TestAuthz:
+    @pytest.mark.parametrize(
+        "role", [Role.teacher, Role.parent, Role.school_admin, Role.platform_admin]
+    )
+    def test_only_a_student_may_read_the_widget(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+        role: Role,
+    ) -> None:
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        _auth_as(client, _seed_user(pg_sessionmaker, role), role)
+        assert client.get("/api/student/widget").status_code == 403
+
+    def test_the_route_accepts_no_user_id_parameter_at_all(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        """Identity is structural, mirroring ``xp.py``'s own route.
+
+        Regression-tests the actual IDOR, not just self-consistency: `mine`
+        and `theirs` get genuinely different, non-zero streaks (via
+        `xp_service.award`, the real award path — see `TestStreak`'s own
+        comment for why a raw `_award` DB insert can't distinguish them,
+        since it never touches the streak table at all), so a route that
+        leaked `theirs`'s data would fail this assertion rather than pass it
+        vacuously on a 0 == 0 coincidence.
+        """
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        mine = _seed_user(pg_sessionmaker)
+        theirs = _seed_user(pg_sessionmaker)
+        xp_service.award(mine, XpSource.flashcard_reviewed, "dk-mine-1")
+        xp_service.award(
+            theirs, XpSource.flashcard_reviewed, "dk-theirs-1", now=_NOON_UTC - timedelta(days=1)
+        )
+        xp_service.award(theirs, XpSource.flashcard_reviewed, "dk-theirs-2")
+        _auth_as(client, mine, Role.student)
+
+        response = client.get(f"/api/student/widget?user_id={theirs}&userId={theirs}")
+
+        assert response.status_code == 200
+        mine_streak = xp_service.profile(mine).streak.current_length
+        theirs_streak = xp_service.profile(theirs).streak.current_length
+        assert mine_streak != theirs_streak, "fixture assumption: the two streaks must differ"
+        assert response.json()["streak"] == mine_streak
+        assert response.json()["streak"] != theirs_streak
+
+    def test_the_openapi_path_is_registered(self, client: TestClient) -> None:
+        assert "/api/student/widget" in client.app.openapi()["paths"]  # type: ignore[union-attr]
+
+
+# ---------------------------------------------------------------------------
+# The empty state.
+# ---------------------------------------------------------------------------
+
+
+class TestBrandNewStudent:
+    def test_no_xp_and_no_enrolments_is_a_well_formed_empty_state(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        """ "Nothing yet" is a state to render, never a 404."""
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        _auth_as(client, _seed_user(pg_sessionmaker), Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        assert response.json() == {"streak": 0, "nextSession": None}
+
+
+# ---------------------------------------------------------------------------
+# streak.
+# ---------------------------------------------------------------------------
+
+
+class TestStreak:
+    def test_streak_matches_the_xp_service_own_computation(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        # `xp_service.award(...)`, not a raw `XpEvent` insert: the streak
+        # table is only touched by the service's own award path
+        # (`_touch_streak`), so a direct DB insert (as `_award` does, for the
+        # authz test above) leaves `streak.current_length` at 0 regardless of
+        # `total_xp`.
+        xp_service.award(student, XpSource.flashcard_reviewed, "dk-1")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        assert response.json()["streak"] == xp_service.profile(student).streak.current_length
+        assert response.json()["streak"] > 0
+
+
+# ---------------------------------------------------------------------------
+# nextSession.
+# ---------------------------------------------------------------------------
+
+
+class TestNextSession:
+    def test_no_plan_generated_for_any_enrolled_subject_is_none(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625")
+        profile_service.upsert_enrolment(student, "0625")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        assert response.json()["nextSession"] is None
+
+    def test_a_no_signal_refusal_plan_has_no_sessions_and_is_none(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        """A generated-but-refused plan (no weakness signal) has empty sessions."""
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625")
+        profile_service.upsert_enrolment(student, "0625")
+        study_plan_service.generate(student, "0625")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        assert response.json()["nextSession"] is None
+
+    def test_returns_the_earliest_incomplete_session_across_enrolled_subjects(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625", "Physics")
+        _seed_subject(pg_sessionmaker, "0620", "Chemistry")
+        profile_service.upsert_enrolment(student, "0625")
+        profile_service.upsert_enrolment(student, "0620")
+        _seed_weakness(
+            pg_sessionmaker, student, subject_code="0625", topic="1 Motion", lost_marks=5
+        )
+        _seed_weakness(pg_sessionmaker, student, subject_code="0620", topic="2 Atoms", lost_marks=5)
+        plan_a = study_plan_service.generate(student, "0625")
+        plan_b = study_plan_service.generate(student, "0620")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        body = response.json()["nextSession"]
+        all_sessions = [*plan_a.sessions, *plan_b.sessions]
+        assert all_sessions, "fixture assumption: generate() must have produced sessions"
+        # `min(..., key=...)`, not a specific subject: the two subjects'
+        # plans are free to schedule their first session on the same date
+        # (there is no cross-subject ordering guarantee), so any session
+        # sharing the earliest date is a correct answer — this asserts the
+        # date is genuinely the minimum and the title names a real,
+        # same-dated session, rather than pinning one arbitrary tie-break.
+        earliest_date = min(s.date for s in all_sessions)
+        earliest_topics = {s.topic for s in all_sessions if s.date == earliest_date}
+        assert body is not None
+        assert body["title"] in earliest_topics
+        assert body["startsAt"].startswith(earliest_date.isoformat())
+
+    def test_a_completed_session_is_skipped_in_favour_of_the_next_one(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        study_plan_service: StudyPlanService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625")
+        profile_service.upsert_enrolment(student, "0625")
+        _seed_weakness(
+            pg_sessionmaker, student, subject_code="0625", topic="1 Motion", lost_marks=5
+        )
+        plan = study_plan_service.generate(student, "0625")
+        sessions_by_date = sorted(plan.sessions, key=lambda s: s.date)
+        assert len(sessions_by_date) >= 1, (
+            "fixture assumption: generate() must have produced sessions"
+        )
+        study_plan_service.complete_session(student, sessions_by_date[0].id)
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        body = response.json()["nextSession"]
+        if len(sessions_by_date) == 1:
+            assert body is None
+        else:
+            assert body is not None
+            assert body["title"] == sessions_by_date[1].topic
+
+    def test_an_uncompleted_past_session_never_renders_as_next(
+        self,
+        client: TestClient,
+        pg_sessionmaker: sessionmaker[Session],
+        xp_service: XpService,
+        profile_service: StudentProfileService,
+    ) -> None:
+        """A5 review fix: `_next_session` must filter `session.date >= today`.
+
+        Pins exact session dates via a fake `StudyPlanService` exposing only
+        `get_current`, rather than depending on real scheduling heuristics
+        and the real calendar day — a session dated before today, if never
+        completed, is simply overdue, not "next" (the Adaptive Card
+        template's `$when: ${nextSession != null}` would otherwise render a
+        session as scheduled at a moment already in the past).
+        """
+        past_session = SessionView(
+            id=uuid.uuid4(),
+            date=_TODAY - timedelta(days=1),
+            topic="Overdue topic",
+            activity_type=StudyPlanActivityType.review,
+            duration_minutes=30,
+            focus="",
+            completed_at=None,
+            subject_code="0625",
+        )
+        future_session = SessionView(
+            id=uuid.uuid4(),
+            date=_TODAY + timedelta(days=1),
+            topic="Upcoming topic",
+            activity_type=StudyPlanActivityType.review,
+            duration_minutes=30,
+            focus="",
+            completed_at=None,
+            subject_code="0625",
+        )
+        plan = PlanView(
+            id=uuid.uuid4(),
+            student_id=uuid.uuid4(),
+            subject_code="0625",
+            week_start=_TODAY - timedelta(days=_TODAY.weekday()),
+            weekly_hours=2.0,
+            available=True,
+            reason=None,
+            generated_at=_NOON_UTC,
+            sessions=[past_session, future_session],
+        )
+        study_plan_service = _FakeStudyPlanService({"0625": plan})
+        _use_services(client, xp_service, study_plan_service, profile_service)
+        student = _seed_user(pg_sessionmaker)
+        _seed_subject(pg_sessionmaker, "0625")
+        profile_service.upsert_enrolment(student, "0625")
+        _auth_as(client, student, Role.student)
+
+        response = client.get("/api/student/widget")
+
+        assert response.status_code == 200
+        body = response.json()["nextSession"]
+        assert body is not None
+        assert body["title"] == "Upcoming topic"

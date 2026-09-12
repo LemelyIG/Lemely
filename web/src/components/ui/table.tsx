@@ -33,7 +33,7 @@ export function Table({ className, children, ...props }: HTMLAttributes<HTMLDivE
   return (
     <div
       className={cn(
-        "w-full overflow-x-auto rounded-lg border border-rule bg-paper-raised",
+        "w-full overflow-x-auto overscroll-x-contain rounded-lg border border-rule bg-paper-raised",
         className,
       )}
       {...props}

@@ -1,8 +1,10 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useState, type ChangeEvent } from "react"
+import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
+import { readSharedScan } from "@/lib/sharedScan"
+import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import {
   ProcessingState,
   StageGlyph,
@@ -185,6 +187,7 @@ function PaperCard({
           <img
             src={previewUrl}
             alt=""
+            decoding="async"
             className="w-full h-full object-cover object-top"
           />
         ) : null}
@@ -239,6 +242,42 @@ export function Grading() {
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(UPLOAD_STAGES)
+
+  /*
+   * Web Share Target / File Handling API landing (`/scan-inbox`,
+   * `routes.tsx`) — a teacher who shares or opens a scan into the installed
+   * app picks it up here, the same one Cache Storage bridge
+   * `CorrectPaper.tsx` reads (see `sharedScan.ts`'s own doc). Mount-only,
+   * guarded by a ref rather than the effect's own re-run, for the identical
+   * StrictMode double-invoke reason `CorrectPaper.tsx`'s own effect
+   * documents — `readSharedScan` deletes the cache entry it reads, so a
+   * second call in the same tick would find nothing left.
+   */
+  const sharedScanAttempted = useRef(false)
+  useEffect(() => {
+    if (sharedScanAttempted.current) return
+    sharedScanAttempted.current = true
+    readSharedScan()
+      .then((file) => {
+        if (file) setScanFile(file)
+      })
+      .catch(() => {
+        // Best-effort — a non-secure context (no `caches`) must not surface
+        // as an unhandled promise rejection on every mount.
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Reports whether this screen holds a scan the teacher hasn't submitted
+   * yet — read by `UpdateToast.tsx`'s "Reload" action so a reload can't
+   * silently drop a shared/launched scan that only exists in this
+   * component's own state. See `activeScanGuard.ts`'s own doc for why.
+   */
+  useEffect(() => {
+    setHasUnsubmittedScan(scanFile !== null)
+    return () => setHasUnsubmittedScan(false)
+  }, [scanFile])
 
   const papersQuery = usePapers()
   /* What the sidebar reports when the teacher has not picked a paper.

@@ -13,6 +13,7 @@ import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { InstallBanner } from "@/components/InstallBanner"
 import { RouteFallback } from "@/components/ui/state-views"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -122,6 +123,11 @@ const DeviceSettingsSection = lazy(() =>
 const NotificationSettingsSection = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
     default: m.NotificationSettingsSection,
+  })),
+)
+const InstallSettingsSection = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({
+    default: m.InstallSettingsSection,
   })),
 )
 
@@ -569,7 +575,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
     // DESIGN.md §7 permits, and this is that bar. `z-nav` replaces the raw
     // `z-20`: same number, but the z-index scale is a gate and a literal
     // bypasses it.
-    <header className="flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop py-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
+    <header className="lm-app-header lm-app-header-pt-4 lm-nav-chrome flex items-center gap-[18px] px-page-mobile min-[640px]:px-page-desktop pb-4 border-b border-rule bg-paper/80 backdrop-blur-nav sticky top-0 z-nav">
       {/* P3.1: the only navigation entry point below 820px, which is where the
           sidebar stops existing. `-ms-2` pulls the 44px target back level with
           the crumb's text edge without shrinking the target itself. */}
@@ -715,7 +721,7 @@ function StudentLayout() {
     // own ground rather than depend on what is behind it (`body`'s own paint,
     // in this case — correct today, but a fragile thing for a portal root to
     // lean on) matching the warm `--paper` token by coincidence.
-    <div data-portal="student" className="paper-grain flex min-h-screen bg-paper">
+    <div data-portal="student" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar />
 
@@ -764,6 +770,10 @@ function StudentLayout() {
               about the account. Renders nothing, and no margin either, unless the
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
+          {/* Packet A7: same "renders nothing unless there's something to
+              say" shape as the two banners above. Student and teacher only —
+              see the component's own header for why. */}
+          <InstallBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils the note above ("Phase 4 places those as it
                 rebuilds each surface", `routes.tsx`): a render crash in one
@@ -837,6 +847,11 @@ export const studentRoute: RouteObject = {
           path: "notifications",
           element: <NotificationSettingsSection />,
           handle: { title: "Notification settings" },
+        },
+        {
+          path: "install",
+          element: <InstallSettingsSection />,
+          handle: { title: "Install Lemely" },
         },
       ],
     },

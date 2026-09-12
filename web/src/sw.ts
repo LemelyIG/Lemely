@@ -37,8 +37,64 @@ import {
   pickClientToFocus,
   type PushNotificationContent,
 } from "@/lib/push/pushDecision"
+import { SHARE_CACHE, handleShareTargetFetch } from "@/sw/shareTarget"
+import { fetchWidgetDataOrStub } from "@/sw/widgetBridge"
 
-declare const self: ServiceWorkerGlobalScope
+/*
+ * The PWA Widgets API (Windows 11 Widgets Board / Android home-screen
+ * widgets) is Chromium-experimental and not yet in TypeScript's own
+ * `lib.webworker.d.ts` — same situation `vite-env.d.ts` documents for the
+ * File Handling API's `LaunchParams`. Declared narrow, to exactly what this
+ * file calls: `getByInstanceId`, `matchAll`, `updateByInstanceId`,
+ * `widgetuninstall` and `periodicsync`-driven updates are real parts of the
+ * API this app does not use.
+ *
+ * Augmenting `ServiceWorkerGlobalScopeEventMap` (rather than typing the
+ * listener's `event` parameter by hand at each call site) is what lets
+ * `self.addEventListener("widgetinstall", ...)` below infer `WidgetEvent`
+ * through the same generic overload `"push"`/`"message"` already use, so a
+ * typo'd event name or a wrong property on `event.widget` is still a
+ * `tsc -b` error, not a runtime one.
+ */
+interface WidgetDefinition {
+  tag: string
+  /** camelCased from the manifest's `ms_ac_template` at the browser level —
+   * the Adaptive Card template's URL. */
+  msAcTemplate: string
+  /** camelCased from the manifest's `data` — a URL the browser expects to
+   * return JSON, per the spec, not the JSON payload itself. */
+  data: string
+}
+
+interface WidgetObject {
+  definition: WidgetDefinition
+}
+
+interface WidgetsNamespace {
+  getByTag(tag: string): Promise<WidgetObject | undefined>
+  updateByTag(tag: string, payload: { template: string; data: string }): Promise<void>
+}
+
+interface WidgetEvent extends ExtendableEvent {
+  widget: WidgetObject
+}
+
+declare global {
+  interface ServiceWorkerGlobalScopeEventMap {
+    widgetinstall: WidgetEvent
+    widgetresume: WidgetEvent
+  }
+}
+
+// Widget bridge review fix (HIGH 2): `widgets` is optional, not asserted
+// present. The Widgets API only ships in Edge on Windows 11 with WinAppSDK —
+// every other browser leaves `self.widgets` `undefined`, and the previous
+// non-optional type let `self.widgets.getByTag(...)` (below) throw a
+// synchronous TypeError on every single `activate` in every other browser,
+// before `event.waitUntil` was ever reached. `widgetinstall`/`widgetresume`
+// need no such guard: the browser only ever fires those where the API
+// itself exists.
+declare const self: ServiceWorkerGlobalScope & { widgets?: WidgetsNamespace }
 
 // --- App shell (the generateSW half, reproduced) ----------------------------
 
@@ -67,10 +123,12 @@ if (precacheEnabled) {
 
   // `navigateFallback: "/index.html"` with `navigateFallbackDenylist: [/^\/api/]`.
   // The SPA serves every navigation from the precached shell — except anything
-  // under /api, which must reach the network.
+  // under /api, which must reach the network, and now /share-target (below):
+  // a precached-shell navigation response would out-race the redirect the
+  // share-target handler itself returns.
   registerRoute(
     new NavigationRoute(createHandlerBoundToURL("/index.html"), {
-      denylist: [/^\/api/],
+      denylist: [/^\/api/, /^\/share-target/],
     }),
   )
 } else {
@@ -84,19 +142,60 @@ if (precacheEnabled) {
     event.waitUntil(
       caches
         .keys()
-        .then((keys) => Promise.all(keys.map((key) => caches.delete(key))))
+        // A6 review fix (addendum L4): was every key. `SHARE_CACHE` holds a
+        // share-target/file-handler stash that may be sitting between the OS
+        // delivering a file and `CorrectPaper.tsx` reading it on mount — a
+        // worker update activating in that window must not discard it out
+        // from under the reader.
+        .then((keys) => Promise.all(keys.filter((key) => key !== SHARE_CACHE).map((key) => caches.delete(key))))
         .then(() => undefined),
     )
   })
 }
 
-// `registerType: "autoUpdate"` meant the new worker took over without asking.
-// Preserved explicitly, because injectManifest does not imply it.
-self.skipWaiting().catch(() => {
-  // A browser that refuses the skip simply activates on the next navigation;
-  // nothing here is worth failing the install over.
+// Packet A7 (`silent-update-swap`): `registerType` is now `"prompt"`, not
+// `"autoUpdate"`, and a new worker must stay in `waiting` — not take over —
+// until the reader clicks "Reload" on `<UpdateToast>` (`useServiceWorkerUpdate`).
+// An unconditional call at install time defeated that regardless of the
+// page-side gate: it advanced this worker straight past `waiting` on every
+// install, so `wb.addEventListener("waiting", ...)` (vite-plugin-pwa's own
+// `registerSW.ts`) never even fired. Skipping now happens only on request,
+// via the `SKIP_WAITING` message `updateServiceWorker(true)` sends.
+self.addEventListener("message", (event: ExtendableMessageEvent) => {
+  if ((event.data as { type?: unknown } | undefined)?.type === "SKIP_WAITING") {
+    self.skipWaiting().catch(() => {
+      // A browser that refuses the skip simply activates on the next
+      // navigation; nothing here is worth failing the message handler over.
+    })
+  }
 })
 clientsClaim()
+
+// --- Web Share Target (manifest's `share_target`) ---------------------------
+
+// File-scope and unconditional — registered regardless of `precacheEnabled`,
+// because the OS share sheet reaches this worker on staging and localhost
+// too, not only on the production hosts precaching is scoped to. Workbox's
+// `registerRoute` only ever matches navigations (GET); the share sheet POSTs
+// to `/share-target`, which needs its own listener.
+self.addEventListener("fetch", (event: FetchEvent) => {
+  const url = new URL(event.request.url)
+  if (event.request.method !== "POST" || url.pathname !== "/share-target") return
+
+  // A6 review fix (MEDIUM 1): a hostile page can auto-submit a cross-site
+  // form straight to this exact URL — the worker only sees the request's
+  // destination, which is this origin either way, so `url.pathname` alone
+  // cannot distinguish that from the OS's own share sheet. `Sec-Fetch-Site`
+  // is set by the browser, not readable-or-writable from page JS: "cross-site"
+  // for a hostile page's form, "none" (no referring page at all) for the
+  // OS-level share-sheet launch this handler actually exists for. Falling
+  // through to the network (no `event.respondWith`) rather than answering
+  // with an error keeps this indistinguishable from a route this worker
+  // never registered at all.
+  if (event.request.headers.get("Sec-Fetch-Site") === "cross-site") return
+
+  event.respondWith(handleShareTargetFetch(event))
+})
 
 // --- Push (the reason this file exists) -------------------------------------
 
@@ -221,5 +320,114 @@ self.addEventListener("notificationclick", (event: NotificationEvent) => {
       }
       await self.clients.openWindow(target)
     })(),
+  )
+})
+
+// --- Widgets (Windows 11 / Android widget surface, packet A5's backend) -----
+//
+// No `widgetclick` listener: that event only fires for an `Action.Execute`
+// verb-based action, and `public/widgets/streak.json`'s one action is
+// `Action.OpenUrl` — the widget host opens it directly, so this worker never
+// sees a click at all. A listener here would be dead code for a template
+// that carries no verb to trigger it.
+
+/**
+ * The tag `vite/manifest.ts`'s `widgets` member declares for the one widget
+ * this app ships. Hardcoded rather than read from anywhere importable here:
+ * `vite/manifest.ts` is a Vite-config module, not part of this file's own
+ * narrow `tsconfig.sw.json` project (see that file's own comment on why the
+ * include list stays explicit), and there is exactly one widget to name.
+ */
+const STREAK_WIDGET_TAG = "lemely-streak"
+
+/**
+ * Render one widget instance with the caller's current data.
+ *
+ * `widgets` is passed in rather than read from `self.widgets` here, so every
+ * call site narrows the now-optional (widget bridge review fix HIGH 2) type
+ * exactly once, itself, rather than this function re-deriving "does the API
+ * exist" from an event it did not receive.
+ *
+ * The template is always fetched fresh from `widget.definition.msAcTemplate`
+ * (never inlined) because the Adaptive Cards spec requires the *rendered*
+ * template text in every `updateByTag` call, not just the data — there is no
+ * "keep the template, only update the data" call in this API. The stub
+ * fallback's URL comes from `widget.definition.data` — the exact value
+ * `vite/manifest.ts`'s `widgets[0].data` declares — rather than a second,
+ * hand-typed copy of that path living here too.
+ */
+async function renderWidget(widget: WidgetObject, widgets: WidgetsNamespace): Promise<void> {
+  const template = await (await fetch(widget.definition.msAcTemplate)).text()
+
+  let data: string
+  try {
+    data = await fetchWidgetDataOrStub(
+      self.clients,
+      CLIENT_REPLY_TIMEOUT_MS,
+      widget.definition.data,
+      fetch,
+    )
+  } catch {
+    // Widget bridge review fix (MEDIUM 2): mirrors `handlePush`'s own
+    // try/catch around its content-decision step, which this handshake was
+    // meant to parallel — a failure anywhere in the live-data path (an
+    // unexpected rejection from the client handshake, say) must not mean
+    // the widget renders NOTHING. Fall back to fetching the stub directly,
+    // the same URL `fetchWidgetDataOrStub`'s own internal fallback already
+    // uses for the ordinary "nothing answered in time" case.
+    data = await (await fetch(widget.definition.data)).text()
+  }
+
+  await widgets.updateByTag(widget.definition.tag, { template, data })
+}
+
+// A widget is added to the dashboard without necessarily being rendered yet
+// (Microsoft's own docs: "it is not automatically rendered using the
+// ms_ac_template and data fields") — this is the event that asks this worker
+// to actually draw it for the first time. The browser only ever fires this
+// where `self.widgets` exists, but the guard costs nothing and keeps every
+// listener in this section narrowing the same optional type the same way.
+self.addEventListener("widgetinstall", (event) => {
+  const widgets = self.widgets
+  if (widgets === undefined) return
+  event.waitUntil(renderWidget(event.widget, widgets))
+})
+
+// Fired when the widget host resumes rendering installed widgets after
+// suspending them to save resources — the moment this worker gets another
+// chance at fresher data than whatever was last pushed, which may by now be
+// the stub if no tab was open at install time.
+self.addEventListener("widgetresume", (event) => {
+  const widgets = self.widgets
+  if (widgets === undefined) return
+  event.waitUntil(renderWidget(event.widget, widgets))
+})
+
+// A widget instance can already be installed — from before this worker code
+// shipped, or from an install that landed with no page open to answer the
+// handshake — with nothing to make it re-render on its own once one is.
+// `activate` is the same moment `sw.ts`'s non-precache branch already uses to
+// bring a returning visitor onto a fresh deploy (above); doing the same for
+// an already-installed widget here means a reader never has to remove and
+// re-add it just to see real data for the first time.
+//
+// Unlike `widgetinstall`/`widgetresume`, this listener runs on EVERY
+// activation in EVERY browser — the Widgets API only ships in Edge on
+// Windows 11 with WinAppSDK, so `self.widgets` is `undefined` almost
+// everywhere else. Widget bridge review fix (HIGH 2): the old, non-optional
+// ambient type asserted it was always present, so `self.widgets.getByTag`
+// threw a synchronous `TypeError` on every activation for essentially every
+// user, before `event.waitUntil` was ever reached — `clientsClaim()` and the
+// non-precache cache-wipe listener both still ran (DOM dispatch continues
+// past a throwing listener), but the throw itself was a guaranteed uncaught
+// error on every deploy.
+self.addEventListener("activate", (event) => {
+  const widgets = self.widgets
+  if (widgets === undefined) return
+  event.waitUntil(
+    widgets.getByTag(STREAK_WIDGET_TAG).then((widget) => {
+      if (widget === undefined) return
+      return renderWidget(widget, widgets)
+    }),
   )
 })

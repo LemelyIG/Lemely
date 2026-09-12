@@ -69,9 +69,9 @@ const DataHandling = lazy(() =>
  */
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
   return (
-    <div className="paper-grain flex min-h-screen flex-col bg-paper">
+    <div className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
-      <header className="sticky top-0 z-nav border-b border-rule bg-paper/85 backdrop-blur-nav">
+      <header className="lm-app-header lm-nav-chrome sticky top-0 z-nav border-b border-rule bg-paper/85 backdrop-blur-nav">
         {/*
           The one permitted *kind* of `backdrop-blur` (§3.2 item 6): a page top
           bar, never scrolling content. `bg-paper/85` under it means the blur

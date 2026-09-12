@@ -191,9 +191,10 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
 describe("the settings lane stays reachable by every role — P4.10", () => {
   const settingsRoutes = appRoutes.filter((route) => route.path?.startsWith("/settings/"))
 
-  it("mounts all three screens at the top level", () => {
+  it("mounts all four screens at the top level", () => {
     expect(settingsRoutes.map((route) => route.path).sort()).toEqual([
       "/settings/devices",
+      "/settings/install",
       "/settings/notifications",
       "/settings/profile",
     ])
@@ -207,12 +208,15 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
    * `parent` was wrongly inside `TEACHER_ROLES`, and the mirror image of P4.9's
    * marketing page, which was guarded when it should have been public.
    */
-  it.each(["/settings/devices", "/settings/notifications"])("guards %s", (routePath) => {
-    const route = appRoutes.find((r) => r.path === routePath)
-    expect(containsComponent(route?.element, "RequireAuth")).toBe(true)
-  })
+  it.each(["/settings/devices", "/settings/notifications", "/settings/install"])(
+    "guards %s",
+    (routePath) => {
+      const route = appRoutes.find((r) => r.path === routePath)
+      expect(containsComponent(route?.element, "RequireAuth")).toBe(true)
+    },
+  )
 
-  it("admits all five roles to all three settings screens", () => {
+  it("admits all five roles to all four settings screens", () => {
     const source = sourceOf("src/routes.tsx")
     // Every `/settings/*` route must name ALL_ROLES, which is the union of the
     // three role lists — asserted here rather than trusting the name, because
@@ -226,7 +230,7 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
     // appears in this file's prose, and counting comments as routes is how a
     // gate ends up asserting something other than what it claims to.
     const settingsBlocks = source.split('path: "/settings/').slice(1)
-    expect(settingsBlocks).toHaveLength(3)
+    expect(settingsBlocks).toHaveLength(4)
     for (const block of settingsBlocks) {
       expect(block.slice(0, 400)).toContain("ALL_ROLES")
     }
@@ -264,5 +268,45 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
     "src/portals/settings/NotificationSettings.tsx",
   ])("%s renders inside SettingsFrame", (relative) => {
     expect(sourceOf(relative)).toContain("<SettingsFrame")
+  })
+
+  /*
+   * A7 review fix (MEDIUM 2) — this is the gate HIGH 2 was missing. The
+   * fourth pill (`Install Lemely`) landed only in `SettingsFrame.tsx`'s
+   * top-level `SETTINGS_NAV`, so student and teacher — the only two roles
+   * `InstallBanner` targets, and the only two roles with a portal-scoped
+   * Settings section at all — had no navigational way back to
+   * `/settings/install` once they dismissed the banner: every sibling pill
+   * in `PortalSettingsLayout` redirects them straight back into the portal
+   * lane. Nothing failed loudly; typecheck and every existing gate passed,
+   * because none of them compared the two nav lists against each other.
+   */
+  function extractNavLabels(source: string, arrayStartMarker: string): string[] {
+    const start = source.indexOf(arrayStartMarker)
+    expect(start, `missing "${arrayStartMarker}"`).toBeGreaterThan(-1)
+    // `arrayStartMarker` itself ends on the array's opening `[` (in
+    // `PortalSettingsLayout.tsx` the marker also contains a `]` of its own,
+    // from the `SettingsNavItem[]` type annotation) — search for the
+    // closing `]` only from where the marker ends, so that one is never
+    // mistaken for it. Neither nav array nests another `[`/`]` inside an
+    // item, so the first `]` found from there is the array's own close.
+    const contentStart = start + arrayStartMarker.length
+    const end = source.indexOf("]", contentStart)
+    expect(end, `no closing "]" found after "${arrayStartMarker}"`).toBeGreaterThan(contentStart)
+    return [...source.slice(contentStart, end).matchAll(/label:\s*"([^"]+)"/g)].map((m) => m[1])
+  }
+
+  it("SETTINGS_NAV (top-level lane) and PortalSettingsLayout's nav items name the same set of screens", () => {
+    const topLevelLabels = extractNavLabels(
+      sourceOf("src/portals/settings/SettingsFrame.tsx"),
+      "const SETTINGS_NAV = [",
+    )
+    const portalLabels = extractNavLabels(
+      sourceOf("src/portals/settings/PortalSettingsLayout.tsx"),
+      "const items: SettingsNavItem[] = [",
+    )
+
+    expect(topLevelLabels.length).toBeGreaterThan(0)
+    expect(new Set(portalLabels)).toEqual(new Set(topLevelLabels))
   })
 })

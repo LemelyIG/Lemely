@@ -2,6 +2,7 @@
 import type { HTMLAttributes, ReactNode } from "react"
 import { Check, CircleNotch, DotsThree, X } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { ProgressBar } from "@/components/ui/progress-bar"
 
 /*
  * C-10 · Processing state — the marking pipeline's staged progress (S-14).
@@ -200,20 +201,14 @@ function StageProgressBar({ progress }: { progress: ProcessingStageProgress }) {
   }
 
   const pct = Math.max(0, Math.min(100, Math.round((progress.current / progress.total) * 100)))
+  const label = progress.label ?? `${unit} ${progress.current} of ${progress.total}`
   return (
     <div className="mt-3 rounded-md border border-rule bg-paper-sunk p-3">
       <div className="mb-2 flex items-center justify-between gap-2 text-data-sm">
-        <span className="text-ink-muted">
-          {progress.label ?? `${unit} ${progress.current} of ${progress.total}`}
-        </span>
+        <span className="text-ink-muted">{label}</span>
         <span className="flex-none text-accent-ink">{pct}%</span>
       </div>
-      <div className="h-1.5 w-full overflow-hidden rounded-full bg-rule">
-        <div
-          className="h-full rounded-full bg-accent transition-[width] duration-[var(--dur-slow)] ease-out-soft"
-          style={{ width: `${pct}%` }}
-        />
-      </div>
+      <ProgressBar value={pct} tone="accent" ariaLabel={label} />
     </div>
   )
 }

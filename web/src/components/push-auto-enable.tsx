@@ -53,12 +53,15 @@ import {
  */
 export function PushAutoEnable() {
   const { session } = useAuth()
-  const config = usePushConfig()
+  const userId = session?.userId ?? null
+  // Packet A7: gated on session state. This component is mounted
+  // unconditionally in main.tsx, above the router — without this, the push
+  // config request fired on every cold, logged-out load of /login. See
+  // usePushConfig's own doc for the full finding.
+  const config = usePushConfig(userId !== null)
   const subscribe = useSubscribeToPush()
   /** The user this browser has already run for, so a re-render cannot re-ask. */
   const ranFor = useRef<string | null>(null)
-
-  const userId = session?.userId ?? null
   const available = config.data?.available ?? false
   const publicKey = config.data?.publicKey ?? null
 

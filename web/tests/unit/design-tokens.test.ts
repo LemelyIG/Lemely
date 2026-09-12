@@ -96,6 +96,69 @@ describe("lib/utils.ts and index.css agree in both directions", () => {
   })
 })
 
+/*
+ * Packet A3 (audit-dossier remediation). `--info` and `--info-wash` were
+ * pinned at hue 240/235 — identical to `--pastel-sky-ink`'s hue (240) and
+ * `--focus-ring`'s hue (240), and `--info-wash` literally identical to
+ * `--pastel-sky` (both `oklch(0.94 0.03 235)`). §3.8 reserves subject hues for
+ * subject identity ("a student should find Physics by colour before
+ * reading") and §3.9 reserves its hue for "the browser is listening" — a
+ * notice banner painted in either is a false subject/focus cue. Hue-only
+ * check: lightness/chroma already carry the measured AA contrast
+ * (`tests/test_design_tokens.py`), which a hue change alone does not disturb.
+ */
+describe("--info does not collide with a subject pastel or --focus-ring", () => {
+  const HUE_TOKENS = [
+    "pastel-rose",
+    "pastel-rose-ink",
+    "pastel-amber",
+    "pastel-amber-ink",
+    "pastel-sage",
+    "pastel-sage-ink",
+    "pastel-sky",
+    "pastel-sky-ink",
+    "pastel-lilac",
+    "pastel-lilac-ink",
+    "pastel-clay",
+    "pastel-clay-ink",
+    "focus-ring",
+  ]
+
+  function hueOf(name: string): number {
+    const match = css.match(new RegExp(`--${name}:\\s*oklch\\(\\s*[\\d.]+\\s+[\\d.]+\\s+([\\d.]+)\\s*\\)`))
+    if (!match) throw new Error(`--${name} not found in index.css`)
+    return Number(match[1])
+  }
+
+  it("finds --info in index.css", () => {
+    expect(() => hueOf("info")).not.toThrow()
+  })
+
+  it("--info's hue is not identical to any subject pastel or --focus-ring", () => {
+    const infoHue = hueOf("info")
+    for (const name of HUE_TOKENS) {
+      expect(hueOf(name), `--info hue ${infoHue} collides with --${name}`).not.toBe(infoHue)
+    }
+  })
+
+  it("--info-wash's hue is not identical to any subject pastel", () => {
+    const washHue = hueOf("info-wash")
+    for (const name of HUE_TOKENS) {
+      expect(hueOf(name), `--info-wash hue ${washHue} collides with --${name}`).not.toBe(washHue)
+    }
+  })
+})
+
+describe("--fs-field platform floor", () => {
+  it("is defined at 16px", () => {
+    expect(css).toContain("--fs-field: 16px")
+  })
+
+  it("is a registered font-size class, not a display/body/data type rung", () => {
+    expect(registered).toContain("field")
+  })
+})
+
 describe("no arbitrary literals in the retrofitted portals", () => {
   // `portals/student/` is deliberately absent: only its shell (index.tsx) was
   // retrofitted in P3.10 chunk c. Its screens still carry ~120 literals, which

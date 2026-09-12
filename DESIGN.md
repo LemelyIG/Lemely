@@ -199,7 +199,7 @@ system and it is carried forward on purpose.
 | `--ok` / `--ok-wash` | `oklch(0.48 0.075 175)` `#256B5B` | `oklch(0.945 0.030 175)` `#D9F4EC` | 5.41:1 | Correct, complete, saved, on track. |
 | `--warn` / `--warn-wash` | `oklch(0.45 0.085 70)` `#734C17` | `oklch(0.945 0.045 85)` `#FBEBCB` | 6.45:1 | Partial credit, uncertain, borderline, needs attention. |
 | `--err` / `--err-wash` | `oklch(0.38 0.145 27)` `#7E0D10` | `oklch(0.94 0.035 27)` `#FFE3DF` | 8.86:1 | Wrong, failed, destructive, blocked. |
-| `--info` / `--info-wash` | `oklch(0.44 0.080 240)` `#22587A` | `oklch(0.94 0.030 235)` `#D9EFFD` | 6.47:1 | Neutral notices, tips, "how this works". |
+| `--info` / `--info-wash` | `oklch(0.44 0.080 265)` `#3D517F` | `oklch(0.94 0.030 265)` `#E1EBFF` | 6.56:1 | Neutral notices, tips, "how this works". Hue 265 (was 240/235, which collided with `--pastel-sky-ink`'s hue and `--focus-ring`'s hue — see D-A3.1). |
 
 Every semantic text colour is also AA on `--paper` (5.38:1 to 10.04:1) and on
 `--paper-sunk`.
@@ -333,6 +333,7 @@ with the wrong family.
 | `data-md` | JetBrains Mono | 15 | 1.2 | 0 | 500 | Inline figures, marks, XP. |
 | `data-sm` | JetBrains Mono | 11 | 1 | 0.05em | 500 | Paper codes, IDs, timestamps, metadata. |
 | `hand` | Caveat | 19 | 1.35 | 0 | 400 | Marginalia. See §4.1. |
+| `field` | — | 16 | inherit | inherit | inherit | **Not a rung.** A platform floor: iOS Safari auto-zooms the viewport on focusing any input under 16px. `.text-field` is a standalone `font-size` override for native form fields, not a modifier layered on top of a `.text-body-*` class — both are in the same twMerge font-size group, so `cn("text-body-md", "text-field")` always collapses to `text-field` alone; family/weight/line-height come from whatever the field inherits, not from a `.text-body-*` rung. |
 
 **Mobile.** `display-hero` → 38px, `display-xl` → 30px, `display-lg` → 26px
 below 768px. Everything else holds; the body scale is already comfortable on a
@@ -343,6 +344,16 @@ students actually use.
 display headings and no italic emphasis inside a heading (§3.2 item 12);
 emphasis is weight, accent colour, or a drawn underline. Italic is body-copy
 only, plus Caveat, which is its own thing.
+
+**Platform chrome.** `index.html`'s `apple-mobile-web-app-status-bar-style` is
+`"default"`, not `"black-translucent"`, on purpose: `"black-translucent"` draws
+the status bar text over the page instead of reserving space for it, which is
+the exact "phone drew a dark address bar over a light app" defect the
+`theme-color` fix above this meta tag exists to prevent. `"default"` keeps the
+status bar its own opaque row, matching the light `--paper` ground everywhere
+this product renders. Do not "fix" the mismatch between this note's location
+and a stale `§5` reference elsewhere — this is the correct, current home for
+it.
 
 ---
 
@@ -603,3 +614,103 @@ Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
 6. Check the four mobile widths (320/375/414/768) and desktop.
 7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
 8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
+
+---
+
+## 15. Device envelope
+
+Phase A's mechanics — what makes Lemely behave like an installed app rather
+than a browser tab, and where each rule actually lives. Sections below are
+the settled state after Phase A; forward pointers name what Phase B still
+owns.
+
+**Install / update lifecycle.** `registerType: "autoUpdate"` (`vite.config.ts`)
+means a new build is fetched and installed in the background with no
+prompt. Taking control is gated, not automatic: `self.skipWaiting()`
+(`src/sw.ts`) runs only inside the worker's own `message` listener, fired by
+the page once it has shown a reload prompt (`src/main.tsx` /
+`lib/staleChunk.ts`) and the reader has agreed — never on install, which
+would otherwise swap the app out from under whatever the reader is mid-way
+through. `scripts/check-native-invariants.mjs` enforces the gating
+mechanically (below).
+
+**Offline behaviour.** The service worker precaches the app shell only on
+the real production hosts — `PRECACHE_HOSTS` (`src/sw.ts`) lists
+`lemelyig.com`/`www.lemelyig.com` explicitly, so staging and local dev never
+precache and never need the activate-time cache-clear that host set exists
+to avoid. `/api/*` is never cached, on any host: marks, grades and the
+review queue are live data, and a stale response there is a wrong answer,
+not a convenience. On the client, `isOfflineFailure` classifies a network
+error and `<OfflineState>` (`components/ui/state-views.tsx`, wired through
+`<QueryState>`) renders a real "you're offline" screen instead of the
+generic error state — a network failure and a 500 are different facts and
+read as different screens.
+
+**Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
+home-indicator layout in the first place; without it `env(safe-area-inset-*)`
+resolves to `0` everywhere and every rule below is a no-op. Standalone-only
+chrome is gated behind `@media (display-mode: standalone)` (`index.css`) —
+a same-origin browser tab gets no inset padding, because the browser's own
+chrome already occupies that space there. `.lm-app-header` adds the inset
+additively (`padding-top: calc(var(--lm-app-header-pt, 0px) +
+env(safe-area-inset-top))`) rather than replacing a header's existing
+padding, and `.lm-safe-bottom` does the equivalent for the bottom nav/toast
+rail. `apple-mobile-web-app-status-bar-style="default"` (`index.html`) is a
+deliberate choice, not an oversight: `black-translucent` draws the page
+*under* the status bar, which reads as content overlapping system chrome
+unless every top-level screen accounts for it independently; `default`
+keeps the status bar opaque and out of the layout's way, and the safe-area
+insets above are what actually earn the notch/home-indicator space back.
+
+**Orientation.** The manifest declares `orientation: "any"`
+(`vite/manifest.ts`) — a marking/study app has no portrait-only or
+landscape-only surface, and locking orientation would fight a student who
+rotates to read a wide mark scheme. Phase A ships no orientation-specific
+layout of its own; a dedicated landscape overlay or layout is Phase B's
+scope, not this one's.
+
+**Gestures.** Phase A ships none. The disambiguation rule
+(`|dx| > 10 && |dx| > 2*|dy|`, distinguishing an intentional horizontal
+swipe from scroll noise) and the actual gesture list — flashcard swipe,
+nav-drawer swipe-dismiss, pull-to-refresh, and the rest — are Phase B's
+scope; this section is a forward pointer, not a spec, and nothing here
+should be read as gesture content Phase A already implements.
+
+**Capability register.**
+
+| Capability | Status | Where |
+|---|---|---|
+| Web Share Target | Shipped (A6) | `vite/manifest.ts`'s `share_target`, `src/sw/shareTarget.ts` |
+| File Handling API | Shipped (A6) | `vite/manifest.ts`'s `file_handlers`, `/file-handler` (`routes.tsx`) |
+| Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
+| Badging API | Out of scope for Phase A | Phase B |
+| Haptics (Vibration API) | Out of scope for Phase A | Phase B |
+| Wake Lock | Out of scope for Phase A | Phase B |
+
+**Mechanical enforcement.** The mechanics sections above are guarded, not
+just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
+lint` and CI's own unit-test step) asserts the viewport meta, the
+touch/tap/overscroll CSS rules, the `--fs-field` token, the safe-area
+rules, the additive `.lm-app-header` inset and its named utilities, the
+`lm-nav-chrome` coverage, the status-bar style meta, the absence of
+class-list `min-h-screen` outside a desktop `<aside>` (there is no
+"paired with `min-h-dvh`" exemption — the class must be gone, since
+Tailwind v4 emits `.min-h-screen` after `.min-h-dvh` regardless of source
+order and both sit at equal specificity, so `min-h-screen` always wins the
+cascade when both are present), the 8-state `active:` requirement on every
+interactive `components/ui/*.tsx` control — whether its classes sit inline
+on the JSX tag or inside a `cva(...)` variant recipe (`button.tsx`'s own
+shape: a reusable primitive with no `onClick` of its own, its `hover:`/
+`active:` split across a base array and a variant string rather than on
+any literal tag) — scoped per element/recipe, not merely present somewhere
+in the file, and that `skipWaiting` only ever runs inside `self.
+addEventListener("message", ...)`, never at module scope or inside some
+other block that still executes unconditionally at install time.
+`scripts/check-bundle-budget.mjs` (wired into `npm run
+build` via `postbuild` — which means it now also gates every production
+deploy, not only CI, since `deploy.yml`'s frontend build step runs through
+the same `npm run build`) fails the build if any shipped JS chunk exceeds
+its gzip budget. Neither script replaces this document, nor `tests/unit/
+nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
+all three exist because a rule stated only in prose is a rule the next
+edit can silently break.

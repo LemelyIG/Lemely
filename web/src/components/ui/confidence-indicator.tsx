@@ -71,7 +71,7 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
         aria-expanded={open}
         aria-label={`Confidence: ${meta.label}. ${meta.explanation}`}
         className={cn(
-          "inline-flex items-center gap-1 rounded-full border border-transparent cursor-pointer transition-colors",
+          "inline-flex items-center gap-1 rounded-full border border-transparent cursor-pointer transition-[color,background-color,transform] active:scale-[0.98]",
           "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
           loud ? "px-2 py-1" : "p-0.5",
           tierClasses[tier],
@@ -142,7 +142,7 @@ export function ConfidenceIndicatorSummary({
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
           aria-label="What does confidence mean?"
-          className="ms-auto flex-none text-t3 transition-colors hover:text-t2 cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
+          className="ms-auto flex-none text-t3 transition-[color,transform] hover:text-t2 active:scale-[0.98] cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent rounded-full"
         >
           <Info className="w-4 h-4" aria-hidden />
         </button>

@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useEffect, useState } from "react"
+import { useEffect, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowClockwise, Camera, UploadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
@@ -34,6 +34,10 @@ import { useProfile } from "@/lib/hooks/useMeApi"
 import { canStartRun, runPhase } from "@/lib/uploadRun"
 import { cn } from "@/lib/utils"
 import { uploadStageProgress } from "@/lib/uploadProgress"
+import { defaultScanSource } from "@/lib/scanSource"
+import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
+import { readSharedScan } from "@/lib/sharedScan"
+import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -332,7 +336,12 @@ export function CorrectPaper() {
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(initialStages)
   const [error, setError] = useState<string | null>(null)
-  const [scanSource, setScanSource] = useState<ScanSource>("file")
+  // Touch devices (phone, tablet) open straight to the camera — see
+  // `defaultScanSource`'s own doc for why. Lazy initializer so `matchMedia`
+  // runs once, not on every render.
+  const [scanSource, setScanSource] = useState<ScanSource>(() =>
+    defaultScanSource(window.matchMedia?.bind(window)),
+  )
   const [cameraSessionKey, setCameraSessionKey] = useState(0)
   /*
    * The uploaded paper, held past a failure so the run can be retried without
@@ -399,6 +408,65 @@ export function CorrectPaper() {
     chooseScan(null)
     if (source === "camera") setCameraSessionKey((k) => k + 1)
   }
+
+  /**
+   * Web Share Target (manifest's `share_target`) AND File Handling API
+   * (manifest's `file_handlers`): both funnel through the same Cache
+   * Storage bridge (`installFileHandlerBridge`, mounted once in `main.tsx`,
+   * and `handleShareTargetFetch` in the service worker both call the same
+   * `stashSharedFile`), so `readSharedScan` here picks up a file regardless
+   * of which OS mechanism delivered it. Mount-only: a share consumed once
+   * should not keep reappearing on every later visit, which is also why
+   * `readSharedScan` deletes the cache entry it reads.
+   *
+   * Guarded by a ref, not the `let cancelled` pattern this effect used to
+   * use (A6 review fix MEDIUM 3): React 18 StrictMode's dev-only double
+   * effect invoke called `readSharedScan` twice in the same tick, and since
+   * it deletes the cache entry as part of reading it, the two invocations
+   * raced — the first read (and deleted) the real file, then discarded it
+   * because its own cleanup had already flipped `cancelled` to true by the
+   * time its promise resolved; the second found nothing left to read
+   * either way. The ref persists across both invocations of the same
+   * effect (this is the same fiber, not a real unmount/remount), so it
+   * makes sure `readSharedScan` — and the cache delete inside it — only
+   * ever runs once no matter how many times the effect itself runs.
+   */
+  const sharedScanAttempted = useRef(false)
+  useEffect(() => {
+    if (sharedScanAttempted.current) return
+    sharedScanAttempted.current = true
+    readSharedScan()
+      .then((file) => {
+        if (!file) return
+        setScanSource("file")
+        chooseScan(file)
+      })
+      .catch(() => {
+        // Best-effort, matching handleShareTargetFetch's own contract — a
+        // non-secure context (no `caches`) or any other rejection here must
+        // not surface as an unhandled promise rejection on every mount.
+      })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  /*
+   * Reports whether this screen holds a scan the reader hasn't submitted
+   * yet — read by `UpdateToast.tsx`'s "Reload" action so a reload can't
+   * silently drop a shared/launched scan that only exists in this
+   * component's own state. See `activeScanGuard.ts`'s own doc for why.
+   *
+   * Gated on `paperId === null` too, not `scanFile !== null` alone: unlike
+   * `Grading.tsx`, this screen deliberately never clears `scanFile` on a
+   * successful run (M5's retry-in-place depends on it staying set) — the
+   * guard has to release once the scan actually reaches the server, or it
+   * would latch `true` for the rest of the mount and the reload refusal
+   * would keep telling a reader to "finish" a scan whose result is already
+   * on screen.
+   */
+  useEffect(() => {
+    setHasUnsubmittedScan(scanFile !== null && paperId === null)
+    return () => setHasUnsubmittedScan(false)
+  }, [scanFile, paperId])
 
   /**
    * Drive the stream for an already-uploaded paper. Split from `runPipeline`
@@ -673,6 +741,7 @@ export function CorrectPaper() {
             ) : (
               <CameraCapture
                 key={cameraSessionKey}
+                autoStart={shouldAutoStartCamera(cameraSessionKey)}
                 onComplete={chooseScan}
                 onCancel={() => chooseScanSource("file")}
                 className="border-0 bg-transparent p-0"

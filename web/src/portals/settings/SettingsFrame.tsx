@@ -113,14 +113,17 @@ export function SettingsNav({ items }: { items: readonly SettingsNavItem[] }) {
   )
 }
 
-/** The three screens in this lane, in the order they appear in the nav.
+/** The four screens in this lane, in the order they appear in the nav.
  * Profile leads because it is the identity screen a reader expects first;
  * `end: true` on every entry keeps the old top-level behaviour unchanged —
- * none of these three routes has a sub-route to distinguish itself from. */
+ * none of these four routes has a sub-route to distinguish itself from. */
 const SETTINGS_NAV = [
   { to: "/settings/profile", label: "Profile", end: true },
   { to: "/settings/devices", label: "Account and devices", end: true },
   { to: "/settings/notifications", label: "Notifications", end: true },
+  // Packet A7. `end: true` for the same reason as its three siblings: none
+  // of these four routes has a sub-route to distinguish itself from.
+  { to: "/settings/install", label: "Install Lemely", end: true },
 ] as const satisfies readonly SettingsNavItem[]
 
 /**
@@ -142,7 +145,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
   const homeLabel = session ? portalLabelForRole(session.role) : "Sign in"
 
   return (
-    <div className="paper-grain flex min-h-screen flex-col bg-paper">
+    <div className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
 
       <header className="border-b border-rule bg-paper-raised">

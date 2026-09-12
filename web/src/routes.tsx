@@ -23,6 +23,7 @@ import { safeNextPath } from "@/lib/nextPath"
  * It is a small screen, and it is the one worth carrying in the entry bundle.
  */
 import { NotFound } from "@/portals/misc/NotFound"
+import { ScanInbox } from "@/portals/misc/ScanInbox"
 /*
  * PR 2 part A2. Static for the identical reason `NotFound` above is: this is
  * the router's `errorElement`, so a lazy import of it would have to fetch a
@@ -68,6 +69,9 @@ const NotificationSettings = lazy(() =>
 )
 const ProfileSettings = lazy(() =>
   import("@/portals/settings/ProfileSettings").then((m) => ({ default: m.ProfileSettings })),
+)
+const InstallSettings = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({ default: m.InstallSettings })),
 )
 
 /*
@@ -210,14 +214,18 @@ function SessionEndedRoute({ children }: { children: React.ReactNode }) {
  * their own (P4.10's `SettingsFrame` remains their only route to it), so this
  * is a no-op for them and they keep rendering the framed screen exactly as
  * they always have.
+ *
+ * `"install"` (A7 review fix HIGH 2) redirects only for `student`/`teacher`,
+ * same as its three siblings — the two roles `InstallBanner` targets, and
+ * the two roles `PortalSettingsLayout` now lists an install pill for.
  */
 function SettingsLaneRedirect({
   segment,
   children,
 }: {
   /** The path under a portal's own `settings` root: `""` for the profile
-   * index, `"devices"` or `"notifications"` for its two siblings. */
-  segment: "" | "devices" | "notifications"
+   * index, `"devices"`, `"notifications"`, or `"install"` for its siblings. */
+  segment: "" | "devices" | "notifications" | "install"
   children: React.ReactNode
 }) {
   const { session } = useAuth()
@@ -663,6 +671,24 @@ export const appRoutes: RouteObject[] = [
       </RequireAuth>
     ),
   },
+  // Packet A7, wrapped in `SettingsLaneRedirect` as of the A7 review fix
+  // (HIGH 2): `PortalSettingsLayout` now lists an install pill, so
+  // `/student/settings/install` and `/teacher/settings/install` exist too
+  // (see `InstallSettings.tsx`'s own header for why this screen needs one).
+  {
+    path: "/settings/install",
+    errorElement,
+    handle: { title: "Install Lemely" } satisfies PageMeta,
+    element: (
+      <RequireAuth allowedRoles={ALL_ROLES}>
+        <SettingsLaneRedirect segment="install">
+          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+            <InstallSettings />
+          </Suspense>
+        </SettingsLaneRedirect>
+      </RequireAuth>
+    ),
+  },
   {
     ...teacherRoute,
     errorElement,
@@ -695,6 +721,31 @@ export const appRoutes: RouteObject[] = [
     ...parentRoute,
     errorElement,
     element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
+  },
+  // Role-aware landing for the Web Share Target (`sw/shareTarget.ts`'s
+  // redirect) and the File Handling API route below — `ScanInbox` reads the
+  // session itself and forwards to whichever portal's upload surface fits
+  // the role. No `RequireAuth` here: its own destinations
+  // (`scanInboxDestination.ts`) are themselves inside `RequireAuth`-wrapped
+  // portal subtrees, so a signed-out reader still lands on `/login` by the
+  // normal route rather than a second guard.
+  {
+    path: "/scan-inbox",
+    errorElement,
+    handle: { title: "Opening your scan" } satisfies PageMeta,
+    element: <ScanInbox />,
+  },
+  // File Handling API (manifest's `file_handlers`, packet A6): the OS hands a
+  // launched image/PDF to this path via `window.launchQueue`, which forwards
+  // it into the same marking flow the Web Share Target (`/share-target`) and
+  // the in-app "Camera"/"File" pickers already use. Routed through
+  // `/scan-inbox` (not straight to `/student/correct`) so a teacher launching
+  // a file lands on their own upload surface too — see that route above.
+  {
+    path: "/file-handler",
+    errorElement,
+    handle: { title: "Opening your scan" } satisfies PageMeta,
+    element: <Navigate to="/scan-inbox" replace />,
   },
   /*
    * Catch-all, last so it only matches what nothing above did.

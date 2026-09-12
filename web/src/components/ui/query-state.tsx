@@ -1,7 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
 import type { ReactNode } from "react"
-import { ErrorState, type StateViewAction } from "@/components/ui/state-views"
+import { ErrorState, OfflineState, type StateViewAction } from "@/components/ui/state-views"
 import { describeQueryFailure } from "@/lib/queryFailure"
+import { isOfflineFailure } from "@/lib/offlineFailure"
 
 /*
  * Loading/error primitives PR, part A · `<QueryState>`: a react-query result
@@ -225,10 +226,16 @@ export function QueryState<T>({
       typeof error.body === "function"
         ? error.body(query.error)
         : (error.body ?? describeQueryFailure(query.error))
+    // A dropped connection (`ApiError(0, ...)` — see `isOfflineFailure`'s own
+    // doc for why that and only that) is not the same fact as a real
+    // failure: `OfflineState` says "you're not connected", `ErrorState` says
+    // "something broke", and conflating them tells a reader on a bad train
+    // connection that Lemely is broken when it is not.
+    const StateComponent = isOfflineFailure(query.error) ? OfflineState : ErrorState
     return (
       <>
         {heading}
-        <ErrorState
+        <StateComponent
           heading={error.heading}
           body={body}
           marginalia={error.marginalia}

@@ -400,9 +400,16 @@ jobs:
         working-directory: web
         run: npm ci
 
+      # `-- --mode <env>` (packet A5 review fix): `web/vite/manifest.ts`'s
+      # `buildManifest` reads Vite's own build mode to decide whether the
+      # manifest's `scope_extensions` (the staging origin) is present at
+      # all — see that function's own docstring. Plain `npm run build`
+      # always defaults to mode "production", which is correct for the
+      # production deploy but would silently omit scope_extensions from a
+      # staging build too without this.
       - name: Build SPA
         working-directory: web
-        run: npm run build
+        run: npm run build -- --mode ${{ needs.resolve-env.outputs.environment }}
 
       # `--var BACKEND_URL:<url>` overrides the placeholder in wrangler.jsonc
       # with the Cloud Run URL this same run just deployed — see

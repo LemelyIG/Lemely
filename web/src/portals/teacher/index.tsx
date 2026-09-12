@@ -4,6 +4,7 @@ import { lazy, Suspense, useState } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { InstallBanner } from "@/components/InstallBanner"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteFallback } from "@/components/ui/state-views"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
@@ -99,6 +100,11 @@ const DeviceSettingsSection = lazy(() =>
 const NotificationSettingsSection = lazy(() =>
   import("@/portals/settings/NotificationSettings").then((m) => ({
     default: m.NotificationSettingsSection,
+  })),
+)
+const InstallSettingsSection = lazy(() =>
+  import("@/portals/settings/InstallSettings").then((m) => ({
+    default: m.InstallSettingsSection,
   })),
 )
 
@@ -436,7 +442,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
     // exists below `md`, so it belongs on the nav layer with the sidebar rather
     // than on the sticky-table-header layer beneath it — and DESIGN.md §7 wants
     // the rung named, not reached through an arbitrary value.
-    <div className="sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile py-2.5 backdrop-blur-nav md:px-page-desktop">
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"
@@ -542,7 +548,7 @@ function TeacherLayout() {
     // which is why it read as the generic dashboard the anti-references name.
     // `bg-paper`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar />
 
@@ -580,6 +586,10 @@ function TeacherLayout() {
               about the account. Renders nothing, and no margin either, unless the
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
+          {/* Packet A7: same "renders nothing unless there's something to
+              say" shape as the two banners above. Student and teacher only —
+              see the component's own header for why. */}
+          <InstallBanner />
           <Suspense fallback={<RouteFallback className="text-body-md" />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for this portal: a render crash in one
@@ -671,6 +681,11 @@ export const teacherRoute: RouteObject = {
           path: "notifications",
           element: <NotificationSettingsSection />,
           handle: { title: "Notification settings" },
+        },
+        {
+          path: "install",
+          element: <InstallSettingsSection />,
+          handle: { title: "Install Lemely" },
         },
       ],
     },

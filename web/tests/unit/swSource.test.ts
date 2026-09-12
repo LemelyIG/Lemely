@@ -1,0 +1,147 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { describe, expect, it } from "vitest"
+
+/**
+ * Packet A7 — gated service-worker activation.
+ *
+ * D5.15's original `self.skipWaiting()` ran unconditionally on install,
+ * which is the "silent update swap" ledger finding: a new worker took
+ * control (and, combined with `registerType: "autoUpdate"`, silently
+ * reloaded every open tab) with no user consent, possibly mid-interaction.
+ * `useServiceWorkerUpdate` now gates that on an explicit "Reload" click,
+ * which needs the worker to stay in `waiting` until it is told to skip —
+ * the only way to tell it that from the page is `postMessage`, so this test
+ * pins that `self.skipWaiting()` is reachable *only* from a message
+ * listener, source-text style (the same pattern `useCountdown.test.ts` and
+ * others already use for a service worker/effect body this suite's
+ * jsdom-less environment cannot otherwise exercise, D3.20).
+ */
+
+const source = readFileSync(join(import.meta.dirname, "..", "..", "src", "sw.ts"), "utf8")
+
+/**
+ * Extracts the full `self.addEventListener("message", ... )` call, brace
+ * pair and all, by counting braces from the opening `{` rather than a
+ * non-greedy regex — the listener's body nests a `.catch(() => { ... })`,
+ * and `[\s\S]*?\}\)` stops at that inner closer, not the outer one.
+ */
+function extractMessageListener(text: string): string | null {
+  const startMatch = text.match(/self\.addEventListener\("message",\s*\([^)]*\)\s*=>\s*\{/)
+  if (!startMatch || startMatch.index === undefined) return null
+  const bodyStart = startMatch.index + startMatch[0].length
+  let depth = 1
+  let i = bodyStart
+  while (i < text.length && depth > 0) {
+    if (text[i] === "{") depth += 1
+    else if (text[i] === "}") depth -= 1
+    i += 1
+  }
+  if (depth !== 0) return null
+  // `i` now sits just past the matching `}`; the call still needs its own
+  // closing `)`.
+  const closeParen = text.indexOf(")", i)
+  if (closeParen === -1) return null
+  return text.slice(startMatch.index, closeParen + 1)
+}
+
+describe("sw.ts — gated skip-waiting (A7)", () => {
+  const listener = extractMessageListener(source)
+
+  it("has a message listener that skips waiting on SKIP_WAITING", () => {
+    expect(listener, 'no self.addEventListener("message", ...) block found').not.toBeNull()
+    expect(listener).toMatch(/SKIP_WAITING/)
+    expect(listener).toMatch(/self\.skipWaiting\(\)/)
+  })
+
+  it("never calls self.skipWaiting() outside that message listener", () => {
+    expect(listener).not.toBeNull()
+    const withoutMessageListener = listener ? source.replace(listener, "") : source
+    expect(withoutMessageListener).not.toMatch(/self\.skipWaiting\(\)/)
+  })
+
+  it("still claims clients unconditionally — only activation waits on consent, not control of already-open tabs once activated", () => {
+    expect(source).toMatch(/^clientsClaim\(\)/m)
+  })
+})
+
+describe("sw.ts — share-target CSRF guard (A6 review fix MEDIUM 1)", () => {
+  // A cross-site form (a hostile page auto-submitting to
+  // https://lemelyig.com/share-target) is intercepted by this worker just
+  // like the OS's own share sheet is — the worker only sees the request's
+  // destination, not who initiated it, so `url.pathname === "/share-target"`
+  // alone can't tell them apart. `Sec-Fetch-Site` is the browser-set,
+  // unspoofable-by-JS signal that can: "cross-site" for a hostile page's
+  // form, "none" (no referring page at all) for the OS's own share-sheet
+  // launch.
+  it("rejects a request explicitly marked cross-site before handing it to handleShareTargetFetch", () => {
+    expect(source).toMatch(/Sec-Fetch-Site/)
+    expect(source).toMatch(/cross-site/)
+  })
+})
+
+describe("sw.ts — non-precache activate handler spares the share-target cache (A6 review fix addendum L4)", () => {
+  it("filters SHARE_CACHE out of the full cache wipe", () => {
+    const activateMatch = source.match(/self\.addEventListener\("activate",[\s\S]*?\n {2}\}\)/)
+    expect(activateMatch, 'no self.addEventListener("activate", ...) block found').not.toBeNull()
+    const body = activateMatch ? activateMatch[0] : ""
+    expect(body).toMatch(/SHARE_CACHE/)
+    expect(body).toMatch(/\.filter\(/)
+  })
+})
+
+/*
+ * Widget SW bridge (blocking, Phase A) — wiring only, not exercised by a
+ * test: `renderWidget`/the three listeners below reach `self.widgets` and
+ * `self.clients`, both WebWorker-only, so this suite pins them the same way
+ * it pins the push listener and the share-target CSRF guard above. The
+ * handshake logic and the fallback-to-stub path themselves ARE exercised
+ * directly — see `widgetBridge.test.ts` — because that logic was
+ * deliberately pulled into `sw/widgetBridge.ts` (self-free) for exactly this
+ * reason, mirroring `sw/shareTarget.ts`'s own split.
+ */
+describe("sw.ts — widget bridge wiring (Windows 11 / Android widget surface)", () => {
+  it("renders the widget on widgetinstall and widgetresume, via the same fetchWidgetDataOrStub handshake", () => {
+    expect(source).toMatch(/self\.addEventListener\(\s*"widgetinstall"/)
+    expect(source).toMatch(/self\.addEventListener\(\s*"widgetresume"/)
+    expect(source).toMatch(/fetchWidgetDataOrStub\(/)
+    expect(source).toMatch(/widgets\.updateByTag\(/)
+  })
+
+  it("re-renders an already-installed widget on activate, not only on a fresh widgetinstall", () => {
+    expect(source).toMatch(/widgets\.getByTag\(/)
+  })
+
+  it("fetches the Adaptive Card template fresh from the widget's own definition, never a hand-typed copy of the URL", () => {
+    expect(source).toMatch(/widget\.definition\.msAcTemplate/)
+  })
+
+  it("passes the fallback stub URL from the widget's own definition.data, not a second hardcoded copy of the path", () => {
+    expect(source).toMatch(/widget\.definition\.data/)
+    expect(source).not.toMatch(/["'`]\/?widgets\/streak-data\.json["'`]/)
+  })
+})
+
+/*
+ * Widget bridge review fix (HIGH 2) — `self.widgets` is optional (the
+ * Widgets API only ships in Edge on Windows 11 with WinAppSDK), and
+ * `activate` runs in every browser, so it is the one listener among the
+ * three above that must not dereference `self.widgets` unguarded — the
+ * regression this pins was a synchronous `TypeError` on every single
+ * `activate` in every non-Edge browser.
+ */
+describe("sw.ts — widget API feature detection (widget bridge review fix HIGH 2)", () => {
+  it("declares self.widgets as optional, not asserted always present", () => {
+    expect(source).toMatch(/declare const self: ServiceWorkerGlobalScope & \{ widgets\?:/)
+  })
+
+  it("the activate listener bails out before touching self.widgets when it is undefined", () => {
+    const activateBlocks = [
+      ...source.matchAll(/self\.addEventListener\("activate",[\s\S]*?\n\}\)/g),
+    ].map((m) => m[0])
+    const widgetActivateBlock = activateBlocks.find((block) => block.includes("STREAK_WIDGET_TAG"))
+    expect(widgetActivateBlock, "no widget-related activate listener found").toBeDefined()
+    expect(widgetActivateBlock).toMatch(/const widgets = self\.widgets/)
+    expect(widgetActivateBlock).toMatch(/if \(widgets === undefined\) return/)
+  })
+})

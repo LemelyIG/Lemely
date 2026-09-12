@@ -157,7 +157,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         aria-labelledby={titleId}
         tabIndex={-1}
         className={cn(
-          "fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
+          "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
           "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",
           "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
@@ -211,7 +211,7 @@ export function NavDrawerTrigger({ onClick, label, className }: NavDrawerTrigger
       aria-label={label}
       aria-haspopup="dialog"
       className={cn(
-        "flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
+        "lm-nav-chrome flex h-11 w-11 shrink-0 items-center justify-center rounded-md text-ink-muted transition-colors",
         "hover:bg-paper-sunk hover:text-ink",
         "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
         "active:scale-[0.98]",

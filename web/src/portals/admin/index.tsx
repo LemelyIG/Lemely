@@ -315,7 +315,7 @@ function AdminTopBar({ lane, onOpenNav }: { lane: AdminLane; onOpenNav: () => vo
   const trail = resolveAdminTrail(location.pathname, lane)
 
   return (
-    <div className="sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile py-2.5 backdrop-blur-nav md:px-page-desktop">
+    <div className="lm-app-header lm-app-header-pt-2.5 lm-nav-chrome sticky top-0 z-nav flex min-h-14 items-center gap-3 border-b border-rule bg-paper/80 px-page-mobile pb-2.5 backdrop-blur-nav md:px-page-desktop">
       <NavDrawerTrigger
         onClick={onOpenNav}
         label={lane === "school" ? "Open school admin navigation" : "Open platform navigation"}
@@ -341,7 +341,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
     // gets it: "consistent with the system" is 4.10's own instruction.
     // `bg-paper`: the shell owns its own ground rather than depending on
     // `body`'s paint showing through beneath the fixed grain overlay.
-    <div data-portal="teacher" className="paper-grain flex min-h-screen bg-paper">
+    <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
       <Sidebar lane={lane} />
 

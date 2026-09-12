@@ -67,7 +67,7 @@ export function RoleSwitcher({
         aria-haspopup="menu"
         aria-expanded={open}
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-body-md text-t1 transition-colors hover:bg-surface-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+        className="flex items-center gap-2 rounded-md border border-border bg-surface px-3 py-2 text-body-md text-t1 transition-[background-color,transform] hover:bg-surface-2 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
       >
         {current.icon}
         <span className="font-medium">{current.label}</span>
@@ -79,7 +79,7 @@ export function RoleSwitcher({
           aria-label="Switch role"
           // P6.3: `z-dropdown` names the band the raw `z-30` happened to land
           // on. Same value, but a reader can now tell it was chosen.
-          className="absolute right-0 z-dropdown mt-1.5 min-w-48 rounded-md border border-border bg-surface py-1"
+          className="absolute end-0 z-dropdown mt-1.5 min-w-48 rounded-md border border-border bg-surface py-1"
         >
           {roles.map((role) => {
             const active = role.id === current.id
@@ -95,7 +95,7 @@ export function RoleSwitcher({
                 }}
                 className={cn(
                   // §6.1 touch floor — see the note in nav-shells.tsx.
-                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-left text-body-md transition-colors hover:bg-surface-2",
+                  "flex w-full items-center gap-2.5 px-3 py-2 pointer-coarse:min-h-11 text-start text-body-md transition-[background-color,transform] hover:bg-surface-2 active:scale-[0.98]",
                   active ? "font-medium text-t1" : "text-t2",
                 )}
               >

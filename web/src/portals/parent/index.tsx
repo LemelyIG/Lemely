@@ -322,7 +322,7 @@ function ParentLayout() {
     // the same gap surface 5 found in the teacher portal, and it is the whole
     // mechanism by which §1's protected quality survives a screen made of
     // rows and numbers.
-    <div data-portal="parent" className="paper-grain flex min-h-screen flex-col bg-paper">
+    <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
       <Header />
       {/* The trail sits between the header and `main` rather than inside it:

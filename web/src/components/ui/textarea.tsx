@@ -110,7 +110,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
           onChange={handleChange}
           rows={props.rows ?? 4}
           className={cn(
-            "w-full rounded-md border bg-paper-raised px-3 py-2 text-body-md text-ink placeholder:text-ink-faint",
+            "w-full rounded-md border bg-paper-raised px-3 py-2 text-field text-ink placeholder:text-ink-faint",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",
             "border-rule hover:border-rule-strong focus-visible:border-rule-strong active:border-rule-strong",
             "disabled:cursor-not-allowed disabled:bg-paper-sunk disabled:text-ink-faint disabled:hover:border-rule",

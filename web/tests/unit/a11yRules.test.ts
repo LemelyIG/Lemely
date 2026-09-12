@@ -433,6 +433,102 @@ describe("landmarks are named", () => {
  * This pins the wrapper, because the tempting edit is to put the class back on
  * the element it describes.
  */
+/*
+ * Packet A3 (audit-dossier remediation). `--accent-on` is documented directly
+ * above its declaration in index.css as "the ONE permitted pure white" —
+ * measured at 4.65:1 on a filled surface, where `--ink-inverse` (the other
+ * candidate) fails at 4.27:1. A literal `text-white` bypasses that
+ * measurement entirely: it happens to be the same hex today, but nothing
+ * ties it to the token, so a future edit to `--accent-on` silently stops
+ * covering every raw `text-white` call site.
+ */
+describe("no raw white text utility", () => {
+  it("uses a semantic on-fill token (e.g. text-accent-on) instead of text-white anywhere in src", () => {
+    const offenders: string[] = []
+    for (const { file, source } of PARSED) {
+      for (const m of source.matchAll(/\btext-white\b/g)) {
+        offenders.push(`${relativeTo(file)}:${lineOf(source, m.index ?? 0)}`)
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
+/*
+ * Packet A3 (audit-dossier remediation). `rtlSafety.test.ts` enforces logical
+ * properties only on the explicit `RTL_CLEAN_FILES` list, and only inside
+ * `className="..."` / `className={...}` text — it does not look inside a
+ * `cva(...)` recipe string, which is exactly where `weakness-chip.tsx`'s
+ * `text-left` was hiding. This gate is deliberately narrower in scope
+ * (`components/ui`, the physical-direction utilities the dossier's sweep and
+ * the A3 review named) but wider in what it reads: the same
+ * `cn`/`cva`/`buttonVariants`-aware class-group walk `contrastRules.test.ts`
+ * and `hoverTransition.test.ts` use, so a physical utility cannot hide inside
+ * a variant recipe here either.
+ *
+ * Widened after the A3 review found `role-switcher.tsx`'s own dropdown menu
+ * positioned with `right-0` in the same commit that fixed this exact class of
+ * bug elsewhere in that file — the original two-entry list (`ml-auto`,
+ * `text-left`) could not see it, since `right-0` is neither. `left-`/`right-`
+ * are prefix entries (catching `right-0`, `left-4`, …), unlike the exact-token
+ * entries above them, which is why they get their own trailing-boundary rule
+ * below (mirroring `rtlSafety.test.ts`'s `PHYSICAL` table) rather than the
+ * bare negative-lookahead the exact tokens use.
+ */
+describe("RTL: no physical-direction leak survives in components/ui", () => {
+  function classGroups(source: string): { text: string; index: number }[] {
+    const out: { text: string; index: number }[] = []
+    const opener = /\b(?:cn|cva|buttonVariants)\s*\(/g
+    let match: RegExpExecArray | null
+    while ((match = opener.exec(source)) !== null) {
+      let depth = 1
+      let i = opener.lastIndex
+      while (i < source.length && depth > 0) {
+        if (source[i] === "(") depth++
+        else if (source[i] === ")") depth--
+        i++
+      }
+      out.push({ text: source.slice(match.index, i), index: match.index })
+    }
+    for (const plain of source.matchAll(/className="([^"]*)"/g)) {
+      out.push({ text: plain[1], index: plain.index ?? 0 })
+    }
+    return out
+  }
+
+  /** Exact tokens (no value suffix) vs. prefixes (`left-0`, `right-4`, …). */
+  const EXACT_BAD = ["ml-auto", "mr-auto", "text-left", "text-right"]
+  const PREFIX_BAD = ["left-", "right-"]
+
+  const uiFiles = sourceFiles(join(SRC, "components", "ui"))
+
+  it("finds components/ui files to check", () => {
+    expect(uiFiles.length).toBeGreaterThan(10)
+  })
+
+  it("no class expression carries a physical-direction utility", () => {
+    const offenders: string[] = []
+    for (const file of uiFiles) {
+      const source = stripComments(readFileSync(file, "utf8"))
+      for (const group of classGroups(source)) {
+        for (const bad of EXACT_BAD) {
+          if (new RegExp(`(?:^|[\\s:"'\`])${bad}(?![\\w-])`).test(group.text)) {
+            offenders.push(`${relativeTo(file)}:${lineOf(source, group.index)} — ${bad}`)
+          }
+        }
+        for (const bad of PREFIX_BAD) {
+          const re = new RegExp(`(?:^|[\\s:"'\`])(${bad}[a-z0-9.\\[\\]/-]*)`, "g")
+          let hit: RegExpExecArray | null
+          while ((hit = re.exec(group.text)) !== null) {
+            offenders.push(`${relativeTo(file)}:${lineOf(source, group.index)} — ${hit[1]}`)
+          }
+        }
+      }
+    }
+    expect(offenders).toEqual([])
+  })
+})
+
 describe("visually-hidden content has no geometry — P6.5", () => {
   const SOURCE = readFileSync(join(process.cwd(), "src/components/ui/chart-data-table.tsx"), "utf8")
 

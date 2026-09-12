@@ -279,7 +279,7 @@ export function FullPageState({
 
   if (frame === "standalone") {
     return (
-      <div className="flex min-h-screen flex-col bg-paper">
+      <div className="flex min-h-dvh flex-col bg-paper">
         <SkipLink />
         <main
           id={MAIN_CONTENT_ID}

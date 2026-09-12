@@ -91,7 +91,7 @@ export function VerifyEmailBannerView({ onDismiss }: { onDismiss?: () => void })
       </p>
       <Link
         to="/verify-email"
-        className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-colors hover:text-accent-hover"
+        className="shrink-0 text-body-sm text-accent-ink underline decoration-1 underline-offset-2 transition-[color,transform] hover:text-accent-hover active:scale-[0.98]"
       >
         Verify now
       </Link>
@@ -100,7 +100,7 @@ export function VerifyEmailBannerView({ onDismiss }: { onDismiss?: () => void })
           type="button"
           onClick={onDismiss}
           aria-label="Dismiss the email verification reminder"
-          className="shrink-0 rounded-sm p-1 text-ink-muted transition-colors hover:text-ink"
+          className="shrink-0 rounded-sm p-1 text-ink-muted transition-[color,transform] hover:text-ink active:scale-[0.98]"
         >
           <X size={14} aria-hidden="true" />
         </button>

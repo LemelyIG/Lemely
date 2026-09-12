@@ -90,7 +90,7 @@ export function AuthFrame({
   return (
     <main
       data-portal={dataPortal}
-      className="paper-grain flex min-h-screen flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
+      className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
     >
       {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
           "Lemely", so describing the mark too announces the brand twice. */}
@@ -107,12 +107,20 @@ export function AuthFrame({
 /**
  * Matches `SignupRoleSelect.tsx` and `SignupDetails.tsx`'s own link recipe
  * exactly, so every text link on a signed-out auth screen looks and behaves
- * like the same control. Extracted here (Task 19) now that this file uses it
- * three times over rather than once: the existing parent link below, plus the
- * two G-04 spec names this screen as missing, "Sign up" and forgot-password.
+ * like the same control. `pointer-coarse:inline-flex pointer-coarse:items-center
+ * pointer-coarse:min-h-11` (packet A2, `login-links-under-44px-tap-target`;
+ * the same recipe `SubjectDetail.tsx:182` already uses) gives every link a
+ * real 44px tap target on touch/coarse-pointer devices only. Gated, not
+ * unconditional: a mouse user's link keeps its ordinary inline flow, and
+ * none of these links — two of which sit inline inside a sentence ("New to
+ * Lemely? Create an account") — become an unwrappable flex item that could
+ * overflow at 200% text zoom (WCAG 1.4.4/1.4.10). Extracted here (Task 19)
+ * now that this file uses it three times over rather than once: the
+ * existing parent link below, plus the two G-04 spec names this screen as
+ * missing, "Sign up" and forgot-password.
  */
 const LINK_CLASS =
-  "rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+  "pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11 rounded-sm text-accent-ink underline underline-offset-2 transition-colors hover:text-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
 
 export function Login() {
   const { login } = useAuth()
@@ -246,6 +254,7 @@ export function Login() {
           type="password"
           required
           autoComplete="current-password"
+          enterKeyHint="go"
           value={password}
           onChange={(event) => setPassword(event.target.value)}
         />

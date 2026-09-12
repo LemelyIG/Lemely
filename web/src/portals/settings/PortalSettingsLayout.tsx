@@ -51,6 +51,11 @@ export function PortalSettingsLayout({ basePath }: PortalSettingsLayoutProps) {
     { to: basePath, label: "Profile", end: true },
     { to: `${basePath}/devices`, label: "Account and devices" },
     { to: `${basePath}/notifications`, label: "Notifications" },
+    // A7 review fix (HIGH 2): student and teacher — the only two roles
+    // `InstallBanner` targets — had no navigational path back to
+    // `.../settings/install` once they dismissed the banner. See
+    // `InstallSettings.tsx`'s own module header for the full story.
+    { to: `${basePath}/install`, label: "Install Lemely" },
   ]
 
   return (

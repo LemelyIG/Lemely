@@ -114,8 +114,14 @@
   --warn-wash: oklch(0.945 0.045 85);
   --err: oklch(0.38 0.145 27);
   --err-wash: oklch(0.94 0.035 27);
-  --info: oklch(0.44 0.08 240);
-  --info-wash: oklch(0.94 0.03 235);
+  /* P8 (audit-dossier remediation): was hue 240/235, identical to
+     --pastel-sky-ink's hue (240) and --focus-ring's hue (240), and
+     --info-wash was byte-identical to --pastel-sky. A neutral notice painted
+     in the Math subject's colour, or in the focus ring's colour, reads as a
+     false cue. Hue 265 clears both by >=25deg while keeping L/C unchanged, so
+     the AA measurements below are unaffected. */
+  --info: oklch(0.44 0.08 265);
+  --info-wash: oklch(0.94 0.03 265);
 
   /* ── §3.7 Product scales ─────────────────────────────────────────────── */
   /* Load-bearing product semantics, not decoration. They alias the semantic
@@ -215,6 +221,11 @@
   --fs-data-md: 15px;
   --fs-data-sm: 11px;
   --fs-hand: 19px;
+  /* Not a §4.2 type rung: iOS Safari auto-zooms the viewport on focusing any
+     text input under 16px, so this is a platform floor for native form
+     fields, applied via `.text-field` regardless of what the surrounding
+     copy scale would otherwise call for. */
+  --fs-field: 16px;
 }
 
 @theme inline {
@@ -576,6 +587,15 @@ html,
 body {
   /* Hallmark mobile non-negotiable: no horizontal scroll, anywhere, ever. */
   overflow-x: clip;
+  /* Kills the grey tap flash Chrome/Android and older Safari paint on every
+     touch, which reads as a "hit" on the phone regardless of whether the
+     tapped element responds — real focus/active states already carry the
+     feedback. */
+  -webkit-tap-highlight-color: transparent;
+  /* Stops a swipe-to-scroll gesture at the page top/bottom from bleeding into
+     the browser's pull-to-refresh/back-navigation chrome; each scrollable
+     region below still rubber-bands to its own edges. */
+  overscroll-behavior-y: contain;
 }
 
 body {
@@ -635,6 +655,9 @@ body {
   select,
   textarea {
     min-block-size: 44px;
+    /* Removes the ~300ms double-tap-to-zoom delay a finger otherwise pays on
+       every one of these controls before the browser commits to a single tap. */
+    touch-action: manipulation;
   }
 
   /* Checkbox and radio are excluded above, and the exclusion is load-bearing
@@ -763,6 +786,15 @@ body {
   font-size: var(--fs-body-sm);
   font-weight: 400;
   line-height: 1.5;
+}
+/* The `--fs-field` platform floor (see its token comment). A standalone
+   override, not a modifier meant to combine with a `.text-body-*` class:
+   both live in the same twMerge font-size group (lib/utils.ts), so
+   cn("text-body-md", "text-field") always collapses to "text-field" alone —
+   a field using it gets family/weight/line-height from whatever it inherits,
+   not from a `.text-body-*` rung. */
+.text-field {
+  font-size: var(--fs-field);
 }
 .text-label {
   font-family: var(--font-sans);
@@ -1291,6 +1323,59 @@ body {
    the column to 65ch instead would shrink every card to match the prose. */
 .lm-prose {
   max-width: 65ch;
+}
+
+/* Keeps a scroll region's own rubber-band from handing off to the page (or,
+   inside a drawer/sheet, to the backdrop behind it) once it hits its end. */
+.lm-scroll {
+  overscroll-behavior: contain;
+}
+
+/* Standalone-app chrome: the nav drawer panel and trigger, `BottomNav`, and
+   the four portal top bars. These are navigation furniture, not content — a
+   long-press or drag-select on them (callout menu, text selection) is a
+   browser reflex with nothing useful to act on here, and on a home-screen
+   app it reads as a bug rather than a browser feature. */
+.lm-nav-chrome {
+  -webkit-touch-callout: none;
+  user-select: none;
+}
+
+/* `padding-top` here is unlayered CSS, and unlayered always beats a layered
+   Tailwind utility (a header's own `py-4`/`py-2.5`) regardless of
+   specificity — so this has to be additive, not a bare `env(...)`, or it
+   would zero out a header's existing top padding on every route rather than
+   supplementing it. `--lm-app-header-pt` is the one place a header opts in;
+   a header that never sets it falls back to 0px and this rule is a no-op. */
+.lm-app-header {
+  padding-top: var(--lm-app-header-pt, 0px);
+}
+
+/* Only adds the inset in standalone/home-screen mode — in a normal browser
+   tab the OS chrome already reserves the notch/status-bar area, and adding
+   this on top of it would double the gap. */
+@media (display-mode: standalone) {
+  .lm-app-header {
+    padding-top: calc(var(--lm-app-header-pt, 0px) + env(safe-area-inset-top));
+  }
+}
+
+/* §14 rule 3 forbids an arbitrary value — an inline `style` prop setting a
+   raw spacing literal is the same violation in a different syntax, so these
+   are named classes instead, off the same `--spacing` scale `py-4`/`py-2.5`
+   themselves resolve through. One rung per header that needs to opt into
+   `--lm-app-header-pt`; add another here if a fifth header ever does. */
+.lm-app-header-pt-4 {
+  --lm-app-header-pt: calc(var(--spacing) * 4);
+}
+.lm-app-header-pt-2\.5 {
+  --lm-app-header-pt: calc(var(--spacing) * 2.5);
+}
+
+/* §14 rule 3 forbids an arbitrary value, so this is the named utility for the
+   home-indicator clearance `BottomNav` and the toast rail both need. */
+.lm-safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .lm-scroll::-webkit-scrollbar {

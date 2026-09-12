@@ -8,9 +8,12 @@ import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
 import { currentBuildId, reportClientError } from "./lib/clientErrors"
 import { installStaleChunkReload, StaleChunkGuard } from "./lib/staleChunk"
+import { installFileHandlerBridge } from "./lib/sharedScan"
+import { registerWidgetClientBridge } from "./lib/widget/widgetClientBridge"
 import { PushAutoEnable } from "./components/push-auto-enable"
 import { RecoveryEffects } from "./components/recovery-effects"
 import { TimezoneSync } from "./components/timezone-sync"
+import { UpdateToast } from "./components/UpdateToast"
 import { ToastProvider } from "./components/ui/toast"
 import "./index.css"
 
@@ -20,6 +23,22 @@ import "./index.css"
 // happened to be mounted. Without this every push falls back to the generic
 // notification even with the app open.
 registerPushClientBridge()
+
+// The page half of the widget handshake — same "call once, before the app
+// renders" shape as registerPushClientBridge above, for the same reason: the
+// widget host can ask this worker to render at any moment a tab is open, and
+// a listener installed inside a screen would only answer while that screen
+// happened to be mounted. See lib/widget/widgetClientBridge.ts and
+// sw/widgetBridge.ts for the full handshake and its known freshness limit.
+registerWidgetClientBridge()
+
+// A6 review fix (MEDIUM 4): was registered inside CorrectPaper.tsx, which
+// unmounts on navigation and orphans the launchQueue consumer for any
+// repeat OS "open with" launch after that. See
+// `installFileHandlerBridge`'s own doc (src/lib/sharedScan.ts) for the
+// full reasoning — same "call once, before the app renders" shape as
+// `registerPushClientBridge`/`installStaleChunkReload` above and below.
+installFileHandlerBridge()
 
 /*
  * PR 1B (client error reporting): the two failure classes `ErrorBoundary`
@@ -87,6 +106,10 @@ createRoot(document.getElementById("root")!).render(
               a push. Mounted here rather than in a screen for the same reason
               `TimezoneSync` is: it must run wherever the reader lands. */}
           <PushAutoEnable />
+          {/* Packet A7: same "renders nothing, fires a toast" shape as the
+              three effects above — mounted here so a service-worker update
+              is noticed and offered regardless of which screen is open. */}
+          <UpdateToast />
           <RouterProvider router={router} />
         </ToastProvider>
       </AuthProvider>

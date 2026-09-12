@@ -21,6 +21,17 @@ import { cn } from "@/lib/utils"
  * The same effect that requests the camera stream also releases it — on
  * phase change away from "live" *and* on unmount — so backing out mid-capture
  * never leaves the camera light on.
+ *
+ * A4 review (HIGH) · `getUserMedia` must never fire without a user gesture
+ * behind it. `autoStart` is required, with no default — permission-sensitive
+ * enough that a caller forgetting it must be a compile error, not a silent
+ * fail-open back to auto-starting. `true` when the mount is itself the
+ * direct result of a tap (`CorrectPaper`'s "Camera" toggle and "Rescan");
+ * `false` when the caller can mount this with NO such gesture (`CorrectPaper`'s
+ * device-based default source); `started` then gates both the "live"-phase
+ * acquisition effect and what the "live" phase renders, so a `false` mount
+ * instead shows an explicit "Take a photo" prompt and the camera is
+ * acquired only once the student taps it — itself now the gesture.
  */
 
 interface CapturedPage {
@@ -35,6 +46,17 @@ export interface CameraCaptureProps {
   /** Called when the student backs out of the capture flow entirely. */
   onCancel: () => void
   className?: string
+  /** Whether to acquire the camera immediately on mount. Required, with no
+   * default: `getUserMedia` is permission-sensitive enough that a caller
+   * forgetting this prop must be a type error, not a silent fail-open back
+   * to auto-starting (which is exactly the HIGH-severity bug this prop
+   * exists to prevent — a future second call site is one omitted prop away
+   * from reintroducing it). `true` when the mount is itself the direct
+   * result of a tap (`CorrectPaper`'s "Camera" toggle, "Rescan"). `false`
+   * when it can be mounted with no such gesture (`CorrectPaper`'s
+   * device-based default source, `shouldAutoStartCamera`) — see the module
+   * header. */
+  autoStart: boolean
 }
 
 /** Turn a getUserMedia rejection into a specific, actionable message. */
@@ -85,12 +107,22 @@ async function assemblePagesToPdf(pages: CapturedPage[]): Promise<File> {
   return new File([buffer], "scan.pdf", { type: "application/pdf" })
 }
 
-export function CameraCapture({ onComplete, onCancel, className }: CameraCaptureProps) {
+export function CameraCapture({
+  onComplete,
+  onCancel,
+  className,
+  autoStart,
+}: CameraCaptureProps) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const streamRef = useRef<MediaStream | null>(null)
   const pagesRef = useRef<CapturedPage[]>([])
 
   const [phase, setPhase] = useState<"live" | "reviewing">("live")
+  // Whether the student has given the gesture `getUserMedia` needs — either
+  // `autoStart` already supplied it (a tap elsewhere mounted this component)
+  // or they have since tapped "Take a photo" below. Never reset back to
+  // `false`: once given, the gesture covers "Add another page" too.
+  const [started, setStarted] = useState(autoStart)
   const [starting, setStarting] = useState(true)
   const [cameraError, setCameraError] = useState<string | null>(null)
   const [retryToken, setRetryToken] = useState(0)
@@ -109,11 +141,14 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
     }
   }, [])
 
-  // Acquire the camera stream while (and only while) phase === "live".
-  // The cleanup here fires on phase change away from "live" AND on unmount,
-  // so the camera is released whenever the live preview is not on screen.
+  // Acquire the camera stream while (and only while) phase === "live" AND
+  // the student has given the gesture for it (`started` — see its own doc).
+  // The cleanup here fires on phase change away from "live", on `started`
+  // going false-to-true is a no-op cleanup (nothing was ever acquired), AND
+  // on unmount, so the camera is released whenever the live preview is not
+  // on screen.
   useEffect(() => {
-    if (phase !== "live") return
+    if (phase !== "live" || !started) return
 
     if (typeof navigator === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setStarting(false)
@@ -151,7 +186,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
       streamRef.current?.getTracks().forEach((t) => t.stop())
       streamRef.current = null
     }
-  }, [phase, retryToken])
+  }, [phase, started, retryToken])
 
   const capturePage = () => {
     const video = videoRef.current
@@ -241,6 +276,26 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
   return (
     <Card className={cn("p-[22px] flex flex-col gap-4", className)}>
       {phase === "live" ? (
+        !started ? (
+          // Reached only when this mount had no gesture behind it
+          // (`autoStart={false}`) — `getUserMedia` waits for this tap
+          // instead of firing on mount. See the module header.
+          <div className="flex flex-col items-center gap-4 py-10 text-center">
+            <p className="text-dense-sm text-t3 max-w-[36ch] text-pretty">
+              Lemely needs your camera to photograph the paper.
+            </p>
+            <div className="flex items-center gap-2.5 flex-wrap justify-center">
+              <Button variant="accent" size="md" onClick={() => setStarted(true)}>
+                <Camera size={16} weight="bold" />
+                Take a photo
+              </Button>
+              <Button variant="ghost" size="md" onClick={onCancel}>
+                <X size={16} />
+                Cancel
+              </Button>
+            </div>
+          </div>
+        ) : (
         <>
           <div className="relative w-full aspect-[3/4] max-h-[420px] bg-ink rounded-md overflow-hidden flex items-center justify-center">
             {cameraError ? (
@@ -296,6 +351,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
 
           {thumbnailStrip}
         </>
+        )
       ) : (
         <>
           <div className="text-dense font-medium">
@@ -307,7 +363,7 @@ export function CameraCapture({ onComplete, onCancel, className }: CameraCapture
           </div>
           {thumbnailStrip}
           {assembleError ? (
-            <div className="text-dense-sm text-accent leading-[1.5] text-pretty">
+            <div className="text-dense-sm text-accent-ink leading-[1.5] text-pretty">
               {assembleError}
             </div>
           ) : null}

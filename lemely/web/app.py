@@ -45,6 +45,7 @@ from lemely.web.routers import (
     student_classes,
     study_plan,
     teacher,
+    widget,
     xp,
 )
 from lemely.web.scheduled_notifications import run_sweeper
@@ -135,6 +136,7 @@ def create_app() -> FastAPI:
     app.include_router(parent.router)
     app.include_router(me.router)
     app.include_router(announcements.router)
+    app.include_router(widget.router)
 
     @app.exception_handler(EmptyGradeBoundaryStoreError)
     async def _thresholds_not_ingested(

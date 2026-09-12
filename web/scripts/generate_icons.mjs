@@ -42,6 +42,7 @@ import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
 import { tokenHex } from "../vite/brandTokens.ts"
+import { MASKABLE_SCALE, SQUARE_SCALE, maxMaskableScale, measureDrawnExtent } from "../vite/iconSafeZone.ts"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(HERE, "../public")
@@ -57,82 +58,49 @@ const MARK = path.join(PUBLIC, "brand/mark.svg")
  */
 const PAPER = tokenHex("paper")
 
-/**
- * How much of the icon's width the mark's ARTBOARD spans.
- *
- * Both figures moved when the mark became an open notebook. The old mark was a
- * tall glyph using about 42% of its artboard's width, so 0.62 here left it
- * genuinely small on a home screen; the notebook is landscape and nearly fills
- * its artboard across, so the same number would have shrunk it further.
- *
- * `0.72` for the square cuts, which puts the drawn mark at about 64% of the
- * icon's width and 49% of its height — a normal figure for an app icon, and one
- * that still leaves the outer edge clear on a rounded-rectangle mask.
- *
- * `0.60` for maskable, against a measured ceiling of 0.71 (see below). The
- * margin is for the launcher shapes that crop harder than a circle.
+/*
+ * `SQUARE_SCALE`, `MASKABLE_SCALE`, and the safe-zone arithmetic
+ * (`measureDrawnExtent`/`maxMaskableScale`) live in `vite/iconSafeZone.ts`
+ * rather than being declared here: the maskable ceiling is mark-shape-
+ * dependent (an open notebook is not square), so it has to be measured
+ * against the real SVG rather than assumed. `tests/unit/brandTokens.test.ts`
+ * imports the same module so the two never drift apart.
  */
-const SQUARE_SCALE = 0.72
-const MASKABLE_SCALE = 0.6
-
 const ICONS = [
   { file: "pwa-192x192.png", size: 192, scale: SQUARE_SCALE },
   { file: "pwa-512x512.png", size: 512, scale: SQUARE_SCALE },
   { file: "maskable-icon-512x512.png", size: 512, scale: MASKABLE_SCALE },
+  // packet A5 (`apple-touch-icon-reuses-192`): a real 180px cut for iOS's own
+  // home-screen icon, rather than `index.html` pointing an
+  // `apple-touch-icon` link at the 192px PWA icon and letting iOS downsample
+  // it itself.
+  { file: "apple-touch-icon.png", size: 180, scale: SQUARE_SCALE },
+  // packet A5 (`no-1024-store-icon`): the 1024px listing icon some install
+  // surfaces (and app-store-style listings) expect. `alpha: false` because a
+  // store icon must be fully opaque with no alpha channel at all — some
+  // validators reject one even when every pixel happens to be opaque.
+  { file: "store-icon-1024.png", size: 1024, scale: SQUARE_SCALE, alpha: false },
+  // packet A5 (`manifest-shortcuts`): the three manifest `shortcuts` entries
+  // (`vite/manifest.ts`) need an icon apiece. Same mark-on-paper treatment as
+  // the square PWA icons for now — these are jump-list glyphs, not full
+  // screenshots, so one shared look is correct rather than three bespoke cuts.
+  { file: "shortcut-mark-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-dashboard-96.png", size: 96, scale: SQUARE_SCALE },
+  { file: "shortcut-notifications-96.png", size: 96, scale: SQUARE_SCALE },
 ]
 
 const markSvg = readFileSync(MARK)
 
-/**
- * The mark's drawn extent, as a fraction of its artboard, measured from the
- * rendered alpha rather than read off the coordinates.
- *
- * The safe-zone arithmetic below needs this, and the previous version of this
- * file assumed the artboard was filled edge to edge. That was conservative for
- * the old mark and it is conservative for this one — but conservative by an
- * unknown amount, which is the same thing as not knowing. An open notebook is
- * two thirds as tall as it is wide, and a bound derived from a square it does
- * not occupy would have kept the maskable icon a third smaller than it needs to
- * be for no stated reason.
- */
-async function drawnExtent() {
-  const N = 512
-  const { data } = await sharp(markSvg, { density: 384 })
-    .resize(N, N)
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true })
-  let left = N
-  let top = N
-  let right = -1
-  let bottom = -1
-  for (let y = 0; y < N; y += 1) {
-    for (let x = 0; x < N; x += 1) {
-      // 8/255, so a stroke's outermost antialiased fringe does not count as ink.
-      if (data[(y * N + x) * 4 + 3] <= 8) continue
-      if (x < left) left = x
-      if (x > right) right = x
-      if (y < top) top = y
-      if (y > bottom) bottom = y
-    }
-  }
-  return { width: (right - left + 1) / N, height: (bottom - top + 1) / N }
-}
-
 /*
  * Guard the safe-zone arithmetic in the file that depends on it, so a future
- * edit to MASKABLE_SCALE — or to the mark's own proportions — cannot quietly
- * push it under an Android crop. Nothing else in the repo checks this: it runs
- * here because here is where someone editing the number is actually looking.
- *
- * Android crops a maskable icon to whatever shape the launcher wants and
- * guarantees only the central circle of diameter 0.8w. A rectangle of w x h
- * (as fractions of the icon) is fully inside it only when its diagonal fits,
- * i.e. hypot(w, h) <= 0.8.
+ * edit to `MASKABLE_SCALE` — or to the mark's own proportions — cannot
+ * quietly push it under an Android crop. `tests/unit/brandTokens.test.ts`
+ * asserts the same bound against the real mark; this is the belt to its
+ * braces, and it runs in the one place someone editing the number is
+ * actually looking.
  */
-const EXTENT = await drawnExtent()
-const MAX_MASKABLE_SCALE =
-  0.8 / Math.hypot(EXTENT.width, EXTENT.height)
+const EXTENT = await measureDrawnExtent(markSvg)
+const MAX_MASKABLE_SCALE = maxMaskableScale(EXTENT)
 if (MASKABLE_SCALE > MAX_MASKABLE_SCALE) {
   throw new Error(
     `generate_icons: MASKABLE_SCALE ${MASKABLE_SCALE} exceeds ${MAX_MASKABLE_SCALE.toFixed(3)} ` +
@@ -179,25 +147,81 @@ const ogCard = await sharp({
 writeFileSync(path.join(PUBLIC, OG.file), ogCard)
 console.log(`${OG.file}  ${OG.width}x${OG.height}  mark 300px on ${PAPER}, no text (see comment)`)
 
-for (const { file, size, scale } of ICONS) {
+/**
+ * Wraps a PNG buffer in a minimal single-image ICO container.
+ *
+ * ICO has allowed an embedded PNG directly (no BMP re-encoding) since Vista —
+ * an `ICONDIRENTRY` whose image data starts with the PNG magic bytes is a
+ * PNG, full stop. So this needs no image-format dependency beyond the PNG
+ * `sharp` already produces: a 6-byte `ICONDIR` header, one 16-byte
+ * `ICONDIRENTRY`, then the PNG bytes verbatim.
+ */
+function pngToIco(png, size) {
+  const header = Buffer.alloc(6)
+  header.writeUInt16LE(0, 0) // reserved
+  header.writeUInt16LE(1, 2) // type: 1 = icon
+  header.writeUInt16LE(1, 4) // one image
+
+  const entry = Buffer.alloc(16)
+  // Width/height: 0 means "256"; this repo's favicon is always <256, so the
+  // literal size is always the correct byte.
+  entry.writeUInt8(size, 0)
+  entry.writeUInt8(size, 1)
+  entry.writeUInt8(0, 2) // colour count: 0 = not palette-indexed
+  entry.writeUInt8(0, 3) // reserved
+  entry.writeUInt16LE(1, 4) // colour planes
+  entry.writeUInt16LE(32, 6) // bits per pixel (RGBA)
+  entry.writeUInt32LE(png.length, 8) // image data size
+  entry.writeUInt32LE(header.length + entry.length, 12) // offset to image data
+
+  return Buffer.concat([header, entry, png])
+}
+
+for (const { file, size, scale, alpha } of ICONS) {
   // Render the vector at its final pixel size rather than rasterising once and
   // resampling: the mark is two hairlines and a stroke, and a downsampled
   // hairline turns grey.
   const markPx = Math.round(size * scale)
   const mark = await sharp(markSvg, { density: 384 }).resize(markPx, markPx).png().toBuffer()
 
-  const out = await sharp({
+  let pipeline = sharp({
     create: {
       width: size,
       height: size,
       channels: 4,
       background: PAPER,
     },
-  })
-    .composite([{ input: mark, gravity: "centre" }])
-    .png({ compressionLevel: 9 })
-    .toBuffer()
+  }).composite([{ input: mark, gravity: "centre" }])
+  // `alpha: false` (the store-listing icon): drop the alpha channel entirely
+  // rather than relying on every pixel already being opaque — some store
+  // validators reject a PNG that carries an alpha channel at all.
+  if (alpha === false) pipeline = pipeline.removeAlpha()
+
+  const out = await pipeline.png({ compressionLevel: 9 }).toBuffer()
 
   writeFileSync(path.join(PUBLIC, file), out)
-  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${PAPER}`)
+  console.log(`${file}  ${size}x${size}  mark ${markPx}px on ${PAPER}${alpha === false ? "  (no alpha)" : ""}`)
 }
+
+/*
+ * packet A5 (`no-favicon-ico-fallback`): a real `favicon.ico` alongside the
+ * SVG favicon `index.html` already links. Firefox reader mode, RSS readers
+ * and other UAs that never look at `<link rel="icon">` still fall back to
+ * `/favicon.ico` by convention — see `pngToIco`'s own docstring for why this
+ * needs no new dependency.
+ */
+const FAVICON_SIZE = 32
+const faviconMarkPx = Math.round(FAVICON_SIZE * SQUARE_SCALE)
+const faviconMark = await sharp(markSvg, { density: 384 })
+  .resize(faviconMarkPx, faviconMarkPx)
+  .png()
+  .toBuffer()
+const faviconPng = await sharp({
+  create: { width: FAVICON_SIZE, height: FAVICON_SIZE, channels: 4, background: PAPER },
+})
+  .composite([{ input: faviconMark, gravity: "centre" }])
+  .png({ compressionLevel: 9 })
+  .toBuffer()
+const faviconIco = pngToIco(faviconPng, FAVICON_SIZE)
+writeFileSync(path.join(PUBLIC, "favicon.ico"), faviconIco)
+console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${PAPER}`)

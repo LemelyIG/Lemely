@@ -11,8 +11,20 @@
       optical cut (thicker strokes, snapped to the 16px pixel grid).
     -->
     <link rel="icon" type="image/svg+xml" href="/brand/mark-favicon.svg" />
-    <link rel="apple-touch-icon" href="/pwa-192x192.png" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      packet A5 (`no-favicon-ico-fallback`): a UA that ignores `<link rel="icon">`
+      entirely (Firefox reader mode, RSS readers, and others) falls back to
+      `/favicon.ico` by convention — `scripts/generate_icons.mjs` writes a real
+      one rather than leaving a 404 there.
+    -->
+    <link rel="icon" href="/favicon.ico" sizes="32x32" />
+    <!--
+      packet A5 (`apple-touch-icon-reuses-192`): a real 180px cut
+      (`scripts/generate_icons.mjs`), not the 192px PWA icon downsampled by iOS
+      itself.
+    -->
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <!--
       Injected from the `--paper` token at build time by `vite/themeColor.ts`,
       never written here as a hex. It held `#1e1310` (near-black) above a warm
@@ -91,13 +103,23 @@
       this paints, so the reduced-motion handling for the shell's own motion is
       duplicated here, scoped to the shell's own classes only.
 
-      This shell depends on the repo shipping no Content-Security-Policy
-      today: this inline `<style>` block needs `style-src 'unsafe-inline'`
-      (or a nonce/hash), the inline `<script>` further down that sets
-      `data-shell="portal"` and the inline `onclick="location.reload()"` on
-      the tier 3 reload button both need the same of `script-src`. A future
-      CSP has to grant those, move this markup to external files, or attach
-      a nonce/hash to each, before `script-src`/`style-src` can be tightened.
+      A6/A7 review fix: this shell used to depend on the repo shipping no
+      Content-Security-Policy. `public/_headers`/`nginx.conf`/`worker/
+      index.ts` now all ship one (`headers.test.ts` pins `script-src 'self'`
+      with no `unsafe-inline`, no nonce, no hash — never weaken that
+      assertion to fix a page instead). This inline `<style>` block is
+      covered by `style-src 'self' 'unsafe-inline'`, which the CSP already
+      grants — style is not the tightened directive. `script-src` is, and an
+      inline `<style>` block has never needed anything from it, so there was
+      nothing left to move here. The two things that DID need script-src —
+      the pre-hydration `data-shell="portal"` setter and the tier 3 reload
+      button's click handler — are `public/shell-init.js` now, loaded via
+      `<script src="/shell-init.js">` below (an external, same-origin script
+      file, which `script-src 'self'` already permits with no exception
+      needed): a delegated `document` click listener there handles the
+      reload button regardless of load order, since that button does not
+      exist in the DOM yet at the point this early, parser-blocking script
+      tag runs.
     -->
     <style>
       html,
@@ -581,13 +603,7 @@
         (`schoolAdminRoute`/`platformAdminRoute`) mount at `/school` and
         `/platform` — there is no literal `/admin` route in this router.
       -->
-      <script>
-        (function () {
-          if (/^\/(student|teacher|parent|school|platform)(\/|$)/.test(location.pathname)) {
-            document.getElementById("root").dataset.shell = "portal"
-          }
-        })()
-      </script>
+      <script src="/shell-init.js"></script>
       <div class="lm-shell" role="status">
         <span class="lm-shell-sr">Loading</span>
 
@@ -703,7 +719,7 @@
             Your connection seems slow. We're still trying, and you can reload if you'd rather
             start again.
           </p>
-          <button type="button" class="lm-shell-reload" onclick="location.reload()">
+          <button type="button" class="lm-shell-reload">
             Reload the page
           </button>
         </div>
