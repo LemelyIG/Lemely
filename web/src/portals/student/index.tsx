@@ -14,6 +14,7 @@ import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
+import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -723,6 +724,11 @@ function StudentLayout() {
     // lean on) matching the warm `--paper` token by coincidence.
     <div data-portal="student" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
+      {/* Task 7 (B5a): renders nothing, same "mount inside the authenticated
+          layout" shape as the rest of this file's chrome — `useNotificationCounts`
+          hits an auth-gated endpoint, so this cannot live in `main.tsx` above
+          the router the way `PushAutoEnable`/`TimezoneSync` do. */}
+      <BadgeSync />
       <Sidebar />
 
       {/* Same list, same source, different chrome — see `NavGroups`. The

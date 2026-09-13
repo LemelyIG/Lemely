@@ -305,6 +305,21 @@ export function CameraCapture({
           </div>
         ) : (
         <>
+          {/* Task 7 (B5a) · landscape guidance. This capture flow is a
+              portrait 3:4 frame (see below); a coarse-pointer (phone/tablet)
+              reader who rotates their device gets a viewfinder half its own
+              width instead of a layout that reflows for it. Tailwind 4's
+              built-in `landscape:` variant (a real `orientation` media
+              query, not an arbitrary one) plus `pointer-coarse:` — a
+              landscape *desktop* window, which has no orientation to fix,
+              never sees this. */}
+          <div
+            role="status"
+            className="hidden landscape:pointer-coarse:flex items-center gap-2 rounded-md bg-warn/10 px-3 py-2 text-dense-sm text-warn"
+          >
+            Turn your phone upright for the best scan.
+          </div>
+
           <div className="relative w-full aspect-[3/4] max-h-[420px] bg-ink rounded-md overflow-hidden flex items-center justify-center">
             {cameraError ? (
               <div className="text-dense-sm text-accent-on text-center px-6 leading-[1.5] text-pretty">

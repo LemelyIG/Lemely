@@ -9,6 +9,7 @@ import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
+import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { Chip } from "@/components/ui/chip"
@@ -324,6 +325,9 @@ function ParentLayout() {
     // rows and numbers.
     <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
+      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
+          same reason, same shape. */}
+      <BadgeSync />
       <Header />
       {/* The trail sits between the header and `main` rather than inside it:
           it is wayfinding chrome, and putting it inside the skip link's target

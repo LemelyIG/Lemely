@@ -282,6 +282,20 @@ async function handlePush(): Promise<void> {
     badge: "/pwa-192x192.png",
     data: { url: content.url },
   })
+
+  // Task 7 (B5a): pushes carry no payload (D5.10), so there is no badge
+  // count to read off this event — `content.unread` is the cached count the
+  // page attached to its handshake reply (`pushClientBridge.ts`), which is
+  // why this is gated on presence, not truthiness: no page answering must
+  // leave whatever badge is already showing alone rather than guessing 0.
+  if (content.unread !== undefined) {
+    try {
+      await self.navigator.setAppBadge?.(content.unread)
+    } catch {
+      // Badging is a nicety (`lib/badging.ts`'s own rule) — a failure here
+      // must not affect the notification already shown above.
+    }
+  }
 }
 
 self.addEventListener("push", (event: PushEvent) => {

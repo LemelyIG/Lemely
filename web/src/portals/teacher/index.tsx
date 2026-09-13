@@ -5,6 +5,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
+import { BadgeSync } from "@/components/badge-sync"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
@@ -547,6 +548,9 @@ function TeacherLayout() {
     // `body`'s paint showing through beneath the fixed grain overlay.
     <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
+      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
+          same reason, same shape. */}
+      <BadgeSync />
       <Sidebar />
 
       <NavDrawer

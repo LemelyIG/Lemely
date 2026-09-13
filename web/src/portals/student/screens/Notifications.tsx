@@ -1,4 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
+import { useEffect } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -12,6 +13,7 @@ import {
   useMarkNotificationRead,
   useNotifications,
 } from "@/lib/hooks/useNotificationApi"
+import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
 import { cn } from "@/lib/utils"
 
@@ -217,6 +219,13 @@ function InboxHeading() {
 export function Notifications() {
   const query = useNotifications()
   const markAll = useMarkAllNotificationsRead()
+
+  // Task 7 (B5a): the reader landing on the canonical inbox (D5.9 §1) is
+  // itself the "I've seen what's waiting" signal — `BadgeSync` will put a
+  // real count back the moment a genuinely new row arrives.
+  useEffect(() => {
+    void setAppBadge(0)
+  }, [])
 
   return (
     /*
