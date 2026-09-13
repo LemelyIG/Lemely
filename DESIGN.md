@@ -677,6 +677,26 @@ nav-drawer swipe-dismiss, pull-to-refresh, and the rest — are Phase B's
 scope; this section is a forward pointer, not a spec, and nothing here
 should be read as gesture content Phase A already implements.
 
+**Scanner (Task 8, B5).** `CameraCapture.tsx`'s live viewfinder runs a
+`requestAnimationFrame` loop (every 3rd frame, once the stream is live) that
+downscales to a 320px-wide luma buffer, runs a hand-rolled Sobel edge pass,
+finds the largest rectangular document quad in it, and tracks frame-to-frame
+stability — three steady frames with a quad found auto-fires "Capture page"
+exactly once, then re-arms after the new thumbnail lands. A found quad also
+drives perspective correction (a 4-point homography warp) on the captured
+frame instead of keeping it skewed, and is drawn live as a quad outline over
+the viewfinder. The torch button appears only when the active video track's
+capabilities actually report one (`torchSupported`). **Accuracy floor:** a
+rectangular sheet of paper on a contrasting surface, filling at least 20% of
+the frame — a photo that doesn't meet this still captures on the student's
+own tap, just without perspective correction. **Why not `opencv.js`:** the
+hand-rolled pipeline (`src/lib/scanner/`) is ~1.7KB gzipped in its own lazy
+chunk (`import("@/lib/scanner")`, loaded only once the camera stream starts —
+never in the file-picker-only path); `opencv.js` is 1.5MB+ as a single
+wasm/JS chunk, and `check-bundle-budget.mjs` gzips every shipped chunk
+individually, so a lazy `opencv.js` chunk would fail the budget outright.
+Hand-rolled is the only option that fits.
+
 **Capability register.**
 
 | Capability | Status | Where |
@@ -687,6 +707,7 @@ should be read as gesture content Phase A already implements.
 | Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
 | Badging API | Shipped (B5) | `src/lib/badging.ts` (`setAppBadge`), `src/components/badge-sync.tsx` (`BadgeSync`, mounted in each authenticated portal layout — `useNotificationCounts` is auth-gated, so it cannot live in `main.tsx`), `Notifications.tsx` clears it to 0 on mount. Pushes carry no payload (`lemely/web/push.py:16`), so there is no count to read off a push event itself — `src/sw.ts`'s `handlePush` calls `self.navigator.setAppBadge?.(unread)` only when the page-side handshake reply (`src/lib/push/pushClientBridge.ts`) attached a cached `NotificationCounts.unread`, i.e. the badge rides the existing content handshake rather than the push body |
 | Haptics (Vibration API) | Shipped (B5) | `src/lib/haptics.ts` (`haptic`) — a tap on `ConfirmModal`'s confirm button, a success pulse once per finished flashcard review session (`FlashcardReview.tsx`) |
+| Torch (`MediaStreamTrack` capability) | Shipped (B5) | `src/lib/scanner/torch.ts` (`torchSupported`/`setTorch`), `CameraCapture.tsx`'s viewfinder button — rendered only when the active video track's own capabilities report `torch: true` |
 | Wake Lock | Shipped (B5) | `src/lib/wakeLock.ts` (`useWakeLock`), held by `CameraCapture.tsx` while `phase === "live" && started` — the one flow where the screen sleeping mid-capture loses real work |
 
 **Mechanical enforcement.** The mechanics sections above are guarded, not
