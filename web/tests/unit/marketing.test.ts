@@ -178,6 +178,7 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
       expect(r.cta.to === "/join" || r.cta.to.startsWith("/signup")).toBe(true)
       expect(r.cta.to).not.toBe("/login")
     }
+    expect(landingHero.primaryCta.to.startsWith("/signup")).toBe(true)
   })
 
   /*
@@ -225,7 +226,9 @@ describe("landing copy claims only what the product does — P4.9", () => {
     subjectsTitle,
   ]
 
-  copyValues.forEach((v) => expect(typeof v).toBe("string"))
+  it("gates only string values", () => {
+    copyValues.forEach((v) => expect(typeof v).toBe("string"))
+  })
 
   const allCopy = copyValues.join("\n")
 

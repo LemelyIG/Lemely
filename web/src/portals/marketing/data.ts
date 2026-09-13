@@ -38,7 +38,7 @@ export const landingHero = {
    */
   headline: "Know where the marks went.",
   /*
-   * `resolve_mark_scheme` (`lemely/web/routers/student.py:616`) has exactly
+   * `resolve_mark_scheme` (`lemely/web/routers/student.py:765`) has exactly
    * two sources: a `mark_scheme.pdf` uploaded beside the scan, or a scheme
    * already parsed into the local cache. "Checked against" is the claim that
    * survives however the scheme arrived.
@@ -183,7 +183,7 @@ export const roleTabs: RoleTab[] = [
     id: "teacher",
     label: "Teacher",
     heading: "Marking cited to the scheme, not guessed",
-    body: "Every mark is cited to the official scheme. Anything the marker is unsure of comes to you instead of being guessed.",
+    body: "Every mark is cited to the official scheme. Anything the marker is unsure of comes to you instead of being guessed. The marking runs while you do something else.",
     cta: { label: "Mark a set", to: "/signup/teacher" },
   },
 ]
