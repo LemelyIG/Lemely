@@ -1,8 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useState, type FormEvent } from "react"
-import { Link, useNavigate, useSearchParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
-import { portalPathForRole } from "@/lib/auth/RequireAuth"
+import { postLoginTarget } from "@/lib/auth/postLoginTarget"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -125,6 +125,7 @@ const LINK_CLASS =
 export function Login() {
   const { login } = useAuth()
   const navigate = useNavigate()
+  const location = useLocation()
   const [searchParams] = useSearchParams()
   // PR 2 part A2: where a dead session (`RequireAuth`) or `/session-ended`'s
   // own "Sign in again" link carried the reader from. Re-validated here with
@@ -146,10 +147,14 @@ export function Login() {
     login.mutate(
       { email, password, confirmDeviceEviction },
       {
-        // `next` wins over the role-derived portal home whenever it is
-        // present — a reader who was bounced off a specific page wants back
-        // to that page, not to their dashboard's index.
-        onSuccess: (result) => navigate(next ?? portalPathForRole(result.role), { replace: true }),
+        // Packet B2a: `postLoginTarget` prefers `next` (present whenever the
+        // reader was bounced off a specific page); failing that, `from` —
+        // `RequireAuth`'s own `state.from` — is honoured only inside the
+        // signed-in role's portal; otherwise the role's own portal home.
+        onSuccess: (result) =>
+          navigate(postLoginTarget({ next, from: location.state?.from, role: result.role }), {
+            replace: true,
+          }),
         // A 409 is not a failed login: the password was right and nothing has
         // been signed out yet. Anything else stays an ordinary error message.
         onError: (error) => {

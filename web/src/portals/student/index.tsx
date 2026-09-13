@@ -6,6 +6,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { BackControl } from "@/components/ui/back-control"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
@@ -591,6 +592,13 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
           browser's own gesture. `text-metadata` was also the wrong rung: the
           mono `data-sm` scale is scoped to paper codes, IDs and timestamps,
           and a crumb label is none of those — it is words a reader reads. */}
+      {/* Packet B2a: the only way back below the `sidebar` breakpoint once a
+          student has drilled more than one level deep — there is no sidebar
+          navigation to fall back on there. `sidebar:hidden` because the
+          sidebar's own nav makes this redundant at and above that width. */}
+      {trail.length > 1 ? (
+        <BackControl fallback="/student" className="sidebar:hidden" />
+      ) : null}
       <Breadcrumbs items={trail} className="flex-1" />
       <HeaderStreak />
       {/*

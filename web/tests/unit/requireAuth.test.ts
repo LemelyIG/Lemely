@@ -101,8 +101,20 @@ describe("Login.tsx — next is read only through safeNextPath", () => {
     },
   )
 
-  it("Login.tsx's success handler prefers next over the role-derived portal home", () => {
+  it("Login.tsx's success handler resolves through postLoginTarget, not a raw next ?? portal fallback", () => {
+    // Packet B2a: `postLoginTarget` also considers `state.from` (the location
+    // RequireAuth was guarding), so the plain `next ?? portalPathForRole(...)`
+    // this used to be is no longer the whole story — see postLoginTarget.test.ts.
     const stripped = stripComments(sourceOf("src/portals/auth/Login.tsx"))
-    expect(stripped).toContain("navigate(next ?? portalPathForRole(result.role)")
+    expect(stripped).toContain("navigate(postLoginTarget(")
+    expect(stripped).not.toContain("navigate(next ?? portalPathForRole(result.role)")
+  })
+})
+
+describe("RequireAuth.tsx redirects carry state.from for postLoginTarget", () => {
+  it("both redirect branches (session-ended, login) set state={{ from: ... }}", () => {
+    const stripped = stripComments(sourceOf("src/lib/auth/RequireAuth.tsx"))
+    const occurrences = stripped.match(/state=\{\{ from/g) ?? []
+    expect(occurrences.length).toBeGreaterThanOrEqual(2)
   })
 })

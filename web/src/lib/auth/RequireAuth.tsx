@@ -141,10 +141,16 @@ export function RequireAuth({
   // which is what `!session` alone means for a reader who never had a
   // session this visit.
   if (strandedRole !== null || (!session && peekSessionExpired())) {
-    return <Navigate to={withNext("/session-ended", currentPath)} replace />
+    return (
+      <Navigate
+        to={withNext("/session-ended", currentPath)}
+        state={{ from: currentPath }}
+        replace
+      />
+    )
   }
   if (!session) {
-    return <Navigate to={withNext("/login", currentPath)} replace />
+    return <Navigate to={withNext("/login", currentPath)} state={{ from: currentPath }} replace />
   }
   if (!allowedRoles.includes(session.role)) {
     return <FullPageState variant="no-access" frame="standalone" />
