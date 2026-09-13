@@ -22,7 +22,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | pending |  |
 | 3 | `silent-update-swap` | native | critical | A | A7 | done A7 | `npx vitest run tests/unit/swSource.test.ts tests/unit/serviceWorkerUpdate.test.ts` |
 | 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 5 | `nav-1` | native | critical | B | B2 | pending |  |
+| 5 | `nav-1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 6 | `offline-1` | native | critical | B | B6 | pending | backend half: idempotency key, Task 9, `pytest --no-cov tests/test_web_student.py` |
 | 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
@@ -34,8 +34,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/routeSkeleton.test.ts tests/unit/loadingTiers.test.ts` |
 | 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
 | 16 | `nav-2` | native | high | B | B3 | pending |  |
-| 17 | `nav-3` | native | high | B | B2 | pending |  |
-| 18 | `nav-4` | native | high | B | B2 | pending |  |
+| 17 | `nav-3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
+| 18 | `nav-4` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 20 | `offline-3` | native | high | B | B6 | pending |  |
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
@@ -51,7 +51,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 31 | `safe-area-viewport-cover` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 32 | `status-bar-style-default-mismatch` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 33 | `double-tap-zoom-unneutralized` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 34 | `modal-drawer-scroll-lock-fragile` | native | high | B | B2 | pending |  |
+| 34 | `modal-drawer-scroll-lock-fragile` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/scrollLock.test.ts tests/unit/checkNativeInvariants.test.ts` — pass; `node scripts/check-native-invariants.mjs` — all 20 checks pass |
 | 35 | `overscroll-behavior-absent` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 36 | `TT-1` | native | high | B | B3 | pending |  |
 | 37 | `T2` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
@@ -76,7 +76,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | done B1 | DESIGN.md §12 "Skeletons, not spinners" bullet notes the practice generator's `Create` button as the documented sub-1s-mutation exception; no code change |
 | 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | pending |  |
 | 58 | `kb-6` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 59 | `nav-6` | native | low | B | B2 | pending |  |
+| 59 | `nav-6` | native | low | B | B2 | done B2 | `npx vitest run tests/unit/scrollRestorationKey.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
 | 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | done A4 | `npm run build` (web/) — `Grading.tsx` thumbnail `<img>` now has `decoding="async"` |
 | 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | pending |  |
