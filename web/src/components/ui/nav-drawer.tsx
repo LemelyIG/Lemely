@@ -14,6 +14,8 @@ import { createPortal } from "react-dom"
 import { X } from "@phosphor-icons/react"
 import { useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { lockScroll } from "@/lib/scrollLock"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 
 /*
  * P3.1 · Mobile navigation drawer.
@@ -70,12 +72,26 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const location = useLocation()
 
+  // Packet B2a: same history-trap contract Modal uses — opening pushes one
+  // history entry so browser back closes the drawer instead of navigating
+  // the page underneath it away. The drawer is always dismissible, so a
+  // popstate always closes it (never re-pushes).
+  useDialogHistory({ open, dismissible: true, onClose })
+
   // Close on navigation. `location.key` rather than `pathname` so that
   // re-selecting the destination you are already on still dismisses the
   // drawer: tapping "Overview" while on Overview is a request to see
   // Overview, and leaving the drawer covering it reads as a broken tap.
+  //
+  // `location.state?.lemelyDialog` skips the one location change this drawer
+  // itself causes: `useDialogHistory`'s own history-trap push above (same
+  // URL, `state.lemelyDialog: true`) also changes `location.key`, and
+  // without this guard that self-inflicted change would fire this effect
+  // and close the drawer immediately after opening it.
   useEffect(() => {
-    if (open) onClose()
+    if (!open) return
+    if ((location.state as { lemelyDialog?: boolean } | null)?.lemelyDialog) return
+    onClose()
     // `onClose` is intentionally not a dependency: callers pass an inline
     // arrow, so including it would re-run this on every parent render and
     // close the drawer the instant it opened.
@@ -99,13 +115,13 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
     }
   }, [open])
 
+  // Shared with Modal — see `lockScroll`'s own doc for why this replaces a
+  // plain `overflow: hidden` toggle, and why it is reference-counted (a
+  // modal opened over this drawer, or vice versa, must not have the other's
+  // release unlock scrolling while this one is still open).
   useEffect(() => {
     if (!open) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
+    return lockScroll()
   }, [open])
 
   if (!open) return null

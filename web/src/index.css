@@ -415,6 +415,11 @@
   --breakpoint-xs: 320px;
   --breakpoint-phone: 414px;
   --breakpoint-desktop: 1440px;
+  /* Packet B2a: the width the student/teacher/admin sidebars start showing
+     at, and BottomNav/NavDrawer stop being the primary navigation — the
+     `sidebar:` variant. Task 4 (B3) migrates every sidebar's ad hoc
+     `min-[820px]:`/`md:` literal onto this token. */
+  --breakpoint-sidebar: 820px;
 
   /* ── Font sizes below text-xs, as size-only rungs ────────────────────── */
   --text-2xs: 11px;

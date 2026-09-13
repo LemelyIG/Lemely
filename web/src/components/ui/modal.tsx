@@ -9,6 +9,8 @@ import {
 import { createPortal } from "react-dom"
 import { X } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
+import { lockScroll } from "@/lib/scrollLock"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 
 /*
  * Dialog built on a portal rather than the native `<dialog>` element.
@@ -84,6 +86,12 @@ export function Modal({
   const panelRef = useRef<HTMLDivElement>(null)
   const previouslyFocused = useRef<HTMLElement | null>(null)
 
+  // Packet B2a: opening pushes one history entry so browser back closes this
+  // modal instead of navigating the page underneath it away; a non-dismissible
+  // modal (ConfirmModal) re-pushes on back instead of closing. See
+  // `useDialogHistory` for the full contract.
+  useDialogHistory({ open, dismissible, onClose })
+
   // Focus the panel on open, restore the triggering element's focus on close.
   useEffect(() => {
     if (!open) return
@@ -104,14 +112,13 @@ export function Modal({
   }, [open])
 
   // Lock background scroll while a modal is open, so the page underneath
-  // can't scroll behind the scrim on mobile.
+  // can't scroll behind the scrim on mobile. `lockScroll` (shared with
+  // `NavDrawer`) pins the body at its current offset rather than merely
+  // setting `overflow: hidden`, which still lets iOS Safari scroll the
+  // visual viewport behind a fixed overlay.
   useEffect(() => {
     if (!open) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
+    return lockScroll()
   }, [open])
 
   if (!open) return null

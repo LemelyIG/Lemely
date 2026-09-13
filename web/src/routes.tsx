@@ -1,5 +1,6 @@
 import { lazy, Suspense } from "react"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { RootOutlet } from "@/components/root-outlet"
 import type { RouteObject } from "react-router-dom"
 import { Navigate, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
@@ -308,6 +309,16 @@ const rootMeta: PageMeta = {
 }
 
 export const appRoutes: RouteObject[] = [
+  /*
+   * Packet B2a · one pathless layout route wrapping every top-level route
+   * below, purely so `<ScrollRestoration>` has a data-router route to mount
+   * inside (`RootOutlet`). Deliberately carries no `errorElement`: every
+   * child route below keeps its own, so error bubbling is unchanged — this
+   * wrapper never catches anything itself.
+   */
+  {
+    element: <RootOutlet />,
+    children: [
   { path: "/", element: <Root />, errorElement, handle: rootMeta },
   /*
    * The public marketing lane. Deliberately NOT wrapped in `RequireAuth` — the
@@ -790,5 +801,7 @@ export const appRoutes: RouteObject[] = [
       description: "This Lemely page does not exist. The link may be out of date.",
       skeleton: "standalone",
     } satisfies PageMeta,
+  },
+    ],
   },
 ]
