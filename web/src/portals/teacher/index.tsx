@@ -6,7 +6,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BrandMark } from "@/components/ui/brand-mark"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
 import {
   SquaresFour,
@@ -518,20 +518,17 @@ function TeacherLayout() {
    * (`["teacher", "classes"]`), so this adds no second network request, only
    * a second subscriber to the one already in flight.
    *
-   * A pending query renders the shared route fallback in place of the whole
-   * shell rather than the shell-with-a-fallback-inside-it, for the same
-   * reason D7.9's version does: until the list resolves we do not yet know
-   * whether this teacher belongs on this route, so there is nothing honest
-   * to put in a sidebar built for a destination we might immediately
-   * redirect away from. An errored query falls through to the portal exactly
-   * as it rendered before this gate existed — a `/teacher/classes` hiccup
-   * must degrade to "the portal renders", never to "the account is stuck on
-   * the first-class step until the network recovers".
+   * A pending query used to render the shared route fallback in place of the
+   * whole shell — sidebar and all — rather than the shell with a fallback
+   * inside it. Packet B1 corrects that the same way it does for the student
+   * portal: the shell renders regardless, with `<RouteSkeleton />` standing
+   * in for the content below. `teacherFirstClassRedirect` already returns
+   * `null` for any non-`"success"` status, so calling it unconditionally
+   * here is exactly as safe as the old early return was — an errored query
+   * still falls through to the portal exactly as before, and a pending one
+   * still never redirects.
    */
   const classesQuery = useTeacherClasses()
-  if (classesQuery.isPending) {
-    return <RouteFallback className="p-8" />
-  }
   const firstClassRedirect = teacherFirstClassRedirect(
     classesQuery.status,
     classesQuery.data?.classes.length ?? 0,
@@ -590,23 +587,32 @@ function TeacherLayout() {
               say" shape as the two banners above. Student and teacher only —
               see the component's own header for why. */}
           <InstallBanner />
-          <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
-                rebuilds each surface") for this portal: a render crash in one
-                screen stays inside this content slot rather than taking the
-                sidebar down with it or falling out to the top-level
-                `errorElement`. Inside `Suspense` so a failed chunk load and a
-                render throw both land in this boundary.
-                `resetKey={location.pathname}` clears a caught error on
-                navigation. */}
-            <ErrorBoundary
-              label="This page"
-              resetKey={location.pathname}
-              fallback={portalErrorFallback}
-            >
-              <Outlet />
-            </ErrorBoundary>
-          </Suspense>
+          {/* Packet B1: the classes-query pending state renders the same
+              `RouteSkeleton` a chunk-load wait does, in the same content
+              slot, rather than blanking the shell below `TeacherTopBar` —
+              see the comment above `classesQuery` for why this is safe to
+              gate on here rather than bailing out of the whole layout. */}
+          {classesQuery.isPending ? (
+            <RouteSkeleton />
+          ) : (
+            <Suspense fallback={<RouteSkeleton />}>
+              {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+                  rebuilds each surface") for this portal: a render crash in one
+                  screen stays inside this content slot rather than taking the
+                  sidebar down with it or falling out to the top-level
+                  `errorElement`. Inside `Suspense` so a failed chunk load and a
+                  render throw both land in this boundary.
+                  `resetKey={location.pathname}` clears a caught error on
+                  navigation. */}
+              <ErrorBoundary
+                label="This page"
+                resetKey={location.pathname}
+                fallback={portalErrorFallback}
+              >
+                <Outlet />
+              </ErrorBoundary>
+            </Suspense>
+          )}
         </main>
       </div>
     </div>
@@ -618,21 +624,49 @@ export const teacherRoute: RouteObject = {
   element: <TeacherLayout />,
   children: [
     // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
-    { index: true, element: <Overview />, handle: { title: "Teacher dashboard" } },
-    { path: "grading", element: <Grading />, handle: { title: "Grading console" } },
-    { path: "review", element: <Review />, handle: { title: "Review queue" } },
-    { path: "review/:itemId", element: <ReviewItem />, handle: { title: "Review a mark" } },
-    { path: "classes", element: <Classes />, handle: { title: "Classes" } },
+    {
+      index: true,
+      element: <Overview />,
+      handle: { title: "Teacher dashboard", skeleton: "card-grid" },
+    },
+    {
+      path: "grading",
+      element: <Grading />,
+      handle: { title: "Grading console", skeleton: "page-header" },
+    },
+    {
+      path: "review",
+      element: <Review />,
+      handle: { title: "Review queue", skeleton: "list" },
+    },
+    {
+      path: "review/:itemId",
+      element: <ReviewItem />,
+      handle: { title: "Review a mark", skeleton: "page-header" },
+    },
+    {
+      path: "classes",
+      element: <Classes />,
+      handle: { title: "Classes", skeleton: "card-grid" },
+    },
     {
       path: "classes/:classId",
       element: <ClassDetailLayout />,
       // The layout carries a title so its `index` child (the roster) inherits
       // one, and `analytics` overrides it. Deepest wins, so this is the
       // fallback rather than a competing entry.
-      handle: { title: "Class" },
+      handle: { title: "Class", skeleton: "page-header" },
       children: [
-        { index: true, element: <ClassRoster />, handle: { title: "Class roster" } },
-        { path: "analytics", element: <ClassAnalytics />, handle: { title: "Class analytics" } },
+        {
+          index: true,
+          element: <ClassRoster />,
+          handle: { title: "Class roster", skeleton: "page-header" },
+        },
+        {
+          path: "analytics",
+          element: <ClassAnalytics />,
+          handle: { title: "Class analytics", skeleton: "page-header" },
+        },
       ],
     },
     // D7.10 / Task 21. Deliberately not in `navItems` (`./data.ts`), matching
@@ -646,52 +680,84 @@ export const teacherRoute: RouteObject = {
     {
       path: "first-class",
       element: <CreateFirstClass />,
-      handle: { title: "Create your first class" },
+      handle: { title: "Create your first class", skeleton: "page-header" },
     },
-    { path: "students/:studentId", element: <StudentDetail />, handle: { title: "Student" } },
-    { path: "at-risk", element: <AtRiskList />, handle: { title: "Students at risk" } },
-    { path: "schemes", element: <MarkSchemes />, handle: { title: "Mark schemes" } },
-    { path: "quizzes", element: <Quizzes />, handle: { title: "Quizzes" } },
-    { path: "quizzes/:quizId", element: <QuizBuilder />, handle: { title: "Quiz builder" } },
+    {
+      path: "students/:studentId",
+      element: <StudentDetail />,
+      handle: { title: "Student", skeleton: "page-header" },
+    },
+    {
+      path: "at-risk",
+      element: <AtRiskList />,
+      handle: { title: "Students at risk", skeleton: "list" },
+    },
+    {
+      path: "schemes",
+      element: <MarkSchemes />,
+      handle: { title: "Mark schemes", skeleton: "list" },
+    },
+    {
+      path: "quizzes",
+      element: <Quizzes />,
+      handle: { title: "Quizzes", skeleton: "card-grid" },
+    },
+    {
+      path: "quizzes/:quizId",
+      element: <QuizBuilder />,
+      handle: { title: "Quiz builder", skeleton: "page-header" },
+    },
     // T-10 is per assignment, never per quiz (§1.6) — the route shape is the
     // first place that has to say so.
     {
       path: "quizzes/:quizId/assignments/:assignmentId/results",
       element: <QuizResults />,
-      handle: { title: "Quiz results" },
+      handle: { title: "Quiz results", skeleton: "page-header" },
     },
-    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    {
+      path: "announcements",
+      element: <Announcements />,
+      handle: { title: "Announcements", skeleton: "list" },
+    },
     {
       path: "notifications",
       element: <TeacherNotifications />,
-      handle: { title: "Notifications" },
+      handle: { title: "Notifications", skeleton: "list" },
     },
     {
       path: "settings",
       element: <PortalSettingsLayout basePath="/teacher/settings" />,
-      handle: { title: "Settings" },
+      handle: { title: "Settings", skeleton: "page-header" },
       children: [
-        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          index: true,
+          element: <ProfileSettingsSection />,
+          handle: { title: "Profile settings", skeleton: "page-header" },
+        },
         {
           path: "devices",
           element: <DeviceSettingsSection />,
-          handle: { title: "Account and devices" },
+          handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
           path: "notifications",
           element: <NotificationSettingsSection />,
-          handle: { title: "Notification settings" },
+          handle: { title: "Notification settings", skeleton: "page-header" },
         },
         {
           path: "install",
           element: <InstallSettingsSection />,
-          handle: { title: "Install Lemely" },
+          handle: { title: "Install Lemely", skeleton: "page-header" },
         },
       ],
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the sidebar. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

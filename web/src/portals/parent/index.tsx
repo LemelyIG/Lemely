@@ -9,7 +9,7 @@ import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { Chip } from "@/components/ui/chip"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
@@ -352,7 +352,7 @@ function ParentLayout() {
             about the account. Renders nothing, and no margin either, unless the
             profile has resolved and says the address is unverified. */}
         <VerifyEmailBanner />
-        <Suspense fallback={<RouteFallback />}>
+        <Suspense fallback={<RouteSkeleton />}>
           {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
               rebuilds each surface") for this portal: a render crash in one
               screen stays inside this content slot rather than taking the
@@ -382,26 +382,38 @@ export const parentRoute: RouteObject = {
     // "Your children" rather than a child's name: the route table has an id and
     // no name, and a parent with two children reads the same title on both
     // detail screens, which is the honest limit of what a static title knows.
-    { index: true, element: <Children />, handle: { title: "Your children" } },
-    { path: "children/:childId", element: <ChildOverview />, handle: { title: "Progress" } },
+    {
+      index: true,
+      element: <Children />,
+      handle: { title: "Your children", skeleton: "card-grid" },
+    },
+    {
+      path: "children/:childId",
+      element: <ChildOverview />,
+      handle: { title: "Progress", skeleton: "page-header" },
+    },
     {
       path: "children/:childId/subjects/:code",
       element: <SubjectDetail />,
-      handle: { title: "Subject progress" },
+      handle: { title: "Subject progress", skeleton: "page-header" },
     },
     {
       path: "children/:childId/weaknesses",
       element: <Weaknesses />,
-      handle: { title: "Topics to work on" },
+      handle: { title: "Topics to work on", skeleton: "page-header" },
     },
     {
       path: "notifications",
       element: <ParentNotifications />,
-      handle: { title: "Notifications" },
+      handle: { title: "Notifications", skeleton: "list" },
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the header and the child switcher. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

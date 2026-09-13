@@ -23,7 +23,7 @@ import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -379,7 +379,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
               about the account. Renders nothing, and no margin either, unless the
               profile has resolved and says the address is unverified. */}
           <VerifyEmailBanner />
-          <Suspense fallback={<RouteFallback className="text-body-md" />}>
+          <Suspense fallback={<RouteSkeleton />}>
             {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
                 rebuilds each surface") for both admin lanes: a render crash
                 in one screen stays inside this content slot rather than
@@ -412,14 +412,34 @@ export const schoolAdminRoute: RouteObject = {
     // because a school_admin holds BOTH this portal and the teacher one and
     // would otherwise have two tabs reading "Classes" that are different
     // screens over different data.
-    { index: true, element: <SchoolDashboard />, handle: { title: "School overview" } },
-    { path: "seats", element: <Seats />, handle: { title: "School seats" } },
-    { path: "teachers", element: <Teachers />, handle: { title: "School teachers" } },
-    { path: "classes", element: <Classes />, handle: { title: "School classes" } },
+    {
+      index: true,
+      element: <SchoolDashboard />,
+      handle: { title: "School overview", skeleton: "card-grid" },
+    },
+    {
+      path: "seats",
+      element: <Seats />,
+      handle: { title: "School seats", skeleton: "page-header" },
+    },
+    {
+      path: "teachers",
+      element: <Teachers />,
+      handle: { title: "School teachers", skeleton: "list" },
+    },
+    {
+      path: "classes",
+      element: <Classes />,
+      handle: { title: "School classes", skeleton: "card-grid" },
+    },
     // Last, so it only matches what nothing above did. An unmatched path here
     // would otherwise fall to the top-level `*` and cost the reader the sidebar
     // (P4.10, `portals/misc/NotFound.tsx`).
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }
 
@@ -428,7 +448,11 @@ export const platformAdminRoute: RouteObject = {
   path: "platform",
   element: <AdminLayout lane="platform" />,
   children: [
-    { index: true, element: <PlatformConsole />, handle: { title: "Platform console" } },
+    {
+      index: true,
+      element: <PlatformConsole />,
+      handle: { title: "Platform console", skeleton: "card-grid" },
+    },
     // Task 22 (D7.8): the account graph's missing first link (spec §1.1) —
     // before this route existed, no production code path created a `School`
     // row or a `school_admin` account. Guarded by inheriting the same
@@ -438,9 +462,25 @@ export const platformAdminRoute: RouteObject = {
     // new entry here needs no guard of its own, and `web/tests/unit/
     // adminRoutes.test.ts` pins that this stays true in both directions
     // (platform_admin reaches it; the other four roles do not).
-    { path: "schools", element: <Schools />, handle: { title: "Platform schools" } },
-    { path: "activations", element: <Activations />, handle: { title: "Platform activations" } },
-    { path: "pipeline", element: <PipelineHealth />, handle: { title: "Pipeline health" } },
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "schools",
+      element: <Schools />,
+      handle: { title: "Platform schools", skeleton: "page-header" },
+    },
+    {
+      path: "activations",
+      element: <Activations />,
+      handle: { title: "Platform activations", skeleton: "page-header" },
+    },
+    {
+      path: "pipeline",
+      element: <PipelineHealth />,
+      handle: { title: "Pipeline health", skeleton: "page-header" },
+    },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

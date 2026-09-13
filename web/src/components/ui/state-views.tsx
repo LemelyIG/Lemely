@@ -401,30 +401,45 @@ export function OfflineState(props: Omit<StateViewProps, "kind">) {
  * padding around tier 3's own `FullPageState`, which already manages its own
  * `min-h-screen` layout; kept anyway so every existing call site keeps
  * compiling with no other change than the new `frame` prop.
+ *
+ * `skeleton` (packet B1) overrides tier 2's content when `frame === "content"`
+ * — `RouteSkeleton` (`route-skeleton.tsx`) is the one caller that passes it,
+ * matching the shape to what the route table declares for the route actually
+ * being waited on, rather than every route sharing this component's one
+ * generic guess at what a "content" screen looks like. A caller that omits it
+ * (the two `isPending` shell-blanking sites in the student/teacher layouts,
+ * which have no route match to ask) keeps the old generic content-well shape.
+ * Tier 2's wrapper carries `data-tier="skeleton"` so an e2e spec can assert it
+ * is what's on screen during the window between tiers 1 and 3.
  */
 export function RouteFallback({
   className,
   frame = "content",
+  skeleton,
 }: {
   className?: string
   frame?: "content" | "standalone"
+  skeleton?: ReactNode
 }) {
   return (
     <div role="status" className={cn("grid", className)}>
       <span className="sr-only">Loading</span>
       <div
         aria-hidden="true"
+        data-tier="skeleton"
         className="lm-tier-skeleton col-start-1 row-start-1 flex flex-col gap-8"
       >
         {frame === "content" ? (
-          <>
-            <PageHeaderSkeleton />
-            <ListSkeleton rows={3} />
-            <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-              <PanelSkeleton />
-              <PanelSkeleton />
-            </div>
-          </>
+          (skeleton ?? (
+            <>
+              <PageHeaderSkeleton />
+              <ListSkeleton rows={3} />
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <PanelSkeleton />
+                <PanelSkeleton />
+              </div>
+            </>
+          ))
         ) : null}
       </div>
       <div className="lm-tier-slow col-start-1 row-start-1 bg-paper">

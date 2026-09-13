@@ -14,7 +14,7 @@ import { portalErrorFallback } from "@/components/route-error"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -686,20 +686,20 @@ function StudentLayout() {
    * `UserBlock` above is a different endpoint, `/me/profile`, whose
    * `Profile` type carries no onboarding field at all).
    *
-   * A pending query renders the shared route fallback in place of the whole
-   * shell rather than the shell with a fallback inside it: until the profile
-   * resolves we do not yet know whether this student belongs on this route,
-   * so there is nothing honest to put in a sidebar built for a destination
-   * we might immediately redirect away from. An errored or a
-   * resolved-and-complete query both fall through to the portal exactly as
-   * it rendered before this gate existed — an errored profile fetch must
-   * degrade to "the portal renders", never to "the account is stuck on
-   * onboarding until the network recovers".
+   * A pending query used to render the shared route fallback in place of the
+   * whole shell — sidebar, header and all — rather than the shell with a
+   * fallback inside it, on the reasoning that until the profile resolves we
+   * do not yet know whether this student belongs on this route. Packet B1
+   * corrects that: the shell (sidebar, header, chrome) renders regardless,
+   * with `<RouteSkeleton />` standing in for the content below, so a cold
+   * load paints the portal immediately instead of a blank page. The
+   * onboarding decision itself is unaffected — `studentOnboardingRedirect`
+   * already returns `null` for any non-`"success"` status, so calling it
+   * unconditionally here is exactly as safe as the old early return was: an
+   * errored or a resolved-and-complete query both still fall through to the
+   * portal exactly as before, and a pending one still never redirects.
    */
   const studentProfile = useStudentProfile()
-  if (studentProfile.isPending) {
-    return <RouteFallback className="p-8" />
-  }
   const onboardingRedirect = studentOnboardingRedirect(
     studentProfile.status,
     studentProfile.data?.profile.onboardingCompletedAt ?? null,
@@ -774,25 +774,34 @@ function StudentLayout() {
               say" shape as the two banners above. Student and teacher only —
               see the component's own header for why. */}
           <InstallBanner />
-          <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            {/* PR 1B fulfils the note above ("Phase 4 places those as it
-                rebuilds each surface", `routes.tsx`): a render crash in one
-                screen now stays inside this content slot instead of taking
-                the sidebar/header down with it or falling out to the
-                top-level `errorElement`. Inside `Suspense`, not outside it,
-                so a failed chunk load and a render throw both land in this
-                boundary while the chrome stays painted.
-                `resetKey={location.pathname}` clears a caught error on
-                navigation — a crash on `/student/board` must not still be
-                showing once the reader is on `/student/friends`. */}
-            <ErrorBoundary
-              label="This page"
-              resetKey={location.pathname}
-              fallback={portalErrorFallback}
-            >
-              <Outlet />
-            </ErrorBoundary>
-          </Suspense>
+          {/* Packet B1: the profile query pending state renders the same
+              `RouteSkeleton` a chunk-load wait does, in the same content
+              slot, rather than blanking the shell below `Header` — see the
+              comment above `studentProfile` for why this is safe to gate on
+              here rather than bailing out of the whole layout. */}
+          {studentProfile.isPending ? (
+            <RouteSkeleton />
+          ) : (
+            <Suspense fallback={<RouteSkeleton />}>
+              {/* PR 1B fulfils the note above ("Phase 4 places those as it
+                  rebuilds each surface", `routes.tsx`): a render crash in one
+                  screen now stays inside this content slot instead of taking
+                  the sidebar/header down with it or falling out to the
+                  top-level `errorElement`. Inside `Suspense`, not outside it,
+                  so a failed chunk load and a render throw both land in this
+                  boundary while the chrome stays painted.
+                  `resetKey={location.pathname}` clears a caught error on
+                  navigation — a crash on `/student/board` must not still be
+                  showing once the reader is on `/student/friends`. */}
+              <ErrorBoundary
+                label="This page"
+                resetKey={location.pathname}
+                fallback={portalErrorFallback}
+              >
+                <Outlet />
+              </ErrorBoundary>
+            </Suspense>
+          )}
         </main>
       </div>
     </div>
@@ -814,88 +823,140 @@ export const studentRoute: RouteObject = {
      * segment is a value restated from somewhere else, and P6.4's whole lesson
      * is what happens to those.
      */
-    { index: true, element: <Overview />, handle: { title: "Dashboard" } },
-    { path: "classes", element: <StudentClasses />, handle: { title: "Your classes" } },
-    { path: "subject/:code", element: <Subject />, handle: { title: "Subject" } },
-    { path: "result/:paperId", element: <PaperResult />, handle: { title: "Paper result" } },
-    { path: "correct", element: <CorrectPaper />, handle: { title: "Mark a paper" } },
-    { path: "plan/:subjectCode", element: <StudyPlanWeek />, handle: { title: "Study plan" } },
+    { index: true, element: <Overview />, handle: { title: "Dashboard", skeleton: "card-grid" } },
+    {
+      path: "classes",
+      element: <StudentClasses />,
+      handle: { title: "Your classes", skeleton: "card-grid" },
+    },
+    {
+      path: "subject/:code",
+      element: <Subject />,
+      handle: { title: "Subject", skeleton: "page-header" },
+    },
+    {
+      path: "result/:paperId",
+      element: <PaperResult />,
+      handle: { title: "Paper result", skeleton: "page-header" },
+    },
+    {
+      path: "correct",
+      element: <CorrectPaper />,
+      handle: { title: "Mark a paper", skeleton: "page-header" },
+    },
+    {
+      path: "plan/:subjectCode",
+      element: <StudyPlanWeek />,
+      handle: { title: "Study plan", skeleton: "page-header" },
+    },
     {
       path: "plan/:subjectCode/session/:sessionId",
       element: <StudyPlanSession />,
-      handle: { title: "Study session" },
+      handle: { title: "Study session", skeleton: "page-header" },
     },
-    { path: "board", element: <Standings />, handle: { title: "Leaderboard" } },
-    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
-    { path: "notifications", element: <Notifications />, handle: { title: "Notifications" } },
-    { path: "friends", element: <Friends />, handle: { title: "Friends" } },
-    { path: "profile", element: <Profile />, handle: { title: "Your profile" } },
+    {
+      path: "board",
+      element: <Standings />,
+      handle: { title: "Leaderboard", skeleton: "list" },
+    },
+    {
+      path: "announcements",
+      element: <Announcements />,
+      handle: { title: "Announcements", skeleton: "list" },
+    },
+    {
+      path: "notifications",
+      element: <Notifications />,
+      handle: { title: "Notifications", skeleton: "list" },
+    },
+    { path: "friends", element: <Friends />, handle: { title: "Friends", skeleton: "list" } },
+    {
+      path: "profile",
+      element: <Profile />,
+      handle: { title: "Your profile", skeleton: "page-header" },
+    },
     // The only place a parent_child_links row is created (D3.11).
-    { path: "parents", element: <Parents />, handle: { title: "Parent access" } },
+    {
+      path: "parents",
+      element: <Parents />,
+      handle: { title: "Parent access", skeleton: "page-header" },
+    },
     {
       path: "settings",
       element: <PortalSettingsLayout basePath="/student/settings" />,
-      handle: { title: "Settings" },
+      handle: { title: "Settings", skeleton: "page-header" },
       children: [
-        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          index: true,
+          element: <ProfileSettingsSection />,
+          handle: { title: "Profile settings", skeleton: "page-header" },
+        },
         {
           path: "devices",
           element: <DeviceSettingsSection />,
-          handle: { title: "Account and devices" },
+          handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
           path: "notifications",
           element: <NotificationSettingsSection />,
-          handle: { title: "Notification settings" },
+          handle: { title: "Notification settings", skeleton: "page-header" },
         },
         {
           path: "install",
           element: <InstallSettingsSection />,
-          handle: { title: "Install Lemely" },
+          handle: { title: "Install Lemely", skeleton: "page-header" },
         },
       ],
     },
-    { path: "onboard", element: <Onboarding />, handle: { title: "Getting set up" } },
+    {
+      path: "onboard",
+      element: <Onboarding />,
+      handle: { title: "Getting set up", skeleton: "page-header" },
+    },
     {
       path: "placement/:subjectCode",
       element: <PlacementInvite />,
-      handle: { title: "Placement test" },
+      handle: { title: "Placement test", skeleton: "page-header" },
     },
     {
       path: "placement/test/:assignmentId",
       element: <PlacementTest />,
-      handle: { title: "Placement test" },
+      handle: { title: "Placement test", skeleton: "page-header" },
     },
     {
       path: "placement/result/:assignmentId",
       element: <PlacementResult />,
-      handle: { title: "Placement result" },
+      handle: { title: "Placement result", skeleton: "page-header" },
     },
     {
       path: "practice/:subjectCode",
       element: <PracticeGenerator />,
-      handle: { title: "New practice set" },
+      handle: { title: "New practice set", skeleton: "page-header" },
     },
-    { path: "practice/set/:assignmentId", element: <PracticeSet />, handle: { title: "Practice" } },
+    {
+      path: "practice/set/:assignmentId",
+      element: <PracticeSet />,
+      handle: { title: "Practice", skeleton: "page-header" },
+    },
     {
       path: "practice/result/:assignmentId",
       element: <PracticeResult />,
-      handle: { title: "Practice result" },
+      handle: { title: "Practice result", skeleton: "page-header" },
     },
     {
       path: "practice/print/:assignmentId",
       element: <PracticePrint />,
-      handle: { title: "Print practice set" },
+      handle: { title: "Print practice set", skeleton: "page-header" },
     },
     {
       path: "flashcards/:subjectCode",
       element: <FlashcardDecks />,
-      handle: { title: "Flashcards" },
+      handle: { title: "Flashcards", skeleton: "list" },
     },
     {
       path: "flashcards/review/:subjectCode",
       element: <FlashcardReview />,
-      handle: { title: "Flashcard review" },
+      handle: { title: "Flashcard review", skeleton: "page-header" },
     },
     /*
      * P4.9 moved the marketing page out of this portal and onto a public
@@ -909,7 +970,11 @@ export const studentRoute: RouteObject = {
     // The handle is the landing page's own, not a name for the redirect: this
     // path resolves to `/landing` immediately, and a title is only ever read on
     // a page a reader is looking at.
-    { path: "landing", element: <Navigate to="/landing" replace />, handle: { title: "Lemely" } },
+    {
+      path: "landing",
+      element: <Navigate to="/landing" replace />,
+      handle: { title: "Lemely", skeleton: "standalone" },
+    },
     /*
      * P4.10. Last, so it only matches what nothing above did. Before this, an
      * unmatched path inside this portal fell through to the top-level `*` and
@@ -917,6 +982,10 @@ export const studentRoute: RouteObject = {
      * `portals/misc/NotFound.tsx` for why it is a separate component and not
      * the standalone screen.
      */
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

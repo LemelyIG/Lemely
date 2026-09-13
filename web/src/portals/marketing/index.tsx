@@ -3,7 +3,7 @@ import { lazy, Suspense } from "react"
 import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
 import { BrandMark } from "@/components/ui/brand-mark"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
@@ -225,7 +225,7 @@ export function MarketingLanding() {
         than a blank document, which for a first-time reader is the difference
         between a slow site and a broken one.
       */}
-      <Suspense fallback={<RouteFallback className="px-page-mobile py-section" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <Landing />
       </Suspense>
     </MarketingFrame>
@@ -241,7 +241,11 @@ export const marketingRoute: RouteObject = {
    * description rather than a page-specific one — `/` renders this same
    * component and both should read identically when shared.
    */
-  handle: { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION } satisfies PageMeta,
+  handle: {
+    title: DEFAULT_TITLE,
+    description: DEFAULT_DESCRIPTION,
+    skeleton: "page-header",
+  } satisfies PageMeta,
 }
 
 /**
@@ -255,7 +259,7 @@ export const marketingRoute: RouteObject = {
 export function MarketingDataHandling() {
   return (
     <MarketingFrame>
-      <Suspense fallback={<RouteFallback className="px-page-mobile py-section" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <DataHandling />
       </Suspense>
     </MarketingFrame>
@@ -280,6 +284,7 @@ export const dataHandlingRoute: RouteObject = {
     title: "How your data is handled",
     description:
       "What Lemely stores about an account, what happens to a paper you upload, where a scan is sent to be read, and who else can see your work.",
+    skeleton: "page-header",
   } satisfies PageMeta,
 }
 

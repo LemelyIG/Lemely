@@ -49,6 +49,21 @@
  * exist. `index.html` carries the default for anything that does not override.
  */
 
+/**
+ * The tier-2 skeleton shape a route's `RouteSkeleton` renders while its chunk
+ * loads (DESIGN.md §12, packet B1) — `route-skeleton.tsx`'s
+ * `skeletonForMatches` reads this off the deepest matched `handle` the same
+ * way `pageMetaFromMatches` reads `title`.
+ *
+ * `"standalone"` is the top-level auth/settings/misc routes with no portal
+ * chrome to promise (`RouteFallback`'s `frame="standalone"`, no tier-2
+ * skeleton at all). The other three are `frame="content"` shapes, matched to
+ * what the screen actually opens with: `"card-grid"` for a dashboard of
+ * tiles, `"list"` for a queue/roster/feed, `"page-header"` for everything
+ * else (a form, a single record, a drilldown).
+ */
+export type SkeletonShape = "page-header" | "card-grid" | "list" | "standalone"
+
 /** Static metadata attached to a route's `handle`. */
 export interface PageMeta {
   /**
@@ -65,6 +80,8 @@ export interface PageMeta {
    * Only for routes reachable without a session. See the module note.
    */
   description?: string
+  /** See `SkeletonShape`. Every route with an `element` declares one. */
+  skeleton?: SkeletonShape
 }
 
 /** The product name, appended to every page title. */

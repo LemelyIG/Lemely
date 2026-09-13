@@ -1,5 +1,5 @@
 import { lazy, Suspense } from "react"
-import { RouteFallback } from "@/components/ui/state-views"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import type { RouteObject } from "react-router-dom"
 import { Navigate, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
@@ -301,7 +301,11 @@ const errorElement = <RouteErrorScreen />
  * design (superseding D3.11) retired both that route and the phone-based
  * login it backed.
  */
-const rootMeta: PageMeta = { title: DEFAULT_TITLE, description: DEFAULT_DESCRIPTION }
+const rootMeta: PageMeta = {
+  title: DEFAULT_TITLE,
+  description: DEFAULT_DESCRIPTION,
+  skeleton: "standalone",
+}
 
 export const appRoutes: RouteObject[] = [
   { path: "/", element: <Root />, errorElement, handle: rootMeta },
@@ -328,8 +332,9 @@ export const appRoutes: RouteObject[] = [
       title: "Sign in",
       description:
         "Sign in to Lemely to mark a past paper, review a class, or follow a child's progress.",
+      skeleton: "standalone",
     } satisfies PageMeta,
-    element: <LoginRoute><Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}><Login /></Suspense></LoginRoute>,
+    element: <LoginRoute><Suspense fallback={<RouteSkeleton />}><Login /></Suspense></LoginRoute>,
   },
   /*
    * PR 2 part A2 · `/session-ended`. `RequireAuth` sends a dead session here
@@ -351,7 +356,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/session-ended",
     errorElement,
-    handle: { title: "Your session ended" } satisfies PageMeta,
+    handle: { title: "Your session ended", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <SessionEndedRoute>
         <SessionEnded />
@@ -387,10 +392,11 @@ export const appRoutes: RouteObject[] = [
       title: "Sign up",
       description:
         "Sign up for Lemely as a student or a teacher, and get started marking past papers.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <SignupRoleSelect />
         </Suspense>
       </LoginRoute>
@@ -429,9 +435,10 @@ export const appRoutes: RouteObject[] = [
       title: "Student sign up",
       description:
         "Create a Lemely student account, upload a past paper, and see exactly what to study next.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <SignupDetails role="student" />
       </Suspense>
     ),
@@ -445,9 +452,10 @@ export const appRoutes: RouteObject[] = [
       title: "Teacher sign up",
       description:
         "Create a Lemely teacher account and mark past papers faster, with partial credit worked out for you.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <SignupDetails role="teacher" />
       </Suspense>
     ),
@@ -473,10 +481,11 @@ export const appRoutes: RouteObject[] = [
       title: "Parent sign up",
       description:
         "Create a Lemely parent account from an invite, and see how your child is doing.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <SignupParent />
         </Suspense>
       </LoginRoute>
@@ -501,9 +510,10 @@ export const appRoutes: RouteObject[] = [
       title: "Verify your email",
       description:
         "Check whether a Lemely account's email address is verified. Everything except marking a paper stays open in the meantime.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <VerifyEmail />
       </Suspense>
     ),
@@ -520,9 +530,10 @@ export const appRoutes: RouteObject[] = [
       title: "Confirm your email",
       description:
         "Confirm a Lemely account's email address from a verification link, then continue into the app.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <VerifyEmail />
       </Suspense>
     ),
@@ -538,10 +549,11 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Reset your password",
       description: "Request a password reset for a Lemely account by email address.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <PasswordResetRequest />
         </Suspense>
       </LoginRoute>
@@ -557,10 +569,11 @@ export const appRoutes: RouteObject[] = [
       title: "Set a new password",
       description:
         "Set a new password for a Lemely account from a reset link. Every device gets signed out once the change takes effect.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
       <LoginRoute>
-        <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+        <Suspense fallback={<RouteSkeleton />}>
           <PasswordResetConfirm />
         </Suspense>
       </LoginRoute>
@@ -583,9 +596,10 @@ export const appRoutes: RouteObject[] = [
       title: "Join with an invite code",
       description:
         "Enter an invite code from your school to see what it joins, before you redeem it or sign up to claim it.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -601,9 +615,10 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Preview your invite",
       description: "Preview the class an invite code joins, then redeem it or sign up to claim it.",
+      skeleton: "standalone",
     } satisfies PageMeta,
     element: (
-      <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+      <Suspense fallback={<RouteSkeleton />}>
         <JoinWithCode />
       </Suspense>
     ),
@@ -620,11 +635,11 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/settings/devices",
     errorElement,
-    handle: { title: "Your devices" } satisfies PageMeta,
+    handle: { title: "Your devices", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <SettingsLaneRedirect segment="devices">
-          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <Suspense fallback={<RouteSkeleton />}>
             <DeviceSettings />
           </Suspense>
         </SettingsLaneRedirect>
@@ -642,11 +657,11 @@ export const appRoutes: RouteObject[] = [
     // "Notification settings", not "Notifications": the student portal has a
     // screen at /student/notifications that IS the reader's inbox, and two tabs
     // reading the same word is the defect this whole file is closing.
-    handle: { title: "Notification settings" } satisfies PageMeta,
+    handle: { title: "Notification settings", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <SettingsLaneRedirect segment="notifications">
-          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <Suspense fallback={<RouteSkeleton />}>
             <NotificationSettings />
           </Suspense>
         </SettingsLaneRedirect>
@@ -660,11 +675,11 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/settings/profile",
     errorElement,
-    handle: { title: "Profile settings" } satisfies PageMeta,
+    handle: { title: "Profile settings", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <SettingsLaneRedirect segment="">
-          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <Suspense fallback={<RouteSkeleton />}>
             <ProfileSettings />
           </Suspense>
         </SettingsLaneRedirect>
@@ -678,11 +693,11 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/settings/install",
     errorElement,
-    handle: { title: "Install Lemely" } satisfies PageMeta,
+    handle: { title: "Install Lemely", skeleton: "standalone" } satisfies PageMeta,
     element: (
       <RequireAuth allowedRoles={ALL_ROLES}>
         <SettingsLaneRedirect segment="install">
-          <Suspense fallback={<RouteFallback className="p-8" frame="standalone" />}>
+          <Suspense fallback={<RouteSkeleton />}>
             <InstallSettings />
           </Suspense>
         </SettingsLaneRedirect>
@@ -732,7 +747,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/scan-inbox",
     errorElement,
-    handle: { title: "Opening your scan" } satisfies PageMeta,
+    handle: { title: "Opening your scan", skeleton: "standalone" } satisfies PageMeta,
     element: <ScanInbox />,
   },
   // File Handling API (manifest's `file_handlers`, packet A6): the OS hands a
@@ -744,7 +759,7 @@ export const appRoutes: RouteObject[] = [
   {
     path: "/file-handler",
     errorElement,
-    handle: { title: "Opening your scan" } satisfies PageMeta,
+    handle: { title: "Opening your scan", skeleton: "standalone" } satisfies PageMeta,
     element: <Navigate to="/scan-inbox" replace />,
   },
   /*
@@ -773,6 +788,7 @@ export const appRoutes: RouteObject[] = [
     handle: {
       title: "Page not found",
       description: "This Lemely page does not exist. The link may be out of date.",
+      skeleton: "standalone",
     } satisfies PageMeta,
   },
 ]

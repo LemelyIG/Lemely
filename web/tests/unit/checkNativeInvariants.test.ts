@@ -501,6 +501,15 @@ describe("runChecks — --phase-b gated checks", () => {
     expect(result.checks.find((c) => c.name.includes("RouteFallback"))?.pass).toBe(false)
   })
 
+  // Packet B1: the real fix is `<RouteSkeleton />`, not merely the absence of
+  // `<RouteFallback` — this fixture is what the check is meant to let through.
+  it("pass when routes.tsx uses <RouteSkeleton /> instead and phaseB is true", () => {
+    const input = goodInput()
+    input.files["routes.tsx"] = `element: <Suspense fallback={<RouteSkeleton />}><X /></Suspense>`
+    const result = run({ ...input, phaseB: true })
+    expect(result.checks.find((c) => c.name.includes("RouteFallback"))?.pass).toBe(true)
+  })
+
   it("fail when any file sets document.body.style.overflow = \"hidden\" and phaseB is true", () => {
     const input = goodInput()
     input.files["components/ui/modal.tsx"] = `document.body.style.overflow = "hidden"`
