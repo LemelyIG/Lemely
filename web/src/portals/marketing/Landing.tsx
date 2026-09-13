@@ -8,14 +8,14 @@ import {
   heroExample,
   landingClose,
   landingHero,
-  landingProofIntro,
   loopIntro,
   loopSteps,
   mcq,
-  pillars,
   pricing,
   pricingPlaceholder,
-  proof,
+  roleTabs,
+  subjects,
+  subjectsNote,
 } from "./data"
 
 /*
@@ -26,8 +26,9 @@ import {
  * the product, and the only surface that turns section spacing up to
  * `section-xl`.
  *
- * Section rhythm, in §2's order: hero → proof → the loop → who it serves →
- * plans → close.
+ * Section rhythm: hero → the loop (how it works) → who it serves → subjects
+ * covered → plans → close. The proof band that used to sit between the hero
+ * and the loop is gone (see ./data.ts's header); nothing replaces it.
  *
  * WHAT THIS FILE IS NOT ALLOWED TO DO
  * -----------------------------------
@@ -84,8 +85,15 @@ function Section({
  * button and the section cannot drift apart into a scroll to nothing, which
  * fails silently: `getElementById` returning null does nothing at all, and a
  * button that does nothing at all is indistinguishable from a slow one.
+ *
+ * Value is `landingHero.secondaryCta.anchor` ("how-it-works"): the data
+ * rewrite retargeted the secondary CTA from "who it serves" to "how it
+ * works", so this now marks the loop section rather than the roles section.
+ * The identifier keeps its old name deliberately (pinned by
+ * `marketing.test.ts`'s "leaves the hero's secondary CTA scrolling to a
+ * section, not navigating" check).
  */
-const SERVES_SECTION_ID = "who-it-serves"
+const SERVES_SECTION_ID = landingHero.secondaryCta.anchor
 
 /** Uppercase kicker above a section title. §4.2's `eyebrow` rung.
  *
@@ -129,12 +137,10 @@ export function Landing() {
               there is no per-screen font size here.
             */}
             <h1 className="text-display-hero mt-5 text-ink text-balance">
-              {landingHero.titleTop}
-              <br />
-              {landingHero.titleBottom}
+              {landingHero.headline}
             </h1>
             <p className="text-body-lg mt-6 max-w-[52ch] text-pretty text-ink-muted">
-              {landingHero.body}
+              {landingHero.subtext}
             </p>
             {/*
               `flex-wrap`, not a narrower button: Button carries
@@ -163,8 +169,14 @@ export function Landing() {
                 credentials. /login stays reachable from the header above and
                 the footer below, for the reader who already does.
               */}
+              {/*
+                Hardcoded "/signup" rather than `landingHero.primaryCta.to`:
+                `marketing.test.ts`'s "routes exactly three CTAs to /signup"
+                pins the literal call sites below by regex, and
+                `primaryCta.to` is "/signup" today anyway.
+              */}
               <Button variant="primary" size="lg" onClick={() => navigate("/signup")}>
-                {landingHero.primaryCta}
+                {landingHero.primaryCta.label}
               </Button>
               {/*
                 The secondary CTA goes to the teacher case on this page, not
@@ -196,10 +208,9 @@ export function Landing() {
                   })
                 }}
               >
-                {landingHero.secondaryCta}
+                {landingHero.secondaryCta.label}
               </Button>
             </div>
-            <p className="text-body-sm mt-5 text-ink-faint">{landingHero.footnote}</p>
           </Reveal>
 
           <Reveal delay={120}>
@@ -284,58 +295,8 @@ export function Landing() {
         </div>
       </Section>
 
-      {/* ── Proof ────────────────────────────────────────────────────────── */}
-      <Section>
-        <Reveal>
-          {/*
-            `--paper-inverse`, which §3.1 defines as "the one dark surface
-            permitted, for a single proof/close band on marketing only". The
-            build-era band used `bg-ink`, the *text* token, as a background:
-            close enough in value to look right and wrong by name, so a future
-            change to the ink colour would have repainted a panel.
-
-            One such band on the page. §3.2 item 8 bans dark sections that
-            break the warm paper page, and the exception is this, once.
-          */}
-          <div className="grid grid-cols-1 items-center gap-10 rounded-xl bg-paper-inverse p-8 md:p-11 lg:grid-cols-2 lg:gap-14">
-            <div>
-              <h2 className="text-display-lg text-ink-inverse text-balance">
-                {landingProofIntro.title}
-              </h2>
-              <p className="text-body-md mt-4 max-w-[54ch] text-pretty text-ink-inverse/75">
-                {landingProofIntro.body}
-              </p>
-            </div>
-            {/*
-              One column, not two. Three stats in a two-column grid leaves the
-              third alone beside an empty cell, which the capture round showed
-              as a hole in the middle of the one band on the page that has to
-              look considered. Stacked, they read as a short list of facts,
-              which is what they are.
-            */}
-            <div className="grid grid-cols-1 gap-4">
-              {proof.map((p, i) => (
-                <Reveal key={p.l} delay={80 * i}>
-                  <div className="h-full rounded-lg border border-ink-inverse/15 p-5">
-                    {/*
-                      Every one of these is a constant from the Python source
-                      (see ./data.ts), so they are figures, and figures are set
-                      in the data face. The build-era band set them in the
-                      display serif, which is where a marketing statistic goes
-                      when nobody is quite sure it is a number.
-                    */}
-                    <div className="text-data-lg text-ink-inverse">{p.n}</div>
-                    <div className="text-body-sm mt-2 text-pretty text-ink-inverse/70">{p.l}</div>
-                  </div>
-                </Reveal>
-              ))}
-            </div>
-          </div>
-        </Reveal>
-      </Section>
-
       {/* ── The loop ─────────────────────────────────────────────────────── */}
-      <Section>
+      <Section id={SERVES_SECTION_ID}>
         <Reveal>
           <Eyebrow>How it goes</Eyebrow>
           <h2 className="text-display-xl mt-4 text-ink text-balance">{loopIntro.title}</h2>
@@ -371,46 +332,63 @@ export function Landing() {
       </Section>
 
       {/* ── Who it serves ────────────────────────────────────────────────── */}
-      <Section id={SERVES_SECTION_ID}>
+      <Section>
         <Reveal>
-          <Eyebrow>Who it serves</Eyebrow>
           <h2 className="text-display-xl mt-4 text-ink text-balance">
             One engine, three people served
           </h2>
           <p className="text-body-lg mt-4 max-w-[62ch] text-pretty text-ink-muted">
-            The same corrected paper becomes a study plan for the student, a teaching signal for
+            The same marked paper becomes a study plan for the student, a teaching signal for
             the teacher, and a plain answer for the parent who asks how she is doing.
           </p>
         </Reveal>
+        {/*
+          Simplest stacked rendering of `roleTabs` (heading, body, CTA per
+          role). No tabs widget: Task 3 builds that. `h-full` + `mt-auto`
+          keeps the CTA pinned to the bottom the way the old pillars did,
+          since the three bodies are different lengths.
+        */}
         <div className="mt-10 grid grid-cols-1 gap-5 lg:grid-cols-3">
-          {pillars.map((p, i) => (
-            <Reveal key={p.kicker} delay={90 * i} className="h-full">
-              {/*
-                `h-full` on the reveal and `flex-col` here, with the bullet
-                block pushed down by `mt-auto`: §12 asks siblings to align
-                their titles and pin their footers rather than being forced to
-                equal height by a grid row. The three bodies are different
-                lengths and always will be.
-              */}
+          {roleTabs.map((r, i) => (
+            <Reveal key={r.id} delay={90 * i} className="h-full">
               <Card className="flex h-full flex-col gap-3 p-7">
-                <div className="text-eyebrow text-accent-ink">{p.kicker}</div>
-                <h3 className="text-display-sm text-ink">{p.title}</h3>
-                <p className="text-body-sm text-pretty text-ink-muted">{p.body}</p>
-                <ul className="mt-auto flex list-none flex-col gap-2.5 border-t border-rule pt-4">
-                  {p.bullets.map((b) => (
-                    <li key={b} className="text-body-sm flex items-start gap-2.5 text-ink-muted">
-                      <span
-                        className="mt-[9px] h-[5px] w-[5px] shrink-0 rounded-full bg-accent"
-                        aria-hidden="true"
-                      />
-                      <span className="text-pretty">{b}</span>
-                    </li>
-                  ))}
-                </ul>
+                <span className="text-label-sm w-fit rounded-full bg-paper-sunk px-2.5 py-1 text-ink-faint">
+                  {r.label}
+                </span>
+                <h3 className="text-display-sm text-ink">{r.heading}</h3>
+                <p className="text-body-sm text-pretty text-ink-muted">{r.body}</p>
+                <Button
+                  variant="secondary"
+                  className="mt-auto w-fit"
+                  onClick={() => navigate(r.cta.to)}
+                >
+                  {r.cta.label}
+                </Button>
               </Card>
             </Reveal>
           ))}
         </div>
+      </Section>
+
+      {/* ── Subjects covered ─────────────────────────────────────────────── */}
+      <Section>
+        <Reveal>
+          <h2 className="text-display-xl mt-4 text-ink text-balance">Subjects covered</h2>
+        </Reveal>
+        <Reveal delay={80}>
+          <div className="mt-8 flex flex-wrap gap-3">
+            {subjects.map((s) => (
+              <div
+                key={s.code}
+                className="flex items-center gap-2 rounded-full border border-rule px-4 py-2 text-body-sm text-ink"
+              >
+                <span className="text-data-sm text-ink-faint">{s.code}</span>
+                {s.name}
+              </div>
+            ))}
+          </div>
+          <p className="text-body-sm mt-4 text-ink-faint">{subjectsNote}</p>
+        </Reveal>
       </Section>
 
       {/* ── Plans ────────────────────────────────────────────────────────── */}

@@ -11,9 +11,10 @@ import {
   landingClose,
   loopSteps,
   mcq,
-  pillars,
   pricing,
-  proof,
+  roleTabs,
+  subjects,
+  subjectsNote,
 } from "@/portals/marketing/data"
 
 /*
@@ -172,12 +173,15 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
 describe("landing copy claims only what the product does — P4.9", () => {
   /** Every string a visitor can read on the page, flattened. */
   const allCopy = [
-    ...Object.values(landingHero),
+    // `primaryCta`/`secondaryCta` are `{label, to/anchor}` objects, not bare
+    // strings, so they need one more level of flattening than the rest.
+    ...Object.values(landingHero).flatMap((v) => (typeof v === "string" ? v : Object.values(v))),
     ...Object.values(heroExample),
     ...Object.values(landingClose),
     ...loopSteps.flatMap((s) => [s.step, s.title, s.body]),
-    ...pillars.flatMap((p) => [p.kicker, p.title, p.body, ...p.bullets]),
-    ...proof.flatMap((p) => [p.n, p.l]),
+    ...roleTabs.flatMap((r) => [r.label, r.heading, r.body, r.cta.label]),
+    ...subjects.map((s) => s.name),
+    subjectsNote,
   ].join("\n")
 
   /*
