@@ -15,18 +15,24 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
-from sqlalchemy import select
+from sqlalchemy import select, update
+from sqlalchemy.exc import IntegrityError
 
 from lemely.db.history_repo import parse_user_id
 from lemely.db.models.attempts import Upload
 from lemely.db.models.enums import UploadStatus
 
 if TYPE_CHECKING:
-    from datetime import datetime
-
     from sqlalchemy.orm import Session, sessionmaker
+
+
+#: How long a submitted ``Idempotency-Key`` still dedupes a retry. Enforced
+#: above ``ux_uploads_user_idempotency`` (migration 0036), which has no time
+#: bound of its own — see :meth:`StudentUploadRepository.create_upload`.
+IDEMPOTENCY_KEY_WINDOW = timedelta(hours=24)
 
 
 @dataclass(frozen=True, slots=True)
@@ -79,29 +85,97 @@ class StudentUploadRepository:
         content_type: str | None,
         byte_size: int | None,
         upload_id: uuid.UUID | None = None,
+        idempotency_key: str | None = None,
     ) -> uuid.UUID:
         """Insert a pending :class:`Upload` and return its id.
 
         When ``upload_id`` is supplied it becomes the row's primary key (so the
         router can pre-generate the id, namespace the on-disk directory by it,
         and keep paperId == upload id); otherwise the DB assigns one.
+
+        ``idempotency_key``, when given, is enforced unique per user by
+        ``ux_uploads_user_idempotency`` (migration 0036). The router's own
+        :meth:`find_by_idempotency_key` pre-check already excludes a match
+        older than :data:`IDEMPOTENCY_KEY_WINDOW`, so an ``IntegrityError``
+        reaching this insert is one of exactly two things: a genuine
+        concurrent duplicate of *this* request, still inside the window (hand
+        back its id — closes the race two callers racing with the same key
+        can hit, since both can miss the pre-check and both reach here, but
+        only one insert can win the unique index); or a stale key surviving
+        from a prior, now-expired upload, which is released and the insert
+        retried once so this upload gets its own new row.
         """
         owner = parse_user_id(user_id)
-        upload = Upload(
-            user_id=owner,
-            storage_path=storage_path,
-            original_filename=original_filename,
-            content_type=content_type,
-            byte_size=byte_size,
-            status=UploadStatus.pending,
+
+        def _new_row() -> Upload:
+            row = Upload(
+                user_id=owner,
+                storage_path=storage_path,
+                original_filename=original_filename,
+                content_type=content_type,
+                byte_size=byte_size,
+                status=UploadStatus.pending,
+                idempotency_key=idempotency_key,
+            )
+            if upload_id is not None:
+                row.id = upload_id
+            return row
+
+        try:
+            with self._sm.begin() as session:
+                row = _new_row()
+                session.add(row)
+                session.flush()
+                return row.id
+        except IntegrityError:
+            if idempotency_key is None:
+                raise
+            since = datetime.now(UTC) - IDEMPOTENCY_KEY_WINDOW
+            existing = self.find_by_idempotency_key(
+                user_id=user_id, key=idempotency_key, since=since
+            )
+            if existing is not None:
+                return existing.id
+            with self._sm.begin() as session:
+                session.execute(
+                    update(Upload)
+                    .where(Upload.user_id == owner, Upload.idempotency_key == idempotency_key)
+                    .values(idempotency_key=None)
+                )
+                row = _new_row()
+                session.add(row)
+                session.flush()
+                return row.id
+
+    def find_by_idempotency_key(
+        self, *, user_id: str, key: str, since: datetime
+    ) -> OwnedUpload | None:
+        """Return the caller-owned upload already stored under ``key``, if any.
+
+        Only a row created at or after ``since`` counts as a match — the
+        24h dedupe window is enforced here, not by the unique index, which
+        has no time bound of its own (see :meth:`create_upload`).
+        """
+        owner = parse_user_id(user_id)
+        stmt = (
+            select(Upload)
+            .where(
+                Upload.user_id == owner,
+                Upload.idempotency_key == key,
+                Upload.created_at >= since,
+            )
+            .order_by(Upload.created_at.desc())
+            .limit(1)
         )
-        if upload_id is not None:
-            upload.id = upload_id
-        with self._sm.begin() as session:
-            session.add(upload)
-            session.flush()
-            new_id = upload.id
-        return new_id
+        with self._sm() as session:
+            upload = session.scalars(stmt).one_or_none()
+            if upload is None:
+                return None
+            return OwnedUpload(
+                id=upload.id,
+                storage_path=upload.storage_path,
+                original_filename=upload.original_filename,
+            )
 
     def get_owned_upload(self, *, user_id: str, upload_id: str) -> OwnedUpload | None:
         """Return the caller-owned upload, or ``None`` if missing or foreign.

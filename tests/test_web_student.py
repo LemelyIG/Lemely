@@ -19,7 +19,7 @@ and onboarding on ``/api/me/student-profile*``, each tested in its own module.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -817,6 +817,185 @@ def test_upload_is_not_gated_by_verification(seeded_store: HistoryStore) -> None
     assert resp.status_code == 200, resp.text
     assert resp.json()["paperId"]
     upload_repo.create_upload.assert_called_once()
+    app.dependency_overrides.clear()
+
+
+# ── Idempotency-Key (B6a) ────────────────────────────────────────────────────
+#
+# Postgres-backed (mirrors `test_correct_succeeds_once_verified`'s wiring):
+# the dedupe window is enforced by `StudentUploadRepository` against a real
+# unique index (migration 0036), which a mocked repo cannot exercise.
+
+
+def test_upload_same_idempotency_key_twice_dedupes(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A retried upload (double-tap, or an offline-queue replay of a request
+    that in fact reached the server) with the same key returns the original
+    `paperId` and never touches storage a second time."""
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    headers = {"Idempotency-Key": "retry-key-00001"}
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] == resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 1
+    app.dependency_overrides.clear()
+
+
+def test_upload_different_idempotency_keys_create_two_rows(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-aaaaaaaa"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-bbbbbbbb"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] != resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 2
+    app.dependency_overrides.clear()
+
+
+def test_upload_malformed_idempotency_key_is_422(seeded_store: HistoryStore) -> None:
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+
+    upload_repo = MagicMock()
+    storage_backend = MagicMock()
+    student_id = uuid.uuid4()
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "short"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 422, resp.text
+    upload_repo.create_upload.assert_not_called()
+    storage_backend.upload.assert_not_called()
+    app.dependency_overrides.clear()
+
+
+def test_upload_idempotency_key_older_than_window_creates_new_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A key last used more than 24h ago no longer dedupes: the retry gets its
+    own new row and the stale row's key is released rather than blocking the
+    insert (the unique index has no time bound of its own, migration 0036)."""
+    import sqlalchemy as sa
+
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    old_upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=old_upload_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{old_upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=10,
+                idempotency_key="stale-key-00001",
+            )
+        )
+    stale = datetime.now(UTC) - timedelta(hours=25)
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text("UPDATE uploads SET created_at = :ts WHERE id = :id"),
+            {"ts": stale, "id": old_upload_id},
+        )
+        session.commit()
+
+    storage_backend = FakeStorageBackend()
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "stale-key-00001"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    new_paper_id = resp.json()["paperId"]
+    assert new_paper_id != str(old_upload_id)
+
+    with pg_sessionmaker() as session:
+        count = session.execute(
+            sa.text("SELECT COUNT(*) FROM uploads WHERE user_id = :uid"), {"uid": student_id}
+        ).scalar_one()
+    assert count == 2
     app.dependency_overrides.clear()
 
 

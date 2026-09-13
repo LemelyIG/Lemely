@@ -22,6 +22,7 @@ converter docstring calls out which fields are data-backed vs structurally empty
 
 from __future__ import annotations
 
+import re
 import tempfile
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -30,7 +31,7 @@ from typing import Annotated, NoReturn, TypedDict
 
 import anyio
 import structlog
-from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
 
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
@@ -64,7 +65,7 @@ from lemely.db.notification_repo import NotificationService
 from lemely.db.parent_repo import ParentLinkService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.student_profile_repo import StudentProfileService, SubjectEnrolmentRow
-from lemely.db.upload_repo import StudentUploadRepository, UploadRun
+from lemely.db.upload_repo import IDEMPOTENCY_KEY_WINDOW, StudentUploadRepository, UploadRun
 from lemely.db.xp_repo import UserZoneReader, XpService, civil_date_in_zone
 from lemely.io.det.profiles import get_profile
 from lemely.io.gemini import GeminiClient
@@ -622,6 +623,10 @@ def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
 
 # ── Upload a scan (self-mark ingest) ──────────────────────────────────────────
 
+#: Client-generated, per-attempt dedupe token (D-style: this is the shape a
+#: UUID or similar opaque token already takes; wide enough to admit either).
+_IDEMPOTENCY_KEY_RE = re.compile(r"^[A-Za-z0-9._-]{8,128}$")
+
 
 @router.post("/student/uploads", response_model=StudentUploadResponse)
 async def student_upload(
@@ -631,6 +636,7 @@ async def student_upload(
     storage_backend: Annotated[StorageBackend, Depends(get_storage_backend)],
     scan: Annotated[UploadFile, File()],
     mark_scheme: Annotated[UploadFile | None, File()] = None,
+    idempotency_key: Annotated[str | None, Header(alias="Idempotency-Key")] = None,
 ) -> StudentUploadResponse:
     """Persist a student's scanned paper (+ optional mark scheme) and register it.
 
@@ -640,7 +646,25 @@ async def student_upload(
     :class:`Upload` row's id), and the client filename is sanitised to a
     basename. The returned ``paperId`` is passed back to ``POST
     /api/student/correct`` to run the self-mark pipeline over this scan.
+
+    ``Idempotency-Key`` is optional but, when sent, dedupes retries of the
+    *same* upload attempt (double-tap, or the offline queue replaying a
+    request that in fact already reached the server, Task 10) for 24h per
+    user: a hit returns the original ``paperId`` with this same 200 shape and
+    never re-reads or re-uploads the scan. See migration 0036 for the race
+    this closes.
     """
+    if idempotency_key is not None and not _IDEMPOTENCY_KEY_RE.fullmatch(idempotency_key):
+        raise HTTPException(status_code=422, detail="Malformed Idempotency-Key header")
+
+    if idempotency_key is not None:
+        since = datetime.now(UTC) - IDEMPOTENCY_KEY_WINDOW
+        existing = upload_repo.find_by_idempotency_key(
+            user_id=auth.user_id, key=idempotency_key, since=since
+        )
+        if existing is not None:
+            return StudentUploadResponse(paperId=str(existing.id))
+
     paper_id = uuid.uuid4()
     object_prefix = f"uploads/{auth.user_id}/{paper_id.hex}"
 
@@ -667,15 +691,16 @@ async def student_upload(
             mark_scheme.content_type,
         )
 
-    upload_repo.create_upload(
+    new_id = upload_repo.create_upload(
         user_id=auth.user_id,
         storage_path=object_path,
         original_filename=scan.filename,
         content_type=scan.content_type,
         byte_size=len(scan_bytes),
         upload_id=paper_id,
+        idempotency_key=idempotency_key,
     )
-    return StudentUploadResponse(paperId=str(paper_id))
+    return StudentUploadResponse(paperId=str(new_id))
 
 
 # ── Reading a run that outlived its browser tab ───────────────────────────────
