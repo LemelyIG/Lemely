@@ -248,6 +248,86 @@ def test_list_review_queue_happy_path_shape(
     assert row["maximumMarks"] == 2
     assert row["questionId"] == "1"
     assert row["waitingHours"] >= 0
+    # No params behaves exactly as before, plus a `nextCursor` that is null
+    # once the whole (small) queue fits on one page.
+    assert body["nextCursor"] is None
+
+
+# ── Cursor pagination (B6a) ──────────────────────────────────────────────────
+
+
+def _seed_teacher_with_n_items(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    count: int,
+) -> tuple[uuid.UUID, list[uuid.UUID]]:
+    """Seed one teacher/student pair with ``count`` open review items, each a
+    minute apart starting five hours ago. Returns (teacher_id, item_ids)
+    ordered oldest-first."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+    base = datetime.now(UTC) - timedelta(hours=5)
+    item_ids: list[uuid.UUID] = []
+    for i in range(count):
+        attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+            user_id=str(student),
+            report=_report([_question(str(i), awarded=0, maximum=2)]),
+        )
+        with pg_sessionmaker() as session:
+            item = session.scalars(
+                sa.select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+            ).first()
+            assert item is not None
+            item_id = item.id
+        with pg_sessionmaker() as session:
+            session.execute(
+                sa.text("UPDATE review_queue SET created_at = :ts WHERE id = :id"),
+                {"ts": base + timedelta(minutes=i), "id": item_id},
+            )
+            session.commit()
+        item_ids.append(item_id)
+    return teacher, item_ids
+
+
+def test_list_review_queue_paginates_with_limit_and_cursor(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, item_ids = _seed_teacher_with_n_items(pg_sessionmaker, class_service, 3)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get("/api/teacher/review", params={"limit": 1})
+    assert resp.status_code == 200
+    body = resp.json()
+    assert len(body["items"]) == 1
+    assert body["items"][0]["itemId"] == str(item_ids[0])
+    assert body["nextCursor"] is not None
+
+    resp2 = client.get("/api/teacher/review", params={"limit": 1, "cursor": body["nextCursor"]})
+    assert resp2.status_code == 200
+    body2 = resp2.json()
+    assert len(body2["items"]) == 1
+    assert body2["items"][0]["itemId"] == str(item_ids[1])
+
+
+def test_list_review_queue_malformed_cursor_is_422(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher, _ = _seed_teacher_with_n_items(pg_sessionmaker, class_service, 1)
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get("/api/teacher/review", params={"cursor": "not-a-valid-cursor!!"})
+    assert resp.status_code == 422
 
 
 def test_get_review_item_happy_path_shape(

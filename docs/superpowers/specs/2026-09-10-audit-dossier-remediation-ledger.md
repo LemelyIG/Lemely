@@ -18,20 +18,20 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 
 | # | id | lane | severity/verdict | phase | packet | status | evidence |
 |---|---|---|---|---|---|---|---|
-| 1 | `no-optimistic-flashcard-grading` | native | critical | B | B5 | pending |  |
+| 1 | `no-optimistic-flashcard-grading` | native | critical | B | B5 | done B5 | `npx vitest run tests/unit/flashcardSession.test.ts tests/unit/capabilityWiring.test.ts` — `FlashcardReview.tsx` advances `index` before `reviewCard.mutate`; `applyGradeOutcome` (`lib/flashcardSession.ts`) reconciles settled/failed outcomes; `FailedGradesBanner` names each unsettled card with Retry |
 | 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | pending |  |
 | 3 | `silent-update-swap` | native | critical | A | A7 | done A7 | `npx vitest run tests/unit/swSource.test.ts tests/unit/serviceWorkerUpdate.test.ts` |
 | 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 5 | `nav-1` | native | critical | B | B2 | pending |  |
-| 6 | `offline-1` | native | critical | B | B6 | pending |  |
+| 6 | `offline-1` | native | critical | B | B6 | pending | backend half: idempotency key, Task 9, `pytest --no-cov tests/test_web_student.py` |
 | 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 9 | `T1` | native | critical | B | B2 | pending |  |
 | 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
-| 11 | `zero-haptics-anywhere` | native | high | B | B5 | pending |  |
+| 11 | `zero-haptics-anywhere` | native | high | B | B5 | done B5 | `npx vitest run tests/unit/haptics.test.ts` — `lib/haptics.ts`'s `haptic()`, called on `ConfirmModal`'s confirm tap and once per finished `FlashcardReview` session |
 | 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
 | 13 | `no-install-affordance` | native | high | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
-| 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | pending |  |
+| 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/routeSkeleton.test.ts tests/unit/loadingTiers.test.ts` |
 | 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
 | 16 | `nav-2` | native | high | B | B3 | pending |  |
 | 17 | `nav-3` | native | high | B | B2 | pending |  |
@@ -41,13 +41,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
 | 22 | `no-pre-mount-shell` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 23 | `review-queue-unbounded-unvirtualized` | native | high | B | B6 | pending |  |
-| 24 | `student-shell-blanks-on-cold-load` | native | high | B | B1 | pending |  |
-| 25 | `badging-api-unused-despite-ready-data` | native | high | B | B5 | pending |  |
+| 24 | `student-shell-blanks-on-cold-load` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/routeSkeleton.test.ts` (StudentLayout/TeacherLayout render the full shell with `<RouteSkeleton />` in `<main>` instead of blanking on `isPending`) |
+| 25 | `badging-api-unused-despite-ready-data` | native | high | B | B5 | done B5 | `npx vitest run tests/unit/badging.test.ts tests/unit/capabilityWiring.test.ts` — `lib/badging.ts`'s `setAppBadge()`, driven by `BadgeSync` (mounted per authenticated portal, `useNotificationCounts`) and `sw.ts`'s `handlePush` via the cached `unread` on the push content-request handshake reply (pushes carry no payload, `lemely/web/push.py:16`) |
 | 26 | `camera-scanner-basics-only` | native | high | B | B5 | pending |  |
-| 27 | `web-share-unused-on-result-screen` | native | high | B | B5 | pending |  |
+| 27 | `web-share-unused-on-result-screen` | native | high | B | B5 | done B5 | `npx vitest run tests/unit/share.test.ts tests/unit/capabilityWiring.test.ts` — `lib/share.ts`'s `shareResult`, a "Share" button on `PaperResult.tsx`'s header when a `paperId` is present and the result is not `live`; falls back to copy-link + toast (no result download exists on this screen to fall back to instead) |
 | 28 | `login-links-under-44px-tap-target` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login.tsx LINK_CLASS gains `pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:min-h-11` (gated, not unconditional — see commit 57de3959), applied identically across Login/SignupDetails/SignupParent |
 | 29 | `no-safe-area-insets` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 30 | `no-ios-splash-screens` | native | high | B | B1 | pending |  |
+| 30 | `no-ios-splash-screens` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/splashScreens.test.ts`; `npm run icons` then `ls public/splash \| wc -l` = 32; `grep -c apple-touch-startup-image dist/index.html` = 32; `grep -c splash/ dist/sw.js` = 0 |
 | 31 | `safe-area-viewport-cover` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 32 | `status-bar-style-default-mismatch` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 33 | `double-tap-zoom-unneutralized` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
@@ -67,13 +67,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 47 | `nav-5` | native | medium | B | B3 | pending |  |
 | 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts tests/unit/cameraAutoStart.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer, but per review HIGH finding does not auto-acquire the device on that unprompted mount: `shouldAutoStartCamera` predicate tested directly, gesture-gating wiring (CorrectPaper→CameraCapture `autoStart` prop, CameraCapture's getUserMedia effect gated on `started`) verified by source-level check |
-| 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | pending |  |
+| 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | done B5 | `npx vitest run tests/unit/capabilityWiring.test.ts` (source-text gate — `useWakeLock` is DOM/effect-driven and untestable under this repo's jsdom-less unit runner) — `lib/wakeLock.ts`'s `useWakeLock`, held by `CameraCapture.tsx` while `phase === "live" && started` |
 | 51 | `no-overscroll-behavior` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 52 | `no-orientation-policy` | native | medium | B | B5 | pending |  |
+| 52 | `no-orientation-policy` | native | medium | B | B5 | done B5 | `npx vitest run tests/unit/capabilityWiring.test.ts` — `CameraCapture.tsx` carries a landscape hint (Tailwind 4's built-in `landscape:` variant, gated further on `pointer-coarse:`) recommending portrait for the best scan; the manifest's `orientation: "any"` (DESIGN.md, Phase A) is otherwise unchanged — this is guidance, not a lock |
 | 53 | `no-standalone-media-query` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 54 | `touch-callout-select-on-chrome` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 55 | `T4` | native | medium | B | B2 | pending |  |
-| 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | pending |  |
+| 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | done B1 | DESIGN.md §12 "Skeletons, not spinners" bullet notes the practice generator's `Create` button as the documented sub-1s-mutation exception; no code change |
 | 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | pending |  |
 | 58 | `kb-6` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 59 | `nav-6` | native | low | B | B2 | pending |  |

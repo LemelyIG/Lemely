@@ -66,9 +66,16 @@ class ReviewQueueItemDTO(ApiModel):
 
 
 class ReviewQueueListDTO(ApiModel):
-    """Response for ``GET /api/teacher/review``."""
+    """Response for ``GET /api/teacher/review``.
+
+    ``nextCursor`` is an opaque, urlsafe-base64 keyset token (``created_at``
+    + ``itemId``) the client echoes back as the ``cursor`` query param to
+    fetch the next page; ``null`` once the caller's whole queue fits on this
+    page.
+    """
 
     items: list[ReviewQueueItemDTO]
+    nextCursor: str | None = None
 
 
 class ReviewItemDetailDTO(ApiModel):
