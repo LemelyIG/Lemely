@@ -12,6 +12,7 @@ import {
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
 import { CameraCapture } from "@/components/CameraCapture"
+import { assemblePagesToPdf } from "@/lib/pdf/assemblePages"
 import {
   advanceStage,
   annotateActiveStage,
@@ -333,6 +334,15 @@ export function CorrectPaper() {
   const navigate = useNavigate()
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
+  // Task 8 (B5b) · multi-file picker. Choosing more than one image assembles
+  // them into the same single `scanFile` the rest of this screen already
+  // knows how to handle (upload, retry-in-place, the "Scan ready" summary) —
+  // there is no second, multi-file code path downstream of this. `assembling`
+  // covers the brief async gap while `assemblePagesToPdf` runs; `scanFileError`
+  // is this field's own inline error, separate from the run-level `error`
+  // below (a bad file selection is not a failed marking run).
+  const [assemblingScan, setAssemblingScan] = useState(false)
+  const [scanFileError, setScanFileError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(initialStages)
   const [error, setError] = useState<string | null>(null)
@@ -399,7 +409,41 @@ export function CorrectPaper() {
     setScanFile(file)
     setPaperId(null)
     setError(null)
+    setScanFileError(null)
     setStages(initialStages)
+  }
+
+  /**
+   * Task 8 (B5b). `FileDrop`'s multi-select path: 0 files clears the field,
+   * 1 behaves exactly like the single-file picker always has, and 2+ photos
+   * assemble into one PDF via the same `assemblePagesToPdf` the camera flow
+   * uses. A PDF mixed with anything else (or more than one PDF) is refused
+   * outright rather than guessed at — a "one paper per upload" mark scheme
+   * checker cannot silently decide which PDF the reader meant.
+   */
+  const chooseScanFiles = async (files: File[]) => {
+    setScanFileError(null)
+    if (files.length === 0) {
+      chooseScan(null)
+      return
+    }
+    if (files.length === 1) {
+      chooseScan(files[0])
+      return
+    }
+    if (files.some((file) => file.type === "application/pdf")) {
+      setScanFileError("Choose either one PDF or a set of photos, not both.")
+      return
+    }
+    setAssemblingScan(true)
+    try {
+      const assembled = await assemblePagesToPdf(files)
+      chooseScan(assembled)
+    } catch {
+      setScanFileError("Could not combine those photos into one PDF. Try again.")
+    } finally {
+      setAssemblingScan(false)
+    }
   }
 
   const chooseScanSource = (source: ScanSource) => {
@@ -712,9 +756,12 @@ export function CorrectPaper() {
                 accept="application/pdf,image/*"
                 file={scanFile}
                 onFileChange={chooseScan}
-                busy={busy}
+                multiple
+                onFilesChange={chooseScanFiles}
+                busy={busy || assemblingScan}
+                error={scanFileError}
                 clearLabel="Choose a different scan"
-                hint="One paper per upload. Every page of it, in order."
+                hint="One paper per upload. Choose every page's photo at once, in order - or a single PDF."
               />
             ) : busy ? (
               <div className="rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-sm text-ink-muted">

@@ -79,7 +79,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 59 | `nav-6` | native | low | B | B2 | done B2 | `npx vitest run tests/unit/scrollRestorationKey.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
 | 61 | `grading-thumbnail-no-decoding-async` | native | low | A | A4 | done A4 | `npm run build` (web/) — `Grading.tsx` thumbnail `<img>` now has `decoding="async"` |
-| 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | pending |  |
+| 62 | `file-picker-single-file-no-multiple` | native | low | B | B5 | done B5 | `npx vitest run tests/unit/fileDropMultiple.test.ts tests/unit/assemblePages.test.ts` — `FileDrop`'s `multiple`/`onFilesChange`, wired in `CorrectPaper.tsx`'s scan field (2+ photos assemble into one PDF via `lib/pdf/assemblePages`; a PDF mixed with anything else is refused) |
 | 63 | `silent-401-push-config-every-load` | native | low | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
 | 64 | `sw-registers-on-staging-but-no-fetch-handling` | native | low | A | A7 | done A7 | `already satisfied by A6's unconditional share-target fetch listener (sw.ts, outside precacheEnabled) — verified via tests/unit/swSource.test.ts` |
 | 65 | `min-h-screen-no-dvh-fallback` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
