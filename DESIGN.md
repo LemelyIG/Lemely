@@ -689,12 +689,48 @@ rotates to read a wide mark scheme. Phase A ships no orientation-specific
 layout of its own; a dedicated landscape overlay or layout is Phase B's
 scope, not this one's.
 
-**Gestures.** Phase A ships none. The disambiguation rule
+**Gestures.** Phase A shipped none. The disambiguation rule
 (`|dx| > 10 && |dx| > 2*|dy|`, distinguishing an intentional horizontal
-swipe from scroll noise) and the actual gesture list — flashcard swipe,
-nav-drawer swipe-dismiss, pull-to-refresh, and the rest — are Phase B's
-scope; this section is a forward pointer, not a spec, and nothing here
-should be read as gesture content Phase A already implements.
+swipe from scroll noise) lives in `src/lib/gestures/dragMath.ts`
+(`shouldCommitDrag`), the single source of truth `useDragGesture`
+(`src/lib/gestures/useDragGesture.ts`) and every gesture built on it read.
+**Edge-swipe-back (standalone only, 24px inline-start edge)** is Task 4's
+(B3) own gesture — `src/lib/nav/edgeSwipeBack.ts` (`edgeSwipeDecision`) plus
+`src/components/edge-swipe-back.tsx` (`EdgeSwipeBack`, mounted by the
+student and teacher layouts, renders nothing). It is gated to a PWA running
+in standalone display mode (a browser tab already owns the platform's own
+back gesture) and to a drag that both starts within 24px of the
+inline-start edge and commits away from it, using the same `backTarget`
+decision `BackControl` (B2) uses. The rest of the gesture list — flashcard
+swipe, nav-drawer swipe-dismiss, pull-to-refresh, quiz page-turn, long-press
+menus — is Task 5/6's (B4) scope; this paragraph is a forward pointer for
+those, not a spec, and nothing here beyond edge-swipe-back should be read
+as gesture content already implemented.
+
+**Navigation chrome (Task 4, B3).** Three constants — `SIDEBAR_WIDTH` (252),
+`SIDEBAR_BREAKPOINT` (820), `BOTTOM_NAV_HEIGHT` (56), exported from
+`src/components/ui/nav-shells.tsx` and backed by `index.css`'s
+`--sidebar-width`/`--breakpoint-sidebar`/`--bottom-nav-height` tokens (§14
+rule 3: a named token, never an arbitrary `w-[252px]`/`min-[820px]`
+literal) — are the whole retrofit's shared vocabulary. `w-sidebar` and the
+`sidebar:` variant back every portal's `<aside>`; `.pb-bottom-nav` clears
+`<main>` from the fixed `BottomNav` below that breakpoint. Below it, the
+student portal shows a five-tab `BottomNav`: Overview · Correct · Classes ·
+Profile · More (opens the existing `NavDrawer`); the teacher portal shows
+Overview · Grading · Review · Classes · More. The student portal's "Correct"
+tab renders as a raised accent-circle emphasis tab (`BottomNav`'s
+`emphasisId`), and a matching `BottomActionBar` ("Correct a paper") appears
+above the bar on Overview, Subject and PaperResult — the three routes whose
+`handle.primaryAction === "correct"` — mirroring the header's own CTA, which
+stays for ≥ `SIDEBAR_BREAKPOINT` instead. The admin portal is desktop-first
+and carries no `BottomNav` at all; its two lanes reach every screen through
+`SidebarNav` and the `NavDrawer` alone. `TAB_ROOTS`
+(`src/lib/nav/scrollRestorationKey.ts`) names the eight `BottomNav`/
+`SidebarNav` destinations that restore scroll position by pathname rather
+than by history entry when a reader switches away and back — the same set
+`src/lib/nav/tabMemory.ts`'s `useTabState` reads for per-tab UI memory (a
+filter, an expanded section), so the two can never disagree about what
+counts as a tab.
 
 **Scanner (Task 8, B5).** `CameraCapture.tsx`'s live viewfinder runs a
 `requestAnimationFrame` loop (every 3rd frame, once the stream is live) that

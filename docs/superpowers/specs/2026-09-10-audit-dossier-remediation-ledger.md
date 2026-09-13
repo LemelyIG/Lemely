@@ -33,7 +33,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 13 | `no-install-affordance` | native | high | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
 | 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/routeSkeleton.test.ts tests/unit/loadingTiers.test.ts` |
 | 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
-| 16 | `nav-2` | native | high | B | B3 | pending |  |
+| 16 | `nav-2` | native | high | B | B3 | done B3 | `npx vitest run tests/unit/navShells.test.ts tests/unit/navigation.test.ts tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` — `BottomNav` mounted in `student/index.tsx`/`teacher/index.tsx` below the `sidebar` breakpoint (five tabs each), `SidebarNav` mounted in all three portals above it |
 | 17 | `nav-3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 18 | `nav-4` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
@@ -53,18 +53,18 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 33 | `double-tap-zoom-unneutralized` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 34 | `modal-drawer-scroll-lock-fragile` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/scrollLock.test.ts tests/unit/checkNativeInvariants.test.ts` — pass; `node scripts/check-native-invariants.mjs` — all 20 checks pass |
 | 35 | `overscroll-behavior-absent` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 36 | `TT-1` | native | high | B | B3 | pending |  |
+| 36 | `TT-1` | native | high | B | B3 | done B3 | `npx vitest run tests/unit/navShells.test.ts tests/unit/nativeMechanics.test.ts` — `BottomNav`/`SidebarNav` rows carry `pointer-coarse:min-h-11` (§6.1's 44px floor); `BottomNav`'s own tab cells are `min-h-14` |
 | 37 | `T2` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 38 | `T3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/overlayExit.test.ts` — `Modal`/`NavDrawer` play `lm-out`/`lm-slide-out-start` over `dur-fast`/`ease-in-soft` on close and unmount on `animationend` (`lib/overlayPhase.ts`), instead of vanishing the instant `open` goes false |
 | 39 | `role-switcher-no-active-state` | native | medium | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
 | 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |
-| 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | pending |  |
+| 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | done B3 | `npx vitest run tests/unit/backTarget.test.ts tests/unit/edgeSwipeBack.test.ts` — `BackControl` (B2) is the tap affordance; `EdgeSwipeBack` (B3, `src/components/edge-swipe-back.tsx`) adds the standalone-only 24px inline-start edge-swipe gesture, both resolving through the same `backTarget` decision |
 | 43 | `no-launch-handler` | native | medium | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
 | 44 | `no-periodic-update-check` | native | medium | A | A7 | done A7 | `npx vitest run tests/unit/serviceWorkerUpdate.test.ts (scheduleUpdateChecks: visibilitychange + 60min interval)` |
 | 45 | `kb-3` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
 | 46 | `kb-4` | native | medium | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — see kb-2 evidence; same commit |
-| 47 | `nav-5` | native | medium | B | B3 | pending |  |
+| 47 | `nav-5` | native | medium | B | B3 | done B3 | `npx vitest run tests/unit/scrollRestorationKey.test.ts tests/unit/tabMemory.test.ts` — `TAB_ROOTS` filled with the eight `BottomNav`/`SidebarNav` tab roots; switching tabs and back restores scroll (`ScrollRestoration getKey`) and, where adopted, per-tab UI state (`useTabState`) |
 | 48 | `offline-4` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 49 | `correct-paper-defaults-to-file-not-camera` | native | medium | A | A4 | done A4 | `npx vitest run tests/unit/correctPaperSource.test.ts tests/unit/cameraAutoStart.test.ts` — CorrectPaper opens to camera on a coarse (touch) pointer, but per review HIGH finding does not auto-acquire the device on that unprompted mount: `shouldAutoStartCamera` predicate tested directly, gesture-gating wiring (CorrectPaper→CameraCapture `autoStart` prop, CameraCapture's getUserMedia effect gated on `started`) verified by source-level check |
 | 50 | `wake-lock-unused-during-multi-shot-capture` | native | medium | B | B5 | done B5 | `npx vitest run tests/unit/capabilityWiring.test.ts` (source-text gate — `useWakeLock` is DOM/effect-driven and untestable under this repo's jsdom-less unit runner) — `lib/wakeLock.ts`'s `useWakeLock`, held by `CameraCapture.tsx` while `phase === "live" && started` |
@@ -239,13 +239,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 219 | `x-confidence-weakness-superset` | ui | medium |  |  | no-action | production already better |
 | 220 | `x-imageplaceholder-vs-honest-fallback` | ui | medium |  |  | no-action | production already better |
 | 221 | `x-mark-grade-boundary-family-superset` | ui | medium |  |  | no-action | production already better |
-| 222 | `x-navshells-dead-code` | ui | medium | B | B3 | pending |  |
+| 222 | `x-navshells-dead-code` | ui | medium | B | B3 | done B3 | `npx vitest run tests/unit/navShells.test.ts` — `nav-shells.tsx`'s header no longer says the wiring is pending; `BottomNav`/`SidebarNav` are real, mounted call sites in all three portals, not dead code |
 | 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | pending |  |
 | 224 | `x-copy-gamification-hype-voice` | ui | medium |  |  | skipped | skip: hype copy not adopted |
 | 225 | `x-dark-deliberately-deferred` | ui | medium | C | C5 | pending |  |
 | 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | pending |  |
 | 227 | `x-ia-breadcrumbs-canvas-regression` | ui | medium |  |  | no-action | production already better |
-| 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | pending |  |
+| 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done B3 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
 | 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | pending |  |
 | 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | pending | split: B7 adds e2e half, C4 adds unit half (assigned here to B7) |
@@ -304,7 +304,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | pending |  |
 | 285 | `x-density-canvas-knob-is-decorative` | ui | low |  |  | no-action | dossier: no production change |
 | 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | pending |  |
-| 287 | `x-ia-navshells-unused-abstraction` | ui | low | B | B3 | pending |  |
+| 287 | `x-ia-navshells-unused-abstraction` | ui | low | B | B3 | done B3 | `npx vitest run tests/unit/navShells.test.ts` — `BottomNav`/`SidebarNav` render through `NavShellItem`'s `NavLink` wiring in all three portals; no longer an unused abstraction |
 | 288 | `x-ia-quests-badges-not-built` | ui | low | D | D1 | pending |  |
 | 289 | `x-ia-student-home-abc-exploration` | ui | low |  |  | no-action | dossier: no production change |
 | 290 | `x-motifs-avatar-circle-vs-squircle` | ui | low |  |  | no-action | dossier: no production change |
