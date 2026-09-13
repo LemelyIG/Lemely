@@ -13,8 +13,10 @@ import {
   mcq,
   pricing,
   roleTabs,
+  rolesIntro,
   subjects,
   subjectsNote,
+  subjectsTitle,
 } from "@/portals/marketing/data"
 
 /*
@@ -142,17 +144,40 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
   })
 
   /*
-   * Three call sites, not two: the hero's primary CTA, the close CTA, and the
-   * per-plan CTA in the "Plans" section. That third one renders nothing today
-   * — `pricing` is `[]` (the `landing copy claims only what the product does`
-   * describe block above pins that directly) — but the source line exists and
-   * was `navigate("/login")` before this task, so it is corrected along with
-   * the two live ones rather than left to silently reintroduce the pre-signup
-   * routing the moment a real plan ships.
+   * Four call sites, not three: the hero's primary CTA, the close CTA, the
+   * per-plan CTA in the "Plans" section, and the per-role CTA rendered once
+   * for each `roleTabs` entry (`onClick={() => navigate(r.cta.to)}`). The
+   * per-plan one renders nothing today — `pricing` is `[]` (the `landing
+   * copy claims only what the product does` describe block above pins that
+   * directly) — but the source line exists and was `navigate("/login")`
+   * before this task, so it is corrected along with the two live ones rather
+   * than left to silently reintroduce the pre-signup routing the moment a
+   * real plan ships.
+   *
+   * The fourth call site is `navigate(r.cta.to)`, not a literal `/signup`
+   * string, so the regex below cannot see it and the count it checks stays
+   * at three. `r.cta.to` is instead pinned directly by the data-level
+   * assertion further down this block — that is what catches a `roleTabs`
+   * entry silently re-targeted at `/login`.
    */
   it("routes exactly three CTAs to /signup", () => {
     const matches = source.match(/navigate\(["']\/signup["']\)/g) ?? []
     expect(matches).toHaveLength(3)
+  })
+
+  /*
+   * I-2: the fourth CTA call site above (`navigate(r.cta.to)`) is invisible
+   * to both source-text checks in this block, because its destination is a
+   * data value, not a literal string. Pointing `roleTabs[].cta.to` at
+   * `/login` would pass every assertion above while reintroducing exactly
+   * the defect this describe block exists to prevent. This asserts the data
+   * directly instead of the source text.
+   */
+  it("routes every roleTabs CTA to /signup or /join, never to /login", () => {
+    for (const r of roleTabs) {
+      expect(r.cta.to === "/join" || r.cta.to.startsWith("/signup")).toBe(true)
+      expect(r.cta.to).not.toBe("/login")
+    }
   })
 
   /*
@@ -171,8 +196,19 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
 })
 
 describe("landing copy claims only what the product does — P4.9", () => {
-  /** Every string a visitor can read on the page, flattened. */
-  const allCopy = [
+  /*
+   * Every string a visitor can read on the page, flattened.
+   *
+   * I-5: this used to flatten straight into a joined string, which handles
+   * exactly one level of nesting. A third level, or any non-string leaf,
+   * makes `Object.values`/`flatMap` return an object instead of a string,
+   * `.join("\n")` renders it as `[object Object]`, and every `bannedClaims`
+   * regex below silently stops matching that field while every assertion
+   * still passes — the one failure mode this file exists to prevent. Kept
+   * as an intermediate array and checked with `typeof` before joining, so a
+   * shape violation throws here instead of vanishing into a join.
+   */
+  const copyValues = [
     // `primaryCta`/`secondaryCta` are `{label, to/anchor}` objects, not bare
     // strings, so they need one more level of flattening than the rest.
     ...Object.values(landingHero).flatMap((v) => (typeof v === "string" ? v : Object.values(v))),
@@ -182,7 +218,16 @@ describe("landing copy claims only what the product does — P4.9", () => {
     ...roleTabs.flatMap((r) => [r.label, r.heading, r.body, r.cta.label]),
     ...subjects.map((s) => s.name),
     subjectsNote,
-  ].join("\n")
+    // I-6: `rolesIntro` and `subjectsTitle` moved out of `Landing.tsx` into
+    // `data.ts` so they are gated here, same as everything else on the page.
+    rolesIntro.title,
+    rolesIntro.body,
+    subjectsTitle,
+  ]
+
+  copyValues.forEach((v) => expect(typeof v).toBe("string"))
+
+  const allCopy = copyValues.join("\n")
 
   /*
    * Each entry is a claim that was live on this page and had no

@@ -43,7 +43,7 @@ export const landingHero = {
    * already parsed into the local cache. "Checked against" is the claim that
    * survives however the scheme arrived.
    */
-  subtext: "You upload a scanned paper. Every mark is checked against the real Cambridge scheme.",
+  subtext: "You upload a scanned paper. Every mark is checked against the official Cambridge mark scheme.",
   /* Object, not a bare string: the label is copy, the route is a fact about
      the product, and later work (Landing.tsx, Task 2) needs both. */
   primaryCta: { label: "Get started", to: "/signup" },
@@ -130,7 +130,7 @@ export const loopSteps: LoopStep[] = [
   {
     step: "Scan",
     title: "Scan or upload your paper",
-    body: "A photo or a PDF works. Lemely works out which paper this is from the scan itself.",
+    body: "A photo or a PDF works. Add the mark scheme if we do not have it yet.",
   },
   {
     step: "Mark",
@@ -160,7 +160,9 @@ export interface RoleTab {
  *   parent  -> `/join`, the same destination the persistent header's own
  *              "Parents" link already uses (a parent account only ever comes
  *              from a child-issued invite, never from `/login`).
- *   teacher -> `/signup/teacher`, `routers/review.py`'s confidence floor.
+ *   teacher -> `/signup/teacher`, `teacher_paper_repo.py`'s low-confidence
+ *              review queue (below `REVIEW_CONFIDENCE_THRESHOLD`, marks at or
+ *              above it count without a teacher seeing them).
  */
 export const roleTabs: RoleTab[] = [
   {
@@ -168,23 +170,34 @@ export const roleTabs: RoleTab[] = [
     label: "Student",
     heading: "See exactly where the marks went",
     body: "Scan your paper on your phone. Get it marked against the real scheme, and practise the questions you dropped.",
-    cta: { label: "Get started", to: "/signup/student" },
+    cta: { label: "Mark a paper", to: "/signup/student" },
   },
   {
     id: "parent",
     label: "Parent",
     heading: "See what your child sees",
-    body: "Your child sends you a code. Enter it, set a password, and see the same marked paper they see.",
+    body: "Your child sends you a code. Set a password, and see their grades and the topics that need work.",
     cta: { label: "Get parent access", to: "/join" },
   },
   {
     id: "teacher",
     label: "Teacher",
     heading: "Marking cited to the scheme, not guessed",
-    body: "Every mark is checked against the official scheme and shown to you before it counts. Marking a set of scripts takes less of your evening.",
-    cta: { label: "Get started", to: "/signup/teacher" },
+    body: "Every mark is cited to the official scheme. Anything the marker is unsure of comes to you instead of being guessed.",
+    cta: { label: "Mark a set", to: "/signup/teacher" },
   },
 ]
+
+/*
+ * I-1/I-6: the "who it serves" section intro and the "Subjects covered"
+ * heading, moved here from `Landing.tsx` so every visible string on the page
+ * is gated by `marketing.test.ts`'s `allCopy` check. Both are plain
+ * restatements of what the roles/subjects data below already says.
+ */
+export const rolesIntro = {
+  title: "One marked paper, three people it helps",
+  body: "The student gets a study plan. The teacher gets a signal. The parent gets an answer.",
+}
 
 /* ── Subjects covered ───────────────────────────────────────────────────── */
 
@@ -192,6 +205,8 @@ export interface Subject {
   code: string
   name: string
 }
+
+export const subjectsTitle = "Subjects covered"
 
 export const subjects: Subject[] = [
   { code: "0580", name: "Mathematics" },

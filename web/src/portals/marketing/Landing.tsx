@@ -14,8 +14,10 @@ import {
   pricing,
   pricingPlaceholder,
   roleTabs,
+  rolesIntro,
   subjects,
   subjectsNote,
+  subjectsTitle,
 } from "./data"
 
 /*
@@ -334,12 +336,9 @@ export function Landing() {
       {/* ── Who it serves ────────────────────────────────────────────────── */}
       <Section>
         <Reveal>
-          <h2 className="text-display-xl mt-4 text-ink text-balance">
-            One engine, three people served
-          </h2>
+          <h2 className="text-display-xl mt-4 text-ink text-balance">{rolesIntro.title}</h2>
           <p className="text-body-lg mt-4 max-w-[62ch] text-pretty text-ink-muted">
-            The same marked paper becomes a study plan for the student, a teaching signal for
-            the teacher, and a plain answer for the parent who asks how she is doing.
+            {rolesIntro.body}
           </p>
         </Reveal>
         {/*
@@ -373,7 +372,7 @@ export function Landing() {
       {/* ── Subjects covered ─────────────────────────────────────────────── */}
       <Section>
         <Reveal>
-          <h2 className="text-display-xl mt-4 text-ink text-balance">Subjects covered</h2>
+          <h2 className="text-display-xl mt-4 text-ink text-balance">{subjectsTitle}</h2>
         </Reveal>
         <Reveal delay={80}>
           <div className="mt-8 flex flex-wrap gap-3">
