@@ -25,12 +25,23 @@ describe("scrollRestorationKey", () => {
   })
 
   it("defaults to the module TAB_ROOTS when none is passed", () => {
-    // TAB_ROOTS starts empty in this task (Task 4 fills it), so every route
-    // falls back to its location key by default.
-    expect(scrollRestorationKey({ pathname: "/student", key: "xyz789" })).toBe("xyz789")
+    // Packet B3 (Task 4) filled TAB_ROOTS with the BottomNav/SidebarNav
+    // tab roots, so the module default now keys /student by its pathname.
+    expect(scrollRestorationKey({ pathname: "/student", key: "xyz789" })).toBe("/student")
   })
 
-  it("TAB_ROOTS starts empty", () => {
-    expect(TAB_ROOTS.size).toBe(0)
+  it("Task 4 (B3) fills TAB_ROOTS with the student and teacher tab roots", () => {
+    expect([...TAB_ROOTS].sort()).toEqual(
+      [
+        "/student",
+        "/student/correct",
+        "/student/classes",
+        "/student/profile",
+        "/teacher",
+        "/teacher/grading",
+        "/teacher/review",
+        "/teacher/classes",
+      ].sort(),
+    )
   })
 })

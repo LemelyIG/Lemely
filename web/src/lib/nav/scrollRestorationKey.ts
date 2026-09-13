@@ -8,12 +8,29 @@
  * to the top, which is right for drilling into a subject and back out. A
  * bottom-tab root is different: switching from Overview to Classes and back
  * to Overview is the same screen, and Task 4 (B3) wants it to remember where
- * the reader was scrolled to. `TAB_ROOTS` names those pathnames; this task
- * leaves the set empty (no `BottomNav` yet to populate it with), so every
- * route falls back to the ordinary per-entry key until Task 4 fills it in.
+ * the reader was scrolled to. `TAB_ROOTS` names those pathnames.
+ *
+ * Packet B3 (Task 4): filled with the student and teacher `BottomNav`/
+ * `SidebarNav` roots — the screens a reader actually switches between with a
+ * tab tap rather than drilling into. `/student/correct` is a tab (it is one
+ * of the five `BottomNav` destinations) even though it has no bottom CTA of
+ * its own; admin has no `BottomNav` (desktop-first, see `portals/admin/
+ * index.tsx`) and so contributes no roots here. `lib/nav/tabMemory.ts`'s
+ * `useTabState` imports this same set, so scroll memory and per-tab UI state
+ * (a filter, an expanded section) can never disagree about what counts as a
+ * tab.
  */
 
-export const TAB_ROOTS: ReadonlySet<string> = new Set()
+export const TAB_ROOTS: ReadonlySet<string> = new Set([
+  "/student",
+  "/student/correct",
+  "/student/classes",
+  "/student/profile",
+  "/teacher",
+  "/teacher/grading",
+  "/teacher/review",
+  "/teacher/classes",
+])
 
 export function scrollRestorationKey(
   location: { pathname: string; key: string },

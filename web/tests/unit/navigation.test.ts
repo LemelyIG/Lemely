@@ -2,8 +2,8 @@ import { describe, expect, it } from "vitest"
 
 import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
 import { navItems, resolveTrail, classesItemActive } from "@/portals/teacher/data"
-import { studentRoute } from "@/portals/student"
-import { teacherRoute } from "@/portals/teacher"
+import { studentRoute, STUDENT_BOTTOM_TABS } from "@/portals/student"
+import { teacherRoute, TEACHER_BOTTOM_TABS } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
 import { appRoutes, flattenRoutes } from "@/routes"
@@ -240,6 +240,32 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
       "Home",
       "0625",
     ])
+  })
+})
+
+/*
+ * Packet B3 (Task 4) · BottomNav's tab targets are the one place this task
+ * introduces new navigation destinations (the CTA bar and edge-swipe reuse
+ * existing routes), so they get the same "points at a mounted route" check
+ * every other nav list in this file already gets.
+ */
+describe("BottomNav tabs — B3", () => {
+  it("every student tab points at a mounted student route", () => {
+    for (const tab of STUDENT_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, studentRoutePaths),
+        `${tab.to} is not a mounted student route`,
+      ).toBe(true)
+    }
+  })
+
+  it("every teacher tab points at a mounted teacher route", () => {
+    for (const tab of TEACHER_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, teacherRoutePaths),
+        `${tab.to} is not a mounted teacher route`,
+      ).toBe(true)
+    }
   })
 })
 

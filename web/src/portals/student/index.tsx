@@ -1,9 +1,20 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useEffect, useState } from "react"
-import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
+import { Link, Navigate, NavLink, useLocation, useMatches } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
+import {
+  CalendarBlank,
+  Cards,
+  CaretDown,
+  ChalkboardTeacher,
+  House,
+  List,
+  NotePencil,
+  PencilSimpleLine,
+  UserCircle,
+  type Icon,
+} from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { BackControl } from "@/components/ui/back-control"
@@ -19,6 +30,9 @@ import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
+import { BottomActionBar } from "@/components/ui/bottom-action-bar"
+import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
@@ -28,6 +42,7 @@ import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import type { SubjectRow } from "@/lib/studentTypes"
+import { pageMetaFromMatches } from "@/lib/meta/documentMeta"
 import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from "./data"
 
 /*
@@ -402,43 +417,52 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
 
   return (
     <div className="flex flex-col gap-[22px]">
-      {navGroups.map((grp) => (
-        <div key={grp.label} className="flex flex-col gap-0.5">
-          <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
-          {grp.label === "Student" ? (
-            <>
-              {grp.items.slice(0, 1).map((it) => (
-                <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
-              ))}
-              {overview.data?.subjects.map((subject) => (
-                <SubjectNavGroup
-                  key={subject.code}
-                  subject={subject}
-                  expanded={openCode === subject.code}
-                  onToggle={() => setOpenCode((prev) => (prev === subject.code ? null : subject.code))}
-                  onNavigate={() => setOpenCode(subject.code)}
-                  touch={touch}
-                />
-              ))}
-              {grp.items.slice(1).map((it) => (
-                <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
-              ))}
-            </>
-          ) : (
-            grp.items.map((it) => (
-              <NavRow
-                key={it.to}
-                to={it.to}
-                end={it.end}
-                label={it.label}
-                icon={it.icon}
-                tag={it.tag}
+      {navGroups.map((grp) =>
+        grp.label === "Student" ? (
+          // The subject accordion (`SubjectNavGroup`) is query-driven,
+          // expand/collapse state and all — behaviour the shared
+          // `SidebarNav` primitive's flat `NavShellItem` has no way to
+          // express, so this group stays the bespoke `NavRow` rendering it
+          // always has. The "Marking" group below has none of that and
+          // renders through `SidebarNav` instead — see that branch.
+          <div key={grp.label} className="flex flex-col gap-0.5">
+            <div className="text-eyebrow text-ink-faint px-2 pb-[7px]">{grp.label}</div>
+            {grp.items.slice(0, 1).map((it) => (
+              <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
+            ))}
+            {overview.data?.subjects.map((subject) => (
+              <SubjectNavGroup
+                key={subject.code}
+                subject={subject}
+                expanded={openCode === subject.code}
+                onToggle={() => setOpenCode((prev) => (prev === subject.code ? null : subject.code))}
+                onNavigate={() => setOpenCode(subject.code)}
                 touch={touch}
               />
-            ))
-          )}
-        </div>
-      ))}
+            ))}
+            {grp.items.slice(1).map((it) => (
+              <NavRow key={it.to} to={it.to} end={it.end} label={it.label} icon={it.icon} touch={touch} />
+            ))}
+          </div>
+        ) : (
+          <SidebarNav
+            key={grp.label}
+            aria-label={grp.label}
+            groups={[
+              {
+                label: grp.label,
+                items: grp.items.map((it) => ({
+                  id: it.to,
+                  to: it.to,
+                  end: it.end,
+                  label: it.label,
+                  icon: <it.icon size={16} aria-hidden="true" />,
+                })),
+              },
+            ]}
+          />
+        ),
+      )}
     </div>
   )
 }
@@ -483,7 +507,7 @@ function Sidebar() {
     // is "sidebars, table headers, code blocks, inset areas". Same value the
     // build-era `bg-surface-2` alias resolved to; this is the name the system
     // actually defines.
-    <aside className="hidden min-[820px]:flex w-[246px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <BrandLockup />
 
       <nav aria-label="Student sections" className="overflow-auto lm-scroll">
@@ -586,7 +610,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open student navigation"
-        className="-ms-2 min-[820px]:hidden"
+        className="-ms-2 sidebar:hidden"
       />
       {/* P4.1: the inert mono string is now the same `Breadcrumbs` trail D1.5
           gave the teacher and parent portals, so a student drilled into a
@@ -621,7 +645,12 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
       {onCorrectScreen ? null : (
         <Link
           to="/student/correct"
-          className={buttonVariants({ variant: "primary", size: "md" })}
+          viewTransition
+          // Packet B3 (Task 4): below the `sidebar` breakpoint the thumb-zone
+          // `BottomActionBar` takes over this same action — a fixed CTA at
+          // the very top of a tall phone is the least reachable spot for a
+          // one-handed thumb. See that component's own doc comment.
+          className={cn(buttonVariants({ variant: "primary", size: "md" }), "hidden sidebar:inline-flex")}
         >
           Correct a paper
         </Link>
@@ -686,10 +715,33 @@ export function studentOnboardingRedirect(
   return "/student/onboard"
 }
 
+/** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
+ * assert each `to` resolves to a mounted route without rendering the shell.
+ * Labels declared in tab order ahead of `StudentLayout`'s own "More" so
+ * `navShells.test.ts`'s ordered regex over the stripped source sees all five
+ * labels in the same order the bar renders them. */
+export const STUDENT_BOTTOM_TABS: readonly {
+  id: string
+  label: string
+  to: string
+  end?: boolean
+  icon: Icon
+}[] = [
+  { id: "overview", label: "Overview", to: "/student", end: true, icon: House },
+  { id: "correct", label: "Correct", to: "/student/correct", icon: NotePencil },
+  { id: "classes", label: "Classes", to: "/student/classes", icon: ChalkboardTeacher },
+  { id: "profile", label: "Profile", to: "/student/profile", icon: UserCircle },
+]
+
 function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const queryClient = useQueryClient()
+  // Packet B3 (Task 4): deepest-match lookup, same as `applyDocumentMeta`'s
+  // own title/description resolution — see `PageMeta.primaryAction`'s doc
+  // comment for why the CTA's visibility is read off the route table rather
+  // than a hand-maintained path list.
+  const showBottomActionBar = pageMetaFromMatches(useMatches())?.primaryAction === "correct"
 
   /*
    * The wiring for `studentOnboardingRedirect` above: `useStudentProfile()`
@@ -754,6 +806,10 @@ function StudentLayout() {
         </nav>
       </NavDrawer>
 
+      {/* Packet B3 (Task 4): standalone-only, renders nothing — see the
+          component's own doc comment. */}
+      <EdgeSwipeBack />
+
       <div className="flex-1 min-w-0 flex flex-col">
         <Header onOpenNav={() => setNavOpen(true)} />
         {/* `<main>` moved inward in P3.1. It used to wrap the header as well,
@@ -764,11 +820,14 @@ function StudentLayout() {
             the Operate lane — 1200px content max (`max-w-app`), and a page
             gutter that steps 16 / 20 / 32px rather than sitting at a flat
             34px from 320px upward. The old `p-[34px]` spent 68px of a 375px
-            phone on margin, which is 18% of the viewport given to nothing. */}
+            phone on margin, which is 18% of the viewport given to nothing.
+            `pb-bottom-nav`/`sidebar:pb-8`: clearance for the fixed
+            `BottomNav` below the `sidebar` breakpoint, an ordinary bottom
+            gutter once it is gone. */}
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="flex-1 w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
+          className="flex-1 w-full max-w-app px-page-mobile pt-6 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-page-desktop lg:pt-8 focus:outline-none"
         >
           {/* PR 2 part C: offline recovery banner, above the Suspense/
               ErrorBoundary content it sits over — it renders nothing while
@@ -820,6 +879,34 @@ function StudentLayout() {
           )}
         </main>
       </div>
+
+      {showBottomActionBar ? (
+        <BottomActionBar to="/student/correct" label="Correct a paper" hideOn={["/student/correct"]} />
+      ) : null}
+      {/* Below the `sidebar` breakpoint, the primary navigation. "Correct" is
+          the emphasis tab — a raised accent circle, the thumb-zone twin of
+          the header's own CTA at ≥ the breakpoint. */}
+      <BottomNav
+        items={[
+          ...STUDENT_BOTTOM_TABS.map(
+            (tab): NavShellItem => ({
+              id: tab.id,
+              to: tab.to,
+              end: tab.end,
+              label: tab.label,
+              icon: <tab.icon size={22} aria-hidden="true" />,
+            }),
+          ),
+          {
+            id: "more",
+            label: "More",
+            icon: <List size={22} aria-hidden="true" />,
+            onClick: () => setNavOpen(true),
+          },
+        ]}
+        emphasisId="correct"
+        className="sidebar:hidden"
+      />
     </div>
   )
 }
@@ -839,7 +926,14 @@ export const studentRoute: RouteObject = {
      * segment is a value restated from somewhere else, and P6.4's whole lesson
      * is what happens to those.
      */
-    { index: true, element: <Overview />, handle: { title: "Dashboard", skeleton: "card-grid" } },
+    {
+      index: true,
+      element: <Overview />,
+      // Packet B3 (Task 4): one of the three screens `BottomActionBar`
+      // appears on below the `sidebar` breakpoint — see `PageMeta
+      // .primaryAction`'s own doc comment.
+      handle: { title: "Dashboard", skeleton: "card-grid", primaryAction: "correct" },
+    },
     {
       path: "classes",
       element: <StudentClasses />,
@@ -848,7 +942,7 @@ export const studentRoute: RouteObject = {
     {
       path: "subject/:code",
       element: <Subject />,
-      handle: { title: "Subject", skeleton: "page-header" },
+      handle: { title: "Subject", skeleton: "page-header", primaryAction: "correct" },
     },
     {
       path: "result/:paperId",
@@ -859,7 +953,12 @@ export const studentRoute: RouteObject = {
       // a reveal. See `PaperResult.tsx`'s own root className for the other
       // half of this exception (it keeps `lm-screen`, unlike every other
       // screen root).
-      handle: { title: "Paper result", skeleton: "page-header", viewTransition: false },
+      handle: {
+        title: "Paper result",
+        skeleton: "page-header",
+        viewTransition: false,
+        primaryAction: "correct",
+      },
     },
     {
       path: "correct",
