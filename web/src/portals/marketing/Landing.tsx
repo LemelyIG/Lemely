@@ -300,7 +300,6 @@ export function Landing() {
       {/* ── The loop ─────────────────────────────────────────────────────── */}
       <Section id={SERVES_SECTION_ID}>
         <Reveal>
-          <Eyebrow>How it goes</Eyebrow>
           <h2 className="text-display-xl mt-4 text-ink text-balance">{loopIntro.title}</h2>
           <p className="text-body-lg mt-4 max-w-[62ch] text-pretty text-ink-muted">
             {loopIntro.body}

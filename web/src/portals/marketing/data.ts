@@ -129,7 +129,7 @@ export const loopIntro = {
 export const loopSteps: LoopStep[] = [
   {
     step: "Scan",
-    title: "Scan or upload your paper",
+    title: "Lemely works out which paper it is",
     body: "A photo or a PDF works. Add the mark scheme if we do not have it yet.",
   },
   {
@@ -162,7 +162,7 @@ export interface RoleTab {
  *              from a child-issued invite, never from `/login`).
  *   teacher -> `/signup/teacher`, `teacher_paper_repo.py`'s low-confidence
  *              review queue (below `REVIEW_CONFIDENCE_THRESHOLD`, marks at or
- *              above it count without a teacher seeing them).
+ *              above it count unless flagged for structural review).
  */
 export const roleTabs: RoleTab[] = [
   {
