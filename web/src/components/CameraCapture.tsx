@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { randomUuid } from "@/lib/uuid"
 import { cn } from "@/lib/utils"
+import { useWakeLock } from "@/lib/wakeLock"
 
 /*
  * Multi-shot camera capture for the student "photograph a paper" flow.
@@ -129,6 +130,13 @@ export function CameraCapture({
   const [pages, setPages] = useState<CapturedPage[]>([])
   const [assembling, setAssembling] = useState(false)
   const [assembleError, setAssembleError] = useState<string | null>(null)
+
+  // Task 7 (B5a): held only while the live preview is actually on screen and
+  // acquired (`started`) — a multi-page scan is the one flow here where the
+  // screen sleeping mid-shoot loses real work (the stream stops and the
+  // student has to re-open the camera). See the hook's own header for why
+  // every failure here is silent.
+  useWakeLock(phase === "live" && started)
 
   useEffect(() => {
     pagesRef.current = pages

@@ -1,7 +1,8 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { ReactNode } from "react"
 import { useLocation, useNavigate, useParams } from "react-router-dom"
-import { Check, Minus, Warning } from "@phosphor-icons/react"
+import { Check, Minus, ShareNetwork, Warning } from "@phosphor-icons/react"
+import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
 import { PaperIdentity } from "@/components/ui/paper-identity"
@@ -13,8 +14,10 @@ import { QuestionRow, type MarkState } from "@/components/ui/question-row"
 import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
+import { useToast } from "@/components/ui/toast"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
@@ -131,14 +134,50 @@ function ResultScreen({
   )
 }
 
-function ResultHeader({ res, reveal = false }: { res: Result; reveal?: boolean }) {
+function ResultHeader({
+  res,
+  reveal = false,
+  paperId,
+}: {
+  res: Result
+  reveal?: boolean
+  /**
+   * `paperId` is passed only from the history-sourced branch below — the
+   * live branch (fresh off `/student/correct`) never carries one, and that
+   * absence is exactly how the Share button stays hidden there, per the
+   * spec's "when paperId is present and not live".
+   */
+  paperId?: string
+}) {
+  const { toast } = useToast()
   return (
     <Card className="overflow-hidden">
       <div className="grid grid-result-cols max-tablet:grid-cols-1">
         <div className="px-7 py-6">
-          <div className="flex flex-wrap items-center gap-2.5">
-            <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
-            {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
+          <div className="flex flex-wrap items-center justify-between gap-2.5">
+            <div className="flex flex-wrap items-center gap-2.5">
+              <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
+              {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
+            </div>
+            {paperId ? (
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() =>
+                  void shareResult(
+                    {
+                      url: `${location.origin}/student/result/${paperId}`,
+                      title: `${res.code} ${res.paper} result`,
+                      text: `${res.awarded}/${res.max}, ${res.grade}`,
+                    },
+                    { toast: (msg) => toast({ title: msg }) },
+                  )
+                }
+              >
+                <ShareNetwork size={16} weight="bold" />
+                Share
+              </Button>
+            ) : null}
           </div>
           {res.headline ? (
             <h1 className="mt-2.5 text-display-md text-ink">{res.headline}</h1>
@@ -379,7 +418,7 @@ export function PaperResult() {
       >
         {(data) => (
           <>
-            <ResultHeader res={data} />
+            <ResultHeader res={data} paperId={paperId} />
             {/*
              * PR 4 investigation (deferred audit item): checked whether
              * `ResultDTO` — `data` here — actually carries per-question rows
