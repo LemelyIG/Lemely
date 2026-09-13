@@ -3,7 +3,7 @@ import fs from "node:fs"
 import path from "node:path"
 import type { RouteObject } from "react-router-dom"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import {
   DEFAULT_DESCRIPTION,
   DEFAULT_TITLE,
@@ -148,7 +148,7 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
    * failed to register fails every test below with a clear cause instead of
    * a downstream `Cannot read properties of undefined`. */
   const metaFor = (path: string): { title: string; description?: string } => {
-    const route = appRoutes.find((r) => r.path === path)
+    const route = flattenRoutes(appRoutes).find((r) => r.path === path)
     if (!route) throw new Error(`${path} is not mounted`)
     const handle = route.handle
     if (!isPageMeta(handle)) throw new Error(`${path} has no valid PageMeta handle`)
@@ -161,7 +161,9 @@ describe("the signup/verify/reset/join routes carry honest metadata — Task 19"
       .map(({ path }) => path)
     expect(found.sort()).toEqual([...NEW_PATHS].sort())
     for (const path of NEW_PATHS) {
-      expect(isPageMeta(appRoutes.find((r) => r.path === path)?.handle), path).toBe(true)
+      expect(isPageMeta(flattenRoutes(appRoutes).find((r) => r.path === path)?.handle), path).toBe(
+        true,
+      )
     }
   })
 

@@ -833,3 +833,18 @@ export const appRoutes: RouteObject[] = [
     ],
   },
 ]
+
+/**
+ * Unwraps the pathless layout routes Packet B2a/B2b wrap `appRoutes` in
+ * (`RootOutlet`, then `ScreenFrame`), returning the same flat list of
+ * top-level routes route-lookup tests asserted against before those wrappers
+ * existed — `/login`, `/settings/devices`, the `teacher` portal root, and so
+ * on. A route that carries its own `path` is returned as-is, its `children`
+ * left untouched: this only descends into a layout route with no `path` of
+ * its own, never into a real route's own subtree.
+ */
+export function flattenRoutes(routes: RouteObject[]): RouteObject[] {
+  return routes.flatMap((route) =>
+    route.path === undefined && route.children ? flattenRoutes(route.children) : [route],
+  )
+}

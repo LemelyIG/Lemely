@@ -6,7 +6,7 @@ import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 
 /*
  * P3.1 · the IA restructure (DECISION D1.1-5), pinned.
@@ -538,7 +538,9 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   }
 
   it.each(NEW_PATHS)("registers %s at the top level", (path) => {
-    expect(appRoutes.some((r) => r.path === path), `${path} is not mounted`).toBe(true)
+    expect(flattenRoutes(appRoutes).some((r) => r.path === path), `${path} is not mounted`).toBe(
+      true,
+    )
   })
 
   it("covers all nine, so this suite cannot pass by naming fewer than the spec does", () => {
@@ -549,7 +551,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(WRAPPED)(
     "wraps %s in LoginRoute, bouncing a signed-in visitor to their own portal",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is not wrapped`).toBe(true)
     },
@@ -573,7 +575,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(UNWRAPPED)(
     "does NOT wrap %s in LoginRoute, so it stays reachable with a signed-in session",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is wrapped`).toBe(false)
     },
@@ -584,7 +586,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   // signed-OUT visitor rather than a signed-in one — must appear on none of
   // them, wrapped or not.
   it.each(NEW_PATHS)("does not put %s behind RequireAuth", (path) => {
-    const route = appRoutes.find((r) => r.path === path)
+    const route = flattenRoutes(appRoutes).find((r) => r.path === path)
     expect(route, `${path} is not mounted`).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth"), `${path} is behind RequireAuth`).toBe(
       false,
