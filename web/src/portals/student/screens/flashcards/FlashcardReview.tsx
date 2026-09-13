@@ -9,7 +9,9 @@ import { ProgressBar } from "@/components/ui/progress-bar"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
-import type { CardDTO, ReviewGrade, ReviewResultDTO } from "@/lib/flashcardTypes"
+import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
+import { applyGradeOutcome, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
+import { haptic } from "@/lib/haptics"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -48,8 +50,13 @@ import {
  *   2. **A failed grade stranded the session.** `reviewCard.isError` printed a
  *      line at the bottom of the page and left the same card on screen with
  *      all four grade buttons live — so the natural response (press it again)
- *      looked identical to the press that had just failed. The message now
- *      sits with the buttons and names the card that did not record.
+ *      looked identical to the press that had just failed. Task 7 (B5a)
+ *      replaces that with real optimistic grading: `grade()` advances to the
+ *      next card the instant a button is pressed, the mutation retries with
+ *      backoff on its own (`useFlashcardApi.ts`), and only a grade that
+ *      still fails after that lands in `FailedGradesBanner`, named by the
+ *      card it belongs to (`applyGradeOutcome`, `lib/flashcardSession.ts`) —
+ *      which may by then be a card several presses behind the one on screen.
  */
 
 const GRADE_BUTTONS: { grade: ReviewGrade; label: string; hint: string }[] = [
@@ -58,6 +65,38 @@ const GRADE_BUTTONS: { grade: ReviewGrade; label: string; hint: string }[] = [
   { grade: "good", label: "Good", hint: "3" },
   { grade: "easy", label: "Easy", hint: "4" },
 ]
+
+/**
+ * Task 7 (B5a) · names every card a grade failed to record, each with its
+ * own Retry. A module-level component, not one declared inside
+ * `FlashcardReview` (`rerender-no-inline-components`), and shared between
+ * the in-session view and the end-of-session summary — a failure a student
+ * never retried mid-session must not simply vanish once they reach it.
+ */
+function FailedGradesBanner({
+  failed,
+  onRetry,
+}: {
+  failed: FailedGrade[]
+  onRetry: (entry: FailedGrade) => void
+}) {
+  if (failed.length === 0) return null
+  return (
+    <div
+      role="alert"
+      className="flex flex-col gap-2.5 rounded-md border border-err/40 bg-err/5 p-3.5"
+    >
+      {failed.map((f) => (
+        <div key={f.cardId} className="flex items-center justify-between gap-3">
+          <p className="text-body-sm text-err">"{f.front}" didn't save. This card is still waiting.</p>
+          <Button variant="secondary" size="sm" onClick={() => onRetry(f)}>
+            Retry
+          </Button>
+        </div>
+      ))}
+    </div>
+  )
+}
 
 export function FlashcardReview() {
   const navigate = useNavigate()
@@ -85,24 +124,77 @@ export function FlashcardReview() {
 
   const [index, setIndex] = useState(0)
   const [revealed, setRevealed] = useState(false)
-  const [results, setResults] = useState<ReviewResultDTO[]>([])
+  const [session, setSession] = useState<FlashcardSessionState>({
+    results: [],
+    failed: [],
+    inFlight: 0,
+  })
 
   const current = sessionCards?.[index] ?? null
   const finished = sessionCards !== null && index >= sessionCards.length
 
+  // Task 7 (B5a): grading is now optimistic. `index` advances the instant
+  // the student presses a grade button — no waiting on the network — and
+  // the mutation's own `retry`/`retryDelay` (`useFlashcardApi.ts`) absorb a
+  // transient failure quietly before it ever reaches `FailedGradesBanner`.
   function grade(g: ReviewGrade) {
-    if (!current || reviewCard.isPending) return
+    if (!current) return
+    const card = current
+    setIndex((i) => i + 1)
+    setRevealed(false)
+    setSession((prev) => ({ ...prev, inFlight: prev.inFlight + 1 }))
     reviewCard.mutate(
-      { cardId: current.id, grade: g },
+      { cardId: card.id, grade: g },
       {
         onSuccess: (result) => {
-          setResults((prev) => [...prev, result])
-          setIndex((i) => i + 1)
-          setRevealed(false)
+          setSession((prev) => applyGradeOutcome(prev, { kind: "settled", result }))
+        },
+        onError: () => {
+          setSession((prev) =>
+            applyGradeOutcome(prev, { kind: "failed", cardId: card.id, front: card.front, grade: g }),
+          )
         },
       },
     )
   }
+
+  /** Re-send a grade that failed to record, from the failed-grades banner. */
+  function retryFailedGrade(entry: FailedGrade) {
+    setSession((prev) => ({
+      ...prev,
+      failed: prev.failed.filter((f) => f.cardId !== entry.cardId),
+      inFlight: prev.inFlight + 1,
+    }))
+    reviewCard.mutate(
+      { cardId: entry.cardId, grade: entry.grade },
+      {
+        onSuccess: (result) => {
+          setSession((prev) => applyGradeOutcome(prev, { kind: "settled", result }))
+        },
+        onError: () => {
+          setSession((prev) =>
+            applyGradeOutcome(prev, {
+              kind: "failed",
+              cardId: entry.cardId,
+              front: entry.front,
+              grade: entry.grade,
+            }),
+          )
+        },
+      },
+    )
+  }
+
+  // haptic("success") fires exactly once per session, the moment `finished`
+  // first becomes true — a ref rather than derived state, since `finished`
+  // itself stays true for the rest of this screen's life.
+  const celebratedRef = useRef(false)
+  useEffect(() => {
+    if (finished && !celebratedRef.current) {
+      celebratedRef.current = true
+      haptic("success")
+    }
+  }, [finished])
 
   // Keyboard operability: Space/Enter reveals; 1-4 grade once revealed.
   // Real `<button>`s already give click/Enter/Space for free — this is the
@@ -193,7 +285,9 @@ export function FlashcardReview() {
   }
 
   if (finished) {
-    const summary = summarizeSession(results)
+    // Settled results only — a card whose grade never confirmed is not a
+    // reviewed card, and `applyGradeOutcome` never lets it into `results`.
+    const summary = summarizeSession(session.results)
     return (
       <div className="lm-screen lm-read flex flex-col gap-6">
         <div className="flex flex-col gap-2">
@@ -205,7 +299,14 @@ export function FlashcardReview() {
               ? `, ${totalDue - summary.reviewed} still due today.`
               : "."}
           </p>
+          {session.inFlight > 0 ? (
+            <p className="text-body-sm text-ink-faint">
+              {session.inFlight} grade{session.inFlight === 1 ? "" : "s"} still saving
+            </p>
+          ) : null}
         </div>
+
+        <FailedGradesBanner failed={session.failed} onRetry={retryFailedGrade} />
 
         <Card>
           <CardBody className="flex flex-col gap-3">
@@ -290,6 +391,12 @@ export function FlashcardReview() {
         />
       </div>
 
+      {/* Above the card, not scoped to the current one: a grade that failed
+          to record belongs to whichever card it was pressed on, which — now
+          that grading is optimistic — is very often not the card on screen
+          any more. */}
+      <FailedGradesBanner failed={session.failed} onRetry={retryFailedGrade} />
+
       {current ? (
         <Card>
           {/* `ruled-bg`: DESIGN.md §8 item 2 names ruled paper for the Read
@@ -322,39 +429,26 @@ export function FlashcardReview() {
       ) : null}
 
       {revealed ? (
-        <div className="flex flex-col gap-3">
-          <div className="grid grid-cols-2 gap-3 min-[480px]:grid-cols-4">
-            {GRADE_BUTTONS.map((g) => (
-              <Button
-                key={g.grade}
-                type="button"
-                variant={g.grade === "again" ? "secondary" : "accent"}
-                size="lg"
-                disabled={reviewCard.isPending}
-                onClick={() => grade(g.grade)}
-              >
-                <span className="flex flex-col items-center gap-1">
-                  {g.label}
-                  {/* No `opacity-70`: white at 70% over `--accent` measured
-                      4.17:1 (serious axe violation, P4.9 chunk C) on the three
-                      accent-variant buttons. This hint is a keyboard
-                      affordance — the one thing on this button that must not be
-                      hard to read — so it is a real `Kbd` at full contrast. */}
-                  <Kbd className="border-current/40 bg-transparent text-current">{g.hint}</Kbd>
-                </span>
-              </Button>
-            ))}
-          </div>
-
-          {/* Sits with the buttons, not at the foot of the page. A grade that
-              failed to record leaves the SAME card on screen, so without this
-              adjacency the student cannot tell a failed press from a press
-              they imagined. */}
-          {reviewCard.isError ? (
-            <p className="text-body-sm text-err">
-              We couldn't record that grade, so this card is still waiting. Try again.
-            </p>
-          ) : null}
+        <div className="grid grid-cols-2 gap-3 min-[480px]:grid-cols-4">
+          {GRADE_BUTTONS.map((g) => (
+            <Button
+              key={g.grade}
+              type="button"
+              variant={g.grade === "again" ? "secondary" : "accent"}
+              size="lg"
+              onClick={() => grade(g.grade)}
+            >
+              <span className="flex flex-col items-center gap-1">
+                {g.label}
+                {/* No `opacity-70`: white at 70% over `--accent` measured
+                    4.17:1 (serious axe violation, P4.9 chunk C) on the three
+                    accent-variant buttons. This hint is a keyboard
+                    affordance — the one thing on this button that must not be
+                    hard to read — so it is a real `Kbd` at full contrast. */}
+                <Kbd className="border-current/40 bg-transparent text-current">{g.hint}</Kbd>
+              </span>
+            </Button>
+          ))}
         </div>
       ) : null}
     </div>
