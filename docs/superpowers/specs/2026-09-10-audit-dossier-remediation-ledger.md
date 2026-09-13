@@ -39,7 +39,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
 | 20 | `offline-3` | native | high | B | B6 | pending |  |
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
-| 22 | `no-pre-mount-shell` | native | high | B | B1 | pending |  |
+| 22 | `no-pre-mount-shell` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 23 | `review-queue-unbounded-unvirtualized` | native | high | B | B6 | pending |  |
 | 24 | `student-shell-blanks-on-cold-load` | native | high | B | B1 | pending |  |
 | 25 | `badging-api-unused-despite-ready-data` | native | high | B | B5 | pending |  |
@@ -54,7 +54,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 34 | `modal-drawer-scroll-lock-fragile` | native | high | B | B2 | pending |  |
 | 35 | `overscroll-behavior-absent` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 36 | `TT-1` | native | high | B | B3 | pending |  |
-| 37 | `T2` | native | high | B | B1 | pending |  |
+| 37 | `T2` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 38 | `T3` | native | high | B | B2 | pending |  |
 | 39 | `role-switcher-no-active-state` | native | medium | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
@@ -326,11 +326,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 
 | status | rows |
 |---|---|
-| pending | 102 |
+| pending | 100 |
 | done | 85 |
 | no-action | 92 |
 | skipped | 21 |
-| already-fixed | 1 |
+| already-fixed | 3 |
 | **total** | **301** |
 
 (Recomputed 2026-09-10 after a whole-branch review found this table stale — it previously reported 187 pending with no `done` bucket at all, overstating remaining Phase A scope. `pending` rows above include Phase B/C/D rows not yet started, plus 3 whole-branch-review follow-ups (InstallSettings gating, widget SW bridge, teacher share-target routing) dispatched as fix commits and not yet reflected here.)
