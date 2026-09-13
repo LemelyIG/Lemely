@@ -7,6 +7,7 @@ import { VitePWA } from "vite-plugin-pwa"
 // requires one. `allowImportingTsExtensions` is already set there.
 import { fontPreload } from "./vite/fontPreload.ts"
 import { themeColor } from "./vite/themeColor.ts"
+import { splashLinks } from "./vite/splashLinks.ts"
 import { preMountShell } from "./vite/preMountShell.ts"
 import { buildManifest } from "./vite/manifest.ts"
 
@@ -38,6 +39,9 @@ export default defineConfig(({ mode }) => ({
     // P6.5: `<meta name="theme-color">` from the --paper token. See
     // web/vite/themeColor.ts.
     themeColor(),
+    // Packet B1: the 32 `apple-touch-startup-image` links from
+    // web/vite/splashScreens.ts's SPLASHES matrix. See web/vite/splashLinks.ts.
+    splashLinks(),
     // PR 2 part B: the static pre-mount shell's colour/duration placeholders
     // in index.html, resolved from the same tokens RouteFallback uses. See
     // web/vite/preMountShell.ts.
@@ -128,6 +132,11 @@ export default defineConfig(({ mode }) => ({
           "screenshots/**",
           "widgets/**",
           "store-icon-1024.png",
+          // Packet B1: 32 iOS splash PNGs (`vite/splashScreens.ts`), read
+          // only by iOS's own boot-time `apple-touch-startup-image` match,
+          // never by the running app — the same "not shell" reasoning as
+          // the screenshot/widget/store-icon entries above.
+          "splash/**",
         ],
       },
     }),

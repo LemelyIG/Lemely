@@ -24,6 +24,16 @@
       itself.
     -->
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+    <!--
+      Packet B1 (`no-ios-splash-screens`). iOS never shows the pre-mount
+      shell below — it paints a blank white rectangle for the whole boot
+      window unless one of these links matches the device's exact physical
+      size, dpr and orientation. Resolved at build time by
+      `vite/splashLinks.ts` from `vite/splashScreens.ts`'s `SPLASHES` matrix
+      (32 links: 16 devices x portrait/landscape), never hand-written here —
+      the placeholder-substitution shape `%LEMELY_THEME_COLOR%` above uses.
+    -->
+    %LEMELY_SPLASH_LINKS%
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover, interactive-widget=resizes-content" />
     <!--
       Injected from the `--paper` token at build time by `vite/themeColor.ts`,

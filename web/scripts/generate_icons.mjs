@@ -37,12 +37,13 @@
  * paper field. Verified arithmetically below rather than by eye.
  */
 
-import { readFileSync, writeFileSync } from "node:fs"
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 import sharp from "sharp"
 import { tokenHex } from "../vite/brandTokens.ts"
 import { MASKABLE_SCALE, SQUARE_SCALE, maxMaskableScale, measureDrawnExtent } from "../vite/iconSafeZone.ts"
+import { SPLASHES, splashFilename, splashImagePx } from "../vite/splashScreens.ts"
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const PUBLIC = path.resolve(HERE, "../public")
@@ -225,3 +226,36 @@ const faviconPng = await sharp({
 const faviconIco = pngToIco(faviconPng, FAVICON_SIZE)
 writeFileSync(path.join(PUBLIC, "favicon.ico"), faviconIco)
 console.log(`favicon.ico  ${FAVICON_SIZE}x${FAVICON_SIZE}  mark ${faviconMarkPx}px on ${PAPER}`)
+
+/*
+ * packet B1 (`no-ios-splash-screens`): the 32 iOS boot-time splash PNGs
+ * (`vite/splashScreens.ts`'s `SPLASHES` matrix, portrait and landscape).
+ *
+ * Mark scale is `SPLASH_MARK_SCALE` (0.28) of the canvas's *shorter* side —
+ * noticeably smaller than `SQUARE_SCALE` (0.72), because a splash screen is
+ * a full-bleed boot screen at arbitrary aspect ratio, not a square app icon:
+ * the mark reads as a small centred mark on a paper field, the same
+ * treatment `ogCard` above gives the Open Graph card (mark centred on a
+ * ruled `PAPER` field), just full-bleed instead of ruled.
+ */
+const SPLASH_MARK_SCALE = 0.28
+const SPLASH_DIR = path.join(PUBLIC, "splash")
+mkdirSync(SPLASH_DIR, { recursive: true })
+
+for (const entry of SPLASHES) {
+  for (const orientation of ["portrait", "landscape"]) {
+    const { width, height } = splashImagePx(entry, orientation)
+    const shorterSide = Math.min(width, height)
+    const markPx = Math.round(shorterSide * SPLASH_MARK_SCALE)
+    const mark = await sharp(markSvg, { density: 384 }).resize(markPx, markPx).png().toBuffer()
+    const out = await sharp({
+      create: { width, height, channels: 4, background: PAPER },
+    })
+      .composite([{ input: mark, gravity: "centre" }])
+      .png({ compressionLevel: 9 })
+      .toBuffer()
+    const filename = splashFilename(entry, orientation)
+    writeFileSync(path.join(SPLASH_DIR, filename), out)
+    console.log(`splash/${filename}  ${width}x${height}  mark ${markPx}px on ${PAPER}  (${entry.device}, ${orientation})`)
+  }
+}

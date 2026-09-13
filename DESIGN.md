@@ -577,8 +577,9 @@ that bind every component:
 - **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button.
+- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is.
 - **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
+- **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
 - **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
 
@@ -681,11 +682,12 @@ should be read as gesture content Phase A already implements.
 | Capability | Status | Where |
 |---|---|---|
 | Web Share Target | Shipped (A6) | `vite/manifest.ts`'s `share_target`, `src/sw/shareTarget.ts` |
+| Web Share (`navigator.share`) | Shipped (B5) | `src/lib/share.ts` (`shareResult`/`canWebShare`), `PaperResult.tsx`'s header Share button — falls back to copying the link (`navigator.clipboard.writeText`) plus a toast on an engine or a cancelled/refused share sheet; there is no result download on this screen to fall back to instead |
 | File Handling API | Shipped (A6) | `vite/manifest.ts`'s `file_handlers`, `/file-handler` (`routes.tsx`) |
 | Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
-| Badging API | Out of scope for Phase A | Phase B |
-| Haptics (Vibration API) | Out of scope for Phase A | Phase B |
-| Wake Lock | Out of scope for Phase A | Phase B |
+| Badging API | Shipped (B5) | `src/lib/badging.ts` (`setAppBadge`), `src/components/badge-sync.tsx` (`BadgeSync`, mounted in each authenticated portal layout — `useNotificationCounts` is auth-gated, so it cannot live in `main.tsx`), `Notifications.tsx` clears it to 0 on mount. Pushes carry no payload (`lemely/web/push.py:16`), so there is no count to read off a push event itself — `src/sw.ts`'s `handlePush` calls `self.navigator.setAppBadge?.(unread)` only when the page-side handshake reply (`src/lib/push/pushClientBridge.ts`) attached a cached `NotificationCounts.unread`, i.e. the badge rides the existing content handshake rather than the push body |
+| Haptics (Vibration API) | Shipped (B5) | `src/lib/haptics.ts` (`haptic`) — a tap on `ConfirmModal`'s confirm button, a success pulse once per finished flashcard review session (`FlashcardReview.tsx`) |
+| Wake Lock | Shipped (B5) | `src/lib/wakeLock.ts` (`useWakeLock`), held by `CameraCapture.tsx` while `phase === "live" && started` — the one flow where the screen sleeping mid-capture loses real work |
 
 **Mechanical enforcement.** The mechanics sections above are guarded, not
 just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
