@@ -55,7 +55,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 35 | `overscroll-behavior-absent` | native | high | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 36 | `TT-1` | native | high | B | B3 | pending |  |
 | 37 | `T2` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
-| 38 | `T3` | native | high | B | B2 | pending |  |
+| 38 | `T3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/overlayExit.test.ts` — `Modal`/`NavDrawer` play `lm-out`/`lm-slide-out-start` over `dur-fast`/`ease-in-soft` on close and unmount on `animationend` (`lib/overlayPhase.ts`), instead of vanishing the instant `open` goes false |
 | 39 | `role-switcher-no-active-state` | native | medium | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
 | 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |

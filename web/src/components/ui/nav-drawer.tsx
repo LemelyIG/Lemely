@@ -16,6 +16,7 @@ import { useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
 import { lockScroll } from "@/lib/scrollLock"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
+import { useOverlayPhase } from "@/lib/overlayPhase"
 
 /*
  * P3.1 · Mobile navigation drawer.
@@ -72,11 +73,19 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const location = useLocation()
 
+  // Packet B2b: same exit-phase contract `Modal` uses — see that
+  // component's own comment and `lib/overlayPhase.ts` for the full
+  // rationale. `mounted` (phase !== "closed") is what the history entry,
+  // the close-on-navigation effect, focus and the scroll lock all gate on
+  // below, so the drawer stays live for its own slide-out.
+  const { phase, onAnimationEnd } = useOverlayPhase(open)
+  const mounted = phase !== "closed"
+
   // Packet B2a: same history-trap contract Modal uses — opening pushes one
   // history entry so browser back closes the drawer instead of navigating
   // the page underneath it away. The drawer is always dismissible, so a
   // popstate always closes it (never re-pushes).
-  useDialogHistory({ open, dismissible: true, onClose })
+  useDialogHistory({ open: mounted, dismissible: true, onClose })
 
   // Close on navigation. `location.key` rather than `pathname` so that
   // re-selecting the destination you are already on still dismisses the
@@ -99,7 +108,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   }, [location.key])
 
   useEffect(() => {
-    if (!open) return
+    if (!mounted) return
 
     previouslyFocused.current = document.activeElement as HTMLElement | null
 
@@ -113,18 +122,19 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
       cancelAnimationFrame(raf)
       previouslyFocused.current?.focus()
     }
-  }, [open])
+  }, [mounted])
 
   // Shared with Modal — see `lockScroll`'s own doc for why this replaces a
   // plain `overflow: hidden` toggle, and why it is reference-counted (a
   // modal opened over this drawer, or vice versa, must not have the other's
-  // release unlock scrolling while this one is still open).
+  // release unlock scrolling while this one is still open). Held for as
+  // long as the drawer is mounted, its own closing animation included.
   useEffect(() => {
-    if (!open) return
+    if (!mounted) return
     return lockScroll()
-  }, [open])
+  }, [mounted])
 
-  if (!open) return null
+  if (!mounted) return null
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
@@ -172,10 +182,13 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
+        onAnimationEnd={phase === "closing" ? onAnimationEnd : undefined}
         className={cn(
           "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
           "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",
-          "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
+          phase === "closing"
+            ? "lm-slide-out-start"
+            : "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
         <div className="flex items-center justify-between gap-3">

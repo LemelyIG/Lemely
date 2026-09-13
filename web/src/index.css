@@ -1370,6 +1370,38 @@ html[data-direction="back"]::view-transition-new(root) {
   animation-name: lm-vt-new-back;
 }
 
+/* Exit phase for a dismissible overlay (`Modal`, `NavDrawer`; DESIGN.md §9.2
+   "Exits"). Mirrors of `lm-in`/`lm-slide-in-start` above, played over
+   `dur-fast`/`ease-in-soft` (§9.1: fast for dismissals) rather than the
+   entrance's `dur-base`/`ease-spring` — an exit should read as quicker than
+   the open it undoes. */
+@keyframes lm-out {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+@keyframes lm-slide-out-start {
+  from {
+    opacity: 1;
+    transform: none;
+  }
+  to {
+    opacity: 0;
+    transform: translateX(calc(-100% * var(--lm-dir)));
+  }
+}
+.lm-out {
+  animation: lm-out var(--dur-fast) var(--ease-in-soft) both;
+}
+.lm-slide-out-start {
+  animation: lm-slide-out-start var(--dur-fast) var(--ease-in-soft) both;
+}
+
 /* The Read lane's column (DESIGN.md §2, §13). Study content — flashcards,
    worksheets, plan sessions — is a single centred column, not a well beside a
    sidebar, and §13 fixes its container at 680px.

@@ -496,6 +496,15 @@ watch it perform. Expressive motion is rationed to genuine wins (§9.2).
 - Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
 - Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
 - **Nothing blocks input.** No animation gates a click.
+- **Exits.** Every dismissible overlay (a `Modal`, `NavDrawer`, or anything
+  built on the same contract) plays an exit over `dur-fast`/`ease-in-soft`
+  before it unmounts, rather than disappearing on the frame its `open` prop
+  goes false. It unmounts on `animationend`, not a fixed timer, so the
+  animation and the unmount can never drift apart. Scroll lock and the focus
+  trap both stay active for the duration of the exit — the overlay is still
+  visibly present, so the page behind it must not start scrolling, and focus
+  must not yet be released, until it actually is. A re-open mid-exit snaps
+  straight back to open rather than finishing the exit first.
 - **The one documented exception.** The brand mark's self-drawing stroke
   (`stroke-dashoffset` on the mark's silhouette — four steps: the right page,
   the left page, the coil, the tick — in `components/ui/mark.tsx` and, inline,
