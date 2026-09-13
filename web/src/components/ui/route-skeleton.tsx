@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E4 S5 R4 V4 */
 import { useMatches } from "react-router-dom"
 import type { SkeletonShape } from "@/lib/meta/documentMeta"
 import { RouteFallback } from "@/components/ui/state-views"

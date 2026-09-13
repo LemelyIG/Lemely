@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P4 H5 E5 S4 R5 V4 */
 import { ArrowLeft } from "@phosphor-icons/react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"

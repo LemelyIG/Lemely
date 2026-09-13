@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E5 S5 R4 V4 */
 import { useLayoutEffect } from "react"
 import { Outlet, ScrollRestoration, useNavigationType } from "react-router-dom"
 import { scrollRestorationKey } from "@/lib/nav/scrollRestorationKey"

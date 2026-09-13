@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H4 E4 S4 R3 V4 */
 import type { ReactNode } from "react"
 import { Outlet, useLocation } from "react-router-dom"
 

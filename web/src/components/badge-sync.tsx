@@ -1,3 +1,4 @@
+/* Hallmark · pre-emit critique: P5 H5 E5 S4 R5 V3 */
 import { useEffect } from "react"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { setAppBadge } from "@/lib/badging"

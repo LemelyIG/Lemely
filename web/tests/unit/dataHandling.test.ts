@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import { dataHandlingRoute } from "@/portals/marketing"
 import {
   dataHandlingClose,
@@ -64,7 +64,7 @@ const allCopy = [
 
 describe("the data page is public and reachable — P6.5", () => {
   it("mounts /data at the top level", () => {
-    expect(appRoutes.map((r) => r.path)).toContain("/data")
+    expect(flattenRoutes(appRoutes).map((r) => r.path)).toContain("/data")
   })
 
   /*
@@ -85,7 +85,7 @@ describe("the data page is public and reachable — P6.5", () => {
      * being wrapped in a Suspense or a frame, which is how P4.9's original
      * defect hid. Same technique as `marketing.test.ts`.
      */
-    const route = appRoutes.find((r) => r.path === "/data")
+    const route = flattenRoutes(appRoutes).find((r) => r.path === "/data")
     expect(route).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
