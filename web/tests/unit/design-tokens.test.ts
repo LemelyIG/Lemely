@@ -159,6 +159,26 @@ describe("--fs-field platform floor", () => {
   })
 })
 
+/*
+ * Packet B3 (Task 4). Three tokens, all consumed by nav-shells.tsx's own
+ * `SIDEBAR_WIDTH`/`SIDEBAR_BREAKPOINT`/`BOTTOM_NAV_HEIGHT` constants
+ * (`navShells.test.ts` pins that side) — this side pins index.css actually
+ * declares the values those constants assert against.
+ */
+describe("sidebar/bottom-nav tokens (B3)", () => {
+  it("--breakpoint-sidebar is 820px", () => {
+    expect(css).toContain("--breakpoint-sidebar: 820px")
+  })
+
+  it("--sidebar-width is 252px", () => {
+    expect(css).toContain("--sidebar-width: 252px")
+  })
+
+  it("--bottom-nav-height is 56px", () => {
+    expect(css).toContain("--bottom-nav-height: 56px")
+  })
+})
+
 describe("no arbitrary literals in the retrofitted portals", () => {
   // `portals/student/` is deliberately absent: only its shell (index.tsx) was
   // retrofitted in P3.10 chunk c. Its screens still carry ~120 literals, which

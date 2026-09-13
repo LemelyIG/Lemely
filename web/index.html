@@ -181,13 +181,19 @@
       /* Mobile-first: a portal path gets tier 2's header/content skeleton
          in a single column, with no sidebar column reserved for it. The real
          portal shell (`src/portals/student/index.tsx`'s `<Sidebar>`, mirrored
-         by the teacher/parent portals) renders its `<aside>` only from
-         `min-[820px]:flex` upward and swaps in a drawer below that; a fixed
-         246px column here on a 375px phone painted a sidebar that never
+         by the teacher/admin portals) renders its `<aside>` only from the
+         `sidebar:` breakpoint upward (`nav-shells.tsx`'s
+         `SIDEBAR_BREAKPOINT`) and swaps in a drawer below that; a fixed
+         sidebar column here on a 375px phone painted a sidebar that never
          arrives and left ~129px for the content well, and at 320px tier 3's
          96px mark overflowed the viewport outright. The two-column layout
-         and the sidebar itself both move into the `min-width: 820px` query
-         below, to match. */
+         and the sidebar itself both move into the `min-width:
+         %LEMELY_SIDEBAR_BREAKPOINT%` query below, to match. Packet B3 (Task
+         4): the width and breakpoint are `%LEMELY_SIDEBAR_WIDTH%`/
+         `%LEMELY_SIDEBAR_BREAKPOINT%`, resolved at build time from the same
+         `--sidebar-width`/`--breakpoint-sidebar` tokens the real sidebar's
+         `w-sidebar`/`sidebar:` classes use — see `preMountShell.ts`'s
+         `readSidebarTokens`. */
       #root[data-shell="portal"] .lm-shell-tier2 {
         display: grid;
         grid-template-columns: 1fr;
@@ -210,9 +216,9 @@
          `none` at every width — caught by `shell_shot_f1.mjs`'s `1280px`
          run reporting `sidebarDisplay: "none"` on `/student`, not by reading
          the rule. */
-      @media (min-width: 820px) {
+      @media (min-width: %LEMELY_SIDEBAR_BREAKPOINT%) {
         #root[data-shell="portal"] .lm-shell-tier2 {
-          grid-template-columns: 246px 1fr;
+          grid-template-columns: %LEMELY_SIDEBAR_WIDTH% 1fr;
         }
         .lm-shell-sidebar {
           display: flex;
@@ -424,19 +430,20 @@
         animation: lm-shell-appear 0s %LEMELY_LOADING_TIER_SLOW% both;
       }
       /* Inset tier 3 by the header's height at every width, and by the
-         sidebar's width from `min-width: 820px` up, matching the real portal
-         shell: the top bar (`Header` in `src/portals/student/index.tsx`)
-         renders on every width, but the `<aside>` sidebar only exists from
-         820px, same threshold as `.lm-shell-tier2` above. Below 820px tier 3
-         is inset by the header alone, so it never claims 246px of a content
-         well that has no sidebar beside it. */
+         sidebar's width from the `sidebar:` breakpoint up, matching the real
+         portal shell: the top bar (`Header` in
+         `src/portals/student/index.tsx`) renders on every width, but the
+         `<aside>` sidebar only exists from `%LEMELY_SIDEBAR_BREAKPOINT%`,
+         same threshold as `.lm-shell-tier2` above. Below that, tier 3 is
+         inset by the header alone, so it never claims a sidebar's width in a
+         content well that has no sidebar beside it. */
       #root[data-shell="portal"] .lm-shell-tier3 {
         margin-top: 68px;
         min-height: calc(100vh - 68px);
       }
-      @media (min-width: 820px) {
+      @media (min-width: %LEMELY_SIDEBAR_BREAKPOINT%) {
         #root[data-shell="portal"] .lm-shell-tier3 {
-          margin-left: 246px;
+          margin-left: %LEMELY_SIDEBAR_WIDTH%;
         }
       }
       /* `visibility` rides along with `opacity` here for the same reason, and

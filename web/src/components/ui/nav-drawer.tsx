@@ -23,24 +23,24 @@ import { useOverlayPhase } from "@/lib/overlayPhase"
  *
  * Why this exists at all: the Phase 1 audit mapped the nav *inventory* per
  * role but read it from source, so it recorded which items each sidebar
- * contains without recording the width at which that sidebar exists. It does
- * not, below 820px (student, `hidden min-[820px]:flex`) or 768px (teacher,
- * `hidden md:flex`). Both portals rendered their entire primary navigation to
- * `display: none` on a phone, with no replacement of any kind — no tab bar, no
- * menu button, no drawer. A student on a phone could reach exactly the screen
- * they landed on plus whatever that screen happened to link to. The mission's
- * own framing ("students live on phones") makes that the single largest IA
- * defect in the product, and Phase 3's mandate is explicitly "no dead ends".
+ * contains without recording the width at which that sidebar exists. Below
+ * the `sidebar` breakpoint (student, teacher and admin alike), each portal
+ * rendered its entire primary navigation to `display: none` on a phone, with
+ * no replacement of any kind — no tab bar, no menu button, no drawer. A
+ * student on a phone could reach exactly the screen they landed on plus
+ * whatever that screen happened to link to. The mission's own framing
+ * ("students live on phones") makes that the single largest IA defect in the
+ * product, and Phase 3's mandate is explicitly "no dead ends".
  *
- * Why a drawer and not a truncated tab bar: the student nav carries eleven
- * destinations and the teacher nav eight. A five-slot bottom bar cannot hold
- * either, so shipping one means ranking the survivors and silently dropping
- * the rest — a product decision this phase has no answer for and should not
- * invent. The drawer carries *every* item the desktop sidebar carries, which
- * is the only version of this that is complete rather than a second, smaller
- * dead end. `BottomNav` (C-13) stays in the kit unused for now; if Phase 4
- * establishes which four student destinations are genuinely daily, it becomes
- * the fast path *alongside* this, not instead of it.
+ * Why a drawer and not ONLY a tab bar: the student nav carries eleven
+ * destinations and the teacher nav eight — more than a five-slot bottom bar
+ * can hold. Packet B3 (Task 4) resolved the ranking question Phase 3 left
+ * open: the user decision names the five daily destinations per portal (see
+ * `nav-shells.tsx`'s `BottomNav`, mounted by `student/index.tsx` and
+ * `teacher/index.tsx`), and this drawer stays as the complete list behind
+ * "More" — the fast path and the exhaustive one, not one replacing the
+ * other. It is also the *only* mobile navigation for the admin portal, which
+ * is desktop-first and carries no `BottomNav` at all.
  *
  * Behaviour is modal, because on a phone it covers the content it navigates
  * away from: focus moves in and is trapped, Escape closes, the scrim closes,

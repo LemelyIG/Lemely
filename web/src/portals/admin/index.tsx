@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { Fragment, lazy, Suspense, useState } from "react"
-import { Link, NavLink, useLocation } from "react-router-dom"
+import { lazy, Suspense, useState } from "react"
+import { Link, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   Armchair,
@@ -14,12 +14,12 @@ import {
   type Icon,
 } from "@phosphor-icons/react"
 import { useQueryClient } from "@tanstack/react-query"
-import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -81,62 +81,17 @@ const NAV_ICON: Record<AdminNavItem["icon"], Icon> = {
   pipeline: FlowArrow,
 }
 
-function SidebarNavItem({
-  item,
-  glyph: Glyph,
-  touch = false,
-}: {
-  // Deliberately narrower than `AdminNavItem`: this component no longer knows
-  // about the `icon` union itself (see `AdminNav` below for why), so it takes
-  // the resolved icon component directly instead of a key to look one up.
-  item: { to: string; label: string; end?: boolean }
-  glyph: Icon
-  touch?: boolean
-}) {
-  return (
-    <NavLink
-      to={item.to}
-      end={item.end}
-      viewTransition
-      className={({ isActive }) =>
-        cn(
-          // Symmetric padding has no direction, so this row needs no logical
-          // rewrite (P3.4).
-          // `pointer-coarse:min-h-11` is §6.1's 44px floor. The row measured
-          // 32px, and the same row in the student portal was raised while this
-          // one and the teacher's were not — the standing rule that a defect
-          // fixed on one surface is usually live on another. Safe as a min
-          // here: the row is already `flex items-center`, so the label centres
-          // in the taller box instead of sitting at its top.
-          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
-          "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-          // `focus-ring`, not `accent`: §3.9 keeps focus deliberately blue so it
-          // stays distinguishable from the accent the active row already uses.
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-          // The active rule is reserved at every state, transparent when
-          // inactive, so turning it on cannot nudge the label sideways.
-          "border-s-2",
-          touch && "min-h-11",
-          isActive
-            ? "border-accent bg-paper-raised text-ink"
-            : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
-        )
-      }
-    >
-      {({ isActive }) => (
-        <>
-          <Glyph
-            size={16}
-            weight={isActive ? "fill" : "regular"}
-            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-            aria-hidden="true"
-          />
-          <span className="flex-1">{item.label}</span>
-        </>
-      )}
-    </NavLink>
-  )
-}
+/*
+ * Packet B3 (Task 4): rows now render through the shared `SidebarNav`
+ * primitive (`AdminNav` below) rather than this file's own copy of the
+ * active-row/focus-ring/touch-floor styling — the third portal to carry that
+ * exact recipe (student, teacher, admin) is what made it worth sharing.
+ * `SidebarNav`'s `NavShellItem.icon` is a static `ReactNode`, so the
+ * active-row fill-weight swap this component used to do per-render is no
+ * longer expressed here; a flat icon reads the row's active state from the
+ * accent margin, raised sheet and ink weight the shared component already
+ * carries — three signals, not four.
+ */
 
 /**
  * Sidebar identity block. `GET /api/me/profile`, same as the teacher portal's.
@@ -180,39 +135,48 @@ function UserBlock() {
  * and not another is the defect P3.1 fixed portal-wide, and a second copy is
  * how it comes back.
  */
-function AdminNav({ lane, touch = false }: { lane: AdminLane; touch?: boolean }) {
+function AdminNav({ lane }: { lane: AdminLane }) {
   const items = lane === "school" ? schoolNavItems : platformNavItems
+  const shellItems: NavShellItem[] = items.flatMap((item, index) => {
+    const Glyph = NAV_ICON[item.icon]
+    const own: NavShellItem = {
+      id: item.to,
+      to: item.to,
+      end: item.end,
+      label: item.label,
+      icon: <Glyph size={16} aria-hidden="true" />,
+    }
+    // Task 22 (D7.8): `/platform/schools` is registered on
+    // `platformAdminRoute` below, in this same file. Its nav entry is
+    // injected here instead of living in `platformNavItems` (`./data.ts`)
+    // because that file sits outside this task's file allowlist while other
+    // agents are editing the surfaces it describes. Placed right after the
+    // dashboard entry — "look at the console, then go provision a school" is
+    // the same "look, then provision" ordering `schoolNavItems` already uses
+    // for its own lane (Dashboard, then Seats). `resolveAdminTrail` in
+    // data.ts does not know this path either, so the mobile breadcrumb falls
+    // back to its own documented behaviour for an unmatched path (the lane
+    // root alone, no second crumb) rather than showing a wrong one — a
+    // disclosed gap, not a silent one; see Task 22's report.
+    if (lane === "platform" && index === 0) {
+      return [
+        own,
+        {
+          id: "/platform/schools",
+          to: "/platform/schools",
+          label: "Schools",
+          icon: <Buildings size={16} aria-hidden="true" />,
+        },
+      ]
+    }
+    return [own]
+  })
+
   return (
-    <nav
+    <SidebarNav
       aria-label={lane === "school" ? "School admin sections" : "Platform admin sections"}
-      className="flex flex-col gap-0.5"
-    >
-      {items.map((item, index) => (
-        <Fragment key={item.to}>
-          <SidebarNavItem item={item} glyph={NAV_ICON[item.icon]} touch={touch} />
-          {/* Task 22 (D7.8): `/platform/schools` is registered on
-              `platformAdminRoute` below, in this same file. Its nav entry is
-              injected here instead of living in `platformNavItems`
-              (`./data.ts`) because that file sits outside this task's file
-              allowlist while other agents are editing the surfaces it
-              describes. Placed right after the dashboard entry — "look at the
-              console, then go provision a school" is the same "look, then
-              provision" ordering `schoolNavItems` already uses for its own
-              lane (Dashboard, then Seats). `resolveAdminTrail` in data.ts does
-              not know this path either, so the mobile breadcrumb falls back to
-              its own documented behaviour for an unmatched path (the lane
-              root alone, no second crumb) rather than showing a wrong one —
-              a disclosed gap, not a silent one; see Task 22's report. */}
-          {lane === "platform" && index === 0 ? (
-            <SidebarNavItem
-              item={{ to: "/platform/schools", label: "Schools" }}
-              glyph={Buildings}
-              touch={touch}
-            />
-          ) : null}
-        </Fragment>
-      ))}
-    </nav>
+      items={shellItems}
+    />
   )
 }
 
@@ -291,7 +255,7 @@ function Sidebar({ lane }: { lane: AdminLane }) {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk`'s stated use is "sidebars,
     // table headers, code blocks, inset areas".
-    <aside className="hidden md:flex w-[252px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <BrandLockup lane={lane} />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
@@ -321,7 +285,7 @@ function AdminTopBar({ lane, onOpenNav }: { lane: AdminLane; onOpenNav: () => vo
       <NavDrawerTrigger
         onClick={onOpenNav}
         label={lane === "school" ? "Open school admin navigation" : "Open platform navigation"}
-        className="-ms-2 md:hidden"
+        className="-ms-2 sidebar:hidden"
       />
       {/* One crumb means the trail is just the page's own name, which the page
           heading already says. Rendering nothing beats repeating the <h1>. */}
@@ -353,7 +317,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
         title="Lemely"
         footer={<SidebarFooter lane={lane} />}
       >
-        <AdminNav lane={lane} touch />
+        <AdminNav lane={lane} />
       </NavDrawer>
 
       <div className="flex-1 min-w-0 flex flex-col">

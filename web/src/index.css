@@ -420,6 +420,18 @@
      `sidebar:` variant. Task 4 (B3) migrates every sidebar's ad hoc
      `min-[820px]:`/`md:` literal onto this token. */
   --breakpoint-sidebar: 820px;
+  /* Packet B3 (Task 4): the retrofit's other two dimensions. `--sidebar-width`
+     unifies the student sidebar's old 246px with the teacher/admin 252px —
+     one shell, one width, not three portals independently reinventing "how
+     wide is a sidebar". `--bottom-nav-height` is BottomNav's own height,
+     read back by `.pb-bottom-nav` so a portal's `<main>` never sits under the
+     fixed bar. Both feed `nav-shells.tsx`'s `SIDEBAR_WIDTH`/
+     `BOTTOM_NAV_HEIGHT` constants and `vite/preMountShell.ts`'s
+     `%LEMELY_SIDEBAR_WIDTH%`/`%LEMELY_SIDEBAR_BREAKPOINT%` placeholders —
+     see `readSidebarTokens` there for why the pre-mount shell reads these
+     back out of this file rather than a second, hand-typed copy. */
+  --sidebar-width: 252px;
+  --bottom-nav-height: 56px;
 
   /* ── Font sizes below text-xs, as size-only rungs ────────────────────── */
   --text-2xs: 11px;
@@ -1476,6 +1488,24 @@ html[data-direction="back"]::view-transition-new(root) {
    home-indicator clearance `BottomNav` and the toast rail both need. */
 .lm-safe-bottom {
   padding-bottom: env(safe-area-inset-bottom);
+}
+
+/* Packet B3 (Task 4): the sidebar/bottom-nav named utilities §14 rule 3
+   requires in place of an arbitrary `w-[252px]`/`pb-[...]`. `.w-sidebar`
+   backs every portal's `<aside>` and the pre-mount shell's own skeleton
+   column; `.pb-bottom-nav` is `<main>`'s clearance for the fixed BottomNav,
+   stacking the bar's own height with the home-indicator inset the same way
+   `.lm-safe-bottom` does for the bar itself. */
+.w-sidebar {
+  width: var(--sidebar-width);
+}
+.pb-bottom-nav {
+  padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
+}
+/* `BottomActionBar`'s own position: pinned directly above `BottomNav`
+   rather than at the true viewport bottom — the two stack, never overlap. */
+.lm-bottom-action-bar {
+  bottom: var(--bottom-nav-height);
 }
 
 .lm-scroll::-webkit-scrollbar {

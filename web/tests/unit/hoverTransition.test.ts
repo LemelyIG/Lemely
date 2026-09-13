@@ -57,15 +57,14 @@ const MOVING_STATE =
  * Kept deliberately short. An exemption is a claim that an element should snap,
  * and there are very few honest ones.
  */
-const EXEMPT = new Map<string, string>([
-  [
-    "src/components/ui/nav-shells.tsx",
-    // Build-era shell, superseded by `portals/*/index.tsx` and the Phase 3
-    // `NavDrawer`. It is not on any migration list and no screen renders it;
-    // Phase 6's compat-layer closeout is where it goes, not here.
-    "build-era shell with no call site; retired in Phase 6",
-  ],
-])
+/*
+ * Packet B3 (Task 4) removed the one entry this map used to carry
+ * (`nav-shells.tsx`, "build-era shell with no call site") — every portal now
+ * mounts `BottomNav`/`SidebarNav` for real, so the claim is no longer true,
+ * and the file's own hover groups already pair `transition-colors` with
+ * their `hover:*` classes without needing an exemption.
+ */
+const EXEMPT = new Map<string, string>([])
 
 function sourceFiles(): string[] {
   const out: string[] = []

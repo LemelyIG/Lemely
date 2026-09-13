@@ -197,6 +197,44 @@ describe("lm-nav-chrome coverage", () => {
   })
 })
 
+/*
+ * Packet B3 (Task 4). The three portal sidebars carried their own ad hoc
+ * breakpoint/width literal (`min-[820px]:flex`/`md:flex`, `w-[246px]`/
+ * `w-[252px]`) instead of the shared `sidebar:`/`w-sidebar` tokens this task
+ * introduces — DESIGN.md §14 rule 3 forbids the arbitrary value once a named
+ * token exists for it. Scoped to `<aside` lines specifically: `min-h-screen`'s
+ * own describe block above already carries the "outside an `<aside>`"
+ * exemption for the opposite reason (a sidebar is legitimately desktop-only,
+ * `min-h-screen`), so this block is this file's mirror — a sidebar tag itself
+ * must use the token, never the literal it replaces.
+ */
+describe("no literal sidebar breakpoint/width on any <aside> in portals", () => {
+  function* walk(dir: string): Generator<string> {
+    for (const entry of readdirSync(dir)) {
+      const full = join(dir, entry)
+      if (statSync(full).isDirectory()) yield* walk(full)
+      else if (/\.tsx?$/.test(full)) yield full
+    }
+  }
+
+  const BANNED = [/min-\[820px\]/, /\bmd:flex\b/, /w-\[246px\]/, /w-\[252px\]/]
+  const offenders: string[] = []
+
+  for (const file of walk(join(SRC, "portals"))) {
+    const text = readFileSync(file, "utf8")
+    text.split("\n").forEach((line, i) => {
+      if (!line.includes("<aside")) return
+      if (BANNED.some((pattern) => pattern.test(line))) {
+        offenders.push(`${file.slice(SRC.length + 1)}:${i + 1}`)
+      }
+    })
+  }
+
+  it("has no <aside> line carrying the old literal breakpoint/width", () => {
+    expect(offenders).toEqual([])
+  })
+})
+
 describe("apple-mobile-web-app-status-bar-style", () => {
   it("is declared as default, not black-translucent", () => {
     expect(html).toContain(
