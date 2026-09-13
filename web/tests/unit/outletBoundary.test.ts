@@ -4,8 +4,8 @@ import path from "node:path"
 import { stripComments } from "./support/jsxSource"
 
 /*
- * PR 1B (part B, client error reporting) · every portal's `<Outlet/>` sits
- * inside an `<ErrorBoundary resetKey={...}>`, pinned.
+ * PR 1B (part B, client error reporting) · every portal's routed content
+ * sits inside an `<ErrorBoundary resetKey={...}>`, pinned.
  *
  * `error-boundary.tsx` existed since an earlier phase and was placed
  * nowhere — `routes.tsx` carried the note "Phase 4 places those as it
@@ -17,12 +17,17 @@ import { stripComments } from "./support/jsxSource"
  * it back later" — and nothing but this test would notice, the same way
  * nothing noticed the boundary being unplaced at all for four phases.
  *
+ * Packet B2b swapped each layout's bare `<Outlet />` for `<ScreenOutlet />`
+ * (`screen-outlet.tsx` — it renders its own `<Outlet/>` inside the wrapper
+ * that gives a screen its navigation entrance), so this now looks for
+ * `<ScreenOutlet` rather than `<Outlet`, wrapped the same way.
+ *
  * Read as text (`stripComments` + `indexOf`), not by rendering: this repo's
  * unit suite runs under Node with no jsdom (`vitest.config.ts`, D3.20), so a
  * component tree, `useLocation()`, or a caught error cannot be produced
  * here. `stripComments` (the same lexer `notFoundFallback.test.ts`'s sibling
  * gates and `hallmarkStamp.test.ts` use) matters specifically because two of
- * these four files mention `<Outlet />` inside a comment as well as in real
+ * these four files mention an Outlet inside a comment as well as in real
  * JSX — student's module docstring ("wrap an <Outlet/>") and admin's own
  * inline note ("the layout `<Outlet />` renders every child of this array
  * into") — and a naive substring search would count either as satisfying
@@ -51,24 +56,24 @@ function sourceOf(relative: string): string {
 
 /**
  * True when `stripped` (already comment-stripped source) shows its first
- * `<Outlet` genuinely *contained* by an `<ErrorBoundary resetKey={...}>` —
- * not merely "an ErrorBoundary open tag appears somewhere before it, and a
- * close tag appears somewhere after it", which a decoy boundary wrapping
- * unrelated markup would also satisfy: e.g.
- * `<ErrorBoundary resetKey={x}><span/></ErrorBoundary><Outlet />`, followed
- * anywhere later by any stray `</ErrorBoundary>`, reads as "open tag
- * before, close tag after" without the Outlet being inside anything.
+ * `<ScreenOutlet` genuinely *contained* by an `<ErrorBoundary
+ * resetKey={...}>` — not merely "an ErrorBoundary open tag appears
+ * somewhere before it, and a close tag appears somewhere after it", which a
+ * decoy boundary wrapping unrelated markup would also satisfy: e.g.
+ * `<ErrorBoundary resetKey={x}><span/></ErrorBoundary><ScreenOutlet />`,
+ * followed anywhere later by any stray `</ErrorBoundary>`, reads as "open
+ * tag before, close tag after" without the Outlet being inside anything.
  *
  * Containment is checked two ways:
  *  - nothing but whitespace sits between the nearest preceding boundary's
- *    opening tag's `>` and `<Outlet` itself (a decoy's `<span/>` and its
- *    own `</ErrorBoundary>` would land here as non-whitespace content);
+ *    opening tag's `>` and `<ScreenOutlet` itself (a decoy's `<span/>` and
+ *    its own `</ErrorBoundary>` would land here as non-whitespace content);
  *  - the first `</ErrorBoundary>` found after the Outlet must close *this*
  *    boundary, not some later, unrelated one — so no other
  *    `<ErrorBoundary` open tag may appear first.
  */
 function outletIsWrapped(stripped: string): boolean {
-  const outletAt = stripped.indexOf("<Outlet")
+  const outletAt = stripped.indexOf("<ScreenOutlet")
   if (outletAt === -1) return false
 
   // The *nearest* ErrorBoundary opening tag before the Outlet, not merely
@@ -96,18 +101,21 @@ function outletIsWrapped(stripped: string): boolean {
   return true
 }
 
-describe("every portal Outlet is wrapped by an ErrorBoundary with resetKey — PR 1B", () => {
-  it.each(PORTAL_LAYOUTS)("%s wraps its <Outlet /> in <ErrorBoundary resetKey=...>", (relative) => {
-    const stripped = stripComments(sourceOf(relative))
+describe("every portal's ScreenOutlet is wrapped by an ErrorBoundary with resetKey — PR 1B", () => {
+  it.each(PORTAL_LAYOUTS)(
+    "%s wraps its <ScreenOutlet /> in <ErrorBoundary resetKey=...>",
+    (relative) => {
+      const stripped = stripComments(sourceOf(relative))
 
-    expect(stripped, `${relative} has no <Outlet /> to wrap`).toContain("<Outlet")
-    expect(
-      outletIsWrapped(stripped),
-      `${relative}'s <Outlet /> is not genuinely contained by an <ErrorBoundary resetKey={...}> — ` +
-        "check for a decoy boundary wrapping something else, a missing resetKey, or a close tag " +
-        "belonging to a different <ErrorBoundary>",
-    ).toBe(true)
-  })
+      expect(stripped, `${relative} has no <ScreenOutlet /> to wrap`).toContain("<ScreenOutlet")
+      expect(
+        outletIsWrapped(stripped),
+        `${relative}'s <ScreenOutlet /> is not genuinely contained by an <ErrorBoundary resetKey={...}> — ` +
+          "check for a decoy boundary wrapping something else, a missing resetKey, or a close tag " +
+          "belonging to a different <ErrorBoundary>",
+      ).toBe(true)
+    },
+  )
 
   /*
    * `portals/marketing/index.tsx` is deliberately not in `PORTAL_LAYOUTS`
@@ -121,12 +129,14 @@ describe("every portal Outlet is wrapped by an ErrorBoundary with resetKey — P
    * other four use would be solving a problem this page does not have.
    *
    * Asserted rather than merely omitted: this fails the moment marketing's
-   * layout grows an `<Outlet/>` of its own without this file's author also
-   * deciding, on purpose, whether it needs the same wrapping.
+   * layout grows an `<Outlet/>`/`<ScreenOutlet/>` of its own without this
+   * file's author also deciding, on purpose, whether it needs the same
+   * wrapping.
    */
   it("marketing has no layout Outlet, so it is excluded above rather than left unwrapped", () => {
     const stripped = stripComments(sourceOf("src/portals/marketing/index.tsx"))
     expect(stripped).not.toContain("<Outlet")
+    expect(stripped).not.toContain("<ScreenOutlet")
   })
 })
 
@@ -144,20 +154,20 @@ describe("outletIsWrapped — the detector itself, on literals (not real files)"
   it("passes the genuinely wrapped shape", () => {
     const wrapped = stripComments(`
       <ErrorBoundary resetKey={location.pathname}>
-        <Outlet />
+        <ScreenOutlet />
       </ErrorBoundary>
     `)
     expect(outletIsWrapped(wrapped)).toBe(true)
   })
 
-  it("fails the decoy shape — a boundary wrapping unrelated markup, with a bare Outlet after it", () => {
+  it("fails the decoy shape — a boundary wrapping unrelated markup, with a bare ScreenOutlet after it", () => {
     // The exact adversarial shape: an ErrorBoundary that opens, wraps a
-    // <span/>, and closes — all before a bare <Outlet />, with a stray
-    // </ErrorBoundary> further down. "An open tag before, a close tag
-    // after" is true here; containment is not.
+    // <span/>, and closes — all before a bare <ScreenOutlet />, with a
+    // stray </ErrorBoundary> further down. "An open tag before, a close
+    // tag after" is true here; containment is not.
     const decoy = stripComments(`
       <ErrorBoundary resetKey={location.pathname}><span/></ErrorBoundary>
-      <Outlet />
+      <ScreenOutlet />
       </ErrorBoundary>
     `)
     expect(outletIsWrapped(decoy)).toBe(false)
@@ -166,7 +176,7 @@ describe("outletIsWrapped — the detector itself, on literals (not real files)"
   it("fails the missing-resetKey shape", () => {
     const missingResetKey = stripComments(`
       <ErrorBoundary>
-        <Outlet />
+        <ScreenOutlet />
       </ErrorBoundary>
     `)
     expect(outletIsWrapped(missingResetKey)).toBe(false)

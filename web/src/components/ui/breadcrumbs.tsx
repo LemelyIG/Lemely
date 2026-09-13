@@ -119,6 +119,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
               {item.to && !isLast ? (
                 <Link
                   to={item.to}
+                  viewTransition
                   className={cn(
                     "whitespace-nowrap rounded-sm transition-colors hover:text-ink",
                     "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
@@ -167,6 +168,7 @@ export function Breadcrumbs({ items, collapse = true, className }: BreadcrumbsPr
           <li className="flex min-w-0 items-center sm:hidden">
             <Link
               to={parent.to!}
+              viewTransition
               className={cn(
                 "-ms-2 flex min-h-11 min-w-0 items-center gap-1 px-2 py-1 text-ink-muted transition-colors",
                 "hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",

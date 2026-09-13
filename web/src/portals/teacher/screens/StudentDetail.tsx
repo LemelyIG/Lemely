@@ -187,7 +187,7 @@ export function StudentDetail() {
   const detailQuery = useStudentDetail(studentId)
 
   return (
-    <div className="lm-screen flex flex-col gap-8 min-w-0">
+    <div className="flex flex-col gap-8 min-w-0">
       <QueryState
         query={detailQuery}
         srHeading="Student detail"

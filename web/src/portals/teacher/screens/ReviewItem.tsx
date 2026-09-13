@@ -398,7 +398,7 @@ export function ReviewItem() {
   }, [goToQueue, goNext])
 
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
+    <div className="flex flex-col gap-6 min-w-0">
       <QueryState
         query={detailQuery}
         srHeading="Review item"

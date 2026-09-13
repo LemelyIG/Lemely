@@ -309,7 +309,7 @@ export function Parents() {
   }
 
   return (
-    <div className="lm-screen flex w-full max-w-160 flex-col gap-6">
+    <div className="flex w-full max-w-160 flex-col gap-6">
       <div className="flex flex-col gap-2">
         <h1 className="text-display-md text-ink">Parent access</h1>
         <p className="max-w-[65ch] text-body-md text-ink-muted">

@@ -126,7 +126,7 @@ export function PracticeGenerator() {
   }
 
   return (
-    <div className="lm-screen lm-read flex flex-col gap-6">
+    <div className="lm-read flex flex-col gap-6">
       <QueryState
         query={topicsQuery}
         srHeading={`Practice for ${subjectName}`}

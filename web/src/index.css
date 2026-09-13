@@ -1306,6 +1306,69 @@ body {
 .lm-screen {
   animation: lm-in var(--dur-base) var(--ease-out-soft) both;
 }
+/* Packet B2b: while a View Transition is in flight, `::view-transition-new
+   (root)` below is already carrying the incoming screen's entrance — the
+   screen's own `lm-in` on top of it is a second, competing animation on the
+   same pixels, which reads as a stutter rather than a single motion. Scoped
+   to `:active-view-transition` (true only for the transition's duration) so
+   `.lm-screen` still plays its own entrance on every navigation that does
+   not use `viewTransition` — a deep link, a signed-out redirect, anything
+   outside shell chrome. */
+html:active-view-transition .lm-screen {
+  animation: none;
+}
+
+/* View Transitions for portal-internal navigation (DESIGN.md §9.4), driven
+   by react-router's `viewTransition` prop — `document.startViewTransition`
+   natively, not React's own experimental `<ViewTransition>` (see the packet
+   B2b commit body: it does not typecheck against this repo's pinned stable
+   React). `RootOutlet` sets `html[data-direction]` from
+   `navigationDirection()` before each transition's snapshot is taken, and
+   these four rules read it to pick which of the two mirrored keyframes
+   plays. `back` is the exact reverse of `forward`: the outgoing screen exits
+   toward the edge the incoming one entered from, and vice versa, so the two
+   read as one continuous motion rather than the same slide played twice. */
+@keyframes lm-vt-old-forward {
+  to {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+@keyframes lm-vt-new-forward {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes lm-vt-old-back {
+  to {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+}
+@keyframes lm-vt-new-back {
+  from {
+    opacity: 0;
+    transform: translateX(-24px);
+  }
+}
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--dur-base);
+  animation-timing-function: var(--ease-out-soft);
+}
+html[data-direction="forward"]::view-transition-old(root) {
+  animation-name: lm-vt-old-forward;
+}
+html[data-direction="forward"]::view-transition-new(root) {
+  animation-name: lm-vt-new-forward;
+}
+html[data-direction="back"]::view-transition-old(root) {
+  animation-name: lm-vt-old-back;
+}
+html[data-direction="back"]::view-transition-new(root) {
+  animation-name: lm-vt-new-back;
+}
 
 /* The Read lane's column (DESIGN.md §2, §13). Study content — flashcards,
    worksheets, plan sessions — is a single centred column, not a well beside a
@@ -1462,5 +1525,18 @@ body {
     animation-iteration-count: 1 !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* The `*` rule above does not reach these: `::view-transition-*` are
+     UA-generated pseudo-elements outside the normal element tree, not
+     descendants any `*` selector matches. Left unguarded, a reduced-motion
+     reader would still get the ±24px directional slide on every
+     `viewTransition` navigation — the one motion this file most needs to
+     catch, since it is triggered by native browser API rather than by any
+     class this product controls. */
+  ::view-transition-group(*),
+  ::view-transition-old(*),
+  ::view-transition-new(*) {
+    animation: none !important;
   }
 }

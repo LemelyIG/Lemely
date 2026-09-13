@@ -703,7 +703,7 @@ export function CorrectPaper() {
         : { tone: "bg-ok", title: "Ready when you are" }
 
   return (
-    <div className="lm-screen flex flex-col gap-8">
+    <div className="flex flex-col gap-8">
       {/* §8.5's margin rule, the same single texture element the dashboard
           header carries. The Operate lane runs texture low (§13). */}
       <header className="margin-rule flex flex-wrap items-end gap-5">

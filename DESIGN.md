@@ -529,6 +529,16 @@ The loading tiers (§12) still stage under reduced motion: their delays live in
 motion within each tier (the pulsing skeleton, the self-drawing mark) is
 affected, never when a tier appears.
 
+**When View Transitions apply.** A screen's entrance (`.lm-screen`) plays on
+every navigation by default. Native View Transitions — a directional slide of
+the outgoing/incoming screen, keyed to browser back vs. everything else — are
+layered on top of that only for portal-internal navigation initiated from
+shell chrome: sidebar links, breadcrumbs, `BackControl`, bottom-tab and
+drawer navigation. They never apply to the marked-paper result reveal (§9.3's
+celebration register owns that entrance instead) and never run under
+`prefers-reduced-motion: reduce`, where both the screen entrance and any
+in-flight transition collapse to an immediate, static swap.
+
 ---
 
 ## 10. Icons

@@ -371,7 +371,7 @@ export function Overview() {
   const query = useOverview()
 
   return (
-    <div className="lm-screen flex flex-col gap-8">
+    <div className="flex flex-col gap-8">
       <JoinClassPrompt />
       <QueryState
         query={query}

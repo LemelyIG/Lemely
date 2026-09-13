@@ -68,7 +68,7 @@ export function PlacementResult() {
   const subjectName = useSubjectName(query.data?.subjectCode ?? "")
 
   return (
-    <div className="lm-screen mx-auto flex w-full max-w-180 flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-180 flex-col gap-6">
       <QueryState
         query={query}
         /* Deliberately worded "starting picture", never "result" or "score":

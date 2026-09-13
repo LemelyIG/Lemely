@@ -26,7 +26,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 6 | `offline-1` | native | critical | B | B6 | pending | backend half: idempotency key, Task 9, `pytest --no-cov tests/test_web_student.py` |
 | 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 9 | `T1` | native | critical | B | B2 | pending |  |
+| 9 | `T1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/navigationDirection.test.ts` — `ScreenOutlet`/`ScreenFrame` give every screen (portal and top-level alike) an entrance keyed to `location.key`; `RootOutlet` sets `html[data-direction]` and `index.css`'s `::view-transition-*` rules drive the directional slide for shell-initiated navigation |
 | 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 11 | `zero-haptics-anywhere` | native | high | B | B5 | done B5 | `npx vitest run tests/unit/haptics.test.ts` — `lib/haptics.ts`'s `haptic()`, called on `ConfirmModal`'s confirm tap and once per finished `FlashcardReview` session |
 | 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
@@ -72,7 +72,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 52 | `no-orientation-policy` | native | medium | B | B5 | done B5 | `npx vitest run tests/unit/capabilityWiring.test.ts` — `CameraCapture.tsx` carries a landscape hint (Tailwind 4's built-in `landscape:` variant, gated further on `pointer-coarse:`) recommending portrait for the best scan; the manifest's `orientation: "any"` (DESIGN.md, Phase A) is otherwise unchanged — this is guidance, not a lock |
 | 53 | `no-standalone-media-query` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 54 | `touch-callout-select-on-chrome` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
-| 55 | `T4` | native | medium | B | B2 | pending |  |
+| 55 | `T4` | native | medium | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/navigationDirection.test.ts` — native View Transitions (`document.startViewTransition` via react-router's `viewTransition` prop) on sidebar links, breadcrumbs and `BackControl`; excluded from the paper-result reveal and from `prefers-reduced-motion` |
 | 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | done B1 | DESIGN.md §12 "Skeletons, not spinners" bullet notes the practice generator's `Create` button as the documented sub-1s-mutation exception; no code change |
 | 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | pending |  |
 | 58 | `kb-6` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |

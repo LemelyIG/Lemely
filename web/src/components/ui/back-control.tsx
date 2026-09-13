@@ -27,9 +27,14 @@ export function BackControl({
   function handleClick() {
     const target = backTarget(window.history.state?.idx, fallback)
     if (target.kind === "history") {
+      // react-router's delta overload (`navigate(-1)`) calls `router.go()`
+      // directly and ignores an options argument entirely — `viewTransition`
+      // only exists on the `to`-argument overload's `NavigateOptions`, so a
+      // real history pop plays no View Transition here. The route fallback
+      // below is the one branch that can actually request one.
       navigate(-1)
     } else {
-      navigate(target.to, { replace: true })
+      navigate(target.to, { replace: true, viewTransition: true })
     }
   }
 

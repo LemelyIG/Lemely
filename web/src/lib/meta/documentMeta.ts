@@ -82,6 +82,18 @@ export interface PageMeta {
   description?: string
   /** See `SkeletonShape`. Every route with an `element` declares one. */
   skeleton?: SkeletonShape
+  /**
+   * `false` opts a route's own entrance out of View Transitions (packet
+   * B2b, DESIGN.md §9.4) — a static declaration of the exception, not
+   * something any router mechanism reads automatically (`viewTransition` is
+   * a per-navigation option on the `Link`/`navigate()` call, not something
+   * react-router derives from the destination route's `handle`). It exists
+   * so the exception is visible in the route table itself rather than only
+   * as an absence at every call site that navigates here — the same reason
+   * `skeleton` lives on `handle` rather than being inferred. Omitted (not
+   * `true`) everywhere else: the ordinary case needs no marker.
+   */
+  viewTransition?: false
 }
 
 /** The product name, appended to every page title. */

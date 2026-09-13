@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { Fragment, lazy, Suspense, useState } from "react"
-import { Link, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Link, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   Armchair,
@@ -24,6 +24,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useProfile } from "@/lib/hooks/useMeApi"
@@ -96,6 +97,7 @@ function SidebarNavItem({
     <NavLink
       to={item.to}
       end={item.end}
+      viewTransition
       className={({ isActive }) =>
         cn(
           // Symmetric padding has no direction, so this row needs no logical
@@ -393,7 +395,7 @@ function AdminLayout({ lane }: { lane: AdminLane }) {
               resetKey={location.pathname}
               fallback={portalErrorFallback}
             >
-              <Outlet />
+              <ScreenOutlet />
             </ErrorBoundary>
           </Suspense>
         </main>

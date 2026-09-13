@@ -245,7 +245,7 @@ export function FlashcardReview() {
    */
   if (!sessionCards) {
     return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
+      <div className="lm-read flex flex-col gap-6">
         <QueryState
           query={dueQuery}
           srHeading={`Flashcard review for ${subjectName}`}
@@ -278,7 +278,6 @@ export function FlashcardReview() {
             label: "Back to decks",
             onClick: () => navigate(`/student/flashcards/${subjectCode}`),
           }}
-          className="lm-screen"
         />
       </>
     )
@@ -289,7 +288,7 @@ export function FlashcardReview() {
     // reviewed card, and `applyGradeOutcome` never lets it into `results`.
     const summary = summarizeSession(session.results)
     return (
-      <div className="lm-screen lm-read flex flex-col gap-6">
+      <div className="lm-read flex flex-col gap-6">
         <div className="flex flex-col gap-2">
           <h1 className="text-display-lg text-ink">Session complete</h1>
           <p className="lm-prose text-body-lg text-ink-muted">
@@ -371,7 +370,7 @@ export function FlashcardReview() {
        instead of overflowing a fixed box; and `md:` only, because on a phone
        the content already fills the viewport and centring would push the
        grade buttons below the fold. */
-    <div className="lm-screen lm-read flex flex-col gap-6 md:min-h-[68vh] md:justify-center">
+    <div className="lm-read flex flex-col gap-6 md:min-h-[68vh] md:justify-center">
       <h1 className="sr-only">Flashcard review for {subjectName}</h1>
       <div className="flex flex-col gap-2">
         <div className="flex items-center justify-between text-body-sm text-ink-muted">

@@ -8,7 +8,8 @@ import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
-import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
+import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   FileText,
@@ -156,6 +157,7 @@ function SidebarNavItem({
     <NavLink
       to={item.to}
       end={item.end}
+      viewTransition
       className={({ isActive }) =>
         cn(
           // Symmetric padding has no direction, so this row needs no logical
@@ -613,7 +615,7 @@ function TeacherLayout() {
                 resetKey={location.pathname}
                 fallback={portalErrorFallback}
               >
-                <Outlet />
+                <ScreenOutlet />
               </ErrorBoundary>
             </Suspense>
           )}

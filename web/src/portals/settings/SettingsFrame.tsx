@@ -5,6 +5,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
+import { ScreenFrame } from "@/components/ui/screen-outlet"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { cn } from "@/lib/utils"
 
@@ -190,7 +191,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
           </div>
         </div>
 
-        {children}
+        <ScreenFrame>{children}</ScreenFrame>
       </main>
     </div>
   )

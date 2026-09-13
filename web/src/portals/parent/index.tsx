@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
-import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Bell, Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
@@ -11,6 +11,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { Chip } from "@/components/ui/chip"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
@@ -370,7 +371,7 @@ function ParentLayout() {
             resetKey={location.pathname}
             fallback={portalErrorFallback}
           >
-            <Outlet />
+            <ScreenOutlet />
           </ErrorBoundary>
         </Suspense>
       </main>

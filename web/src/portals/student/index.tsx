@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense, useEffect, useState } from "react"
-import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { CalendarBlank, Cards, CaretDown, PencilSimpleLine, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -17,6 +17,7 @@ import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -221,6 +222,7 @@ function NavRow({
       to={to}
       end={end}
       onClick={onClick}
+      viewTransition
       className={({ isActive }) =>
         cn(
           // `px-[9px]` not `pl-`/`pr-`: symmetric padding has no
@@ -812,7 +814,7 @@ function StudentLayout() {
                 resetKey={location.pathname}
                 fallback={portalErrorFallback}
               >
-                <Outlet />
+                <ScreenOutlet />
               </ErrorBoundary>
             </Suspense>
           )}
@@ -851,7 +853,13 @@ export const studentRoute: RouteObject = {
     {
       path: "result/:paperId",
       element: <PaperResult />,
-      handle: { title: "Paper result", skeleton: "page-header" },
+      // Packet B2b: excluded from View Transitions — PaperResult keeps its
+      // own celebration entrance (DESIGN.md §9.3), and stacking that under a
+      // ±24px shell slide would read as two animations fighting rather than
+      // a reveal. See `PaperResult.tsx`'s own root className for the other
+      // half of this exception (it keeps `lm-screen`, unlike every other
+      // screen root).
+      handle: { title: "Paper result", skeleton: "page-header", viewTransition: false },
     },
     {
       path: "correct",

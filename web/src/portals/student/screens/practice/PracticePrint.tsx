@@ -44,7 +44,7 @@ export function PracticePrint() {
   const query = usePracticeExport(assignmentId)
 
   return (
-    <div className="lm-screen lm-read flex flex-col gap-6">
+    <div className="lm-read flex flex-col gap-6">
       <QueryState
         query={query}
         srHeading="Print your practice set"

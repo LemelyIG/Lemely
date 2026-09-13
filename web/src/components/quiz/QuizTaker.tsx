@@ -465,7 +465,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
    * only renders ahead of its own skeleton/error output (see that
    * component's doc comment). */
   return (
-    <div className={cn("lm-screen mx-auto flex max-w-[820px] flex-col gap-5", className)}>
+    <div className={cn("mx-auto flex max-w-[820px] flex-col gap-5", className)}>
       <QueryState
         query={query}
         srHeading="Test in progress"

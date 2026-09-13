@@ -1,8 +1,9 @@
 import { lazy, Suspense } from "react"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { RootOutlet } from "@/components/root-outlet"
+import { ScreenFrame } from "@/components/ui/screen-outlet"
 import type { RouteObject } from "react-router-dom"
-import { Navigate, useSearchParams } from "react-router-dom"
+import { Navigate, Outlet, useSearchParams } from "react-router-dom"
 import { teacherRoute } from "@/portals/teacher"
 import { studentRoute } from "@/portals/student"
 import { parentRoute } from "@/portals/parent"
@@ -318,6 +319,24 @@ export const appRoutes: RouteObject[] = [
    */
   {
     element: <RootOutlet />,
+    children: [
+  /*
+   * Packet B2b · the second pathless layout route, grouping every top-level
+   * route that is not one of the five portal subtrees below (which get
+   * their own screen entrance from `ScreenOutlet` inside their own layout
+   * instead — see `screen-outlet.tsx`'s module header for why there are two
+   * exports rather than one). This is the auth/marketing/misc/settings lane:
+   * none of it has a shared layout `Outlet` of its own to hang an entrance
+   * off, so this route supplies one. No `errorElement` here either, for the
+   * identical reason `RootOutlet`'s own wrapper carries none: every child
+   * below keeps its own, so bubbling is unchanged.
+   */
+  {
+    element: (
+      <ScreenFrame>
+        <Outlet />
+      </ScreenFrame>
+    ),
     children: [
   { path: "/", element: <Root />, errorElement, handle: rootMeta },
   /*
@@ -715,39 +734,6 @@ export const appRoutes: RouteObject[] = [
       </RequireAuth>
     ),
   },
-  {
-    ...teacherRoute,
-    errorElement,
-    element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,
-  },
-  // P4.7 (D1.6). Two subtrees rather than one `/admin`, because they are two
-  // different jobs held by two different roles with no overlapping screen
-  // between them, and one guard per subtree is a guard a test can assert in
-  // both directions (see `tests/unit/adminRoutes.test.ts`).
-  {
-    ...schoolAdminRoute,
-    errorElement,
-    element: (
-      <RequireAuth allowedRoles={SCHOOL_ADMIN_ROLES}>{schoolAdminRoute.element}</RequireAuth>
-    ),
-  },
-  {
-    ...platformAdminRoute,
-    errorElement,
-    element: (
-      <RequireAuth allowedRoles={PLATFORM_ADMIN_ROLES}>{platformAdminRoute.element}</RequireAuth>
-    ),
-  },
-  {
-    ...studentRoute,
-    errorElement,
-    element: <RequireAuth allowedRoles={STUDENT_ROLES}>{studentRoute.element}</RequireAuth>,
-  },
-  {
-    ...parentRoute,
-    errorElement,
-    element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
-  },
   // Role-aware landing for the Web Share Target (`sw/shareTarget.ts`'s
   // redirect) and the File Handling API route below — `ScanInbox` reads the
   // session itself and forwards to whichever portal's upload surface fits
@@ -788,6 +774,13 @@ export const appRoutes: RouteObject[] = [
    * portal-shaped 404, which is a known simplification: a 404 inside the
    * student portal loses the sidebar. Rebuilding it as a per-portal child
    * route is Phase 4 work, once each portal layout is its final shape.
+   *
+   * Placed inside this same `ScreenFrame` group, ahead of the five portal
+   * routes below, rather than after them where it used to sit: react-router
+   * ranks route matches by path specificity, not by declaration order (ties
+   * aside, and every path here is distinct), so moving it does not change
+   * which route wins for any URL — it only keeps every top-level,
+   * non-portal route contiguous in one group.
    */
   {
     path: "*",
@@ -801,6 +794,41 @@ export const appRoutes: RouteObject[] = [
       description: "This Lemely page does not exist. The link may be out of date.",
       skeleton: "standalone",
     } satisfies PageMeta,
+  },
+    ],
+  },
+  {
+    ...teacherRoute,
+    errorElement,
+    element: <RequireAuth allowedRoles={TEACHER_ROLES}>{teacherRoute.element}</RequireAuth>,
+  },
+  // P4.7 (D1.6). Two subtrees rather than one `/admin`, because they are two
+  // different jobs held by two different roles with no overlapping screen
+  // between them, and one guard per subtree is a guard a test can assert in
+  // both directions (see `tests/unit/adminRoutes.test.ts`).
+  {
+    ...schoolAdminRoute,
+    errorElement,
+    element: (
+      <RequireAuth allowedRoles={SCHOOL_ADMIN_ROLES}>{schoolAdminRoute.element}</RequireAuth>
+    ),
+  },
+  {
+    ...platformAdminRoute,
+    errorElement,
+    element: (
+      <RequireAuth allowedRoles={PLATFORM_ADMIN_ROLES}>{platformAdminRoute.element}</RequireAuth>
+    ),
+  },
+  {
+    ...studentRoute,
+    errorElement,
+    element: <RequireAuth allowedRoles={STUDENT_ROLES}>{studentRoute.element}</RequireAuth>,
+  },
+  {
+    ...parentRoute,
+    errorElement,
+    element: <RequireAuth allowedRoles={PARENT_ROLES}>{parentRoute.element}</RequireAuth>,
   },
     ],
   },

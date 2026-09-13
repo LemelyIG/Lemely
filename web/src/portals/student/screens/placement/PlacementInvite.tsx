@@ -71,7 +71,7 @@ export function PlacementInvite() {
   }
 
   return (
-    <div className="lm-screen mx-auto flex w-full max-w-140 flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-140 flex-col gap-6">
       <QueryState
         query={query}
         srHeading="Placement test"

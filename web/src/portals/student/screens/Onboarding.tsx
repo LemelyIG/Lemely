@@ -315,7 +315,7 @@ export function Onboarding() {
     completeOnboarding.isPending
 
   return (
-    <div className="lm-screen mx-auto flex w-full max-w-190 flex-col gap-6">
+    <div className="mx-auto flex w-full max-w-190 flex-col gap-6">
       {/* The stepper is chrome, not data: it reflects local wizard state
           (`wizardStep`) that exists independent of `profileQuery`, so it
           stays outside `QueryState` and renders in every state rather than
