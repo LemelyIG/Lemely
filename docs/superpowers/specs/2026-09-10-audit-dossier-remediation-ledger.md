@@ -227,7 +227,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 207 | `teacher-analytics-no-lesson-plan-action` | ui | medium | D | D3 | pending |  |
 | 208 | `teacher-flow-canvas-fake-progress-ring` | ui | medium |  |  | no-action | production already better |
 | 209 | `teacher-flow-no-camera-capture-on-upload` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/gradingCamera.test.ts` — `Grading.tsx` offers "Use camera" beside the plain file input, opening `CameraCapture` (`autoStart`, gated on the tap); `assemblePagesToPdf` stays a separate lazy chunk (`node scripts/check-bundle-budget.mjs` — all 139 chunks within budget, `Grading-*` at 4.02KB gzip) |
-| 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | pending | compact prev/next queue strip in ReviewItem reusing queueQuery; route model kept (ReviewItem.tsx:30-40) |
+| 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/queuePosition.test.ts` — `ReviewItem.tsx`'s `QueueStrip` shows "Item N of total" with Prev/Next `Link`s (`viewTransition`, same filter querystring), built from the pure `queuePosition` (`lib/queuePosition.ts`) over the screen's existing `queueQuery`/`queueIds` (no second fetch); route model kept (`ReviewItem.tsx` ~342-365) |
 | 211 | `teacher-tools-pool-source-single-select` | ui | medium | D | D2 | pending |  |
 | 212 | `teacher-tools-predicted-class-average-fabricated` | ui | medium | D | D2 | pending |  |
 | 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/quizBuilderSummary.test.ts` — `QuizBuilder.tsx` now shows a "So far" rail (`SectionHead` + `dl`) beside the `Stepper` from `md` up (a single line below it), listing `settingsSoFar`'s label/value pairs for every step strictly behind the current one |
@@ -285,8 +285,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 265 | `paper-red-pen-register-missing` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/redPen.test.ts` — `.lm-red-pen` (ink + left rule, no background) applied to the expanded slot of a `register="red-pen"` `QuestionRow` |
 | 266 | `teacher-analytics-chart-register-exceeds-canvas` | ui | low |  |  | no-action | production already better |
 | 267 | `teacher-analytics-heatmap-exceeds-canvas` | ui | low |  |  | no-action | production already better |
-| 268 | `teacher-analytics-no-headline-top-grade-count` | ui | low | C | C3 | pending |  |
-| 269 | `teacher-flow-no-nav-badge-counts` | ui | low | C | C3 | pending |  |
+| 268 | `teacher-analytics-no-headline-top-grade-count` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/gradeSummary.test.ts` — `GradeDistributionPanel`'s subtitle leads with "N students on A* or A" (`topGradeCount`, `lib/gradeSummary.ts`, summing buckets `gradeBand` classes "top"), omitted when N is 0 |
+| 269 | `teacher-flow-no-nav-badge-counts` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/reviewBadge.test.ts` — `useReviewQueueCount` (`lib/hooks/useReviewQueueCount.ts`) backs a `badge` on both the sidebar "Review" item and the bottom-nav Review tab (`portals/teacher/index.tsx`, `data.ts`'s `NavItem.badge: "review-queue"`); backed by `GET /teacher/review`'s new `total` (`lemely/web/schemas_review.py`, `pytest --no-cov tests/test_teacher_review_total.py`) |
 | 270 | `teacher-flow-real-keyboard-shortcuts` | ui | low |  |  | no-action | production already better |
 | 271 | `teacher-flow-review-promoted-to-nav` | ui | low |  |  | no-action | production already better |
 | 272 | `teacher-flow-safer-bulk-approve` | ui | low |  |  | no-action | production already better |
