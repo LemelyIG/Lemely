@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
-import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -16,6 +16,7 @@ import {
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
 import type { ReviewBreakdown, ReviewItemDetail } from "@/lib/teacherTypes"
+import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
@@ -339,6 +340,53 @@ function ResolveControls({
   )
 }
 
+/**
+ * Task 9 (C3d) · "Item N of total" under the page header, with Prev/Next
+ * links carrying the same filter querystring the teacher was triaging
+ * under. Built from `queuePosition` over `ReviewItem`'s own already-fetched
+ * `queueIds` — no second fetch, and the identical "am I even still in this
+ * filtered queue" question the existing `nextItemId` logic below already
+ * answers (a resolved/dismissed item, or one that no longer matches the
+ * filters, falls out of `queueIds` and `queuePosition` returns `null`); the
+ * strip renders nothing rather than a stale or misleading position.
+ */
+function QueueStrip({
+  position,
+  filterQs,
+}: {
+  position: { index: number; total: number; prevId: string | null; nextId: string | null }
+  filterQs: string
+}) {
+  const suffix = filterQs ? `?${filterQs}` : ""
+  return (
+    <div className="flex items-center justify-between gap-3 text-body-sm text-ink-faint">
+      <span>
+        Item {position.index + 1} of {position.total}
+      </span>
+      <div className="flex items-center gap-3">
+        {position.prevId ? (
+          <Link
+            to={`/teacher/review/${position.prevId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            <BackArrow /> Prev
+          </Link>
+        ) : null}
+        {position.nextId ? (
+          <Link
+            to={`/teacher/review/${position.nextId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            Next <ForwardArrow />
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function ReviewItem() {
   const { itemId } = useParams<{ itemId: string }>()
   const navigate = useNavigate()
@@ -361,6 +409,10 @@ export function ReviewItem() {
   const queueIds = queueQuery.data?.items.map((i) => i.itemId) ?? []
   const currentIndex = itemId ? queueIds.indexOf(itemId) : -1
   const nextItemId = currentIndex >= 0 ? queueIds[currentIndex + 1] : undefined
+  // Task 9 (C3d): the `QueueStrip`'s data — same `queueIds` as the "next"
+  // logic just above, so "falls out of the filtered queue" is one answer,
+  // not two that could disagree.
+  const position = itemId ? queuePosition(queueIds, itemId) : null
 
   const goToQueue = useCallback(() => {
     navigate(`/teacher/review${filterQs ? `?${filterQs}` : ""}`)
@@ -480,6 +532,8 @@ export function ReviewItem() {
                   </div>
                 </div>
               </div>
+
+              {position ? <QueueStrip position={position} filterQs={filterQs} /> : null}
 
               <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
                 <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">

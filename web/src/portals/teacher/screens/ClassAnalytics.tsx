@@ -12,6 +12,7 @@ import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { gradeBand } from "@/components/ui/grade-badge"
+import { topGradeCount } from "@/lib/gradeSummary"
 import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -108,11 +109,21 @@ function GradeDistributionPanel({
 }) {
   const { tokens } = useNivoTheme()
   const total = buckets.reduce((sum, b) => sum + b.count, 0)
+  // Task 9 (C3d): the headline count this panel was missing — "how many are
+  // already doing well" beside "how many need help" (the heatmap/weakness
+  // panels' whole focus). Omitted (not "0 students on A* or A") when nobody
+  // is in the top band yet, rather than a clause that reads as a claim about
+  // an empty class.
+  const topCount = topGradeCount(buckets)
+  const subtitle =
+    topCount > 0
+      ? `${topCount} student${topCount === 1 ? "" : "s"} on A* or A · Students by their latest paper grade`
+      : "Students by their latest paper grade"
 
   return (
     <ChartFrame
       title="Grade distribution"
-      subtitle="Students by their latest paper grade"
+      subtitle={subtitle}
       isEmpty={total === 0}
       emptyMarginalia="No grades yet"
       emptyBody="Every student on this class ladder appears here once they have a marked paper. Nobody in this class has one so far."
