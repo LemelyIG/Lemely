@@ -65,6 +65,16 @@ const FILES: FileCheck[] = [
     mustContain: ['<Table density="operate"'],
     mustNotContain: ["<table", "px-[16px]", "py-[10px]", "grid-cols-[minmax"],
   },
+  {
+    file: "QuizResults.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
+  {
+    file: "Quizzes.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
 ]
 
 function sourceOf(file: string): string {
