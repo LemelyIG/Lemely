@@ -109,6 +109,7 @@ export const Textarea = forwardRef<HTMLTextAreaElement, TextareaProps>(function 
           aria-describedby={cn(errorId, hintId) || undefined}
           onChange={handleChange}
           rows={props.rows ?? 4}
+          data-kit-field="textarea"
           className={cn(
             "w-full rounded-md border bg-paper-raised px-3 py-2 text-field text-ink placeholder:text-ink-faint",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",

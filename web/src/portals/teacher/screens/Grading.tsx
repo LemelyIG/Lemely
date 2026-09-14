@@ -589,6 +589,7 @@ export function Grading() {
                           disabled={uploading}
                           onChange={handleScanChange}
                           className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                          data-kit-field="file"
                         />
                       )}
                     </div>
@@ -606,6 +607,7 @@ export function Grading() {
                         disabled={uploading}
                         onChange={handleSchemeChange}
                         className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                        data-kit-field="file"
                       />
                       {!schemeFile ? (
                         <div className="text-data-sm text-ink-faint mt-1.5">

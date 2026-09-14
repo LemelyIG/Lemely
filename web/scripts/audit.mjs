@@ -144,6 +144,8 @@
  * axe JSON dump land in context"):
  *   axe/<route-slug>.json, axe/_summary.json
  *   lighthouse/<route-slug>.json, lighthouse/_summary.json
+ *   kit-fields/<route-slug>.json, kit-fields/_summary.json (C2c: hand-rolled
+ *     input/select/textarea fields missing the kit's `data-kit-field` marker)
  *   responsive-summary.json      (horizontal-scroll violations, empty = clean)
  *   screens/<screen-id>/<state>--<bp>.png
  *   console-errors.json
@@ -184,6 +186,9 @@ const REPORTS_DIR = path.isAbsolute(REPORT_DIR_SETTING)
 const AXE_DIR = path.join(REPORTS_DIR, "axe")
 const LH_DIR = path.join(REPORTS_DIR, "lighthouse")
 const SCREENS_DIR = path.join(REPORTS_DIR, "screens")
+// C2c (Task 5) · one JSON per state, `_summary.json` for the run, same shape
+// as AXE_DIR. See `runKitFieldsCheck`'s own doc comment for what this checks.
+const KIT_FIELDS_DIR = path.join(REPORTS_DIR, "kit-fields")
 const CONSOLE_ERRORS_PATH = path.join(REPORTS_DIR, "console-errors.json")
 const RESPONSIVE_SUMMARY_PATH = path.join(REPORTS_DIR, "responsive-summary.json")
 /* P6.3. Route failures used to live only in this process's stdout and its exit
@@ -598,6 +603,64 @@ async function runAxe(page, slug) {
     if (v.impact && counts[v.impact] !== undefined) counts[v.impact] += 1
   }
   return { slug, url: results.url, violationCount: results.violations.length, counts }
+}
+
+/**
+ * C2c (Task 5) · the runtime half of the forms migration
+ * (`web/tests/unit/formsMigration.test.ts` is the source-text half). Every
+ * kit field component (`Input`/`Select`/`Textarea`/`Slider`/`Checkbox`/
+ * `Radio`) stamps `data-kit-field` on its own native control
+ * (`kitFieldMarker.test.ts` pins this at the component level) — this walks
+ * the CAPTURED DOM for a route/state and fails anything that renders the same
+ * tag *without* that marker: a hand-rolled `<input>`/`<select>`/`<textarea>`
+ * the source scan didn't see (dynamically generated markup, a future screen
+ * built without importing the kit) or a real regression in the kit itself.
+ *
+ * Selector mirrors the source-text test's own exemption exactly:
+ * checkbox/radio/file/hidden/submit inputs are excluded, not because they
+ * cannot carry the marker (several genuine survivors do — see the test's
+ * `ALLOWLIST`) but because a bare native one is a legitimate, unmarked
+ * shape for those types (the OS picker for file, a `<button type=submit>`
+ * standing in for `input[type=submit]` everywhere in this product).
+ *
+ * Runs immediately after `runAxe`, at the same viewport/state, so a route
+ * with 3 states gets 3 kit-fields passes — same "every state, not just the
+ * canonical one" reasoning `visitRoute`'s own doc comment gives for axe.
+ */
+async function runKitFieldsCheck(page, slug) {
+  const offenders = await page.evaluate(() => {
+    const nodes = document.querySelectorAll(
+      "input:not([type=checkbox]):not([type=radio]):not([type=file])" +
+        ":not([type=hidden]):not([type=submit]), select, textarea",
+    )
+    return Array.from(nodes)
+      .filter((el) => !el.hasAttribute("data-kit-field"))
+      .map((el) => ({ tag: el.tagName.toLowerCase(), outerHTML: el.outerHTML.slice(0, 300) }))
+  })
+  const result = { slug, url: page.url(), offenderCount: offenders.length, offenders }
+  fs.writeFileSync(path.join(KIT_FIELDS_DIR, `${slug}.json`), JSON.stringify(result, null, 2))
+  return result
+}
+
+/** Pushes a `runKitFieldsCheck` result into `kitFieldsSummary`, and — when it
+ * found any unmarked field — also into `routeFailures` with the offending
+ * element(s)' `outerHTML` head, per Task 5's behaviour 4 ("a miss is a route
+ * failure"). `routeFailures` already fails the whole run at the end of
+ * `main()` (`scripts/check.sh`'s `puppeteer-audit` gate), so this reuses that
+ * existing hard-failure path rather than inventing a second one. */
+function recordKitFields(kitFieldsSummary, routeFailures, result, { screenId, path: routePath, state }) {
+  kitFieldsSummary.push(result)
+  if (result.offenderCount > 0) {
+    routeFailures.push({
+      screenId,
+      path: routePath,
+      error:
+        `kit-fields: ${result.offenderCount} unmarked field(s)` +
+        (state ? ` [${state}]` : "") +
+        " — " +
+        result.offenders.map((o) => o.outerHTML).join(" | "),
+    })
+  }
 }
 
 /** Copies the app session out of `page`'s localStorage verbatim, so an
@@ -1040,7 +1103,11 @@ async function resolveReviewItemViaAdjustForm(page, url) {
  * `axe/_summary.json` has one row per state — do not read
  * `lighthouse/_summary.json`'s row count as "how many states were audited";
  * see `main()`'s end-of-run log for the honest per-kind counts. */
-async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsiveViolations }) {
+async function visitRoute(
+  page,
+  route,
+  { axeSummary, lighthouseSummary, responsiveViolations, kitFieldsSummary, routeFailures },
+) {
   const url = `${PREVIEW_URL}${route.path}`
   const states = route.states ?? [
     { state: route.state ?? "default", slug: route.slug, ready: route.ready },
@@ -1078,6 +1145,11 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
       await page.setViewport(AUDIT_VIEWPORT)
       await gotoReady(page, url, ready, waitUntil)
       axeSummary.push(await runAxe(page, st.slug))
+      recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, st.slug), {
+        screenId: route.screenId,
+        path: route.path,
+        state: st.state,
+      })
 
       if (st.lighthouse !== false) {
         log(`${route.screenId} ${route.path} [${st.state}] — Lighthouse...`)
@@ -2506,6 +2578,7 @@ async function main() {
   fs.mkdirSync(AXE_DIR, { recursive: true })
   fs.mkdirSync(LH_DIR, { recursive: true })
   fs.mkdirSync(SCREENS_DIR, { recursive: true })
+  fs.mkdirSync(KIT_FIELDS_DIR, { recursive: true })
 
   log("Resolving local Supabase stack keys...")
   const supabaseEnv = resolveSupabaseEnv()
@@ -2548,6 +2621,7 @@ async function main() {
   const consoleErrors = []
   const responsiveViolations = []
   const routeFailures = []
+  const kitFieldsSummary = []
 
   let browser
   let routes = []
@@ -2617,6 +2691,11 @@ async function main() {
     await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
     await waitForText(page, "Lemely")
     axeSummary.push(await runAxe(page, "login"))
+    recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "login"), {
+      screenId: "G-04",
+      path: "/login",
+      state: "default",
+    })
     lighthouseSummary.push(
       await runLighthouseAudit(`${PREVIEW_URL}/login`, page, "login", { authed: false }),
     )
@@ -2658,6 +2737,12 @@ async function main() {
     await gotoWithRetry(page, `${PREVIEW_URL}/student/correct`, { waitUntil: "networkidle0" })
     await waitForText(page, "Correct a paper")
     axeSummary.push(await runAxe(page, "student-correct"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-correct"),
+      { screenId: "S-10", path: "/student/correct", state: "entry" },
+    )
     lighthouseSummary.push({
       path: "/student/correct",
       ...(await runLighthouseAudit(`${PREVIEW_URL}/student/correct`, page, "student-correct", {
@@ -2694,6 +2779,11 @@ async function main() {
     await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
     await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
     axeSummary.push(await runAxe(page, "student-result"))
+    recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "student-result"), {
+      screenId: "S-15/S-17",
+      path: resultUrl.slice(PREVIEW_URL.length),
+      state: "default",
+    })
     lighthouseSummary.push({
       // Derived from the URL rather than written out, because this one carries a
       // real paper id — a hand-typed "/student/result" would be a path no run
@@ -2718,6 +2808,12 @@ async function main() {
       await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
       await shoot(page, "S-17", "print-media", AUDIT_VIEWPORT.width)
       axeSummary.push(await runAxe(page, "student-result-print"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-print"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "print-media" },
+      )
     } finally {
       await page.emulateMediaType(null)
     }
@@ -2740,6 +2836,12 @@ async function main() {
     await gotoWithRetry(page, `${PREVIEW_URL}/student/notifications`, { waitUntil: "networkidle0" })
     await waitForText(page, "Your paper has been marked")
     axeSummary.push(await runAxe(page, "student-notifications-populated"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-notifications-populated"),
+      { screenId: "G-13", path: "/student/notifications", state: "populated" },
+    )
     await shoot(page, "G-13", "populated", AUDIT_VIEWPORT.width)
 
     // ── S-06 · Student overview — now non-empty (one corrected paper) ──────
@@ -2754,6 +2856,12 @@ async function main() {
     await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
     await waitForText(page, "Subjects this session")
     axeSummary.push(await runAxe(page, "student-overview"))
+    recordKitFields(
+      kitFieldsSummary,
+      routeFailures,
+      await runKitFieldsCheck(page, "student-overview"),
+      { screenId: "S-06", path: "/student", state: "non-empty" },
+    )
     lighthouseSummary.push({
       path: "/student",
       ...(await runLighthouseAudit(`${PREVIEW_URL}/student`, page, "student-overview", {
@@ -2835,6 +2943,8 @@ async function main() {
           axeSummary,
           lighthouseSummary,
           responsiveViolations,
+          kitFieldsSummary,
+          routeFailures,
         })
       } catch (err) {
         if (!browser.connected) throw browserDeath(`during ${route.screenId} ${route.path}`)
@@ -2859,6 +2969,10 @@ async function main() {
   fs.writeFileSync(
     path.join(LH_DIR, "_summary.json"),
     JSON.stringify(lighthouseSummary, null, 2),
+  )
+  fs.writeFileSync(
+    path.join(KIT_FIELDS_DIR, "_summary.json"),
+    JSON.stringify(kitFieldsSummary, null, 2),
   )
   fs.writeFileSync(CONSOLE_ERRORS_PATH, JSON.stringify(consoleErrors, null, 2))
   fs.writeFileSync(RESPONSIVE_SUMMARY_PATH, JSON.stringify(responsiveViolations, null, 2))
@@ -2886,6 +3000,10 @@ async function main() {
       `  ${r.slug.padEnd(24)} ${r.counts.critical}/${r.counts.serious}/${r.counts.moderate}/${r.counts.minor}  (total ${r.violationCount})`,
     )
   }
+  log(
+    `kit-fields passes: ${kitFieldsSummary.length}. Unmarked (hand-rolled) fields: ` +
+      `${kitFieldsSummary.reduce((sum, r) => sum + r.offenderCount, 0)}.`,
+  )
   log("Lighthouse scores (performance/accessibility/best-practices/seo):")
   for (const r of lighthouseSummary) {
     log(
