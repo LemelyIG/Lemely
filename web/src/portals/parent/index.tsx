@@ -6,7 +6,7 @@ import { useQueryClient } from "@tanstack/react-query"
 import { Bell, Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { BadgeSync } from "@/components/badge-sync"
@@ -187,34 +187,6 @@ function ParentTrail() {
   return <Breadcrumbs items={trail} className="py-3" />
 }
 
-/*
- * The real mark, replacing the accent-circle-with-an-italic-*l* that stood in
- * for it. That placeholder is audit finding M9 ("the logo is a lowercase
- * italic *l* in a filled circle, stamped in three places") and this was the
- * third and last stamp: the student sidebar's copy went with surface 1, the
- * teacher sidebar's with surface 5, and this one was still live. Three
- * surfaces in a row have now found a defect that was already fixed elsewhere,
- * which is the standing lesson rather than a coincidence.
- *
- * It was also this file's only `font-serif` call site — D4.1's defect, where
- * the class resolves to Tailwind's default Georgia stack, so the placeholder
- * was not even rendering in the display face it was reaching for.
- *
- * The mark carries its own `aria-hidden`: the wordmark beside it already says
- * "Lemely", so describing the mark too makes a screen reader announce the brand
- * twice. It is a component rather than an `<img>` because it animates, and a
- * `prefers-reduced-motion` guard cannot reach inside an image — `BrandMark`
- * states the measurement.
- */
-function BrandLockup() {
-  return (
-    <>
-      <BrandMark className="h-6 w-8 shrink-0" />
-      <span className="text-display-sm text-ink">Lemely</span>
-    </>
-  )
-}
-
 /** The inbox's unread count. Nothing while pending, on error, or at zero. */
 function UnreadNotificationsBadge() {
   const { data } = useNotificationCounts()
@@ -239,7 +211,7 @@ function Header() {
           to="/parent"
           className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
         >
-          <BrandLockup />
+          <BrandLockup as="span" className="contents" />
         </Link>
         {/* `flex-wrap` on the row above and `min-w-0` here (P6.1). At the 320px
             viewport §6.1 requires, the brand lockup plus the child switcher,

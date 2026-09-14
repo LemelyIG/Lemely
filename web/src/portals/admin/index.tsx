@@ -15,7 +15,7 @@ import {
 } from "@phosphor-icons/react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Avatar } from "@/components/ui/avatar"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
@@ -228,35 +228,21 @@ function SidebarFooter({ lane }: { lane: AdminLane }) {
   )
 }
 
-/*
- * `alt=""` and `aria-hidden`: the wordmark beside it already says "Lemely", so
- * describing the mark too makes a screen reader announce the brand twice.
- *
- * The lane name sits under the wordmark rather than replacing it. An
- * administrator needs to know which console they are in — the two look alike
- * and the nav lists are short — but they are still in Lemely, and a sidebar
- * that says only "Platform" reads like a different application.
- */
-function BrandLockup({ lane }: { lane: AdminLane }) {
-  return (
-    <div className="flex items-center gap-2.5 px-2">
-      <BrandMark className="h-6 w-8 shrink-0" />
-      <div className="min-w-0">
-        <div className="text-display-sm text-ink">Lemely</div>
-        <div className="text-eyebrow text-ink-faint">
-          {lane === "school" ? "School admin" : "Platform admin"}
-        </div>
-      </div>
-    </div>
-  )
-}
-
 function Sidebar({ lane }: { lane: AdminLane }) {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk`'s stated use is "sidebars,
     // table headers, code blocks, inset areas".
     <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <BrandLockup lane={lane} />
+      {/* The lane name sits under the wordmark rather than replacing it. An
+          administrator needs to know which console they are in — the two
+          look alike and the nav lists are short — but they are still in
+          Lemely, and a sidebar that says only "Platform" reads like a
+          different application. */}
+      <BrandLockup className="px-2">
+        <div className="text-eyebrow text-ink-faint">
+          {lane === "school" ? "School admin" : "Platform admin"}
+        </div>
+      </BrandLockup>
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
         <AdminNav lane={lane} />

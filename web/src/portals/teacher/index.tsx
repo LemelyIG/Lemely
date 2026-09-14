@@ -6,7 +6,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
@@ -321,37 +321,12 @@ function SidebarFooter() {
   )
 }
 
-/*
- * The real mark, replacing the accent-circle-with-an-italic-*l* that stood in
- * for it. That placeholder is audit finding M9 ("the logo is a lowercase
- * italic *l* in a filled circle, stamped in three places"); the student
- * sidebar's copy was replaced when surface 1 landed and this one was still
- * live, which is P4.2's second lesson exactly — a defect fixed on one portal
- * can still be shipping on another.
- *
- * It was also the last `font-serif` call site in this file, i.e. the D4.1
- * defect: the class resolves to Tailwind's default Georgia stack, so the
- * placeholder was not even rendering in the display face it was reaching for.
- *
- * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
- * already says "Lemely", so describing the mark too makes a screen reader
- * announce the brand twice.
- */
-function BrandLockup() {
-  return (
-    <div className="flex items-center gap-2.5 px-2">
-      <BrandMark className="h-6 w-8 shrink-0" />
-      <span className="text-display-sm text-ink">Lemely</span>
-    </div>
-  )
-}
-
 function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
     // is "sidebars, table headers, code blocks, inset areas".
     <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <BrandLockup />
+      <BrandLockup className="px-2" />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
         <TeacherNav />

@@ -2,6 +2,7 @@
 import { lazy, Suspense, useRef } from "react"
 import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { buttonVariants } from "@/components/ui/button"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
@@ -112,24 +113,32 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
               to="/"
               className="brand rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
             >
-              {/* `BrandMark` sets its own `aria-hidden`: the wordmark beside
-                  it already says "lemely", so describing the mark too
-                  announces it twice. The wordmark text stays `sr-only` below
-                  `sm` (640px) rather than `hidden`, for the same reason the
-                  previous build gave: three header actions share the row
-                  with it, and below 640px there is no room for the icon, the
-                  word and three nav items on one line without wrapping a
-                  label to two lines or forcing horizontal scroll, both hard
-                  gates. A screen-reader user still hears the brand name even
-                  though a sighted mobile reader sees only the mark. */}
-              <BrandMark className="h-6 w-8 shrink-0" />
-              {/* Lowercase "lemely": the design's own wordmark casing
-                  (design-import-spec.md, page structure item 1 —
-                  `.brand span` in display serif beside the mark). The
-                  footer below keeps sentence case ("Lemely, marking for
-                  CAIE papers.") because that is a sentence, not a
-                  logotype; the two are not in tension. */}
-              <span className="sr-only sm:not-sr-only sm:inline">lemely</span>
+              {/* `as="span" className="contents"`: `.brand` in marketing.css
+                  is already the flex row (mark + wordmark, `.brand span` sets
+                  the display-serif size) — an extra wrapper here would nest a
+                  second flex box inside it with its own gap. `contents`
+                  keeps `BrandLockup`'s own div out of the box tree so the
+                  mark and wordmark stay direct children of `.brand`, exactly
+                  as the hand-rolled version had them.
+                  Lowercase "lemely": the design's own wordmark casing
+                  (design-import-spec.md, page structure item 1). The footer
+                  below keeps sentence case ("Lemely, marking for CAIE
+                  papers.") because that is a sentence, not a logotype; the
+                  two are not in tension.
+                  The wordmark stays `sr-only` below `sm` (640px) rather than
+                  `hidden`, for the same reason the previous build gave:
+                  three header actions share the row with it, and below
+                  640px there is no room for the icon, the word and three nav
+                  items on one line without wrapping a label to two lines or
+                  forcing horizontal scroll, both hard gates. A screen-reader
+                  user still hears the brand name even though a sighted
+                  mobile reader sees only the mark — `[&>span]` reaches past
+                  `BrandLockup`'s own wrapper to the wordmark it renders. */}
+              <BrandLockup
+                as="span"
+                casing="lower"
+                className="contents [&>span]:sr-only sm:[&>span]:not-sr-only sm:[&>span]:inline"
+              />
             </Link>
             <nav aria-label="Marketing" className="nav__links">
               <Link

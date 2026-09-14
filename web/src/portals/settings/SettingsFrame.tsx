@@ -3,7 +3,7 @@ import type { ReactNode } from "react"
 import { Link, NavLink } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { portalPathForRole } from "@/lib/auth/RequireAuth"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { ScreenFrame } from "@/components/ui/screen-outlet"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
@@ -155,11 +155,7 @@ export function SettingsFrame({ title, intro, children }: SettingsFrameProps) {
             to={home}
             className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
           >
-            {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
-                "Lemely", so describing the mark too announces the brand twice
-                (the same treatment as the parent header). */}
-            <BrandMark className="h-6 w-8 shrink-0" />
-            <span className="text-display-sm text-ink">Lemely</span>
+            <BrandLockup as="span" className="contents" />
           </Link>
         </div>
       </header>
