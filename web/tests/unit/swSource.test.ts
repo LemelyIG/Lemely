@@ -130,6 +130,33 @@ describe("sw.ts — widget bridge wiring (Windows 11 / Android widget surface)",
  * regression this pins was a synchronous `TypeError` on every single
  * `activate` in every non-Edge browser.
  */
+/*
+ * Task 10 (B6b) — offline upload queue Background Sync. `Queue` with a
+ * custom `onSync`, never `BackgroundSyncPlugin`: the plugin replays raw
+ * requests and discards their responses, but this flow needs the returned
+ * `paperId` back to then call `/student/correct` — see `sw.ts`'s own header
+ * comment. The `Queue` construction has to sit inside the `precacheEnabled`
+ * block for the same reason precaching itself does: staging and localhost
+ * are not the hosts this ships to production behaviour on.
+ */
+describe("sw.ts — offline upload queue Background Sync (B6)", () => {
+  it("constructs the lemely-uploads Queue inside the precacheEnabled block, not at module scope", () => {
+    const precacheBlockMatch = source.match(/if \(precacheEnabled\) \{[\s\S]*?\n\} else \{/)
+    expect(precacheBlockMatch, "no `if (precacheEnabled) { ... } else {` block found").not.toBeNull()
+    const body = precacheBlockMatch ? precacheBlockMatch[0] : ""
+    expect(body).toMatch(/new Queue\(\s*"lemely-uploads"/)
+    expect(body).toMatch(/onSync/)
+  })
+
+  it("never uses BackgroundSyncPlugin", () => {
+    expect(source).not.toMatch(/BackgroundSyncPlugin/)
+  })
+
+  it("imports Queue from workbox-background-sync", () => {
+    expect(source).toMatch(/import\s*\{\s*Queue\s*\}\s*from\s*"workbox-background-sync"/)
+  })
+})
+
 describe("sw.ts — widget API feature detection (widget bridge review fix HIGH 2)", () => {
   it("declares self.widgets as optional, not asserted always present", () => {
     expect(source).toMatch(/declare const self: ServiceWorkerGlobalScope & \{ widgets\?:/)

@@ -658,13 +658,62 @@ mechanically (below).
 the real production hosts — `PRECACHE_HOSTS` (`src/sw.ts`) lists
 `lemelyig.com`/`www.lemelyig.com` explicitly, so staging and local dev never
 precache and never need the activate-time cache-clear that host set exists
-to avoid. `/api/*` is never cached, on any host: marks, grades and the
-review queue are live data, and a stale response there is a wrong answer,
-not a convenience. On the client, `isOfflineFailure` classifies a network
-error and `<OfflineState>` (`components/ui/state-views.tsx`, wired through
-`<QueryState>`) renders a real "you're offline" screen instead of the
-generic error state — a network failure and a 500 are different facts and
-read as different screens.
+to avoid (`emp-offline-staging-by-design`: offline on staging is expected to
+fail, not a bug — documented here rather than fixed, since fixing it would
+mean staging serving a stale deploy to a returning visitor, which is the
+exact failure this host split exists to avoid). `/api/*` is never cached,
+on any host: marks, grades and the review queue are live data, and a stale
+response there is a wrong answer, not a convenience. On the client,
+`isOfflineFailure` classifies a network error and `<OfflineState>`
+(`components/ui/state-views.tsx`, wired through `<QueryState>`) renders a
+real "you're offline" screen instead of the generic error state — a
+network failure and a 500 are different facts and read as different
+screens.
+
+**Offline upload queue (Task 10, B6).** A scan that fails to upload because
+the request never reached the server at all (`shouldQueueUpload`,
+`lib/offline/queueDecision.ts` — the same "status 0" test
+`isOfflineFailure` uses) is queued, not lost: `CorrectPaper.tsx` calls
+`enqueueUpload` (`lib/offline/uploadQueue.ts`) and renders `<QueuedBanner>`
+alongside the ordinary form rather than replacing it with a failure panel —
+a real 4xx/5xx from the server is a decision the server made and is never
+queued, only ever a genuine transport failure is. The queue itself is one
+`idb-keyval`-backed IndexedDB store (`QueuedUpload`: the scan and
+mark-scheme bytes as `Blob`s, an `Idempotency-Key` generated once per
+attempt and resent on every retry so a request that in fact already reached
+the server before the connection dropped is never double-uploaded, an
+attempt counter, and — once known — the `paperId`), drained by
+`drainUploadQueue`, which is DOM-free and takes its `upload`/`correct`
+network calls as injected dependencies so the exact same drain logic runs
+from two places: `useUploadQueue.ts`'s page hook (mount, the browser's
+`online` event, and a message from the worker) with a real, authenticated
+session, and `sw.ts`'s `Queue("lemely-uploads", { onSync })` — plain
+`Queue` with a custom `onSync`, not `workbox-background-sync`'s own replay
+plugin, because this flow needs the returned `paperId` back to call
+`/student/correct`, which the plugin's request-replay-and-discard shape
+cannot give it. An entry older than 24h or retried 5 times is dropped
+(`nextQueueAction`), never retried forever.
+
+The worker's own drain attempt is honest about a real limitation: it has no
+access to `localStorage`, so it cannot send the bearer token
+`/student/uploads`/`/student/correct` require, and its own `fetch` calls
+will ordinarily 401 — deliberately not "fixed" by mirroring a token into
+IndexedDB for the worker to read, which would be exactly the kind of
+second, longer-lived credential copy `sw.ts`'s push-handshake code already
+rejects for the same session-boundary reason. What Background Sync
+reliably does instead is message every open client once a sync fires
+(`UPLOAD_QUEUE_DRAINED`), including a tab that is open but
+backgrounded/throttled on mobile — a case the page's own `online` listener
+can miss — so that tab's `useUploadQueue.ts` hook runs the real,
+authenticated drain. Nothing is ever removed from the queue except by a
+`drainUploadQueue` call that actually succeeded, so this is a nudge, not a
+correctness dependency (`sw-background-sync-upload-candidate`,
+`sw-offline-production-trace`).
+
+Sign-out clears the queue (`AuthContext.tsx`'s `logout()` calls
+`clearUploadQueue()`): unlike a cached query response, an entry here holds
+the scan's own bytes, which must not sit on a shared device across an
+account switch (`offline-1`, `offline-3`).
 
 **Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
 home-indicator layout in the first place; without it `env(safe-area-inset-*)`

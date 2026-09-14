@@ -23,7 +23,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 3 | `silent-update-swap` | native | critical | A | A7 | done A7 | `npx vitest run tests/unit/swSource.test.ts tests/unit/serviceWorkerUpdate.test.ts` |
 | 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 5 | `nav-1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
-| 6 | `offline-1` | native | critical | B | B6 | pending | backend half: idempotency key, Task 9, `pytest --no-cov tests/test_web_student.py` |
+| 6 | `offline-1` | native | critical | B | B6 | done B6 | backend half: idempotency key, Task 9, `pytest --no-cov tests/test_web_student.py`; frontend half: `enqueueUpload`/`drainUploadQueue` send `Idempotency-Key` on every attempt, Task 10, `npx vitest run tests/unit/uploadQueue.test.ts tests/unit/queueDecision.test.ts` |
 | 7 | `input-font-14px-ios-zoom` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 8 | `tap-highlight-color` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 9 | `T1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/navigationDirection.test.ts` — `ScreenOutlet`/`ScreenFrame` give every screen (portal and top-level alike) an entrance keyed to `location.key`; `RootOutlet` sets `html[data-direction]` and `index.css`'s `::view-transition-*` rules drive the directional slide for shell-initiated navigation |
@@ -37,7 +37,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 17 | `nav-3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 18 | `nav-4` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 19 | `offline-2` | native | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly (ApiError status 0 only, per review MEDIUM 1); QueryState's error-branch wiring to it verified by source-level check (no jsdom/RTL in this repo — see test file header) |
-| 20 | `offline-3` | native | high | B | B6 | pending |  |
+| 20 | `offline-3` | native | high | B | B6 | done B6 | offline upload queue (`lib/offline/uploadQueue.ts`) persists the scan and drains on reconnect (page + Background Sync); Task 10 |
 | 21 | `correct-paper-chunk-no-prefetch` | native | high | B | B6 | pending |  |
 | 22 | `no-pre-mount-shell` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 23 | `review-queue-unbounded-unvirtualized` | native | high | B | B6 | pending |  |
@@ -113,8 +113,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 93 | `manifest-categories` | pwa | PARTIAL | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (categories) |
 | 94 | `manifest-file-handlers` | pwa | PARTIAL | A | A6 | done A6 | `npx vitest run tests/unit/manifest.test.ts` |
 | 95 | `sec-12-worker-api-response-headers` | pwa | FAIL | A | A6 | done A6 | `npx vitest run tests/unit/headerParity.test.ts (A6 review fix addendum L1 — worker/index.ts now sets all 5 headers, was 2 of 5); npm run build` |
-| 96 | `sw-background-sync-upload-candidate` | pwa | NOT-APPLICABLE | B | B6 | pending |  |
-| 97 | `sw-offline-production-trace` | pwa | PARTIAL | B | B6 | pending |  |
+| 96 | `sw-background-sync-upload-candidate` | pwa | NOT-APPLICABLE | B | B6 | done B6 | `sw.ts`'s `Queue("lemely-uploads", { onSync: drainUploadQueueFromWorker })`; Task 10 — the worker's own fetch attempts are unauthenticated by design (no `localStorage` access) and mainly serve to nudge an open client to drain with a real session, see DESIGN.md §15 |
+| 97 | `sw-offline-production-trace` | pwa | PARTIAL | B | B6 | done B6 | Task 10 |
 | 98 | `any-vs-maskable-distinct-art` | pwa | PASS |  |  | no-action | PASS check |
 | 99 | `icon-sizes-match-reality` | pwa | PASS |  |  | no-action | PASS check |
 | 100 | `maskable-safe-zone-verified` | pwa | PASS |  |  | no-action | PASS check |
@@ -153,7 +153,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 133 | `sec-03-mixed-content` | pwa | PASS | A | A6 | no-action | dossier: no change — sec-03 already correct on develop (A6 re-verify) |
 | 134 | `emp-beforeinstallprompt-not-observed` | pwa | PARTIAL | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
 | 135 | `emp-lighthouse-no-pwa-audits` | pwa | NOT-APPLICABLE |  |  | no-action | N/A check |
-| 136 | `emp-offline-staging-by-design` | pwa | FAILS-ON-STAGING-ONLY | B | B6 | pending |  |
+| 136 | `emp-offline-staging-by-design` | pwa | FAILS-ON-STAGING-ONLY | B | B6 | done B6 | documented (not fixed) in DESIGN.md §15 "Offline behaviour" — staging never precaches by `PRECACHE_HOSTS` design; Task 10 |
 | 137 | `brand-assets-og-card` | pwa | PASS |  |  | no-action | PASS check |
 | 138 | `no-1024-store-icon` | pwa | FAIL | A | A5 | done A5 | `npm run icons` — scripts/generate_icons.mjs; verified via `file dist/apple-touch-icon.png dist/store-icon-1024.png dist/favicon.ico` — 1024px, alpha removed |
 | 139 | `manifest-display-override` | pwa | NOT-APPLICABLE | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (display_override) |

@@ -217,16 +217,33 @@ export function useJoinClass(): UseMutationResult<
  * `uploadWithProgress` reproduces every other behaviour `request()` has —
  * auth header, pre-emptive refresh, one-shot 401 replay, `detail`
  * extraction, `Retry-After` — see its own doc comment in `lib/api.ts`.
+ *
+ * `idempotencyKey` (Task 10, B6b): sent as the `Idempotency-Key` header
+ * `lemely/web/routers/student.py::student_upload` reads — optional, since an
+ * ordinary first attempt from the form has nothing to dedupe against yet.
+ * The offline queue's replay (`lib/offline/uploadQueue.ts`'s `upload` dep,
+ * wired from `useUploadQueue.ts`) always passes one, so a request that in
+ * fact already reached the server before the connection dropped is never
+ * double-uploaded or double-charged against Gemini when the queue retries
+ * it.
  */
 export async function uploadScan(
   scan: File,
   markScheme?: File,
-  options?: { onProgress?: (progress: UploadProgress) => void; signal?: AbortSignal },
+  options?: {
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+    idempotencyKey?: string
+  },
 ): Promise<StudentUploadResponse> {
   const form = new FormData()
   form.append("scan", scan)
   if (markScheme) form.append("mark_scheme", markScheme)
-  return uploadWithProgress<StudentUploadResponse>("/student/uploads", form, options)
+  const { idempotencyKey, ...rest } = options ?? {}
+  return uploadWithProgress<StudentUploadResponse>("/student/uploads", form, {
+    ...rest,
+    headers: idempotencyKey ? { "Idempotency-Key": idempotencyKey } : undefined,
+  })
 }
 
 /**

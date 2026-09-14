@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/processing-state"
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
+import { QueuedBanner } from "@/components/ui/queued-banner"
 import { CameraCapture } from "@/components/CameraCapture"
 import { assemblePagesToPdf } from "@/lib/pdf/assemblePages"
 import {
@@ -39,6 +40,10 @@ import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
+import { enqueueUpload } from "@/lib/offline/uploadQueue"
+import { shouldQueueUpload } from "@/lib/offline/queueDecision"
+import { useUploadQueue } from "@/lib/offline/useUploadQueue"
+import { randomUuid } from "@/lib/uuid"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -366,6 +371,12 @@ export function CorrectPaper() {
    * (M4). A run THIS tab is streaming is not one of these: `running` is true
    * for the whole of that, and the id is already in `paperId`.
    */
+  // Task 10 (B6b). Global to the queue, not this scan pick alone: a scan
+  // queued on a previous visit (or from a different screen instance) must
+  // still show the banner here, since the queue is what is actually
+  // draining it — see `useUploadQueue.ts`'s own header for the three
+  // triggers that keep it moving.
+  const uploadQueue = useUploadQueue()
   const active = useActiveUpload()
   const strandedId =
     !running && active.data && active.data.paperId !== paperId ? active.data.paperId : undefined
@@ -621,15 +632,41 @@ export function CorrectPaper() {
     }
     if (!scanFile) return null
     setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, false))
-    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
-      onProgress: (progress) => {
-        setStages((prev) =>
-          advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
-        )
-      },
-    })
-    setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
-    return uploaded.paperId
+    try {
+      const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
+        onProgress: (progress) => {
+          setStages((prev) =>
+            advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
+          )
+        },
+      })
+      setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
+      return uploaded.paperId
+    } catch (err) {
+      // Task 10 (B6b): an upload that never reached the server at all —
+      // `shouldQueueUpload` is the same "status 0" test `isOfflineFailure`
+      // uses — is not a failure to report, it is a scan to remember. Queued
+      // here, not in `runPipeline`'s own catch below: only THIS call, the
+      // one that moves bytes, should ever be queued. A `streamCorrection`
+      // failure further down means the scan already reached the server, so
+      // queuing it again would duplicate the upload rather than resume it —
+      // that case keeps the ordinary failure panel (`OfflineState`, via
+      // `studentLoadFailureMessage`, where it already applies elsewhere).
+      if (shouldQueueUpload(err)) {
+        await enqueueUpload({
+          id: randomUuid(),
+          idempotencyKey: randomUuid(),
+          scan: scanFile,
+          scanName: scanFile.name,
+          markScheme: schemeFile ?? null,
+          createdAt: Date.now(),
+        })
+        uploadQueue.retry()
+        setStages(initialStages)
+        return null
+      }
+      throw err
+    }
   }
 
   const runPipeline = async () => {
@@ -738,6 +775,8 @@ export function CorrectPaper() {
           </Button>
         )}
       </header>
+
+      <QueuedBanner count={uploadQueue.count} onRetry={uploadQueue.retry} />
 
       <div className="grid grid-correct-cols items-start gap-6 max-tablet:grid-cols-1">
         <Card className="flex flex-col gap-6 p-6">

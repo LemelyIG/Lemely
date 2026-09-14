@@ -424,6 +424,7 @@ function sendXhr(
   token: string | undefined,
   onProgress: ((progress: UploadProgress) => void) | undefined,
   signal: AbortSignal | undefined,
+  extraHeaders: Record<string, string> | undefined,
 ): Promise<XhrOutcome> {
   return new Promise((resolve, reject) => {
     // Handle a signal that arrived pre-aborted (the caller cancelled before
@@ -440,7 +441,7 @@ function sendXhr(
     // that function's doc comment; the rule is the same one `request()`
     // follows for a `FormData` body, just applied through `setRequestHeader`
     // instead of a fetch `headers` object.
-    const headers = authHeaders(true, token) as Record<string, string>
+    const headers = { ...authHeaders(true, token), ...extraHeaders } as Record<string, string>
     for (const [key, value] of Object.entries(headers)) {
       xhr.setRequestHeader(key, value)
     }
@@ -519,16 +520,29 @@ function sendXhr(
  * to report bytes sent for a request body, so `CorrectPaper.tsx`'s paper
  * upload — often several megabytes over a slow connection — used to sit
  * with nothing on screen moving until the whole thing landed.
+ *
+ * `headers` (Task 10, B6b): `authHeaders` still owns `Content-Type`/
+ * `Authorization`, so this is additive, not a replacement — the one caller
+ * today is `uploadScan`'s `idempotencyKey`, which becomes the
+ * `Idempotency-Key` header the offline queue's replay (page or worker) sends
+ * on every attempt of the same entry, matching `request()`'s own
+ * `...init, headers: {...authHeaders(...), ...init?.headers}` ordering so an
+ * XHR-based upload can override an auth header the same way a `fetch`-based
+ * `request()` call already could.
  */
 export async function uploadWithProgress<T>(
   path: string,
   form: FormData,
-  options?: { onProgress?: (progress: UploadProgress) => void; signal?: AbortSignal },
+  options?: {
+    onProgress?: (progress: UploadProgress) => void
+    signal?: AbortSignal
+    headers?: Record<string, string>
+  },
 ): Promise<T> {
-  const { onProgress, signal } = options ?? {}
+  const { onProgress, signal, headers } = options ?? {}
 
   try {
-    return await uploadOnce<T>(path, form, onProgress, signal)
+    return await uploadOnce<T>(path, form, onProgress, signal, headers)
   } catch (err) {
     // The same normalisation `request()` does at its own catch, and for the
     // same reason: without it a 2xx whose body is not JSON — a captive portal
@@ -556,8 +570,9 @@ async function uploadOnce<T>(
   form: FormData,
   onProgress: ((progress: UploadProgress) => void) | undefined,
   signal: AbortSignal | undefined,
+  headers: Record<string, string> | undefined,
 ): Promise<T> {
-  let result = await sendXhr(path, form, await tokenForRequest(), onProgress, signal)
+  let result = await sendXhr(path, form, await tokenForRequest(), onProgress, signal, headers)
   if (result.status === 401) {
     // Same replay-once rule as `request()` (see its own comment): safe here
     // because a `FormData` body is fully buffered by the browser before
@@ -565,7 +580,7 @@ async function uploadOnce<T>(
     // renewed token reads it from the same buffer rather than needing the
     // original `File`s to still be around.
     const renewed = await refreshSession()
-    if (renewed) result = await sendXhr(path, form, renewed, onProgress, signal)
+    if (renewed) result = await sendXhr(path, form, renewed, onProgress, signal, headers)
   }
   if (result.status < 200 || result.status >= 300) {
     const { message, detail } = parseErrorBody(result.status, result.statusText, result.text)
