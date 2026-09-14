@@ -114,6 +114,11 @@ export function useDialogHistory({
       openedAtPathRef.current = location.pathname + location.search
       navigate(location, {
         state: { ...(location.state as Record<string, unknown> | null), lemelyDialog: true },
+        // This push is same-URL bookkeeping, not real navigation — but
+        // `scrollRestorationKey` cannot tell the difference from a real push
+        // on a non-tab-root screen (both change `location.key`). Without
+        // this, opening a dialog scrolls the page to the top.
+        preventScrollReset: true,
       })
       hasEntryRef.current = true
       releaseRef.current = dialogHistoryStack.register({

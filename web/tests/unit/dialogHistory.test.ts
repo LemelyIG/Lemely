@@ -1,5 +1,9 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { fileURLToPath } from "node:url"
 import { describe, expect, it } from "vitest"
 import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
+import { stripComments } from "./support/jsxSource"
 
 /*
  * Packet B2a · the pure decision table behind `useDialogHistory`. Every
@@ -8,6 +12,12 @@ import { nextDialogHistoryAction } from "@/lib/nav/dialogHistory"
  * false`) re-pushes instead of closing, since a stray back gesture must not
  * silently answer a destructive confirmation.
  */
+
+const SRC = fileURLToPath(new URL("../../src/", import.meta.url))
+
+function read(relPath: string): string {
+  return stripComments(readFileSync(join(SRC, relPath), "utf8"))
+}
 
 describe("nextDialogHistoryAction", () => {
   it("open + no entry yet (dismissible) pushes a history entry", () => {
@@ -62,5 +72,27 @@ describe("nextDialogHistoryAction", () => {
     expect(
       nextDialogHistoryAction({ event: "popstate", dismissible: false, hasEntry: false }),
     ).toBe("none")
+  })
+})
+
+describe("useDialogHistory's own history push does not reset scroll", () => {
+  // A dialog's opening push is a same-URL bookkeeping entry, not real
+  // navigation — but `<ScrollRestoration>` cannot tell the difference from
+  // `scrollRestorationKey`'s POV on a non-tab-root screen, since a push keys
+  // by `location.key`, which changes on every push including this one. Left
+  // unguarded, opening a dialog scrolls the page to the top. `preventScrollReset:
+  // true` on this specific `navigate()` call is what stops that, without
+  // touching PUSH-resets-to-top behaviour for real navigation elsewhere.
+  const source = read("lib/nav/useDialogHistory.ts")
+  const pushBlock = source.match(/if \(action === "push"\) \{[\s\S]*?\n {4}\}/)
+
+  it("has a push branch to inspect (source shape sanity check)", () => {
+    expect(pushBlock).not.toBeNull()
+  })
+
+  it("the push branch's navigate() call passes preventScrollReset: true", () => {
+    const navigateCall = pushBlock?.[0].match(/navigate\(location, \{[\s\S]*?\n\s*\}\)/)
+    expect(navigateCall).not.toBeNull()
+    expect(navigateCall?.[0]).toMatch(/preventScrollReset:\s*true/)
   })
 })
