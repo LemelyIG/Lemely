@@ -338,16 +338,18 @@ function ResolveControls({
  */
 function QueueStrip({
   position,
+  total,
   filterQs,
 }: {
   position: { index: number; total: number; prevId: string | null; nextId: string | null }
+  total: number
   filterQs: string
 }) {
   const suffix = filterQs ? `?${filterQs}` : ""
   return (
     <div className="flex items-center justify-between gap-3 text-body-sm text-ink-faint">
       <span>
-        Item {position.index + 1} of {position.total}
+        Item {position.index + 1} of {total}
       </span>
       <div className="flex items-center gap-3">
         {position.prevId ? (
@@ -519,7 +521,13 @@ export function ReviewItem() {
                 </div>
               </div>
 
-              {position ? <QueueStrip position={position} filterQs={filterQs} /> : null}
+              {position ? (
+                <QueueStrip
+                  position={position}
+                  total={queueQuery.data?.total ?? position.total}
+                  filterQs={filterQs}
+                />
+              ) : null}
 
               <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
                 <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">

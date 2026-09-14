@@ -1167,12 +1167,17 @@ export function QuizBuilder() {
                   (each step component gates its inputs on `isDraft` individually),
                   not that a teacher can no longer browse what was configured.
 
-                  The "so far" rail sits beside the stepper from `md` up
+                  The "so far" rail sits beside the stepper from `sidebar:` up
                   (`soFar` is short — five labels at most — so a sidebar never
-                  outgrows the stepper beside it); below `md` there's no room
-                  for a second column, so it collapses to one quiet line
-                  under the stepper instead of disappearing outright. */}
-              <div className="flex items-start gap-8 max-md:flex-col max-md:gap-3">
+                  outgrows the stepper beside it); below `sidebar:` there's no
+                  room for a second column, so it collapses to one quiet line
+                  under the stepper instead of disappearing outright. The
+                  wrapper's own row/column switch has to share that same
+                  breakpoint — a `md:` wrapper with a `sidebar:` aside left a
+                  768-819px band where the wrapper was already a row but the
+                  aside was still hidden, rendering the one-line fallback as
+                  a second column beside the stepper. */}
+              <div className="flex items-start gap-8 max-sidebar:flex-col max-sidebar:gap-3">
                 <div className="flex-1 min-w-0">
                   <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
                 </div>
