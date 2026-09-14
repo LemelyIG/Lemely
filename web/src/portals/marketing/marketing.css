@@ -107,9 +107,7 @@
 .progress{position:absolute;inset-inline:0;bottom:-1px;height:2px;background:var(--accent);transform:scaleX(0);transform-origin:left center;pointer-events:none}
 .nav__inner{display:flex;align-items:center;justify-content:space-between;gap:var(--space-6);min-height:60px}
 .brand{display:flex;align-items:center;gap:var(--space-3);text-decoration:none;color:var(--ink)}
-.brand img{width:26px;height:26px}
 .brand span{font-family:var(--font-display);font-size:21px;font-weight:500;line-height:1}
-.brand--sm img{width:20px;height:20px}
 .brand--sm span{font-family:var(--font-sans);font-size:var(--fs-body-sm);color:var(--ink-muted)}
 .nav__links{display:flex;align-items:center;gap:var(--space-6)}
 /* :not(.nav__cta) is the one deviation from the verbatim port in this file:

@@ -1482,6 +1482,14 @@ body {
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    /* The delay matters as much as the duration here. Every staggered rule on
+       the marketing page uses a `both` fill, so its backwards fill holds the
+       `from` keyframe — `opacity: 0` for `rise`, `wordrise` and siblings —
+       for the whole delay. Zeroing duration alone left a reduced-motion
+       reader looking at invisible content for up to ~750ms before it snapped
+       in, which is the "broken" this block's own heading rules out. */
+    animation-delay: 0.001ms !important;
+    transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }

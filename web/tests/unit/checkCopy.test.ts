@@ -168,6 +168,29 @@ describe("en-dashes in closed compounds are not findings", () => {
     expect(find(line)).toHaveLength(1)
   })
 
+  it("KNOWN HOLE: an unspaced en dash used as prose is exempt, and cannot be told apart", () => {
+    // Recorded deliberately, not as an aspiration. `isClosedCompound` keys on
+    // "en dash with a letter glued either side", and a prose dash written
+    // without spaces has exactly that shape — it is textually identical to a
+    // closed compound, so no refinement of this rule separates them.
+    //
+    // It matters a little more than it looks, because of who writes en dashes
+    // in this repo: someone told "no em dashes" substitutes an en dash and
+    // often keeps the spacing the em dash had, and American convention sets
+    // an em dash unspaced. So the shape this rule admits sits directly
+    // downstream of the instruction the gate exists to enforce.
+    //
+    // Accepted because the alternative is worse: the em-dash ban itself is
+    // untouched (line 199 short-circuits on U+2014), the spaced prose form
+    // still reports, and the only way to close this would be an allowlist
+    // that has to be maintained the day a second compound appears. Pinned
+    // here so the next reader finds the gap stated rather than assuming the
+    // rule is tight.
+    const line = "That code didn't work–it may be wrong"
+    expect(isClosedCompound(line, line.indexOf("–"))).toBe(true)
+    expect(find(line)).toHaveLength(0)
+  })
+
   it("does not weaken the range rule's own word-dash boundary", () => {
     // isRange's existing "not a range" pin stays exactly as strict; the new
     // rule is additive, not a replacement.
