@@ -54,6 +54,20 @@ export function overlayPhase(
 }
 
 /**
+ * How long `closing` may last before it is ended without an `animationend`.
+ *
+ * `animationend` is the right signal but not a guaranteed one: an overlay
+ * animated off a backgrounded tab, or one whose exit animation is stripped
+ * from under it, never fires one. Stuck in `closing`, the overlay stays
+ * mounted and keeps `lockScroll`'s hold on `document.body` (`position:
+ * fixed`) with nothing on screen to explain why the page will not scroll —
+ * the worst failure this state machine can have. Comfortably over the
+ * `--dur-fast` (200ms) both exit animations run at, still short enough that
+ * the backstop is never the thing a reader waits on.
+ */
+export const OVERLAY_EXIT_TIMEOUT_MS = 600
+
+/**
  * Wires `overlayPhase` to a component's `open` prop. Reads
  * `prefersReducedMotion()` fresh on every open/close transition rather than
  * once at mount, for the same reason `prefersReducedMotion`'s own doc gives:
@@ -71,6 +85,14 @@ export function useOverlayPhase(open: boolean): {
     prevOpenRef.current = open
     setPhase((current) => overlayPhase(current, open ? "open" : "close", prefersReducedMotion()))
   }, [open])
+
+  useEffect(() => {
+    if (phase !== "closing") return
+    const timer = setTimeout(() => {
+      setPhase((current) => overlayPhase(current, "animationend", prefersReducedMotion()))
+    }, OVERLAY_EXIT_TIMEOUT_MS)
+    return () => clearTimeout(timer)
+  }, [phase])
 
   function onAnimationEnd() {
     setPhase((current) => overlayPhase(current, "animationend", prefersReducedMotion()))

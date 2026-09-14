@@ -207,7 +207,15 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
-        onAnimationEnd={phase === "closing" ? onAnimationEnd : undefined}
+        // Only the panel's own exit animation ends the exit — see `modal.tsx`,
+        // which carries the same guard for the same reason.
+        onAnimationEnd={
+          phase === "closing"
+            ? (event) => {
+                if (event.target === event.currentTarget) onAnimationEnd()
+              }
+            : undefined
+        }
         className={cn(
           "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
           "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",

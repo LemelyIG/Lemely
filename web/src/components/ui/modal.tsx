@@ -187,7 +187,17 @@ export function Modal({
         aria-labelledby={titleId}
         aria-describedby={description ? descriptionId : undefined}
         tabIndex={-1}
-        onAnimationEnd={phase === "closing" ? onAnimationEnd : undefined}
+        // `event.target === event.currentTarget`: React's synthetic
+        // `onAnimationEnd` also hears animations bubbling from descendants, and
+        // a spinner or skeleton finishing inside a closing panel would end the
+        // exit early and yank the panel off mid-slide.
+        onAnimationEnd={
+          phase === "closing"
+            ? (event) => {
+                if (event.target === event.currentTarget) onAnimationEnd()
+              }
+            : undefined
+        }
         className={cn(
           "relative z-modal flex max-h-[85vh] w-full flex-col gap-4 rounded-xl border border-rule bg-paper-raised p-6 shadow-[var(--shadow-float)]",
           phase === "closing"
