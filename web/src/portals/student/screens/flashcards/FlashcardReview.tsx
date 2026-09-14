@@ -12,6 +12,8 @@ import { useDueSession, useReviewCard } from "@/lib/hooks/useFlashcardApi"
 import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
 import { applyGradeOutcome, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
 import { haptic } from "@/lib/haptics"
+import { useDragGesture } from "@/lib/gestures/useDragGesture"
+import { flashcardSwipeAction } from "@/lib/flashcardSwipe"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -132,6 +134,31 @@ export function FlashcardReview() {
 
   const current = sessionCards?.[index] ?? null
   const finished = sessionCards !== null && index >= sessionCards.length
+
+  // Task 6 (B4b): the card face is the swipe surface. One axis throughout
+  // the interaction (right reveals, then left/right grades) reads as one
+  // continuous motion idiom rather than switching direction mid-gesture —
+  // `flashcardSwipeAction` still recognises an upward swipe as a reveal too
+  // (its own unit tests pin that), reachable via a diagonal drag or, as
+  // today, the keyboard/button path, which stay the discoverable way to
+  // trigger it. `commitThreshold` matches whichever action threshold is
+  // live so a drag short of it always springs back animated rather than
+  // snapping — see `useDragGesture`'s own commit/cancel split.
+  const cardSurfaceRef = useRef<HTMLDivElement>(null)
+  useDragGesture(cardSurfaceRef, {
+    axis: "x",
+    enabled: current !== null && !finished,
+    commitThreshold: revealed ? 80 : 60,
+    startFilter: (event) => {
+      const target = event.target
+      return !(target instanceof Element && target.closest("button, a, input, textarea, select"))
+    },
+    onCommit: (dx, dy) => {
+      const action = flashcardSwipeAction({ dx, dy, revealed })
+      if (action === "reveal") setRevealed(true)
+      else if (action !== "none") grade(action)
+    },
+  })
 
   // Task 7 (B5a): grading is now optimistic. `index` advances the instant
   // the student presses a grade button — no waiting on the network — and
@@ -397,34 +424,36 @@ export function FlashcardReview() {
       <FailedGradesBanner failed={session.failed} onRetry={retryFailedGrade} />
 
       {current ? (
-        <Card>
-          {/* `ruled-bg`: DESIGN.md §8 item 2 names ruled paper for the Read
-              lane, and this card face is the one place in the product that is
-              literally a piece of paper with a question on it. It is the only
-              texture element on the viewport, well inside §8's budget of two. */}
-          <CardBody className="ruled-bg flex flex-col items-center gap-5 py-12 text-center">
-            <Badge tone={current.source === "ai" ? "lilac" : "sage"}>
-              {cardSourceLabel(current.source)}
-            </Badge>
-            <div className="lm-prose text-display-md text-ink">{current.front}</div>
+        <div ref={cardSurfaceRef}>
+          <Card>
+            {/* `ruled-bg`: DESIGN.md §8 item 2 names ruled paper for the Read
+                lane, and this card face is the one place in the product that is
+                literally a piece of paper with a question on it. It is the only
+                texture element on the viewport, well inside §8's budget of two. */}
+            <CardBody className="ruled-bg flex flex-col items-center gap-5 py-12 text-center">
+              <Badge tone={current.source === "ai" ? "lilac" : "sage"}>
+                {cardSourceLabel(current.source)}
+              </Badge>
+              <div className="lm-prose text-display-md text-ink">{current.front}</div>
 
-            {revealed ? (
-              /* `display-sm`, not `body-lg`. The answer is the entire payload
-                 of a reveal — it is the thing a student came here to check
-                 themselves against — and at body weight under a `display-md`
-                 question it was the quietest element on the card. It stays a
-                 rung below the question, because the question is what orients
-                 you, but it is no longer an afterthought. */
-              <div className="lm-prose w-full border-t border-rule pt-5 text-display-sm text-ink">
-                {current.back}
-              </div>
-            ) : (
-              <Button variant="secondary" size="lg" onClick={() => setRevealed(true)}>
-                Reveal answer <Kbd>Space</Kbd>
-              </Button>
-            )}
-          </CardBody>
-        </Card>
+              {revealed ? (
+                /* `display-sm`, not `body-lg`. The answer is the entire payload
+                   of a reveal — it is the thing a student came here to check
+                   themselves against — and at body weight under a `display-md`
+                   question it was the quietest element on the card. It stays a
+                   rung below the question, because the question is what orients
+                   you, but it is no longer an afterthought. */
+                <div className="lm-prose w-full border-t border-rule pt-5 text-display-sm text-ink">
+                  {current.back}
+                </div>
+              ) : (
+                <Button variant="secondary" size="lg" onClick={() => setRevealed(true)}>
+                  Reveal answer <Kbd>Space</Kbd>
+                </Button>
+              )}
+            </CardBody>
+          </Card>
+        </div>
       ) : null}
 
       {revealed ? (

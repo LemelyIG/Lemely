@@ -17,6 +17,7 @@ import { cn } from "@/lib/utils"
 import { lockScroll } from "@/lib/scrollLock"
 import { useDialogHistory } from "@/lib/nav/useDialogHistory"
 import { useOverlayPhase } from "@/lib/overlayPhase"
+import { useDragGesture } from "@/lib/gestures/useDragGesture"
 
 /*
  * P3.1 · Mobile navigation drawer.
@@ -133,6 +134,30 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
     if (!mounted) return
     return lockScroll()
   }, [mounted])
+
+  // Task 6 (B4b): drag-dismiss. `startFilter` excludes the scrollable nav
+  // list itself — a vertical scroll in there must never be fought by a
+  // horizontal drag-dismiss listener starting underneath it — so the
+  // gesture only starts from the header/footer chrome around the list.
+  // `commitThreshold` is 40% of the panel's own width rather than a fixed
+  // pixel count, so a narrow phone drawer and the `85vw`-capped wide one
+  // both need a proportionally similar drag. Direction is read from
+  // `--lm-dir` at commit time (not cached), matching P3.4's RTL rule: the
+  // drawer is anchored to the reading-start edge in both directions, so
+  // "closing" is a drag *away* from that edge, whichever edge that is.
+  useDragGesture(panelRef, {
+    axis: "x",
+    enabled: mounted,
+    commitThreshold: (panelRef.current?.getBoundingClientRect().width ?? 320) * 0.4,
+    startFilter: (event) => {
+      const target = event.target
+      return !(target instanceof Element && target.closest(".lm-scroll"))
+    },
+    onCommit: (dx) => {
+      const dir = Number(getComputedStyle(document.documentElement).getPropertyValue("--lm-dir")) || 1
+      if (dx * dir < 0) onClose()
+    },
+  })
 
   if (!mounted) return null
 
