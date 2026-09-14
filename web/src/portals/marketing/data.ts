@@ -42,15 +42,13 @@
  * nearest punctuation that preserves meaning and rhythm (a comma or a colon),
  * never dropping the clause and never introducing one of its own.
  *
- * TWO KNOWN GAPS: `howItWorks.body` and `schemeSection.body` are left
- * `undefined` rather than invented. design-import-spec.md quotes body copy
- * verbatim for the hero, the trust band and the close, but paraphrases these
- * two sections as "Body as in the design" / "Body as designed" with no
- * quote. Inventing plausible-sounding filler here would be exactly the
- * honesty defect this whole import exists to avoid, so `Landing.tsx` renders
- * these sections without a body paragraph until the verbatim text arrives
- * (asked of the design-import controller; see import-part-a-report.md).
- * `classBatchSection.body` WAS recoverable — see its own comment below.
+ * Three strings were paraphrased rather than quoted in design-import-spec.md
+ * as first read (`howItWorks.body`, `schemeSection.body`,
+ * `schemeSection.aside`) and were left `undefined` rather than invented —
+ * see import-part-a-report.md. The design-import controller has since pulled
+ * the verbatim text from `landing.jsx` for all three and patched the spec;
+ * every `<p>` on the page now quotes in full, so nothing below is a gap
+ * anymore.
  */
 
 export interface CtaLink {
@@ -117,42 +115,28 @@ export const trustBand = {
 }
 
 /* ── How it works (`.sect .split--flip`) ────────────────────────────────────
- * design-import-spec.md, page structure item 4. The eyebrow, heading and
- * fine print are quoted verbatim in the spec; the body paragraph is not (see
- * this file's header). Left undefined rather than invented — Landing.tsx
- * skips the `<p>` when absent.
+ * design-import-spec.md, page structure item 4. Quoted verbatim, `landing.jsx`
+ * via the design-import controller (patched into the spec 2026-09-14). No
+ * em dash in the source.
  */
-export const howItWorks: {
-  eyebrow: string
-  heading: string
-  body?: string
-  finePrint: string
-} = {
+export const howItWorks = {
   eyebrow: "How it works",
   heading: "One scan becomes the marking, the working, and the practice.",
-  body: undefined,
+  body: "A photo or a PDF is enough. Lemely identifies the syllabus, session, paper and variant from the page itself, marks the script against that variant's scheme, and turns the dropped marks into a practice set on the same shape.",
   finePrint: "If we do not hold the scheme yet, add it and the paper marks against yours.",
 }
 
 /* ── Where the marks come from (`.sect.sect--sunk`) ─────────────────────────
- * design-import-spec.md, page structure item 5. Same gap as `howItWorks`:
- * the eyebrow and heading are quoted, the body is not. The spec also
- * describes "Aside with `books` icon" for this section but never quotes its
- * text (unlike the trust band's aside, which is quoted in full) — left
- * undefined for the same reason as `body` rather than invented; an earlier
- * draft of this file got this wrong and fabricated an aside sentence here,
- * caught before it shipped.
+ * design-import-spec.md, page structure item 5. Quoted verbatim, same source
+ * and patch as `howItWorks` above. The body's one em dash ("...for that
+ * variant — not from a model's impression..."), per the controller's own
+ * instruction, is converted to a comma.
  */
-export const schemeSection: {
-  eyebrow: string
-  heading: string
-  body?: string
-  aside?: string
-} = {
+export const schemeSection = {
   eyebrow: "Where the marks come from",
   heading: "Official schemes, read as printed.",
-  body: undefined,
-  aside: undefined,
+  body: "Marks come from the published mark scheme for that syllabus, session, paper and variant, not from a model's impression of the subject. Grade boundaries come from the real table for that variant, and where a boundary has to be estimated the badge says so, permanently, on itself.",
+  aside: "Deterministic, AI-assisted and missing are labelled differently, everywhere.",
 }
 
 /* ── A class at a time (`.sect .split--flip`) ───────────────────────────────

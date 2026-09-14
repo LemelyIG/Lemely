@@ -1,10 +1,8 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 — design import, part A.
-   V3: five sections mount a StubMount placeholder rather than their real
-   visual (part B); two sections render without a body paragraph pending a
-   verbatim quote (see data.ts). Neither is a defect in what this pass
-   built — both are named gaps, not silent ones — but the page is not
-   visually complete, and V is where that belongs rather than being hidden
-   inside a higher score. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — design import, part A.
+   V4, not 5: five sections mount a StubMount placeholder rather than their
+   real visual, by design — part B builds OpenedQuestion, ScanSequence,
+   SchemeExcerpt, ClassBatch and Readings next. Every other section's copy
+   is now the verbatim source text, no gaps left open. */
 import type { CSSProperties } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowDown, Books, CursorClick } from "@phosphor-icons/react"
@@ -134,12 +132,7 @@ export function Landing() {
             <RevealBlock as="div" className="copy">
               <p className="text-eyebrow">{howItWorks.eyebrow}</p>
               <h2 className="text-display-xl text-ink text-balance">{howItWorks.heading}</h2>
-              {/* `body` is undefined until the verbatim quote arrives (see
-                  data.ts's header) — this section renders without it rather
-                  than inventing one. */}
-              {howItWorks.body ? (
-                <p className="copy__body text-body-lg text-pretty">{howItWorks.body}</p>
-              ) : null}
+              <p className="copy__body text-body-lg text-pretty">{howItWorks.body}</p>
               <p className="copy__fine text-body-sm">{howItWorks.finePrint}</p>
             </RevealBlock>
             <RevealBlock as="div" index={1} className="drift drift--soft">
@@ -156,15 +149,11 @@ export function Landing() {
             <RevealBlock as="div" className="copy">
               <p className="text-eyebrow">{schemeSection.eyebrow}</p>
               <h2 className="text-display-xl text-ink text-balance">{schemeSection.heading}</h2>
-              {schemeSection.body ? (
-                <p className="copy__body text-body-lg text-pretty">{schemeSection.body}</p>
-              ) : null}
-              {schemeSection.aside ? (
-                <p className="copy__aside text-body-sm">
-                  <Books size={16} weight="regular" aria-hidden />
-                  {schemeSection.aside}
-                </p>
-              ) : null}
+              <p className="copy__body text-body-lg text-pretty">{schemeSection.body}</p>
+              <p className="copy__aside text-body-sm">
+                <Books size={16} weight="regular" aria-hidden />
+                {schemeSection.aside}
+              </p>
             </RevealBlock>
             {/* No `.drift` wrapper here — the spec gives this visual no
                 parallax class, unlike the trust band's and the two
