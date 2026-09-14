@@ -4,6 +4,7 @@ import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
+import { Select } from "@/components/ui/select"
 import { validateAvatarFile } from "@/lib/avatarUpload"
 import { useProfile, usePutTimezone, useRemoveAvatar, useUploadAvatar } from "@/lib/hooks/useMeApi"
 import {
@@ -233,6 +234,7 @@ export function ProfileSettingsSection() {
               className="hidden"
               disabled={busy}
               onChange={handleFileSelected}
+              data-kit-field="file"
             />
           </div>
 
@@ -263,24 +265,21 @@ export function ProfileSettingsSection() {
         </div>
 
         <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
-          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-            Your time zone
-            <select
-              value={pickerValue(profile.data)}
-              onChange={handleTimezoneChange}
-              disabled={profile.isPending || putTimezone.isPending}
-              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-            >
-              <option value={FOLLOW_DEVICE_VALUE}>
-                {device ? `Follow this device (${device})` : "Follow this device"}
+          <Select
+            label="Your time zone"
+            value={pickerValue(profile.data)}
+            onChange={handleTimezoneChange}
+            disabled={profile.isPending || putTimezone.isPending}
+          >
+            <option value={FOLLOW_DEVICE_VALUE}>
+              {device ? `Follow this device (${device})` : "Follow this device"}
+            </option>
+            {zoneOptions.map((zone) => (
+              <option key={zone} value={zone}>
+                {zone}
               </option>
-              {zoneOptions.map((zone) => (
-                <option key={zone} value={zone}>
-                  {zone}
-                </option>
-              ))}
-            </select>
-          </label>
+            ))}
+          </Select>
           {timezoneError ? (
             <p role="status" className="text-body-sm text-err">
               {timezoneError}

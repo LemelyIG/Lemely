@@ -8,6 +8,7 @@ import { useAuth } from "@/lib/auth/AuthContext"
 import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { BrandLockup } from "@/components/ui/brand-lockup"
 import { OfflineBanner } from "@/components/ui/offline-banner"
+import { Select } from "@/components/ui/select"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { BadgeSync } from "@/components/badge-sync"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
@@ -80,15 +81,18 @@ function ChildSwitcher() {
   if (!childId || children.length < 2) return null
 
   return (
-    <label className="flex items-center gap-2 text-body-sm text-ink-muted">
+    <div className="flex items-center gap-2 text-body-sm text-ink-muted">
       {/* The visible word is hidden at mobile for width, so the accessible
           name has to come from somewhere that is never hidden — otherwise the
-          select is an unlabelled control below 640px. */}
+          select is an unlabelled control below 640px. `Select`'s own
+          `sr-only` label carries it now, in place of a bare `aria-label`
+          string. */}
       <span className="hidden sm:inline" aria-hidden="true">
         Viewing
       </span>
-      <select
-        aria-label="Choose which child to view"
+      <Select
+        label="Choose which child to view"
+        labelClassName="sr-only"
         value={childId}
         onChange={(event) => {
           // Preserve where the parent is (overview / subject / weaknesses)
@@ -98,15 +102,14 @@ function ChildSwitcher() {
           const tail = location.pathname.endsWith("/weaknesses") ? "/weaknesses" : ""
           navigate(`/parent/children/${event.target.value}${tail}`)
         }}
-        className="rounded-md border border-rule bg-paper-raised px-2.5 py-1.5 text-body-sm text-ink transition-colors hover:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
         {children.map((child) => (
           <option key={child.childId} value={child.childId}>
             {child.displayName}
           </option>
         ))}
-      </select>
-    </label>
+      </Select>
+    </div>
   )
 }
 

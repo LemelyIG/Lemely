@@ -3,6 +3,7 @@ import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
 import { Meter } from "@/components/ui/primitives"
 import { Slider } from "@/components/ui/slider"
 import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
@@ -180,10 +181,6 @@ function SessionLengthPresets({
  */
 export const QUESTION_HEADING_ID = "onboarding-question-heading"
 
-/** The shared class list for the two free-text questions. See `QuestionShell`. */
-const FREE_TEXT_FIELD =
-  "min-h-11 rounded-lg border border-rule bg-paper-raised px-4 py-3 text-body-lg text-ink transition-colors hover:border-rule-strong focus-visible:border-rule-strong focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-
 function QuestionShell({ question, children }: { question: string; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-5">
@@ -346,14 +343,14 @@ export function QuestionnaireStep({
     answered = answers.schoolName !== undefined && answers.schoolName !== null
     body = (
       <QuestionShell question="Which school are you at?">
-        <input
+        <Input
+          label="School"
+          labelClassName="sr-only"
           type="text"
           autoFocus
           value={answers.schoolName ?? ""}
           onChange={(event) => onSchoolName(event.target.value)}
-          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Greenwood International School"
-          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
@@ -408,14 +405,14 @@ export function QuestionnaireStep({
     answered = answers.gradeLevel !== undefined && answers.gradeLevel !== null
     body = (
       <QuestionShell question="What year or grade level are you in?">
-        <input
+        <Input
+          label="Grade level"
+          labelClassName="sr-only"
           type="text"
           autoFocus
           value={answers.gradeLevel ?? ""}
           onChange={(event) => onGradeLevel(event.target.value)}
-          aria-labelledby={QUESTION_HEADING_ID}
           placeholder="e.g. Year 11"
-          className={FREE_TEXT_FIELD}
         />
       </QuestionShell>
     )
