@@ -1127,6 +1127,18 @@ async function visitRoute(
         await page.emulateMediaType(st.media)
       }
 
+      // C5c (Task 14): a state may declare `colorScheme: "dark"` to capture
+      // the route under `prefers-color-scheme: dark` — the signal
+      // `public/shell-init.js` reads when there is no stored `lemely.theme`
+      // preference (Task 13), which is exactly the case here since the
+      // audit's seeded accounts never touch Appearance. Puppeteer's call is
+      // `page.emulateMediaFeatures([{ name, value }])`, a sibling of
+      // `emulateMediaType` above and, again, not Playwright's
+      // `page.emulateMedia({ colorScheme })`.
+      if (st.colorScheme) {
+        await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: st.colorScheme }])
+      }
+
       if (st.setup) {
         log(`${route.screenId} ${route.path} [${st.state}] — setup...`)
         await st.setup(page)
@@ -1169,6 +1181,13 @@ async function visitRoute(
       // default ("screen").
       if (st.media) {
         await page.emulateMediaType(null)
+      }
+      // Same reset, for the same reason, for the colour-scheme feature: an
+      // empty array is Puppeteer's documented way to clear feature emulation
+      // (its own `emulateMediaFeatures` doc comment: "Passing an empty array
+      // disables CSS media feature emulation"), the sibling of `null` above.
+      if (st.colorScheme) {
+        await page.emulateMediaFeatures([])
       }
       if (st.teardown) {
         log(`${route.screenId} ${route.path} [${st.state}] — teardown...`)
@@ -1460,11 +1479,27 @@ function buildRouteRegistry(seed) {
     },
     {
       screenId: "T-04",
-      slug: "teacher-class-analytics",
       path: `/teacher/classes/${classId}/analytics`,
       session: teacherSession,
-      ready: (page) => waitForText(page, "Topic weakness heatmap"),
       authed: true,
+      // C5c (Task 14): the chart-heaviest screen in the registry (grade
+      // distribution bar + cohort-mean line, both Nivo/`useNivoTheme`) is the
+      // one whose dark capture is worth a reviewer's eyes for its own sake —
+      // it's what `theme.spec.ts`'s chart-fill assertion also exercises.
+      states: [
+        {
+          state: "default",
+          slug: "teacher-class-analytics",
+          ready: (page) => waitForText(page, "Topic weakness heatmap"),
+        },
+        {
+          state: "dark",
+          slug: "teacher-class-analytics-dark",
+          lighthouse: false,
+          colorScheme: "dark",
+          ready: (page) => waitForText(page, "Topic weakness heatmap"),
+        },
+      ],
     },
     {
       screenId: "T-05",
@@ -1489,17 +1524,33 @@ function buildRouteRegistry(seed) {
     },
     {
       screenId: "T-07",
-      slug: "teacher-review",
       path: "/teacher/review",
       session: teacherSession,
+      authed: true,
       // Same shape as T-06: "Review queue" duplicates into the pending
       // sr-only h1, so wait on the loaded-only eyebrow line instead. Not
       // empty since P3.10 chunk e1: the seed now deliberately persists one
       // LOW-confidence attempt (`seed.reviewItem`, D3.9's queueing path) so
       // T-08 below has a real item to drill into — this list shows exactly
       // that one row.
-      ready: (page) => waitForText(page, "core recurring task"),
-      authed: true,
+      //
+      // C5c (Task 14): one of the five named dark captures — a reviewer can
+      // open `teacher-review-dark.png` and see the red-pen register, the
+      // filter tabs and the queued item in dark.
+      states: [
+        {
+          state: "default",
+          slug: "teacher-review",
+          ready: (page) => waitForText(page, "core recurring task"),
+        },
+        {
+          state: "dark",
+          slug: "teacher-review-dark",
+          lighthouse: false,
+          colorScheme: "dark",
+          ready: (page) => waitForText(page, "core recurring task"),
+        },
+      ],
     },
     // ── T-08 · Review item detail — zero coverage before e1 seeded a real
     // LOW-confidence item (scripts/seed_e2e.py's `reviewItem`, linked to
@@ -2700,6 +2751,28 @@ async function main() {
       await runLighthouseAudit(`${PREVIEW_URL}/login`, page, "login", { authed: false }),
     )
 
+    // ── G-04 · Login under prefers-color-scheme: dark — C5c (Task 14) ──────
+    // Not Lighthouse-scored, for the same reason the print-media capture
+    // below isn't: perf/a11y/SEO are properties of the shipped code, not of
+    // which colour scheme happened to be emulated. A screenshot + axe pass,
+    // reusing the same `ready` condition ("Lemely" in the wordmark) as the
+    // light default state above.
+    log("G-04 /login — dark capture...")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, `${PREVIEW_URL}/login`, { waitUntil: "networkidle0" })
+      await waitForText(page, "Lemely")
+      await shoot(page, "G-04", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "login-dark"))
+      recordKitFields(kitFieldsSummary, routeFailures, await runKitFieldsCheck(page, "login-dark"), {
+        screenId: "G-04",
+        path: "/login",
+        state: "dark",
+      })
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
+
     // ── Authenticated flow: sign up (direct API, matches
     // web/e2e/screenshots.spec.ts's apiSignUp), log in through the real UI,
     // upload the golden fixture to reach a real corrected-paper state. ──
@@ -2818,6 +2891,30 @@ async function main() {
       await page.emulateMediaType(null)
     }
 
+    // ── S-15/S-17 · Paper result under prefers-color-scheme: dark — C5c
+    // (Task 14) ──────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as print-media above). A
+    // screenshot + axe pass, reusing the light default's `ready` condition
+    // (the "out of ... marks" `aria-label`) — this is the red-pen paper
+    // register a reviewer opens `student-result-dark.png` to check.
+    log("S-15/S-17 /student/result/:paperId — dark capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-dark"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "dark" },
+      )
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
+
     // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
     // The registry's G-13 entry audits the EMPTY state, which is the state the
     // screen genuinely ships in (the seed writes no notification rows), and it
@@ -2868,6 +2965,28 @@ async function main() {
         authed: true,
       })),
     })
+
+    // ── S-06 · Student overview under prefers-color-scheme: dark — C5c
+    // (Task 14) ──────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as the other four dark
+    // captures). A screenshot + axe pass, reusing the light default's
+    // `ready` condition ("Subjects this session").
+    log("S-06 /student — dark capture...")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, `${PREVIEW_URL}/student`, { waitUntil: "networkidle0" })
+      await waitForText(page, "Subjects this session")
+      await shoot(page, "S-06", "dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-overview-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-overview-dark"),
+        { screenId: "S-06", path: "/student", state: "dark" },
+      )
+    } finally {
+      await page.emulateMediaFeatures([])
+    }
     // ── The 15 declaratively-registered routes (teacher/parent/G-05/
     // student-parents) — each role gets its own fresh page with a real
     // session injected (see `injectSession`), rather than re-driving 4

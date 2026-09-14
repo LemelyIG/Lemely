@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test"
 import { signInAs, waitForRouteReady } from "./native-feel.helpers"
+import { readSeed } from "./seed"
 
 /*
  * Task 13 (C5b): the Appearance setting, end to end.
@@ -95,10 +96,50 @@ test.describe("theme: Appearance setting", () => {
     await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
   })
 
-  // Task 14 (C5c) makes this assertion meaningful, once nivoTheme.ts
-  // re-resolves its palette on a data-theme change (a MutationObserver on
-  // document.documentElement). This is a named placeholder only — do not
-  // implement it here; Task 14 removes the fixme. No other fixme/skip may
-  // survive this file (Task 15 asserts that).
-  test.fixme("chart text fill matches resolved --ink-muted in dark", async () => {})
+  // Task 14 (C5c): `nivoTheme.ts` now re-resolves its palette on a
+  // `data-theme` change (a `MutationObserver` on `document.documentElement`
+  // — see that file's `useNivoTheme`), so a chart under dark OS emulation
+  // must actually be drawn in the dark ladder's `--ink-muted`, not whatever
+  // was resolved at the light-mode mount that happened before this test's
+  // `emulateMedia` ever ran.
+  //
+  // ClassAnalytics (T-04) is the chart-heaviest screen in the product — the
+  // grade-distribution bar chart's category axis prints a tick per grade
+  // band, and `buildNivoTheme` (nivoTheme.ts) sets every tick's `fill` to
+  // `--ink-muted`. Comparing raw strings would be fragile (the token is
+  // authored as `oklch(...)`, a resolved SVG `fill` is reported back through
+  // `getComputedStyle` in whatever colour-function form the browser chooses
+  // to serialise it in), so both sides of the comparison go through
+  // `getComputedStyle` in the SAME page, on the SAME browser, so they land in
+  // the same serialised form regardless of what that form is.
+  test("chart text fill matches resolved --ink-muted in dark", async ({ page }) => {
+    const seed = readSeed()
+    await page.emulateMedia({ colorScheme: "dark" })
+    await signInAs(page, "teacher")
+    await page.goto(`/teacher/classes/${seed.class.classId}/analytics`)
+    await waitForRouteReady(page)
+    await expect(page.getByText("Topic weakness heatmap")).toBeVisible({ timeout: 15_000 })
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "dark")
+
+    // The dark ladder's --ink-muted, resolved the same way any other
+    // CSS-property comparison in this file is: through the browser's own
+    // computed style, not a raw custom-property string.
+    const expectedFill = await page.evaluate(() => {
+      const probe = document.createElement("div")
+      probe.style.color = "var(--ink-muted)"
+      document.body.appendChild(probe)
+      const value = getComputedStyle(probe).color
+      probe.remove()
+      return value
+    })
+
+    // The grade-distribution chart's category axis (Grade distribution ->
+    // BarChart -> axis.ticks.text, all fill: --ink-muted) — the first `<text>`
+    // Nivo renders on the page.
+    const tickText = page.locator("svg text").first()
+    await expect(tickText).toBeVisible()
+    const actualFill = await tickText.evaluate((el) => getComputedStyle(el).fill)
+
+    expect(actualFill).toBe(expectedFill)
+  })
 })

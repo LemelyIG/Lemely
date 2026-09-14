@@ -677,6 +677,7 @@ from these tokens; no chart sets its own colours.
 - **Legends and tooltips are required.** Tooltips give exact values. Meaning is never encoded by colour alone: pair with direct labels, shape, or pattern.
 - **Empty-data state is mandatory** on every chart, in the Read/Operate voice, with marginalia rather than a blank box.
 - A scoped D3 component is permitted if a viz genuinely exceeds Nivo, matching this theme; log the exception in the Phase 7 report.
+- **Dark mode (C5c).** Tokens re-resolve when `data-theme` changes: `useNivoTheme` (`web/src/lib/nivoTheme.ts`) watches `document.documentElement` with a `MutationObserver` on `data-theme` and re-runs `resolveChartTokens()`, so a chart already open when the reader flips Appearance repaints in the new ladder rather than holding the palette it mounted with.
 
 ---
 
@@ -691,7 +692,7 @@ that bind every component:
 - **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom. Marketing cards turn the knob to `space-8`.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is.
+- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is. Token-driven (`bg-paper-sunk`), so a skeleton needs no dark-mode variant of its own — it works in both themes for free (C5c).
 - **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
 - **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
@@ -1023,10 +1024,11 @@ install actually would be, not against `127.0.0.1`.
 
 ## 16. Recorded decisions (audit remediation)
 
-Five audit-ledger findings compare a pre-redesign exploration canvas against
+Six audit-ledger findings compare a pre-redesign exploration canvas against
 this document and find a mismatch. In every case this document (or
 `PRODUCT.md`) is what shipped, and the canvas fact is the one that is stale.
-Full write-up: `docs/design-canvas-notes.md`.
+Full write-up (findings 1–5): `docs/design-canvas-notes.md`; finding 6's is
+§3.10 itself.
 
 1. **Device limit** (`trust-ops-device-limit-count-divergence`) — the canvas
    diverges from `PRODUCT.md`'s "Maximum 3 concurrent devices per account".
@@ -1040,3 +1042,6 @@ Full write-up: `docs/design-canvas-notes.md`.
 5. **Hero grade on the student home** (`student-home-no-hero-grade`) — not
    built. Overview reports per-subject predicted grades; a single hero grade
    would be a cross-subject aggregate the product does not compute.
+6. **Dark mode** (`x-a11y-dark-theme-exploration-correctly-unshipped`) —
+   shipped as a token swap; the exploration artboards' bespoke dark palette
+   was not adopted — see §3.10.
