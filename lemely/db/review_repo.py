@@ -202,6 +202,23 @@ class ReviewQueueRow:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewQueuePage:
+    """A :meth:`ReviewService.list_queue` result: one page plus the true total.
+
+    ``rows`` is the requested page — padded to ``limit + 1`` when ``limit``
+    was given, exactly as :meth:`ReviewService.list_queue` has always done, so
+    the caller can still tell ``has_more`` without a second query. ``total``
+    is the count of every row matching ``class_id``/``reason``/
+    ``min_age_hours`` *ignoring* ``cursor`` and ``limit`` — computed from the
+    same single query that produced ``rows``, so it can never drift from (or
+    be scoped differently than) the page itself.
+    """
+
+    rows: list[ReviewQueueRow]
+    total: int
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewItemDetail:
     """T-08's full detail: the row plus the question content and any override."""
 
@@ -277,7 +294,7 @@ class ReviewService:
         min_age_hours: float | None = None,
         limit: int | None = None,
         cursor: tuple[datetime, uuid.UUID] | None = None,
-    ) -> list[ReviewQueueRow]:
+    ) -> ReviewQueuePage:
         """Return every **open** review item across the caller's own students.
 
         ``class_id`` restricts to one of the caller's classes (a class the
@@ -292,12 +309,18 @@ class ReviewService:
         strictly after it (in the same ``(created_at, item_id)`` order the
         results are sorted in) are returned — this is what makes the
         ordering stable across pages even when two rows share a
-        ``created_at`` down to the microsecond. When ``limit`` is given, the
-        returned list is padded to ``limit + 1`` rows (never truncated to
-        exactly ``limit``) so the caller can tell whether another page
-        follows without a second query; ``limit=None`` (the default, e.g.
-        ``teacher_at_risk_list``'s queue-depth count) returns every row, as
-        before.
+        ``created_at`` down to the microsecond. When ``limit`` is given,
+        :attr:`ReviewQueuePage.rows` is padded to ``limit + 1`` rows (never
+        truncated to exactly ``limit``) so the caller can tell whether another
+        page follows without a second query; ``limit=None`` (the default,
+        e.g. ``teacher_at_risk_list``'s queue-depth count) returns every row,
+        as before.
+
+        :attr:`ReviewQueuePage.total` is always the count of every row
+        matching ``class_id``/``reason``/``min_age_hours`` *before* ``cursor``
+        and ``limit`` are applied — cursor/limit are pagination over one
+        query's result set, not a narrower query, so ``total`` and ``rows``
+        can never fall out of sync with each other or with the tenant scope.
         """
         visible = self._visible_class_map(caller_id, caller_role, class_id_filter=class_id)
         reason_enum: ReviewReason | None = None
@@ -305,7 +328,7 @@ class ReviewService:
             try:
                 reason_enum = ReviewReason(reason)
             except ValueError:
-                return []
+                return ReviewQueuePage(rows=[], total=0)
         now = datetime.now(UTC)
         results: list[ReviewQueueRow] = []
         with self._sessionmaker() as session:
@@ -373,13 +396,18 @@ class ReviewService:
         results.sort(key=lambda row: (row.created_at, row.item_id))
         if min_age_hours is not None:
             results = [row for row in results if row.waiting_hours >= min_age_hours]
+        # `total` is captured here — after every filter except `cursor`/
+        # `limit` — so it reflects exactly what `rows` is a page of, from
+        # this one query, not a second and possibly differently-scoped one.
+        total = len(results)
+        page = results
         if cursor is not None:
-            results = [row for row in results if (row.created_at, row.item_id) > cursor]
+            page = [row for row in page if (row.created_at, row.item_id) > cursor]
         if limit is not None:
             # `limit + 1`, not `limit`: the extra row is how the caller
             # (the router) learns a next page exists without a second query.
-            results = results[: limit + 1]
-        return results
+            page = page[: limit + 1]
+        return ReviewQueuePage(rows=page, total=total)
 
     def get_item(
         self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
@@ -1050,6 +1078,7 @@ __all__ = [
     "ReviewItemDetail",
     "ReviewNotFoundError",
     "ReviewOwnershipError",
+    "ReviewQueuePage",
     "ReviewQueueRow",
     "ReviewService",
     "ReviewValidationError",

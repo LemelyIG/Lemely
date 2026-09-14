@@ -206,35 +206,34 @@ def list_review_queue(
     reset to page one).
 
     ``total`` (C3d) is the count of every item matching ``class_id``/
-    ``reason``/``min_age_hours``, ignoring ``limit``/``cursor`` — computed
-    from a single unfiltered-by-page call to ``service.list_queue`` (the same
-    call, same filters, same tenant scope as the paginated one below; page
-    and cursor are then applied in Python over that one result set) rather
-    than a second, separately-scoped query, so `total` can never drift from
-    (or leak beyond) what the page itself is allowed to see.
+    ``reason``/``min_age_hours``, ignoring ``limit``/``cursor`` — computed by
+    ``service.list_queue`` from the same single query that produces the page,
+    so `total` can never drift from (or leak beyond) what the page itself is
+    allowed to see. Cursor filtering and limit padding/slicing live entirely
+    in ``ReviewService.list_queue`` (the keyset-cursor predicate is not
+    re-implemented here); this route only turns its ``ReviewQueuePage`` into
+    the wire DTO.
     """
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
     parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
     try:
-        all_rows = service.list_queue(
+        result = service.list_queue(
             auth.user_id,
             auth.role,
             class_id=class_id,
             reason=reason,
             min_age_hours=min_age_hours,
+            limit=limit,
+            cursor=parsed_cursor,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    total = len(all_rows)
-    rows = all_rows
-    if parsed_cursor is not None:
-        rows = [row for row in rows if (row.created_at, row.item_id) > parsed_cursor]
-    has_more = len(rows) > limit
-    page = rows[:limit]
+    has_more = len(result.rows) > limit
+    page = result.rows[:limit]
     next_cursor = _encode_cursor(page[-1].created_at, page[-1].item_id) if has_more else None
     return ReviewQueueListDTO(
-        items=[_row_to_dto(row) for row in page], nextCursor=next_cursor, total=total
+        items=[_row_to_dto(row) for row in page], nextCursor=next_cursor, total=result.total
     )
 
 
