@@ -184,7 +184,7 @@ export const roleTabs: RoleTab[] = [
   {
     id: "parent",
     label: "Parent",
-    heading: "See what your child sees",
+    heading: "See how your child is doing",
     body: "Your child sends you a code. Set a password, and see their grades and the topics that need work.",
     cta: { label: "Get parent access", to: "/join" },
   },
@@ -293,7 +293,7 @@ export const pricingPlaceholder = {
 
 export const landingClose = {
   title: "Bring one paper",
-  body: "Upload a script and its mark scheme, and read the marking back.",
+  body: "Upload a script and read the marking back.",
   cta: "Get started",
   /* Marginalia (§8). Decorative: removing it costs the page nothing. */
   aside: "one script is enough to judge it",

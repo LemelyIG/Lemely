@@ -5,21 +5,8 @@ import path from "node:path"
 import { appRoutes } from "@/routes"
 import { marketingRoute } from "@/portals/marketing"
 import { studentRoute } from "@/portals/student"
-import {
-  landingHero,
-  heroExample,
-  landingClose,
-  loopSteps,
-  mcq,
-  pricing,
-  pricingPlaceholder,
-  pricingTitle,
-  roleTabs,
-  rolesIntro,
-  subjects,
-  subjectsNote,
-  subjectsTitle,
-} from "@/portals/marketing/data"
+import * as marketingData from "@/portals/marketing/data"
+import { landingHero, heroExample, mcq, pricing, roleTabs } from "@/portals/marketing/data"
 
 /*
  * P4.9 · the Persuade lane, pinned.
@@ -259,41 +246,93 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
 
 describe("landing copy claims only what the product does — P4.9", () => {
   /*
-   * Every string a visitor can read on the page, flattened.
+   * Item 3 (final whole-branch review) · this used to be a hand-built array
+   * that pulled specific fields off specific exports. That shape is exactly
+   * why `loopIntro` shipped for five commits with zero failing tests: it
+   * renders as the second section's own `<h2>` and lead paragraph
+   * (`Landing.tsx:236,238`) but nobody added its two lines to this list, and
+   * nothing here could ever have noticed the omission — the list was the
+   * only source of truth for what counted as "copy", and it disagreed with
+   * the page. This is the fourth time this exact mechanism drifted on this
+   * branch (I-6 added `rolesIntro`/`subjectsTitle`, F6 added
+   * `pricingTitle`/`pricingPlaceholder`, and `subjects[].code` and
+   * `mcq[].title` were two more silent gaps found in the same review that
+   * added this comment).
    *
-   * I-5: this used to flatten straight into a joined string, which handles
-   * exactly one level of nesting. A third level, or any non-string leaf,
-   * makes `Object.values`/`flatMap` return an object instead of a string,
-   * `.join("\n")` renders it as `[object Object]`, and every `bannedClaims`
-   * regex below silently stops matching that field while every assertion
-   * still passes — the one failure mode this file exists to prevent. Kept
-   * as an intermediate array and checked with `typeof` before joining, so a
-   * shape violation throws here instead of vanishing into a join.
+   * Fixed structurally instead of with a fifteenth line: `collectStrings`
+   * walks every value of every listed export recursively, so a field cannot
+   * be missed once its export is in scope — there is no per-field list left
+   * to fall out of sync. What is still an explicit, hand-maintained list is
+   * the much smaller, coarser thing: which *exports* are copy at all. That
+   * list is self-checking (see the exhaustiveness test below), which is the
+   * difference that matters — a `data.ts` export in neither `COPY_EXPORTS`
+   * nor `NOT_COPY` fails this suite outright instead of silently rendering
+   * ungated, the way `loopIntro` did.
    */
-  const copyValues = [
-    // `primaryCta`/`secondaryCta` are `{label, to/anchor}` objects, not bare
-    // strings, so they need one more level of flattening than the rest.
-    ...Object.values(landingHero).flatMap((v) => (typeof v === "string" ? v : Object.values(v))),
-    ...Object.values(heroExample),
-    ...Object.values(landingClose),
-    ...loopSteps.flatMap((s) => [s.step, s.title, s.body]),
-    ...roleTabs.flatMap((r) => [r.label, r.heading, r.body, r.cta.label]),
-    ...subjects.map((s) => s.name),
-    subjectsNote,
-    // I-6: `rolesIntro` and `subjectsTitle` moved out of `Landing.tsx` into
-    // `data.ts` so they are gated here, same as everything else on the page.
-    rolesIntro.title,
-    rolesIntro.body,
-    subjectsTitle,
-    // F6: the "Plans" section's own copy was never in this list, so the
-    // `bannedClaims` regexes below — including `/free\b/i` and `/\btrial\b/i`
-    // — never scanned it. Both pass today (this section is the one place on
-    // the page a reader would expect either word), which is exactly why the
-    // gap was latent rather than caught by a failing test.
-    pricingTitle,
-    pricingPlaceholder.title,
-    pricingPlaceholder.body,
-  ]
+
+  /**
+   * Recursively collects every string leaf under `value` into `out`.
+   * Non-string, non-container leaves (numbers, booleans) are not copy and
+   * are skipped rather than stringified, so a route like `roleTabs[].cta.to`
+   * is swept in as harmlessly-scanned text and a count like `mcq[].id`
+   * never becomes a phantom "0" in `allCopy`.
+   */
+  function collectStrings(value: unknown, out: string[]): void {
+    if (typeof value === "string") {
+      out.push(value)
+    } else if (Array.isArray(value)) {
+      value.forEach((v) => collectStrings(v, out))
+    } else if (value !== null && typeof value === "object") {
+      Object.values(value).forEach((v) => collectStrings(v, out))
+    }
+  }
+
+  /**
+   * Every `data.ts` export that renders as visible (or accessible, e.g. the
+   * mcq cells' `title` tooltip) copy on the page. Walked recursively above,
+   * so listing the export here is enough to gate every field it has now and
+   * every field a future edit adds to it — the per-field gap this rewrite
+   * closes.
+   */
+  const COPY_EXPORTS = [
+    "landingHero",
+    "heroExample",
+    "mcq",
+    "loopIntro",
+    "loopSteps",
+    "roleTabs",
+    "rolesIntro",
+    "subjectsTitle",
+    "subjects",
+    "subjectsNote",
+    "pricingTitle",
+    "pricingPlaceholder",
+    "landingClose",
+  ] as const
+
+  /** Exports deliberately excluded from the copy gate, one reason each. */
+  const NOT_COPY: Record<string, string> = {
+    pricing:
+      "empty ([]) while pricing is undecided; the 'ships no pricing tiers' test below asserts that directly",
+  }
+
+  /*
+   * The exhaustiveness check the old list never had: every export the
+   * compiled module actually has must appear in exactly one of the two
+   * classifications above. A new `data.ts` export that lands in neither —
+   * the fabricated-`loopIntro` failure mode, reproduced on purpose as one of
+   * the two sabotage checks for this rewrite — fails here, not silently.
+   */
+  it("classifies every data.ts export as copy or NOT_COPY, with none left unclassified", () => {
+    const actualExportNames = Object.keys(marketingData).sort()
+    const classifiedNames = [...COPY_EXPORTS, ...Object.keys(NOT_COPY)].sort()
+    expect(actualExportNames).toEqual(classifiedNames)
+  })
+
+  const copyValues: string[] = []
+  for (const name of COPY_EXPORTS) {
+    collectStrings((marketingData as unknown as Record<string, unknown>)[name], copyValues)
+  }
 
   it("gates only string values", () => {
     copyValues.forEach((v) => expect(typeof v).toBe("string"))
