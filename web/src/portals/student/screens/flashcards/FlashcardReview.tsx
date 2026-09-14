@@ -13,7 +13,8 @@ import type { CardDTO, ReviewGrade } from "@/lib/flashcardTypes"
 import { applyGradeOutcome, type FailedGrade, type FlashcardSessionState } from "@/lib/flashcardSession"
 import { haptic } from "@/lib/haptics"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
-import { flashcardSwipeAction } from "@/lib/flashcardSwipe"
+import { flashcardSwipeAction, GRADE_SWIPE_THRESHOLD, REVEAL_SWIPE_THRESHOLD } from "@/lib/flashcardSwipe"
+import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -138,26 +139,26 @@ export function FlashcardReview() {
   // Task 6 (B4b): the card face is the swipe surface. One axis throughout
   // the interaction (right reveals, then left/right grades) reads as one
   // continuous motion idiom rather than switching direction mid-gesture —
-  // `flashcardSwipeAction` still recognises an upward swipe as a reveal too
-  // (its own unit tests pin that), reachable via a diagonal drag or, as
-  // today, the keyboard/button path, which stay the discoverable way to
-  // trigger it. `commitThreshold` matches whichever action threshold is
-  // live so a drag short of it always springs back animated rather than
-  // snapping — see `useDragGesture`'s own commit/cancel split.
+  // the keyboard/button path stays the discoverable way to reveal or grade.
+  // `commitThreshold` matches whichever action threshold `flashcardSwipe.ts`
+  // itself defines (`REVEAL_SWIPE_THRESHOLD`/`GRADE_SWIPE_THRESHOLD`) so the
+  // two can never silently disagree, and a drag short of it always springs
+  // back animated rather than snapping — see `useDragGesture`'s own
+  // commit/cancel split.
   const cardSurfaceRef = useRef<HTMLDivElement>(null)
   useDragGesture(cardSurfaceRef, {
     axis: "x",
     enabled: current !== null && !finished,
-    commitThreshold: revealed ? 80 : 60,
+    commitThreshold: revealed ? GRADE_SWIPE_THRESHOLD : REVEAL_SWIPE_THRESHOLD,
     // See `QuizTaker`'s own note: keep vertical scrolling, keep the
     // horizontal direction for this hook.
     touchAction: "pan-y",
     startFilter: (event) => {
       const target = event.target
-      return !(target instanceof Element && target.closest("button, a, input, textarea, select"))
+      return !(target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR))
     },
-    onCommit: (dx, dy) => {
-      const action = flashcardSwipeAction({ dx, dy, revealed })
+    onCommit: (dx) => {
+      const action = flashcardSwipeAction({ dx, revealed })
       if (action === "reveal") setRevealed(true)
       else if (action !== "none") grade(action)
     },

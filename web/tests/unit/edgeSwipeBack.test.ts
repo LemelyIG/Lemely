@@ -40,9 +40,8 @@ describe("edgeSwipeDecision", () => {
     expect(edgeSwipeDecision({ ...BASE, dx: -40 })).toBe("none")
   })
 
-  it("is none when the drag never commits (too small, or too vertical)", () => {
-    expect(edgeSwipeDecision({ ...BASE, dx: 5 })).toBe("none")
-    expect(edgeSwipeDecision({ ...BASE, dx: 15, dy: 12 })).toBe("none")
+  it("is none when the drag doesn't move away from the edge at all (dx: 0)", () => {
+    expect(edgeSwipeDecision({ ...BASE, dx: 0 })).toBe("none")
   })
 
   it("is none exactly at the 24px edge boundary's far side", () => {

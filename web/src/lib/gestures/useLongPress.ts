@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react"
 import type { MouseEvent as ReactMouseEvent, PointerEvent as ReactPointerEvent } from "react"
 import { longPressDecision, shouldStartLongPress, shouldSuppressContextMenu } from "./longPressMath"
+import { GESTURE_INTERACTIVE_SELECTOR } from "./interactiveSelector"
 
 /*
  * Task 5 (B4a) · long-press for a row's secondary-actions menu (question,
@@ -19,8 +20,6 @@ import { longPressDecision, shouldStartLongPress, shouldSuppressContextMenu } fr
  * WCAG 2.1.1 / 2.5.1 failure, and a hold cannot be performed with a
  * keyboard at all.
  */
-
-const INTERACTIVE_SELECTOR = "button, a, input, textarea, select, [role=radio], [role=checkbox]"
 
 export interface UseLongPressHandlers {
   onLongPress: (event: PointerEvent) => void
@@ -46,7 +45,6 @@ export interface UseLongPressResult {
 interface PressState {
   startX: number
   startY: number
-  startedAt: number
   pointerType: string
   timer: ReturnType<typeof setTimeout>
   fired: boolean
@@ -71,7 +69,7 @@ export function useLongPress(handlers: UseLongPressHandlers): UseLongPressResult
   function onPointerDown(event: ReactPointerEvent) {
     suppressClickRef.current = false
     const target = event.target
-    const startedOnInteractive = target instanceof Element && target.closest(INTERACTIVE_SELECTOR) !== null
+    const startedOnInteractive = target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null
     if (!shouldStartLongPress({ button: event.button, startedOnInteractive })) return
 
     const nativeEvent = event.nativeEvent
@@ -87,7 +85,6 @@ export function useLongPress(handlers: UseLongPressHandlers): UseLongPressResult
     stateRef.current = {
       startX: event.clientX,
       startY: event.clientY,
-      startedAt: Date.now(),
       pointerType: event.pointerType,
       timer,
       fired: false,
@@ -98,12 +95,12 @@ export function useLongPress(handlers: UseLongPressHandlers): UseLongPressResult
     const state = stateRef.current
     if (!state || state.fired) return
     const movedPx = Math.hypot(event.clientX - state.startX, event.clientY - state.startY)
+    // Firing is the `setTimeout` in `onPointerDown`'s sole job, not this
+    // function's — `longPressDecision` only ever needs to answer "has this
+    // moved too far to still count as a hold".
     const decision = longPressDecision({
-      elapsedMs: Date.now() - state.startedAt,
       movedPx,
-      holdMs: handlersRef.current.holdMs ?? 500,
       moveTolerance: handlersRef.current.moveTolerance ?? 10,
-      startedOnInteractive: false,
     })
     if (decision === "cancel") clearPress()
   }

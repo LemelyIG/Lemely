@@ -13,33 +13,26 @@ import {
  * pure and tested directly, same reasoning as `pullMath.test.ts`.
  */
 
-const BASE = { holdMs: 500, moveTolerance: 10, startedOnInteractive: false }
-
+/*
+ * `longPressDecision` used to also decide "fire" (from `elapsedMs >=
+ * holdMs`) and take a `startedOnInteractive` flag — both dead weight.
+ * `useLongPress.ts`'s own `setTimeout` is the sole arbiter of firing (its
+ * callback fires unconditionally at `holdMs`, not gated on this function's
+ * say-so), and `startedOnInteractive` was always hardcoded `false` at the
+ * only call site (`onPointerMove`): a press that started on an interactive
+ * descendant is refused at `onPointerDown` via `shouldStartLongPress`
+ * (tested below) and never reaches `onPointerMove`'s state at all. This
+ * function's only real job is "has the pointer moved too far to still count
+ * as a hold".
+ */
 describe("longPressDecision", () => {
-  it("waits just before the hold duration with no movement", () => {
-    expect(longPressDecision({ ...BASE, elapsedMs: 499, movedPx: 0 })).toBe("wait")
+  it("waits while the pointer stays within the movement tolerance", () => {
+    expect(longPressDecision({ movedPx: 0, moveTolerance: 10 })).toBe("wait")
+    expect(longPressDecision({ movedPx: 10, moveTolerance: 10 })).toBe("wait")
   })
 
-  it("fires once the hold duration elapses with no movement", () => {
-    expect(longPressDecision({ ...BASE, elapsedMs: 500, movedPx: 0 })).toBe("fire")
-  })
-
-  it("cancels when the pointer moves past the tolerance, even early", () => {
-    expect(longPressDecision({ ...BASE, elapsedMs: 200, movedPx: 11 })).toBe("cancel")
-  })
-
-  it("cancels a press that started on an interactive descendant", () => {
-    expect(
-      longPressDecision({ ...BASE, elapsedMs: 500, movedPx: 0, startedOnInteractive: true }),
-    ).toBe("cancel")
-  })
-
-  it("waits at exactly the movement tolerance", () => {
-    expect(longPressDecision({ ...BASE, elapsedMs: 200, movedPx: 10 })).toBe("wait")
-  })
-
-  it("fires well past the hold duration with no movement", () => {
-    expect(longPressDecision({ ...BASE, elapsedMs: 1200, movedPx: 0 })).toBe("fire")
+  it("cancels once the pointer moves past the tolerance", () => {
+    expect(longPressDecision({ movedPx: 11, moveTolerance: 10 })).toBe("cancel")
   })
 })
 

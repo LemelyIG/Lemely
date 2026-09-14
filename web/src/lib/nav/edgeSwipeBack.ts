@@ -1,5 +1,3 @@
-import { shouldCommitDrag } from "@/lib/gestures/dragMath"
-
 /*
  * Packet B3 (Task 4) · the pure half of `EdgeSwipeBack` (`edge-swipe-back.tsx`
  * mounts it). Standalone-only — a browser tab already has the platform's own
@@ -8,6 +6,24 @@ import { shouldCommitDrag } from "@/lib/gestures/dragMath"
  * inline-start edge zone and commits away from that edge, so a drag starting
  * mid-screen (dismissing a drawer, paging a quiz, B4's own gestures) is never
  * mistaken for this one.
+ *
+ * Consolidation pass · this used to re-run `dragMath.ts`'s `shouldCommitDrag`
+ * on `away`/`dy` itself. It was a genuine second copy of the same gate:
+ * `EdgeSwipeBack.tsx` wires `useDragGesture` with `axis: "x"` and no
+ * `commitThreshold` override, so the hook's own `endDrag` already ran
+ * `shouldCommitDrag(dx, dy, "x", 10)` — the identical default threshold and
+ * axis — before it ever calls `onCommit`, which is the only place this
+ * function is reached from. `away` is `dx * dir` and `dir` is always ±1, so
+ * `Math.abs(away) === Math.abs(dx)`: the two calls could only ever agree,
+ * and a future change to one `commitThreshold` with no matching change to
+ * the other would have silently drifted them apart, same shape as the
+ * threshold duplication fixed elsewhere in this pass. Every other pure
+ * gesture decision in this codebase (`flashcardSwipeAction`,
+ * `quizSwipeAllowed`) already trusts the hook's own commit gate rather than
+ * re-deriving it, so this now does too — the distance/straightness check
+ * lives once, in `dragMath.ts` (tested directly in `dragMath.test.ts`), and
+ * this function only interprets the edge/direction meaning of a drag the
+ * hook has already confirmed committed.
  */
 
 export interface EdgeSwipeInput {
@@ -30,7 +46,6 @@ export const EDGE_ZONE_PX = 24
 export function edgeSwipeDecision({
   startX,
   dx,
-  dy,
   viewportWidth,
   standalone,
   dir,
@@ -45,8 +60,6 @@ export function edgeSwipeDecision({
   // not a back gesture.
   const away = dx * dir
   if (away <= 0) return "none"
-
-  if (!shouldCommitDrag(away, dy, "x")) return "none"
 
   return "back"
 }

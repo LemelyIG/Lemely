@@ -13,7 +13,8 @@ import type { StudentQuizQuestion, SubmitQuizResponse } from "@/lib/placementTyp
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
-import { quizSwipeAllowed } from "@/lib/quizSwipe"
+import { quizSwipeAllowed, SWIPE_LOCK_SECONDS } from "@/lib/quizSwipe"
+import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import {
   answerCacheKey,
   answerInputKind,
@@ -82,11 +83,6 @@ import {
  */
 
 type SaveStatus = "idle" | "saving" | "saved" | "error"
-
-/** Task 6 (B4b): the closest-ancestor selector the page-turn swipe's
- * `startFilter` checks — an MCQ radio, a text input, or a button/link owns
- * its own tap already and must never race a page-turn against it. */
-const SWIPE_INTERACTIVE_SELECTOR = '[role="radio"], textarea, input, button, a'
 
 function storageKey(assignmentId: string, suffix: string): string {
   return `lm.quiz.${suffix}.${assignmentId}`
@@ -445,7 +441,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
   const questionCardRef = useRef<HTMLDivElement>(null)
   useDragGesture(questionCardRef, {
     axis: "x",
-    enabled: !(remaining !== null && remaining <= 60),
+    enabled: !(remaining !== null && remaining <= SWIPE_LOCK_SECONDS),
     commitThreshold: 60,
     // Vertical panning still scrolls the question; the browser must not
     // claim the horizontal direction before the 60px commit threshold is
@@ -453,7 +449,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     touchAction: "pan-y",
     startFilter: (event) => {
       const target = event.target
-      const interactive = target instanceof Element ? target.closest(SWIPE_INTERACTIVE_SELECTOR) : null
+      const interactive = target instanceof Element ? target.closest(GESTURE_INTERACTIVE_SELECTOR) : null
       return quizSwipeAllowed({
         remainingSeconds: remaining,
         targetTag: interactive?.tagName ?? (target instanceof Element ? target.tagName : ""),

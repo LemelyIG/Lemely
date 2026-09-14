@@ -1,22 +1,22 @@
 import { describe, expect, it } from "vitest"
-import { quizSwipeAllowed } from "@/lib/quizSwipe"
+import { quizSwipeAllowed, SWIPE_LOCK_SECONDS } from "@/lib/quizSwipe"
 
 describe("quizSwipeAllowed — last-60-seconds lock", () => {
-  it("59 seconds remaining locks the swipe", () => {
+  it(`${SWIPE_LOCK_SECONDS - 1} seconds remaining locks the swipe`, () => {
     expect(
-      quizSwipeAllowed({ remainingSeconds: 59, targetTag: "DIV", targetRole: null }),
+      quizSwipeAllowed({ remainingSeconds: SWIPE_LOCK_SECONDS - 1, targetTag: "DIV", targetRole: null }),
     ).toBe(false)
   })
 
-  it("inverse: 61 seconds remaining allows the swipe", () => {
+  it(`inverse: ${SWIPE_LOCK_SECONDS + 1} seconds remaining allows the swipe`, () => {
     expect(
-      quizSwipeAllowed({ remainingSeconds: 61, targetTag: "DIV", targetRole: null }),
+      quizSwipeAllowed({ remainingSeconds: SWIPE_LOCK_SECONDS + 1, targetTag: "DIV", targetRole: null }),
     ).toBe(true)
   })
 
-  it("exactly 60 seconds remaining locks the swipe (the lock is inclusive)", () => {
+  it(`exactly ${SWIPE_LOCK_SECONDS} seconds remaining locks the swipe (the lock is inclusive)`, () => {
     expect(
-      quizSwipeAllowed({ remainingSeconds: 60, targetTag: "DIV", targetRole: null }),
+      quizSwipeAllowed({ remainingSeconds: SWIPE_LOCK_SECONDS, targetTag: "DIV", targetRole: null }),
     ).toBe(false)
   })
 
