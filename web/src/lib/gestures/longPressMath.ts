@@ -24,3 +24,29 @@ export function longPressDecision(input: LongPressDecisionInput): "fire" | "wait
   if (elapsedMs >= holdMs) return "fire"
   return "wait"
 }
+
+/**
+ * Whether a `pointerdown` should start the hold timer at all.
+ *
+ * Touch and pen presses report `button: 0`, as does a primary mouse press;
+ * anything above that is a secondary or middle mouse button, which belongs to
+ * the browser (its own context menu, its own paste) and never to us.
+ */
+export function shouldStartLongPress(input: {
+  button: number
+  startedOnInteractive: boolean
+}): boolean {
+  return input.button === 0 && !input.startedOnInteractive
+}
+
+/**
+ * Whether to `preventDefault()` a `contextmenu` event.
+ *
+ * Only for a touch/pen hold, where our own menu is about to open in the
+ * native one's place. A mouse right-click gets the browser's menu: we offer
+ * nothing to replace it with, and suppressing it left the user with nothing
+ * at all.
+ */
+export function shouldSuppressContextMenu(pointerType: string, pressActive: boolean): boolean {
+  return pressActive && pointerType !== "mouse"
+}

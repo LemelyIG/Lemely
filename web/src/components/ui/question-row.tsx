@@ -1,6 +1,13 @@
 import { useState, type ReactNode } from "react"
 import { Link } from "react-router-dom"
-import { CaretDown, CheckCircle, CircleHalf, XCircle, type Icon } from "@phosphor-icons/react"
+import {
+  CaretDown,
+  CheckCircle,
+  CircleHalf,
+  DotsThreeVertical,
+  XCircle,
+  type Icon,
+} from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 import { MarkDisplay } from "./mark-display"
 import { ConfidenceIndicator, type ConfidenceTier } from "./confidence-indicator"
@@ -84,6 +91,13 @@ export function QuestionRow({
   // existing tap targets. Only attached when there is at least one real
   // menu item — a row with neither prop gets no listener at all, not a
   // menu that opens empty.
+  //
+  // The hold is an accelerator, never the only way in: "Practice this topic"
+  // lives nowhere else in the UI, so a hold-only menu made it unreachable by
+  // keyboard (WCAG 2.1.1) and unreachable without a path-or-timing gesture
+  // (2.5.1). The "More actions" button below is the real affordance — it
+  // carries the popover's own `triggerProps`, so the ARIA wiring is correct
+  // and Escape hands focus back to it instead of dropping it on `<body>`.
   const hasMenu = Boolean(practiceHref || onShare)
   const [menuOpen, setMenuOpen] = useState(false)
   const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
@@ -93,7 +107,8 @@ export function QuestionRow({
       open={hasMenu && menuOpen}
       onOpenChange={setMenuOpen}
       className="block"
-      renderTrigger={() => (
+      align="end"
+      renderTrigger={({ triggerProps }) => (
         <div
           className={cn("border-b border-border last:border-b-0", className)}
           {...(hasMenu ? longPress : {})}
@@ -128,6 +143,19 @@ export function QuestionRow({
             </button>
             <span className="ms-auto flex items-center gap-2 flex-none">
               <ConfidenceIndicator tier={confidence} />
+              {hasMenu ? (
+                <button
+                  type="button"
+                  {...triggerProps}
+                  aria-label="More actions"
+                  className={cn(
+                    "p-1.5 rounded-md text-t3 hover:bg-surface-2 hover:text-t2 active:scale-[0.98] transition-[background-color,color,transform] cursor-pointer",
+                    "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                  )}
+                >
+                  <DotsThreeVertical className="w-4 h-4" aria-hidden />
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={toggle}

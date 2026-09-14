@@ -330,8 +330,22 @@ function DeckRow({
       open={menuOpen}
       onOpenChange={setMenuOpen}
       className="block"
-      renderTrigger={() => (
-        <Card {...longPress}>
+      /* `triggerProps` wired minus its `onClick`, exactly as
+         `Notifications`' row does it and for the same reasons — a tap on a
+         deck must not open the menu, but the popover still needs the
+         trigger's ref (so Escape returns focus here rather than to `<body>`)
+         and its ARIA attributes. No "More actions" button either: this
+         menu's one item, Delete, is already the visible Trash button below. */
+      renderTrigger={({ triggerProps }) => (
+        <Card
+          ref={triggerProps.ref}
+          tabIndex={-1}
+          aria-haspopup={triggerProps["aria-haspopup"]}
+          aria-expanded={triggerProps["aria-expanded"]}
+          aria-controls={triggerProps["aria-controls"]}
+          className="outline-none"
+          {...longPress}
+        >
           <CardBody className="flex flex-col gap-2">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="flex flex-col gap-1.5">
