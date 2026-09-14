@@ -174,11 +174,14 @@ export function Landing() {
                   `landingHero.primaryCta.to`, not a hardcoded "/signup": the
                   data field carries the route as a fact about the product
                   and this call site now consumes it rather than repeating a
-                  literal that could drift from it. `marketing.test.ts`'s
-                  "routes exactly three CTAs to /signup" regex matches this
-                  exact call form (`navigate\(landingHero\.primaryCta\.to\)`)
-                  alongside the two remaining literal calls, so the count it
-                  checks stays at three.
+                  literal that could drift from it. The close CTA further
+                  down this file does the same with `landingClose.cta.to`
+                  (Task 19 twin fix), so neither site hardcodes the
+                  destination anymore. `marketing.test.ts`'s "routes exactly
+                  two CTAs to /signup" regex matches both call forms
+                  (`navigate\(landingHero\.primaryCta\.to\)` and
+                  `navigate\(landingClose\.cta\.to\)`), so the count it
+                  checks stays at two.
                 */}
                 <Button
                   variant="primary"
@@ -400,9 +403,12 @@ export function Landing() {
             </p>
             <div className="flex flex-wrap items-center gap-5">
               {/* The close CTA the hero's own comment refers to as "the close
-                  CTA further down the page" — same destination, same reason. */}
-              <Button variant="primary" size="lg" onClick={() => navigate("/signup")}>
-                {landingClose.cta}
+                  CTA further down the page" — same destination, same reason.
+                  `landingClose.cta.to`, not a hardcoded "/signup": mirrors
+                  the hero's primaryCta fix (Task 2, M-2) so this site has one
+                  source of truth for its destination too. */}
+              <Button variant="primary" size="lg" onClick={() => navigate(landingClose.cta.to)}>
+                {landingClose.cta.label}
               </Button>
               {/*
                 Marginalia (§8), and the only handwritten text on the page.

@@ -28,7 +28,6 @@
  */
 
 export const landingHero = {
-  eyebrow: "For CAIE IGCSE",
   /*
    * Role-neutral on purpose: the old hero named "teachers and their
    * students" before a reader had chosen which one they were. `BUILD/BRAND.md`
@@ -294,7 +293,10 @@ export const pricingPlaceholder = {
 export const landingClose = {
   title: "Bring one paper",
   body: "Upload a script and read the marking back.",
-  cta: "Get started",
+  /* Object, not a bare string, mirroring `landingHero.primaryCta` (Task 2,
+     M-2): the label is copy, the route is a fact about the product, and
+     `Landing.tsx` consumes both instead of hardcoding the destination. */
+  cta: { label: "Get started", to: "/signup" },
   /* Marginalia (§8). Decorative: removing it costs the page nothing. */
   aside: "one script is enough to judge it",
 }

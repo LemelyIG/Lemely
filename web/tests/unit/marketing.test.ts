@@ -6,7 +6,14 @@ import { appRoutes } from "@/routes"
 import { marketingRoute } from "@/portals/marketing"
 import { studentRoute } from "@/portals/student"
 import * as marketingData from "@/portals/marketing/data"
-import { landingHero, heroExample, mcq, pricing, roleTabs } from "@/portals/marketing/data"
+import {
+  landingClose,
+  landingHero,
+  heroExample,
+  mcq,
+  pricing,
+  roleTabs,
+} from "@/portals/marketing/data"
 
 /*
  * P4.9 · the Persuade lane, pinned.
@@ -155,14 +162,16 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
    * `navigate(landingHero.primaryCta.to)` rather than repeating the literal
    * `"/signup"` string, so the data field the "routes every roleTabs CTA"
    * assertion below already pins is actually consumed by the page instead of
-   * sitting unread beside it. The regex matches either call form for that
-   * one site (the close CTA stays literal), so the count it checks stays at
-   * two either way.
+   * sitting unread beside it. The close CTA (Task 19 twin fix) does the same
+   * with `navigate(landingClose.cta.to)`, so neither remaining call site is a
+   * literal string anymore. The regex matches both data-consuming forms (and
+   * the literal, in case either site ever reverts to one), so the count it
+   * checks stays at two either way.
    */
   it("routes exactly two CTAs to /signup", () => {
     const matches =
       source.match(
-        /navigate\(["']\/signup["']\)|navigate\(landingHero\.primaryCta\.to\)/g,
+        /navigate\(["']\/signup["']\)|navigate\(landingHero\.primaryCta\.to\)|navigate\(landingClose\.cta\.to\)/g,
       ) ?? []
     expect(matches).toHaveLength(2)
   })
@@ -172,15 +181,27 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
    * to both source-text checks in this block, because its destination is a
    * data value, not a literal string. Pointing `roleTabs[].cta.to` at
    * `/login` would pass every assertion above while reintroducing exactly
-   * the defect this describe block exists to prevent. This asserts the data
-   * directly instead of the source text.
+   * the defect this describe block exists to prevent — but a blanket "never
+   * /login" is too weak a guard on its own: it also passed the PARENT entry
+   * pointed at `/signup` or `/signup/parent`, both wrong for a parent for the
+   * same reason `SignupRoleSelect.tsx`'s own comment gives — a parent account
+   * only ever comes from a child-issued invite, so `/join` is that role's
+   * only destination, never a self-service signup form. This pins the exact
+   * destination per role instead of a blanket "not /login".
    */
-  it("routes every roleTabs CTA to /signup or /join, never to /login", () => {
+  it("routes every roleTabs CTA to the destination its role actually has, never to /login", () => {
+    const EXPECTED_CTA_TO: Record<string, string> = {
+      student: "/signup/student",
+      // Parents have no self-service signup — SignupRoleSelect.tsx.
+      parent: "/join",
+      teacher: "/signup/teacher",
+    }
     for (const r of roleTabs) {
-      expect(r.cta.to === "/join" || r.cta.to.startsWith("/signup")).toBe(true)
+      expect(r.cta.to).toBe(EXPECTED_CTA_TO[r.id])
       expect(r.cta.to).not.toBe("/login")
     }
     expect(landingHero.primaryCta.to.startsWith("/signup")).toBe(true)
+    expect(landingClose.cta.to.startsWith("/signup")).toBe(true)
   })
 
   /*
