@@ -339,6 +339,33 @@
   --spacing-page-tablet: 20px;
   --spacing-page-mobile: 16px;
 
+  /* Landing-page design import (feat/landing-redesign). The imported page
+     CSS (`portals/marketing/marketing.css`) is written against a bare
+     4px-based `--space-*` scale rather than Tailwind's `p-*`/`gap-*`
+     utilities, because it is verbatim from the design project and targets
+     raw custom properties directly. Deliberately sparse — no --space-7,
+     --space-9, etc. — matching the design system's own scale exactly; a
+     value outside it is wrong rather than missing.
+     `--gutter`/`--page-*` alias the spacing tokens two lines up rather than
+     redefining the pixel values a second time, so there remains one source
+     of truth for the page-gutter figures. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --space-32: 128px;
+  --gutter: var(--spacing-gutter);
+  --page-desktop: var(--spacing-page-desktop);
+  --page-tablet: var(--spacing-page-tablet);
+  --page-mobile: var(--spacing-page-mobile);
+
   /* ── §5 Containers ───────────────────────────────────────────────────── */
   --container-read: 680px;
   --container-app: 1200px;
@@ -1528,9 +1555,11 @@ html[data-direction="back"]::view-transition-new(root) {
    (`vite/preMountShell.ts`), which paints before this stylesheet is even
    requested.
 
-   The reduced-motion rule at the bottom of this file only forces
-   `animation-duration` (and `transition-duration`) toward zero — it never
-   touches `animation-delay` — so these two classes still stage under
+   The reduced-motion rule at the bottom of this file forces
+   `animation-duration`, `transition-duration` AND both delays toward zero,
+   because a staggered entrance whose delay survives holds `opacity: 0`
+   through it. That rule therefore carries an explicit carve-out for the two
+   classes below, which stage rather than animate, so they still stage under
    `prefers-reduced-motion`: `--loading-tier-skeleton` and
    `--loading-tier-slow` still gate when tier 2 and tier 3 become visible,
    only the (already instantaneous) opacity fade itself is affected, which is
@@ -1585,6 +1614,14 @@ html[data-direction="back"]::view-transition-new(root) {
   *::after {
     animation-duration: 0.001ms !important;
     animation-iteration-count: 1 !important;
+    /* The delay matters as much as the duration here. Every staggered rule on
+       the marketing page uses a `both` fill, so its backwards fill holds the
+       `from` keyframe — `opacity: 0` for `rise`, `wordrise` and siblings —
+       for the whole delay. Zeroing duration alone left a reduced-motion
+       reader looking at invisible content for up to ~750ms before it snapped
+       in, which is the "broken" this block's own heading rules out. */
+    animation-delay: 0.001ms !important;
+    transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
   }
@@ -1600,5 +1637,21 @@ html[data-direction="back"]::view-transition-new(root) {
   ::view-transition-old(*),
   ::view-transition-new(*) {
     animation: none !important;
+  }
+
+  /* The two exceptions, and the reason the blanket rule above needs one.
+     These classes use `animation-delay` as a TIMER, not as motion: duration
+     is `0s` and the backwards `both` fill holds `visibility: hidden` until
+     the delay elapses, so the delay IS the tier gate. Zeroing it collapses
+     both windows — tier 2's skeleton flashes on instant transitions, and
+     tier 3's "Still loading, reload the page" is on screen, announced, and
+     tabbable from the first frame of every navigation. That is the defect
+     §9.3 above documents having already fixed once, and it would land only
+     on reduced-motion users. Staging is not animation; it survives here. */
+  .lm-tier-skeleton {
+    animation-delay: var(--loading-tier-skeleton) !important;
+  }
+  .lm-tier-slow {
+    animation-delay: var(--loading-tier-slow) !important;
   }
 }

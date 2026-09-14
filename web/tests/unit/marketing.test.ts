@@ -1,43 +1,41 @@
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
 import { appRoutes, flattenRoutes } from "@/routes"
 import { marketingRoute } from "@/portals/marketing"
 import { studentRoute } from "@/portals/student"
-import {
-  landingHero,
-  heroExample,
-  landingClose,
-  loopSteps,
-  mcq,
-  pillars,
-  pricing,
-  proof,
-} from "@/portals/marketing/data"
+import * as marketingData from "@/portals/marketing/data"
+import { close, hero } from "@/portals/marketing/data"
 
 /*
- * P4.9 · the Persuade lane, pinned.
+ * P4.9 · the Persuade lane, pinned. Rewritten for the design import
+ * (feat/landing-redesign, 2026-09-14) — see `.superpowers/sdd/
+ * design-import-spec.md` and `design-import-claims.md`'s RULING. The design
+ * replaced the page's structure and copy wholesale (role-neutral hero and
+ * card grid out; centred hero, dark trust band, and the imported section
+ * order in), so most of this file's assertions changed shape along with it.
+ * What did NOT change is the intent behind each one: this page is still the
+ * only public one in the product, its CTAs still have to route to signup
+ * rather than sign-in, and its copy is still gated against inventing a claim
+ * the product's code does not back.
  *
  * Two classes of fact live here, and they are both the kind that rot in
- * silence — the kind this project has now been bitten by often enough to stop
- * arguing about whether they deserve a test.
+ * silence:
  *
- * 1. REACHABILITY. The marketing page spent the whole build behind
- *    `RequireAuth allowedRoles={["student"]}` at `/student/landing`, where the
- *    only reader who could open it was a student who had already signed up.
- *    Nothing failed. Typecheck passed, lint passed, the route rendered
- *    perfectly for the one person who did not need it, and the *audit* found
- *    it only as a note in a comment. A guard placed around the wrong subtree
- *    is invisible to every gate this build runs except a test that says out
- *    loud which routes are public.
+ * 1. REACHABILITY. The marketing page spent a whole build behind
+ *    `RequireAuth allowedRoles={["student"]}` at `/student/landing`, where
+ *    the only reader who could open it was a student who had already signed
+ *    up. A guard placed around the wrong subtree is invisible to every gate
+ *    this build runs except a test that says out loud which routes are
+ *    public.
  *
- * 2. HONEST COPY. DESIGN-AUDIT C1/C2/C3 deleted the fabricated numbers from
- *    this page and left six fabricated sentences behind them, including the
- *    exact figure C1 had just removed, four sections up the same file. The
- *    banned-claim assertions below are deliberately literal: they name the
- *    words, because the failure mode is not a wrong number, it is a plausible
- *    sentence about a feature nobody built.
+ * 2. HONEST COPY. Every claim on this page traces to a comment saying where
+ *    it was verified, or to the RULING that says it ships anyway as the
+ *    design's own authoritative call. The banned-claim assertions below are
+ *    deliberately literal: they name the words, because the failure mode is
+ *    not a wrong number, it is a plausible sentence about a feature nobody
+ *    built.
  */
 
 const topLevelRoutes = flattenRoutes(appRoutes)
@@ -49,10 +47,9 @@ const topLevelPaths = topLevelRoutes.map((r) => r.path)
  * Walk a route element tree looking for a component by display name.
  *
  * Guards are React elements, so this is the only honest way to ask "is this
- * route behind `RequireAuth`" without rendering it — and asking that question
- * is the entire point of this file. Matching by name rather than by type
- * identity means it keeps working when a guard is wrapped in a Suspense or a
- * frame, which is exactly how the original defect hid.
+ * route behind `RequireAuth`" without rendering it. Matching by name rather
+ * than by type identity means it keeps working when a guard is wrapped in a
+ * Suspense or a frame, which is exactly how the original defect hid.
  */
 function containsComponent(node: unknown, name: string): boolean {
   if (!node || typeof node !== "object") return false
@@ -68,20 +65,12 @@ describe("the marketing lane is public — P4.9", () => {
     expect(topLevelPaths).toContain("/landing")
   })
 
-  /*
-   * The assertion that would have caught the original defect, made against the
-   * route table itself rather than against the source text.
-   */
   it("puts no auth guard on the marketing route", () => {
     const route = topLevelRoutes.find((r) => r.path === "/landing")
     expect(route).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
 
-  /*
-   * The inverse, so this file cannot pass by the guards having been removed
-   * everywhere. Each portal must still be behind one.
-   */
   it.each(["teacher", "student", "parent"])("keeps the %s portal guarded", (portal) => {
     const route = topLevelRoutes.find((r) => r.path === portal)
     expect(route).toBeDefined()
@@ -97,7 +86,6 @@ describe("the marketing lane is public — P4.9", () => {
 
   it("does not mount the marketing route inside the student portal", () => {
     expect(marketingRoute.path).toBe("landing")
-    // Sanity: the student portal no longer imports the landing screen at all.
     const source = fs.readFileSync(
       path.resolve(__dirname, "../../src/portals/student/index.tsx"),
       "utf8",
@@ -113,26 +101,12 @@ describe("the marketing lane is public — P4.9", () => {
 })
 
 /*
- * Task 19 (spec §4.4) · marketing CTAs point at `/signup`, not `/login`.
- *
- * A source-text check rather than a rendered one, matching this file's own
- * established method above (`does not mount the marketing route inside the
- * student portal` reads `student/index.tsx` as text for the same reason):
- * `vitest.config.ts` runs the node environment on purpose, with no jsdom and
- * no React Testing Library, so there is nothing here to click a `<Button>`
- * and inspect what `navigate` was called with. Reading the source for the
- * literal call sites is the honest substitute available at this layer, and
- * it is exactly the kind of fact — "this string appears in this file" — that
- * a source-text check is good at pinning down.
- *
- * Before Task 19, `/signup` did not exist, so every CTA on this page
- * (correctly, at the time) pointed at `/login` — spec §1's own problem
- * statement records that as the headline finding this whole redesign closes.
- * Now that `/signup` exists, a `navigate("/login")` reappearing here is a
- * regression to that exact defect, not a stylistic choice, which is why this
- * gets its own test rather than living only as a comment in `Landing.tsx`.
+ * Marketing CTAs point at `/signup`, not `/login`. A source-text check
+ * rather than a rendered one: `vitest.config.ts` runs the node environment,
+ * with no jsdom and no React Testing Library, so reading the literal call
+ * sites is the honest substitute available at this layer.
  */
-describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
+describe("marketing CTAs route to signup, not sign-in", () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../src/portals/marketing/Landing.tsx"),
     "utf8",
@@ -143,68 +117,364 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
   })
 
   /*
-   * Three call sites, not two: the hero's primary CTA, the close CTA, and the
-   * per-plan CTA in the "Plans" section. That third one renders nothing today
-   * — `pricing` is `[]` (the `landing copy claims only what the product does`
-   * describe block above pins that directly) — but the source line exists and
-   * was `navigate("/login")` before this task, so it is corrected along with
-   * the two live ones rather than left to silently reintroduce the pre-signup
-   * routing the moment a real plan ships.
+   * Two call sites: the hero's primary CTA and the close CTA. The imported
+   * design's "who it serves" section (`Readings`, part B) carries no CTA of
+   * its own — unlike the previous build's `RoleTabs`, whose per-role signup
+   * buttons this design replaces with three read-only tab panels — so there
+   * is no third or fourth call site to account for here anymore.
    */
-  it("routes exactly three CTAs to /signup", () => {
-    const matches = source.match(/navigate\(["']\/signup["']\)/g) ?? []
-    expect(matches).toHaveLength(3)
+  it("routes exactly two CTAs to /signup", () => {
+    const matches =
+      source.match(
+        /navigate\(["']\/signup["']\)|navigate\(hero\.primaryCta\.to\)|navigate\(close\.cta\.to\)/g,
+      ) ?? []
+    expect(matches).toHaveLength(2)
+  })
+
+  it("reads both CTA destinations from data.ts, not a hardcoded literal", () => {
+    expect(hero.primaryCta.to.startsWith("/signup")).toBe(true)
+    expect(close.cta.to.startsWith("/signup")).toBe(true)
   })
 
   /*
-   * The hero's *secondary* CTA ("For centres and teachers") is deliberately
-   * excluded from both checks above: it was never a `navigate("/login")` call
-   * to begin with, and its own comment in `Landing.tsx` explains why it
-   * scrolls to the "who it serves" section instead of navigating anywhere.
-   * Pinned here so a future edit that folds it into the signup-routing
-   * pattern above (a plausible-looking "consistency" fix) has to remove this
-   * assertion on purpose rather than by accident.
+   * The hero's *secondary* CTA ("See a marked script") is deliberately
+   * excluded: it scrolls to the dark trust band rather than navigating
+   * anywhere, same reasoning as the previous build's own secondary CTA.
    */
   it("leaves the hero's secondary CTA scrolling to a section, not navigating", () => {
     expect(source).toMatch(/scrollIntoView/)
-    expect(source).toMatch(/SERVES_SECTION_ID/)
+    expect(source).toMatch(/MARKED_SECTION_ID/)
+  })
+
+  const shellSource = fs.readFileSync(
+    path.resolve(__dirname, "../../src/portals/marketing/index.tsx"),
+    "utf8",
+  )
+
+  it("keeps the header's primary action on /signup", () => {
+    expect(shellSource).toMatch(/to="\/signup"[\s\S]{0,120}buttonVariants/)
+    // The header also carries "Log in" (nav) and "Log in" (footer) — both
+    // legitimately point at /login. Exactly two, never a third.
+    expect(shellSource.match(/to="\/login"/g) ?? []).toHaveLength(2)
+  })
+})
+
+/*
+ * Design import: `marketing.css` (the verbatim page CSS port) and the
+ * components that consume it stay token-only, per design-import-spec.md's
+ * hard constraint ("Tokens only: zero raw oklch(, hex, or text-[...] under
+ * portals/marketing/**"). A source-text sweep, same method the rest of this
+ * file already uses for facts a rendered test can't see.
+ */
+describe("design import: token purity and the z-nav rename", () => {
+  const marketingDir = path.resolve(__dirname, "../../src/portals/marketing")
+  const files = fs
+    .readdirSync(marketingDir)
+    .filter((f) => /\.(tsx?|css)$/.test(f))
+    .map((f) => ({ name: f, source: fs.readFileSync(path.join(marketingDir, f), "utf8") }))
+
+  /*
+   * `files.length > 0` used to be the whole check, and passes with a single
+   * file — it cannot prove the (non-recursive) glob actually swept the
+   * directory rather than matching one leftover. A real floor plus the five
+   * specimen filenames by name means a renamed or moved component, or a glob
+   * that stops matching, fails here instead of silently shrinking the swept
+   * set (M-3).
+   */
+  it("has files to check, including every specimen component (sanity — the glob above did not silently match nothing or drop a renamed file)", () => {
+    expect(files.length).toBeGreaterThan(5)
+    const names = files.map((f) => f.name)
+    for (const specimen of [
+      "OpenedQuestion.tsx",
+      "ScanSequence.tsx",
+      "SchemeExcerpt.tsx",
+      "ClassBatch.tsx",
+      "Readings.tsx",
+    ]) {
+      expect(names).toContain(specimen)
+    }
+  })
+
+  it.each(files.map((f) => f.name))("contains no raw oklch(...) literal (%s)", (name) => {
+    const file = files.find((f) => f.name === name)!
+    expect(file.source).not.toMatch(/oklch\(/)
+  })
+
+  it.each(files.map((f) => f.name))("contains no raw hex color literal (%s)", (name) => {
+    const file = files.find((f) => f.name === name)!
+    // Matches #abc / #aabbcc style literals but not something like a URL
+    // fragment; this codebase's design tokens never need a bare hex.
+    expect(file.source).not.toMatch(/#[0-9a-fA-F]{3,8}\b/)
+  })
+
+  it.each(files.filter((f) => f.name.endsWith(".tsx")).map((f) => f.name))(
+    "contains no Tailwind arbitrary color value text-[...]/bg-[#...] (%s)",
+    (name) => {
+      const file = files.find((f) => f.name === name)!
+      expect(file.source).not.toMatch(/\b(?:text|bg|border)-\[#/)
+    },
+  )
+
+  it("marketing.css rewrites the design's --z-nav to the repo's --z-index-nav, and defines no duplicate token", () => {
+    const css = files.find((f) => f.name === "marketing.css")!.source
+    expect(css).toMatch(/var\(--z-index-nav\)/)
+    expect(css).not.toMatch(/--z-nav\b/)
+  })
+})
+
+/*
+ * Part B swapped every `StubMount` placeholder for the real specimen
+ * component. Pinned the other direction from part A's own check: this
+ * asserts the stubs are GONE and each real component is both imported and
+ * mounted, so a future edit that reverts one to a placeholder (or imports
+ * it without ever rendering it) fails here rather than silently.
+ */
+describe("design import: part B's five specimen components are all mounted", () => {
+  const source = fs.readFileSync(
+    path.resolve(__dirname, "../../src/portals/marketing/Landing.tsx"),
+    "utf8",
+  )
+  const specimens = ["OpenedQuestion", "ScanSequence", "SchemeExcerpt", "ClassBatch", "Readings"]
+
+  it("mounts no StubMount placeholder anywhere", () => {
+    // A regex on the literal call/definition forms, not the bare word —
+    // the surrounding prose (this file's own comments included) narrates
+    // the swap using the word "StubMount" without it being a live call.
+    expect(source).not.toMatch(/<StubMount\b|function StubMount\b/)
+  })
+
+  it.each(specimens)("imports and renders %s", (name) => {
+    expect(source).toMatch(new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*"\\./${name}"`))
+    expect(source).toMatch(new RegExp(`<${name}\\s*/>`))
   })
 })
 
 describe("landing copy claims only what the product does — P4.9", () => {
-  /** Every string a visitor can read on the page, flattened. */
-  const allCopy = [
-    ...Object.values(landingHero),
-    ...Object.values(heroExample),
-    ...Object.values(landingClose),
-    ...loopSteps.flatMap((s) => [s.step, s.title, s.body]),
-    ...pillars.flatMap((p) => [p.kicker, p.title, p.body, ...p.bullets]),
-    ...proof.flatMap((p) => [p.n, p.l]),
-  ].join("\n")
+  /**
+   * Recursively collects every string leaf under `value` into `out`.
+   * Non-string, non-container leaves that are legitimately not copy (marks,
+   * counts, indices — `awarded`, `available`, `total`, fixture `id`s) are
+   * skipped rather than stringified. `undefined` is NOT among them: this
+   * gate used to tolerate it, back when `howItWorks.body` and
+   * `schemeSection.body`/`.aside` were deliberately left undefined pending a
+   * verbatim quote (see data.ts's history, commit 7bec7d30). That gap is
+   * closed — every COPY_EXPORTS field is a real string now — so an
+   * `undefined` leaf today means a field silently went missing, not a
+   * pending quote, and the gate should fail loudly rather than skip it
+   * quietly the way it used to have to.
+   */
+  function collectStrings(value: unknown, out: string[]): void {
+    if (typeof value === "string") {
+      out.push(value)
+    } else if (Array.isArray(value)) {
+      value.forEach((v) => collectStrings(v, out))
+    } else if (value === undefined) {
+      throw new Error(
+        "collectStrings: found an undefined leaf in gated copy — every COPY_EXPORTS " +
+          "field is expected to be a real string (or a container of them); fill it in " +
+          "rather than leaving it undefined, or classify the export under NOT_COPY " +
+          "with a reason if it genuinely isn't copy",
+      )
+    } else if (value !== null && typeof value === "object") {
+      Object.values(value).forEach((v) => collectStrings(v, out))
+    }
+  }
+
+  /**
+   * Every `data.ts` export that renders as visible copy on the page. Walked
+   * recursively, so listing the export here gates every field it has now
+   * and every field a future edit adds to it.
+   */
+  const COPY_EXPORTS = [
+    "hero",
+    "subjects",
+    "trustBand",
+    "howItWorks",
+    "schemeSection",
+    "classBatchSection",
+    "readingsIntro",
+    "close",
+    "openedQuestion",
+    "scanSequence",
+    "schemeExcerpt",
+    "classBatch",
+    "readings",
+  ] as const
+
+  /** Exports deliberately excluded from the copy gate, one reason each. */
+  const NOT_COPY: Record<string, string> = {}
 
   /*
-   * Each entry is a claim that was live on this page and had no
-   * implementation. The comment is the verification, not a guess: these were
-   * checked against the backend one at a time.
+   * The exhaustiveness check: every export the compiled module actually has
+   * must appear in exactly one of the two classifications above. A new
+   * `data.ts` export that lands in neither fails here, not silently — the
+   * same mechanism the previous build's own `loopIntro` slipped past before
+   * this check existed.
+   */
+  it("classifies every data.ts export as copy or NOT_COPY, with none left unclassified", () => {
+    const actualExportNames = Object.keys(marketingData).sort()
+    const classifiedNames = [...COPY_EXPORTS, ...Object.keys(NOT_COPY)].sort()
+    expect(actualExportNames).toEqual(classifiedNames)
+  })
+
+  /*
+   * KEY-SET GATE, orthogonal to the value walk above. `collectStrings` throws
+   * on an `undefined` leaf, but `Object.values({})` is `[]`: a field that is
+   * deleted outright, rather than set to `undefined`, passes that walk
+   * silently. Today that gap is closed by the compiler (`howItWorks` and
+   * `schemeSection` are bare object literals dereferenced with `.body`/
+   * `.aside` in Landing.tsx, so dropping a key is a type error) rather than
+   * by this test file, which means an optional field added later
+   * (`aside?: string`) and left unset would sail through both `tsc` and the
+   * value walk. These assertions read the expected key set from `data.ts`
+   * itself (never from the object under test, which would prove nothing) and
+   * check the runtime export's keys against it exactly, so the gate stands
+   * on its own instead of leaning on the compiler.
+   */
+
+  /** Expected top-level key set for every object-shaped COPY_EXPORTS entry. */
+  const TOP_LEVEL_KEYS: Record<string, readonly string[]> = {
+    hero: ["eyebrow", "headline", "sub", "primaryCta", "secondaryCta"],
+    trustBand: ["eyebrow", "heading", "body", "aside"],
+    howItWorks: ["eyebrow", "heading", "body", "finePrint"],
+    schemeSection: ["eyebrow", "heading", "body", "aside"],
+    classBatchSection: ["eyebrow", "heading", "body", "finePrint"],
+    readingsIntro: ["eyebrow", "heading", "sub"],
+    close: ["heading", "sub", "cta", "aside", "needs"],
+    openedQuestion: ["paper", "hand", "defaultId", "questions"],
+    scanSequence: ["steps", "scan", "mark", "practise"],
+    schemeExcerpt: ["meta", "lines", "hand"],
+    classBatch: ["headPrefix", "headSuffix", "total", "note", "rows"],
+  }
+
+  it.each(Object.entries(TOP_LEVEL_KEYS))("keeps %s's top-level keys exactly as authored", (name, keys) => {
+    const value = (marketingData as unknown as Record<string, unknown>)[name]
+    expect(Object.keys(value as object).sort()).toEqual([...keys].sort())
+  })
+
+  /*
+   * `subjects`, `readings`, `openedQuestion.questions` and `classBatch.rows`
+   * are arrays of objects, so an index-keyed check (`Object.keys` on the
+   * array) would be meaningless. Instead this checks the ELEMENT shape, and
+   * checks it against every element, not just the first, so one malformed
+   * row can't hide behind its neighbours.
+   */
+  const ELEMENT_KEYS: [string, readonly string[], unknown[]][] = [
+    ["subjects", ["code", "name"], marketingData.subjects],
+    [
+      "readings",
+      ["id", "label", "title", "body", "points"],
+      marketingData.readings,
+    ],
+    [
+      "openedQuestion.questions",
+      [
+        "id",
+        "label",
+        "title",
+        "awarded",
+        "available",
+        "state",
+        "work",
+        "lines",
+        "confidence",
+        "confidenceTier",
+      ],
+      marketingData.openedQuestion.questions,
+    ],
+    [
+      "classBatch.rows",
+      ["id", "awarded", "available", "state"],
+      marketingData.classBatch.rows,
+    ],
+  ]
+
+  it.each(ELEMENT_KEYS)("keeps every element of %s to its authored key set", (_label, keys, elements) => {
+    expect(elements.length).toBeGreaterThan(0)
+    elements.forEach((el) => {
+      expect(Object.keys(el as object).sort()).toEqual([...keys].sort())
+    })
+  })
+
+  it("covers every COPY_EXPORTS entry with a key-set check above", () => {
+    const arrayShapedExports = ["subjects", "readings"]
+    const covered = [...Object.keys(TOP_LEVEL_KEYS), ...arrayShapedExports].sort()
+    expect(covered).toEqual([...COPY_EXPORTS].sort())
+  })
+
+  /*
+   * VERBATIM-WORDING GATE (M-4), orthogonal to both checks above: the
+   * key-set gate proves a field EXISTS, the value walk below proves every
+   * field is a string, but neither pins what a load-bearing field SAYS. The
+   * derived-wording failure (a paraphrase quietly replacing the design's
+   * verbatim text) has happened THREE times on this import and was caught
+   * by human diffing every time — never by a test. These `toBe` checks pin
+   * the strings whose exact wording is the point (the hero headline and
+   * subtext, the trust band's h2, every Readings panel title), not every
+   * string on the page.
+   */
+  it("keeps the hero headline verbatim", () => {
+    expect(hero.headline).toBe("Marking you can check, line by line.")
+  })
+
+  it("keeps the hero subtext verbatim", () => {
+    expect(hero.sub).toBe(
+      "Lemely marks a scanned script against the official mark scheme, then shows the scheme line behind every mark it awards or withholds. Nothing counts until you sign it off.",
+    )
+  })
+
+  it("keeps the trust band's h2 verbatim", () => {
+    expect(marketingData.trustBand.heading).toBe(
+      "A mark is an argument, so it arrives with its reasons.",
+    )
+  })
+
+  it("keeps every readings panel title verbatim", () => {
+    const titles = Object.fromEntries(marketingData.readings.map((panel) => [panel.id, panel.title]))
+    expect(titles).toEqual({
+      teacher: "You see the marking, and the doubt.",
+      student: "They see where the marks went.",
+      parent: "They see an answer they can read.",
+    })
+  })
+
+  /*
+   * Collected in `beforeAll`, not at describe scope. `collectStrings` throws
+   * on an `undefined` leaf by design, and a throw during collection fails the
+   * whole FILE with no named test attached — the reader gets a stack trace
+   * instead of "this export lost a field". Inside `beforeAll` the same throw
+   * is reported against a hook, which names the suite it belongs to.
+   */
+  const copyValues: string[] = []
+  let allCopy = ""
+
+  beforeAll(() => {
+    for (const name of COPY_EXPORTS) {
+      collectStrings((marketingData as unknown as Record<string, unknown>)[name], copyValues)
+    }
+    allCopy = copyValues.join("\n")
+  })
+
+  it("gates only string values", () => {
+    copyValues.forEach((v) => expect(typeof v).toBe("string"))
+  })
+
+  /*
+   * Each entry is a claim that was live on the PREVIOUS build's page and had
+   * no implementation. Carried forward unchanged into the design import:
+   * none of the design's own (verbatim-shipped, per the RULING) claims trip
+   * any of these, so the gate still does useful work rather than being
+   * loosened to fit.
    */
   const bannedClaims: [RegExp, string][] = [
-    // Notifications are web push and an in-app inbox. WhatsApp appeared
-    // nowhere in the repository except this page.
     [/whatsapp/i, "no WhatsApp delivery exists"],
-    // `lemely/web/schemas_teacher.py` records attendance and retention as
-    // screen fields with no backend source, and there is no QR code, facial
-    // check or 2FA anywhere in the product.
     [/\bQR\b/i, "no QR attendance exists"],
     [/\b2FA\b/i, "no second-factor check exists"],
     [/replayed minute/i, "lesson retention is structurally empty"],
-    // PRODUCT.md:74 — payment processing is out of scope.
     [/payments?\b/i, "payment processing is out of scope"],
-    // PRODUCT.md:105 — partner schools are on the must-not-fabricate list.
     [/partner(ed|ship)?\b/i, "there are no partner schools or teachers"],
-    // C1 deleted this figure from the proof band; it survived in the hero.
     [/\b41s\b/i, "the marking-time figure has no source"],
     [/19\.5h/i, "the hours-saved figure has no source"],
-    // Pricing is undecided, so no free/trial/card claim can be made.
     [/free\b/i, "pricing is undecided, so nothing can be called free"],
     [/\btrial\b/i, "no trial has ever existed"],
   ]
@@ -213,44 +483,7 @@ describe("landing copy claims only what the product does — P4.9", () => {
     expect(allCopy).not.toMatch(pattern)
   })
 
-  /*
-   * The other half of C2, and the half a regex cannot express: the plans
-   * section must stay empty until a real price exists. A future edit that
-   * "fills the space" with example tiers fails here rather than shipping a
-   * price to a prospective customer.
-   */
-  it("ships no pricing tiers while pricing is undecided", () => {
-    expect(pricing).toHaveLength(0)
-  })
-
-  /*
-   * The hero card shows a marked script, and the product has no customers
-   * whose script it could be. The label is what makes the card honest, so it
-   * is a fact about the data and not a detail of the markup.
-   */
-  it("labels the hero result card as an example", () => {
-    expect(heroExample.exampleLabel).toMatch(/example/i)
-  })
-})
-
-describe("the hero example card cannot contradict itself — P4.9", () => {
-  /*
-   * Three things state the same fact in three registers: the grid draws forty
-   * cells with some marked wrong, the score reads 38/40, and the note says
-   * "two marks dropped". They are derived from one array so they cannot
-   * drift, and this pins that they agree — the defect the parent portal shipped
-   * in another form, where one timestamp rendered as "1d ago" directly above
-   * "2 days ago".
-   */
-  it("draws one cell per question", () => {
-    expect(mcq).toHaveLength(40)
-  })
-
-  it("drops exactly as many marks as the score and the note both claim", () => {
-    const dropped = mcq.filter((c) => !c.correct).length
-    expect(dropped).toBe(2)
-    expect(Number(heroExample.score)).toBe(mcq.length - dropped)
-    expect(heroExample.max).toBe(`/${mcq.length}`)
-    expect(heroExample.note.toLowerCase()).toContain("two marks dropped")
+  it("contains no em dash anywhere in gated copy", () => {
+    expect(allCopy).not.toMatch(/—/)
   })
 })
