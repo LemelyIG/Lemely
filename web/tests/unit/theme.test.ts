@@ -6,6 +6,7 @@ import {
   readThemePreference,
   resolveTheme,
 } from "../../src/lib/theme/theme.ts"
+import { themeStore } from "../../src/lib/theme/useTheme.ts"
 
 /*
  * The pure logic behind the Appearance setting (Phase C, task C5b). No jsdom
@@ -125,5 +126,88 @@ describe("applyTheme", () => {
     const root = fakeRoot()
     expect(() => applyTheme(root, null, "dark")).not.toThrow()
     expect(root.dataset.theme).toBe("dark")
+  })
+})
+
+/*
+ * The shared external store behind `useTheme` (C5 review fix). Two
+ * independent `useState` instances — `ThemeSync` (mounted app-wide) and
+ * `ProfileSettingsSection`'s Appearance fieldset (mounted only while
+ * settings is open) — used to each hold their own copy of the preference,
+ * so an explicit choice made through one never reached the other, and a
+ * later OS change silently overrode it via the other's still-"system"
+ * listener. This is the same failure a plain `useState` always has for
+ * cross-instance state: no shared source of truth. `useSyncExternalStore`
+ * needs a real render to exercise end-to-end (this repo's unit runner has
+ * no jsdom — see the header above), so these tests exercise the extracted
+ * store logic (`subscribe`/`getPreferenceSnapshot`/`setPreference`/
+ * `handleStorageEvent`) directly, in isolation from React. `useTheme`
+ * itself — the `useSyncExternalStore` wiring and the `applyTheme` layout
+ * effect — is covered by `theme.spec.ts`'s e2e suite in a real browser.
+ */
+describe("themeStore (the shared store behind every useTheme() instance)", () => {
+  it("notifies every subscribed listener when the preference changes", () => {
+    themeStore.setPreference("light") // known baseline; a no-op change does not notify
+    const calls: string[] = []
+    const unsubA = themeStore.subscribe(() => calls.push("a"))
+    const unsubB = themeStore.subscribe(() => calls.push("b"))
+
+    themeStore.setPreference("dark")
+
+    expect(calls).toEqual(["a", "b"])
+    unsubA()
+    unsubB()
+  })
+
+  it("getPreferenceSnapshot reflects the latest setPreference call", () => {
+    themeStore.setPreference("light")
+    expect(themeStore.getPreferenceSnapshot()).toBe("light")
+
+    themeStore.setPreference("dark")
+    expect(themeStore.getPreferenceSnapshot()).toBe("dark")
+
+    themeStore.setPreference("system")
+    expect(themeStore.getPreferenceSnapshot()).toBe("system")
+  })
+
+  it("a simulated storage event from another tab updates the snapshot and notifies subscribers", () => {
+    themeStore.setPreference("light")
+    const calls: string[] = []
+    const unsub = themeStore.subscribe(() => calls.push(themeStore.getPreferenceSnapshot()))
+
+    themeStore.handleStorageEvent({ key: THEME_STORAGE_KEY, newValue: "dark" })
+
+    expect(themeStore.getPreferenceSnapshot()).toBe("dark")
+    expect(calls).toEqual(["dark"])
+    unsub()
+  })
+
+  it("ignores a storage event for an unrelated key", () => {
+    themeStore.setPreference("light")
+    const calls: string[] = []
+    const unsub = themeStore.subscribe(() => calls.push("notified"))
+
+    themeStore.handleStorageEvent({ key: "some.other.key", newValue: "dark" })
+
+    expect(themeStore.getPreferenceSnapshot()).toBe("light")
+    expect(calls).toEqual([])
+    unsub()
+  })
+
+  it("a storage event carrying an invalid value falls back to system, same as readThemePreference", () => {
+    themeStore.setPreference("dark")
+    themeStore.handleStorageEvent({ key: THEME_STORAGE_KEY, newValue: "purple" })
+    expect(themeStore.getPreferenceSnapshot()).toBe("system")
+  })
+
+  it("stops notifying once unsubscribed", () => {
+    themeStore.setPreference("light")
+    const calls: string[] = []
+    const unsub = themeStore.subscribe(() => calls.push("notified"))
+    unsub()
+
+    themeStore.setPreference("dark")
+
+    expect(calls).toEqual([])
   })
 })

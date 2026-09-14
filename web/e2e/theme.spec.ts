@@ -80,6 +80,38 @@ test.describe("theme: Appearance setting", () => {
     expect(storedTheme).toBe("light")
   })
 
+  // C5 review fix: `ThemeSync` (mounted app-wide, above the router — see
+  // `main.tsx`) and this settings screen's Appearance fieldset each call
+  // `useTheme()` independently. Before the shared-store fix, each got its
+  // OWN component-local preference, so an explicit choice made through the
+  // settings instance never reached `ThemeSync`'s instance: its still-
+  // "system" media-query listener stayed attached and silently re-applied
+  // a system-derived theme on the next OS flip below, discarding the
+  // reader's choice with no reload in between. The existing "persists...
+  // after reload" case above only proves a reload re-reads storage fresh —
+  // a different code path from the live listener this regression lives in.
+  test("choosing Light explicitly survives a later live OS flip to dark, with no reload (two-instance desync regression)", async ({
+    page,
+  }) => {
+    await page.emulateMedia({ colorScheme: "light" })
+    await signInAs(page, "student")
+    await page.goto("/student/settings")
+    await waitForRouteReady(page)
+
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
+
+    await page.getByRole("radio", { name: "Light" }).check()
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
+
+    // The OS flips live, with both `useTheme()` instances still mounted and
+    // no reload in between. The explicit choice must survive untouched.
+    await page.emulateMedia({ colorScheme: "dark" })
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
+
+    await page.emulateMedia({ colorScheme: "light" })
+    await expect(page.locator("html")).toHaveAttribute("data-theme", "light")
+  })
+
   test("System follows the OS live, with no reload, once selected", async ({ page }) => {
     await page.emulateMedia({ colorScheme: "light" })
     await signInAs(page, "student")
