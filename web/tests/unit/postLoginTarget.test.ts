@@ -4,13 +4,14 @@ import { postLoginTarget } from "@/lib/auth/postLoginTarget"
 /*
  * Packet B2a · where `Login.tsx` sends a reader after a successful sign-in.
  * `next` (an explicit `?next=`, e.g. from `RequireAuth`'s redirect or a
- * "sign in to continue" link) always wins. Failing that, `from` — the
+ * "sign in to continue" link) wins over `from`. Failing that, `from` — the
  * location `RequireAuth` was guarding when it bounced a dead session to
- * `/login` — is honoured only when it is inside the role's own portal, so a
- * teacher account signing back in from a stale `/student/...` bookmark (or a
- * crafted `from`) does not land inside another role's portal. Both `next`
- * and `from` are re-validated through `safeNextPath` here, same as every
- * other reader of a `?next=`/`state.from` value (`nextPath.ts`).
+ * `/login` — is used instead. Both `next` and `from` are honoured only when
+ * they are inside the role's own portal, so a teacher account signing back
+ * in from a stale `/student/...` bookmark (or a crafted `next`/`from`) does
+ * not land inside another role's portal. Both are re-validated through
+ * `safeNextPath` here, same as every other reader of a `?next=`/
+ * `state.from` value (`nextPath.ts`).
  */
 
 describe("postLoginTarget", () => {
@@ -52,5 +53,11 @@ describe("postLoginTarget", () => {
     expect(postLoginTarget({ next: null, from: null, role: "parent" })).toBe("/parent")
     expect(postLoginTarget({ next: null, from: null, role: "school_admin" })).toBe("/school")
     expect(postLoginTarget({ next: null, from: null, role: "platform_admin" })).toBe("/platform")
+  })
+
+  it("ignores a next outside the role's portal and falls back to the portal home", () => {
+    expect(
+      postLoginTarget({ next: "/platform/schools", from: null, role: "student" }),
+    ).toBe("/student")
   })
 })
