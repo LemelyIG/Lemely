@@ -29,6 +29,35 @@ export const CONFIDENCE_MIN = 1
 export const CONFIDENCE_MAX = 5
 
 /**
+ * Shortcuts onto the weekly-hours slider (C3b). The slider stays the source
+ * of truth — `weeklyStudyHours` on the wire is a plain number and has no
+ * slot for "which preset produced this" — so these three chips only ever
+ * write the same value a student could have dragged to themselves, and a
+ * chip shows pressed only when the slider already sits exactly there
+ * (`presetForWeeklyHours`), never on a closest-match guess.
+ */
+export const SESSION_LENGTH_PRESETS = [
+  { id: "20m", label: "20 min a day", weeklyHours: 2 },
+  { id: "45m", label: "45 min a day", weeklyHours: 5 },
+  { id: "1h", label: "An hour or more", weeklyHours: 7 },
+] as const
+
+export type SessionLengthPresetId = (typeof SESSION_LENGTH_PRESETS)[number]["id"]
+
+/** The weekly-hours value a preset chip writes to the slider on tap. */
+export function presetToWeeklyHours(id: SessionLengthPresetId): number {
+  return SESSION_LENGTH_PRESETS.find((preset) => preset.id === id)!.weeklyHours
+}
+
+/** Which preset (if any) the current slider value exactly matches — `null`
+ * for an unset slider or a value between presets. Exact match only: the
+ * chips are shortcuts onto the slider, not a rounding of it. */
+export function presetForWeeklyHours(hours: number | null): SessionLengthPresetId | null {
+  if (hours === null) return null
+  return SESSION_LENGTH_PRESETS.find((preset) => preset.weeklyHours === hours)?.id ?? null
+}
+
+/**
  * Which subject's placement invite (S-03) to send the student to when they
  * finish S-02, or `null` if they enrolled in none — in which case there is no
  * placement test to invite them into and the caller sends them to S-06.

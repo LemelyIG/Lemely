@@ -42,3 +42,11 @@ describe("Announcements.tsx", () => {
     expect(source).not.toMatch(/export function formatCountdown/)
   })
 })
+
+describe("QuestionnaireStep.tsx", () => {
+  const source = sourceOf("src/portals/student/screens/onboarding/QuestionnaireStep.tsx")
+
+  it("offers the session-length preset chips", () => {
+    expect(source).toContain("SESSION_LENGTH_PRESETS")
+  })
+})

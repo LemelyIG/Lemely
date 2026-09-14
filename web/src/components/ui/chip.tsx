@@ -62,8 +62,26 @@ const chip = cva(
 
 export interface ChipProps
   extends HTMLAttributes<HTMLSpanElement>,
-    VariantProps<typeof chip> {}
+    VariantProps<typeof chip> {
+  /**
+   * Toggle-selected state (C3b: the study-plan session-length presets, a row
+   * of `Chip`s used as a pressable shortcut onto a slider value). Maps to
+   * `aria-pressed`, mirroring the state the interactive element wrapping
+   * this chip already carries — a caller renders the real `<button>`, sets
+   * `aria-pressed` there, and passes the same boolean here so the chip's own
+   * markup states it too rather than relying on the wrapper alone. Omitted
+   * (`undefined`) for every status-chip use, which is not a toggle and gets
+   * no `aria-pressed` at all.
+   */
+  pressed?: boolean
+}
 
-export function Chip({ className, tone, ...props }: ChipProps) {
-  return <span className={cn(chip({ tone }), className)} {...props} />
+export function Chip({ className, tone, pressed, ...props }: ChipProps) {
+  return (
+    <span
+      className={cn(chip({ tone }), className)}
+      aria-pressed={pressed}
+      {...props}
+    />
+  )
 }

@@ -215,7 +215,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |
 | 196 | `gamification-no-daily-quests` | ui | medium | D | D1 | pending |  |
 | 197 | `gamification-production-states-exceed-canvas` | ui | medium |  |  | no-action | production already better |
-| 198 | `onboarding-plan-rows-no-icon-coding-no-live-type` | ui | medium | C | C3 | pending |  |
+| 198 | `onboarding-plan-rows-no-icon-coding-no-live-type` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/activityIcon.test.ts` — `studyPlanData.ts`'s `activityIcon` maps each activity type to a Phosphor glyph; `StudyPlanWeek.tsx`'s `SessionRow` renders it (`aria-hidden`) before the label |
 | 199 | `parent-add-child-affordance-rejected` | ui | medium |  |  | skipped | skip: parent add-child affordance explicitly rejected |
 | 200 | `parent-weekly-digest-framing-lost` | ui | medium | D | D2 | pending |  |
 | 201 | `student-home-streak-hidden-on-phone` | ui | medium | C | C3 | pending |  |
@@ -269,11 +269,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 249 | `x-completeness-kbd-primitive-bypassed` | ui | low | A | A3 | done A3 | `npm run typecheck && npm run build` — pass |
 | 250 | `gamification-frozen-streak-unwired` | ui | low | D | D1 | pending |  |
 | 251 | `gamification-restrained-visual-register` | ui | low |  |  | no-action | dossier: no production change |
-| 252 | `onboarding-14day-framing-vs-perpetual-week` | ui | low | C | C3 | pending |  |
+| 252 | `onboarding-14day-framing-vs-perpetual-week` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/studyPlanHeader.test.ts` — `StudyPlanWeek.tsx`'s `WeekHeader` reads through `SectionHead` with eyebrow "This week" (perpetual-week framing), no leftover 14-day literal |
 | 253 | `onboarding-plan-calendar-sync-not-built` | ui | low | D | D2 | pending | .ics export of study-plan sessions (Apple/Google Calendar); WhatsApp channel skipped |
 | 254 | `onboarding-production-exceeds-canvas-state-handling` | ui | low |  |  | no-action | production already better |
 | 255 | `onboarding-progress-indicator-pattern-mismatch` | ui | low |  |  | skipped | skip: 5-pip progress bar pattern not adopted |
-| 256 | `onboarding-session-length-chips-vs-weekly-hours-slider` | ui | low | C | C3 | pending |  |
+| 256 | `onboarding-session-length-chips-vs-weekly-hours-slider` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/sessionLengthPresets.test.ts` — `onboardingData.ts`'s `SESSION_LENGTH_PRESETS`/`presetForWeeklyHours`; `QuestionnaireStep.tsx` renders the three preset chips above `SkippableSlider` |
 | 257 | `parent-activity-feed-badges-not-built` | ui | low | D | D1 | pending |  |
 | 258 | `parent-weakness-panel-tone-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 259 | `student-home-first-run-state-better-than-canvas` | ui | low |  |  | no-action | production already better |

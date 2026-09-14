@@ -2,6 +2,7 @@
 import type { ReactNode } from "react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
+import { Chip } from "@/components/ui/chip"
 import { Meter } from "@/components/ui/primitives"
 import { Slider } from "@/components/ui/slider"
 import { confidenceTopicsFor, subjectFor } from "@/lib/reference"
@@ -13,8 +14,11 @@ import { unavailableMessage } from "../placement/placementData"
 import {
   CONFIDENCE_MAX,
   CONFIDENCE_MIN,
+  SESSION_LENGTH_PRESETS,
   WEEKLY_HOURS_MAX,
   WEEKLY_HOURS_MIN,
+  presetForWeeklyHours,
+  presetToWeeklyHours,
   type QuestionnaireAnswers,
   type QuestionnaireStepDef,
 } from "./onboardingData"
@@ -103,6 +107,44 @@ function SkippableSlider({
         max={max}
         aria-label={ariaLabel}
       />
+    </div>
+  )
+}
+
+/**
+ * Three shortcuts onto the weekly-hours slider above it (C3b). The slider is
+ * still the only thing that writes `weeklyStudyHours` — a tap here just sets
+ * it to the preset's mapped value, the same as dragging the thumb there
+ * would. `aria-pressed` lives on the real `<button>`, the actual interactive
+ * element; `Chip`'s own `pressed` prop mirrors it onto the chip's markup so
+ * the visual state and the accessible state never disagree.
+ */
+function SessionLengthPresets({
+  value,
+  onChange,
+}: {
+  value: number | undefined
+  onChange: (value: number) => void
+}) {
+  const selected = presetForWeeklyHours(value ?? null)
+  return (
+    <div className="flex flex-wrap gap-2" role="group" aria-label="Session length shortcuts">
+      {SESSION_LENGTH_PRESETS.map((preset) => {
+        const pressed = selected === preset.id
+        return (
+          <button
+            key={preset.id}
+            type="button"
+            aria-pressed={pressed}
+            onClick={() => onChange(presetToWeeklyHours(preset.id))}
+            className="rounded-full"
+          >
+            <Chip tone={pressed ? "accent" : "neutral"} pressed={pressed}>
+              {preset.label}
+            </Chip>
+          </button>
+        )
+      })}
     </div>
   )
 }
@@ -345,15 +387,21 @@ export function QuestionnaireStep({
     answered = answers.weeklyStudyHours !== undefined && answers.weeklyStudyHours !== null
     body = (
       <QuestionShell question="How many hours can you study each week, outside class?">
-        <SkippableSlider
-          value={answers.weeklyStudyHours ?? undefined}
-          onChange={onWeeklyHours}
-          min={WEEKLY_HOURS_MIN}
-          max={WEEKLY_HOURS_MAX}
-          ariaLabel="Weekly study hours"
-          unsetLabel="Not set"
-          formatValue={(v) => `${v} ${v === 1 ? "hour" : "hours"}/week`}
-        />
+        <div className="flex flex-col gap-4">
+          <SessionLengthPresets
+            value={answers.weeklyStudyHours ?? undefined}
+            onChange={onWeeklyHours}
+          />
+          <SkippableSlider
+            value={answers.weeklyStudyHours ?? undefined}
+            onChange={onWeeklyHours}
+            min={WEEKLY_HOURS_MIN}
+            max={WEEKLY_HOURS_MAX}
+            ariaLabel="Weekly study hours"
+            unsetLabel="Not set"
+            formatValue={(v) => `${v} ${v === 1 ? "hour" : "hours"}/week`}
+          />
+        </div>
       </QuestionShell>
     )
   } else if (step.kind === "gradeLevel") {
