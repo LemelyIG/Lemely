@@ -1178,7 +1178,7 @@ export function QuizBuilder() {
                 </div>
                 {soFar.length > 0 ? (
                   <>
-                    <aside className="hidden md:flex md:flex-col gap-2.5 w-[220px] shrink-0">
+                    <aside className="hidden sidebar:flex sidebar:flex-col gap-2.5 w-56 shrink-0">
                       <SectionHead title="So far" rung="display-sm" level={3} />
                       <dl className="m-0 flex flex-col gap-2">
                         {soFar.map((item) => (
@@ -1189,7 +1189,7 @@ export function QuizBuilder() {
                         ))}
                       </dl>
                     </aside>
-                    <div className="md:hidden text-body-sm text-ink-faint text-pretty">
+                    <div className="sidebar:hidden text-body-sm text-ink-faint text-pretty">
                       So far: {soFar.map((item) => `${item.label} ${item.value}`).join(" · ")}
                     </div>
                   </>
