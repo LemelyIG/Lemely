@@ -19,10 +19,12 @@ import { INDEX_CSS, tokenHex } from "./brandTokens.ts"
  * consumer that is not the CSS cascade.
  *
  * So `index.html` carries six colour placeholders (`%LEMELY_COLOR_PAPER%`
- * and six siblings) and two duration placeholders
- * (`%LEMELY_LOADING_TIER_SKELETON%` / `%LEMELY_LOADING_TIER_SLOW%`), and this
- * plugin is the one place that resolves all nine, at build time, from the same
- * two sources of truth everything else in this repo already answers to:
+ * and six siblings), two duration placeholders
+ * (`%LEMELY_LOADING_TIER_SKELETON%` / `%LEMELY_LOADING_TIER_SLOW%`), and, as
+ * of Packet B3 (Task 4), two size placeholders (`%LEMELY_SIDEBAR_WIDTH%` /
+ * `%LEMELY_SIDEBAR_BREAKPOINT%`), and this plugin is the one place that
+ * resolves all eleven, at build time, from the same two sources of truth
+ * everything else in this repo already answers to:
  * `tokenHex` (`brandTokens.ts`, the OKLCH → hex path `themeColor.ts` also
  * uses) for colour, and a direct read of `index.css`'s `--loading-tier-*`
  * declarations for duration. Duplicating `200ms` and `5000ms` as literals here
@@ -119,6 +121,20 @@ const DURATION_PLACEHOLDERS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * Placeholder -> the `--token-name` `index.css` declares it under (Packet B3,
+ * Task 4). The pre-mount shell's portal-chrome skeleton used to hardcode its
+ * sidebar column width and the `min-width` breakpoint it appears at as bare
+ * `246px`/`820px` literals — the same "cannot reach `var(...)`" constraint
+ * `COLOR_PLACEHOLDERS` and `DURATION_PLACEHOLDERS` solve for colour and
+ * duration applies here too, so this is the third placeholder family for the
+ * same reason.
+ */
+const SIZE_PLACEHOLDERS: Readonly<Record<string, string>> = {
+  "%LEMELY_SIDEBAR_WIDTH%": "sidebar-width",
+  "%LEMELY_SIDEBAR_BREAKPOINT%": "breakpoint-sidebar",
+}
+
+/**
  * Reads `--loading-tier-skeleton` and `--loading-tier-slow` off a copy of
  * `index.css`'s source text, so the pre-mount shell's two duration
  * placeholders resolve to whatever `index.css` actually declares rather than a
@@ -147,6 +163,35 @@ export function readLoadingTierDurations(css: string): Record<string, string> {
     durations[placeholder] = match[1]
   }
   return durations
+}
+
+/**
+ * Reads `--sidebar-width` and `--breakpoint-sidebar` off a copy of
+ * `index.css`'s source text (Packet B3, Task 4) — the same pattern as
+ * `readLoadingTierDurations` above, for the same reason: the pre-mount
+ * shell's sidebar column/breakpoint must never drift from `nav-shells.tsx`'s
+ * `SIDEBAR_WIDTH`/`SIDEBAR_BREAKPOINT` constants, which read the same two
+ * `index.css` tokens.
+ *
+ * Exported so `tests/unit/preMountShell.test.ts` can exercise the parsing
+ * (and the throw on a missing token) without going through a full plugin run.
+ */
+export function readSidebarTokens(css: string): Record<string, string> {
+  const sizes: Record<string, string> = {}
+  for (const [placeholder, tokenName] of Object.entries(SIZE_PLACEHOLDERS)) {
+    const pattern = new RegExp(`--${tokenName}:\\s*([\\d.]+px)\\s*;`)
+    const match = css.match(pattern)
+    if (!match) {
+      throw new Error(
+        `preMountShell: no \`--${tokenName}\` declaration found in ${INDEX_CSS}. The ` +
+          "pre-mount shell reads its sidebar width/breakpoint from there so it cannot drift " +
+          "from nav-shells.tsx's SIDEBAR_WIDTH/SIDEBAR_BREAKPOINT; if the token was renamed, " +
+          "update SIZE_PLACEHOLDERS in web/vite/preMountShell.ts to match.",
+      )
+    }
+    sizes[placeholder] = match[1]
+  }
+  return sizes
 }
 
 /**
@@ -193,6 +238,18 @@ export function fillPreMountShell(html: string): string {
     out = out.replaceAll(placeholder, value)
   }
 
+  const sizes = readSidebarTokens(readFileSync(INDEX_CSS, "utf8"))
+  for (const [placeholder, value] of Object.entries(sizes)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "sidebar width/breakpoint are read from index.css at build time so they cannot " +
+          "drift from nav-shells.tsx's SIDEBAR_WIDTH/SIDEBAR_BREAKPOINT.",
+      )
+    }
+    out = out.replaceAll(placeholder, value)
+  }
+
   // Every KNOWN placeholder above is checked for presence before it is
   // replaced, which catches one gone missing. It does not catch the mirror
   // failure: a NEW `%LEMELY_COLOR_..._%` or `%LEMELY_LOADING_TIER_..._%`
@@ -204,12 +261,12 @@ export function fillPreMountShell(html: string): string {
   // the backstop: after every known substitution has run, nothing shaped
   // like one of THIS plugin's three placeholder families may remain.
   //
-  // Scoped to those two prefixes, not every `%LEMELY_..._%` in the document:
-  // `themeColor.ts` owns a third placeholder, `%LEMELY_THEME_COLOR%`, on the
-  // same `<meta name="theme-color">` line, resolved by its own plugin in its
-  // own build step — a bare `%LEMELY_[A-Z_]+%` sweep here would misreport
-  // that one as this plugin's failure to resolve.
-  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER|MARK)_[A-Z_]+%/g)
+  // Scoped to those prefixes, not every `%LEMELY_..._%` in the document:
+  // `themeColor.ts` owns a further placeholder, `%LEMELY_THEME_COLOR%`, on
+  // the same `<meta name="theme-color">` line, resolved by its own plugin in
+  // its own build step — a bare `%LEMELY_[A-Z_]+%` sweep here would
+  // misreport that one as this plugin's failure to resolve.
+  const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER|MARK|SIDEBAR)_[A-Z_]+%/g)
   if (leftover) {
     throw new Error(
       `preMountShell: index.html still contains unresolved placeholder(s) after every known ` +

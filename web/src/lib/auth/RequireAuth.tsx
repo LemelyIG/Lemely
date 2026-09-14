@@ -2,7 +2,7 @@ import { useEffect, type ReactNode } from "react"
 import { Navigate, useLocation } from "react-router-dom"
 import { useAuth } from "./AuthContext"
 import { isTokenExpired } from "./jwt"
-import { clearSession, markSessionExpired, peekSessionExpired, type Session } from "./storage"
+import { endSession, markSessionExpired, peekSessionExpired, type Session } from "./storage"
 import { withNext } from "@/lib/nextPath"
 import { FullPageState } from "@/portals/misc/FullPageState"
 
@@ -127,9 +127,15 @@ export function RequireAuth({
   // login screen has no other way to know this was an expiry rather than an
   // ordinary sign-out. Clearing it also notifies `AuthContext`, so the redirect
   // below settles onto the plain `!session` case.
+  //
+  // `endSession`, not the bare `clearSession` this used to call directly
+  // (H1/H2, security review): a stranded session ends just as completely as
+  // a deliberate sign-out, so this must also drop the persisted query cache
+  // and the offline upload queue, not just the session object — see
+  // `endSession`'s own doc comment (`storage.ts`).
   useEffect(() => {
     if (strandedRole !== null) {
-      clearSession()
+      endSession()
       markSessionExpired(strandedRole)
     }
   }, [strandedRole])
@@ -141,10 +147,16 @@ export function RequireAuth({
   // which is what `!session` alone means for a reader who never had a
   // session this visit.
   if (strandedRole !== null || (!session && peekSessionExpired())) {
-    return <Navigate to={withNext("/session-ended", currentPath)} replace />
+    return (
+      <Navigate
+        to={withNext("/session-ended", currentPath)}
+        state={{ from: currentPath }}
+        replace
+      />
+    )
   }
   if (!session) {
-    return <Navigate to={withNext("/login", currentPath)} replace />
+    return <Navigate to={withNext("/login", currentPath)} state={{ from: currentPath }} replace />
   }
   if (!allowedRoles.includes(session.role)) {
     return <FullPageState variant="no-access" frame="standalone" />

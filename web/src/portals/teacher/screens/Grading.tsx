@@ -340,7 +340,7 @@ export function Grading() {
   const hasRunStarted = stages.some((s) => s.status !== "pending")
 
   return (
-    <div className="lm-screen flex flex-col gap-5">
+    <div className="flex flex-col gap-5">
       <QueryState
         query={papersQuery}
         srHeading="Grading console"

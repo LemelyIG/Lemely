@@ -177,7 +177,7 @@ export function Quizzes() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-5 min-w-0">
+    <div className="flex flex-col gap-5 min-w-0">
       <QueryState
         query={quizzesQuery}
         srHeading="AI quizzes"

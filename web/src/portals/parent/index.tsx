@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { lazy, Suspense } from "react"
-import { Link, Outlet, useLocation, useNavigate, useParams } from "react-router-dom"
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Bell, Gear, SignOut } from "@phosphor-icons/react"
 import { useAuth } from "@/lib/auth/AuthContext"
@@ -9,7 +9,9 @@ import { useCachedChildSubject, useChildren } from "@/lib/hooks/useParentApi"
 import { BrandMark } from "@/components/ui/brand-mark"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
-import { RouteFallback } from "@/components/ui/state-views"
+import { BadgeSync } from "@/components/badge-sync"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Breadcrumbs, type Crumb } from "@/components/ui/breadcrumbs"
 import { Chip } from "@/components/ui/chip"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
@@ -324,6 +326,9 @@ function ParentLayout() {
     // rows and numbers.
     <div data-portal="parent" className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
+      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
+          same reason, same shape. */}
+      <BadgeSync />
       <Header />
       {/* The trail sits between the header and `main` rather than inside it:
           it is wayfinding chrome, and putting it inside the skip link's target
@@ -352,7 +357,7 @@ function ParentLayout() {
             about the account. Renders nothing, and no margin either, unless the
             profile has resolved and says the address is unverified. */}
         <VerifyEmailBanner />
-        <Suspense fallback={<RouteFallback />}>
+        <Suspense fallback={<RouteSkeleton />}>
           {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
               rebuilds each surface") for this portal: a render crash in one
               screen stays inside this content slot rather than taking the
@@ -366,7 +371,7 @@ function ParentLayout() {
             resetKey={location.pathname}
             fallback={portalErrorFallback}
           >
-            <Outlet />
+            <ScreenOutlet />
           </ErrorBoundary>
         </Suspense>
       </main>
@@ -382,26 +387,38 @@ export const parentRoute: RouteObject = {
     // "Your children" rather than a child's name: the route table has an id and
     // no name, and a parent with two children reads the same title on both
     // detail screens, which is the honest limit of what a static title knows.
-    { index: true, element: <Children />, handle: { title: "Your children" } },
-    { path: "children/:childId", element: <ChildOverview />, handle: { title: "Progress" } },
+    {
+      index: true,
+      element: <Children />,
+      handle: { title: "Your children", skeleton: "card-grid" },
+    },
+    {
+      path: "children/:childId",
+      element: <ChildOverview />,
+      handle: { title: "Progress", skeleton: "page-header" },
+    },
     {
       path: "children/:childId/subjects/:code",
       element: <SubjectDetail />,
-      handle: { title: "Subject progress" },
+      handle: { title: "Subject progress", skeleton: "page-header" },
     },
     {
       path: "children/:childId/weaknesses",
       element: <Weaknesses />,
-      handle: { title: "Topics to work on" },
+      handle: { title: "Topics to work on", skeleton: "page-header" },
     },
     {
       path: "notifications",
       element: <ParentNotifications />,
-      handle: { title: "Notifications" },
+      handle: { title: "Notifications", skeleton: "list" },
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the header and the child switcher. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

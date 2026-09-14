@@ -10,7 +10,9 @@ import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { Slider } from "@/components/ui/slider"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
+import { Popover } from "@/components/ui/popover"
 import { ApiError } from "@/lib/api"
+import { useLongPress } from "@/lib/gestures/useLongPress"
 import {
   useAddCard,
   useCreateDeck,
@@ -22,7 +24,7 @@ import {
   useFlashcardDecks,
   useGenerateDeck,
 } from "@/lib/hooks/useFlashcardApi"
-import type { CardDTO, DeckOrigin, GenerateDeckResponseDTO } from "@/lib/flashcardTypes"
+import type { CardDTO, DeckOrigin, DeckSummaryDTO, GenerateDeckResponseDTO } from "@/lib/flashcardTypes"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -297,6 +299,115 @@ function DeckCardEditor({ deckId }: { deckId: string }) {
   )
 }
 
+/**
+ * One deck's card, long-press wired to a "Delete" shortcut for the same
+ * confirm flow the visible Trash button below already opens — no
+ * "Rename": `lemely/web/routers/flashcards.py` has no deck rename endpoint
+ * (`DELETE /decks/{id}` and `PATCH /cards/{id}` only) and `useFlashcardApi
+ * .ts` has no `useUpdateDeck`, so there is nothing for a rename item to
+ * call.
+ *
+ * Its own component (not inline in the `.map()` below): `useLongPress` and
+ * the popover's own `menuOpen` are per-row state, and hooks cannot be
+ * called from inside a loop callback.
+ */
+function DeckRow({
+  deck,
+  expanded,
+  onToggleExpand,
+  onRequestDelete,
+}: {
+  deck: DeckSummaryDTO
+  expanded: boolean
+  onToggleExpand: () => void
+  onRequestDelete: () => void
+}) {
+  const [menuOpen, setMenuOpen] = useState(false)
+  const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
+
+  return (
+    <Popover
+      open={menuOpen}
+      onOpenChange={setMenuOpen}
+      className="block"
+      /* `triggerProps` wired minus its `onClick`, exactly as
+         `Notifications`' row does it and for the same reasons — a tap on a
+         deck must not open the menu, but the popover still needs the
+         trigger's ref (so Escape returns focus here rather than to `<body>`)
+         and its ARIA attributes. No "More actions" button either: this
+         menu's one item, Delete, is already the visible Trash button below. */
+      renderTrigger={({ triggerProps }) => (
+        <Card
+          ref={triggerProps.ref}
+          tabIndex={-1}
+          aria-haspopup={triggerProps["aria-haspopup"]}
+          aria-expanded={triggerProps["aria-expanded"]}
+          aria-controls={triggerProps["aria-controls"]}
+          className="outline-none"
+          {...longPress}
+        >
+          <CardBody className="flex flex-col gap-2">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-col gap-1.5">
+                <div className="text-body-lg font-medium text-ink">{deck.title}</div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <DeckOriginBadge origin={deck.origin} />
+                  {/* One span with an explicit separator, not two adjacent
+                      ones — see the original comment this preserves. */}
+                  <span className="text-data-sm text-ink-faint">
+                    {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
+                    {deck.dueCount} due
+                  </span>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  size="sm"
+                  aria-expanded={expanded}
+                  onClick={onToggleExpand}
+                >
+                  {expanded ? (
+                    <>
+                      Edit <CaretUp size={14} aria-hidden />
+                    </>
+                  ) : (
+                    <>
+                      Edit <CaretDown size={14} aria-hidden />
+                    </>
+                  )}
+                </Button>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  aria-label={`Delete deck: ${deck.title}`}
+                  onClick={onRequestDelete}
+                >
+                  <Trash size={16} aria-hidden />
+                </Button>
+              </div>
+            </div>
+          </CardBody>
+          {expanded ? <DeckCardEditor deckId={deck.id} /> : null}
+        </Card>
+      )}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setMenuOpen(false)
+          onRequestDelete()
+        }}
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
+      >
+        Delete
+      </button>
+    </Popover>
+  )
+}
+
 export function FlashcardDecks() {
   const navigate = useNavigate()
   const { subjectCode = "" } = useParams<{ subjectCode: string }>()
@@ -350,7 +461,7 @@ export function FlashcardDecks() {
   }
 
   return (
-    <div className="lm-screen lm-read flex flex-col gap-6">
+    <div className="lm-read flex flex-col gap-6">
       <QueryState
         query={decksQuery}
         srHeading={`Flashcards for ${subjectName}`}
@@ -580,66 +691,19 @@ export function FlashcardDecks() {
                         to the topic heading above them. */}
                     <h2 className="text-display-sm text-ink">{group.topic ?? "Untopiced"}</h2>
                     <div className="margin-rule flex flex-col gap-2">
-                      {group.decks.map((deck) => {
-                        const expanded = expandedDeckId === deck.id
-                        return (
-                          <Card key={deck.id}>
-                            <CardBody className="flex flex-col gap-2">
-                              <div className="flex flex-wrap items-center justify-between gap-3">
-                                <div className="flex flex-col gap-1.5">
-                                  <div className="text-body-lg font-medium text-ink">
-                                    {deck.title}
-                                  </div>
-                                  <div className="flex flex-wrap items-center gap-2">
-                                    <DeckOriginBadge origin={deck.origin} />
-                                    {/* One span with an explicit separator,
-                                        not two adjacent ones. As two siblings
-                                        a gap apart, the counts rendered as
-                                        "18 cards 6 due" and scanned as a
-                                        single run-on string rather than two
-                                        separate facts about the deck. */}
-                                    <span className="text-data-sm text-ink-faint">
-                                      {deck.cardCount} card{deck.cardCount === 1 ? "" : "s"} ·{" "}
-                                      {deck.dueCount} due
-                                    </span>
-                                  </div>
-                                </div>
-                                <div className="flex items-center gap-2">
-                                  <Button
-                                    type="button"
-                                    variant="secondary"
-                                    size="sm"
-                                    aria-expanded={expanded}
-                                    onClick={() => setExpandedDeckId(expanded ? null : deck.id)}
-                                  >
-                                    {expanded ? (
-                                      <>
-                                        Edit <CaretUp size={14} aria-hidden />
-                                      </>
-                                    ) : (
-                                      <>
-                                        Edit <CaretDown size={14} aria-hidden />
-                                      </>
-                                    )}
-                                  </Button>
-                                  <Button
-                                    type="button"
-                                    variant="ghost"
-                                    size="sm"
-                                    aria-label={`Delete deck: ${deck.title}`}
-                                    onClick={() =>
-                                      setDeckPendingDelete({ id: deck.id, title: deck.title })
-                                    }
-                                  >
-                                    <Trash size={16} aria-hidden />
-                                  </Button>
-                                </div>
-                              </div>
-                            </CardBody>
-                            {expanded ? <DeckCardEditor deckId={deck.id} /> : null}
-                          </Card>
-                        )
-                      })}
+                      {group.decks.map((deck) => (
+                        <DeckRow
+                          key={deck.id}
+                          deck={deck}
+                          expanded={expandedDeckId === deck.id}
+                          onToggleExpand={() =>
+                            setExpandedDeckId(expandedDeckId === deck.id ? null : deck.id)
+                          }
+                          onRequestDelete={() =>
+                            setDeckPendingDelete({ id: deck.id, title: deck.title })
+                          }
+                        />
+                      ))}
                     </div>
                   </section>
                 ))

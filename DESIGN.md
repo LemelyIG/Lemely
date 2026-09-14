@@ -496,6 +496,15 @@ watch it perform. Expressive motion is rationed to genuine wins (§9.2).
 - Scroll entries: fade up 8px over `dur-slow` with `ease-out-soft`, staggered 60ms per item, capped at 6 items of stagger (beyond that it reads as slow, not choreographed).
 - Press: `scale(0.98)` over `dur-fast`. Hover: a colour or 1px translate shift over `dur-instant`.
 - **Nothing blocks input.** No animation gates a click.
+- **Exits.** Every dismissible overlay (a `Modal`, `NavDrawer`, or anything
+  built on the same contract) plays an exit over `dur-fast`/`ease-in-soft`
+  before it unmounts, rather than disappearing on the frame its `open` prop
+  goes false. It unmounts on `animationend`, not a fixed timer, so the
+  animation and the unmount can never drift apart. Scroll lock and the focus
+  trap both stay active for the duration of the exit — the overlay is still
+  visibly present, so the page behind it must not start scrolling, and focus
+  must not yet be released, until it actually is. A re-open mid-exit snaps
+  straight back to open rather than finishing the exit first.
 - **The one documented exception.** The brand mark's self-drawing stroke
   (`stroke-dashoffset` on the mark's silhouette — four steps: the right page,
   the left page, the coil, the tick — in `components/ui/mark.tsx` and, inline,
@@ -528,6 +537,16 @@ The loading tiers (§12) still stage under reduced motion: their delays live in
 `animation-delay`, which the reduced-motion rule leaves untouched, so only the
 motion within each tier (the pulsing skeleton, the self-drawing mark) is
 affected, never when a tier appears.
+
+**When View Transitions apply.** A screen's entrance (`.lm-screen`) plays on
+every navigation by default. Native View Transitions — a directional slide of
+the outgoing/incoming screen, keyed to browser back vs. everything else — are
+layered on top of that only for portal-internal navigation initiated from
+shell chrome: sidebar links, breadcrumbs, `BackControl`, bottom-tab and
+drawer navigation. They never apply to the marked-paper result reveal (§9.3's
+celebration register owns that entrance instead) and never run under
+`prefers-reduced-motion: reduce`, where both the screen entrance and any
+in-flight transition collapse to an immediate, static swap.
 
 ---
 
@@ -577,8 +596,9 @@ that bind every component:
 - **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button.
+- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is.
 - **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
+- **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
 - **Error states** name what happened and what to do, in active voice ("We couldn't save your changes"), and offer a retry.
 
@@ -638,13 +658,78 @@ mechanically (below).
 the real production hosts — `PRECACHE_HOSTS` (`src/sw.ts`) lists
 `lemelyig.com`/`www.lemelyig.com` explicitly, so staging and local dev never
 precache and never need the activate-time cache-clear that host set exists
-to avoid. `/api/*` is never cached, on any host: marks, grades and the
-review queue are live data, and a stale response there is a wrong answer,
-not a convenience. On the client, `isOfflineFailure` classifies a network
-error and `<OfflineState>` (`components/ui/state-views.tsx`, wired through
-`<QueryState>`) renders a real "you're offline" screen instead of the
-generic error state — a network failure and a 500 are different facts and
-read as different screens.
+to avoid (`emp-offline-staging-by-design`: offline on staging is expected to
+fail, not a bug — documented here rather than fixed, since fixing it would
+mean staging serving a stale deploy to a returning visitor, which is the
+exact failure this host split exists to avoid). `/api/*` is never cached,
+on any host: marks, grades and the review queue are live data, and a stale
+response there is a wrong answer, not a convenience. On the client,
+`isOfflineFailure` classifies a network error and `<OfflineState>`
+(`components/ui/state-views.tsx`, wired through `<QueryState>`) renders a
+real "you're offline" screen instead of the generic error state — a
+network failure and a 500 are different facts and read as different
+screens.
+
+**Offline upload queue (Task 10, B6).** A scan that fails to upload because
+the request never reached the server at all (`shouldQueueUpload`,
+`lib/offline/queueDecision.ts` — the same "status 0" test
+`isOfflineFailure` uses) is queued, not lost: `CorrectPaper.tsx` calls
+`enqueueUpload` (`lib/offline/uploadQueue.ts`) and renders `<QueuedBanner>`
+alongside the ordinary form rather than replacing it with a failure panel —
+a real 4xx/5xx from the server is a decision the server made and is never
+queued, only ever a genuine transport failure is. The queue itself is one
+`idb-keyval`-backed IndexedDB store (`QueuedUpload`: the scan and
+mark-scheme bytes as `Blob`s, an `Idempotency-Key` generated once per
+attempt and resent on every retry so a request that in fact already reached
+the server before the connection dropped is never double-uploaded, an
+attempt counter, and — once known — the `paperId`), drained by
+`drainUploadQueue`, which is DOM-free and takes its `upload`/`correct`
+network calls as injected dependencies so the exact same drain logic runs
+from two places: `useUploadQueue.ts`'s page hook (mount, the browser's
+`online` event, and a message from the worker) with a real, authenticated
+session, and `sw.ts`'s `Queue("lemely-uploads", { onSync })` — plain
+`Queue` with a custom `onSync`, not `workbox-background-sync`'s own replay
+plugin, because this flow needs the returned `paperId` back to call
+`/student/correct`, which the plugin's request-replay-and-discard shape
+cannot give it. An entry older than 24h or retried 5 times is dropped
+(`nextQueueAction`), never retried forever.
+
+The worker's own drain attempt is honest about a real limitation: it has no
+access to `localStorage`, so it cannot send the bearer token
+`/student/uploads`/`/student/correct` require, and its own `fetch` calls
+will ordinarily 401 — deliberately not "fixed" by mirroring a token into
+IndexedDB for the worker to read, which would be exactly the kind of
+second, longer-lived credential copy `sw.ts`'s push-handshake code already
+rejects for the same session-boundary reason. What Background Sync
+reliably does instead is message every open client once a sync fires
+(`UPLOAD_QUEUE_DRAINED`), including a tab that is open but
+backgrounded/throttled on mobile — a case the page's own `online` listener
+can miss — so that tab's `useUploadQueue.ts` hook runs the real,
+authenticated drain. Nothing is ever removed from the queue except by a
+`drainUploadQueue` call that actually succeeded, so this is a nudge, not a
+correctness dependency (`sw-background-sync-upload-candidate`,
+`sw-offline-production-trace`).
+
+Sign-out clears the queue (`AuthContext.tsx`'s `logout()` calls
+`clearUploadQueue()`): unlike a cached query response, an entry here holds
+the scan's own bytes, which must not sit on a shared device across an
+account switch (`offline-1`, `offline-3`).
+
+**Persisted query cache (Task 10, B6).** `main.tsx` wraps the app in
+`PersistQueryClientProvider` (`@tanstack/react-query-persist-client`) with
+an `idb-keyval`-backed persister (`lib/offline/queryPersister.ts`). Which
+queries are written to IndexedDB at all is an allowlist, not a denylist —
+`isPersistableQueryKey` (`lib/offline/persistAllowlist.ts`) only persists
+the reference catalogue, the student's/teacher's class list, announcements,
+the notifications inbox, the flashcard deck list, and the signed-in
+profile, by their real, re-grepped `queryKey` prefixes. Grades, an active
+marking run, and the teacher review queue are never written, not merely
+excluded on read: `dehydrateOptions.shouldDehydrateQuery` is checked before
+a query is ever serialized, so a stale number on a report card cannot
+happen by way of this cache. `maxAge` (24h) matches the upload queue's own
+abandon window, and `buster: currentBuildId()` invalidates the whole
+persisted cache on a new deploy, the same build-id guard `lib/staleChunk.ts`
+already uses for chunk URLs.
 
 **Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
 home-indicator layout in the first place; without it `env(safe-area-inset-*)`
@@ -669,23 +754,122 @@ rotates to read a wide mark scheme. Phase A ships no orientation-specific
 layout of its own; a dedicated landscape overlay or layout is Phase B's
 scope, not this one's.
 
-**Gestures.** Phase A ships none. The disambiguation rule
+**Gestures.** Phase A shipped none. The disambiguation rule
 (`|dx| > 10 && |dx| > 2*|dy|`, distinguishing an intentional horizontal
-swipe from scroll noise) and the actual gesture list — flashcard swipe,
-nav-drawer swipe-dismiss, pull-to-refresh, and the rest — are Phase B's
-scope; this section is a forward pointer, not a spec, and nothing here
-should be read as gesture content Phase A already implements.
+swipe from scroll noise) lives in `src/lib/gestures/dragMath.ts`
+(`shouldCommitDrag`), the single source of truth `useDragGesture`
+(`src/lib/gestures/useDragGesture.ts`) and every gesture built on it read.
+**Edge-swipe-back (standalone only, 24px inline-start edge)** is Task 4's
+(B3) own gesture — `src/lib/nav/edgeSwipeBack.ts` (`edgeSwipeDecision`) plus
+`src/components/edge-swipe-back.tsx` (`EdgeSwipeBack`, mounted by the
+student and teacher layouts, renders nothing). It is gated to a PWA running
+in standalone display mode (a browser tab already owns the platform's own
+back gesture) and to a drag that both starts within 24px of the
+inline-start edge and commits away from it, using the same `backTarget`
+decision `BackControl` (B2) uses.
+
+**The rest of the list, shipped in Task 5/6 (B4).** `useDragGesture`'s
+`commitThreshold` (default 10px) is raised per gesture to the distance that
+gesture actually means, so a drag short of the real threshold always
+springs back animated rather than snapping. **Flashcard reveal/grade**
+(`FlashcardReview.tsx`, `lib/flashcardSwipe.ts::flashcardSwipeAction`): one
+axis throughout the card's whole interaction — swipe right (or, before
+reveal, up — `flashcardSwipeAction` recognises both, though the discoverable
+touch path stays the single consistent right-swipe idiom) reveals at 60px;
+once revealed, left grades "again" and right grades "good" at 80px; "hard"
+and "easy" stay button/keyboard-only. Reveal button, grade buttons and the
+1-4/Space keyboard shortcuts are unchanged. **Nav-drawer drag-dismiss**
+(`nav-drawer.tsx`): the panel commits closed at 40% of its own width, RTL-
+aware via `--lm-dir` read at commit time (never cached, so a language switch
+mid-session is never stale); `startFilter` excludes the drawer's own
+scrollable nav list, so a vertical scroll in there is never fought.
+**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`,
+`components/ui/pull-indicator.tsx::PullIndicator`) on Notifications,
+Announcements and Overview: none of the three has a scroll container of its
+own, so both the gesture and its scroll-top check key off
+`document.documentElement` — the same target `EdgeSwipeBack` already
+listens on, coexisting the way that component's own comment anticipates.
+**Quiz page-turn** (`QuizTaker.tsx`, `lib/quizSwipe.ts::quizSwipeAllowed`):
+swiping the question card always flushes the 600ms autosave before moving
+(a page-turn racing an unsaved answer is exactly the D3.21 shape); refuses
+to start on an MCQ radio, a textarea, an input, a button or a link, so it
+never races a tap already owned by one of those; and is fully disabled
+(the listener detaches, not merely a no-op check) in the last 60 seconds of
+a timed test. Previous/Next buttons are unchanged. **Long-press menus**
+(`lib/gestures/useLongPress.ts`, opening the existing `components/ui/
+popover.tsx::Popover` in controlled mode) on three rows, each only where it
+has a real secondary action to offer: `QuestionRow` gains optional
+`practiceHref`/`onShare` props (`PaperResult.tsx` supplies both — "Practice
+this topic" links to the practice generator prefilled with the question's
+topic when one is recorded, "Share" reuses the same action `ResultHeader`'s
+own Share button already builds); the notification row offers "Mark read",
+shown only while the row is actually unread; the flashcard deck row offers
+"Delete" through the existing confirm flow — **no "Rename"**:
+`lemely/web/routers/flashcards.py` has `DELETE /decks/{id}` and `PATCH
+/cards/{id}` but no deck rename endpoint, and `useFlashcardApi.ts` has no
+`useUpdateDeck`, so there is nothing for a rename item to call. No
+additional long-press targets beyond these three rows: the affirmed
+override for `gesture-no-long-press-and-thats-fine` is that the one
+additional place the dossier suggested stays without it, by user decision,
+rather than being added here for completeness.
+
+**Navigation chrome (Task 4, B3).** Three constants — `SIDEBAR_WIDTH` (252),
+`SIDEBAR_BREAKPOINT` (820), `BOTTOM_NAV_HEIGHT` (56), exported from
+`src/components/ui/nav-shells.tsx` and backed by `index.css`'s
+`--sidebar-width`/`--breakpoint-sidebar`/`--bottom-nav-height` tokens (§14
+rule 3: a named token, never an arbitrary `w-[252px]`/`min-[820px]`
+literal) — are the whole retrofit's shared vocabulary. `w-sidebar` and the
+`sidebar:` variant back every portal's `<aside>`; `.pb-bottom-nav` clears
+`<main>` from the fixed `BottomNav` below that breakpoint. Below it, the
+student portal shows a five-tab `BottomNav`: Overview · Correct · Classes ·
+Profile · More (opens the existing `NavDrawer`); the teacher portal shows
+Overview · Grading · Review · Classes · More. The student portal's "Correct"
+tab renders as a raised accent-circle emphasis tab (`BottomNav`'s
+`emphasisId`), and a matching `BottomActionBar` ("Correct a paper") appears
+above the bar on Overview, Subject and PaperResult — the three routes whose
+`handle.primaryAction === "correct"` — mirroring the header's own CTA, which
+stays for ≥ `SIDEBAR_BREAKPOINT` instead. The admin portal is desktop-first
+and carries no `BottomNav` at all; its two lanes reach every screen through
+`SidebarNav` and the `NavDrawer` alone. `TAB_ROOTS`
+(`src/lib/nav/scrollRestorationKey.ts`) names the eight `BottomNav`/
+`SidebarNav` destinations that restore scroll position by pathname rather
+than by history entry when a reader switches away and back — the same set
+`src/lib/nav/tabMemory.ts`'s `useTabState` reads for per-tab UI memory (a
+filter, an expanded section), so the two can never disagree about what
+counts as a tab.
+
+**Scanner (Task 8, B5).** `CameraCapture.tsx`'s live viewfinder runs a
+`requestAnimationFrame` loop (every 3rd frame, once the stream is live) that
+downscales to a 320px-wide luma buffer, runs a hand-rolled Sobel edge pass,
+finds the largest rectangular document quad in it, and tracks frame-to-frame
+stability — three steady frames with a quad found auto-fires "Capture page"
+exactly once, then re-arms after the new thumbnail lands. A found quad also
+drives perspective correction (a 4-point homography warp) on the captured
+frame instead of keeping it skewed, and is drawn live as a quad outline over
+the viewfinder. The torch button appears only when the active video track's
+capabilities actually report one (`torchSupported`). **Accuracy floor:** a
+rectangular sheet of paper on a contrasting surface, filling at least 20% of
+the frame — a photo that doesn't meet this still captures on the student's
+own tap, just without perspective correction. **Why not `opencv.js`:** the
+hand-rolled pipeline (`src/lib/scanner/`) is ~1.7KB gzipped in its own lazy
+chunk (`import("@/lib/scanner")`, loaded only once the camera stream starts —
+never in the file-picker-only path); `opencv.js` is 1.5MB+ as a single
+wasm/JS chunk, and `check-bundle-budget.mjs` gzips every shipped chunk
+individually, so a lazy `opencv.js` chunk would fail the budget outright.
+Hand-rolled is the only option that fits.
 
 **Capability register.**
 
 | Capability | Status | Where |
 |---|---|---|
 | Web Share Target | Shipped (A6) | `vite/manifest.ts`'s `share_target`, `src/sw/shareTarget.ts` |
+| Web Share (`navigator.share`) | Shipped (B5) | `src/lib/share.ts` (`shareResult`/`canWebShare`), `PaperResult.tsx`'s header Share button — falls back to copying the link (`navigator.clipboard.writeText`) plus a toast on an engine or a cancelled/refused share sheet; there is no result download on this screen to fall back to instead |
 | File Handling API | Shipped (A6) | `vite/manifest.ts`'s `file_handlers`, `/file-handler` (`routes.tsx`) |
 | Widgets (Streak) | Declared, SW bridge pending | `vite/manifest.ts`'s `widgets`, `public/widgets/streak.json`, `GET /api/student/widget` — `self.widgets.updateByTag` is not yet called anywhere in `src/sw.ts`; until it lands, an installed widget shows its static default data rather than a real streak |
-| Badging API | Out of scope for Phase A | Phase B |
-| Haptics (Vibration API) | Out of scope for Phase A | Phase B |
-| Wake Lock | Out of scope for Phase A | Phase B |
+| Badging API | Shipped (B5) | `src/lib/badging.ts` (`setAppBadge`), `src/components/badge-sync.tsx` (`BadgeSync`, mounted in each authenticated portal layout — `useNotificationCounts` is auth-gated, so it cannot live in `main.tsx`), `Notifications.tsx` clears it to 0 on mount. Pushes carry no payload (`lemely/web/push.py:16`), so there is no count to read off a push event itself — `src/sw.ts`'s `handlePush` calls `self.navigator.setAppBadge?.(unread)` only when the page-side handshake reply (`src/lib/push/pushClientBridge.ts`) attached a cached `NotificationCounts.unread`, i.e. the badge rides the existing content handshake rather than the push body |
+| Haptics (Vibration API) | Shipped (B5) | `src/lib/haptics.ts` (`haptic`) — a tap on `ConfirmModal`'s confirm button, a success pulse once per finished flashcard review session (`FlashcardReview.tsx`) |
+| Torch (`MediaStreamTrack` capability) | Shipped (B5) | `src/lib/scanner/torch.ts` (`torchSupported`/`setTorch`), `CameraCapture.tsx`'s viewfinder button — rendered only when the active video track's own capabilities report `torch: true` |
+| Wake Lock | Shipped (B5) | `src/lib/wakeLock.ts` (`useWakeLock`), held by `CameraCapture.tsx` while `phase === "live" && started` — the one flow where the screen sleeping mid-capture loses real work |
 
 **Mechanical enforcement.** The mechanics sections above are guarded, not
 just documented: `scripts/check-native-invariants.mjs` (wired into `npm run
@@ -710,7 +894,31 @@ other block that still executes unconditionally at install time.
 build` via `postbuild` — which means it now also gates every production
 deploy, not only CI, since `deploy.yml`'s frontend build step runs through
 the same `npm run build`) fails the build if any shipped JS chunk exceeds
-its gzip budget. Neither script replaces this document, nor `tests/unit/
+its gzip budget — 150KB as of Phase B (Task 11, B6c), tightened from Phase
+A's 200KB once `pdf-lib` and the scanner were split out of `CorrectPaper`.
+The one named exception is the lazy `assemblePages-*.js` chunk that split
+produced: `pdf-lib`'s own official minified build has no tree-shakeable
+"core" and lands that chunk at ~171KB gzipped on its own, with no further
+code-organization move available to shrink it, so `KNOWN_HEAVY_LAZY_CHUNKS`
+in the script gives it its own 175KB ceiling rather than raising the
+general 150KB budget for every other chunk — the chunk only downloads once
+a student assembles 2+ photos into one PDF, never on an initial-load path,
+so it is not the same cost category the 150KB budget exists to catch.
+Neither script replaces this document, nor `tests/unit/
 nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
 all three exist because a rule stated only in prose is a rule the next
 edit can silently break.
+
+`web/e2e/native-feel.spec.ts` (Task 12, B7) is the behavioural half of this
+enforcement — real device emulation (`iphone-15`/`pixel-7` Playwright
+projects), not source-text pins: 16px form fields, 44px tap targets, the
+chrome-suppression computed styles, safe-area CSS and the exact viewport
+meta, history-trapped dialogs, per-tab scroll and state memory, the
+authenticated deep-link return, and reduced motion across a whole screen
+rather than one component. `web/scripts/check_installability.mjs`
+(`npm run check:installable`) closes the gap Google's Lighthouse PWA-category
+removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
+`Page.getInstallabilityErrors` that audit used to wrap, against a production
+build served under the real `lemelyig.com` origin family so the manifest's
+`scope_extensions` and service-worker scope are checked the way a real
+install actually would be, not against `127.0.0.1`.

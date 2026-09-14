@@ -32,6 +32,17 @@ class Upload(TimestampMixin, Base):
     """
 
     __tablename__ = "uploads"
+    __table_args__ = (
+        # Enforces the Idempotency-Key dedupe (migration 0036); see
+        # StudentUploadRepository.create_upload for the race it closes.
+        sa.Index(
+            "ux_uploads_user_idempotency",
+            "user_id",
+            "idempotency_key",
+            unique=True,
+            postgresql_where=sa.text("idempotency_key IS NOT NULL"),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
@@ -53,6 +64,7 @@ class Upload(TimestampMixin, Base):
         nullable=False,
         server_default=sa.text("'pending'::uploadstatus"),
     )
+    idempotency_key: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
 
     attempts: Mapped[list[Attempt]] = relationship("Attempt", back_populates="upload")
 

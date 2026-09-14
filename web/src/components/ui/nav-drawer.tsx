@@ -14,30 +14,34 @@ import { createPortal } from "react-dom"
 import { X } from "@phosphor-icons/react"
 import { useLocation } from "react-router-dom"
 import { cn } from "@/lib/utils"
+import { lockScroll } from "@/lib/scrollLock"
+import { useDialogHistory } from "@/lib/nav/useDialogHistory"
+import { useOverlayPhase } from "@/lib/overlayPhase"
+import { useDragGesture } from "@/lib/gestures/useDragGesture"
 
 /*
  * P3.1 · Mobile navigation drawer.
  *
  * Why this exists at all: the Phase 1 audit mapped the nav *inventory* per
  * role but read it from source, so it recorded which items each sidebar
- * contains without recording the width at which that sidebar exists. It does
- * not, below 820px (student, `hidden min-[820px]:flex`) or 768px (teacher,
- * `hidden md:flex`). Both portals rendered their entire primary navigation to
- * `display: none` on a phone, with no replacement of any kind — no tab bar, no
- * menu button, no drawer. A student on a phone could reach exactly the screen
- * they landed on plus whatever that screen happened to link to. The mission's
- * own framing ("students live on phones") makes that the single largest IA
- * defect in the product, and Phase 3's mandate is explicitly "no dead ends".
+ * contains without recording the width at which that sidebar exists. Below
+ * the `sidebar` breakpoint (student, teacher and admin alike), each portal
+ * rendered its entire primary navigation to `display: none` on a phone, with
+ * no replacement of any kind — no tab bar, no menu button, no drawer. A
+ * student on a phone could reach exactly the screen they landed on plus
+ * whatever that screen happened to link to. The mission's own framing
+ * ("students live on phones") makes that the single largest IA defect in the
+ * product, and Phase 3's mandate is explicitly "no dead ends".
  *
- * Why a drawer and not a truncated tab bar: the student nav carries eleven
- * destinations and the teacher nav eight. A five-slot bottom bar cannot hold
- * either, so shipping one means ranking the survivors and silently dropping
- * the rest — a product decision this phase has no answer for and should not
- * invent. The drawer carries *every* item the desktop sidebar carries, which
- * is the only version of this that is complete rather than a second, smaller
- * dead end. `BottomNav` (C-13) stays in the kit unused for now; if Phase 4
- * establishes which four student destinations are genuinely daily, it becomes
- * the fast path *alongside* this, not instead of it.
+ * Why a drawer and not ONLY a tab bar: the student nav carries eleven
+ * destinations and the teacher nav eight — more than a five-slot bottom bar
+ * can hold. Packet B3 (Task 4) resolved the ranking question Phase 3 left
+ * open: the user decision names the five daily destinations per portal (see
+ * `nav-shells.tsx`'s `BottomNav`, mounted by `student/index.tsx` and
+ * `teacher/index.tsx`), and this drawer stays as the complete list behind
+ * "More" — the fast path and the exhaustive one, not one replacing the
+ * other. It is also the *only* mobile navigation for the admin portal, which
+ * is desktop-first and carries no `BottomNav` at all.
  *
  * Behaviour is modal, because on a phone it covers the content it navigates
  * away from: focus moves in and is trapped, Escape closes, the scrim closes,
@@ -70,12 +74,34 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   const previouslyFocused = useRef<HTMLElement | null>(null)
   const location = useLocation()
 
+  // Packet B2b: same exit-phase contract `Modal` uses — see that
+  // component's own comment and `lib/overlayPhase.ts` for the full
+  // rationale. `mounted` (phase !== "closed") is what the history entry,
+  // the close-on-navigation effect, focus and the scroll lock all gate on
+  // below, so the drawer stays live for its own slide-out.
+  const { phase, onAnimationEnd } = useOverlayPhase(open)
+  const mounted = phase !== "closed"
+
+  // Packet B2a: same history-trap contract Modal uses — opening pushes one
+  // history entry so browser back closes the drawer instead of navigating
+  // the page underneath it away. The drawer is always dismissible, so a
+  // popstate always closes it (never re-pushes).
+  useDialogHistory({ open: mounted, dismissible: true, onClose })
+
   // Close on navigation. `location.key` rather than `pathname` so that
   // re-selecting the destination you are already on still dismisses the
   // drawer: tapping "Overview" while on Overview is a request to see
   // Overview, and leaving the drawer covering it reads as a broken tap.
+  //
+  // `location.state?.lemelyDialog` skips the one location change this drawer
+  // itself causes: `useDialogHistory`'s own history-trap push above (same
+  // URL, `state.lemelyDialog: true`) also changes `location.key`, and
+  // without this guard that self-inflicted change would fire this effect
+  // and close the drawer immediately after opening it.
   useEffect(() => {
-    if (open) onClose()
+    if (!open) return
+    if ((location.state as { lemelyDialog?: boolean } | null)?.lemelyDialog) return
+    onClose()
     // `onClose` is intentionally not a dependency: callers pass an inline
     // arrow, so including it would re-run this on every parent render and
     // close the drawer the instant it opened.
@@ -83,7 +109,7 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   }, [location.key])
 
   useEffect(() => {
-    if (!open) return
+    if (!mounted) return
 
     previouslyFocused.current = document.activeElement as HTMLElement | null
 
@@ -97,18 +123,46 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
       cancelAnimationFrame(raf)
       previouslyFocused.current?.focus()
     }
-  }, [open])
+  }, [mounted])
 
+  // Shared with Modal — see `lockScroll`'s own doc for why this replaces a
+  // plain `overflow: hidden` toggle, and why it is reference-counted (a
+  // modal opened over this drawer, or vice versa, must not have the other's
+  // release unlock scrolling while this one is still open). Held for as
+  // long as the drawer is mounted, its own closing animation included.
   useEffect(() => {
-    if (!open) return
-    const previousOverflow = document.body.style.overflow
-    document.body.style.overflow = "hidden"
-    return () => {
-      document.body.style.overflow = previousOverflow
-    }
-  }, [open])
+    if (!mounted) return
+    return lockScroll()
+  }, [mounted])
 
-  if (!open) return null
+  // Task 6 (B4b): drag-dismiss. `startFilter` excludes the scrollable nav
+  // list itself — a vertical scroll in there must never be fought by a
+  // horizontal drag-dismiss listener starting underneath it — so the
+  // gesture only starts from the header/footer chrome around the list.
+  // `commitThreshold` is 40% of the panel's own width rather than a fixed
+  // pixel count, so a narrow phone drawer and the `85vw`-capped wide one
+  // both need a proportionally similar drag. Direction is read from
+  // `--lm-dir` at commit time (not cached), matching P3.4's RTL rule: the
+  // drawer is anchored to the reading-start edge in both directions, so
+  // "closing" is a drag *away* from that edge, whichever edge that is.
+  useDragGesture(panelRef, {
+    axis: "x",
+    enabled: mounted,
+    // The nav list inside still scrolls vertically; only the horizontal
+    // direction belongs to the drag-dismiss.
+    touchAction: "pan-y",
+    commitThreshold: (panelRef.current?.getBoundingClientRect().width ?? 320) * 0.4,
+    startFilter: (event) => {
+      const target = event.target
+      return !(target instanceof Element && target.closest(".lm-scroll"))
+    },
+    onCommit: (dx) => {
+      const dir = Number(getComputedStyle(document.documentElement).getPropertyValue("--lm-dir")) || 1
+      if (dx * dir < 0) onClose()
+    },
+  })
+
+  if (!mounted) return null
 
   function handleKeyDown(event: ReactKeyboardEvent<HTMLDivElement>) {
     if (event.key === "Escape") {
@@ -156,10 +210,21 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
+        // Only the panel's own exit animation ends the exit — see `modal.tsx`,
+        // which carries the same guard for the same reason.
+        onAnimationEnd={
+          phase === "closing"
+            ? (event) => {
+                if (event.target === event.currentTarget) onAnimationEnd()
+              }
+            : undefined
+        }
         className={cn(
           "lm-nav-chrome fixed inset-y-0 start-0 z-modal flex w-[min(20rem,85vw)] flex-col gap-5",
           "border-e border-rule bg-paper-raised px-4 py-5 shadow-[var(--shadow-float)]",
-          "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
+          phase === "closing"
+            ? "lm-slide-out-start"
+            : "motion-safe:animate-[lm-slide-in-start_var(--dur-base)_var(--ease-spring)_both]",
         )}
       >
         <div className="flex items-center justify-between gap-3">

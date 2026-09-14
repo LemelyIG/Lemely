@@ -73,7 +73,7 @@ export function Subject() {
    */
   if (query.status === "error" && query.error instanceof ApiError && query.error.status === 404) {
     return (
-      <div className="lm-screen flex flex-col gap-6">
+      <div className="flex flex-col gap-6">
         {/* The page must identify itself in every state, not only the populated
             one — see the same heading inside `<QueryState>` below for the
             pending/generic-error cases this mirrors. */}
@@ -88,7 +88,7 @@ export function Subject() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-6">
+    <div className="flex flex-col gap-6">
       <QueryState
         query={query}
         srHeading={`Subject ${code}`}

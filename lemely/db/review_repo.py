@@ -275,6 +275,8 @@ class ReviewService:
         class_id: uuid.UUID | str | None = None,
         reason: str | None = None,
         min_age_hours: float | None = None,
+        limit: int | None = None,
+        cursor: tuple[datetime, uuid.UUID] | None = None,
     ) -> list[ReviewQueueRow]:
         """Return every **open** review item across the caller's own students.
 
@@ -285,6 +287,17 @@ class ReviewService:
         value yields no matches, never a 500 (mirrors ``teacher_at_risk_list``).
         ``min_age_hours`` keeps only items that have been waiting at least that
         long.
+
+        ``cursor`` is a ``(created_at, item_id)`` keyset boundary: only rows
+        strictly after it (in the same ``(created_at, item_id)`` order the
+        results are sorted in) are returned — this is what makes the
+        ordering stable across pages even when two rows share a
+        ``created_at`` down to the microsecond. When ``limit`` is given, the
+        returned list is padded to ``limit + 1`` rows (never truncated to
+        exactly ``limit``) so the caller can tell whether another page
+        follows without a second query; ``limit=None`` (the default, e.g.
+        ``teacher_at_risk_list``'s queue-depth count) returns every row, as
+        before.
         """
         visible = self._visible_class_map(caller_id, caller_role, class_id_filter=class_id)
         reason_enum: ReviewReason | None = None
@@ -307,7 +320,7 @@ class ReviewService:
                         ReviewQueueItem.status == ReviewStatus.open,
                         Attempt.user_id.in_(visible.keys()),
                     )
-                    .order_by(ReviewQueueItem.created_at)
+                    .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
                 )
                 if reason_enum is not None:
                     stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
@@ -340,7 +353,7 @@ class ReviewService:
                         ReviewQueueItem.status == ReviewStatus.open,
                         teacher_paper_visible(_as_uuid(caller_id), _as_role(caller_role)),
                     )
-                    .order_by(ReviewQueueItem.created_at)
+                    .order_by(ReviewQueueItem.created_at, ReviewQueueItem.id)
                 )
                 if reason_enum is not None:
                     paper_stmt = paper_stmt.where(ReviewQueueItem.reason == reason_enum)
@@ -354,10 +367,18 @@ class ReviewService:
                     results.append(_to_console_row(item, paper, now=now, report=reports[paper.id]))
         # Oldest first across both sources — longest-waiting is highest
         # priority, and that ordering must hold over the merged list, not
-        # within each half (T-07's "prioritised list").
-        results.sort(key=lambda row: row.created_at)
+        # within each half (T-07's "prioritised list"). The `item_id`
+        # tiebreak makes this order (and therefore cursor pagination over it)
+        # stable when two rows from different sources share a `created_at`.
+        results.sort(key=lambda row: (row.created_at, row.item_id))
         if min_age_hours is not None:
             results = [row for row in results if row.waiting_hours >= min_age_hours]
+        if cursor is not None:
+            results = [row for row in results if (row.created_at, row.item_id) > cursor]
+        if limit is not None:
+            # `limit + 1`, not `limit`: the extra row is how the caller
+            # (the router) learns a next page exists without a second query.
+            results = results[: limit + 1]
         return results
 
     def get_item(

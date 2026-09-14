@@ -12,6 +12,9 @@ import { useSaveQuizAnswer, useStudentQuizTake, useSubmitQuiz } from "@/lib/hook
 import type { StudentQuizQuestion, SubmitQuizResponse } from "@/lib/placementTypes"
 import { ApiError } from "@/lib/api"
 import { studentLoadFailureMessage, studentSaveFailureMessage } from "@/lib/studentOutcome"
+import { useDragGesture } from "@/lib/gestures/useDragGesture"
+import { quizSwipeAllowed, SWIPE_LOCK_SECONDS } from "@/lib/quizSwipe"
+import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import {
   answerCacheKey,
   answerInputKind,
@@ -241,6 +244,8 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
 
   const questions = useMemo(() => query.data?.questions ?? [], [query.data])
   const current: StudentQuizQuestion | undefined = questions[index]
+  const total = questions.length
+  const remaining = remainingSeconds(query.data?.header.timeLimitMinutes ?? null, elapsedSeconds)
 
   const persistCacheEntry = useCallback(
     (questionRef: string, entry: LocalAnswer, dirty: boolean) => {
@@ -422,6 +427,48 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     }
   }
 
+  // Task 6 (B4b): page-turn swipe on the question card. `enabled` is the
+  // hard last-60-seconds lock (fully detaches the listener, not merely a
+  // no-op check inside it); `startFilter` is `quizSwipeAllowed`'s own,
+  // per-event target check (an MCQ radio, a text input, a button/link) —
+  // both read the same `remaining`, so the lock holds even if a stray event
+  // somehow bypassed `enabled`. A commit always flushes the 600ms autosave
+  // before moving — a swipe that changed the question before that answer
+  // reached the server is exactly the D3.21 shape `flushPendingSaves`'s own
+  // doc warns about — and a flush that fails keeps the student on the same
+  // question rather than risking it; `SaveIndicator` already surfaces the
+  // per-question failure.
+  const questionCardRef = useRef<HTMLDivElement>(null)
+  useDragGesture(questionCardRef, {
+    axis: "x",
+    enabled: !(remaining !== null && remaining <= SWIPE_LOCK_SECONDS),
+    commitThreshold: 60,
+    // Vertical panning still scrolls the question; the browser must not
+    // claim the horizontal direction before the 60px commit threshold is
+    // reached, or the swipe is stolen before this hook ever sees it.
+    touchAction: "pan-y",
+    startFilter: (event) => {
+      const target = event.target
+      const interactive = target instanceof Element ? target.closest(GESTURE_INTERACTIVE_SELECTOR) : null
+      return quizSwipeAllowed({
+        remainingSeconds: remaining,
+        targetTag: interactive?.tagName ?? (target instanceof Element ? target.tagName : ""),
+        targetRole: interactive?.getAttribute("role") ?? null,
+      })
+    },
+    onCommit: (dx) => {
+      const direction = dx < 0 ? 1 : -1
+      void (async () => {
+        try {
+          await flushPendingSaves()
+        } catch {
+          return
+        }
+        setIndex((i) => clampQuestionIndex(i + direction, total))
+      })()
+    },
+  })
+
   async function handleSubmit() {
     setSubmitError(null)
     try {
@@ -465,7 +512,7 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
    * only renders ahead of its own skeleton/error output (see that
    * component's doc comment). */
   return (
-    <div className={cn("lm-screen mx-auto flex max-w-[820px] flex-col gap-5", className)}>
+    <div className={cn("mx-auto flex max-w-[820px] flex-col gap-5", className)}>
       <QueryState
         query={query}
         srHeading="Test in progress"
@@ -571,53 +618,55 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
                 </div>
               ) : null}
 
-              <Card>
-                <CardBody className="flex flex-col gap-5">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="flex flex-wrap items-center gap-2">
-                      <Chip tone="neutral" className="font-mono">
-                        {current.totalMarks} mark{current.totalMarks === 1 ? "" : "s"}
-                      </Chip>
-                      <Chip tone={current.topic ? "accent" : "neutral"}>
-                        {formatQuestionTopic(current.topic)}
-                      </Chip>
+              <div ref={questionCardRef}>
+                <Card>
+                  <CardBody className="flex flex-col gap-5">
+                    <div className="flex items-start justify-between gap-3">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <Chip tone="neutral" className="font-mono">
+                          {current.totalMarks} mark{current.totalMarks === 1 ? "" : "s"}
+                        </Chip>
+                        <Chip tone={current.topic ? "accent" : "neutral"}>
+                          {formatQuestionTopic(current.topic)}
+                        </Chip>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => toggleFlag(current.questionRef)}
+                        aria-pressed={currentFlagged}
+                        className={cn(
+                          // `min-h-[44px]` per QUALITY-BAR.md:40, the same idiom the rest
+                          // of the library uses. This is a phone-primary control used
+                          // mid-exam — "come back to this question" — so a missed tap
+                          // costs the student the question. Padding alone left it ~30px:
+                          // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
+                          // automated gate flagged it.
+                          "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-body-sm transition-colors cursor-pointer",
+                          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
+                          currentFlagged ? "bg-warn-wash text-warn" : "text-ink-faint hover:bg-paper-sunk",
+                        )}
+                      >
+                        <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
+                        {currentFlagged ? "Flagged for review" : "Flag for review"}
+                      </button>
                     </div>
-                    <button
-                      type="button"
-                      onClick={() => toggleFlag(current.questionRef)}
-                      aria-pressed={currentFlagged}
-                      className={cn(
-                        // `min-h-[44px]` per QUALITY-BAR.md:40, the same idiom the rest
-                        // of the library uses. This is a phone-primary control used
-                        // mid-exam — "come back to this question" — so a missed tap
-                        // costs the student the question. Padding alone left it ~30px:
-                        // tall enough for WCAG 2.5.8 AA (24px), which is exactly why no
-                        // automated gate flagged it.
-                        "flex min-h-[44px] items-center gap-1.5 rounded px-2.5 py-1.5 text-body-sm transition-colors cursor-pointer",
-                        "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent",
-                        currentFlagged ? "bg-warn-wash text-warn" : "text-ink-faint hover:bg-paper-sunk",
-                      )}
-                    >
-                      <Flag weight={currentFlagged ? "fill" : "regular"} size={14} aria-hidden />
-                      {currentFlagged ? "Flagged for review" : "Flag for review"}
-                    </button>
-                  </div>
 
-                  <p className="whitespace-pre-line text-body-lg leading-relaxed text-ink">
-                    {current.prompt}
-                  </p>
+                    <p className="whitespace-pre-line text-body-lg leading-relaxed text-ink">
+                      {current.prompt}
+                    </p>
 
-                  <AnswerInput
-                    kind={kind}
-                    question={current}
-                    value={currentAnswer}
-                    onAnswerText={(v) => updateAnswer(current.questionRef, "answerText", v)}
-                    onWorkingText={(v) => updateAnswer(current.questionRef, "workingText", v)}
-                  />
+                    <AnswerInput
+                      kind={kind}
+                      question={current}
+                      value={currentAnswer}
+                      onAnswerText={(v) => updateAnswer(current.questionRef, "answerText", v)}
+                      onWorkingText={(v) => updateAnswer(current.questionRef, "workingText", v)}
+                    />
 
-                  <SaveIndicator status={currentStatus} online={online} />
-                </CardBody>
-              </Card>
+                    <SaveIndicator status={currentStatus} online={online} />
+                  </CardBody>
+                </Card>
+              </div>
 
               {confirmingSubmit ? (
                 <Card className="border-warn">

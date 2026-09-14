@@ -19,7 +19,7 @@ and onboarding on ``/api/me/student-profile*``, each tested in its own module.
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from typing import TYPE_CHECKING
 from unittest.mock import MagicMock
@@ -35,6 +35,8 @@ from sqlalchemy.orm import Session, sessionmaker
 if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
+
+    from lemely.db.upload_repo import StudentUploadRepository
 
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
@@ -818,6 +820,428 @@ def test_upload_is_not_gated_by_verification(seeded_store: HistoryStore) -> None
     assert resp.json()["paperId"]
     upload_repo.create_upload.assert_called_once()
     app.dependency_overrides.clear()
+
+
+# ── Idempotency-Key (B6a) ────────────────────────────────────────────────────
+#
+# Postgres-backed (mirrors `test_correct_succeeds_once_verified`'s wiring):
+# the dedupe window is enforced by `StudentUploadRepository` against a real
+# unique index (migration 0036), which a mocked repo cannot exercise.
+
+
+def test_upload_same_idempotency_key_twice_dedupes(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A retried upload (double-tap, or an offline-queue replay of a request
+    that in fact reached the server) with the same key returns the original
+    `paperId` and never touches storage a second time."""
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    headers = {"Idempotency-Key": "retry-key-00001"}
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers=headers,
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] == resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 1
+    app.dependency_overrides.clear()
+
+
+def test_upload_different_idempotency_keys_create_two_rows(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp1 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-aaaaaaaa"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp2 = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "key-bbbbbbbb"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp1.status_code == 200, resp1.text
+    assert resp2.status_code == 200, resp2.text
+    assert resp1.json()["paperId"] != resp2.json()["paperId"]
+    assert len(storage_backend._objects) == 2
+    app.dependency_overrides.clear()
+
+
+def test_upload_malformed_idempotency_key_is_422(seeded_store: HistoryStore) -> None:
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+
+    upload_repo = MagicMock()
+    storage_backend = MagicMock()
+    student_id = uuid.uuid4()
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: seeded_store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: upload_repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "short"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 422, resp.text
+    upload_repo.create_upload.assert_not_called()
+    storage_backend.upload.assert_not_called()
+    app.dependency_overrides.clear()
+
+
+def test_upload_idempotency_key_older_than_window_creates_new_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A key last used more than 24h ago no longer dedupes: the retry gets its
+    own new row and the stale row's key is released rather than blocking the
+    insert (the unique index has no time bound of its own, migration 0036)."""
+    import sqlalchemy as sa
+
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    old_upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=old_upload_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{old_upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=10,
+                idempotency_key="stale-key-00001",
+            )
+        )
+    stale = datetime.now(UTC) - timedelta(hours=25)
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text("UPDATE uploads SET created_at = :ts WHERE id = :id"),
+            {"ts": stale, "id": old_upload_id},
+        )
+        session.commit()
+
+    storage_backend = FakeStorageBackend()
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: StudentUploadRepository(
+        pg_sessionmaker
+    )
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": "stale-key-00001"},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    new_paper_id = resp.json()["paperId"]
+    assert new_paper_id != str(old_upload_id)
+
+    with pg_sessionmaker() as session:
+        count = session.execute(
+            sa.text("SELECT COUNT(*) FROM uploads WHERE user_id = :uid"), {"uid": student_id}
+        ).scalar_one()
+    assert count == 2
+    app.dependency_overrides.clear()
+
+
+def _make_race_injecting_repo(
+    session_factory: sessionmaker[Session], *, student_id: uuid.UUID, race_key: str
+) -> StudentUploadRepository:
+    """Simulates a second request's insert winning the race.
+
+    Injects a competing row holding ``race_key`` immediately before
+    delegating to the real ``create_upload`` — so *this* call's own insert
+    loses the unique-index race deterministically, without real threads.
+    Shared by the two orphaned-storage-cleanup tests below, which differ
+    only in the storage backend they wire in.
+    """
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    class _RaceInjectingRepo(StudentUploadRepository):
+        def __init__(self, sm: sessionmaker[Session]) -> None:
+            super().__init__(sm)
+            self.winner_id = uuid.uuid4()
+            self._injected = False
+
+        def create_upload(self, **kwargs: object) -> uuid.UUID:
+            if not self._injected and kwargs.get("idempotency_key") == race_key:
+                self._injected = True
+                with self._sm.begin() as session:
+                    session.add(
+                        Upload(
+                            id=self.winner_id,
+                            user_id=student_id,
+                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
+                            original_filename="scan.pdf",
+                            content_type="application/pdf",
+                            byte_size=5,
+                            idempotency_key=race_key,
+                        )
+                    )
+            return super().create_upload(**kwargs)  # type: ignore[arg-type]
+
+    return _RaceInjectingRepo(session_factory)
+
+
+def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A genuine concurrent race — two requests with the same key both miss
+    the router's pre-check — must not leak the losing request's storage
+    object. `create_upload` hands back the *winner's* row id when its own
+    insert loses the unique-index race; the router must then delete the
+    object it just wrote for *this* request before returning that id, or the
+    blob sits in storage forever, referenced by nothing."""
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-00001"
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
+    storage_backend = FakeStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": race_key},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"] == str(repo.winner_id)
+    assert storage_backend._objects == {}, "losing request's storage object was not cleaned up"
+    app.dependency_overrides.clear()
+
+
+def test_upload_orphaned_storage_delete_failure_still_returns_winner_paperid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The losing side of an idempotency race cleans up its own orphaned
+    storage object as a courtesy, not as a condition of success: the
+    client's scan already succeeded, just under the winner's row. If the
+    cleanup ``delete`` call itself fails (a transient GCS hiccup), that must
+    not turn this already-successful request into a 500 — the caller did
+    nothing wrong and has nothing to retry."""
+    from lemely.runtime.errors import ExternalServiceError
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-delete-fails-00001"
+
+    class _DeleteFailsStorageBackend(FakeStorageBackend):
+        def delete(self, bucket: str, object_path: str) -> None:
+            raise ExternalServiceError("simulated transient GCS delete failure")
+
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
+    storage_backend = _DeleteFailsStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": race_key},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"] == str(repo.winner_id)
+    app.dependency_overrides.clear()
+
+
+def test_create_upload_second_integrity_error_on_stale_retry_resolves(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Two concurrent requests racing the *same stale* idempotency key: the
+    first releases the key and inserts its new row; the second's retry
+    insert then collides with that freshly-inserted row and must resolve to
+    its id rather than escape as an uncaught ``IntegrityError`` (-> 500)."""
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    stale_id = uuid.uuid4()
+    key = "stale-concurrent-race"
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=stale_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{stale_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=5,
+                idempotency_key=key,
+            )
+        )
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text("UPDATE uploads SET created_at = :ts WHERE id = :id"),
+            {"ts": datetime.now(UTC) - timedelta(hours=25), "id": stale_id},
+        )
+        session.commit()
+
+    class _StaleRaceRepo(StudentUploadRepository):
+        """Injects a concurrent winner between releasing the stale key and
+        this call's own retry insert, so the retry collides deterministically."""
+
+        def __init__(self, session_factory: sessionmaker[Session]) -> None:
+            super().__init__(session_factory)
+            self.winner_id = uuid.uuid4()
+            self._injected = False
+
+        def _retry_after_releasing_stale_key(self, **kwargs: object) -> uuid.UUID:
+            if not self._injected:
+                self._injected = True
+                with self._sm.begin() as session:
+                    # Mirrors what the concurrent request's own call does:
+                    # release the stale row's key first (or this insert
+                    # would itself collide with the still-live stale row),
+                    # then land its own new row under the released key —
+                    # simulating that request completing its entire
+                    # null-and-retry cycle first.
+                    session.execute(
+                        sa.text(
+                            "UPDATE uploads SET idempotency_key = NULL "
+                            "WHERE user_id = :uid AND idempotency_key = :key"
+                        ),
+                        {"uid": str(student_id), "key": key},
+                    )
+                    session.add(
+                        Upload(
+                            id=self.winner_id,
+                            user_id=student_id,
+                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
+                            original_filename="scan.pdf",
+                            content_type="application/pdf",
+                            byte_size=5,
+                            idempotency_key=key,
+                        )
+                    )
+            return super()._retry_after_releasing_stale_key(**kwargs)  # type: ignore[arg-type]
+
+    repo = _StaleRaceRepo(pg_sessionmaker)
+    new_upload_id = uuid.uuid4()
+
+    returned_id = repo.create_upload(
+        user_id=str(student_id),
+        storage_path=f"uploads/{student_id}/{new_upload_id.hex}/scan.pdf",
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=5,
+        upload_id=new_upload_id,
+        idempotency_key=key,
+    )
+
+    assert returned_id == repo.winner_id
+
+
+def test_create_upload_reraises_unrelated_integrity_error(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """An ``IntegrityError`` that has nothing to do with the idempotency key
+    (e.g. a primary-key collision on ``upload_id``) must surface as-is, not
+    be swallowed by the null-and-retry logic meant for a stale-key race."""
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    dup_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=dup_id,
+                user_id=student_id,
+                storage_path=f"uploads/{student_id}/{dup_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=5,
+            )
+        )
+
+    repo = StudentUploadRepository(pg_sessionmaker)
+
+    with pytest.raises(sa.exc.IntegrityError):
+        repo.create_upload(
+            user_id=str(student_id),
+            storage_path=f"uploads/{student_id}/{dup_id.hex}/scan2.pdf",
+            original_filename="scan2.pdf",
+            content_type="application/pdf",
+            byte_size=5,
+            upload_id=dup_id,
+            idempotency_key="brand-new-key-no-existing-row",
+        )
 
 
 def test_correct_succeeds_once_verified(

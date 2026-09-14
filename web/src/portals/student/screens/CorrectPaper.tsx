@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/processing-state"
 import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
+import { QueuedBanner } from "@/components/ui/queued-banner"
 import { CameraCapture } from "@/components/CameraCapture"
 import {
   advanceStage,
@@ -38,6 +39,10 @@ import { defaultScanSource } from "@/lib/scanSource"
 import { shouldAutoStartCamera } from "@/lib/cameraAutoStart"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
+import { enqueueUpload } from "@/lib/offline/uploadQueue"
+import { shouldQueueUpload } from "@/lib/offline/queueDecision"
+import { useUploadQueue } from "@/lib/offline/useUploadQueue"
+import { randomUuid } from "@/lib/uuid"
 import type { QuestionResult, Result, StudentCorrectFrame, UploadRun } from "@/lib/studentTypes"
 import { reassure } from "../data"
 
@@ -333,6 +338,15 @@ export function CorrectPaper() {
   const navigate = useNavigate()
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
+  // Task 8 (B5b) · multi-file picker. Choosing more than one image assembles
+  // them into the same single `scanFile` the rest of this screen already
+  // knows how to handle (upload, retry-in-place, the "Scan ready" summary) —
+  // there is no second, multi-file code path downstream of this. `assembling`
+  // covers the brief async gap while `assemblePagesToPdf` runs; `scanFileError`
+  // is this field's own inline error, separate from the run-level `error`
+  // below (a bad file selection is not a failed marking run).
+  const [assemblingScan, setAssemblingScan] = useState(false)
+  const [scanFileError, setScanFileError] = useState<string | null>(null)
   const [running, setRunning] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(initialStages)
   const [error, setError] = useState<string | null>(null)
@@ -356,6 +370,12 @@ export function CorrectPaper() {
    * (M4). A run THIS tab is streaming is not one of these: `running` is true
    * for the whole of that, and the id is already in `paperId`.
    */
+  // Task 10 (B6b). Global to the queue, not this scan pick alone: a scan
+  // queued on a previous visit (or from a different screen instance) must
+  // still show the banner here, since the queue is what is actually
+  // draining it — see `useUploadQueue.ts`'s own header for the three
+  // triggers that keep it moving.
+  const uploadQueue = useUploadQueue()
   const active = useActiveUpload()
   const strandedId =
     !running && active.data && active.data.paperId !== paperId ? active.data.paperId : undefined
@@ -399,7 +419,45 @@ export function CorrectPaper() {
     setScanFile(file)
     setPaperId(null)
     setError(null)
+    setScanFileError(null)
     setStages(initialStages)
+  }
+
+  /**
+   * Task 8 (B5b). `FileDrop`'s multi-select path: 0 files clears the field,
+   * 1 behaves exactly like the single-file picker always has, and 2+ photos
+   * assemble into one PDF via the same `assemblePagesToPdf` the camera flow
+   * uses. A PDF mixed with anything else (or more than one PDF) is refused
+   * outright rather than guessed at — a "one paper per upload" mark scheme
+   * checker cannot silently decide which PDF the reader meant.
+   */
+  const chooseScanFiles = async (files: File[]) => {
+    setScanFileError(null)
+    if (files.length === 0) {
+      chooseScan(null)
+      return
+    }
+    if (files.length === 1) {
+      chooseScan(files[0])
+      return
+    }
+    if (files.some((file) => file.type === "application/pdf")) {
+      setScanFileError("Choose either one PDF or a set of photos, not both.")
+      return
+    }
+    setAssemblingScan(true)
+    try {
+      // Task 11 (B6c): dynamic, not static — see CameraCapture.tsx's own
+      // comment on its matching call for why `pdf-lib` stays out of this
+      // chunk until a multi-photo upload actually needs it.
+      const { assemblePagesToPdf } = await import("@/lib/pdf/assemblePages")
+      const assembled = await assemblePagesToPdf(files)
+      chooseScan(assembled)
+    } catch {
+      setScanFileError("Could not combine those photos into one PDF. Try again.")
+    } finally {
+      setAssemblingScan(false)
+    }
   }
 
   const chooseScanSource = (source: ScanSource) => {
@@ -577,15 +635,41 @@ export function CorrectPaper() {
     }
     if (!scanFile) return null
     setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, false))
-    const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
-      onProgress: (progress) => {
-        setStages((prev) =>
-          advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
-        )
-      },
-    })
-    setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
-    return uploaded.paperId
+    try {
+      const uploaded = await uploadScan(scanFile, schemeFile ?? undefined, {
+        onProgress: (progress) => {
+          setStages((prev) =>
+            advanceStage(prev, STAGE_ORDER, "upload", undefined, false, uploadStageProgress(progress)),
+          )
+        },
+      })
+      setStages((prev) => advanceStage(prev, STAGE_ORDER, "upload", undefined, true))
+      return uploaded.paperId
+    } catch (err) {
+      // Task 10 (B6b): an upload that never reached the server at all —
+      // `shouldQueueUpload` is the same "status 0" test `isOfflineFailure`
+      // uses — is not a failure to report, it is a scan to remember. Queued
+      // here, not in `runPipeline`'s own catch below: only THIS call, the
+      // one that moves bytes, should ever be queued. A `streamCorrection`
+      // failure further down means the scan already reached the server, so
+      // queuing it again would duplicate the upload rather than resume it —
+      // that case keeps the ordinary failure panel (`OfflineState`, via
+      // `studentLoadFailureMessage`, where it already applies elsewhere).
+      if (shouldQueueUpload(err)) {
+        await enqueueUpload({
+          id: randomUuid(),
+          idempotencyKey: randomUuid(),
+          scan: scanFile,
+          scanName: scanFile.name,
+          markScheme: schemeFile ?? null,
+          createdAt: Date.now(),
+        })
+        uploadQueue.retry()
+        setStages(initialStages)
+        return null
+      }
+      throw err
+    }
   }
 
   const runPipeline = async () => {
@@ -659,7 +743,7 @@ export function CorrectPaper() {
         : { tone: "bg-ok", title: "Ready when you are" }
 
   return (
-    <div className="lm-screen flex flex-col gap-8">
+    <div className="flex flex-col gap-8">
       {/* §8.5's margin rule, the same single texture element the dashboard
           header carries. The Operate lane runs texture low (§13). */}
       <header className="margin-rule flex flex-wrap items-end gap-5">
@@ -695,6 +779,8 @@ export function CorrectPaper() {
         )}
       </header>
 
+      <QueuedBanner count={uploadQueue.count} onRetry={uploadQueue.retry} />
+
       <div className="grid grid-correct-cols items-start gap-6 max-tablet:grid-cols-1">
         <Card className="flex flex-col gap-6 p-6">
           <div className="flex flex-col gap-3">
@@ -712,9 +798,12 @@ export function CorrectPaper() {
                 accept="application/pdf,image/*"
                 file={scanFile}
                 onFileChange={chooseScan}
-                busy={busy}
+                multiple
+                onFilesChange={chooseScanFiles}
+                busy={busy || assemblingScan}
+                error={scanFileError}
                 clearLabel="Choose a different scan"
-                hint="One paper per upload. Every page of it, in order."
+                hint="One paper per upload. Choose every page's photo at once, in order - or a single PDF."
               />
             ) : busy ? (
               <div className="rounded-lg border border-rule bg-paper-sunk px-4 py-3 text-body-sm text-ink-muted">

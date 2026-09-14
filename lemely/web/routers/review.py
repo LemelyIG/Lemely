@@ -15,7 +15,10 @@ defines.
 
 from __future__ import annotations
 
+import base64
+import binascii
 import uuid
+from datetime import datetime
 from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -68,6 +71,33 @@ def _raise_for(exc: ReviewError) -> NoReturn:
     if isinstance(exc, ReviewValidationError):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Cursor encode/decode.
+# ---------------------------------------------------------------------------
+
+_CURSOR_SEP = "|"
+
+
+def _encode_cursor(created_at: datetime, item_id: uuid.UUID) -> str:
+    """Opaque keyset cursor: urlsafe-base64 of ``"<iso created_at>|<uuid>"``."""
+    raw = f"{created_at.isoformat()}{_CURSOR_SEP}{item_id}"
+    return base64.urlsafe_b64encode(raw.encode()).decode()
+
+
+def _decode_cursor(cursor: str) -> tuple[datetime, uuid.UUID]:
+    """Inverse of :func:`_encode_cursor`.
+
+    Raises ``HTTPException(422)`` on anything that does not round-trip — a
+    malformed cursor is a client error, never a 500.
+    """
+    try:
+        raw = base64.urlsafe_b64decode(cursor.encode()).decode()
+        created_at_str, item_id_str = raw.split(_CURSOR_SEP, 1)
+        return datetime.fromisoformat(created_at_str), uuid.UUID(item_id_str)
+    except (ValueError, UnicodeDecodeError, binascii.Error) as exc:
+        raise HTTPException(status_code=422, detail="Malformed cursor") from exc
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +194,20 @@ def list_review_queue(
     class_id: str | None = None,
     reason: str | None = None,
     min_age_hours: float | None = None,
+    limit: int = 50,
+    cursor: str | None = None,
 ) -> ReviewQueueListDTO:
-    """T-07: every open review item across the caller's own students.
+    """T-07: every open review item across the caller's own students, paginated.
 
     Filters by class, reason, and minimum waiting age. A malformed
-    (non-UUID) ``class_id`` is a clean 422, never a 500.
+    (non-UUID) ``class_id`` is a clean 422, never a 500. ``limit`` (1..200,
+    default 50) bounds the page size; ``cursor``, when given, continues a
+    previous page (an unparseable cursor is a 422, never a 500 or a silent
+    reset to page one).
     """
+    if not 1 <= limit <= 200:
+        raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
+    parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
     try:
         rows = service.list_queue(
             auth.user_id,
@@ -177,10 +215,15 @@ def list_review_queue(
             class_id=class_id,
             reason=reason,
             min_age_hours=min_age_hours,
+            limit=limit,
+            cursor=parsed_cursor,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return ReviewQueueListDTO(items=[_row_to_dto(row) for row in rows])
+    has_more = len(rows) > limit
+    page = rows[:limit]
+    next_cursor = _encode_cursor(page[-1].created_at, page[-1].item_id) if has_more else None
+    return ReviewQueueListDTO(items=[_row_to_dto(row) for row in page], nextCursor=next_cursor)
 
 
 @router.get("/{item_id}", response_model=ReviewItemDetailDTO)

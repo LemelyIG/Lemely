@@ -680,9 +680,15 @@ export interface ReviewQueueItem {
 /** Response for `GET /teacher/review` (mirrors `ReviewQueueListDTO`). Already
  * ordered oldest-first by the backend (`ReviewQueueItem.created_at` asc) —
  * the longest-waiting item is the highest priority, so T-07 renders this
- * order directly rather than re-sorting client-side. */
+ * order directly rather than re-sorting client-side.
+ *
+ * `nextCursor` (Task 9) is an opaque keyset token to echo back as `cursor` on
+ * the next `useReviewQueue` call to continue this page; `null` once the
+ * caller's whole queue (under the current filters) fits on this page —
+ * `Review.tsx`'s "Load more" button (Task 11, B6c) is gated on it. */
 export interface ReviewQueueList {
   items: ReviewQueueItem[]
+  nextCursor: string | null
 }
 
 /**

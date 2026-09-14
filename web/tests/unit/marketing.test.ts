@@ -2,7 +2,7 @@ import { beforeAll, describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import { marketingRoute } from "@/portals/marketing"
 import { studentRoute } from "@/portals/student"
 import * as marketingData from "@/portals/marketing/data"
@@ -38,8 +38,10 @@ import { close, hero } from "@/portals/marketing/data"
  *    built.
  */
 
+const topLevelRoutes = flattenRoutes(appRoutes)
+
 /** Top-level route paths the product mounts, in order. */
-const topLevelPaths = appRoutes.map((r) => r.path)
+const topLevelPaths = topLevelRoutes.map((r) => r.path)
 
 /**
  * Walk a route element tree looking for a component by display name.
@@ -64,13 +66,13 @@ describe("the marketing lane is public — P4.9", () => {
   })
 
   it("puts no auth guard on the marketing route", () => {
-    const route = appRoutes.find((r) => r.path === "/landing")
+    const route = topLevelRoutes.find((r) => r.path === "/landing")
     expect(route).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth")).toBe(false)
   })
 
   it.each(["teacher", "student", "parent"])("keeps the %s portal guarded", (portal) => {
-    const route = appRoutes.find((r) => r.path === portal)
+    const route = topLevelRoutes.find((r) => r.path === portal)
     expect(route).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth")).toBe(true)
   })

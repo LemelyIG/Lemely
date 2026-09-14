@@ -355,6 +355,88 @@ def test_list_queue_min_age_hours(
     assert len(review_service.list_queue(teacher, Role.teacher, min_age_hours=1000)) == 0
 
 
+# ── Cursor pagination (B6a) ──────────────────────────────────────────────────
+
+
+def _seed_n_items_with_created_at(
+    pg_sessionmaker: sessionmaker[Session],
+    student: uuid.UUID,
+    timestamps: list,
+) -> list[uuid.UUID]:
+    """Seed one open review item per timestamp (oldest first) and backdate
+    each item's ``created_at`` to the given value. Returns the item ids in
+    the same order as ``timestamps``."""
+    item_ids: list[uuid.UUID] = []
+    for i, ts in enumerate(timestamps):
+        attempt_id = _seed_attempt_with_review_items(
+            pg_sessionmaker,
+            student,
+            [_question(str(i), awarded=0, maximum=2, confidence_score=0.3, needs_review=True)],
+        )
+        items = _review_items_for_attempt(pg_sessionmaker, attempt_id)
+        assert len(items) == 1
+        item_id = items[0].id
+        with pg_sessionmaker() as session:
+            session.execute(
+                sa.text("UPDATE review_queue SET created_at = :ts WHERE id = :id"),
+                {"ts": ts, "id": item_id},
+            )
+            session.commit()
+        item_ids.append(item_id)
+    return item_ids
+
+
+def test_list_queue_cursor_pagination_no_overlap_no_gap(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    base = datetime.now(UTC) - timedelta(hours=5)
+    item_ids = _seed_n_items_with_created_at(
+        pg_sessionmaker, student, [base + timedelta(minutes=i) for i in range(5)]
+    )
+
+    page1 = review_service.list_queue(teacher, Role.teacher, limit=2)
+    # `limit + 1` rows come back so the caller can detect `has_more`.
+    assert len(page1) == 3
+    assert [r.item_id for r in page1[:2]] == item_ids[:2]
+
+    cursor = (page1[1].created_at, page1[1].item_id)
+    page2 = review_service.list_queue(teacher, Role.teacher, limit=2, cursor=cursor)
+    assert len(page2) == 3
+    assert [r.item_id for r in page2[:2]] == item_ids[2:4]
+
+    seen = [r.item_id for r in page1[:2]] + [r.item_id for r in page2[:2]]
+    assert seen == item_ids[:4]
+    assert len(set(seen)) == len(seen)
+
+
+def test_list_queue_cursor_stable_under_equal_created_at(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    from datetime import UTC, datetime
+
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    same_ts = datetime.now(UTC)
+    item_ids = _seed_n_items_with_created_at(pg_sessionmaker, student, [same_ts] * 3)
+
+    full = review_service.list_queue(teacher, Role.teacher)
+    assert [r.item_id for r in full] == sorted(item_ids)
+
+    page1 = review_service.list_queue(teacher, Role.teacher, limit=1)
+    assert len(page1) == 2
+    assert page1[0].item_id == full[0].item_id
+
+    cursor = (page1[0].created_at, page1[0].item_id)
+    page2 = review_service.list_queue(teacher, Role.teacher, limit=1, cursor=cursor)
+    assert page2[0].item_id == full[1].item_id
+
+
 # ── get_item ─────────────────────────────────────────────────────────────────
 
 

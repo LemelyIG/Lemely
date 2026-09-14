@@ -1,8 +1,10 @@
 import { StrictMode } from "react"
 import { createRoot } from "react-dom/client"
 import { RouterProvider } from "react-router-dom"
-import { QueryClientProvider } from "@tanstack/react-query"
+import { PersistQueryClientProvider } from "@tanstack/react-query-persist-client"
 import { queryClient } from "./lib/queryClient"
+import { persister } from "./lib/offline/queryPersister"
+import { isPersistableQueryKey } from "./lib/offline/persistAllowlist"
 import { AuthProvider } from "./lib/auth/AuthContext"
 import { router } from "./App"
 import { registerPushClientBridge } from "./lib/push/pushClientBridge"
@@ -88,7 +90,31 @@ installStaleChunkReload({
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <QueryClientProvider client={queryClient}>
+    {/*
+     * Task 10 (B6b): `PersistQueryClientProvider` wraps the same
+     * `queryClient` `QueryClientProvider` used, and behaves identically to
+     * it for every reader — the persisted-cache machinery only activates on
+     * `restoreClient`'s hydrate-then-drop-stale-data behaviour. `maxAge`
+     * (24h) matches `uploadQueue.ts`'s own abandon window, so nothing
+     * persisted here outlives the point the offline queue itself would give
+     * up. `buster: currentBuildId()` means a deploy invalidates the whole
+     * persisted cache rather than rehydrating a shape an older build wrote —
+     * the same build-id guard `lib/staleChunk.ts` already uses for chunk
+     * URLs. `shouldDehydrateQuery` is the one line that matters most:
+     * `isPersistableQueryKey` is an allowlist (`lib/offline/
+     * persistAllowlist.ts`'s own header explains why), so grades, an active
+     * marking run and the review queue are never written to IndexedDB at
+     * all, not merely excluded on read.
+     */}
+    <PersistQueryClientProvider
+      client={queryClient}
+      persistOptions={{
+        persister,
+        maxAge: 24 * 60 * 60 * 1000,
+        buster: currentBuildId(),
+        dehydrateOptions: { shouldDehydrateQuery: (query) => isPersistableQueryKey(query.queryKey) },
+      }}
+    >
       <AuthProvider>
         <ToastProvider>
           {/* Mounted once, above the router, so both of its effects (the
@@ -113,6 +139,6 @@ createRoot(document.getElementById("root")!).render(
           <RouterProvider router={router} />
         </ToastProvider>
       </AuthProvider>
-    </QueryClientProvider>
+    </PersistQueryClientProvider>
   </StrictMode>,
 )

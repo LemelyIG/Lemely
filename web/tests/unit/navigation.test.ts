@@ -2,11 +2,11 @@ import { describe, expect, it } from "vitest"
 
 import { navGroups, crumbs, resolveCrumb, resolveCrumbTrail } from "@/portals/student/data"
 import { navItems, resolveTrail, classesItemActive } from "@/portals/teacher/data"
-import { studentRoute } from "@/portals/student"
-import { teacherRoute } from "@/portals/teacher"
+import { studentRoute, STUDENT_BOTTOM_TABS } from "@/portals/student"
+import { teacherRoute, TEACHER_BOTTOM_TABS } from "@/portals/teacher"
 import { platformAdminRoute, schoolAdminRoute } from "@/portals/admin"
 import { platformNavItems, resolveAdminTrail, schoolNavItems } from "@/portals/admin/data"
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 
 /*
  * P3.1 · the IA restructure (DECISION D1.1-5), pinned.
@@ -240,6 +240,32 @@ describe("resolveCrumbTrail — the student portal's back affordance", () => {
       "Home",
       "0625",
     ])
+  })
+})
+
+/*
+ * Packet B3 (Task 4) · BottomNav's tab targets are the one place this task
+ * introduces new navigation destinations (the CTA bar and edge-swipe reuse
+ * existing routes), so they get the same "points at a mounted route" check
+ * every other nav list in this file already gets.
+ */
+describe("BottomNav tabs — B3", () => {
+  it("every student tab points at a mounted student route", () => {
+    for (const tab of STUDENT_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, studentRoutePaths),
+        `${tab.to} is not a mounted student route`,
+      ).toBe(true)
+    }
+  })
+
+  it("every teacher tab points at a mounted teacher route", () => {
+    for (const tab of TEACHER_BOTTOM_TABS) {
+      expect(
+        matchesSomeRoute(tab.to, teacherRoutePaths),
+        `${tab.to} is not a mounted teacher route`,
+      ).toBe(true)
+    }
   })
 })
 
@@ -538,7 +564,9 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   }
 
   it.each(NEW_PATHS)("registers %s at the top level", (path) => {
-    expect(appRoutes.some((r) => r.path === path), `${path} is not mounted`).toBe(true)
+    expect(flattenRoutes(appRoutes).some((r) => r.path === path), `${path} is not mounted`).toBe(
+      true,
+    )
   })
 
   it("covers all nine, so this suite cannot pass by naming fewer than the spec does", () => {
@@ -549,7 +577,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(WRAPPED)(
     "wraps %s in LoginRoute, bouncing a signed-in visitor to their own portal",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is not wrapped`).toBe(true)
     },
@@ -573,7 +601,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   it.each(UNWRAPPED)(
     "does NOT wrap %s in LoginRoute, so it stays reachable with a signed-in session",
     (path) => {
-      const route = appRoutes.find((r) => r.path === path)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === path)
       expect(route, `${path} is not mounted`).toBeDefined()
       expect(containsComponent(route!.element, "LoginRoute"), `${path} is wrapped`).toBe(false)
     },
@@ -584,7 +612,7 @@ describe("the nine signup/verify/reset/join routes — Task 19", () => {
   // signed-OUT visitor rather than a signed-in one — must appear on none of
   // them, wrapped or not.
   it.each(NEW_PATHS)("does not put %s behind RequireAuth", (path) => {
-    const route = appRoutes.find((r) => r.path === path)
+    const route = flattenRoutes(appRoutes).find((r) => r.path === path)
     expect(route, `${path} is not mounted`).toBeDefined()
     expect(containsComponent(route!.element, "RequireAuth"), `${path} is behind RequireAuth`).toBe(
       false,

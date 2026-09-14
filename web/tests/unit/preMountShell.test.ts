@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { fillPreMountShell, readLoadingTierDurations } from "../../vite/preMountShell.ts"
+import { fillPreMountShell, readLoadingTierDurations, readSidebarTokens } from "../../vite/preMountShell.ts"
 import { FULL_PAGE_STATE_COPY } from "../../src/portals/misc/fullPageStateCopy.ts"
 
 /*
@@ -38,6 +38,12 @@ const COLOR_PLACEHOLDERS = [
 
 const DURATION_PLACEHOLDERS = ["%LEMELY_LOADING_TIER_SKELETON%", "%LEMELY_LOADING_TIER_SLOW%"]
 
+// Packet B3 (Task 4): the sidebar width/breakpoint literals index.html's
+// pre-mount shell used to hardcode (246px, 820px) are now resolved from
+// index.css's `--sidebar-width`/`--breakpoint-sidebar` tokens the same way
+// the two duration placeholders above are — see `readSidebarTokens`.
+const SIZE_PLACEHOLDERS = ["%LEMELY_SIDEBAR_WIDTH%", "%LEMELY_SIDEBAR_BREAKPOINT%"]
+
 describe("readLoadingTierDurations", () => {
   it("reads both tier durations off a real index.css", () => {
     const css = readFileSync(join(ROOT, "src/index.css"), "utf8")
@@ -57,10 +63,29 @@ describe("readLoadingTierDurations", () => {
   })
 })
 
+describe("readSidebarTokens", () => {
+  it("reads both size tokens off a real index.css", () => {
+    const css = readFileSync(join(ROOT, "src/index.css"), "utf8")
+    expect(readSidebarTokens(css)).toEqual({
+      "%LEMELY_SIDEBAR_WIDTH%": "252px",
+      "%LEMELY_SIDEBAR_BREAKPOINT%": "820px",
+    })
+  })
+
+  it("throws, naming the token, when a declaration is missing", () => {
+    const withoutWidth = `:root {\n  --breakpoint-sidebar: 820px;\n}\n`
+    expect(() => readSidebarTokens(withoutWidth)).toThrow(/sidebar-width/)
+  })
+
+  it("throws on an empty file rather than resolving to an empty string", () => {
+    expect(() => readSidebarTokens("")).toThrow(/sidebar-width/)
+  })
+})
+
 describe("fillPreMountShell", () => {
-  it("replaces every colour and duration placeholder in the real index.html", () => {
+  it("replaces every colour, duration and size placeholder in the real index.html", () => {
     const filled = fillPreMountShell(REAL_INDEX_HTML)
-    for (const placeholder of [...COLOR_PLACEHOLDERS, ...DURATION_PLACEHOLDERS]) {
+    for (const placeholder of [...COLOR_PLACEHOLDERS, ...DURATION_PLACEHOLDERS, ...SIZE_PLACEHOLDERS]) {
       expect(filled).not.toContain(placeholder)
     }
   })
@@ -79,6 +104,12 @@ describe("fillPreMountShell", () => {
     expect(filled).toContain("5000ms")
   })
 
+  it("substitutes the real sidebar width and breakpoint for the size placeholders", () => {
+    const filled = fillPreMountShell(REAL_INDEX_HTML)
+    expect(filled).toContain("252px")
+    expect(filled).toContain("820px")
+  })
+
   it("throws when a colour placeholder is missing from the source", () => {
     const withoutPaper = REAL_INDEX_HTML.replaceAll("%LEMELY_COLOR_PAPER%", "")
     expect(() => fillPreMountShell(withoutPaper)).toThrow(/LEMELY_COLOR_PAPER/)
@@ -87,6 +118,11 @@ describe("fillPreMountShell", () => {
   it("throws when a duration placeholder is missing from the source", () => {
     const withoutSlow = REAL_INDEX_HTML.replaceAll("%LEMELY_LOADING_TIER_SLOW%", "")
     expect(() => fillPreMountShell(withoutSlow)).toThrow(/LEMELY_LOADING_TIER_SLOW/)
+  })
+
+  it("throws when a size placeholder is missing from the source", () => {
+    const withoutWidth = REAL_INDEX_HTML.replaceAll("%LEMELY_SIDEBAR_WIDTH%", "")
+    expect(() => fillPreMountShell(withoutWidth)).toThrow(/LEMELY_SIDEBAR_WIDTH/)
   })
 
   it("is idempotent-safe against an already-empty document", () => {
@@ -108,14 +144,14 @@ describe("fillPreMountShell", () => {
     expect(() => fillPreMountShell(withStray)).toThrow(/LEMELY_COLOR_SURPRISE/)
   })
 
-  it("leaves no %LEMELY_COLOR_...% or %LEMELY_LOADING_TIER_...% placeholder in the resolved real index.html", () => {
-    // Scoped to this plugin's two placeholder families, not every
+  it("leaves no %LEMELY_COLOR_...%, %LEMELY_LOADING_TIER_...% or %LEMELY_SIDEBAR_...% placeholder in the resolved real index.html", () => {
+    // Scoped to this plugin's three placeholder families, not every
     // `%LEMELY_..._%` in the document: `%LEMELY_THEME_COLOR%` on the
     // `theme-color` meta tag belongs to `themeColor.ts`'s own plugin and is
     // never touched by `fillPreMountShell` alone, so it is expected to still
     // be present here.
     const filled = fillPreMountShell(REAL_INDEX_HTML)
-    expect(filled).not.toMatch(/%LEMELY_(?:COLOR|LOADING_TIER)_[A-Z_]+%/)
+    expect(filled).not.toMatch(/%LEMELY_(?:COLOR|LOADING_TIER|SIDEBAR)_[A-Z_]+%/)
     expect(filled).toContain("%LEMELY_THEME_COLOR%")
   })
 })
@@ -211,38 +247,63 @@ describe("BLOCKER 1: tier 2/3 are visibility:hidden until their delay elapses", 
 
 /*
  * Adversarial-review BLOCKER 2: the pre-mount shell's portal chrome had no
- * mobile breakpoint — a fixed 246px sidebar column and a matching 246px
- * `margin-left` inset on tier 3 painted unconditionally, while the real
- * portal `<aside>` only exists from `min-[820px]:flex` up
+ * mobile breakpoint — a fixed sidebar column and a matching `margin-left`
+ * inset on tier 3 painted unconditionally, while the real portal `<aside>`
+ * only exists from the `sidebar:` breakpoint up
  * (`src/portals/student/index.tsx`). Pinned as a source-text assertion: the
- * two `246px` declarations may only appear inside a `min-width: 820px`
- * media query.
+ * two `%LEMELY_SIDEBAR_WIDTH%` declarations may only appear inside a
+ * `min-width: %LEMELY_SIDEBAR_BREAKPOINT%` media query.
+ *
+ * Packet B3 (Task 4) moved the two gated values off literal `246px`/`820px`
+ * onto `%LEMELY_SIDEBAR_WIDTH%`/`%LEMELY_SIDEBAR_BREAKPOINT%`, resolved from
+ * the same `--sidebar-width`/`--breakpoint-sidebar` tokens `nav-shells.tsx`'s
+ * `SIDEBAR_WIDTH`/`SIDEBAR_BREAKPOINT` constants read — see
+ * `readSidebarTokens` above. This block now asserts the gating on the
+ * placeholder (pre-build) and, separately, on the resolved 252px/820px
+ * values `fillPreMountShell` produces (post-build) — the two-value drift
+ * this test caught with a bare literal is impossible now (both come from one
+ * token pair), but the "still gated on the real breakpoint" property is
+ * unrelated to that and still worth pinning on the actual shipped markup.
  */
-describe('BLOCKER 2: the 246px sidebar column/inset are gated on min-width: 820px', () => {
-  it("every `246px` CSS declaration in index.html's shell styles sits inside a min-width: 820px media query", () => {
-    const styleStart = REAL_INDEX_HTML.indexOf("<style>")
-    const styleEnd = REAL_INDEX_HTML.indexOf("</style>")
-    const style = REAL_INDEX_HTML.slice(styleStart, styleEnd)
+describe("BLOCKER 2: the sidebar column/inset are gated on the sidebar breakpoint", () => {
+  function assertGated(html: string, valuePattern: RegExp, mediaQuery: string, label: string) {
+    const styleStart = html.indexOf("<style>")
+    const styleEnd = html.indexOf("</style>")
+    const style = html.slice(styleStart, styleEnd)
 
-    // Declarations only: `246px` inside a CSS comment (prose explaining the
+    // Declarations only: the value inside a CSS comment (prose explaining the
     // rule) doesn't count, so comments are blanked the same way
     // stripHtmlComments (above) blanks HTML comments.
     const withoutComments = style.replace(/\/\*[\s\S]*?\*\//g, (c) => c.replace(/[^\n]/g, " "))
 
-    const declarations = [...withoutComments.matchAll(/246px/g)]
-    expect(declarations.length).toBeGreaterThan(0)
+    const declarations = [...withoutComments.matchAll(valuePattern)]
+    expect(declarations.length, `no ${label} declaration found at all`).toBeGreaterThan(0)
 
     for (const match of declarations) {
       const before = withoutComments.slice(0, match.index)
-      const lastMediaOpen = before.lastIndexOf("@media (min-width: 820px)")
+      const lastMediaOpen = before.lastIndexOf(mediaQuery)
       // Every "{" between the media query and this match, minus every "}",
       // must stay net positive — i.e. the match is still nested inside that
       // media query's braces, not in a sibling rule after it closed.
-      expect(lastMediaOpen, "246px declaration found outside any min-width:820px media query").toBeGreaterThan(-1)
+      expect(lastMediaOpen, `${label} declaration found outside any ${mediaQuery} media query`).toBeGreaterThan(-1)
       const between = before.slice(lastMediaOpen)
       const depth = (between.match(/\{/g) ?? []).length - (between.match(/\}/g) ?? []).length
-      expect(depth, "246px declaration found after its enclosing @media block closed").toBeGreaterThan(0)
+      expect(depth, `${label} declaration found after its enclosing @media block closed`).toBeGreaterThan(0)
     }
+  }
+
+  it("every %LEMELY_SIDEBAR_WIDTH% declaration in the source sits inside a min-width: %LEMELY_SIDEBAR_BREAKPOINT% media query", () => {
+    assertGated(
+      REAL_INDEX_HTML,
+      /%LEMELY_SIDEBAR_WIDTH%/g,
+      "@media (min-width: %LEMELY_SIDEBAR_BREAKPOINT%)",
+      "%LEMELY_SIDEBAR_WIDTH%",
+    )
+  })
+
+  it("every resolved 252px declaration sits inside a min-width: 820px media query", () => {
+    const filled = fillPreMountShell(REAL_INDEX_HTML)
+    assertGated(filled, /252px/g, "@media (min-width: 820px)", "252px")
   })
 })
 

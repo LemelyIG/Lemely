@@ -19,7 +19,7 @@ import {
   getDeviceId,
   getSession,
   setSession,
-  clearSession,
+  endSession,
   subscribeToSession,
   type Session,
 } from "./storage"
@@ -262,7 +262,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   })
 
   const logout = () => {
-    clearSession()
+    // `endSession` (`auth/storage.ts`) — H1/H2, security review: sign-out
+    // must drop every session-scoped cache, not just the session object —
+    // the persisted react-query cache and the offline upload queue's raw
+    // scan bytes too, the same as `RequireAuth.tsx`'s stranded-session
+    // redirect and `api.ts`'s refused silent refresh now do. See
+    // `endSession`'s own doc comment for the full guard.
+    endSession()
     setSessionState(null)
   }
 

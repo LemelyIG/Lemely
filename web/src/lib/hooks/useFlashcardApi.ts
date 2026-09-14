@@ -204,6 +204,14 @@ export function useReviewCard(): UseMutationResult<
         method: "POST",
         body: JSON.stringify({ grade } satisfies ReviewCardRequest),
       }),
+    // Task 7 (B5a): grading is now optimistic — `FlashcardReview.tsx`
+    // advances to the next card before this settles — so a transient
+    // failure is worth retrying quietly before it ever reaches the failed-
+    // grades banner. Capped backoff, not unbounded: a card that is really
+    // failing (a 4xx, an offline device) should reach the banner in seconds,
+    // not hang the session.
+    retry: 3,
+    retryDelay: (attempt) => Math.min(1000 * 2 ** attempt, 8000),
     onSuccess: () => {
       queryClient.invalidateQueries({ queryKey: DUE_KEY })
       queryClient.invalidateQueries({ queryKey: DECKS_KEY })

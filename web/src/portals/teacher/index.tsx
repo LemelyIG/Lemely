@@ -5,9 +5,11 @@ import { useQueryClient } from "@tanstack/react-query"
 import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
+import { BadgeSync } from "@/components/badge-sync"
 import { BrandMark } from "@/components/ui/brand-mark"
-import { RouteFallback } from "@/components/ui/state-views"
-import { Link, Navigate, NavLink, Outlet, useLocation } from "react-router-dom"
+import { RouteSkeleton } from "@/components/ui/route-skeleton"
+import { ScreenOutlet } from "@/components/ui/screen-outlet"
+import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
 import {
   SquaresFour,
   FileText,
@@ -19,6 +21,7 @@ import {
   Bell,
   Megaphone,
   Gear,
+  List,
   type Icon,
 } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
@@ -26,6 +29,8 @@ import { Avatar } from "@/components/ui/avatar"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
 import { portalErrorFallback } from "@/components/route-error"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
+import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
+import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
@@ -33,7 +38,6 @@ import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
-import { Chip } from "@/components/ui/chip"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
@@ -124,84 +128,25 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
   settings: Gear,
 }
 
-/** The inbox's unread count. Renders nothing while pending, on error, or at
- * zero, so the nav never shows a number the app has not established. */
-function UnreadNotificationsBadge() {
-  const { data } = useNotificationCounts()
-  const label = unreadBadgeLabel(data)
-  if (label === null) return null
-  return (
-    <Chip tone="warn" className="flex-none">
-      {label}
-      <span className="sr-only"> unread</span>
-    </Chip>
-  )
-}
-
-function SidebarNavItem({
-  item,
-  touch = false,
-  forceActive = false,
-}: {
-  item: NavItem
-  touch?: boolean
-  /** Overrides NavLink's own `isActive` to true. Used by the Classes row for
-   * the one case its own `end: true` match cannot see — see
-   * `data.ts`'s `classesItemActive`. */
-  forceActive?: boolean
-}) {
+/*
+ * Packet B3 (Task 4): rows now render through the shared `SidebarNav`
+ * primitive (`TeacherNav` below) rather than this file's own copy of the
+ * active-row/focus-ring/touch-floor styling — the same retrofit the admin
+ * portal took. `unread` is resolved here (not inside `NavShellItem.badge`,
+ * which is a plain `string | number`) and passed down as the notifications
+ * row's own badge value.
+ */
+function toNavShellItem(item: NavItem, options: { forceActive?: boolean; badge?: string } = {}): NavShellItem {
   const Glyph = NAV_ICON[item.icon]
-  return (
-    <NavLink
-      to={item.to}
-      end={item.end}
-      className={({ isActive }) =>
-        cn(
-          // Symmetric padding has no direction, so this row needs no logical
-          // rewrite (P3.4).
-          // §6.1's 44px floor; this row measured 32px. See the same line in the
-          // admin and student sidebars — one shape, three portals.
-          "flex items-center gap-2.5 w-full text-start text-label px-[9px] py-2 pointer-coarse:min-h-11 rounded-md",
-          "transition-colors duration-[var(--dur-instant)] ease-out-soft",
-          // `focus-ring`, not `accent`: DESIGN.md §3.9 makes focus deliberately
-          // blue so it stays distinguishable from the accent's own hover and
-          // selected states. This row used `outline-accent`, which made
-          // "focused" and "current" the same colour on a nav whose active row
-          // is already accent-marked. Same fix the student sidebar took.
-          "focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring",
-          // The active rule is reserved at every state, transparent when
-          // inactive, so turning it on cannot nudge the label sideways by 2px
-          // as you navigate.
-          "border-s-2",
-          touch && "min-h-11",
-          isActive || forceActive
-            ? "border-accent bg-paper-raised text-ink"
-            : "border-transparent bg-transparent text-ink-muted hover:bg-paper hover:text-ink",
-        )
-      }
-    >
-      {({ isActive }) => {
-        const active = isActive || forceActive
-        return (
-          <>
-            {/* §10 permits `fill` for a single active-state nav icon, and this
-                is it. The active row therefore carries four independent
-                signals — the accent margin rule, the raised sheet,
-                full-strength ink, and the filled glyph — so none of them
-                carries the state alone. */}
-            <Glyph
-              size={16}
-              weight={active ? "fill" : "regular"}
-              className={cn("shrink-0", active ? "text-accent" : "text-ink-faint")}
-              aria-hidden="true"
-            />
-            <span className="flex-1">{item.label}</span>
-            {item.badge === "unread-notifications" ? <UnreadNotificationsBadge /> : null}
-          </>
-        )
-      }}
-    </NavLink>
-  )
+  return {
+    id: item.to,
+    to: item.to,
+    end: item.end,
+    label: item.label,
+    icon: <Glyph size={16} aria-hidden="true" />,
+    active: options.forceActive,
+    badge: options.badge,
+  }
 }
 
 /**
@@ -328,30 +273,31 @@ function UserBlock() {
  * the defect P3.1 fixes is navigation that exists at one width and not
  * another, and two copies of the list is how that comes back.
  */
-function TeacherNav({ touch = false }: { touch?: boolean }) {
+function TeacherNav() {
   const location = useLocation()
   // Same query `ClassesNavSection` below subscribes to — react-query dedupes
   // by queryKey, so this adds no second request, only a second subscriber to
   // the classes list already in flight (or cached).
   const { data } = useTeacherClasses()
   const visibleClassIds = data?.classes.slice(0, 5).map((c) => c.id) ?? []
+  // Same query `BadgeSync` (the app badge) already subscribes to — no second
+  // request, only a second subscriber to the one query.
+  const { data: counts } = useNotificationCounts()
+  const unread = unreadBadgeLabel(counts) ?? undefined
+
+  const shellItems: NavShellItem[] = navItems.map((item) =>
+    toNavShellItem(item, {
+      forceActive:
+        item.to === "/teacher/classes"
+          ? classesItemActive(location.pathname, visibleClassIds)
+          : undefined,
+      badge: item.badge === "unread-notifications" ? unread : undefined,
+    }),
+  )
 
   return (
     <div className="flex flex-col gap-[22px]">
-      <nav aria-label="Teacher sections" className="flex flex-col gap-0.5">
-        {navItems.map((item) => (
-          <SidebarNavItem
-            key={item.to}
-            item={item}
-            touch={touch}
-            forceActive={
-              item.to === "/teacher/classes"
-                ? classesItemActive(location.pathname, visibleClassIds)
-                : false
-            }
-          />
-        ))}
-      </nav>
+      <SidebarNav aria-label="Teacher sections" items={shellItems} />
       <ClassesNavSection />
     </div>
   )
@@ -404,7 +350,7 @@ function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
     // is "sidebars, table headers, code blocks, inset areas".
-    <aside className="hidden md:flex w-[252px] flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
+    <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
       <BrandLockup />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
@@ -446,7 +392,7 @@ function TeacherTopBar({ onOpenNav }: { onOpenNav: () => void }) {
       <NavDrawerTrigger
         onClick={onOpenNav}
         label="Open teacher navigation"
-        className="-ms-2 md:hidden"
+        className="-ms-2 sidebar:hidden"
       />
       {/* One crumb means the trail is just the page's own name, which the page
           heading already says. Rendering nothing is better than rendering a
@@ -506,6 +452,25 @@ export function teacherFirstClassRedirect(
   return "/teacher/first-class"
 }
 
+/** The four route-backed BottomNav tabs, exported so `navigation.test.ts` can
+ * assert each `to` resolves to a mounted route without rendering the shell.
+ * Labels declared in tab order ("Overview", "Grading", "Review", "Classes")
+ * ahead of `TeacherLayout`'s own "More" so `navShells.test.ts`'s ordered
+ * regex over the stripped source sees all five labels in the same order the
+ * bar renders them. */
+export const TEACHER_BOTTOM_TABS: readonly {
+  id: string
+  label: string
+  to: string
+  end?: boolean
+  icon: Icon
+}[] = [
+  { id: "overview", label: "Overview", to: "/teacher", end: true, icon: SquaresFour },
+  { id: "grading", label: "Grading", to: "/teacher/grading", icon: FileText },
+  { id: "review", label: "Review", to: "/teacher/review", icon: SealQuestion },
+  { id: "classes", label: "Classes", to: "/teacher/classes", icon: ChartBar },
+]
+
 function TeacherLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
@@ -518,20 +483,17 @@ function TeacherLayout() {
    * (`["teacher", "classes"]`), so this adds no second network request, only
    * a second subscriber to the one already in flight.
    *
-   * A pending query renders the shared route fallback in place of the whole
-   * shell rather than the shell-with-a-fallback-inside-it, for the same
-   * reason D7.9's version does: until the list resolves we do not yet know
-   * whether this teacher belongs on this route, so there is nothing honest
-   * to put in a sidebar built for a destination we might immediately
-   * redirect away from. An errored query falls through to the portal exactly
-   * as it rendered before this gate existed — a `/teacher/classes` hiccup
-   * must degrade to "the portal renders", never to "the account is stuck on
-   * the first-class step until the network recovers".
+   * A pending query used to render the shared route fallback in place of the
+   * whole shell — sidebar and all — rather than the shell with a fallback
+   * inside it. Packet B1 corrects that the same way it does for the student
+   * portal: the shell renders regardless, with `<RouteSkeleton />` standing
+   * in for the content below. `teacherFirstClassRedirect` already returns
+   * `null` for any non-`"success"` status, so calling it unconditionally
+   * here is exactly as safe as the old early return was — an errored query
+   * still falls through to the portal exactly as before, and a pending one
+   * still never redirects.
    */
   const classesQuery = useTeacherClasses()
-  if (classesQuery.isPending) {
-    return <RouteFallback className="p-8" />
-  }
   const firstClassRedirect = teacherFirstClassRedirect(
     classesQuery.status,
     classesQuery.data?.classes.length ?? 0,
@@ -550,6 +512,9 @@ function TeacherLayout() {
     // `body`'s paint showing through beneath the fixed grain overlay.
     <div data-portal="teacher" className="paper-grain flex min-h-dvh bg-paper">
       <SkipLink />
+      {/* Task 7 (B5a): see student/index.tsx's own comment on this line —
+          same reason, same shape. */}
+      <BadgeSync />
       <Sidebar />
 
       <NavDrawer
@@ -558,17 +523,24 @@ function TeacherLayout() {
         title="Lemely"
         footer={<SidebarFooter />}
       >
-        <TeacherNav touch />
+        <TeacherNav />
       </NavDrawer>
+
+      {/* Packet B3 (Task 4): standalone-only, renders nothing — see the
+          component's own doc comment. */}
+      <EdgeSwipeBack />
 
       <div className="flex-1 min-w-0 flex flex-col">
         <TeacherTopBar onOpenNav={() => setNavOpen(true)} />
         {/* `<main>` is the content area only, not the whole column: the skip
-            link's target must not contain the navigation it skips. */}
+            link's target must not contain the navigation it skips.
+            `pb-bottom-nav`/`sidebar:pb-8`: clearance for the fixed
+            `BottomNav` below the `sidebar` breakpoint, an ordinary bottom
+            gutter once it is gone. */}
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
-          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile py-6 md:px-page-tablet lg:px-page-desktop lg:py-8 focus:outline-none"
+          className="flex-1 min-w-0 overflow-x-hidden w-full max-w-app px-page-mobile pt-6 pb-bottom-nav sidebar:pb-8 md:px-page-tablet lg:px-page-desktop lg:pt-8 focus:outline-none"
         >
           {/* PR 2 part C: offline recovery banner, above the Suspense/
               ErrorBoundary content it sits over — it renders nothing while
@@ -590,25 +562,62 @@ function TeacherLayout() {
               say" shape as the two banners above. Student and teacher only —
               see the component's own header for why. */}
           <InstallBanner />
-          <Suspense fallback={<RouteFallback className="text-body-md" />}>
-            {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
-                rebuilds each surface") for this portal: a render crash in one
-                screen stays inside this content slot rather than taking the
-                sidebar down with it or falling out to the top-level
-                `errorElement`. Inside `Suspense` so a failed chunk load and a
-                render throw both land in this boundary.
-                `resetKey={location.pathname}` clears a caught error on
-                navigation. */}
-            <ErrorBoundary
-              label="This page"
-              resetKey={location.pathname}
-              fallback={portalErrorFallback}
-            >
-              <Outlet />
-            </ErrorBoundary>
-          </Suspense>
+          {/* Packet B1: the classes-query pending state renders the same
+              `RouteSkeleton` a chunk-load wait does, in the same content
+              slot, rather than blanking the shell below `TeacherTopBar` —
+              see the comment above `classesQuery` for why this is safe to
+              gate on here rather than bailing out of the whole layout. */}
+          {classesQuery.isPending ? (
+            <RouteSkeleton />
+          ) : (
+            <Suspense fallback={<RouteSkeleton />}>
+              {/* PR 1B fulfils `routes.tsx`'s note ("Phase 4 places those as it
+                  rebuilds each surface") for this portal: a render crash in one
+                  screen stays inside this content slot rather than taking the
+                  sidebar down with it or falling out to the top-level
+                  `errorElement`. Inside `Suspense` so a failed chunk load and a
+                  render throw both land in this boundary.
+                  `resetKey={location.pathname}` clears a caught error on
+                  navigation. */}
+              <ErrorBoundary
+                label="This page"
+                resetKey={location.pathname}
+                fallback={portalErrorFallback}
+              >
+                <ScreenOutlet />
+              </ErrorBoundary>
+            </Suspense>
+          )}
         </main>
       </div>
+
+      {/* Below the `sidebar` breakpoint, the primary navigation — same
+          shape as the student portal's own BottomNav, see that file's
+          comment on the identical mount. Review carries no badge: no
+          client-side count of the review queue's depth exists outside the
+          queue screen's own filtered query (re-grepped — `useReviewQueue`
+          has no caller in this file), and adding one would be a new fetch
+          this task's scope does not cover. */}
+      <BottomNav
+        items={[
+          ...TEACHER_BOTTOM_TABS.map(
+            (tab): NavShellItem => ({
+              id: tab.id,
+              to: tab.to,
+              end: tab.end,
+              label: tab.label,
+              icon: <tab.icon size={22} aria-hidden="true" />,
+            }),
+          ),
+          {
+            id: "more",
+            label: "More",
+            icon: <List size={22} aria-hidden="true" />,
+            onClick: () => setNavOpen(true),
+          },
+        ]}
+        className="sidebar:hidden"
+      />
     </div>
   )
 }
@@ -618,21 +627,49 @@ export const teacherRoute: RouteObject = {
   element: <TeacherLayout />,
   children: [
     // P6.5 · `handle.title` on every child. See `lib/meta/documentMeta.ts`.
-    { index: true, element: <Overview />, handle: { title: "Teacher dashboard" } },
-    { path: "grading", element: <Grading />, handle: { title: "Grading console" } },
-    { path: "review", element: <Review />, handle: { title: "Review queue" } },
-    { path: "review/:itemId", element: <ReviewItem />, handle: { title: "Review a mark" } },
-    { path: "classes", element: <Classes />, handle: { title: "Classes" } },
+    {
+      index: true,
+      element: <Overview />,
+      handle: { title: "Teacher dashboard", skeleton: "card-grid" },
+    },
+    {
+      path: "grading",
+      element: <Grading />,
+      handle: { title: "Grading console", skeleton: "page-header" },
+    },
+    {
+      path: "review",
+      element: <Review />,
+      handle: { title: "Review queue", skeleton: "list" },
+    },
+    {
+      path: "review/:itemId",
+      element: <ReviewItem />,
+      handle: { title: "Review a mark", skeleton: "page-header" },
+    },
+    {
+      path: "classes",
+      element: <Classes />,
+      handle: { title: "Classes", skeleton: "card-grid" },
+    },
     {
       path: "classes/:classId",
       element: <ClassDetailLayout />,
       // The layout carries a title so its `index` child (the roster) inherits
       // one, and `analytics` overrides it. Deepest wins, so this is the
       // fallback rather than a competing entry.
-      handle: { title: "Class" },
+      handle: { title: "Class", skeleton: "page-header" },
       children: [
-        { index: true, element: <ClassRoster />, handle: { title: "Class roster" } },
-        { path: "analytics", element: <ClassAnalytics />, handle: { title: "Class analytics" } },
+        {
+          index: true,
+          element: <ClassRoster />,
+          handle: { title: "Class roster", skeleton: "page-header" },
+        },
+        {
+          path: "analytics",
+          element: <ClassAnalytics />,
+          handle: { title: "Class analytics", skeleton: "page-header" },
+        },
       ],
     },
     // D7.10 / Task 21. Deliberately not in `navItems` (`./data.ts`), matching
@@ -646,52 +683,84 @@ export const teacherRoute: RouteObject = {
     {
       path: "first-class",
       element: <CreateFirstClass />,
-      handle: { title: "Create your first class" },
+      handle: { title: "Create your first class", skeleton: "page-header" },
     },
-    { path: "students/:studentId", element: <StudentDetail />, handle: { title: "Student" } },
-    { path: "at-risk", element: <AtRiskList />, handle: { title: "Students at risk" } },
-    { path: "schemes", element: <MarkSchemes />, handle: { title: "Mark schemes" } },
-    { path: "quizzes", element: <Quizzes />, handle: { title: "Quizzes" } },
-    { path: "quizzes/:quizId", element: <QuizBuilder />, handle: { title: "Quiz builder" } },
+    {
+      path: "students/:studentId",
+      element: <StudentDetail />,
+      handle: { title: "Student", skeleton: "page-header" },
+    },
+    {
+      path: "at-risk",
+      element: <AtRiskList />,
+      handle: { title: "Students at risk", skeleton: "list" },
+    },
+    {
+      path: "schemes",
+      element: <MarkSchemes />,
+      handle: { title: "Mark schemes", skeleton: "list" },
+    },
+    {
+      path: "quizzes",
+      element: <Quizzes />,
+      handle: { title: "Quizzes", skeleton: "card-grid" },
+    },
+    {
+      path: "quizzes/:quizId",
+      element: <QuizBuilder />,
+      handle: { title: "Quiz builder", skeleton: "page-header" },
+    },
     // T-10 is per assignment, never per quiz (§1.6) — the route shape is the
     // first place that has to say so.
     {
       path: "quizzes/:quizId/assignments/:assignmentId/results",
       element: <QuizResults />,
-      handle: { title: "Quiz results" },
+      handle: { title: "Quiz results", skeleton: "page-header" },
     },
-    { path: "announcements", element: <Announcements />, handle: { title: "Announcements" } },
+    {
+      path: "announcements",
+      element: <Announcements />,
+      handle: { title: "Announcements", skeleton: "list" },
+    },
     {
       path: "notifications",
       element: <TeacherNotifications />,
-      handle: { title: "Notifications" },
+      handle: { title: "Notifications", skeleton: "list" },
     },
     {
       path: "settings",
       element: <PortalSettingsLayout basePath="/teacher/settings" />,
-      handle: { title: "Settings" },
+      handle: { title: "Settings", skeleton: "page-header" },
       children: [
-        { index: true, element: <ProfileSettingsSection />, handle: { title: "Profile settings" } },
+        {
+          index: true,
+          element: <ProfileSettingsSection />,
+          handle: { title: "Profile settings", skeleton: "page-header" },
+        },
         {
           path: "devices",
           element: <DeviceSettingsSection />,
-          handle: { title: "Account and devices" },
+          handle: { title: "Account and devices", skeleton: "page-header" },
         },
         {
           path: "notifications",
           element: <NotificationSettingsSection />,
-          handle: { title: "Notification settings" },
+          handle: { title: "Notification settings", skeleton: "page-header" },
         },
         {
           path: "install",
           element: <InstallSettingsSection />,
-          handle: { title: "Install Lemely" },
+          handle: { title: "Install Lemely", skeleton: "page-header" },
         },
       ],
     },
     // P4.10. Last, so it only matches what nothing above did — an unmatched
     // path in this portal used to fall to the top-level `*` and cost the
     // reader the sidebar. See `portals/misc/NotFound.tsx`.
-    { path: "*", element: <PortalNotFound />, handle: { title: "Page not found" } },
+    {
+      path: "*",
+      element: <PortalNotFound />,
+      handle: { title: "Page not found", skeleton: "page-header" },
+    },
   ],
 }

@@ -49,6 +49,21 @@
  * exist. `index.html` carries the default for anything that does not override.
  */
 
+/**
+ * The tier-2 skeleton shape a route's `RouteSkeleton` renders while its chunk
+ * loads (DESIGN.md §12, packet B1) — `route-skeleton.tsx`'s
+ * `skeletonForMatches` reads this off the deepest matched `handle` the same
+ * way `pageMetaFromMatches` reads `title`.
+ *
+ * `"standalone"` is the top-level auth/settings/misc routes with no portal
+ * chrome to promise (`RouteFallback`'s `frame="standalone"`, no tier-2
+ * skeleton at all). The other three are `frame="content"` shapes, matched to
+ * what the screen actually opens with: `"card-grid"` for a dashboard of
+ * tiles, `"list"` for a queue/roster/feed, `"page-header"` for everything
+ * else (a form, a single record, a drilldown).
+ */
+export type SkeletonShape = "page-header" | "card-grid" | "list" | "standalone"
+
 /** Static metadata attached to a route's `handle`. */
 export interface PageMeta {
   /**
@@ -65,6 +80,30 @@ export interface PageMeta {
    * Only for routes reachable without a session. See the module note.
    */
   description?: string
+  /** See `SkeletonShape`. Every route with an `element` declares one. */
+  skeleton?: SkeletonShape
+  /**
+   * `false` opts a route's own entrance out of View Transitions (packet
+   * B2b, DESIGN.md §9.4) — a static declaration of the exception, not
+   * something any router mechanism reads automatically (`viewTransition` is
+   * a per-navigation option on the `Link`/`navigate()` call, not something
+   * react-router derives from the destination route's `handle`). It exists
+   * so the exception is visible in the route table itself rather than only
+   * as an absence at every call site that navigates here — the same reason
+   * `skeleton` lives on `handle` rather than being inferred. Omitted (not
+   * `true`) everywhere else: the ordinary case needs no marker.
+   */
+  viewTransition?: false
+  /**
+   * Packet B3 (Task 4): `"correct"` marks a route as one of the screens the
+   * student portal's thumb-zone `BottomActionBar` ("Correct a paper")
+   * appears on below the `sidebar` breakpoint — Overview, Subject and
+   * PaperResult. Read via `pageMetaFromMatches(useMatches())` in
+   * `StudentLayout`, the same deepest-match lookup `applyDocumentMeta` uses
+   * for the title, so a route's CTA visibility can never disagree with which
+   * route the reader is actually looking at.
+   */
+  primaryAction?: "correct"
 }
 
 /** The product name, appended to every page title. */

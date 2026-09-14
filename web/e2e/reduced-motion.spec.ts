@@ -43,6 +43,11 @@ import { readSeed } from "./seed"
  * block and the two `reduce` expectations must fail. A reduced-motion test
  * that still passes with the rule removed is the "passes for the wrong
  * reason" shape this build has already paid for once (P5.5 chunk C).
+ *
+ * B7 (Task 12) broadens reduced-motion coverage beyond this file's single
+ * route/Button pair — see `e2e/native-feel.spec.ts`'s Assertion 8, which
+ * additionally covers every animated/transitioning element on `/student`
+ * plus synchronous overlay unmount.
  */
 
 /** `getComputedStyle` returns CSS time strings ("0.32s", "0.001ms"). */

@@ -487,29 +487,41 @@ self.addEventListener("message", (event: ExtendableMessageEvent) => {
   })
 })
 
-describe("runChecks — --phase-b gated checks", () => {
-  it("are skipped (not present in the results) when phaseB is not passed", () => {
+describe("runChecks — routes.tsx / body-overflow checks run unconditionally (packet B2)", () => {
+  // These two used to run only behind a `--phase-b` flag while Phase A/B1
+  // were landing. Both hold on the real tree as of B2, so they are now part
+  // of the plain result set, same as every other check.
+  it("are present in the results with no flag needed", () => {
     const result = run(goodInput())
-    expect(result.checks.find((c) => c.name.includes("RouteFallback"))).toBeUndefined()
-    expect(result.checks.find((c) => c.name.includes("body.style.overflow"))).toBeUndefined()
+    expect(result.checks.find((c) => c.name.includes("RouteFallback"))).toBeDefined()
+    expect(result.checks.find((c) => c.name.includes("body.style.overflow"))).toBeDefined()
   })
 
-  it("fail when routes.tsx still has fallback={<RouteFallback and phaseB is true", () => {
+  it("fail when routes.tsx still has fallback={<RouteFallback", () => {
     const input = goodInput()
     input.files["routes.tsx"] = `element: <Suspense fallback={<RouteFallback />}><X /></Suspense>`
-    const result = run({ ...input, phaseB: true })
+    const result = run(input)
     expect(result.checks.find((c) => c.name.includes("RouteFallback"))?.pass).toBe(false)
   })
 
-  it("fail when any file sets document.body.style.overflow = \"hidden\" and phaseB is true", () => {
+  // Packet B1: the real fix is `<RouteSkeleton />`, not merely the absence of
+  // `<RouteFallback` — this fixture is what the check is meant to let through.
+  it("pass when routes.tsx uses <RouteSkeleton /> instead", () => {
+    const input = goodInput()
+    input.files["routes.tsx"] = `element: <Suspense fallback={<RouteSkeleton />}><X /></Suspense>`
+    const result = run(input)
+    expect(result.checks.find((c) => c.name.includes("RouteFallback"))?.pass).toBe(true)
+  })
+
+  it("fail when any file sets document.body.style.overflow = \"hidden\"", () => {
     const input = goodInput()
     input.files["components/ui/modal.tsx"] = `document.body.style.overflow = "hidden"`
-    const result = run({ ...input, phaseB: true })
+    const result = run(input)
     expect(result.checks.find((c) => c.name.includes("body.style.overflow"))?.pass).toBe(false)
   })
 
-  it("pass when phaseB is true and the tree is already clean", () => {
-    const result = run({ ...goodInput(), phaseB: true })
+  it("pass when the tree is already clean", () => {
+    const result = run(goodInput())
     expect(result.passed).toBe(true)
   })
 })

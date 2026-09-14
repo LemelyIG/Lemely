@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { Button } from "@/components/ui/button"
 import { Modal } from "@/components/ui/modal"
+import { haptic } from "@/lib/haptics"
 
 /*
  * C-24 · The confirmation step for a destructive action.
@@ -89,7 +90,15 @@ export function ConfirmModal({
               alone was missing. A destructive action that greys out and
               changes its wording, with nothing moving, reads as a button that
               refused the press rather than one that is working. */}
-          <Button variant="accent" size="sm" onClick={onConfirm} loading={pending}>
+          <Button
+            variant="accent"
+            size="sm"
+            onClick={() => {
+              haptic("tap")
+              onConfirm()
+            }}
+            loading={pending}
+          >
             {pending ? (pendingLabel ?? confirmLabel) : confirmLabel}
           </Button>
         </div>

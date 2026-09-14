@@ -17,12 +17,21 @@
 
 import { request } from "@/lib/api"
 import { getSession } from "@/lib/auth/storage"
-import type { Notification, NotificationsPage } from "@/lib/notificationTypes"
+import { queryClient } from "@/lib/queryClient"
+import type { Notification, NotificationCounts, NotificationsPage } from "@/lib/notificationTypes"
 import {
   DEFAULT_PUSH_URL,
   PUSH_CONTENT_REPLY,
   PUSH_CONTENT_REQUEST,
 } from "@/lib/push/pushDecision"
+
+/** The `["notifications", "counts"]` query key `useNotificationCounts`
+ * (`hooks/useNotificationApi.ts`) caches `NotificationCounts` under. Not
+ * imported from there — that module is page-only React-query hooks, and
+ * pulling one in here for a single array literal would be a heavier
+ * dependency than repeating a five-element key that changes exactly as
+ * often as the endpoint it names. */
+const NOTIFICATION_COUNTS_KEY = ["notifications", "counts"] as const
 
 /** What this module posts back to the worker. */
 export interface PushContentReply {
@@ -30,6 +39,9 @@ export interface PushContentReply {
   title: string
   body: string | null
   url: string
+  /** See `PushNotificationContent.unread`'s own doc — this is that field's
+   * source. */
+  unread?: number
 }
 
 /**
@@ -91,6 +103,7 @@ export function destinationFor(
 export function buildPushReply(
   page: NotificationsPage | null,
   role?: string,
+  unreadCount?: number,
 ): PushContentReply | null {
   if (page === null) return null
   const unread = page.notifications.find((notification) => notification.readAt === null)
@@ -100,6 +113,7 @@ export function buildPushReply(
     title: unread.title,
     body: unread.body,
     url: destinationFor(unread, role),
+    ...(unreadCount !== undefined ? { unread: unreadCount } : {}),
   }
 }
 
@@ -114,9 +128,10 @@ export function buildPushReply(
 export async function answerPushContentRequest(
   fetchInbox: () => Promise<NotificationsPage>,
   role?: string,
+  unreadCount?: number,
 ): Promise<PushContentReply | null> {
   try {
-    return buildPushReply(await fetchInbox(), role)
+    return buildPushReply(await fetchInbox(), role, unreadCount)
   } catch {
     // A failed or unauthorised fetch is not an error worth surfacing anywhere:
     // the worker's fallback already covers it, and there is no UI in scope
@@ -152,6 +167,12 @@ export function registerPushClientBridge(): void {
       // The role is read at answer time, not at registration: a page can
       // outlive a sign-out and sign-in as someone else.
       getSession()?.role,
+      // Whatever `BadgeSync`'s `useNotificationCounts()` last cached — a
+      // second `/notifications/counts` fetch inside a push handler with a
+      // bounded lifetime is not worth the round trip, and this value is
+      // already fresh enough for a badge (it is only ever behind by however
+      // long since the last count refetch, not by anything a push changes).
+      queryClient.getQueryData<NotificationCounts>(NOTIFICATION_COUNTS_KEY)?.unread,
     ).then((reply) => {
       // Always post something, even null: the worker races this against a
       // timeout, and a definite "nothing to say" lets it render the generic

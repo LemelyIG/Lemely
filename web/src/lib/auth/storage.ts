@@ -6,6 +6,9 @@
  */
 
 import { randomUuid } from "@/lib/uuid"
+import { queryClient } from "@/lib/queryClient"
+import { persister } from "@/lib/offline/queryPersister"
+import { clearUploadQueue } from "@/lib/offline/uploadQueue"
 
 const DEVICE_ID_KEY = "lemely.deviceId"
 const SESSION_KEY = "lemely.session"
@@ -95,6 +98,69 @@ export function clearSession(): void {
   notify(null)
   expiredSignal = false
   expiredRole = undefined
+}
+
+/**
+ * The other caches a signed-in reader leaves behind, beyond the session
+ * itself — injectable for the same reason `uploadQueue.ts`'s own
+ * `UploadQueueAdapter`/`DrainUploadQueueDeps` are: the real implementations
+ * reach `indexedDB`, which this suite's Node environment (`vitest.config.ts`,
+ * D3.20) does not have. See `endSession`'s own doc comment below for what
+ * each of these guards against.
+ */
+export interface SessionCaches {
+  clearQueries: () => void
+  // `unknown`, not `Promise<void>`: `persister.removeClient()`
+  // (`Persister["removeClient"]` from `@tanstack/query-persist-client-core`)
+  // is typed `Promisable<void>` (`void | PromiseLike<void>`), so the default
+  // wiring below must fit that, not the other way around — `endSession` only
+  // ever `void`s the result, so the exact shape doesn't otherwise matter.
+  removePersistedQueries: () => unknown
+  clearUploadQueue: () => Promise<void>
+}
+
+const defaultSessionCaches: SessionCaches = {
+  clearQueries: () => queryClient.clear(),
+  removePersistedQueries: () => persister.removeClient(),
+  clearUploadQueue,
+}
+
+/**
+ * Full session teardown: `clearSession()` above, plus every other
+ * session-scoped cache a reader leaves behind that must not survive onto the
+ * next account on a shared device (H1/H2, security review of the offline
+ * persistence work).
+ *
+ * H1: the persisted react-query cache (`queryPersister.ts`) is keyed by a
+ * fixed, not-user-scoped storage key with a 24h `maxAge` — without this, a
+ * second student signing in on a shared school device would hydrate the
+ * first student's profile/notifications/class-list from IndexedDB until each
+ * query happened to refetch. `clearQueries` alone is not enough: it empties
+ * the in-memory cache for *this* page instance, but leaves the IndexedDB blob
+ * `PersistQueryClientProvider` would rehydrate from on the very next mount —
+ * `removePersistedQueries` (`persister.removeClient()`) is what actually
+ * drops that.
+ *
+ * H2: the offline upload queue (`uploadQueue.ts`) holds the scan (and
+ * mark-scheme) bytes themselves, not just a cached response. This used to be
+ * cleared only by a deliberate sign-out (`AuthContext.tsx`'s own
+ * `clearUploadQueue()` call) — a session that instead ended by expiry
+ * (`RequireAuth.tsx`) or a refused silent refresh (`api.ts`) left another
+ * reader's exam scans sitting in IndexedDB indefinitely.
+ *
+ * All three session-end paths now call this instead of duplicating the
+ * cleanup, so no future one can forget it. `clearQueries` is synchronous;
+ * `removePersistedQueries`/`clearUploadQueue` are fire-and-forget, exactly
+ * like `AuthContext.tsx`'s own pre-existing `clearUploadQueue()` call was —
+ * nothing on any of these three call sites (a sign-out click, a redirect
+ * render, a refused refresh) waits for either, and a failure here must not
+ * block it.
+ */
+export function endSession(caches: SessionCaches = defaultSessionCaches): void {
+  clearSession()
+  caches.clearQueries()
+  void caches.removePersistedQueries()
+  void caches.clearUploadQueue()
 }
 
 /*

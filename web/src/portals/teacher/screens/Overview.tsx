@@ -100,7 +100,7 @@ export function Overview() {
   const classesQuery = useTeacherClasses()
 
   return (
-    <div className="lm-screen flex flex-col gap-8 min-w-0">
+    <div className="flex flex-col gap-8 min-w-0">
       {/*
        * Two independent queries feed this screen, and almost nothing below
        * reads from only one of them — the first-run check needs

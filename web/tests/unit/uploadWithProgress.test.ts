@@ -4,6 +4,23 @@ import { setSession } from "@/lib/auth/storage"
 import { uploadScan } from "@/lib/hooks/useStudentApi"
 
 /*
+ * H1/H2 (security review) — a refused refresh reached here too (the "401
+ * replay" describe block's refresh-fails case) now ends the session through
+ * `endSession()`, which reaches `indexedDB` for the persisted query cache and
+ * the offline upload queue. Neither exists in this Node-environment suite
+ * (D3.20), so both modules are mocked the same way `sessionRefresh.test.ts`
+ * does for the identical reason.
+ */
+const removeClientMock = vi.fn().mockResolvedValue(undefined)
+vi.mock("@/lib/offline/queryPersister", () => ({
+  persister: { removeClient: () => removeClientMock() },
+}))
+const clearUploadQueueMock = vi.fn().mockResolvedValue(undefined)
+vi.mock("@/lib/offline/uploadQueue", () => ({
+  clearUploadQueue: () => clearUploadQueueMock(),
+}))
+
+/*
  * PR 4 of the loading/error-screens programme — `uploadWithProgress()`.
  *
  * `request()` is `fetch`-based, and `fetch` cannot report upload progress, so
@@ -184,6 +201,8 @@ beforeEach(() => {
   vi.stubGlobal("fetch", fetchMock)
   FakeXHR.instances = []
   vi.stubGlobal("XMLHttpRequest", FakeXHR as unknown as typeof XMLHttpRequest)
+  removeClientMock.mockClear()
+  clearUploadQueueMock.mockClear()
 })
 
 afterEach(() => {
@@ -360,6 +379,11 @@ describe("401 replay", () => {
     })
     expect(fetchMock).toHaveBeenCalledTimes(1) // one refresh attempt, no retry loop
     expect(FakeXHR.instances).toHaveLength(1) // never replayed with no renewed token
+    // H1/H2: a refused refresh ends the session as completely as a
+    // deliberate sign-out — the persisted query cache and the offline
+    // upload queue must not survive for the next reader on this device.
+    expect(removeClientMock).toHaveBeenCalledTimes(1)
+    expect(clearUploadQueueMock).toHaveBeenCalledTimes(1)
   })
 })
 

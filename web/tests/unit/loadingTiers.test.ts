@@ -4,18 +4,23 @@ import { describe, expect, it } from "vitest"
 
 /*
  * DESIGN.md §12's loading tiers, pinned across the places they have to agree
- * (PR 2 part B).
+ * (PR 2 part B; routes.tsx block rewritten for packet B1).
  *
  * Four checks, one per surface that can silently drift from the others:
  *
  *   - `index.css` declares the two tokens at the approved values — the single
  *     source `RouteFallback` and the pre-mount shell (`preMountShell.ts`) both
  *     read from.
- *   - every `RouteFallback` call site in `routes.tsx` (the top-level routes)
- *     carries `frame="standalone"` — a call site that regresses to the
- *     bare default would silently render the portal-shaped content skeleton
- *     for a sign-in form, which is exactly the promise-of-chrome-that-never-
- *     arrives DESIGN.md's brief warns against.
+ *   - `routes.tsx` no longer has a bare `<RouteFallback` call site at all
+ *     (packet B1 replaced every one with `<RouteSkeleton />`, which reads
+ *     `frame` off the matched route's own `handle.skeleton` instead of every
+ *     call site having to remember to pass `frame="standalone"`) — and
+ *     `route-skeleton.tsx`'s own `RouteSkeleton` component is what actually
+ *     passes `frame="standalone"` once `skeletonForMatches` resolves to that
+ *     shape. `tests/unit/routeSkeleton.test.ts` owns the fuller set of
+ *     packet-B1 assertions (the `handle.skeleton` pairing checks, the
+ *     `skeletonForMatches` unit tests); this file keeps only the two checks
+ *     that were already here.
  *   - `DESIGN.md` §9.2 states the mark's self-drawing stroke as the one
  *     documented exception to "animate only transform and opacity" — the rest
  *     of this system's gates (`motionDefaults.test.ts`, `a11yRules.test.ts`)
@@ -87,18 +92,19 @@ describe("index.css declares the loading-tier tokens", () => {
   })
 })
 
-describe("routes.tsx: every top-level RouteFallback is frame=\"standalone\"", () => {
+describe("routes.tsx: zero <RouteFallback call sites (packet B1)", () => {
   const routes = readFileSync(join(ROOT, "src/routes.tsx"), "utf8")
 
-  it("has at least one RouteFallback call site", () => {
-    const calls = routes.match(/<RouteFallback\b[^/]*\/>/g) ?? []
-    expect(calls.length).toBeGreaterThan(0)
+  it("has no <RouteFallback call site", () => {
+    expect(routes).not.toMatch(/<RouteFallback\b/)
   })
+})
 
-  it("has no RouteFallback call site missing frame=\"standalone\"", () => {
-    const calls = routes.match(/<RouteFallback\b[^/]*\/>/g) ?? []
-    const missing = calls.filter((call) => !call.includes('frame="standalone"'))
-    expect(missing).toEqual([])
+describe('route-skeleton.tsx: RouteSkeleton passes frame="standalone" for the standalone shape', () => {
+  const source = readFileSync(join(ROOT, "src/components/ui/route-skeleton.tsx"), "utf8")
+
+  it('renders frame={shape === "standalone" ? "standalone" : "content"}', () => {
+    expect(source).toMatch(/frame=\{shape === "standalone" \? "standalone" : "content"\}/)
   })
 })
 

@@ -159,3 +159,13 @@ jobs:
       # `dist/` exists (packet A8) — no separate step needed here.
       - name: Build
         run: npm run build
+
+      # B7 (Task 12): no Playwright/e2e job exists anywhere in this repo's
+      # CI today — `native-feel.spec.ts` and the rest of `web/e2e/` run
+      # locally/on demand only (`npm run test:e2e`), against the real
+      # backend + seeded local Supabase stack that CI does not stand up.
+      # `check:installable` needs only a production build + a headless
+      # Chrome, both already present in this job, so it runs here rather
+      # than waiting on an e2e job that doesn't exist.
+      - name: Installability check
+        run: npm run check:installable

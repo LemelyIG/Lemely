@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
-import { appRoutes } from "@/routes"
+import { appRoutes, flattenRoutes } from "@/routes"
 import { studentRoute } from "@/portals/student"
 import { teacherRoute } from "@/portals/teacher"
 import { parentRoute } from "@/portals/parent"
@@ -110,7 +110,7 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
   })
 
   it("still keeps the top-level catch-all, for paths outside every portal", () => {
-    const catchAll = appRoutes.find((route) => route.path === "*")
+    const catchAll = flattenRoutes(appRoutes).find((route) => route.path === "*")
     expect(catchAll).toBeDefined()
     expect(containsComponent(catchAll?.element, "NotFound")).toBe(true)
   })
@@ -123,7 +123,7 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
    * version of that sentence which fails when someone changes it.
    */
   it("leaves the top-level catch-all ungated", () => {
-    const catchAll = appRoutes.find((route) => route.path === "*")
+    const catchAll = flattenRoutes(appRoutes).find((route) => route.path === "*")
     expect(containsComponent(catchAll?.element, "RequireAuth")).toBe(false)
   })
 
@@ -178,8 +178,9 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
    * `errorElement`, not just some of them.
    */
   it("gives every top-level route the same RouteErrorScreen errorElement — PR 2 part A2", () => {
-    expect(appRoutes.length).toBeGreaterThan(0)
-    for (const route of appRoutes) {
+    const topLevelRoutes = flattenRoutes(appRoutes)
+    expect(topLevelRoutes.length).toBeGreaterThan(0)
+    for (const route of topLevelRoutes) {
       expect(
         containsComponent(route.errorElement, "RouteErrorScreen"),
         `route ${String(route.path)} does not use RouteErrorScreen as its errorElement`,
@@ -189,7 +190,9 @@ describe("every portal answers its own unmatched paths — P4.10", () => {
 })
 
 describe("the settings lane stays reachable by every role — P4.10", () => {
-  const settingsRoutes = appRoutes.filter((route) => route.path?.startsWith("/settings/"))
+  const settingsRoutes = flattenRoutes(appRoutes).filter((route) =>
+    route.path?.startsWith("/settings/"),
+  )
 
   it("mounts all four screens at the top level", () => {
     expect(settingsRoutes.map((route) => route.path).sort()).toEqual([
@@ -211,7 +214,7 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
   it.each(["/settings/devices", "/settings/notifications", "/settings/install"])(
     "guards %s",
     (routePath) => {
-      const route = appRoutes.find((r) => r.path === routePath)
+      const route = flattenRoutes(appRoutes).find((r) => r.path === routePath)
       expect(containsComponent(route?.element, "RequireAuth")).toBe(true)
     },
   )
@@ -232,7 +235,13 @@ describe("the settings lane stays reachable by every role — P4.10", () => {
     const settingsBlocks = source.split('path: "/settings/').slice(1)
     expect(settingsBlocks).toHaveLength(4)
     for (const block of settingsBlocks) {
-      expect(block.slice(0, 400)).toContain("ALL_ROLES")
+      // 450, not 400: the `/settings/notifications` block's own explanatory
+      // comment (distinguishing it from the student portal's identically-named
+      // notifications screen) pushes ALL_ROLES to character 403 on its own,
+      // pre-dating this file's B2 route-nesting change (same offset at
+      // 6dfa5f40^) — a pre-existing off-by-a-few-characters gap, not evidence
+      // this route lost its guard.
+      expect(block.slice(0, 450)).toContain("ALL_ROLES")
     }
   })
 

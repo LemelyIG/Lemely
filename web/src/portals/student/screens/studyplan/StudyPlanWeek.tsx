@@ -215,7 +215,7 @@ export function StudyPlanWeek() {
   const onRebuild = () => rebuild.mutate({ subjectCode })
 
   return (
-    <div className="lm-screen lm-read flex flex-col gap-6">
+    <div className="lm-read flex flex-col gap-6">
       <QueryState
         query={planQuery}
         srHeading={heading}

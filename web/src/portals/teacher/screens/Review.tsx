@@ -15,7 +15,7 @@ import {
 } from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
-import type { BulkApproveResponse, ReviewQueueItem } from "@/lib/teacherTypes"
+import type { BulkApproveResponse, ReviewQueueItem, ReviewQueueList } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
@@ -187,29 +187,77 @@ function questionLabel(item: ReviewQueueItem): string {
   return item.questionId ? `Q${item.questionId}` : "this question"
 }
 
+/**
+ * Task 11 (B6c) — accumulates review-queue pages across "Load more" clicks.
+ *
+ * `page.key` is the current filter tuple (`classId|reason|minAgeHours`):
+ * when it differs from `prev.key`, a filter changed underneath the
+ * accumulated list, so the new page **replaces** it outright rather than
+ * appending onto rows the current filters no longer select. When the key
+ * matches, `page.items` is the next cursor's page and gets **appended**,
+ * deduped by `itemId` — a background refetch of the first page (react-query
+ * revalidating on window focus, say) can redeliver rows already present in
+ * a later page's accumulated list, and a duplicate `key` in the table's
+ * `.map()` below is a React error, not just a cosmetic double row.
+ */
+export function mergeReviewPages(
+  prev: { key: string; items: ReviewQueueItem[] },
+  page: { key: string; items: ReviewQueueItem[] },
+): { key: string; items: ReviewQueueItem[] } {
+  if (prev.key !== page.key) return page
+  const seen = new Set(prev.items.map((item) => item.itemId))
+  return { key: page.key, items: [...prev.items, ...page.items.filter((item) => !seen.has(item.itemId))] }
+}
+
 export function Review() {
   const navigate = useNavigate()
   const [searchParams, setSearchParams] = useSearchParams()
   const classId = searchParams.get("class_id") ?? ""
   const reason = searchParams.get("reason") ?? ""
   const minAgeHours = searchParams.get("min_age_hours") ?? ""
+  const filterKey = `${classId}|${reason}|${minAgeHours}`
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [bulkResult, setBulkResult] = useState<BulkApproveResponse | null>(null)
   const snapshotRef = useRef<ReviewQueueItem[]>([])
+
+  // Task 11 (B6c): "Load more" cursor pagination (T-09's `nextCursor`).
+  // `cursor` resets to `undefined` whenever the filter tuple changes (the
+  // effect below); `pages` accumulates every fetched page under the current
+  // filters via `mergeReviewPages` above.
+  const [cursor, setCursor] = useState<string | undefined>(undefined)
+  const [pages, setPages] = useState<{ key: string; items: ReviewQueueItem[] }>({ key: "", items: [] })
+  // The guard that lets the merge below run once per *new* query result
+  // rather than once per render — "adjusting state during render" (React's
+  // own documented pattern for this), not a `useEffect`, because an effect
+  // would commit one frame with the stale accumulated `pages` before
+  // catching up, which is exactly the frame a click on "Load more" paints.
+  const [mergedData, setMergedData] = useState<ReviewQueueList | undefined>(undefined)
 
   const classesQuery = useTeacherClasses()
   const queueQuery = useReviewQueue({
     classId: classId || undefined,
     reason: reason || undefined,
     minAgeHours: minAgeHours ? Number(minAgeHours) : undefined,
+    limit: 50,
+    cursor,
   })
   const bulkApprove = useBulkApproveReview()
 
+  if (queueQuery.data && queueQuery.data !== mergedData) {
+    setMergedData(queueQuery.data)
+    setPages((prev) => mergeReviewPages(prev, { key: filterKey, items: queueQuery.data!.items }))
+  }
+
   // A selection made under one filter combination shouldn't silently carry
   // over (and get bulk-approved) once the visible set changes underneath it.
+  // The same filter change also restarts pagination from the first page —
+  // `mergeReviewPages` itself would replace `pages` regardless once the new
+  // page's `key` arrives, but resetting `cursor` here is what makes that the
+  // *first* page rather than whatever page the old filters had scrolled to.
   useEffect(() => {
     setSelected(new Set())
+    setCursor(undefined)
   }, [classId, reason, minAgeHours])
 
   function updateFilter(key: string, value: string) {
@@ -265,7 +313,7 @@ export function Review() {
   }
 
   return (
-    <div className="lm-screen flex flex-col gap-6 min-w-0">
+    <div className="flex flex-col gap-6 min-w-0">
       <QueryState
         query={queueQuery}
         srHeading="Review queue"
@@ -280,7 +328,11 @@ export function Review() {
           body: teacherLoadFailureMessage,
         }}
       >
-        {({ items }) => {
+        {() => {
+          // Task 11 (B6c): the accumulated pages, not the query's own
+          // `data.items` — a single fetch is one page; `pages.items` is
+          // every page "Load more" has pulled in under the current filters.
+          const items = pages.items
           const filterQsString = searchParams.toString()
           const filtersActive = classId !== "" || reason !== "" || minAgeHours !== ""
           const selectableItems = selectableOf(items)
@@ -671,6 +723,27 @@ export function Review() {
                       </tbody>
                     </table>
                   </div>
+
+                  {/* Task 11 (B6c): keyset "Load more", not a virtualized
+                      list or infinite scroll — deferred by design. The
+                      review queue is a bounded working set a teacher clears
+                      out (bulk-approve, resolve, dismiss), not an
+                      ever-growing feed, so the DOM-node-count problem
+                      virtualization solves does not apply here the way it
+                      would to e.g. a chat history; revisit if that
+                      assumption stops holding. */}
+                  {mergedData?.nextCursor ? (
+                    <div className="flex justify-center">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        disabled={queueQuery.isFetching}
+                        onClick={() => setCursor(mergedData.nextCursor ?? undefined)}
+                      >
+                        {queueQuery.isFetching ? "Loading…" : "Load more"}
+                      </Button>
+                    </div>
+                  ) : null}
                 </>
               )}
             </>

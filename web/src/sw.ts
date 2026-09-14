@@ -26,7 +26,9 @@
 import { clientsClaim } from "workbox-core"
 import { precacheAndRoute, createHandlerBoundToURL } from "workbox-precaching"
 import { NavigationRoute, registerRoute } from "workbox-routing"
+import { Queue } from "workbox-background-sync"
 
+import { drainUploadQueue, type QueuedUpload } from "@/lib/offline/uploadQueue"
 import {
   CLIENT_REPLY_TIMEOUT_MS,
   DEFAULT_PUSH_URL,
@@ -131,6 +133,17 @@ if (precacheEnabled) {
       denylist: [/^\/api/, /^\/share-target/],
     }),
   )
+
+  // Task 10 (B6b) — offline upload queue, Background Sync half. Plain
+  // `Queue` with a custom `onSync`, not `workbox-background-sync`'s own
+  // ready-made replay plugin: that plugin replays raw `Request`s and
+  // discards their responses, but this flow needs the returned `paperId`
+  // back to then call `/student/correct` — see `drainUploadQueueFromWorker`
+  // below. Registered only where precaching
+  // itself is (production hosts): staging and localhost readers are already
+  // watching real traffic land, and Background Sync exists to help a reader
+  // who is not watching at all.
+  new Queue("lemely-uploads", { onSync: drainUploadQueueFromWorker })
 } else {
   // Registering no fetch handler at all is what makes every request pass
   // straight to the network. But a worker installed back when this host did
@@ -151,6 +164,70 @@ if (precacheEnabled) {
         .then(() => undefined),
     )
   })
+}
+
+// --- Offline upload queue (Task 10, B6b) ------------------------------------
+
+/**
+ * One attempt at `POST /api/student/uploads`, no `onProgress`, no bearer
+ * token: this runs inside the worker, which has no access to
+ * `localStorage` (`queueDecision.ts`'s own comment on why `lib/api.ts`
+ * cannot be imported anywhere in this file's module graph applies here too
+ * — the session token lives there, and the worker is never given one). This
+ * fetch is genuinely unauthenticated and will 401 against a route gated by
+ * `require_role`, which is the honest, expected outcome: `drainUploadQueue`
+ * catches that, bumps the entry's `attempts`, and leaves it queued rather
+ * than losing it — see `drainUploadQueueFromWorker` below for what actually
+ * finishes the drain.
+ */
+async function workerUploadEntry(entry: QueuedUpload): Promise<{ paperId: string }> {
+  const form = new FormData()
+  form.append("scan", entry.scan, entry.scanName)
+  if (entry.markScheme) form.append("mark_scheme", entry.markScheme, "mark_scheme.pdf")
+  const res = await fetch("/api/student/uploads", {
+    method: "POST",
+    headers: { "Idempotency-Key": entry.idempotencyKey },
+    body: form,
+  })
+  if (!res.ok) throw new Error(`offline queue: upload failed with status ${res.status}`)
+  return (await res.json()) as { paperId: string }
+}
+
+/** Same unauthenticated-attempt shape as `workerUploadEntry` above, for
+ * `POST /api/student/correct`. */
+async function workerCorrectPaper(paperId: string): Promise<void> {
+  const res = await fetch("/api/student/correct", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paperId }),
+  })
+  if (!res.ok) throw new Error(`offline queue: correct failed with status ${res.status}`)
+}
+
+/**
+ * Background Sync's `onSync` — fired by the browser once connectivity
+ * returns, possibly with every tab that queued an upload already closed.
+ *
+ * Its own `upload`/`correct` attempts above are best-effort and will
+ * ordinarily fail with 401, for the reason their own comments give: this
+ * worker has no bearer token to send, and mirroring one here — even
+ * transiently — is exactly the "second, longer-lived copy of a credential"
+ * `requestContentFromClients` above already rejects for push, for the same
+ * session-boundary reason (P5.7/D5.12). What this *does* reliably do is
+ * message every open client once a sync fires, including a tab that is open
+ * but backgrounded/throttled — a case `useUploadQueue.ts`'s own `online`
+ * listener can miss if the tab's timers are suspended. That page-side hook
+ * holds the one thing that can actually finish the drain: a live,
+ * authenticated session. This is a nudge, not a guarantee — the queue is
+ * exactly as durable either way, since nothing here removes an entry unless
+ * `drainUploadQueue` actually succeeds with it.
+ */
+async function drainUploadQueueFromWorker(): Promise<void> {
+  await drainUploadQueue({ upload: workerUploadEntry, correct: workerCorrectPaper })
+  const clients = await self.clients.matchAll({ type: "window", includeUncontrolled: true })
+  for (const client of clients) {
+    client.postMessage({ type: "UPLOAD_QUEUE_DRAINED" })
+  }
 }
 
 // Packet A7 (`silent-update-swap`): `registerType` is now `"prompt"`, not
@@ -282,6 +359,20 @@ async function handlePush(): Promise<void> {
     badge: "/pwa-192x192.png",
     data: { url: content.url },
   })
+
+  // Task 7 (B5a): pushes carry no payload (D5.10), so there is no badge
+  // count to read off this event — `content.unread` is the cached count the
+  // page attached to its handshake reply (`pushClientBridge.ts`), which is
+  // why this is gated on presence, not truthiness: no page answering must
+  // leave whatever badge is already showing alone rather than guessing 0.
+  if (content.unread !== undefined) {
+    try {
+      await self.navigator.setAppBadge?.(content.unread)
+    } catch {
+      // Badging is a nicety (`lib/badging.ts`'s own rule) — a failure here
+      // must not affect the notification already shown above.
+    }
+  }
 }
 
 self.addEventListener("push", (event: PushEvent) => {

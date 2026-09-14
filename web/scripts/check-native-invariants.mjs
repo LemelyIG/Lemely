@@ -22,19 +22,13 @@
  * files, call `runChecks`, print pass/fail per check, exit 1 on any
  * failure.
  *
- * The two `--phase-b` checks are Phase B invariants that do not hold yet in
- * Phase A by design (`RouteFallback` is still the real route-chunk fallback
- * until B1 replaces it with a pre-mount shell continuation; a modal's
- * `document.body.style.overflow = "hidden"` scroll lock is still in use
- * until B2 replaces it with the FullscreenDrawer's own mechanism) — checked
- * only when the flag is passed, never enforced by plain `npm run
- * check:native`/`npm run lint`. Confirmed empirically (A8 review fix):
- * `--phase-b` genuinely fails both right now against the real tree
- * (routes.tsx still has multiple `fallback={<RouteFallback` occurrences;
- * `document.body.style.overflow = "hidden"` is still set in at least one
- * modal/drawer component) — the gating mechanism itself was always
- * correct, only an earlier commit message's claim that both were "already
- * true today" was wrong.
+ * Two checks below were gated behind a `--phase-b` flag while Phase A/B1
+ * were landing (`RouteFallback` was still the real route-chunk fallback
+ * until B1 replaced it with `RouteSkeleton`; a modal's
+ * `document.body.style.overflow = "hidden"` scroll lock was still in use
+ * until B2 replaced it with the shared `lockScroll()` primitive). Both hold
+ * on the real tree as of B2, so they run unconditionally now, the same as
+ * every other check here — see `runChecks` below.
  */
 
 import { readFileSync, readdirSync, statSync } from "node:fs"
@@ -423,9 +417,8 @@ function checkLmNavChrome(files) {
  * @param {string} input.swSource
  * @param {Record<string, string>} input.files - every `web/src/**\/*.{ts,tsx}`
  *   file, keyed by its path relative to `web/src/`.
- * @param {boolean} [input.phaseB] - also run the two Phase B checks.
  */
-export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource, files, phaseB = false }) {
+export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource, files }) {
   const allFiles = files ?? {}
   const checks = []
 
@@ -527,22 +520,20 @@ export function runChecks({ indexHtml, indexCss, inputTsx, textareaTsx, swSource
     pass: isSkipWaitingGated(swSource ?? ""),
   })
 
-  if (phaseB) {
-    const routeFallbackCount = ((allFiles["routes.tsx"] ?? "").match(/fallback=\{<RouteFallback/g) ?? [])
-      .length
-    checks.push({
-      name: "[phase-b] routes.tsx: zero fallback={<RouteFallback occurrences",
-      pass: routeFallbackCount === 0,
-      detail: String(routeFallbackCount),
-    })
+  const routeFallbackCount = ((allFiles["routes.tsx"] ?? "").match(/fallback=\{<RouteFallback/g) ?? [])
+    .length
+  checks.push({
+    name: "routes.tsx: zero fallback={<RouteFallback occurrences",
+    pass: routeFallbackCount === 0,
+    detail: String(routeFallbackCount),
+  })
 
-    const overflowOffenders = checkNoBodyOverflowHidden(allFiles)
-    checks.push({
-      name: '[phase-b] no document.body.style.overflow = "hidden" anywhere in web/src',
-      pass: overflowOffenders.length === 0,
-      detail: overflowOffenders.join(", "),
-    })
-  }
+  const overflowOffenders = checkNoBodyOverflowHidden(allFiles)
+  checks.push({
+    name: 'no document.body.style.overflow = "hidden" anywhere in web/src',
+    pass: overflowOffenders.length === 0,
+    detail: overflowOffenders.join(", "),
+  })
 
   return { checks, passed: checks.every((c) => c.pass) }
 }
@@ -568,8 +559,6 @@ function readAllSourceFiles() {
 }
 
 function main() {
-  const phaseB = process.argv.includes("--phase-b")
-
   const indexHtml = readFileSync(path.join(ROOT, "index.html"), "utf8")
   const indexCss = readFileSync(path.join(SRC, "index.css"), "utf8")
   const files = readAllSourceFiles()
@@ -589,7 +578,6 @@ function main() {
     textareaTsx,
     swSource,
     files,
-    phaseB,
   })
 
   for (const check of checks) {

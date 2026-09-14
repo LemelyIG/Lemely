@@ -66,7 +66,7 @@ export function PracticeResult() {
   const subjectName = useSubjectName(query.data?.subjectCode ?? "")
 
   return (
-    <div className="lm-screen lm-read flex flex-col gap-6">
+    <div className="lm-read flex flex-col gap-6">
       <QueryState
         query={query}
         srHeading="Practice set result"

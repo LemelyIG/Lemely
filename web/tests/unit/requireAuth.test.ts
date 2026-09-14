@@ -66,6 +66,15 @@ describe("RequireAuth.tsx — the three-way redirect shape (source-text gate, no
     expect(stripped).toContain('frame="standalone"')
   })
 
+  it("ends a stranded session through endSession, not the bare clearSession (H1/H2)", () => {
+    // A stranded session found on mount must drop the persisted query cache
+    // and offline upload queue the same way a deliberate sign-out does —
+    // `endSession` (`auth/storage.ts`) is the single function that does all
+    // of that, replacing the bare `clearSession()` this effect used to call.
+    expect(stripped).toContain("endSession()")
+    expect(stripped).not.toContain("clearSession()")
+  })
+
   it("builds next exclusively through safeNextPath/withNext — no hand-built ?next= string", () => {
     // Every `?next=` this file produces goes through `withNext`'s own
     // `encodeURIComponent`, imported at the top of the file. A raw
@@ -101,8 +110,20 @@ describe("Login.tsx — next is read only through safeNextPath", () => {
     },
   )
 
-  it("Login.tsx's success handler prefers next over the role-derived portal home", () => {
+  it("Login.tsx's success handler resolves through postLoginTarget, not a raw next ?? portal fallback", () => {
+    // Packet B2a: `postLoginTarget` also considers `state.from` (the location
+    // RequireAuth was guarding), so the plain `next ?? portalPathForRole(...)`
+    // this used to be is no longer the whole story — see postLoginTarget.test.ts.
     const stripped = stripComments(sourceOf("src/portals/auth/Login.tsx"))
-    expect(stripped).toContain("navigate(next ?? portalPathForRole(result.role)")
+    expect(stripped).toContain("navigate(postLoginTarget(")
+    expect(stripped).not.toContain("navigate(next ?? portalPathForRole(result.role)")
+  })
+})
+
+describe("RequireAuth.tsx redirects carry state.from for postLoginTarget", () => {
+  it("both redirect branches (session-ended, login) set state={{ from: ... }}", () => {
+    const stripped = stripComments(sourceOf("src/lib/auth/RequireAuth.tsx"))
+    const occurrences = stripped.match(/state=\{\{ from/g) ?? []
+    expect(occurrences.length).toBeGreaterThanOrEqual(2)
   })
 })
