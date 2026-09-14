@@ -381,3 +381,38 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | D1 | 6 |
 | D2 | 11 |
 | D3 | 8 |
+
+### Phase C re-verification note (Task 0 / C0)
+
+Re-verified against `develop` at `521edaf1` (the branch point for
+`feat/ui-kit-and-dark-mode`) on 2026-09-14. All 36 `phase = C` rows above are
+still `pending`; none are already fixed. The real counts behind the Phase C
+plan's packet briefs supersede the design spec's original claims of 5/29/8:
+
+- Brand lockup copies: **7** sites (`student/index.tsx:509`,
+  `teacher/index.tsx:343`, `parent/index.tsx:212`, `admin/index.tsx:243`,
+  `settings/SettingsFrame.tsx:161`, `auth/Login.tsx:98`,
+  `marketing/index.tsx:125`), not 5.
+- Raw form fields under `web/src/portals`: **39** sites in **14** files, not
+  29 — `rg -c "<input|<select|<textarea" web/src/portals` sums to 39 across
+  14 files, matching the plan's per-file breakdown exactly (`ReviewItem.tsx`
+  8, `Announcements.tsx` 6, `Classes.tsx` 4, `Review.tsx` 3, `AtRiskList.tsx`
+  3, `QuestionnaireStep.tsx` 3, `Grading.tsx` 2, `FlashcardDecks.tsx` 2,
+  `ProfileSettings.tsx` 2, `parent/index.tsx` 2, `MarkSchemes.tsx` 1,
+  `CreateFirstClass.tsx` 1, `ClassRoster.tsx` 1, `SubjectsStep.tsx` 1).
+- Teacher `<table>` sites, not 8: the plan's Task 0 claims **9 tables in 6
+  files**, but `rg -c "<table" web/src/portals/teacher` at `521edaf1` finds
+  **12 `<table>` elements across 8 files** — the plan's list omits
+  `QuizResults.tsx` (2 tables, lines 205 and 293) and `Quizzes.tsx` (1
+  table, line 289), which both exist on `develop` at this commit and are
+  not new to this branch. This is a real mismatch between the plan and the
+  tree, not re-confirmed as written; flagged for whichever task (C2,
+  Tasks 3–4) migrates teacher tables onto the `Table` primitive, so its
+  file list and Table-related ledger rows (packet C2) account for these
+  two extra files rather than silently under-scoping the migration.
+
+All other spot-checked Task 0 claims (raw form field count/breakdown,
+7 brand lockup sites including the untouched `marketing/index.tsx` footer
+mark, `check:copy` absent from `.github/workflows/ci.yml`, and
+`ReviewQueueList` in `web/src/lib/teacherTypes.ts:689` carrying `items` +
+`nextCursor` with no `total` field) were re-confirmed exactly as written.
