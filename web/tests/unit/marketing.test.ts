@@ -247,41 +247,6 @@ describe("design import: part B's five specimen components are all mounted", () 
   })
 })
 
-/*
- * M-4: the copy gate above checks classification, string-ness and banned
- * claims, but nothing pinned an exact sentence. The derived-wording failure
- * (a paraphrase quietly replacing the design's verbatim text) has happened
- * THREE times on this import and was caught by human diffing every time —
- * never by a test. These `toBe` checks pin the load-bearing strings: the
- * ones whose exact wording is the point, not every string on the page.
- */
-describe("landing copy pins the design's exact wording — M-4", () => {
-  it("keeps the hero headline verbatim", () => {
-    expect(hero.headline).toBe("Marking you can check, line by line.")
-  })
-
-  it("keeps the hero subtext verbatim", () => {
-    expect(hero.sub).toBe(
-      "Lemely marks a scanned script against the official mark scheme, then shows the scheme line behind every mark it awards or withholds. Nothing counts until you sign it off.",
-    )
-  })
-
-  it("keeps the trust band's h2 verbatim", () => {
-    expect(marketingData.trustBand.heading).toBe(
-      "A mark is an argument, so it arrives with its reasons.",
-    )
-  })
-
-  it("keeps every readings panel title verbatim", () => {
-    const titles = Object.fromEntries(marketingData.readings.map((panel) => [panel.id, panel.title]))
-    expect(titles).toEqual({
-      teacher: "You see the marking, and the doubt.",
-      student: "They see where the marks went.",
-      parent: "They see an answer they can read.",
-    })
-  })
-})
-
 describe("landing copy claims only what the product does — P4.9", () => {
   /**
    * Recursively collects every string leaf under `value` into `out`.
@@ -433,6 +398,42 @@ describe("landing copy claims only what the product does — P4.9", () => {
     const arrayShapedExports = ["subjects", "readings"]
     const covered = [...Object.keys(TOP_LEVEL_KEYS), ...arrayShapedExports].sort()
     expect(covered).toEqual([...COPY_EXPORTS].sort())
+  })
+
+  /*
+   * VERBATIM-WORDING GATE (M-4), orthogonal to both checks above: the
+   * key-set gate proves a field EXISTS, the value walk below proves every
+   * field is a string, but neither pins what a load-bearing field SAYS. The
+   * derived-wording failure (a paraphrase quietly replacing the design's
+   * verbatim text) has happened THREE times on this import and was caught
+   * by human diffing every time — never by a test. These `toBe` checks pin
+   * the strings whose exact wording is the point (the hero headline and
+   * subtext, the trust band's h2, every Readings panel title), not every
+   * string on the page.
+   */
+  it("keeps the hero headline verbatim", () => {
+    expect(hero.headline).toBe("Marking you can check, line by line.")
+  })
+
+  it("keeps the hero subtext verbatim", () => {
+    expect(hero.sub).toBe(
+      "Lemely marks a scanned script against the official mark scheme, then shows the scheme line behind every mark it awards or withholds. Nothing counts until you sign it off.",
+    )
+  })
+
+  it("keeps the trust band's h2 verbatim", () => {
+    expect(marketingData.trustBand.heading).toBe(
+      "A mark is an argument, so it arrives with its reasons.",
+    )
+  })
+
+  it("keeps every readings panel title verbatim", () => {
+    const titles = Object.fromEntries(marketingData.readings.map((panel) => [panel.id, panel.title]))
+    expect(titles).toEqual({
+      teacher: "You see the marking, and the doubt.",
+      student: "They see where the marks went.",
+      parent: "They see an answer they can read.",
+    })
   })
 
   const copyValues: string[] = []
