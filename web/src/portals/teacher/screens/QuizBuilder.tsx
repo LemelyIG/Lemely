@@ -6,6 +6,8 @@ import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { Meter } from "@/components/ui/primitives"
+import { SectionHead } from "@/components/ui/section-head"
+import { Slider } from "@/components/ui/slider"
 import { Stepper, type StepperStep } from "@/components/ui/stepper"
 import { cn } from "@/lib/utils"
 import { Input } from "@/components/ui/input"
@@ -19,6 +21,12 @@ import {
 } from "@/lib/teacherOutcome"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { widestVocabularyFor } from "@/lib/grades"
+import {
+  POOL_SOURCE_OPTIONS,
+  estimateQuizMinutes,
+  quizLengthUpperBound,
+  settingsSoFar,
+} from "@/lib/quizBuilderSummary"
 import {
   useCreateQuizAssignment,
   useDeleteQuizAssignment,
@@ -151,24 +159,6 @@ const STEPS: StepperStep[] = [
 const STEP3_PREVIEW_COUNT = 12
 
 const DEFAULT_REQUESTED_COUNT = 10
-
-const POOL_SOURCE_OPTIONS: { value: string; label: string; detail: string }[] = [
-  {
-    value: "past_paper",
-    label: "Past papers",
-    detail: "Real CAIE exam questions, indexed by topic and mark allocation.",
-  },
-  {
-    value: "generated",
-    label: "AI-generated",
-    detail: "New questions written to match CAIE style for this subject.",
-  },
-  {
-    value: "teacher_upload",
-    label: "My uploads",
-    detail: "Questions taken from papers you've uploaded and had parsed yourself.",
-  },
-]
 
 /** Turns a `QuizPoolCountDTO.shortfall` into the concrete "which constraint
  * to loosen" options the brief asks for — never just the raw deficit
@@ -618,6 +608,11 @@ function StepPool({
   })
 
   const suggestions = poolCountQuery.data ? shortfallSuggestions(poolCountQuery.data, quiz) : []
+  // `matching` is the real, uncapped count the current source/topics/grade
+  // filters serve (`PoolCountPanel`'s own headline figure) — the slider's
+  // ceiling once a source has been chosen and the count has resolved; a
+  // conservative 50 before that (`quizLengthUpperBound`'s own doc).
+  const lengthUpperBound = quizLengthUpperBound(poolCountQuery.data?.matching ?? null)
 
   return (
     <div className="flex flex-col gap-5 max-w-[640px]">
@@ -648,15 +643,24 @@ function StepPool({
           })}
         </div>
       </div>
-      <Input
-        type="number"
-        min={1}
-        label="Number of questions"
-        disabled={!isDraft}
-        value={requestedCount}
-        onChange={(e) => setRequestedCount(Math.max(0, Number(e.target.value) || 0))}
-        wrapperClassName="w-[200px]"
-      />
+      <div className="flex flex-col gap-1.5 w-[280px]">
+        <label className="text-label text-ink" htmlFor="quiz-length-slider">
+          Number of questions:{" "}
+          <span className="text-data-md text-ink">{requestedCount}</span>
+        </label>
+        <Slider
+          id="quiz-length-slider"
+          value={Math.min(requestedCount, lengthUpperBound)}
+          onValueChange={setRequestedCount}
+          min={1}
+          max={lengthUpperBound}
+          disabled={!isDraft}
+          aria-label="Number of questions"
+        />
+        <span className="text-body-sm text-ink-faint">
+          ~{estimateQuizMinutes(requestedCount)} min
+        </span>
+      </div>
 
       {/* Same "genuinely independent panel, too small for a full ErrorState"
           call as `StepDifficulty`'s own `poolCountQuery` block — see the
@@ -1122,6 +1126,11 @@ export function QuizBuilder() {
           if (loadedQuiz.questionCount > 0) completed.add(5)
           if (!isDraft) completed.add(6)
 
+          // Task 8 (C3c) · `teacher-tools-quizbuilder-structure-divergence`.
+          // Only what's already decided — a step the teacher is still on
+          // renders through its own step component, not duplicated here.
+          const soFar = settingsSoFar({ quiz: loadedQuiz, questions }, step)
+
           return (
             <>
               <div className="flex flex-col gap-1">
@@ -1156,8 +1165,36 @@ export function QuizBuilder() {
               {/* Navigation itself is never disabled, even for a non-draft quiz —
                   "read-only" means every step's own form controls can't be edited
                   (each step component gates its inputs on `isDraft` individually),
-                  not that a teacher can no longer browse what was configured. */}
-              <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+                  not that a teacher can no longer browse what was configured.
+
+                  The "so far" rail sits beside the stepper from `md` up
+                  (`soFar` is short — five labels at most — so a sidebar never
+                  outgrows the stepper beside it); below `md` there's no room
+                  for a second column, so it collapses to one quiet line
+                  under the stepper instead of disappearing outright. */}
+              <div className="flex items-start gap-8 max-md:flex-col max-md:gap-3">
+                <div className="flex-1 min-w-0">
+                  <Stepper steps={STEPS} current={step} onSelect={(id) => goToStep(id)} completed={completed} />
+                </div>
+                {soFar.length > 0 ? (
+                  <>
+                    <aside className="hidden md:flex md:flex-col gap-2.5 w-[220px] shrink-0">
+                      <SectionHead title="So far" rung="display-sm" level={3} />
+                      <dl className="m-0 flex flex-col gap-2">
+                        {soFar.map((item) => (
+                          <div key={item.label} className="flex items-baseline justify-between gap-3">
+                            <dt className="text-body-sm text-ink-faint">{item.label}</dt>
+                            <dd className="m-0 text-body-sm text-ink text-end truncate">{item.value}</dd>
+                          </div>
+                        ))}
+                      </dl>
+                    </aside>
+                    <div className="md:hidden text-body-sm text-ink-faint text-pretty">
+                      So far: {soFar.map((item) => `${item.label} ${item.value}`).join(" · ")}
+                    </div>
+                  </>
+                ) : null}
+              </div>
 
               {isDraft && patchDraft.isError ? (
                 <div role="alert" className="text-body-sm text-err">

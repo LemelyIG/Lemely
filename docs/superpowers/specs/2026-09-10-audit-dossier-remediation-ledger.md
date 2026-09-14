@@ -230,7 +230,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | pending | compact prev/next queue strip in ReviewItem reusing queueQuery; route model kept (ReviewItem.tsx:30-40) |
 | 211 | `teacher-tools-pool-source-single-select` | ui | medium | D | D2 | pending |  |
 | 212 | `teacher-tools-predicted-class-average-fabricated` | ui | medium | D | D2 | pending |  |
-| 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | pending |  |
+| 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/quizBuilderSummary.test.ts` — `QuizBuilder.tsx` now shows a "So far" rail (`SectionHead` + `dl`) beside the `Stepper` from `md` up (a single line below it), listing `settingsSoFar`'s label/value pairs for every step strictly behind the current one |
 | 214 | `trust-ops-device-limit-count-divergence` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 215 | `trust-ops-suspicious-login-geoip-rejected` | ui | medium |  |  | skipped | skip: suspicious-login geo-IP explicitly rejected |
 | 216 | `x-a11y-canvas-icon-buttons-unlabeled` | ui | medium |  |  | no-action | production already better |
@@ -290,7 +290,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 270 | `teacher-flow-real-keyboard-shortcuts` | ui | low |  |  | no-action | production already better |
 | 271 | `teacher-flow-review-promoted-to-nav` | ui | low |  |  | no-action | production already better |
 | 272 | `teacher-flow-safer-bulk-approve` | ui | low |  |  | no-action | production already better |
-| 273 | `teacher-tools-quiz-length-slider-vs-input` | ui | low | C | C3 | pending |  |
+| 273 | `teacher-tools-quiz-length-slider-vs-input` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/quizBuilderSummary.test.ts` — `StepPool`'s `Input type="number"` is now a `Slider` (1..`quizLengthUpperBound(poolCount)`), showing the value plus an "~N min" caption from `estimateQuizMinutes` |
 | 274 | `trust-ops-device-mgmt-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 275 | `trust-ops-fraud-toggles-unbuilt` | ui | low |  |  | skipped | skip: fraud toggles out of scope |
 | 276 | `x-a11y-dark-theme-exploration-correctly-unshipped` | ui | low | C | C5 | pending |  |
