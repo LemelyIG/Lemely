@@ -908,3 +908,17 @@ Neither script replaces this document, nor `tests/unit/
 nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
 all three exist because a rule stated only in prose is a rule the next
 edit can silently break.
+
+`web/e2e/native-feel.spec.ts` (Task 12, B7) is the behavioural half of this
+enforcement — real device emulation (`iphone-15`/`pixel-7` Playwright
+projects), not source-text pins: 16px form fields, 44px tap targets, the
+chrome-suppression computed styles, safe-area CSS and the exact viewport
+meta, history-trapped dialogs, per-tab scroll and state memory, the
+authenticated deep-link return, and reduced motion across a whole screen
+rather than one component. `web/scripts/check_installability.mjs`
+(`npm run check:installable`) closes the gap Google's Lighthouse PWA-category
+removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
+`Page.getInstallabilityErrors` that audit used to wrap, against a production
+build served under the real `lemelyig.com` origin family so the manifest's
+`scope_extensions` and service-worker scope are checked the way a real
+install actually would be, not against `127.0.0.1`.

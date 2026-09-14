@@ -248,7 +248,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done B3 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
 | 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | pending |  |
-| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | pending | split: B7 adds e2e half, C4 adds unit half (assigned here to B7) |
+| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done B7 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair |
 | 232 | `x-responsive-phone-locked-surfaces-get-real-desktop-containers` | ui | medium |  |  | no-action | production already better |
 | 233 | `x-responsive-teacher-dense-tables-scoped-overflow` | ui | medium |  |  | no-action | production already better |
 | 234 | `x-tokens-card-pure-white` | ui | medium |  |  | no-action | production already better |
