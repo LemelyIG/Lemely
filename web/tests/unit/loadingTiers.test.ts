@@ -41,27 +41,43 @@ describe("index.css declares the loading-tier tokens", () => {
   })
 
   /*
-   * The invariant a token check cannot see. Both tiers stage on
-   * `animation-delay` with a `0s` duration and a `both` fill, so the delay IS
-   * the gate that holds `visibility: hidden`. A global
-   * `animation-delay: 0 !important` under `prefers-reduced-motion` therefore
-   * collapses both windows and puts tier 3's "Still loading" message on
-   * screen, announced and tabbable, from the first frame of every navigation
-   * — for reduced-motion users only.
+   * The invariant, not the instance. An earlier version of this test named
+   * the two tier classes directly, which catches someone DELETING an
+   * exemption but not someone ADDING a third staged element and forgetting
+   * one — the same shape of gap as this file's token assertions, which
+   * stayed green while the interaction they describe was broken (2156e8f2,
+   * caught in review).
    *
-   * That regression shipped once (commit 2156e8f2, caught in review) while
-   * this file's token assertions stayed green, because they pin the values
-   * and not the interaction. This pins the interaction.
+   * The invariant is decidable from the text because there is a clean
+   * marker: a zero-duration animation is STAGING, not motion. Nothing moves,
+   * so the delay is the gate rather than a stagger — which is exactly what
+   * separates the tiers from the 16 real staggered delays elsewhere, with no
+   * judgement needed about whether a `var()` resolves to a time.
+   *
+   * The `toEqual` line is the sanity clause. If a refactor expresses these
+   * another way, the sweep finds nothing and this fails loudly, rather than
+   * matching an empty set and passing — which is how the original defect got
+   * through in the first place.
+   *
+   * Known gap, accepted: this does not catch `visibility: visible !important`
+   * being added to the blanket rule, or `lm-appear` losing its explicit
+   * `from`. Those are not realistic edits; "add a fourth loading tier" is.
+   * The behavioural counterpart lives in `e2e/reduced-motion.spec.ts`.
    */
-  it("exempts both staging tiers from the reduced-motion delay reset", () => {
-    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"))
-    expect(reduced).toMatch(/animation-delay:\s*0\.001ms\s*!important/)
-    expect(reduced).toMatch(
-      /\.lm-tier-skeleton\s*\{[^}]*animation-delay:\s*var\(--loading-tier-skeleton\)\s*!important/,
+  it("exempts every zero-duration animation from the reduced-motion delay reset", () => {
+    const staged = [...css.matchAll(/(\.[\w-]+)\s*\{[^}]*animation:\s*[\w-]+\s+0s\b/g)].map(
+      (m) => m[1],
     )
-    expect(reduced).toMatch(
-      /\.lm-tier-slow\s*\{[^}]*animation-delay:\s*var\(--loading-tier-slow\)\s*!important/,
-    )
+    expect(staged).toEqual([".lm-tier-skeleton", ".lm-tier-slow"])
+
+    const reducedMotion = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"))
+    expect(reducedMotion).toMatch(/animation-delay:\s*0\.001ms\s*!important/)
+    for (const selector of staged) {
+      expect(
+        reducedMotion,
+        `${selector} stages on its delay, so it must be carved out of the reset`,
+      ).toMatch(new RegExp(`\\${selector}\\s*\\{[^}]*animation-delay:[^;]+!important`))
+    }
   })
 
   it("names DESIGN.md §12 near the tokens", () => {
