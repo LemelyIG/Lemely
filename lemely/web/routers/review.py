@@ -204,26 +204,38 @@ def list_review_queue(
     default 50) bounds the page size; ``cursor``, when given, continues a
     previous page (an unparseable cursor is a 422, never a 500 or a silent
     reset to page one).
+
+    ``total`` (C3d) is the count of every item matching ``class_id``/
+    ``reason``/``min_age_hours``, ignoring ``limit``/``cursor`` — computed
+    from a single unfiltered-by-page call to ``service.list_queue`` (the same
+    call, same filters, same tenant scope as the paginated one below; page
+    and cursor are then applied in Python over that one result set) rather
+    than a second, separately-scoped query, so `total` can never drift from
+    (or leak beyond) what the page itself is allowed to see.
     """
     if not 1 <= limit <= 200:
         raise HTTPException(status_code=422, detail="limit must be between 1 and 200")
     parsed_cursor = _decode_cursor(cursor) if cursor is not None else None
     try:
-        rows = service.list_queue(
+        all_rows = service.list_queue(
             auth.user_id,
             auth.role,
             class_id=class_id,
             reason=reason,
             min_age_hours=min_age_hours,
-            limit=limit,
-            cursor=parsed_cursor,
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    total = len(all_rows)
+    rows = all_rows
+    if parsed_cursor is not None:
+        rows = [row for row in rows if (row.created_at, row.item_id) > parsed_cursor]
     has_more = len(rows) > limit
     page = rows[:limit]
     next_cursor = _encode_cursor(page[-1].created_at, page[-1].item_id) if has_more else None
-    return ReviewQueueListDTO(items=[_row_to_dto(row) for row in page], nextCursor=next_cursor)
+    return ReviewQueueListDTO(
+        items=[_row_to_dto(row) for row in page], nextCursor=next_cursor, total=total
+    )
 
 
 @router.get("/{item_id}", response_model=ReviewItemDetailDTO)

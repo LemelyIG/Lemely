@@ -72,10 +72,15 @@ class ReviewQueueListDTO(ApiModel):
     + ``itemId``) the client echoes back as the ``cursor`` query param to
     fetch the next page; ``null`` once the caller's whole queue fits on this
     page.
+
+    ``total`` is the count of items matching the request's filters
+    (``class_id``/``reason``/``min_age_hours``), ignoring ``limit``/``cursor``
+    — the same tenant scope as ``items`` (C3d).
     """
 
     items: list[ReviewQueueItemDTO]
     nextCursor: str | None = None
+    total: int
 
 
 class ReviewItemDetailDTO(ApiModel):
