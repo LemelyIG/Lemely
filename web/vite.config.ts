@@ -168,5 +168,15 @@ export default defineConfig(({ mode }) => ({
         changeOrigin: true,
       },
     },
+    // B7 (Task 12): `scripts/check_installability.mjs` maps `lemelyig.com`
+    // to this preview server via Chromium's `--host-resolver-rules` so
+    // Chromium's installability checks run against the real production
+    // origin family (`vite/manifest.ts`'s `scope_extensions`), not
+    // `127.0.0.1`. Without this, Vite's own Host-header allowlist (added
+    // against DNS-rebinding attacks) answers that request with a bare 403
+    // before the app ever loads — confirmed by hand: `curl -H "Host:
+    // lemelyig.com:4173" http://127.0.0.1:4173/` returns 403 without this
+    // entry, 200 with it.
+    allowedHosts: ["lemelyig.com"],
   },
 }))

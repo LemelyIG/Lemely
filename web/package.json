@@ -24,6 +24,7 @@
     "screenshots:manifest": "node scripts/manifest_screenshots.mjs",
     "check:native": "node scripts/check-native-invariants.mjs",
     "check:bundle": "node scripts/check-bundle-budget.mjs",
+    "check:installable": "node scripts/check_installability.mjs",
     "cf:dev": "wrangler dev",
     "cf:deploy:staging": "wrangler deploy --env staging",
     "cf:deploy:production": "wrangler deploy --env production"
