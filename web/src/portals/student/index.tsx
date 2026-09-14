@@ -43,6 +43,7 @@ import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import type { SubjectRow } from "@/lib/studentTypes"
 import { pageMetaFromMatches } from "@/lib/meta/documentMeta"
+import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
 import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from "./data"
 
 /*
@@ -64,7 +65,17 @@ import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from ".
 const Overview = lazy(() => import("./screens/Overview").then((m) => ({ default: m.Overview })))
 const Subject = lazy(() => import("./screens/Subject").then((m) => ({ default: m.Subject })))
 const PaperResult = lazy(() => import("./screens/PaperResult").then((m) => ({ default: m.PaperResult })))
-const CorrectPaper = lazy(() => import("./screens/CorrectPaper").then((m) => ({ default: m.CorrectPaper })))
+// Task 11 (B6c): `loadCorrectPaper` is a named loader, not inlined into
+// `lazy(...)`, so `prefetchOnIntent` below can pass the exact same function
+// React.lazy uses — hovering/focusing the CTA warms the same module cache
+// entry the router's own Suspense boundary will read from on navigation.
+const loadCorrectPaper = () =>
+  import("./screens/CorrectPaper").then((m) => ({ default: m.CorrectPaper }))
+const CorrectPaper = lazy(loadCorrectPaper)
+// One shared fire-once gate across every call site below (Header CTA,
+// BottomActionBar, BottomNav's "Correct" tab) — see `prefetchOnIntent`'s own
+// doc comment for why this must be a single call, not one per site.
+const prefetchCorrectPaper = prefetchOnIntent(loadCorrectPaper)
 const StudyPlanSession = lazy(() =>
   import("./screens/studyplan/StudyPlanSession").then((m) => ({ default: m.StudyPlanSession })),
 )
@@ -651,6 +662,7 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
           // the very top of a tall phone is the least reachable spot for a
           // one-handed thumb. See that component's own doc comment.
           className={cn(buttonVariants({ variant: "primary", size: "md" }), "hidden sidebar:inline-flex")}
+          {...prefetchCorrectPaper}
         >
           Correct a paper
         </Link>
@@ -881,7 +893,12 @@ function StudentLayout() {
       </div>
 
       {showBottomActionBar ? (
-        <BottomActionBar to="/student/correct" label="Correct a paper" hideOn={["/student/correct"]} />
+        <BottomActionBar
+          to="/student/correct"
+          label="Correct a paper"
+          hideOn={["/student/correct"]}
+          prefetch={prefetchCorrectPaper.onPointerEnter}
+        />
       ) : null}
       {/* Below the `sidebar` breakpoint, the primary navigation. "Correct" is
           the emphasis tab — a raised accent circle, the thumb-zone twin of
@@ -895,6 +912,11 @@ function StudentLayout() {
               end: tab.end,
               label: tab.label,
               icon: <tab.icon size={22} aria-hidden="true" />,
+              // Task 11 (B6c): only the "Correct" tab points at the lazy
+              // CorrectPaper chunk — every other tab's screen is already
+              // reached via other prefetched/near paths or is small enough
+              // not to warrant one.
+              prefetch: tab.id === "correct" ? prefetchCorrectPaper.onPointerEnter : undefined,
             }),
           ),
           {

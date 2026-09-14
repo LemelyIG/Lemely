@@ -13,7 +13,6 @@ import { QueryState } from "@/components/ui/query-state"
 import { ErrorState } from "@/components/ui/state-views"
 import { QueuedBanner } from "@/components/ui/queued-banner"
 import { CameraCapture } from "@/components/CameraCapture"
-import { assemblePagesToPdf } from "@/lib/pdf/assemblePages"
 import {
   advanceStage,
   annotateActiveStage,
@@ -448,6 +447,10 @@ export function CorrectPaper() {
     }
     setAssemblingScan(true)
     try {
+      // Task 11 (B6c): dynamic, not static — see CameraCapture.tsx's own
+      // comment on its matching call for why `pdf-lib` stays out of this
+      // chunk until a multi-photo upload actually needs it.
+      const { assemblePagesToPdf } = await import("@/lib/pdf/assemblePages")
       const assembled = await assemblePagesToPdf(files)
       chooseScan(assembled)
     } catch {

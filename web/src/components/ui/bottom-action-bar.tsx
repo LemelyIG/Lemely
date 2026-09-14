@@ -18,9 +18,12 @@ export interface BottomActionBarProps {
    * its own screen has nothing to do) and any screen the caller judges the
    * bar would compete with, e.g. a full-screen flow. */
   hideOn: string[]
+  /** Task 11 (B6): prefetch the destination's chunk on hover/touch/focus —
+   * wired onto every intent event this bar's own `Link` can raise. */
+  prefetch?: () => void
 }
 
-export function BottomActionBar({ to, label, hideOn }: BottomActionBarProps) {
+export function BottomActionBar({ to, label, hideOn, prefetch }: BottomActionBarProps) {
   const location = useLocation()
   if (hideOn.includes(location.pathname)) return null
 
@@ -30,7 +33,14 @@ export function BottomActionBar({ to, label, hideOn }: BottomActionBarProps) {
         "lm-nav-chrome lm-safe-bottom lm-bottom-action-bar sidebar:hidden fixed inset-x-0 z-nav px-page-mobile pb-3",
       )}
     >
-      <Link to={to} viewTransition className={cn(buttonVariants({ variant: "primary", size: "md" }), "w-full")}>
+      <Link
+        to={to}
+        viewTransition
+        onPointerEnter={prefetch}
+        onTouchStart={prefetch}
+        onFocus={prefetch}
+        className={cn(buttonVariants({ variant: "primary", size: "md" }), "w-full")}
+      >
         {label}
       </Link>
     </div>

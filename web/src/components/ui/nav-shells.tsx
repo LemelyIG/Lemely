@@ -67,7 +67,8 @@ function NavShellLink({ item, className, children }: NavShellLinkOwnProps) {
         to={item.to}
         end={item.end}
         viewTransition
-        onMouseEnter={item.prefetch}
+        onPointerEnter={item.prefetch}
+        onTouchStart={item.prefetch}
         onFocus={item.prefetch}
         className={({ isActive }) => className(isActive || !!item.active)}
       >

@@ -894,7 +894,17 @@ other block that still executes unconditionally at install time.
 build` via `postbuild` — which means it now also gates every production
 deploy, not only CI, since `deploy.yml`'s frontend build step runs through
 the same `npm run build`) fails the build if any shipped JS chunk exceeds
-its gzip budget. Neither script replaces this document, nor `tests/unit/
+its gzip budget — 150KB as of Phase B (Task 11, B6c), tightened from Phase
+A's 200KB once `pdf-lib` and the scanner were split out of `CorrectPaper`.
+The one named exception is the lazy `assemblePages-*.js` chunk that split
+produced: `pdf-lib`'s own official minified build has no tree-shakeable
+"core" and lands that chunk at ~171KB gzipped on its own, with no further
+code-organization move available to shrink it, so `KNOWN_HEAVY_LAZY_CHUNKS`
+in the script gives it its own 175KB ceiling rather than raising the
+general 150KB budget for every other chunk — the chunk only downloads once
+a student assembles 2+ photos into one PDF, never on an initial-load path,
+so it is not the same cost category the 150KB budget exists to catch.
+Neither script replaces this document, nor `tests/unit/
 nativeMechanics.test.ts` (the vitest suite CI's own unit-test step runs) —
 all three exist because a rule stated only in prose is a rule the next
 edit can silently break.

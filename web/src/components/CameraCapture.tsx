@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from "react"
 import { Camera, Flashlight, Trash, X } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
-import { assemblePagesToPdf } from "@/lib/pdf/assemblePages"
 import { randomUuid } from "@/lib/uuid"
 import { cn } from "@/lib/utils"
 import { useWakeLock } from "@/lib/wakeLock"
@@ -419,6 +418,11 @@ export function CameraCapture({
     setAssembling(true)
     setAssembleError(null)
     try {
+      // Task 11 (B6c): dynamic, not static — `pdf-lib` is ~120KB gzipped and
+      // this call site only runs once the student presses "Done" on the
+      // camera flow, so there is no reason for it to sit in CorrectPaper's
+      // own chunk from first paint.
+      const { assemblePagesToPdf } = await import("@/lib/pdf/assemblePages")
       const file = await assemblePagesToPdf(pages.map((page) => page.blob))
       onComplete(file)
     } catch {
