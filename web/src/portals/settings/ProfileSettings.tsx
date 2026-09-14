@@ -4,9 +4,12 @@ import { Avatar } from "@/components/ui/avatar"
 import { Button } from "@/components/ui/button"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
+import { Radio, RadioGroup } from "@/components/ui/radio"
 import { Select } from "@/components/ui/select"
 import { validateAvatarFile } from "@/lib/avatarUpload"
 import { useProfile, usePutTimezone, useRemoveAvatar, useUploadAvatar } from "@/lib/hooks/useMeApi"
+import { isThemePreference } from "@/lib/theme/theme"
+import { useTheme } from "@/lib/theme/useTheme"
 import {
   FOLLOW_DEVICE_UPDATE,
   FOLLOW_DEVICE_VALUE,
@@ -68,6 +71,7 @@ export function ProfileSettingsSection() {
   const upload = useUploadAvatar()
   const remove = useRemoveAvatar()
   const putTimezone = usePutTimezone()
+  const { preference: themePreference, setPreference: setThemePreference } = useTheme()
   const [timezoneError, setTimezoneError] = useState<string | null>(null)
   const device = deviceTimezone()
   const zoneOptions = timezoneOptions(browserTimezones(), profile.data?.timezone, device)
@@ -285,6 +289,33 @@ export function ProfileSettingsSection() {
               {timezoneError}
             </p>
           ) : null}
+        </div>
+      </section>
+
+      <section aria-labelledby="appearance-heading" className="flex flex-col gap-4">
+        <div className="flex flex-col gap-2">
+          <h2 id="appearance-heading" className="text-display-sm text-ink">
+            Appearance
+          </h2>
+          <p className="max-w-[65ch] text-body-sm text-ink-muted">
+            Applies immediately on this device. System follows your OS setting and switches
+            automatically if it changes.
+          </p>
+        </div>
+
+        <div className="flex flex-col gap-3 rounded-lg border border-rule bg-paper-raised p-4 sm:p-5">
+          <RadioGroup
+            label="Theme"
+            value={themePreference}
+            onValueChange={(value) => {
+              if (isThemePreference(value)) setThemePreference(value)
+            }}
+            orientation="horizontal"
+          >
+            <Radio label="System" value="system" />
+            <Radio label="Light" value="light" />
+            <Radio label="Dark" value="dark" />
+          </RadioGroup>
         </div>
       </section>
     </>

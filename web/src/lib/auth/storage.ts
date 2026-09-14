@@ -155,6 +155,13 @@ const defaultSessionCaches: SessionCaches = {
  * nothing on any of these three call sites (a sign-out click, a redirect
  * render, a refused refresh) waits for either, and a failure here must not
  * block it.
+ *
+ * Deliberately does NOT clear `THEME_STORAGE_KEY` ("lemely.theme", `lib/
+ * theme/theme.ts`): the Appearance setting is a device preference, not
+ * session data — the same distinction `getDeviceId` above draws for the
+ * device fingerprint. A reader who chose Dark should still see Dark on the
+ * sign-in screen this function's own caller is about to render, and after
+ * the next reader signs in on the same device.
  */
 export function endSession(caches: SessionCaches = defaultSessionCaches): void {
   clearSession()
