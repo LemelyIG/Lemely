@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
+import { relativeTo, sourceFiles } from "./support/jsxSource"
 
 /**
  * The compat-layer gate.
@@ -27,7 +28,7 @@ import { describe, expect, it } from "vitest"
  * is well-formed, resolves to *something*, and is therefore invisible to every
  * gate that looks at rendered output.
  */
-const MIGRATED_FILES = [
+const MIGRATED_FILES_CURATED = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
   "src/portals/student/index.tsx",
   "src/portals/student/screens/Subject.tsx",
@@ -56,10 +57,9 @@ const MIGRATED_FILES = [
   "src/portals/admin/screens/PipelineHealth.tsx",
   "src/lib/settingsOutcome.ts",
   "src/portals/misc/NotFound.tsx",
-  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
-  "src/portals/marketing/index.tsx",
-  "src/portals/marketing/Landing.tsx",
-  "src/portals/marketing/DataHandling.tsx",
+  // Phase 4, surface 9 — the Reveal component the marketing lane needed.
+  // The marketing lane itself is globbed below (MARKETING_FILES), not listed
+  // here by hand.
   "src/components/ui/reveal.tsx",
   "dev-previews/Directions.tsx",
   "src/routes.tsx",
@@ -125,6 +125,19 @@ const MIGRATED_FILES = [
   "src/portals/auth/SignupParent.tsx",
   "src/components/auth/CodeInput.tsx",
 ]
+
+/*
+ * Review finding B (Task 2 fixes): `src/portals/marketing/**` is fully
+ * migrated, unlike most of the rest of this hand-maintained list, so it is
+ * globbed rather than hand-listed — `HeroExampleCard.tsx` (Task 2) landed in
+ * no gate list here, and Task 3 adds more marketing components. A glob covers
+ * a new file the moment it exists.
+ */
+const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")).map((f) =>
+  relativeTo(process.cwd(), f),
+)
+
+const MIGRATED_FILES = [...new Set([...MIGRATED_FILES_CURATED, ...MARKETING_FILES])]
 
 /**
  * Build-era class names and the Study Notebook name that replaces each.

@@ -78,7 +78,7 @@ export const heroExample = {
   score: "38",
   max: "/40",
   grade: "A",
-  note: "Two marks dropped, both on reading a distance-time gradient. The practice set that follows is twelve questions of that one shape.",
+  note: "Two marks dropped, both on reading a distance-time gradient. The practice that follows is built from that one shape.",
 }
 
 /* ── The example script's answer grid ───────────────────────────────────── */

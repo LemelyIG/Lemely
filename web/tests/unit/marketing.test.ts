@@ -205,6 +205,27 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
     expect(source).toMatch(/scrollIntoView/)
     expect(source).toMatch(/SERVES_SECTION_ID/)
   })
+
+  /*
+   * Review finding A: this whole describe block reads only `Landing.tsx`, so
+   * the header's own "Get started" — rendered by `portals/marketing/index.tsx`,
+   * not `Landing.tsx` — was never checked here. It is the page's most
+   * prominent primary action (the only header link styled with
+   * `buttonVariants`), and before `/signup` existed it pointed at `/login`
+   * exactly like the CTAs above. A regression there must fail a test the same
+   * way a regression in the hero or close CTA already does.
+   */
+  const shellSource = fs.readFileSync(
+    path.resolve(__dirname, "../../src/portals/marketing/index.tsx"),
+    "utf8",
+  )
+
+  it("keeps the header's primary action on /signup", () => {
+    expect(shellSource).toMatch(/to="\/signup"[\s\S]{0,120}buttonVariants/)
+    // The header also carries "Log in" (nav) and "Log in" (footer) — both
+    // legitimately point at /login. Exactly two, never a third.
+    expect(shellSource.match(/to="\/login"/g) ?? []).toHaveLength(2)
+  })
 })
 
 describe("landing copy claims only what the product does — P4.9", () => {

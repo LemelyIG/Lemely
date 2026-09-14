@@ -21,7 +21,7 @@ import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
  * migrates it, and the list only ever grows.
  */
 
-const RTL_CLEAN_FILES = [
+const RTL_CLEAN_FILES_CURATED = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
   "src/portals/student/screens/Subject.tsx",
   "src/portals/student/screens/Parents.tsx",
@@ -48,10 +48,9 @@ const RTL_CLEAN_FILES = [
   "src/portals/admin/screens/Activations.tsx",
   "src/portals/admin/screens/PipelineHealth.tsx",
   "src/lib/settingsOutcome.ts",
-  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
-  "src/portals/marketing/index.tsx",
-  "src/portals/marketing/Landing.tsx",
-  "src/portals/marketing/DataHandling.tsx",
+  // Phase 4, surface 9 — the Reveal component the marketing lane needed.
+  // The marketing lane itself is globbed below (MARKETING_FILES), not listed
+  // here by hand.
   "src/components/ui/reveal.tsx",
   "dev-previews/Directions.tsx",
   "src/routes.tsx",
@@ -156,6 +155,21 @@ const RTL_CLEAN_FILES = [
   "src/portals/auth/SignupParent.tsx",
   "src/components/auth/CodeInput.tsx",
 ]
+
+/*
+ * Review finding B (Task 2 fixes): `src/portals/marketing/**` is fully
+ * migrated (Phase 4, surface 9), so the premise above for hand-maintaining
+ * this list — globbing `src/` would fail on the ~40 build-era screens Phase 4
+ * has not reached — does not hold for this one directory. It is globbed
+ * instead of hand-listed so a new marketing component (`HeroExampleCard.tsx`
+ * landed in no gate list here, and Task 3 adds more) is covered the moment it
+ * exists rather than on the next audit that happens to notice.
+ */
+const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")).map((f) =>
+  relativeTo(process.cwd(), f),
+)
+
+const RTL_CLEAN_FILES = [...new Set([...RTL_CLEAN_FILES_CURATED, ...MARKETING_FILES])]
 
 /**
  * Physical-direction Tailwind utilities that have a logical counterpart.

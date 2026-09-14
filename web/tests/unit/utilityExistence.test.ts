@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { describe, expect, it } from "vitest"
-import { stripComments } from "./support/jsxSource"
+import { relativeTo, sourceFiles, stripComments } from "./support/jsxSource"
 
 /**
  * The resolves-to-nothing gate.
@@ -47,7 +47,7 @@ import { stripComments } from "./support/jsxSource"
  * which is exactly the condition all three real defects met.
  */
 
-const SCANNED_FILES = [
+const SCANNED_FILES_CURATED = [
   // Phase 4, surface 10 — 404 / misc, and the settings lane no surface owned.
   "src/portals/student/screens/Subject.tsx",
   "src/portals/student/screens/Parents.tsx",
@@ -75,10 +75,9 @@ const SCANNED_FILES = [
   "src/portals/admin/screens/PipelineHealth.tsx",
   "src/lib/settingsOutcome.ts",
   "src/portals/misc/NotFound.tsx",
-  // Phase 4, surface 9 — the marketing lane, and the Reveal it needed.
-  "src/portals/marketing/index.tsx",
-  "src/portals/marketing/Landing.tsx",
-  "src/portals/marketing/DataHandling.tsx",
+  // Phase 4, surface 9 — the Reveal component the marketing lane needed.
+  // The marketing lane itself is globbed below (MARKETING_FILES), not listed
+  // here by hand.
   "src/components/ui/reveal.tsx",
   "dev-previews/Directions.tsx",
   "src/routes.tsx",
@@ -148,6 +147,19 @@ const SCANNED_FILES = [
   "src/portals/auth/SignupParent.tsx",
   "src/components/auth/CodeInput.tsx",
 ]
+
+/*
+ * Review finding B (Task 2 fixes): `src/portals/marketing/**` is fully
+ * migrated, unlike most of the rest of this hand-maintained list, so it is
+ * globbed rather than hand-listed — `HeroExampleCard.tsx` (Task 2) landed in
+ * no gate list here, and Task 3 adds more marketing components. A glob covers
+ * a new file the moment it exists.
+ */
+const MARKETING_FILES = sourceFiles(join(process.cwd(), "src/portals/marketing")).map((f) =>
+  relativeTo(process.cwd(), f),
+)
+
+const SCANNED_FILES = [...new Set([...SCANNED_FILES_CURATED, ...MARKETING_FILES])]
 
 const CSS_PATH = "src/index.css"
 
