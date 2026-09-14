@@ -226,7 +226,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 206 | `teacher-analytics-national-benchmark-absent` | ui | medium |  |  | skipped | skip: backlog #20 national benchmark excluded |
 | 207 | `teacher-analytics-no-lesson-plan-action` | ui | medium | D | D3 | pending |  |
 | 208 | `teacher-flow-canvas-fake-progress-ring` | ui | medium |  |  | no-action | production already better |
-| 209 | `teacher-flow-no-camera-capture-on-upload` | ui | medium | C | C3 | pending |  |
+| 209 | `teacher-flow-no-camera-capture-on-upload` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/gradingCamera.test.ts` — `Grading.tsx` offers "Use camera" beside the plain file input, opening `CameraCapture` (`autoStart`, gated on the tap); `assemblePagesToPdf` stays a separate lazy chunk (`node scripts/check-bundle-budget.mjs` — all 139 chunks within budget, `Grading-*` at 4.02KB gzip) |
 | 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | pending | compact prev/next queue strip in ReviewItem reusing queueQuery; route model kept (ReviewItem.tsx:30-40) |
 | 211 | `teacher-tools-pool-source-single-select` | ui | medium | D | D2 | pending |  |
 | 212 | `teacher-tools-predicted-class-average-fabricated` | ui | medium | D | D2 | pending |  |
