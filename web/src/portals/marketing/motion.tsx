@@ -42,6 +42,13 @@ import { cn } from "@/lib/utils"
 import { prefersReducedMotion } from "@/lib/celebration"
 
 /**
+ * Set by any `useReveal` observer callback. Module-scoped because the
+ * failsafe is mounted once at the frame while the observers live per-element,
+ * so a shared flag is the only thing that spans both.
+ */
+let observerReported = false
+
+/**
  * The JS half of `.reveal`/`.is-in`: observes `ref`, flips `is-in` on first
  * intersection, then disconnects (`once: true`, same as `Reveal`).
  *
@@ -64,6 +71,10 @@ export function useReveal(index = 0) {
     }
     const observer = new IntersectionObserver(
       (entries) => {
+        // Any callback at all proves the observer is live, intersecting or
+        // not. `useRevealFailsafe` reads this to decide whether it is
+        // recovering from a broken observer or trampling a working one.
+        observerReported = true
         if (entries.some((entry) => entry.isIntersecting)) {
           setIsIn(true)
           observer.disconnect()
@@ -117,7 +128,16 @@ export function useRevealFailsafe() {
   useEffect(() => {
     if (prefersReducedMotion()) return
     const timer = window.setTimeout(() => {
-      document.querySelectorAll(".reveal:not(.is-in)").forEach((el) => el.classList.add("is-in"))
+      // The guard this failsafe is meaningless without. Without it the timer
+      // fires unconditionally 1500ms after mount and reveals every element
+      // still waiting below the fold, so by the time the reader scrolls to
+      // them there is nothing left to animate: the whole scroll-reveal design
+      // is dead a second and a half in. The imported source carries the same
+      // check (`if (ioFired) return`) for the same reason.
+      if (observerReported) return
+      document
+        .querySelectorAll(".reveal:not(.is-in)")
+        .forEach((el) => el.classList.remove("reveal"))
     }, 1500)
     return () => window.clearTimeout(timer)
   }, [])
