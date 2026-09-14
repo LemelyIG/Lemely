@@ -4,6 +4,9 @@ import { Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
 import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
+import { Select } from "@/components/ui/select"
+import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { initialsOf, relativeTime } from "@/lib/utils"
@@ -213,28 +216,22 @@ export function Announcements() {
         onSubmit={handleSubmit}
         className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4 max-w-[720px]"
       >
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Title
-          <input
-            required
-            value={title}
-            onChange={(e) => setTitle(e.target.value)}
-            placeholder="e.g. Thermal physics test moved to Thursday"
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-        </label>
+        <Input
+          label="Title"
+          required
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          placeholder="e.g. Thermal physics test moved to Thursday"
+        />
 
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-          Message
-          <textarea
-            required
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            rows={5}
-            placeholder="Plain text. Line breaks are kept as you type them."
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-lg text-ink resize-y focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-        </label>
+        <Textarea
+          label="Message"
+          required
+          value={body}
+          onChange={(e) => setBody(e.target.value)}
+          rows={5}
+          placeholder="Plain text. Line breaks are kept as you type them."
+        />
 
         <fieldset className="border-0 p-0 m-0 flex flex-col gap-2">
           <legend className="text-eyebrow text-ink-faint p-0 mb-1">
@@ -248,6 +245,7 @@ export function Announcements() {
               checked={audience === "classes"}
               onChange={() => setAudience("classes")}
               className="accent-accent"
+              data-kit-field="radio"
             />
             My classes
           </label>
@@ -302,6 +300,7 @@ export function Announcements() {
                   checked={audience === "school"}
                   onChange={() => setAudience("school")}
                   className="accent-accent"
+                  data-kit-field="radio"
                 />
                 Whole school
               </label>
@@ -314,24 +313,22 @@ export function Announcements() {
                       Couldn't load your schools: {teacherLoadFailureMessage(schoolsQuery.error)}
                     </span>
                   ) : (
-                    <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted max-w-[320px]">
-                      School
-                      <select
-                        required
-                        value={schoolId}
-                        onChange={(e) => setSchoolId(e.target.value)}
-                        className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                      >
-                        <option value="" disabled>
-                          Choose a school…
+                    <Select
+                      label="School"
+                      required
+                      value={schoolId}
+                      onChange={(e) => setSchoolId(e.target.value)}
+                      wrapperClassName="max-w-[320px]"
+                    >
+                      <option value="" disabled>
+                        Choose a school…
+                      </option>
+                      {schools.map((s) => (
+                        <option key={s.schoolId} value={s.schoolId}>
+                          {s.schoolName}
                         </option>
-                        {schools.map((s) => (
-                          <option key={s.schoolId} value={s.schoolId}>
-                            {s.schoolName}
-                          </option>
-                        ))}
-                      </select>
-                    </label>
+                      ))}
+                    </Select>
                   )}
                 </div>
               ) : null}
@@ -343,18 +340,14 @@ export function Announcements() {
           </p>
         </fieldset>
 
-        <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted max-w-[280px]">
-          Date it (optional)
-          <input
-            type="datetime-local"
-            value={publishAt}
-            onChange={(e) => setPublishAt(e.target.value)}
-            className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-          />
-          <span className="text-body-sm text-ink-muted text-pretty">
-            Hidden from students and unsent until this date and time. Leave it empty to post now.
-          </span>
-        </label>
+        <Input
+          label="Date it (optional)"
+          type="datetime-local"
+          value={publishAt}
+          onChange={(e) => setPublishAt(e.target.value)}
+          hint="Hidden from students and unsent until this date and time. Leave it empty to post now."
+          wrapperClassName="max-w-[280px]"
+        />
 
         <div className="flex items-center gap-3 flex-wrap">
           <Button type="submit" variant="ink" disabled={!canSubmit || createAnnouncement.isPending}>

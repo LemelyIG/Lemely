@@ -93,6 +93,7 @@ export function MarkSchemes() {
                 accept="application/pdf"
                 className="hidden"
                 onChange={handleFileChange}
+                data-kit-field="file"
               />
               <Button
                 variant="secondary"

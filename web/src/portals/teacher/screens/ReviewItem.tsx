@@ -4,7 +4,9 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
+import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { relativeTime } from "@/lib/utils"
@@ -130,15 +132,13 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
       }}
       className="flex flex-col gap-2.5"
     >
-      <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-        Internal note (optional, visible only to you, never the student)
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
-          className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        />
-      </label>
+      <Textarea
+        label="Internal note (optional, visible only to you, never the student)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+        className="resize-none"
+      />
       <div>
         <Button type="submit" variant="ink" disabled={dismiss.isPending}>
           {dismiss.isPending ? "Dismissing…" : "Dismiss flag"}
@@ -228,15 +228,13 @@ function ResolveControls({
       <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
         {mode === "accept" ? (
           <>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Internal note (optional, visible only to you and other teachers, not the student)
-              <textarea
-                value={acceptNote}
-                onChange={(e) => setAcceptNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Internal note (optional, visible only to you and other teachers, not the student)"
+              value={acceptNote}
+              onChange={(e) => setAcceptNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             <div className="flex items-center gap-2.5 flex-wrap">
               <Button type="button" variant="ink" disabled={resolve.isPending} onClick={handleAccept}>
                 {resolve.isPending ? "Saving…" : "Accept as-is"}
@@ -255,66 +253,54 @@ function ResolveControls({
         ) : (
           <form onSubmit={handleSaveCorrection} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Marks to award
-                <input
-                  type="number"
-                  min={0}
-                  max={detail.maximumMarks ?? undefined}
-                  value={overrideMarks}
-                  onChange={(e) => setOverrideMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Method
-                <input
-                  type="number"
-                  min={0}
-                  value={methodMarks}
-                  onChange={(e) => setMethodMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Accuracy
-                <input
-                  type="number"
-                  min={0}
-                  value={accuracyMarks}
-                  onChange={(e) => setAccuracyMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Other
-                <input
-                  type="number"
-                  min={0}
-                  value={otherMarks}
-                  onChange={(e) => setOtherMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
+              <Input
+                label="Marks to award"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={detail.maximumMarks ?? undefined}
+                value={overrideMarks}
+                onChange={(e) => setOverrideMarks(e.target.value)}
+              />
+              <Input
+                label="Method"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={methodMarks}
+                onChange={(e) => setMethodMarks(e.target.value)}
+              />
+              <Input
+                label="Accuracy"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={accuracyMarks}
+                onChange={(e) => setAccuracyMarks(e.target.value)}
+              />
+              <Input
+                label="Other"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={otherMarks}
+                onChange={(e) => setOtherMarks(e.target.value)}
+              />
             </div>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Breakdown notes (internal: how you split the marks)
-              <textarea
-                value={breakdownNotes}
-                onChange={(e) => setBreakdownNotes(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Note to the student, saved on their corrected result as the reason for the change
-              <textarea
-                value={studentNote}
-                onChange={(e) => setStudentNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Breakdown notes (internal: how you split the marks)"
+              value={breakdownNotes}
+              onChange={(e) => setBreakdownNotes(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+            <Textarea
+              label="Note to the student, saved on their corrected result as the reason for the change"
+              value={studentNote}
+              onChange={(e) => setStudentNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             {validationError ? (
               <div role="alert" className="text-body-sm text-err">
                 {validationError}
