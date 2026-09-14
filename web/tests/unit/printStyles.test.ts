@@ -85,9 +85,14 @@ describe("the @media print block", () => {
     const lightProps = [...new Set(lightRootRules.flatMap((r) => r.props))].sort()
     const darkProps = [...new Set(darkRootRules.flatMap((r) => r.props))].sort()
 
-    // At minimum, the paper AND ink triples travel together.
+    // At minimum, the paper, ink AND semantic (ok/warn/err) triples travel
+    // together — PaperResult.tsx's IntegrityMark and "Needs review" copy
+    // print in --ok/--warn, unhidden by data-print="hide", and re-verification
+    // review found they washed out under the same specificity bug (dark
+    // --warn measured 2.10:1 on forced white paper vs light's 7.58:1).
     expect(lightProps).toEqual(expect.arrayContaining(["--paper", "--paper-raised", "--paper-sunk"]))
     expect(lightProps).toEqual(expect.arrayContaining(["--ink", "--ink-muted", "--ink-faint"]))
+    expect(lightProps).toEqual(expect.arrayContaining(["--ok", "--warn", "--err"]))
     expect(darkProps).toEqual(lightProps)
   })
 

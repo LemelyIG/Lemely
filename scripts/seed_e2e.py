@@ -1230,7 +1230,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         Role.teacher,
         class_id=class_row.class_id,
         reason="low_confidence",
-    )
+    ).rows
     review_rows = [r for r in review_rows if r.attempt_id == inactive_attempt_id]
     if len(review_rows) != 1:
         raise RuntimeError(

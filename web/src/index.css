@@ -1155,12 +1155,12 @@ body {
 
   /*
    * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
-   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*` per
-   * `data-theme`, but ink on physical paper must stay legible regardless of
-   * which theme was active on screen when the student printed. Forcing the
-   * literal, not a token, guarantees that even if a future dark-mode token
-   * swap runs *inside* this block by mistake, print still resolves to a
-   * light page.
+   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*`/semantic
+   * per `data-theme`, but ink on physical paper must stay legible regardless
+   * of which theme was active on screen when the student printed. Forcing
+   * the literal, not a token, guarantees that even if a future dark-mode
+   * token swap runs *inside* this block by mistake, print still resolves to
+   * a light page.
    *
    * C4/C5 review fix: `@media` adds no specificity, so a bare `:root` here
    * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
@@ -1172,10 +1172,20 @@ body {
    * dark ladder uses, and wins there by source order (this block comes
    * after it in the file) — and it now resets `--ink*` and `--rule` too,
    * not just `--paper*`, since PaperResult.tsx/question-row.tsx print real
-   * ink-coloured text and `--rule`-based borders. Values are the light
-   * ladder's own (§3.1/§3.2/§3.3 above), literal rather than `var()`, for
-   * the same "survives a future mistake inside this block" reason `--paper*`
-   * already relied on.
+   * ink-coloured text and `--rule`-based borders.
+   *
+   * Re-verification review fix: `--ok`/`--warn`/`--err` are ALSO re-themed
+   * by the dark ladder (index.css:318-323) and ALSO print — PaperResult.tsx's
+   * `IntegrityMark` (border-ok/text-ok, border-warn/text-warn) and its
+   * "Needs review" copy (text-warn) sit on the print surface with no
+   * `data-print="hide"`. Same bug, one tier milder (washed out, not
+   * invisible: dark `--warn` measures 2.10:1 on forced white paper vs light
+   * `--warn`'s 7.58:1) — reset alongside the paper/ink/rule triple for the
+   * same reason.
+   *
+   * Values are the light ladder's own (§3.1/§3.2/§3.3 above), literal
+   * rather than `var()`, for the same "survives a future mistake inside
+   * this block" reason `--paper*` already relied on.
    */
   :root,
   :root[data-theme="dark"] {
@@ -1187,6 +1197,12 @@ body {
     --ink-muted: oklch(0.48 0.006 240);
     --ink-faint: oklch(0.52 0.006 240);
     --rule: oklch(0.905 0.004 85);
+    --ok: oklch(0.48 0.075 175);
+    --ok-wash: oklch(0.945 0.03 175);
+    --warn: oklch(0.45 0.085 70);
+    --warn-wash: oklch(0.945 0.045 85);
+    --err: oklch(0.38 0.145 27);
+    --err-wash: oklch(0.94 0.035 27);
   }
 }
 
