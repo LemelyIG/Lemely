@@ -44,8 +44,13 @@ describe("no screen root under src/portals carries lm-screen except PaperResult.
 describe("screen-outlet.tsx", () => {
   const source = sourceOf("src/components/ui/screen-outlet.tsx")
 
-  it("keys its wrapper on location.key, so it remounts on navigation only", () => {
-    expect(source).toContain("key={location.key}")
+  it("keys its wrapper on screenKey, not location.key", () => {
+    // `location.key` is fresh per history *entry*, and an overlay opening
+    // pushes one at the URL the reader is already on — which remounted the
+    // whole screen subtree and destroyed the state holding the dialog open.
+    // See `screenKey.test.ts` for that mechanism pinned against the router.
+    expect(source).toContain("key={screenKey(location)}")
+    expect(source).not.toContain("location.key")
   })
 
   it("carries the lm-screen class", () => {

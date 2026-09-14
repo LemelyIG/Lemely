@@ -32,6 +32,29 @@ describe("modal.tsx and nav-drawer.tsx use the shared history + scroll-lock prim
   )
 })
 
+describe("useDialogHistory owns its history entry for exactly as long as it is mounted", () => {
+  const source = sourceOf("src/lib/nav/useDialogHistory.ts")
+
+  it("dispatches popstate through the shared stack rather than its own listener decision", () => {
+    // `popstate` is global: one listener per overlay instance meant two
+    // stacked overlays both answered a single back press. See
+    // `dialogHistoryStack.test.ts`.
+    expect(source).toContain("dialogHistoryStack")
+    expect(source).toContain("expectSelfPop")
+  })
+
+  it("releases its pushed entry on unmount", () => {
+    // An overlay unmounted while still open used to orphan its entry, leaving
+    // a back press that appeared to do nothing — the orphan sits at the same
+    // URL, so popping it is invisible.
+    const unmountEffect = source.match(
+      /useEffect\(\(\) => \{\s*return \(\) => \{[\s\S]*?\n\s*\}\s*\}, \[\]\)/,
+    )
+    expect(unmountEffect).not.toBeNull()
+    expect(unmountEffect![0]).toContain("unwind")
+  })
+})
+
 describe("routes.tsx mounts RootOutlet as the single pathless layout route", () => {
   it("contains <RootOutlet exactly once, before the first route's path:", () => {
     const stripped = sourceOf("src/routes.tsx")

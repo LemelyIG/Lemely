@@ -1,18 +1,24 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S4 R3 V4 */
 import type { ReactNode } from "react"
 import { Outlet, useLocation } from "react-router-dom"
+import { screenKey } from "@/lib/nav/screenKey"
 
 /*
  * Packet B2b · gives a screen its entrance (`.lm-screen`'s `lm-in`,
  * DESIGN.md §9) on navigation, and nothing else.
  *
- * Keyed by `location.key`, so the wrapper — and therefore the CSS animation
- * — remounts exactly on navigation, never on an in-screen state change. That
- * is the whole reason this moved off each screen's own root `<div
- * className="lm-screen">`: a screen that swaps its own content (a tab, a
- * filter, a query resolving) does not touch `location.key`, so it no longer
- * replays an entrance meant for "you arrived here", not "something on this
- * page changed".
+ * Keyed by `screenKey` — the URL, not `location.key` — so the wrapper (and
+ * therefore the CSS animation) remounts exactly on navigation, never on an
+ * in-screen state change. That is the whole reason this moved off each
+ * screen's own root `<div className="lm-screen">`: a screen that swaps its own
+ * content (a tab, a filter, a query resolving) does not change the URL, so it
+ * no longer replays an entrance meant for "you arrived here", not "something
+ * on this page changed".
+ *
+ * Not `location.key`: that is fresh per history *entry*, and an overlay
+ * opening pushes one at the URL the reader is already on — which remounted
+ * this subtree and destroyed the screen state holding the dialog open. See
+ * `lib/nav/screenKey.ts`.
  *
  * Two exports, not one:
  *
@@ -31,7 +37,7 @@ import { Outlet, useLocation } from "react-router-dom"
 export function ScreenOutlet() {
   const location = useLocation()
   return (
-    <div key={location.key} className="lm-screen" data-screen>
+    <div key={screenKey(location)} className="lm-screen" data-screen>
       <Outlet />
     </div>
   )
@@ -40,7 +46,7 @@ export function ScreenOutlet() {
 export function ScreenFrame({ children }: { children: ReactNode }) {
   const location = useLocation()
   return (
-    <div key={location.key} className="lm-screen" data-screen>
+    <div key={screenKey(location)} className="lm-screen" data-screen>
       {children}
     </div>
   )
