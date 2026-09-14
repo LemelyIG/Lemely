@@ -222,8 +222,8 @@ describe("the count-up reveal stays on the live marking path", () => {
     // The live path: `location.state` set by `CorrectPaper` right after marking.
     expect(src).toMatch(/<ResultHeader\s+res=\{live\}\s+reveal\s*\/>/)
     // The history path: fetched by paper id, and must not animate.
-    expect(src).toMatch(/<ResultHeader\s+res=\{data\}\s*\/>/)
-    expect(src).not.toMatch(/<ResultHeader\s+res=\{data\}\s+reveal/)
+    expect(src).toMatch(/<ResultHeader\s+res=\{data\}[^/]*\/>/)
+    expect(src).not.toMatch(/<ResultHeader\s+res=\{data\}[^/]*\breveal\b/)
   })
 
   it("counts up only the hero mark, never an inline one", () => {

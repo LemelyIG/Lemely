@@ -89,13 +89,21 @@ describe("View Transitions are wired from shell chrome", () => {
     expect(sourceOf("src/components/ui/back-control.tsx")).toContain("viewTransition")
   })
 
-  it.each([
-    "src/portals/student/index.tsx",
-    "src/portals/teacher/index.tsx",
-    "src/portals/admin/index.tsx",
-  ])("%s's sidebar NavLink passes viewTransition", (relativePath) => {
-    expect(sourceOf(relativePath)).toContain("viewTransition")
+  it("student's sidebar NavLink passes viewTransition inline", () => {
+    expect(sourceOf("src/portals/student/index.tsx")).toContain("viewTransition")
   })
+
+  it.each(["src/portals/teacher/index.tsx", "src/portals/admin/index.tsx"])(
+    "%s's sidebar renders through nav-shells.tsx, which passes viewTransition on its NavLink",
+    (relativePath) => {
+      // Teacher and admin sidebars render their nav rows through the shared
+      // `SidebarNav` component rather than an inline NavLink, so the assertion
+      // lives where the behavior actually is: nav-shells.tsx always renders
+      // viewTransition on any NavLink item that carries a `to`.
+      expect(sourceOf(relativePath)).toContain("SidebarNav")
+      expect(sourceOf("src/components/ui/nav-shells.tsx")).toContain("viewTransition")
+    },
+  )
 
   it("the /student/result/:paperId route opts out with handle.viewTransition: false", () => {
     const source = sourceOf("src/portals/student/index.tsx")
