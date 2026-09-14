@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest"
+import { beforeAll, describe, expect, it } from "vitest"
 import fs from "node:fs"
 import path from "node:path"
 
@@ -436,16 +436,26 @@ describe("landing copy claims only what the product does — P4.9", () => {
     })
   })
 
+  /*
+   * Collected in `beforeAll`, not at describe scope. `collectStrings` throws
+   * on an `undefined` leaf by design, and a throw during collection fails the
+   * whole FILE with no named test attached — the reader gets a stack trace
+   * instead of "this export lost a field". Inside `beforeAll` the same throw
+   * is reported against a hook, which names the suite it belongs to.
+   */
   const copyValues: string[] = []
-  for (const name of COPY_EXPORTS) {
-    collectStrings((marketingData as unknown as Record<string, unknown>)[name], copyValues)
-  }
+  let allCopy = ""
+
+  beforeAll(() => {
+    for (const name of COPY_EXPORTS) {
+      collectStrings((marketingData as unknown as Record<string, unknown>)[name], copyValues)
+    }
+    allCopy = copyValues.join("\n")
+  })
 
   it("gates only string values", () => {
     copyValues.forEach((v) => expect(typeof v).toBe("string"))
   })
-
-  const allCopy = copyValues.join("\n")
 
   /*
    * Each entry is a claim that was live on the PREVIOUS build's page and had
