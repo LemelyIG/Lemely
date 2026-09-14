@@ -214,7 +214,7 @@ function NotificationRow({ notification }: { notification: Notification }) {
           setMenuOpen(false)
           markRead.mutate(notification.notificationId)
         }}
-        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink hover:bg-paper-sunk"
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink transition-[background-color,transform] hover:bg-paper-sunk active:scale-[0.98]"
       >
         Mark read
       </button>
