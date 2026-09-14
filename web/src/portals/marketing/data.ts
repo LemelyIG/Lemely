@@ -2,219 +2,100 @@
  * Marketing copy for the Persuade lane (DESIGN.md §2).
  *
  * ────────────────────────────────────────────────────────────────────────────
- * THE RULE THIS FILE EXISTS TO ENFORCE
+ * DESIGN IMPORT (feat/landing-redesign, 2026-09-14)
  * ────────────────────────────────────────────────────────────────────────────
- * PRODUCT.md's "Evidence on Hand" closes with the list of things that must not
- * be fabricated: **no customers, no testimonials, no case studies, no press,
- * no pricing, no live deployment, no usage numbers, no partner schools.**
+ * This file replaces the role-neutral copy the previous redesign shipped.
+ * `.superpowers/sdd/design-import-spec.md` is authoritative for the page's
+ * structure and wording; `.superpowers/sdd/design-import-claims.md`'s RULING
+ * section is authoritative for which of the design's claims ship verbatim
+ * versus which are corrected. Read both before touching a string here.
  *
- * DESIGN-AUDIT C1/C2/C3 applied that rule to the two places it was easiest to
- * see — the proof band's statistics and the pricing tiers — and stopped there.
- * P4.9 found the rest of it: the audit deleted the numbers and left the
- * sentences, and six claims were still live on the page after C1/C2/C3 were
- * closed. `marketing.test.ts`'s `bannedClaims` block pins every one of them so
- * they cannot reappear.
+ * THE RULE THIS FILE STILL EXISTS TO ENFORCE
+ * -------------------------------------------
+ * PRODUCT.md's "Evidence on Hand" bans fabricating customers, testimonials,
+ * case studies, press, usage numbers, or partner schools. The design import
+ * ships several claims that read stronger than what the product's code
+ * currently does ("nothing counts until you sign it off", "the queue orders
+ * itself by doubt", "upload a class as a batch") — these were checked against
+ * the backend one at a time (design-import-claims.md) and found to overclaim
+ * or misdescribe the true behaviour. The RULING there is to ship them
+ * verbatim anyway, as the design's authoritative call, with exactly one
+ * carve-out: the parent reading's login copy, which the design gets
+ * factually wrong (a retired phone-OTP flow) rather than merely optimistic.
+ * That carve-out is Readings' concern (`Readings.tsx`, part B of this
+ * import); this file does not carry Readings' tab copy.
  *
- * Every bullet below now names something a reader can go and use. A claim
- * with no such comment does not belong in this file. When a feature ships,
- * add it here *with* its source.
+ * WHAT LIVES HERE VS. WHAT DOESN'T
+ * ---------------------------------
+ * This file carries the page's FURNITURE copy — every eyebrow, heading, body
+ * paragraph, fine print and aside for every section — because that is what
+ * Landing.tsx renders directly. It does NOT carry the fixture content for the
+ * five specimen components (OpenedQuestion, ScanSequence, SchemeExcerpt,
+ * ClassBatch, Readings): those components don't exist yet (part B builds
+ * them), Landing.tsx mounts placeholders in their place for now, and their
+ * own fixture copy belongs beside the component that renders it, added to
+ * this file when part B lands. The copy gate below (`COPY_EXPORTS`/
+ * `NOT_COPY`) will need updating that day, same as it does here.
  *
- * ── The proof band (deleted 2026-09) ───────────────────────────────────────
- * `proof` and `landingProofIntro` are gone. Their numbers (model-call count,
- * confidence floor, escalation threshold) are true and traceable, but they
- * read as a marketing statistic rather than as anything a 15-year-old visitor
- * can act on, and the redesign's honest-copy rule is narrower than "true": it
- * is "true, and worth a stranger's attention". Nothing replaces this band.
+ * EM-DASHES: the design's copy is full of them; `check:copy` bans them under
+ * `web/src/`. Every string below has had its em dashes converted to the
+ * nearest punctuation that preserves meaning and rhythm (a comma or a colon),
+ * never dropping the clause and never introducing one of its own.
+ *
+ * TWO KNOWN GAPS: `howItWorks.body` and `schemeSection.body` are left
+ * `undefined` rather than invented. design-import-spec.md quotes body copy
+ * verbatim for the hero, the trust band and the close, but paraphrases these
+ * two sections as "Body as in the design" / "Body as designed" with no
+ * quote. Inventing plausible-sounding filler here would be exactly the
+ * honesty defect this whole import exists to avoid, so `Landing.tsx` renders
+ * these sections without a body paragraph until the verbatim text arrives
+ * (asked of the design-import controller; see import-part-a-report.md).
+ * `classBatchSection.body` WAS recoverable — see its own comment below.
  */
 
-export const landingHero = {
-  /*
-   * Role-neutral on purpose: the old hero named "teachers and their
-   * students" before a reader had chosen which one they were. `BUILD/BRAND.md`
-   * §5's own tagline candidate, used near-verbatim because it already passes
-   * the voice test: specific, no hype word, and it is the actual benefit
-   * rather than a description of the category.
-   */
-  headline: "Know where the marks went.",
-  /*
-   * `resolve_mark_scheme` (`lemely/web/routers/student.py:765`) has exactly
-   * two sources: a `mark_scheme.pdf` uploaded beside the scan, or a scheme
-   * already parsed into the local cache. "Checked against" is the claim that
-   * survives however the scheme arrived.
-   */
-  subtext: "You upload a scanned paper. Every mark is checked against the official Cambridge mark scheme.",
-  /* Object, not a bare string: the label is copy, the route is a fact about
-     the product, and later work (Landing.tsx, Task 2) needs both. */
-  primaryCta: { label: "Get started", to: "/signup" },
-  /* Scrolls to the "how it works" section rather than navigating anywhere.
-     `anchor` names the section id Task 2 wires this to. */
-  secondaryCta: { label: "See how it works", anchor: "how-it-works" },
-}
-
-/*
- * The hero's result card. **Labelled as an example, in the card itself**, and
- * that label is not decoration: a marked script showing 38/40 in a hero reads
- * as somebody's real result, and the product has no customers whose result it
- * could be. `exampleLabel` renders as a tag on the card, not as a caption
- * underneath it, so it cannot be cropped away from the number it qualifies.
- *
- * Untouched by this rewrite: `marketing.test.ts` pins the 38/40 score, the 40
- * cells, the two dropped marks at Q2/Q34, and the "two marks dropped" note as
- * one consistent fact derived from `studentAnswers` below.
- */
-export const heroExample = {
-  exampleLabel: "Example",
-  /*
-   * Was "0625 / Paper 1 Variant 2 / May-June 2020". The mobile judge (Task
-   * 2, evaluator run `ralph` iteration 2, AC-12) flagged "Variant" as
-   * unglossed CAIE jargon for a 15-year-old, and a one-clause gloss ("the
-   * second version of this paper") would make the meta line longer than the
-   * fact is worth. Cutting the variant number is the honest fix: which of
-   * the several variants this script is does not change what the card
-   * demonstrates, and nothing in `marketing.test.ts` pins the old string.
-   */
-  meta: "0625 / Paper 1 / May-June 2020",
-  score: "38",
-  max: "/40",
-  grade: "A",
-  note: "Two marks dropped, both on reading a distance-time gradient. The practice that follows is built from that one shape.",
-}
-
-/* ── The example script's answer grid ───────────────────────────────────── */
-
-/*
- * Forty answers, of which the scheme disagrees with two. Illustrative
- * marketing content: the two disagreements are what make the card internally
- * consistent, so score, grid and note are derived from one source and cannot
- * drift apart.
- */
-const studentAnswers = [
-  "A", "A", "A", "D", "C", "D", "A", "A", "B", "C",
-  "B", "B", "D", "A", "A", "C", "A", "C", "B", "A",
-  "D", "A", "A", "A", "C", "D", "C", "A", "A", "D",
-  "D", "D", "A", "C", "B", "C", "B", "B", "A", "B",
-] as const
-
-// The scheme differs from the student on Q2 and Q34 (two dropped marks).
-const expectedAnswers = studentAnswers.map((a, i) => (i === 1 ? "B" : i === 33 ? "D" : a))
-
-export interface McqCell {
-  id: number
-  ans: string
-  correct: boolean
-  title: string
-}
-
-export const mcq: McqCell[] = studentAnswers.map((ans, i) => ({
-  id: i + 1,
-  ans,
-  correct: ans === expectedAnswers[i],
-  title: `Q${i + 1}, you answered ${ans}, the scheme says ${expectedAnswers[i]}`,
-}))
-
-/* ── The loop / "How it works" ──────────────────────────────────────────── */
-
-export interface LoopStep {
-  step: string
-  title: string
-  body: string
-}
-
-/*
- * Three steps, each one a route that exists today:
- *   1. `/student/correct` -> `lemely/web/routers/student.py` (upload + mark).
- *   2. The marked paper's per-mark-point breakdown, working shown.
- *   3. `/student/practice/:code` -> `practice.py`, built from dropped marks.
- *
- * `step` used to hold "01"/"02"/"03". A verb reads better than a number and
- * needs no legend, so it carries the label instead.
- */
-export const loopIntro = {
-  title: "How it works",
-  body: "One scan becomes the marking, the working behind it, and practice on what you missed.",
-}
-
-export const loopSteps: LoopStep[] = [
-  {
-    step: "Scan",
-    title: "Lemely works out which paper it is",
-    body: "A photo or a PDF works. Add the mark scheme if we do not have it yet.",
-  },
-  {
-    step: "Mark",
-    title: "See it marked against the real scheme",
-    body: "Every mark is checked against the official Cambridge mark scheme, and the working is shown for each one.",
-  },
-  {
-    step: "Practise",
-    title: "Work on what you dropped",
-    body: "The questions you missed become the next set you practise.",
-  },
-]
-
-/* ── Who it serves ──────────────────────────────────────────────────────── */
-
-export interface RoleTab {
-  id: string
+export interface CtaLink {
   label: string
-  heading: string
-  body: string
-  cta: { label: string; to: string }
+  to: string
 }
 
-/*
- * Replaces `pillars`. Each register below traces to a shipped route:
- *   student -> `/signup/student`, and the marking loop above.
- *   parent  -> `/join`, the same destination the persistent header's own
- *              "Parents" link already uses (a parent account only ever comes
- *              from a child-issued invite, never from `/login`).
- *   teacher -> `/signup/teacher`, `teacher_paper_repo.py`'s low-confidence
- *              review queue (below `REVIEW_CONFIDENCE_THRESHOLD`, marks at or
- *              above it count unless flagged for structural review).
+/* ── Nav / Footer ────────────────────────────────────────────────────────
+ * Deliberately NOT exported from here, matching the pattern the previous
+ * build already established: `index.tsx`'s header ("Log in" / "Parents" /
+ * "Get started") and footer ("Lemely, marking for CAIE papers." / "How your
+ * data is handled" / "Log in" / "Parent access") are navigation furniture,
+ * not a claim about the product, and `marketing.test.ts` pins their routes
+ * with source-text assertions rather than the honest-copy gate below. The
+ * design's own nav/footer copy (design-import-spec.md, page structure items
+ * 1 and 9) is textually identical to what `index.tsx` already had, so
+ * nothing there needed to change beyond the sticky nav's new progress bar.
  */
-export const roleTabs: RoleTab[] = [
-  {
-    id: "student",
-    label: "Student",
-    heading: "See exactly where the marks went",
-    body: "Scan your paper on your phone. Get it marked against the real scheme, and practise the questions you dropped.",
-    cta: { label: "Mark a paper", to: "/signup/student" },
-  },
-  {
-    id: "parent",
-    label: "Parent",
-    heading: "See how your child is doing",
-    body: "Your child sends you a code. Set a password, and see their grades and the topics that need work.",
-    cta: { label: "Get parent access", to: "/join" },
-  },
-  {
-    id: "teacher",
-    label: "Teacher",
-    heading: "Marking cited to the scheme, not guessed",
-    body: "Every mark is cited to the official scheme. Anything the marker is unsure of comes to you instead of being guessed. The marking runs while you do something else.",
-    cta: { label: "Mark a set", to: "/signup/teacher" },
-  },
-]
 
-/*
- * I-1/I-6: the "who it serves" section intro and the "Subjects covered"
- * heading, moved here from `Landing.tsx` so every visible string on the page
- * is gated by `marketing.test.ts`'s `allCopy` check. Both are plain
- * restatements of what the roles/subjects data below already says.
+/* ── Hero ────────────────────────────────────────────────────────────────
+ * design-import-spec.md, page structure item 2. Quoted verbatim; ships as
+ * designed under the RULING (nothing here was flagged in the claims audit).
  */
-export const rolesIntro = {
-  title: "One marked paper, three people it helps",
-  body: "The student gets a study plan. The teacher gets a signal. The parent gets an answer.",
+export const hero = {
+  eyebrow: "Marking for CAIE papers",
+  headline: "Marking you can check, line by line.",
+  sub: "Lemely marks a scanned script against the official mark scheme, then shows the scheme line behind every mark it awards or withholds. Nothing counts until you sign it off.",
+  primaryCta: { label: "Get started", to: "/signup" } satisfies CtaLink,
+  /* Scrolls to the dark trust band (`#marked`, page structure item 3)
+     rather than navigating. `anchor` is the section id Landing.tsx wires
+     this to, mirroring the previous build's own hero-CTA pattern. */
+  secondaryCta: { label: "See a marked script", anchor: "marked" },
 }
 
-/* ── Subjects covered ───────────────────────────────────────────────────── */
-
+/* ── Subjects (folded into the hero, per the design) ───────────────────────
+ * The previous build gave subjects their own "Subjects covered" section
+ * further down the page; the imported design folds the same three
+ * code/name pairs into `.hero__scope` instead (page structure item 2's
+ * third bullet) and has no standalone subjects section at all. Same three
+ * subjects, same codes, carried over unchanged from the previous `data.ts`.
+ */
 export interface Subject {
   code: string
   name: string
 }
-
-export const subjectsTitle = "Subjects covered"
 
 export const subjects: Subject[] = [
   { code: "0580", name: "Mathematics" },
@@ -222,81 +103,116 @@ export const subjects: Subject[] = [
   { code: "0625", name: "Physics" },
 ]
 
-export const subjectsNote = "More subjects are coming."
-
-/* ── Plans ──────────────────────────────────────────────────────────────── */
-
-export interface PricingPlan {
-  name: string
-  price: string
-  who: string
-  dark: boolean
-  feats: string[]
-  cta: string
-  ctaAccent: boolean
+/* ── The dark trust band (`#marked`) ────────────────────────────────────────
+ * design-import-spec.md, page structure item 3. Quoted verbatim. Ships the
+ * design's own eyebrow/heading/body/aside; the visual it wraps
+ * (`OpenedQuestion`, inside `.drift`) is part B's build — this section only
+ * carries the copy either side of it.
+ */
+export const trustBand = {
+  eyebrow: "Why you can trust it",
+  heading: "A mark is an argument, so it arrives with its reasons.",
+  body: "Method and answer marks are awarded separately. Lemely names the one that did not land, quotes the scheme line it used, and states how sure it is. Below its confidence floor it flags the question for you instead of guessing.",
+  aside: "Open any of the three questions and read the lines it used.",
 }
 
-/*
- * Emptied 2026-08-13 (DESIGN-AUDIT C2) and still empty. PRODUCT.md records
- * pricing as explicitly undecided and payments as out of scope. Kept as an
- * empty list rather than deleted outright so the section keeps its slot on
- * the page: Landing renders `pricingPlaceholder` unconditionally while this
- * is empty (Task 4, F3/F3a), and `marketing.test.ts`'s
- * `expect(pricing).toHaveLength(0)` is what now enforces that, not a runtime
- * branch in the component.
- *
- * Task 3 left a second render path in `Landing.tsx` — a three-equal-card grid
- * for a populated `pricing` — reachable only once this array stopped being
- * empty. That is the exact card-grid family Task 3 exists to have removed
- * from the page, sitting dead in the branch the judge cannot see, and it
- * would have appeared the day a plan shipped with no one deciding to put it
- * there. It is gone (Task 4, F3): the moment real pricing is decided, the
- * layout for it gets designed then, deliberately, and it will not be three
- * equal cards.
+/* ── How it works (`.sect .split--flip`) ────────────────────────────────────
+ * design-import-spec.md, page structure item 4. The eyebrow, heading and
+ * fine print are quoted verbatim in the spec; the body paragraph is not (see
+ * this file's header). Left undefined rather than invented — Landing.tsx
+ * skips the `<p>` when absent.
  */
-export const pricing: PricingPlan[] = []
-
-/*
- * Section furniture, not placeholder content. `pricingTitle` is the section's
- * `<h2>` and is true in both states pricing can be in: undecided (today) or
- * decided (later, with `pricing` populated and its own layout designed then).
- * It used to be bound to `pricingPlaceholder.title` ("No price yet"), which
- * meant populating `pricing` left "No price yet" rendered directly above a
- * grid of priced tiers — a false heading, on the one page whose banner
- * comment in `Landing.tsx` exists because an earlier audit "deleted the
- * numbers and left the sentences" (Task 4, F2). A heading is state-neutral;
- * binding it to the empty state made the page's structure a function of its
- * own emptiness.
- */
-export const pricingTitle = "What it costs"
-
-/*
- * Folds in the "Lemely is still being built" line the hero used to carry as
- * its footnote: this is the one place on the page a reader expects to be
- * told what something costs, so it is the honest place to say nothing is
- * decided yet rather than the hero, which is about the product, not billing.
- *
- * Both fields render inside the section, under the stable `pricingTitle`
- * heading above — `title` as the direct statement ("No price yet"), `body`
- * as the one sentence of context. Neither is an eyebrow: the section's old
- * "Plans" kicker and the "Not announced" chip this used to carry alongside
- * the heading are both gone, and nothing replaces them, so this section still
- * spends none of the page's two-eyebrow allowance (BUILD/BRAND.md §5).
- */
-export const pricingPlaceholder = {
-  title: "No price yet",
-  body: "Lemely is still being built. Nothing to pay while we build it.",
+export const howItWorks: {
+  eyebrow: string
+  heading: string
+  body?: string
+  finePrint: string
+} = {
+  eyebrow: "How it works",
+  heading: "One scan becomes the marking, the working, and the practice.",
+  body: undefined,
+  finePrint: "If we do not hold the scheme yet, add it and the paper marks against yours.",
 }
 
-/* ── Close ──────────────────────────────────────────────────────────────── */
+/* ── Where the marks come from (`.sect.sect--sunk`) ─────────────────────────
+ * design-import-spec.md, page structure item 5. Same gap as `howItWorks`:
+ * the eyebrow and heading are quoted, the body is not. The spec also
+ * describes "Aside with `books` icon" for this section but never quotes its
+ * text (unlike the trust band's aside, which is quoted in full) — left
+ * undefined for the same reason as `body` rather than invented; an earlier
+ * draft of this file got this wrong and fabricated an aside sentence here,
+ * caught before it shipped.
+ */
+export const schemeSection: {
+  eyebrow: string
+  heading: string
+  body?: string
+  aside?: string
+} = {
+  eyebrow: "Where the marks come from",
+  heading: "Official schemes, read as printed.",
+  body: undefined,
+  aside: undefined,
+}
 
-export const landingClose = {
-  title: "Bring one paper",
-  body: "Upload a script and read the marking back.",
-  /* Object, not a bare string, mirroring `landingHero.primaryCta` (Task 2,
-     M-2): the label is copy, the route is a fact about the product, and
-     `Landing.tsx` consumes both instead of hardcoding the destination. */
-  cta: { label: "Get started", to: "/signup" },
-  /* Marginalia (§8). Decorative: removing it costs the page nothing. */
+/* ── A class at a time (`.sect .split--flip`) ───────────────────────────────
+ * design-import-spec.md, page structure item 6, quotes the eyebrow, heading
+ * and fine print directly. The body paragraph is only paraphrased there
+ * ("Body as designed"), but design-import-claims.md quotes it in full while
+ * verifying it against the backend — two sentences, both explicitly ruled to
+ * ship verbatim ("UPLOAD A CLASS AS A BATCH..." and "THE QUEUE THEN ORDERS
+ * ITSELF BY DOUBT..." are both listed under the RULING as "SHIPS AS
+ * DESIGNED"). Combined here as the section's one body paragraph; the
+ * original's single em dash ("needs a teacher — not the pile...") is
+ * converted to a comma, preserving the same contrast.
+ */
+export const classBatchSection = {
+  eyebrow: "A class at a time",
+  heading: "Send a set in, read back what needs you.",
+  body: "Upload a class as a batch and the scripts are marked together against one scheme. The queue then orders itself by doubt, so the first thing you open is the marking that needs a teacher, not the pile in the order it arrived.",
+  finePrint: "Per-question detail is available right after a paper is corrected.",
+}
+
+/* ── The same paper, three ways (`.sect.sect--centre`) ──────────────────────
+ * design-import-spec.md, page structure item 7. Quoted verbatim. Only the
+ * centred section intro lives here; the three `Readings` tab panels
+ * (teacher/student/parent), including the parent carve-out, are part B's
+ * `Readings.tsx` and its own data.
+ */
+export const readingsIntro = {
+  eyebrow: "The same paper, three ways",
+  heading: "One marked paper, three readings of it.",
+  sub: "The marking is one object. What each person is shown of it is not.",
+}
+
+/* ── Close ───────────────────────────────────────────────────────────────
+ * design-import-spec.md, page structure item 8. Fully quoted in the spec, so
+ * this is the one section below the hero that ships complete, with no gap.
+ */
+export interface NeedsRow {
+  term: string
+  detail: string
+}
+
+export const close = {
+  heading: "Mark a script you have already marked.",
+  sub: "That is the fastest way to judge it. Mark a paper yourself, run the same script through Lemely, and compare it line by line.",
+  cta: { label: "Get started", to: "/signup" } satisfies CtaLink,
+  /* Marginalia (§8): `<span className="text-hand">`, aria-hidden — a nudge
+     beside a button whose own label already says what to do. */
   aside: "one script is enough to judge it",
+  needs: [
+    {
+      term: "What to bring",
+      detail: "One attempted script, photographed or as a PDF.",
+    },
+    {
+      term: "If we do not hold the scheme",
+      detail: "Add it once and every paper on that variant marks against it.",
+    },
+    {
+      term: "What comes back",
+      detail: "Per-question marks, the scheme line behind each, and the flags.",
+    },
+  ] satisfies NeedsRow[],
 }

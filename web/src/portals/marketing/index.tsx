@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { lazy, Suspense } from "react"
+import { lazy, Suspense, useRef } from "react"
 import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
 import { BrandMark } from "@/components/ui/brand-mark"
@@ -9,6 +9,8 @@ import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { cn } from "@/lib/utils"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
+import { useRevealFailsafe, useScrollProgress } from "./motion"
+import "./marketing.css"
 
 /*
  * ────────────────────────────────────────────────────────────────────────────
@@ -70,96 +72,98 @@ const DataHandling = lazy(() =>
  * out of the line length.
  */
 export function MarketingFrame({ children }: { children: React.ReactNode }) {
+  /*
+   * The design's `.progress` bar (design-import-spec.md, page structure item
+   * 1): a 2px accent hairline pinned to the nav's bottom edge, `scaleX`
+   * driven by scroll progress. `useScrollProgress` is a no-op where the
+   * browser supports `animation-timeline: scroll(root)` (`marketing.css`'s
+   * own `@supports` block drives it); the ref only matters for the rAF
+   * fallback. See `./motion.tsx` for why this isn't a scroll listener.
+   */
+  const progressRef = useRef<HTMLDivElement>(null)
+  useScrollProgress(progressRef)
+  /* The imported CSS's global reveal failsafe (design-import-spec.md, Motion
+     utilities): mounted once, here, rather than per-section. */
+  useRevealFailsafe()
+
   return (
     <div className="paper-grain flex min-h-dvh flex-col bg-paper">
       <SkipLink />
-      <header className="lm-app-header lm-nav-chrome sticky top-0 z-nav border-b border-rule bg-paper/85 backdrop-blur-nav">
-        {/*
-          The one permitted *kind* of `backdrop-blur` (§3.2 item 6): a page top
-          bar, never scrolling content. `bg-paper/85` under it means the blur
-          has something to lift, and text crossing beneath the header never
-          reads through at full strength.
-
-          P6.3 corrected two things this comment used to get wrong. It said
-          "the one permitted backdrop-blur in the whole product", and there are
-          four — this header and the student, teacher and admin shells — which
-          is fine under the rule but is not what the sentence claimed. And the
-          four declared themselves two different ways: this one at
-          `backdrop-blur-sm` (8px) and the other three at an arbitrary
-          `backdrop-blur-[10px]`. All four are now `backdrop-blur-nav`, the
-          only radius the exception is allowed to use.
-
-          `z-nav`, not the `z-sticky` this carried. Four top bars doing one job
-          declared two bands, and this was the odd one out, sitting in the band
-          `table.tsx` reserves for sticky table headers.
-        */}
-        <div className="mx-auto flex w-full max-w-marketing items-center justify-between gap-3 px-page-mobile py-3.5 md:gap-4 md:px-page-tablet lg:px-page-desktop">
-          <Link
-            to="/"
-            className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
-          >
-            {/* `BrandMark` sets its own `aria-hidden`: the wordmark beside it
-                already says "Lemely", so describing the mark too announces it
-                twice. Same reasoning as `AuthFrame`.
-
-                The wordmark text is `sr-only` below `sm` (640px), not
-                `hidden`: three header actions now share the row with it
-                (Task 2 adds "Get started" beside "Log in" and "Parents"),
-                and at 320-414px there is not room for the icon, the word
-                "Lemely" and three nav items on one line without either
-                wrapping a link's label to two lines or forcing horizontal
-                scroll, both of which are hard gates. `sr-only` keeps the
-                text in the accessible name of this link (the icon alone
-                carries no reliable name), so a screen-reader user still
-                hears "Lemely" even though a sighted mobile reader sees only
-                the mark. */}
-            <BrandMark className="h-6 w-8 shrink-0" />
-            <span className="sr-only text-display-sm text-ink sm:not-sr-only sm:inline">
-              Lemely
-            </span>
-          </Link>
-          <nav aria-label="Marketing" className="flex items-center gap-1 sm:gap-1.5">
-            {/* P6.5's "Sign in" renamed to "Log in": the live judge's AC-1
-                finding was that the header carried no primary action at all,
-                and while fixing that we also drop the ambiguity between
-                "sign in" (here) and "log in" (the footer, `Login.tsx`'s own
-                heading) — one verb for the one action, everywhere it appears. */}
+      {/*
+        `.nav` (marketing.css) now owns the sticky positioning, z-index,
+        border, background and blur that used to live here as Tailwind
+        utilities (`sticky top-0 z-nav border-b border-rule bg-paper/85
+        backdrop-blur-nav`) — the design is authoritative for this page's
+        layout, and `.nav` is the verbatim port of it. `lm-app-header` and
+        `lm-nav-chrome` stay: they are PWA/native concerns unrelated to this
+        page's visual redesign — safe-area-inset-top padding in standalone
+        mode, and suppressing the long-press callout on navigation chrome —
+        and removing them would regress `feat/native-and-pwa`, the branch
+        this one is built on.
+      */}
+      <header className="nav lm-app-header lm-nav-chrome">
+        {/* `aria-hidden`: a reading-progress hairline, not information a
+            screen-reader user needs announced — same treatment the design
+            gives it (design-import-spec.md: "aria-hidden"). */}
+        <div ref={progressRef} className="progress" aria-hidden="true" />
+        <div className="wrap">
+          <div className="nav__inner">
             <Link
-              to="/login"
-              className="text-label rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
+              to="/"
+              className="brand rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
             >
-              Log in
+              {/* `BrandMark` sets its own `aria-hidden`: the wordmark beside
+                  it already says "lemely", so describing the mark too
+                  announces it twice. The wordmark text stays `sr-only` below
+                  `sm` (640px) rather than `hidden`, for the same reason the
+                  previous build gave: three header actions share the row
+                  with it, and below 640px there is no room for the icon, the
+                  word and three nav items on one line without wrapping a
+                  label to two lines or forcing horizontal scroll, both hard
+                  gates. A screen-reader user still hears the brand name even
+                  though a sighted mobile reader sees only the mark. */}
+              <BrandMark className="h-6 w-8 shrink-0" />
+              {/* Lowercase "lemely": the design's own wordmark casing
+                  (design-import-spec.md, page structure item 1 —
+                  `.brand span` in display serif beside the mark). The
+                  footer below keeps sentence case ("Lemely, marking for
+                  CAIE papers.") because that is a sentence, not a
+                  logotype; the two are not in tension. */}
+              <span className="sr-only sm:not-sr-only sm:inline">lemely</span>
             </Link>
-            {/*
-              Parents get their own entry in the header rather than a line in
-              the footer. A parent account only ever comes from a child-issued
-              invite (the parent-invites design, superseding D3.11), never
-              from `/login` where every field asks for a credential they do
-              not have yet, so this points at `/join` — the screen built for
-              "I have a code" — exactly like `Login.tsx`'s own parent link and
-              `SignupRoleSelect.tsx`'s parent card.
-            */}
-            <Link
-              to="/join"
-              className="text-label rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
-            >
-              Parents
-            </Link>
-            {/*
-              P4.9's own finding, from the live evaluator: the header carried
-              no "Get started" action at all, so the one thing a first-time
-              visitor actually wants to do lived only in the hero body, one
-              scroll below the fold on a short viewport. `buttonVariants`
-              rather than `<Button>`: this has to be a real `<Link>` (a
-              signed-out visitor should be able to open it in a new tab, and
-              a `<button onClick={navigate}>` takes that away), styled to
-              match the kit exactly, same pattern as `getting-started.tsx`'s
-              in-flow CTA.
-            */}
-            <Link to="/signup" className={cn(buttonVariants({ variant: "primary", size: "sm" }))}>
-              Get started
-            </Link>
-          </nav>
+            <nav aria-label="Marketing" className="nav__links">
+              <Link
+                to="/login"
+                className="rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
+              >
+                Log in
+              </Link>
+              {/*
+                Parents get their own entry in the header rather than a line
+                in the footer. A parent account only ever comes from a
+                child-issued invite, never from `/login` where every field
+                asks for a credential they do not have yet, so this points at
+                `/join` — the screen built for "I have a code" — exactly like
+                `Login.tsx`'s own parent link and `SignupRoleSelect.tsx`'s
+                parent card.
+              */}
+              <Link
+                to="/join"
+                className="rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 transition-colors hover:bg-paper-sunk focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
+              >
+                Parents
+              </Link>
+              {/*
+                `buttonVariants` rather than `<Button>`: this has to be a
+                real `<Link>` (a signed-out visitor should be able to open it
+                in a new tab, and a `<button onClick={navigate}>` takes that
+                away), styled to match the kit exactly.
+              */}
+              <Link to="/signup" className={cn(buttonVariants({ variant: "primary", size: "sm" }))}>
+                Get started
+              </Link>
+            </nav>
+          </div>
         </div>
       </header>
 
@@ -167,46 +171,23 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
         {children}
       </main>
 
-      <footer className="border-t border-rule">
-        <div className="mx-auto flex w-full max-w-marketing flex-col gap-3 px-page-mobile py-8 text-body-sm text-ink-faint md:flex-row md:items-center md:justify-between md:px-page-tablet lg:px-page-desktop">
+      <footer className="foot">
+        <div className="wrap foot__inner text-body-sm text-ink-faint">
           <div className="flex items-center gap-2.5">
             <BrandMark className="h-5 w-7 shrink-0" />
             <span>Lemely, marking for CAIE papers.</span>
           </div>
           {/*
-            P6.5 closes this, and the comment that used to sit here is worth
-            keeping in substance: there were no legal links and none were
-            invented, because a footer link to a page that does not exist is the
-            dead navigation the audit went looking for.
-            What ships is ONE link, to a page that describes what the software
-            actually does with a reader's data, and no terms of service. D6.8
-            records why, and the short form is that facts about this product can
-            be derived from this repository and promises cannot. A privacy
-            policy and a ToS are mostly promises about an operator who is not in
-            the code, so writing them here would be inventing content in the one
-            category where invention has legal consequences.
-            The label says "How your data is handled" rather than "Privacy",
-            because "Privacy" is the word readers have learned to expect a
-            policy behind, and this is deliberately not one.
+            ONE link to a page that describes what the software actually does
+            with a reader's data, and no terms of service: a privacy policy
+            and a ToS are mostly promises about an operator who is not in the
+            code, so writing them here would be inventing content in the one
+            category where invention has legal consequences. "How your data
+            is handled" rather than "Privacy", because "Privacy" is the word
+            readers have learned to expect a policy behind, and this is
+            deliberately not one.
           */}
-          {/*
-            A COLUMN below `sm`, and the adapt gate is why rather than taste.
-
-            The row was three links wide once this one joined it, and at 320px
-            the 276px of content box left after the page padding is not enough:
-            "How your data is handled" wrapped onto two lines, and it pushed
-            "Parent sign in" onto two as well. Six findings, and all six were
-            caused by adding the third link — hallmark's mobile
-            non-negotiable is that clickable text never wraps, because the
-            second line is a strip of link that looks like body copy and a
-            thumb aiming at it hits neither.
-
-            Stacking gives each link the full width, so each is one line and
-            each is a full-width target. `items-start` rather than `items-end`:
-            the labels then share the left edge with the brand line above them
-            and the page's own margin, instead of forming a third ragged edge.
-          */}
-          <div className="flex flex-col items-start gap-1 sm:flex-row sm:items-center sm:gap-4">
+          <div className="foot__links">
             <Link
               to="/data"
               className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"

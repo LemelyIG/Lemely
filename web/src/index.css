@@ -339,6 +339,33 @@
   --spacing-page-tablet: 20px;
   --spacing-page-mobile: 16px;
 
+  /* Landing-page design import (feat/landing-redesign). The imported page
+     CSS (`portals/marketing/marketing.css`) is written against a bare
+     4px-based `--space-*` scale rather than Tailwind's `p-*`/`gap-*`
+     utilities, because it is verbatim from the design project and targets
+     raw custom properties directly. Deliberately sparse — no --space-7,
+     --space-9, etc. — matching the design system's own scale exactly; a
+     value outside it is wrong rather than missing.
+     `--gutter`/`--page-*` alias the spacing tokens two lines up rather than
+     redefining the pixel values a second time, so there remains one source
+     of truth for the page-gutter figures. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+  --space-16: 64px;
+  --space-24: 96px;
+  --space-32: 128px;
+  --gutter: var(--spacing-gutter);
+  --page-desktop: var(--spacing-page-desktop);
+  --page-tablet: var(--spacing-page-tablet);
+  --page-mobile: var(--spacing-page-mobile);
+
   /* ── §5 Containers ───────────────────────────────────────────────────── */
   --container-read: 680px;
   --container-app: 1200px;
