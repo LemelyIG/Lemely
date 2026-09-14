@@ -15,10 +15,14 @@
  * tab tap rather than drilling into. `/student/correct` is a tab (it is one
  * of the five `BottomNav` destinations) even though it has no bottom CTA of
  * its own; admin has no `BottomNav` (desktop-first, see `portals/admin/
- * index.tsx`) and so contributes no roots here. `lib/nav/tabMemory.ts`'s
- * `useTabState` imports this same set, so scroll memory and per-tab UI state
- * (a filter, an expanded section) can never disagree about what counts as a
- * tab.
+ * index.tsx`) and so contributes no roots here.
+ *
+ * Consolidation pass · `lib/nav/tabMemory.ts`'s `useTabState` used to import
+ * this same set for a parallel per-tab UI-state memory (a filter, an
+ * expanded section). It had zero callers — none of Overview/Classes/Profile/
+ * Notifications hold local UI state that would benefit from surviving a tab
+ * switch — so it was deleted rather than kept as speculative dead code; this
+ * `TAB_ROOTS` set now backs scroll restoration only.
  */
 
 export const TAB_ROOTS: ReadonlySet<string> = new Set([
