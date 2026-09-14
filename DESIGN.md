@@ -701,11 +701,52 @@ student and teacher layouts, renders nothing). It is gated to a PWA running
 in standalone display mode (a browser tab already owns the platform's own
 back gesture) and to a drag that both starts within 24px of the
 inline-start edge and commits away from it, using the same `backTarget`
-decision `BackControl` (B2) uses. The rest of the gesture list — flashcard
-swipe, nav-drawer swipe-dismiss, pull-to-refresh, quiz page-turn, long-press
-menus — is Task 5/6's (B4) scope; this paragraph is a forward pointer for
-those, not a spec, and nothing here beyond edge-swipe-back should be read
-as gesture content already implemented.
+decision `BackControl` (B2) uses.
+
+**The rest of the list, shipped in Task 5/6 (B4).** `useDragGesture`'s
+`commitThreshold` (default 10px) is raised per gesture to the distance that
+gesture actually means, so a drag short of the real threshold always
+springs back animated rather than snapping. **Flashcard reveal/grade**
+(`FlashcardReview.tsx`, `lib/flashcardSwipe.ts::flashcardSwipeAction`): one
+axis throughout the card's whole interaction — swipe right (or, before
+reveal, up — `flashcardSwipeAction` recognises both, though the discoverable
+touch path stays the single consistent right-swipe idiom) reveals at 60px;
+once revealed, left grades "again" and right grades "good" at 80px; "hard"
+and "easy" stay button/keyboard-only. Reveal button, grade buttons and the
+1-4/Space keyboard shortcuts are unchanged. **Nav-drawer drag-dismiss**
+(`nav-drawer.tsx`): the panel commits closed at 40% of its own width, RTL-
+aware via `--lm-dir` read at commit time (never cached, so a language switch
+mid-session is never stale); `startFilter` excludes the drawer's own
+scrollable nav list, so a vertical scroll in there is never fought.
+**Pull-to-refresh** (`lib/gestures/usePullToRefresh.ts`,
+`components/ui/pull-indicator.tsx::PullIndicator`) on Notifications,
+Announcements and Overview: none of the three has a scroll container of its
+own, so both the gesture and its scroll-top check key off
+`document.documentElement` — the same target `EdgeSwipeBack` already
+listens on, coexisting the way that component's own comment anticipates.
+**Quiz page-turn** (`QuizTaker.tsx`, `lib/quizSwipe.ts::quizSwipeAllowed`):
+swiping the question card always flushes the 600ms autosave before moving
+(a page-turn racing an unsaved answer is exactly the D3.21 shape); refuses
+to start on an MCQ radio, a textarea, an input, a button or a link, so it
+never races a tap already owned by one of those; and is fully disabled
+(the listener detaches, not merely a no-op check) in the last 60 seconds of
+a timed test. Previous/Next buttons are unchanged. **Long-press menus**
+(`lib/gestures/useLongPress.ts`, opening the existing `components/ui/
+popover.tsx::Popover` in controlled mode) on three rows, each only where it
+has a real secondary action to offer: `QuestionRow` gains optional
+`practiceHref`/`onShare` props (`PaperResult.tsx` supplies both — "Practice
+this topic" links to the practice generator prefilled with the question's
+topic when one is recorded, "Share" reuses the same action `ResultHeader`'s
+own Share button already builds); the notification row offers "Mark read",
+shown only while the row is actually unread; the flashcard deck row offers
+"Delete" through the existing confirm flow — **no "Rename"**:
+`lemely/web/routers/flashcards.py` has `DELETE /decks/{id}` and `PATCH
+/cards/{id}` but no deck rename endpoint, and `useFlashcardApi.ts` has no
+`useUpdateDeck`, so there is nothing for a rename item to call. No
+additional long-press targets beyond these three rows: the affirmed
+override for `gesture-no-long-press-and-thats-fine` is that the one
+additional place the dossier suggested stays without it, by user decision,
+rather than being added here for completeness.
 
 **Navigation chrome (Task 4, B3).** Three constants — `SIDEBAR_WIDTH` (252),
 `SIDEBAR_BREAKPOINT` (820), `BOTTOM_NAV_HEIGHT` (56), exported from

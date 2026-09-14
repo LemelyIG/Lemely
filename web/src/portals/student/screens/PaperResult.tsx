@@ -280,7 +280,23 @@ function ResultHeader({
  * DTO (no data-flow change) but are no longer rendered to the student. Noted
  * in the P2.5.3 report as a deliberate deviation.
  */
-function QuestionList({ questions }: { questions: QuestionResult[] }) {
+function QuestionList({
+  questions,
+  subjectCode,
+  onShare,
+}: {
+  questions: QuestionResult[]
+  /** The paper's subject code (`res.code.split("/")[0]`), used to build
+   * each row's `practiceHref`. */
+  subjectCode: string
+  /** Task 6 (B4b): shared by every row's long-press "Share" item — the same
+   * action `ResultHeader`'s own Share button offers, just reachable from
+   * any question row too. Unlike that button (gated on a real `paperId`),
+   * this is wired from both call sites: a live result has no `paperId` yet
+   * to build a permalink from, so its share falls back to the current URL
+   * rather than losing the affordance entirely. */
+  onShare?: () => void
+}) {
   if (questions.length === 0) {
     // Inside a Card, like the populated list it stands in for. Bare, it
     // floated in the middle of the page with nothing to say which region was
@@ -302,6 +318,12 @@ function QuestionList({ questions }: { questions: QuestionResult[] }) {
           state={markState(q)}
           confidence={confidenceTierFor(q)}
           topic={q.topic}
+          practiceHref={
+            q.topic
+              ? `/student/practice/${subjectCode}?topic=${encodeURIComponent(q.topic)}`
+              : undefined
+          }
+          onShare={onShare}
         >
           <div className="flex flex-col gap-2.5">
             <Chip tone="neutral" className="w-fit">
@@ -328,9 +350,29 @@ export function PaperResult() {
   const { paperId } = useParams<{ paperId: string }>()
   const location = useLocation()
   const navigate = useNavigate()
+  const { toast } = useToast()
   const live = isLiveResult(location.state) ? location.state : null
 
   const query = useResult(live ? "" : (paperId ?? ""))
+
+  // Task 6 (B4b): the same share action `ResultHeader`'s own Share button
+  // builds, reused for every question row's long-press "Share" item. A
+  // live result has no `paperId` yet (fresh off `/student/correct`, not
+  // persisted to a `/student/result/:paperId` address) — `location.href`
+  // is what that student actually has open, honest even if not a permalink.
+  function shareHandler(res: Result, forPaperId?: string): () => void {
+    return () =>
+      void shareResult(
+        {
+          url: forPaperId
+            ? `${window.location.origin}/student/result/${forPaperId}`
+            : window.location.href,
+          title: `${res.code} ${res.paper} result`,
+          text: `${res.awarded}/${res.max}, ${res.grade}`,
+        },
+        { toast: (msg) => toast({ title: msg }) },
+      )
+  }
 
   if (live) {
     const summary = confidenceSummaryOf(live.questions)
@@ -344,7 +386,11 @@ export function PaperResult() {
             needsReview={summary.needsReview}
           />
         ) : null}
-        <QuestionList questions={live.questions} />
+        <QuestionList
+          questions={live.questions}
+          subjectCode={live.code.split("/")[0]}
+          onShare={shareHandler(live)}
+        />
       </ResultScreen>
     )
   }
@@ -442,7 +488,11 @@ export function PaperResult() {
              * populates per-question history detail — the live path just
              * above already proves `QuestionList` can render it real.
              */}
-            <QuestionList questions={[]} />
+            <QuestionList
+              questions={[]}
+              subjectCode={data.code.split("/")[0]}
+              onShare={paperId ? shareHandler(data, paperId) : undefined}
+            />
           </>
         )}
       </QueryState>

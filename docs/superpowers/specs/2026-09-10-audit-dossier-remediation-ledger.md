@@ -19,7 +19,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | # | id | lane | severity/verdict | phase | packet | status | evidence |
 |---|---|---|---|---|---|---|---|
 | 1 | `no-optimistic-flashcard-grading` | native | critical | B | B5 | done B5 | `npx vitest run tests/unit/flashcardSession.test.ts tests/unit/capabilityWiring.test.ts` — `FlashcardReview.tsx` advances `index` before `reviewCard.mutate`; `applyGradeOutcome` (`lib/flashcardSession.ts`) reconciles settled/failed outcomes; `FailedGradesBanner` names each unsettled card with Retry |
-| 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | pending |  |
+| 2 | `gesture-flashcard-no-swipe` | native | critical | B | B4 | done B4 | `npx vitest run tests/unit/flashcardSwipe.test.ts tests/unit/gestureWiring.test.ts` — `FlashcardReview.tsx` wires `useDragGesture` on the card, `flashcardSwipeAction` (`lib/flashcardSwipe.ts`) decides reveal/again/good; Reveal/grade buttons and keyboard shortcuts unchanged |
 | 3 | `silent-update-swap` | native | critical | A | A7 | done A7 | `npx vitest run tests/unit/swSource.test.ts tests/unit/serviceWorkerUpdate.test.ts` |
 | 4 | `kb-1` | native | critical | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 5 | `nav-1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/dialogHistory.test.ts tests/unit/navigationModel.test.ts` — pass |
@@ -29,7 +29,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 9 | `T1` | native | critical | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/navigationDirection.test.ts` — `ScreenOutlet`/`ScreenFrame` give every screen (portal and top-level alike) an entrance keyed to `location.key`; `RootOutlet` sets `html[data-direction]` and `index.css`'s `::view-transition-*` rules drive the directional slide for shell-initiated navigation |
 | 10 | `no-active-state-question-row-confidence` | native | high | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
 | 11 | `zero-haptics-anywhere` | native | high | B | B5 | done B5 | `npx vitest run tests/unit/haptics.test.ts` — `lib/haptics.ts`'s `haptic()`, called on `ConfirmModal`'s confirm tap and once per finished `FlashcardReview` session |
-| 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | pending |  |
+| 12 | `gesture-navdrawer-no-swipe-dismiss` | native | high | B | B4 | done B4 | `npx vitest run tests/unit/gestureWiring.test.ts` — `nav-drawer.tsx` wires `useDragGesture` on the panel, commits closed at 40% of panel width, RTL-aware via `--lm-dir` read at commit time; Escape/backdrop/close-button unchanged |
 | 13 | `no-install-affordance` | native | high | A | A7 | done A7 | `npx vitest run tests/unit/installPrompt.test.ts` |
 | 14 | `route-fallback-not-a-skeleton` | native | high | B | B1 | done B1 | `npx vitest run tests/unit/routeSkeleton.test.ts tests/unit/loadingTiers.test.ts` |
 | 15 | `kb-2` | native | high | A | A2 | done A2 | `npx vitest run tests/unit/authInputAttributes.test.ts` — Login/JoinWithCode enterKeyHint=go, SignupDetails autoCapitalize/autoCorrect; design doc's "ParentLogin.tsx PhoneStep" is stale (phone-OTP parent login retired, commit f7fa328) — enterKeyHint=send applied to SignupParent's email-step field instead |
@@ -57,8 +57,8 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 37 | `T2` | native | high | B | B1 | already-fixed | web/index.html pre-mount shell + vite/preMountShell.ts + tests/unit/preMountShell.test.ts present on develop c70dd38d |
 | 38 | `T3` | native | high | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/overlayExit.test.ts` — `Modal`/`NavDrawer` play `lm-out`/`lm-slide-out-start` over `dur-fast`/`ease-in-soft` on close and unmount on `animationend` (`lib/overlayPhase.ts`), instead of vanishing the instant `open` goes false |
 | 39 | `role-switcher-no-active-state` | native | medium | A | A3 | done A3 | `npx vitest run tests/unit/hoverTransition.test.ts` — pass |
-| 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | pending |  |
-| 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | pending |  |
+| 40 | `gesture-no-pull-to-refresh` | native | medium | B | B4 | done B4 | `npx vitest run tests/unit/gestureWiring.test.ts` — `usePullToRefresh`/`PullIndicator` wired on Notifications, Announcements and Overview, keyed off `document.documentElement` (none of the three has its own scroll container) |
+| 41 | `gesture-quiztaker-no-swipe-honest-tradeoff` | native | medium | B | B4 | done B4 | `npx vitest run tests/unit/quizSwipe.test.ts tests/unit/quizTaker.test.ts tests/unit/gestureWiring.test.ts` — `QuizTaker.tsx` wires `useDragGesture`, `quizSwipeAllowed` (`lib/quizSwipe.ts`) refuses radio/textarea/input/button/a targets and locks in the last 60s, commit flushes autosave before `setIndex`; Previous/Next unchanged |
 | 42 | `gesture-standalone-pwa-no-back-replacement` | native | medium | B | B2 | done B3 | `npx vitest run tests/unit/backTarget.test.ts tests/unit/edgeSwipeBack.test.ts` — `BackControl` (B2) is the tap affordance; `EdgeSwipeBack` (B3, `src/components/edge-swipe-back.tsx`) adds the standalone-only 24px inline-start edge-swipe gesture, both resolving through the same `backTarget` decision |
 | 43 | `no-launch-handler` | native | medium | A | A5 | done A5 | `npx vitest run tests/unit/manifest.test.ts` + dist/manifest.webmanifest key check — vite/manifest.ts (launch_handler) |
 | 44 | `no-periodic-update-check` | native | medium | A | A7 | done A7 | `npx vitest run tests/unit/serviceWorkerUpdate.test.ts (scheduleUpdateChecks: visibilitychange + 60min interval)` |
@@ -74,7 +74,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 54 | `touch-callout-select-on-chrome` | native | medium | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 55 | `T4` | native | medium | B | B2 | done B2 | `npx vitest run tests/unit/screenEntrance.test.ts tests/unit/navigationDirection.test.ts` — native View Transitions (`document.startViewTransition` via react-router's `viewTransition` prop) on sidebar links, breadcrumbs and `BackControl`; excluded from the paper-result reveal and from `prefers-reduced-motion` |
 | 56 | `practice-create-spinner-acceptable-but-note` | native | low | B | B1 | done B1 | DESIGN.md §12 "Skeletons, not spinners" bullet notes the practice generator's `Create` button as the documented sub-1s-mutation exception; no code change |
-| 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | pending |  |
+| 57 | `gesture-no-long-press-and-thats-fine` | native | low | B | B4 | done B4 | `npx vitest run tests/unit/gestureWiring.test.ts` — `useLongPress`/`Popover` wired on `QuestionRow` (Practice this topic, Share), the notification row (Mark read, unread only) and the flashcard deck row (Delete only, no Rename endpoint exists); no additional long-press targets beyond these three rows |
 | 58 | `kb-6` | native | low | A | A1 | done A1 | `npx vitest run tests/unit/nativeMechanics.test.ts tests/unit/design-tokens.test.ts` |
 | 59 | `nav-6` | native | low | B | B2 | done B2 | `npx vitest run tests/unit/scrollRestorationKey.test.ts tests/unit/navigationModel.test.ts` — pass |
 | 60 | `charts-well-deferred-positive` | native | low |  |  | no-action | dossier: verification only, no fix needed |
