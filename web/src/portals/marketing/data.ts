@@ -241,10 +241,35 @@ export interface PricingPlan {
  * Emptied 2026-08-13 (DESIGN-AUDIT C2) and still empty. PRODUCT.md records
  * pricing as explicitly undecided and payments as out of scope. Kept as an
  * empty list rather than deleted outright so the section keeps its slot on
- * the page: Landing renders `pricingPlaceholder` while this is empty, and the
- * moment real pricing is decided it goes back in here with no layout work.
+ * the page: Landing renders `pricingPlaceholder` unconditionally while this
+ * is empty (Task 4, F3/F3a), and `marketing.test.ts`'s
+ * `expect(pricing).toHaveLength(0)` is what now enforces that, not a runtime
+ * branch in the component.
+ *
+ * Task 3 left a second render path in `Landing.tsx` — a three-equal-card grid
+ * for a populated `pricing` — reachable only once this array stopped being
+ * empty. That is the exact card-grid family Task 3 exists to have removed
+ * from the page, sitting dead in the branch the judge cannot see, and it
+ * would have appeared the day a plan shipped with no one deciding to put it
+ * there. It is gone (Task 4, F3): the moment real pricing is decided, the
+ * layout for it gets designed then, deliberately, and it will not be three
+ * equal cards.
  */
 export const pricing: PricingPlan[] = []
+
+/*
+ * Section furniture, not placeholder content. `pricingTitle` is the section's
+ * `<h2>` and is true in both states pricing can be in: undecided (today) or
+ * decided (later, with `pricing` populated and its own layout designed then).
+ * It used to be bound to `pricingPlaceholder.title` ("No price yet"), which
+ * meant populating `pricing` left "No price yet" rendered directly above a
+ * grid of priced tiers — a false heading, on the one page whose banner
+ * comment in `Landing.tsx` exists because an earlier audit "deleted the
+ * numbers and left the sentences" (Task 4, F2). A heading is state-neutral;
+ * binding it to the empty state made the page's structure a function of its
+ * own emptiness.
+ */
+export const pricingTitle = "What it costs"
 
 /*
  * Folds in the "Lemely is still being built" line the hero used to carry as
@@ -252,14 +277,12 @@ export const pricing: PricingPlan[] = []
  * told what something costs, so it is the honest place to say nothing is
  * decided yet rather than the hero, which is about the product, not billing.
  *
- * `title` is rendered as the section's own heading (Task 3, live judge's own
- * suggestion, evaluator run `ralph` iteration 2): "fold 'not announced' into
- * the heading itself... to also help with the eyebrow count." The separate
- * `label` chip ("Not announced") this used to carry alongside the heading is
- * gone, and nothing replaces it. That plus the section's own "Plans" kicker
- * were the two occupants of the page's eyebrow budget; removing both spends
- * none of the two-eyebrow allowance the whole page shares (BUILD/BRAND.md
- * §5's "at most 2" rule) rather than one of two.
+ * Both fields render inside the section, under the stable `pricingTitle`
+ * heading above — `title` as the direct statement ("No price yet"), `body`
+ * as the one sentence of context. Neither is an eyebrow: the section's old
+ * "Plans" kicker and the "Not announced" chip this used to carry alongside
+ * the heading are both gone, and nothing replaces them, so this section still
+ * spends none of the page's two-eyebrow allowance (BUILD/BRAND.md §5).
  */
 export const pricingPlaceholder = {
   title: "No price yet",

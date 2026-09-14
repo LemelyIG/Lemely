@@ -2,6 +2,7 @@
 import { useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
+import { cn } from "@/lib/utils"
 import type { RoleTab } from "./data"
 
 /**
@@ -78,8 +79,15 @@ export function RoleTabs({ roles }: { roles: RoleTab[] }) {
         role="tablist"
         aria-label="Who Lemely serves"
         onKeyDown={onKeyDown}
-        className="flex gap-1 border-b border-rule"
+        className="flex flex-wrap gap-1 border-b border-rule"
       >
+        {/*
+          `flex-wrap` (Task 4, F9): the row had no wrap and no horizontal
+          scroll, and each tab's `whitespace-nowrap` means it cannot shrink
+          either. Three roles fit every viewport today, but nothing stopped a
+          fourth from overflowing 320px and tripping the `horizontal_scroll`
+          gate. Cheap insurance against a content change breaking layout.
+        */}
         {roles.map((r) => {
           const selected = r.id === activeId
           return (
@@ -95,11 +103,12 @@ export function RoleTabs({ roles }: { roles: RoleTab[] }) {
               aria-controls="role-panel"
               tabIndex={selected ? 0 : -1}
               onClick={() => setActiveId(r.id)}
-              className={`text-label whitespace-nowrap rounded-t-md px-3 py-3 -mb-px border-b-2 pointer-coarse:min-h-11 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-4 ${
+              className={cn(
+                "text-label whitespace-nowrap rounded-t-md px-3 py-3 -mb-px border-b-2 pointer-coarse:min-h-11 transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-4",
                 selected
                   ? "border-accent text-ink"
-                  : "border-transparent text-ink-faint hover:text-ink"
-              }`}
+                  : "border-transparent text-ink-faint hover:text-ink",
+              )}
             >
               {r.label}
             </button>
@@ -116,7 +125,15 @@ export function RoleTabs({ roles }: { roles: RoleTab[] }) {
       >
         <h3 className="text-display-lg text-ink text-balance">{active.heading}</h3>
         <p className="text-body-lg max-w-[56ch] text-pretty text-ink-muted">{active.body}</p>
-        <Button variant="primary" onClick={() => navigate(active.cta.to)}>
+        {/*
+          `secondary`, not `primary` (Task 4, F5): an unrequested change in
+          Task 3 promoted this to `primary`, which put four primary buttons on
+          one page (header, hero, this, close). The hero and close CTAs are
+          the page's actual conversion path; this is a per-persona nudge
+          inside a tab a reader may not even open, and does not carry equal
+          weight with either.
+        */}
+        <Button variant="secondary" onClick={() => navigate(active.cta.to)}>
           {active.cta.label}
         </Button>
       </div>

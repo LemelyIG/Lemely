@@ -12,6 +12,8 @@ import {
   loopSteps,
   mcq,
   pricing,
+  pricingPlaceholder,
+  pricingTitle,
   roleTabs,
   rolesIntro,
   subjects,
@@ -144,36 +146,38 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
   })
 
   /*
-   * Four call sites, not three: the hero's primary CTA, the close CTA, the
-   * per-plan CTA in the "Plans" section, and the per-role CTA rendered once
-   * for each `roleTabs` entry (`onClick={() => navigate(r.cta.to)}`). The
-   * per-plan one renders nothing today — `pricing` is `[]` (the `landing
-   * copy claims only what the product does` describe block above pins that
-   * directly) — but the source line exists and was `navigate("/login")`
-   * before this task, so it is corrected along with the two live ones rather
-   * than left to silently reintroduce the pre-signup routing the moment a
-   * real plan ships.
+   * Two call sites in this file: the hero's primary CTA and the close CTA. A
+   * third used to live here too, a per-plan CTA inside the "Plans" section's
+   * populated-pricing branch — but that branch was dead code (Task 4, F3):
+   * `pricing` is `[]` (the `landing copy claims only what the product does`
+   * describe block above pins that directly) and always has been, so the
+   * branch, and its CTA, could never render. Task 4 deletes the branch rather
+   * than guard it, which drops this count from three to two.
    *
-   * The fourth call site is `navigate(r.cta.to)`, not a literal `/signup`
-   * string, so the regex below cannot see it and the count it checks stays
-   * at three. `r.cta.to` is instead pinned directly by the data-level
-   * assertion further down this block — that is what catches a `roleTabs`
-   * entry silently re-targeted at `/login`.
+   * A fourth site exists on the page but not in this file: the per-role CTA
+   * rendered once for each `roleTabs` entry, `navigate(active.cta.to)` in
+   * `RoleTabs.tsx` since Task 3 moved the role panels out of `Landing.tsx`.
+   * It is not a literal `/signup` string, so the regex below cannot see it
+   * regardless of which file it lives in. Two things pin it instead: the
+   * data-level assertion further down this block, which catches a `roleTabs`
+   * entry silently re-targeted at `/login`, and the "reads the destination
+   * from data" check below, which catches `RoleTabs.tsx` itself silently
+   * hardcoding a destination instead of consuming that data (Task 4, F7).
    *
    * Task 2 (M-2): the hero's primary CTA now calls
    * `navigate(landingHero.primaryCta.to)` rather than repeating the literal
    * `"/signup"` string, so the data field the "routes every roleTabs CTA"
    * assertion below already pins is actually consumed by the page instead of
    * sitting unread beside it. The regex matches either call form for that
-   * one site (the close CTA and the per-plan CTA stay literal), so the count
-   * it checks stays at three either way.
+   * one site (the close CTA stays literal), so the count it checks stays at
+   * two either way.
    */
-  it("routes exactly three CTAs to /signup", () => {
+  it("routes exactly two CTAs to /signup", () => {
     const matches =
       source.match(
         /navigate\(["']\/signup["']\)|navigate\(landingHero\.primaryCta\.to\)/g,
       ) ?? []
-    expect(matches).toHaveLength(3)
+    expect(matches).toHaveLength(2)
   })
 
   /*
@@ -226,6 +230,31 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
     // legitimately point at /login. Exactly two, never a third.
     expect(shellSource.match(/to="\/login"/g) ?? []).toHaveLength(2)
   })
+
+  /*
+   * F7: this whole describe block read only `Landing.tsx` and, once the
+   * header check above was added, `portals/marketing/index.tsx`. Task 3
+   * moved the role panels' CTA into `RoleTabs.tsx`, so that render site was
+   * unguarded by any source-text check here — the same failure mode as
+   * review finding A just above and I-2 further down this block, a third
+   * time on this branch. The data-level assertion below (`routes every
+   * roleTabs CTA...`) pins `roleTabs[].cta.to` itself, but nothing pinned
+   * that `RoleTabs.tsx` actually reads that data rather than hardcoding a
+   * destination of its own — which is exactly the gap a "consistency" edit
+   * to `RoleTabs.tsx` could fall into without touching `data.ts` at all.
+   */
+  const roleTabsSource = fs.readFileSync(
+    path.resolve(__dirname, "../../src/portals/marketing/RoleTabs.tsx"),
+    "utf8",
+  )
+
+  it("routes the role panel's CTA from roleTabs data, not a hardcoded path", () => {
+    expect(roleTabsSource).toMatch(/navigate\(active\.cta\.to\)/)
+  })
+
+  it("contains no navigate(\"/login\") call in the role panel", () => {
+    expect(roleTabsSource).not.toMatch(/navigate\(["']\/login["']\)/)
+  })
 })
 
 describe("landing copy claims only what the product does — P4.9", () => {
@@ -256,6 +285,14 @@ describe("landing copy claims only what the product does — P4.9", () => {
     rolesIntro.title,
     rolesIntro.body,
     subjectsTitle,
+    // F6: the "Plans" section's own copy was never in this list, so the
+    // `bannedClaims` regexes below — including `/free\b/i` and `/\btrial\b/i`
+    // — never scanned it. Both pass today (this section is the one place on
+    // the page a reader would expect either word), which is exactly why the
+    // gap was latent rather than caught by a failing test.
+    pricingTitle,
+    pricingPlaceholder.title,
+    pricingPlaceholder.body,
   ]
 
   it("gates only string values", () => {

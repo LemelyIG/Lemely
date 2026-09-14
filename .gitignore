@@ -152,3 +152,6 @@ reports/accuracy/test-touch-ledger.jsonl
 /eval/scans/
 /eval/mark_schemes/
 !eval/labels/.gitkeep
+
+# Playwright MCP debug output (console/page logs from agent browser sessions)
+.playwright-mcp/

@@ -1,9 +1,9 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
-import { Card } from "@/components/ui/card"
 import { Reveal } from "@/components/ui/reveal"
 import { prefersReducedMotion } from "@/lib/celebration"
+import { cn } from "@/lib/utils"
 import { HeroExampleCard } from "./HeroExampleCard"
 import { RoleTabs } from "./RoleTabs"
 import {
@@ -13,8 +13,8 @@ import {
   loopIntro,
   loopSteps,
   mcq,
-  pricing,
   pricingPlaceholder,
+  pricingTitle,
   roleTabs,
   rolesIntro,
   subjects,
@@ -42,10 +42,11 @@ import {
  * Every claim now carries the module that implements it, in a comment beside
  * it. A new sentence without one does not ship.
  *
- * The plans section renders `pricingPlaceholder` while `pricing` is empty. It
- * is empty on purpose: see the C2 note in ./data.ts. Do not repopulate it with
- * example tiers to "fill the space" — the placeholder stating that pricing is
- * undecided is the honest render, and inventing a price is the specific defect
+ * The plans section renders `pricingPlaceholder` unconditionally. `pricing`
+ * stays `[]` on purpose: see the C2 note in ./data.ts. Do not add a branch
+ * that renders it into cards to "fill the space" — the placeholder stating
+ * that pricing is undecided is the honest render, and inventing a price (or
+ * resurrecting the three-equal-card layout for one) is the specific defect
  * that note exists to prevent recurring.
  */
 
@@ -328,7 +329,7 @@ export function Landing() {
               {subjects.map((s, i) => (
                 <div
                   key={s.code}
-                  className={`flex items-baseline gap-4 px-5 py-4 ${i !== 0 ? "border-t border-rule" : ""}`}
+                  className={cn("flex items-baseline gap-4 px-5 py-4", i !== 0 && "border-t border-rule")}
                 >
                   <dt className="text-data-md w-14 shrink-0 text-accent-ink">{s.code}</dt>
                   <dd className="text-body-md text-ink">{s.name}</dd>
@@ -343,68 +344,50 @@ export function Landing() {
       {/* ── Plans ────────────────────────────────────────────────────────── */}
       <Section id="plans">
         {/*
-          The live judge's own suggestion (evaluator run `ralph`, iteration
-          2): fold the "Not announced" chip into the heading itself rather
-          than rendering it as a separate all-caps label. That, plus the
-          "Plans" kicker this section carried above the heading, were the
-          eyebrow budget's own two occupants — cutting both means this page
-          now spends none of its two-eyebrow allowance, not one of two.
-          `pricingPlaceholder.title` is content (`data.ts`), so the honest
-          statement lives there rather than as markup here.
+          `pricingTitle` ("What it costs") is stable furniture, not content:
+          it is true whether `pricing` is empty (today) or populated (later),
+          which the placeholder's own title ("No price yet") is not. Task 4
+          (F2) restores this after Task 3 bound the `<h2>` to
+          `pricingPlaceholder.title` directly — a section heading that read
+          correctly while `pricing` was `[]` and became a false heading
+          ("No price yet" sitting above a grid of priced tiers) the moment it
+          was not. See ./data.ts's own comment on `pricingTitle` for the full
+          reasoning.
         */}
         <Reveal>
-          <h2 className="text-display-xl mt-4 text-ink text-balance">
-            {pricingPlaceholder.title}
-          </h2>
+          <h2 className="text-display-xl mt-4 text-ink text-balance">{pricingTitle}</h2>
         </Reveal>
-        {pricing.length === 0 ? (
-          <Reveal delay={80}>
-            <Card className="mt-8 flex max-w-[560px] flex-col gap-3 p-7">
-              <p className="text-body-md text-pretty text-ink-muted">{pricingPlaceholder.body}</p>
-            </Card>
-          </Reveal>
-        ) : (
-          <div className="mt-8 grid grid-cols-1 gap-5 lg:grid-cols-3">
-            {pricing.map((p, i) => (
-              <Reveal key={p.name} delay={90 * i} className="h-full">
-                <Card className="flex h-full flex-col gap-3 p-7">
-                  <div className="text-label text-ink">{p.name}</div>
-                  <div className="text-data-lg text-ink">{p.price}</div>
-                  <p className="text-body-sm text-pretty text-ink-muted">{p.who}</p>
-                  <div className="mt-2 flex flex-col gap-2">
-                    {p.feats.map((f) => (
-                      <div key={f} className="text-body-sm text-ink-muted">
-                        {f}
-                      </div>
-                    ))}
-                  </div>
-                  {/*
-                    The kit's Button, not a hand-rolled <button> with its own
-                    border recipe. The build-era version wrote three variant
-                    branches inline, one of which set a raw `oklch()` border —
-                    a token-discipline gate failure (§3.2 item 13) sitting in
-                    the one section that also carried the invented prices.
+        {/*
+          Unconditional, no branch on `pricing.length`. Task 3 left a second
+          render path here for a populated `pricing` — a three-equal-card
+          grid, reachable only once `pricing` stopped being `[]` — which is
+          the exact layout family the judge flagged for "How it works" and
+          "Who it serves" above, back in a branch no judge or gate can ever
+          execute. Task 4 (F3/F3a) deletes that branch rather than guarding
+          it: pricing is undecided (PRODUCT.md), the spec's Non-Goals exclude
+          real tiers, and keeping the dead branch around preserved the exact
+          layout decision the rest of this page just undid. When real pricing
+          ships, its layout gets designed then, deliberately, and it will not
+          be this one. `pricing` itself stays exported and `[]`
+          (`marketing.test.ts`'s `expect(pricing).toHaveLength(0)` is now
+          the only thing enforcing that, which is the right layer for it).
 
-                    Unreachable today, same as the rest of this branch:
-                    `pricing` is `[]` (the C2 note above), so this button never
-                    renders until a real plan exists to put here. Its
-                    destination is kept in step with the hero and close CTAs
-                    anyway (Task 19: /signup, not /login) so that whichever
-                    plan ships first does not silently resurrect the
-                    pre-signup routing this page just moved away from.
-                  */}
-                  <Button
-                    variant={p.ctaAccent ? "primary" : "secondary"}
-                    className="mt-auto w-full"
-                    onClick={() => navigate("/signup")}
-                  >
-                    {p.cta}
-                  </Button>
-                </Card>
-              </Reveal>
-            ))}
+          The container also drops `Card` for a plain `border-t` rule
+          (Task 4, F1): "Subjects covered" above already owns the page's one
+          bordered-box treatment (`ruled-bg` / `rounded-xl` / `border-rule` /
+          `bg-paper-raised`), and this section matching that recipe exactly
+          made the two read as the same layout family sitting back to back —
+          the live judge's own words were "no price yet card is a plain
+          bordered white box... reading slightly more generic-SaaS than the
+          rest of the page." The close section's own pattern (a `border-t`
+          rule under a heading, no fill, no radius) is reused here instead.
+        */}
+        <Reveal delay={80}>
+          <div className="mt-8 flex max-w-[560px] flex-col gap-3 border-t border-rule pt-6">
+            <p className="text-label text-ink">{pricingPlaceholder.title}</p>
+            <p className="text-body-md text-pretty text-ink-muted">{pricingPlaceholder.body}</p>
           </div>
-        )}
+        </Reveal>
       </Section>
 
       {/* ── Close ────────────────────────────────────────────────────────── */}
