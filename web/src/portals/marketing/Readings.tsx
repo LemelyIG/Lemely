@@ -1,9 +1,8 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S3 R4 V4 — design import, part B.
-   S3, not 4: most of this component's copy (every body paragraph, and the
-   student/parent points beyond the parent carve-out) has no verbatim source
-   in design-import-spec.md — see data.ts's own comment on `readings` for
-   what each non-quoted string is traced to instead, and the part B report
-   for the flag raised to the design-import controller. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — design import, part B.
+   Every panel's title, body and points are verbatim from the design-import
+   controller (the earlier gap — synthesized body/points copy while waiting
+   on the spec's full Readings quotes — is closed; see data.ts's comment on
+   `readings`). */
 import { useState } from "react"
 import { Check } from "@phosphor-icons/react"
 import { Tabs, TabsList, TabsPanel } from "@/components/ui/tabs"

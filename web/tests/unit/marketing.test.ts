@@ -232,15 +232,29 @@ describe("design import: part B's five specimen components are all mounted", () 
 describe("landing copy claims only what the product does — P4.9", () => {
   /**
    * Recursively collects every string leaf under `value` into `out`.
-   * Non-string, non-container leaves (numbers, booleans, undefined — two
-   * fields below are deliberately undefined pending a verbatim quote, see
-   * data.ts's header) are skipped rather than stringified.
+   * Non-string, non-container leaves that are legitimately not copy (marks,
+   * counts, indices — `awarded`, `available`, `total`, fixture `id`s) are
+   * skipped rather than stringified. `undefined` is NOT among them: this
+   * gate used to tolerate it, back when `howItWorks.body` and
+   * `schemeSection.body`/`.aside` were deliberately left undefined pending a
+   * verbatim quote (see data.ts's history, commit 7bec7d30). That gap is
+   * closed — every COPY_EXPORTS field is a real string now — so an
+   * `undefined` leaf today means a field silently went missing, not a
+   * pending quote, and the gate should fail loudly rather than skip it
+   * quietly the way it used to have to.
    */
   function collectStrings(value: unknown, out: string[]): void {
     if (typeof value === "string") {
       out.push(value)
     } else if (Array.isArray(value)) {
       value.forEach((v) => collectStrings(v, out))
+    } else if (value === undefined) {
+      throw new Error(
+        "collectStrings: found an undefined leaf in gated copy — every COPY_EXPORTS " +
+          "field is expected to be a real string (or a container of them); fill it in " +
+          "rather than leaving it undefined, or classify the export under NOT_COPY " +
+          "with a reason if it genuinely isn't copy",
+      )
     } else if (value !== null && typeof value === "object") {
       Object.values(value).forEach((v) => collectStrings(v, out))
     }

@@ -413,51 +413,25 @@ export const classBatch = {
 }
 
 /* ── Readings ("The same paper, three ways") ────────────────────────────
- * design-import-spec.md, "Readings — the three-way switcher". Only partly
- * quoted: all three panel TITLES are verbatim, and the teacher panel's
- * three points are verbatim ("Body and points verbatim from the design,
- * including [the three quoted points]"). The spec never quotes any body
- * paragraph, or the student/parent points lists, beyond saying they too are
- * "verbatim" — the same shape of gap part A hit with `howItWorks.body`/
- * `schemeSection.body`, except here it also covers a required *structural*
- * element (three check-marked points per panel) that cannot simply be left
- * undefined the way a lone paragraph can.
+ * design-import-spec.md, "Readings — the three-way switcher". Every title,
+ * body and points list below is verbatim from the design-import controller
+ * — the spec originally quoted only the titles and the teacher panel's
+ * three points, and I flagged the rest (every body paragraph, and the
+ * student/parent points lists) rather than synthesize them; the controller
+ * then supplied the full text and the spec was patched to match.
  *
- * Rather than invent new claims to fill that gap (banned — see
- * design-import-claims.md's closing gate), every non-quoted string below is
- * traced to a claim this exact codebase has ALREADY shipped and, where
- * relevant, already had the honesty audit run against it:
+ * The teacher body ships "Override any mark you disagree with" per the
+ * RULING even though design-import-claims.md verified override only exists
+ * for review-queue items, not every mark — recorded here as a reminder not
+ * to "fix" it in review; the controller was explicit that this ships as
+ * designed.
  *
- *   - teacher.body: paraphrases design-import-claims.md's own suggested true
- *     alternate phrasing for the queue ("Only the marking Lemely was unsure
- *     of reaches the queue"), which that file offers as the honest reading
- *     even though the RULING ships the stronger ordering claim verbatim in
- *     the points below it.
- *   - student.points[2] ("Their grade stays private to them.") is quoted
- *     directly from design-import-claims.md's "needs verification, not yet
- *     checked" list — not one of the three FALSE findings, so it ships under
- *     the RULING's opening blanket clause ("ship the design's claims
- *     verbatim, except the parent phone-login lines"), same as every other
- *     unverified-but-not-falsified design claim already shipping elsewhere
- *     on this page.
- *   - student.body and student.points[0]/[1], and parent.points[1]/[2], all
- *     restate ideas already shipped verbatim elsewhere in THIS file
- *     (`howItWorks.body`'s "turns the dropped marks into a practice set on
- *     the same shape"; the pre-redesign `roleTabs.student`/`roleTabs.parent`
- *     bodies this branch's own git history carries, which were themselves
- *     already honesty-audited before this import) — restated in a new shape
- *     for this panel, not a new fact introduced by this pass.
- *   - parent.body/points[0] are the carve-out itself: design-import-spec.md
- *     names the design's original two sentences to replace ("Phone login,
- *     no account to manage." / "Read-only access with a phone login.") and
- *     gives the verified flow to replace them with. Both below keep the
- *     design's short cadence rather than the longer reference sentence
- *     quoted in data.ts's own file header, per the spec's explicit
- *     instruction not to lengthen the panel.
- *
- * Flagged to the design-import controller in the part B report: every field
- * below that is not a direct quote is named there, same as part A flagged
- * its own two body-copy gaps rather than silently filling them.
+ * The parent panel is the one carve-out design-import-spec.md names: the
+ * design's ORIGINAL first body sentence and first point both claimed phone
+ * login (a retired flow, `lemely/web/routers/auth.py:6`); both are replaced
+ * below with the verified flow. The rest of the parent panel — its title,
+ * and the body's second and third sentences, and the second and third
+ * points — is the design's own text, unchanged.
  */
 export interface ReadingsPanel {
   id: "teacher" | "student" | "parent"
