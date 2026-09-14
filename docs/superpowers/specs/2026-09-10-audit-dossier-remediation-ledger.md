@@ -210,7 +210,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | pending |  |
 | 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | pending |  |
 | 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline |
-| 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | pending |  |
+| 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | done C4 | `npx vitest run tests/unit/printStyles.test.ts` — `web/src/index.css`'s `@media print` block gains `[data-print="hide"]`, `.lm-print-avoid-break`, forced-white paper; `question-row.tsx` carries `lm-print-avoid-break`; `audit.mjs` captures `student-result-print` under `page.emulateMediaType("print")` |
 | 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |
 | 196 | `gamification-no-daily-quests` | ui | medium | D | D1 | pending |  |
@@ -247,7 +247,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 227 | `x-ia-breadcrumbs-canvas-regression` | ui | medium |  |  | no-action | production already better |
 | 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done f71dcc10 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
-| 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | pending |  |
+| 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | done C2 | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-glyph.tsx` adds the `SubjectGlyph` pastel tile, consumed by `Subject.tsx`'s header and `student/index.tsx`'s subject nav rows |
 | 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done 7b2f1101 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair |
 | 232 | `x-responsive-phone-locked-surfaces-get-real-desktop-containers` | ui | medium |  |  | no-action | production already better |
 | 233 | `x-responsive-teacher-dense-tables-scoped-overflow` | ui | medium |  |  | no-action | production already better |
@@ -258,7 +258,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | pending |  |
 | 239 | `brand-mark-a11y-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 240 | `brand-mark-geometry-diverges` | ui | low |  |  | no-action | dossier: no production change |
-| 241 | `brand-subject-glyph-vs-subject-tag` | ui | low | C | C1 | pending |  |
+| 241 | `brand-subject-glyph-vs-subject-tag` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-tag.tsx`'s `SubjectTag` gains an `icon?: boolean` prop rendering `subjectGlyphFor`'s glyph, sharing one tone/glyph table with `SubjectGlyph` instead of two independent lookups |
 | 242 | `center-activation-queue-more-honest-than-canvas-checkout` | ui | low |  |  | no-action | production already better |
 | 243 | `classes-naming-collision-caveat` | ui | low |  |  | no-action | dossier: no production change |
 | 244 | `classes-no-live-video-tutoring` | ui | low |  |  | skipped | skip: live video tutoring out of scope |
@@ -296,14 +296,14 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 276 | `x-a11y-dark-theme-exploration-correctly-unshipped` | ui | low | C | C5 | pending |  |
 | 277 | `x-celebration-stepper-production-only` | ui | low |  |  | no-action | production already better |
 | 278 | `x-chip-badge-taxonomy-split` | ui | low |  |  | no-action | dossier: no production change |
-| 279 | `x-progressring-inline-duplication-risk` | ui | low | C | C1 | pending |  |
+| 279 | `x-progressring-inline-duplication-risk` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/progressRing.test.ts` — `Grading.tsx`'s inline `CIRC`/`dash` ring math is now `progress-ring.tsx`'s `ringDash`/`ProgressRing` |
 | 280 | `x-copy-bulk-approve-honesty` | ui | low |  |  | no-action | production already better |
 | 281 | `x-copy-error-state-canvas-gap` | ui | low |  |  | no-action | production already better |
-| 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | pending |  |
+| 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | done C4 | `npx vitest run tests/unit/ciCopyGate.test.ts` — `npm run check:copy` (0 findings) now runs in `.github/workflows/ci.yml`'s web job, not just locally/on demand |
 | 283 | `x-dark-nav-badge-raw-white` | ui | low | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | pending |  |
 | 285 | `x-density-canvas-knob-is-decorative` | ui | low |  |  | no-action | dossier: no production change |
-| 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | pending |  |
+| 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/tableDensity.test.ts` — `table.tsx`'s `CELL_PADDING.operate` codifies the `px-4 py-2.5` rhythm via a `density` prop + `TableDensityContext` |
 | 287 | `x-ia-navshells-unused-abstraction` | ui | low | B | B3 | done 2a503cd6 | `npx vitest run tests/unit/navShells.test.ts` — `BottomNav`/`SidebarNav` render through `NavShellItem`'s `NavLink` wiring in all three portals; no longer an unused abstraction |
 | 288 | `x-ia-quests-badges-not-built` | ui | low | D | D1 | pending |  |
 | 289 | `x-ia-student-home-abc-exploration` | ui | low |  |  | no-action | dossier: no production change |
@@ -311,9 +311,9 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 291 | `x-motifs-lemely-mark-superseded` | ui | low |  |  | no-action | dossier: no production change |
 | 292 | `x-motifs-margin-note-vs-caveat-rule` | ui | low |  |  | no-action | production already better |
 | 293 | `x-motifs-marking-glyph-system` | ui | low |  |  | no-action | production already better |
-| 294 | `x-motifs-progress-ring-not-systematized` | ui | low | C | C1 | pending |  |
+| 294 | `x-motifs-progress-ring-not-systematized` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/progressRing.test.ts` — `progress-ring.tsx`'s `ProgressRing` is the one reusable ring primitive, replacing Grading's one-off SVG |
 | 295 | `x-motion-canvas-static-production-elaborate` | ui | low |  |  | no-action | production already better |
-| 296 | `x-motion-progress-ring-no-production-equivalent` | ui | low | C | C1 | pending |  |
+| 296 | `x-motion-progress-ring-no-production-equivalent` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/progressRing.test.ts` — `ProgressRing` ships in production on `Grading.tsx`, with no `stroke-dasharray` transition per DESIGN.md §9.2 |
 | 297 | `x-tokens-canvas-honey-hierarchy-inversion` | ui | low |  |  | no-action | dossier: no production change |
 | 298 | `x-tokens-dark-theme-deferred` | ui | low | C | C5 | pending |  |
 | 299 | `x-type-canvas-italic-heading` | ui | low |  |  | skipped | skip: italic hero heading not adopted |

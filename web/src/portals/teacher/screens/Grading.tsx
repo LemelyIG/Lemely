@@ -3,6 +3,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
+import { ProgressRing } from "@/components/ui/progress-ring"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import {
@@ -86,8 +87,6 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  *  - `onOpen` on a card selects the paper (updates the sidebar) instead of
  *    navigating to `/teacher/review`, which is queue-wide, not per-paper.
  */
-
-const CIRC = 2 * Math.PI * 42
 
 /* `PipelineStep.state` is the stored per-paper summary's vocabulary; the kit's
  * `ProcessingStage` is the live stream's. They mean the same three things and
@@ -358,7 +357,6 @@ export function Grading() {
           const reviewCount = Number(tabs.find((t) => t.id === "review")?.count ?? "0")
           const processingCount = Number(tabs.find((t) => t.id === "processing")?.count ?? "0")
           const progress = allCount > 0 ? gradedCount / allCount : 0
-          const dash = `${(CIRC * progress).toFixed(1)} ${CIRC.toFixed(1)}`
 
           return (
             <>
@@ -415,29 +413,14 @@ export function Grading() {
                   </div>
 
                   <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
-                    <svg
-                      viewBox="0 0 100 100"
-                      className="w-[92px] h-[92px] flex-none -rotate-90"
-                    >
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="42"
-                        fill="none"
-                        stroke="var(--border)"
-                        strokeWidth="10"
-                      />
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="42"
-                        fill="none"
-                        stroke="var(--accent)"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        strokeDasharray={dash}
-                      />
-                    </svg>
+                    <ProgressRing
+                      value={progress * 100}
+                      tone="accent"
+                      label={`${gradedCount} of ${allCount} paper${allCount === 1 ? "" : "s"} graded`}
+                      size={92}
+                      strokeWidth={10}
+                      className="flex-none"
+                    />
                     <div className="flex-1">
                       <div className="text-display-sm text-ink">Auto-grading</div>
                       {processingCount > 0 ? (

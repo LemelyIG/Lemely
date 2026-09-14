@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useEffect, useState } from "react"
+import { lazy, Suspense, useEffect, useState, type ReactElement } from "react"
 import { Link, Navigate, NavLink, useLocation, useMatches } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -18,7 +18,7 @@ import {
 import { cn } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
 import { BackControl } from "@/components/ui/back-control"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { buttonVariants } from "@/components/ui/button"
 import { ErrorBoundary } from "@/components/ui/error-boundary"
@@ -36,6 +36,7 @@ import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
 import { XPStreak } from "@/components/ui/xp-streak"
+import { SubjectGlyph } from "@/components/ui/subject-glyph"
 import { useProfile, useStudentProfile } from "@/lib/hooks/useMeApi"
 import { useReference } from "@/lib/hooks/useReferenceApi"
 import { useXpProfile } from "@/lib/hooks/useXpApi"
@@ -44,7 +45,7 @@ import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import type { SubjectRow } from "@/lib/studentTypes"
 import { pageMetaFromMatches } from "@/lib/meta/documentMeta"
 import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
-import { currentSubjectCode, navGroups, resolveCrumbTrail, subjectIcon } from "./data"
+import { currentSubjectCode, navGroups, resolveCrumbTrail } from "./data"
 
 /*
  * Student portal (terracotta). Grouped sidebar nav + a sticky top header
@@ -236,7 +237,12 @@ function NavRow({
   to: string
   end?: boolean
   label: string
-  icon: Icon
+  /** Most rows pass a bare Phosphor `Icon` component, sized and coloured to
+   * the row's active state below. The subject accordion's header row passes
+   * an already-rendered `<SubjectGlyph>` instead — a pastel tile carries its
+   * own size and tone, so it renders as given rather than through the
+   * active-state `<Glyph size={16} .../>` treatment every other row shares. */
+  icon: Icon | ReactElement
   tag?: string
   touch?: boolean
   /** Sub-items nested under a subject's accordion header sit one step in. */
@@ -281,13 +287,20 @@ function NavRow({
               and this is it. The active row therefore carries four
               independent signals — the accent margin rule, the
               raised sheet, full-strength ink, and the filled glyph —
-              so none of them is carrying the state alone. */}
-          <Glyph
-            size={16}
-            weight={isActive ? "fill" : "regular"}
-            className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
-            aria-hidden="true"
-          />
+              so none of them is carrying the state alone. A pastel
+              `SubjectGlyph` tile (see `icon`'s doc above) skips this
+              treatment: it already carries its own tone and has no
+              active/inactive variant of its own. */}
+          {typeof Glyph === "function" ? (
+            <Glyph
+              size={16}
+              weight={isActive ? "fill" : "regular"}
+              className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
+              aria-hidden="true"
+            />
+          ) : (
+            Glyph
+          )}
           <span className="flex-1">{label}</span>
           {tag ? <span className="text-data-sm text-ink-faint">{tag}</span> : null}
         </>
@@ -321,7 +334,6 @@ function SubjectNavGroup({
   onNavigate: () => void
   touch?: boolean
 }) {
-  const Glyph = subjectIcon(subject.code)
   const { data: reference } = useReference()
   const { secondary } = subjectIdentifier(
     reference?.qualificationLevels,
@@ -336,7 +348,7 @@ function SubjectNavGroup({
           <NavRow
             to={`/student/subject/${subject.code}`}
             label={subject.name}
-            icon={Glyph}
+            icon={<SubjectGlyph subject={subject.name} size="sm" />}
             tag={secondary || undefined}
             touch={touch}
             onClick={onNavigate}
@@ -490,28 +502,6 @@ function NavGroups({ touch = false }: { touch?: boolean }) {
  * genuinely hold two roles is a real feature and is not this.
  */
 
-/*
- * The real mark, replacing the accent dot that stood in for it (audit M9: "the
- * logo is a lowercase italic *l* in a filled circle, stamped in three places"
- * — the student sidebar's dot was a fourth variant of the same placeholder).
- * `BrandMark` draws the mark inline from `lib/brandMark.ts`; the same
- * geometry is written out to `web/public/brand/mark.svg` for the favicon and
- * the generated icons.
- *
- * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
- * already says "Lemely", so describing the mark too makes a screen reader
- * announce the brand twice. The mark file carries its own <title>, which is
- * correct when it is used standalone (the favicon) and is suppressed here.
- */
-function BrandLockup() {
-  return (
-    <div className="flex items-center gap-2.5 px-2">
-      <BrandMark className="h-6 w-8 shrink-0" />
-      <span className="text-display-sm text-ink">Lemely</span>
-    </div>
-  )
-}
-
 function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
@@ -519,7 +509,7 @@ function Sidebar() {
     // build-era `bg-surface-2` alias resolved to; this is the name the system
     // actually defines.
     <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <BrandLockup />
+      <BrandLockup className="px-2" />
 
       <nav aria-label="Student sections" className="overflow-auto lm-scroll">
         <NavGroups />
