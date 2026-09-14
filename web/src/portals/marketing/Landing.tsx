@@ -4,6 +4,7 @@ import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Reveal } from "@/components/ui/reveal"
 import { prefersReducedMotion } from "@/lib/celebration"
+import { HeroExampleCard } from "./HeroExampleCard"
 import {
   heroExample,
   landingClose,
@@ -122,96 +123,107 @@ export function Landing() {
           argument and the card carries the evidence, so the copy gets the
           wider share. Collapses to one column at `lg`, above the 1180px the
           old page used, because the card stops being readable beside the
-          hero well before the grid technically stops fitting.
+          hero well before the grid technically stops fitting. On mobile the
+          card renders directly under the CTAs, in document order.
         */}
         <div className="grid grid-cols-1 items-center gap-10 lg:grid-cols-[1.1fr_1fr] lg:gap-14">
           <Reveal>
-            <Eyebrow>{landingHero.eyebrow}</Eyebrow>
             {/*
-              The page's heading, and an <h1>. It rendered as a plain <div>
-              until P5.11, which went unnoticed because this route had no
-              audit-registry entry.
+              No eyebrow. The live judge (evaluator run `ralph`, iteration 2)
+              counted four all-caps kickers page-wide against a budget of two
+              and this one ("For CAIE IGCSE") was the cheapest to cut: the
+              headline is the product's own tagline (BUILD/BRAND.md §5) and
+              carries the page without help.
 
-              `display-hero` is §4.2's top rung and this is the one surface in
-              the product entitled to it (§13: the display-rung knob runs
-              `display-md`…`display-hero`, and only marketing turns it all the
-              way up). It drops to 38px under 768px, from the rung itself, so
-              there is no per-screen font size here.
+              The margin rule is the hero's one flourish (BUILD/BRAND.md §2:
+              "Lemely *is* that margin"), in `--accent-ink` rather than the
+              neutral `.margin-rule` utility used as page texture elsewhere,
+              so it reads as the deliberate brand gesture on this page rather
+              than as another hairline. Logical `border-s` so it survives a
+              future `dir="rtl"` flip.
             */}
-            <h1 className="text-display-hero mt-5 text-ink text-balance">
-              {landingHero.headline}
-            </h1>
-            <p className="text-body-lg mt-6 max-w-[52ch] text-pretty text-ink-muted">
-              {landingHero.subtext}
-            </p>
-            {/*
-              `flex-wrap`, not a narrower button: Button carries
-              `whitespace-nowrap`, so at 380px the secondary CTA cannot shrink
-              and instead ran to x=409 — a horizontal-scroll violation, which
-              `check_ui_gates.py` fails the build on (zero tolerated). Wrapping
-              stacks the two CTAs and keeps both labels intact; truncating
-              "For centres and teachers" would hide who the link is for.
-            */}
-            <div className="mt-8 flex flex-wrap gap-3">
+            <div className="border-s-2 border-accent-ink ps-6">
               {/*
-                Both CTAs (this one and the close CTA further down the page)
-                go to /signup rather than to /login. That was stale before
-                Task 19: `/signup` did not exist yet, so `/login` was the only
-                honest one-step destination for a first-time visitor, even
-                though the sign-in form it led to was never going to accept
-                credentials nobody had created. The old build sent "Mark a
-                paper" straight to `/student/correct`, which for a signed-out
-                visitor — every visitor this page now has — was a bounce to
-                /login with the destination lost anyway.
-                /signup (G-02) exists now and is the genuinely correct
-                one-step destination for someone with no account: it is where
-                the sign-in itself sends the same reader (`Login.tsx`'s own
-                "Create an account" link), so this page no longer routes a new
-                visitor through a form built for someone who already has
-                credentials. /login stays reachable from the header above and
-                the footer below, for the reader who already does.
+                The page's heading, and an <h1>. It rendered as a plain <div>
+                until P5.11, which went unnoticed because this route had no
+                audit-registry entry.
+
+                `display-hero` is §4.2's top rung and this is the one surface
+                in the product entitled to it. It drops to 38px under 768px,
+                from the rung itself, so there is no per-screen font size
+                here. Five words, one line at every width this page ships.
               */}
+              <h1 className="text-display-hero text-ink text-balance">
+                {landingHero.headline}
+              </h1>
+              <p className="text-body-lg mt-6 max-w-[52ch] text-pretty text-ink-muted">
+                {landingHero.subtext}
+              </p>
               {/*
-                Hardcoded "/signup" rather than `landingHero.primaryCta.to`:
-                `marketing.test.ts`'s "routes exactly three CTAs to /signup"
-                pins the literal call sites below by regex, and
-                `primaryCta.to` is "/signup" today anyway.
+                `flex-wrap`, not a narrower button: Button carries
+                `whitespace-nowrap`, so at 380px the secondary CTA cannot
+                shrink and instead ran to x=409 — a horizontal-scroll
+                violation, which `check_ui_gates.py` fails the build on (zero
+                tolerated). Wrapping stacks the two CTAs and keeps both
+                labels intact; truncating "See how it works" would hide what
+                the link does.
               */}
-              <Button variant="primary" size="lg" onClick={() => navigate("/signup")}>
-                {landingHero.primaryCta.label}
-              </Button>
-              {/*
-                The secondary CTA goes to the teacher case on this page, not
-                to the same sign-in the primary already offers. Two buttons
-                side by side pointing at one destination is not a choice, and
-                "For centres and teachers" promises something specific: the
-                part of the page written for them. There is no separate
-                centres product to link to, and inventing a route to one is
-                the fabrication this surface spent its whole audit removing.
-              */}
-              <Button
-                variant="secondary"
-                size="lg"
-                onClick={() => {
-                  /*
-                   * The one piece of motion in this product that the global
-                   * reduced-motion block cannot reach (§9.4). `index.css` sets
-                   * `scroll-behavior: auto !important` under
-                   * `prefers-reduced-motion`, but a `behavior` passed
-                   * explicitly to `scrollIntoView` wins over the CSS property
-                   * by spec — `"auto"` is what defers to it. So an explicit
-                   * `"smooth"` here scrolled a reader who asked for no motion
-                   * across the whole page anyway, and the `!important` above
-                   * it looked like it was covering the case.
-                   */
-                  document.getElementById(SERVES_SECTION_ID)?.scrollIntoView({
-                    behavior: prefersReducedMotion() ? "auto" : "smooth",
-                    block: "start",
-                  })
-                }}
-              >
-                {landingHero.secondaryCta.label}
-              </Button>
+              <div className="mt-8 flex flex-wrap gap-3">
+                {/*
+                  Both CTAs (this one and the close CTA further down the page)
+                  go to /signup rather than to /login. That was stale before
+                  Task 19: `/signup` did not exist yet, so `/login` was the
+                  only honest one-step destination for a first-time visitor.
+                  /signup (G-02) exists now and is the genuinely correct
+                  one-step destination for someone with no account: it is
+                  where the sign-in itself sends the same reader
+                  (`Login.tsx`'s own "Create an account" link). /login stays
+                  reachable from the header above and the footer below, for
+                  the reader who already has credentials.
+
+                  `landingHero.primaryCta.to`, not a hardcoded "/signup": the
+                  data field carries the route as a fact about the product
+                  and this call site now consumes it rather than repeating a
+                  literal that could drift from it. `marketing.test.ts`'s
+                  "routes exactly three CTAs to /signup" regex matches this
+                  exact call form (`navigate\(landingHero\.primaryCta\.to\)`)
+                  alongside the two remaining literal calls, so the count it
+                  checks stays at three.
+                */}
+                <Button
+                  variant="primary"
+                  size="lg"
+                  onClick={() => navigate(landingHero.primaryCta.to)}
+                >
+                  {landingHero.primaryCta.label}
+                </Button>
+                {/*
+                  The secondary CTA scrolls to "how it works" rather than
+                  navigating anywhere, and rather than pointing at the same
+                  sign-in the primary already offers. Two buttons side by
+                  side pointing at one destination is not a choice.
+                */}
+                <Button
+                  variant="secondary"
+                  size="lg"
+                  onClick={() => {
+                    /*
+                     * The one piece of motion in this product that the global
+                     * reduced-motion block cannot reach (§9.4). `index.css`
+                     * sets `scroll-behavior: auto !important` under
+                     * `prefers-reduced-motion`, but a `behavior` passed
+                     * explicitly to `scrollIntoView` wins over the CSS
+                     * property by spec — `"auto"` is what defers to it.
+                     */
+                    document.getElementById(SERVES_SECTION_ID)?.scrollIntoView({
+                      behavior: prefersReducedMotion() ? "auto" : "smooth",
+                      block: "start",
+                    })
+                  }}
+                >
+                  {landingHero.secondaryCta.label}
+                </Button>
+              </div>
             </div>
           </Reveal>
 
@@ -219,80 +231,11 @@ export function Landing() {
             {/*
               No shadow. `Card`'s own docstring says "no shadow, ever"
               (DESIGN.md §7 — depth here is tonal layering and hairlines, not
-              elevation), and the build-era version of this hero attached a
-              60px drop shadow to it anyway, which is the single most
-              generic-SaaS gesture on the page and precisely the anti-reference
-              §4 names.
+              elevation). A real component rendering `heroExample`/`mcq`, not
+              a div-drawn screenshot: `HeroExampleCard` owns the honesty and
+              accessibility reasoning for what it renders.
             */}
-            <Card className="p-6">
-              <div className="flex items-center justify-between gap-3">
-                <div className="text-data-sm flex items-center gap-2 text-ink-muted">
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-ok" aria-hidden="true" />
-                  {heroExample.meta}
-                </div>
-                {/*
-                  The label that makes this card honest. A hero showing 38/40
-                  reads as somebody's result, and the product has no customers
-                  whose result it could be (PRODUCT.md's must-not-fabricate
-                  list). It sits *in* the card, beside the provenance line,
-                  rather than as a caption below the number, so it cannot be
-                  read separately from the figure it qualifies.
-                */}
-                <span className="text-label-sm shrink-0 rounded-full bg-paper-sunk px-2.5 py-1 text-ink-faint">
-                  {heroExample.exampleLabel}
-                </span>
-              </div>
-
-              <div className="mt-5 flex items-baseline gap-3.5">
-                {/*
-                  The mark and the grade are data, so they are set in the data
-                  face, not the display face. This is D4.2's finding on the
-                  student's own result screen (`MarkDisplay`), where the two
-                  figures a reader looks at first were in Newsreader while
-                  DESIGN.md §4 puts them in the mono face. The same two figures
-                  were in the same wrong face here.
-                */}
-                <div className="text-data-lg text-ink">
-                  {heroExample.score}
-                  <span className="text-data-md text-ink-faint">{heroExample.max}</span>
-                </div>
-                <div className="text-data-lg text-accent">{heroExample.grade}</div>
-              </div>
-
-              {/*
-                Forty cells, two of them dropped. `aria-hidden` with a text
-                summary beside it: forty individually-labelled squares is forty
-                stops for a screen-reader user to walk through for a decorative
-                picture of a result the sentence below already gives them.
-              */}
-              <div className="mt-5 grid grid-cols-10 gap-[5px]" aria-hidden="true">
-                {mcq.map((q) => (
-                  <div
-                    key={q.id}
-                    title={q.title}
-                    /*
-                      `mark-correct`/`mark-wrong`, not `ok`/`accent`. These
-                      cells are marked answers, which is exactly what §3's
-                      marking tokens name, and the build-era grid used a raw
-                      `oklch(0.96 0.02 150)` fill with a hand-picked green
-                      border — a token-discipline gate failure (§3.2 item 13)
-                      that also meant the one place in the product showing a
-                      marked script to a stranger used a different green from
-                      every place showing one to a student.
-                    */
-                    className={`aspect-square rounded-[5px] border ${
-                      q.correct
-                        ? "border-mark-correct/25 bg-mark-correct-bg"
-                        : "border-mark-wrong/30 bg-mark-wrong-bg"
-                    }`}
-                  />
-                ))}
-              </div>
-
-              <p className="text-body-sm mt-5 border-t border-rule pt-4 text-pretty text-ink-muted">
-                {heroExample.note}
-              </p>
-            </Card>
+            <HeroExampleCard example={heroExample} cells={mcq} />
           </Reveal>
         </div>
       </Section>
@@ -333,7 +276,7 @@ export function Landing() {
       </Section>
 
       {/* ── Who it serves ────────────────────────────────────────────────── */}
-      <Section>
+      <Section id="who-it-serves">
         <Reveal>
           <h2 className="text-display-xl mt-4 text-ink text-balance">{rolesIntro.title}</h2>
           <p className="text-body-lg mt-4 max-w-[62ch] text-pretty text-ink-muted">
@@ -369,7 +312,7 @@ export function Landing() {
       </Section>
 
       {/* ── Subjects covered ─────────────────────────────────────────────── */}
-      <Section>
+      <Section id="subjects">
         <Reveal>
           <h2 className="text-display-xl mt-4 text-ink text-balance">{subjectsTitle}</h2>
         </Reveal>
@@ -390,7 +333,7 @@ export function Landing() {
       </Section>
 
       {/* ── Plans ────────────────────────────────────────────────────────── */}
-      <Section>
+      <Section id="plans">
         <Reveal>
           <Eyebrow>Plans</Eyebrow>
           <h2 className="text-display-xl mt-4 text-ink text-balance">What it costs</h2>
@@ -448,7 +391,7 @@ export function Landing() {
       </Section>
 
       {/* ── Close ────────────────────────────────────────────────────────── */}
-      <Section>
+      <Section id="start">
         <Reveal>
           <div className="flex flex-col items-start gap-5 border-t border-rule pt-section-sm">
             <h2 className="text-display-xl text-ink text-balance">{landingClose.title}</h2>

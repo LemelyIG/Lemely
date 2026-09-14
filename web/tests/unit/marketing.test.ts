@@ -159,9 +159,20 @@ describe("marketing CTAs route to signup, not sign-in — Task 19", () => {
    * at three. `r.cta.to` is instead pinned directly by the data-level
    * assertion further down this block — that is what catches a `roleTabs`
    * entry silently re-targeted at `/login`.
+   *
+   * Task 2 (M-2): the hero's primary CTA now calls
+   * `navigate(landingHero.primaryCta.to)` rather than repeating the literal
+   * `"/signup"` string, so the data field the "routes every roleTabs CTA"
+   * assertion below already pins is actually consumed by the page instead of
+   * sitting unread beside it. The regex matches either call form for that
+   * one site (the close CTA and the per-plan CTA stay literal), so the count
+   * it checks stays at three either way.
    */
   it("routes exactly three CTAs to /signup", () => {
-    const matches = source.match(/navigate\(["']\/signup["']\)/g) ?? []
+    const matches =
+      source.match(
+        /navigate\(["']\/signup["']\)|navigate\(landingHero\.primaryCta\.to\)/g,
+      ) ?? []
     expect(matches).toHaveLength(3)
   })
 

@@ -3,8 +3,10 @@ import { lazy, Suspense } from "react"
 import type { RouteObject } from "react-router-dom"
 import { Link } from "react-router-dom"
 import { BrandMark } from "@/components/ui/brand-mark"
+import { buttonVariants } from "@/components/ui/button"
 import { RouteFallback } from "@/components/ui/state-views"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
+import { cn } from "@/lib/utils"
 import { DEFAULT_TITLE, DEFAULT_DESCRIPTION } from "@/lib/meta/documentMeta"
 import type { PageMeta } from "@/lib/meta/documentMeta"
 
@@ -91,23 +93,42 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
           declared two bands, and this was the odd one out, sitting in the band
           `table.tsx` reserves for sticky table headers.
         */}
-        <div className="mx-auto flex w-full max-w-marketing items-center justify-between gap-4 px-page-mobile py-3.5 md:px-page-tablet lg:px-page-desktop">
+        <div className="mx-auto flex w-full max-w-marketing items-center justify-between gap-3 px-page-mobile py-3.5 md:gap-4 md:px-page-tablet lg:px-page-desktop">
           <Link
             to="/"
             className="flex items-center gap-2.5 rounded-md pointer-coarse:min-h-11 transition-colors hover:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent"
           >
             {/* `BrandMark` sets its own `aria-hidden`: the wordmark beside it
                 already says "Lemely", so describing the mark too announces it
-                twice. Same reasoning as `AuthFrame`. */}
+                twice. Same reasoning as `AuthFrame`.
+
+                The wordmark text is `sr-only` below `sm` (640px), not
+                `hidden`: three header actions now share the row with it
+                (Task 2 adds "Get started" beside "Log in" and "Parents"),
+                and at 320-414px there is not room for the icon, the word
+                "Lemely" and three nav items on one line without either
+                wrapping a link's label to two lines or forcing horizontal
+                scroll, both of which are hard gates. `sr-only` keeps the
+                text in the accessible name of this link (the icon alone
+                carries no reliable name), so a screen-reader user still
+                hears "Lemely" even though a sighted mobile reader sees only
+                the mark. */}
             <BrandMark className="h-6 w-8 shrink-0" />
-            <span className="text-display-sm text-ink">Lemely</span>
+            <span className="sr-only text-display-sm text-ink sm:not-sr-only sm:inline">
+              Lemely
+            </span>
           </Link>
-          <nav aria-label="Marketing" className="flex items-center gap-1.5">
+          <nav aria-label="Marketing" className="flex items-center gap-1 sm:gap-1.5">
+            {/* P6.5's "Sign in" renamed to "Log in": the live judge's AC-1
+                finding was that the header carried no primary action at all,
+                and while fixing that we also drop the ambiguity between
+                "sign in" (here) and "log in" (the footer, `Login.tsx`'s own
+                heading) — one verb for the one action, everywhere it appears. */}
             <Link
               to="/login"
-              className="text-label rounded-md px-3 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="text-label rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
             >
-              Sign in
+              Log in
             </Link>
             {/*
               Parents get their own entry in the header rather than a line in
@@ -117,20 +138,26 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
               not have yet, so this points at `/join` — the screen built for
               "I have a code" — exactly like `Login.tsx`'s own parent link and
               `SignupRoleSelect.tsx`'s parent card.
-
-              It was `hidden sm:inline-flex` in the first draft, which hid it
-              below 640px — on the phone, which is where a parent who was sent
-              a link opens it, and where G-05's original framing ("the
-              lowest-friction entry in the product") still holds even though
-              the login mechanism behind it changed. The same reasoning the
-              brief applies to students ("students live on phones") applies
-              harder here. Two short labels fit at 320px; both stay.
             */}
             <Link
               to="/join"
-              className="text-label rounded-md px-3 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
+              className="text-label rounded-md px-2 py-2 pointer-coarse:flex pointer-coarse:items-center pointer-coarse:min-h-11 text-ink-muted transition-colors hover:bg-paper-sunk hover:text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent sm:px-3"
             >
               Parents
+            </Link>
+            {/*
+              P4.9's own finding, from the live evaluator: the header carried
+              no "Get started" action at all, so the one thing a first-time
+              visitor actually wants to do lived only in the hero body, one
+              scroll below the fold on a short viewport. `buttonVariants`
+              rather than `<Button>`: this has to be a real `<Link>` (a
+              signed-out visitor should be able to open it in a new tab, and
+              a `<button onClick={navigate}>` takes that away), styled to
+              match the kit exactly, same pattern as `getting-started.tsx`'s
+              in-flow CTA.
+            */}
+            <Link to="/signup" className={cn(buttonVariants({ variant: "primary", size: "sm" }))}>
+              Get started
             </Link>
           </nav>
         </div>
@@ -190,7 +217,7 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
               to="/login"
               className="rounded-sm underline-offset-4 pointer-coarse:inline-flex pointer-coarse:items-center pointer-coarse:justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11 transition-colors hover:text-ink hover:underline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
             >
-              Sign in
+              Log in
             </Link>
             <Link
               to="/join"

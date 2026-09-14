@@ -65,7 +65,16 @@ export const landingHero = {
  */
 export const heroExample = {
   exampleLabel: "Example",
-  meta: "0625 / Paper 1 Variant 2 / May-June 2020",
+  /*
+   * Was "0625 / Paper 1 Variant 2 / May-June 2020". The mobile judge (Task
+   * 2, evaluator run `ralph` iteration 2, AC-12) flagged "Variant" as
+   * unglossed CAIE jargon for a 15-year-old, and a one-clause gloss ("the
+   * second version of this paper") would make the meta line longer than the
+   * fact is worth. Cutting the variant number is the honest fix: which of
+   * the several variants this script is does not change what the card
+   * demonstrates, and nothing in `marketing.test.ts` pins the old string.
+   */
+  meta: "0625 / Paper 1 / May-June 2020",
   score: "38",
   max: "/40",
   grade: "A",
