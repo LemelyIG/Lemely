@@ -700,6 +700,19 @@ async def student_upload(
         upload_id=paper_id,
         idempotency_key=idempotency_key,
     )
+    if new_id != paper_id:
+        # A concurrent request holding the same idempotency key won the
+        # race inside `create_upload` (see its docstring): the DB row this
+        # request would have owned was never created, so the object(s) just
+        # written above are referenced by nothing and must not be left
+        # orphaned in storage.
+        await anyio.to_thread.run_sync(storage_backend.delete, settings.storage.bucket, object_path)
+        if mark_scheme is not None:
+            await anyio.to_thread.run_sync(
+                storage_backend.delete,
+                settings.storage.bucket,
+                f"{object_prefix}/mark_scheme.pdf",
+            )
     return StudentUploadResponse(paperId=str(new_id))
 
 

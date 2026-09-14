@@ -26,6 +26,8 @@ from lemely.db.models.attempts import Upload
 from lemely.db.models.enums import UploadStatus
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from sqlalchemy.orm import Session, sessionmaker
 
 
@@ -97,13 +99,24 @@ class StudentUploadRepository:
         ``ux_uploads_user_idempotency`` (migration 0036). The router's own
         :meth:`find_by_idempotency_key` pre-check already excludes a match
         older than :data:`IDEMPOTENCY_KEY_WINDOW`, so an ``IntegrityError``
-        reaching this insert is one of exactly two things: a genuine
-        concurrent duplicate of *this* request, still inside the window (hand
-        back its id — closes the race two callers racing with the same key
-        can hit, since both can miss the pre-check and both reach here, but
-        only one insert can win the unique index); or a stale key surviving
-        from a prior, now-expired upload, which is released and the insert
-        retried once so this upload gets its own new row.
+        reaching this insert is one of three things: a genuine concurrent
+        duplicate of *this* request, still inside the window (hand back its
+        id — closes the race two callers racing with the same key can hit,
+        since both can miss the pre-check and both reach here, but only one
+        insert can win the unique index); a stale key surviving from a
+        prior, now-expired upload, which is released and the insert retried
+        once so this upload gets its own new row (and, if a *second*
+        concurrent request wins that retry, resolved the same way as the
+        first case rather than left to raise); or an unrelated constraint
+        violation with nothing to do with the idempotency key, which is
+        re-raised as-is.
+
+        Callers that write to another system before calling this (e.g. the
+        router uploads the scan to object storage first) must compare the
+        returned id against the ``upload_id`` they passed in: a mismatch
+        means this call lost an idempotency race and returned an *existing*
+        row's id — whatever the caller wrote under its own ``upload_id`` is
+        now unreferenced by any row and must be cleaned up.
         """
         owner = parse_user_id(user_id)
 
@@ -136,16 +149,77 @@ class StudentUploadRepository:
             )
             if existing is not None:
                 return existing.id
+            if not self._idempotency_key_row_exists(owner=owner, key=idempotency_key):
+                # Nothing with this key exists at all, fresh or stale — this
+                # IntegrityError is about a different constraint entirely
+                # (e.g. an unrelated ``upload_id`` collision). Nulling a key
+                # that was never the conflicting one would only retry into
+                # the same failure; surface the real error instead.
+                raise
+            return self._retry_after_releasing_stale_key(
+                owner=owner,
+                idempotency_key=idempotency_key,
+                user_id=user_id,
+                new_row=_new_row,
+                since=since,
+            )
+
+    def _idempotency_key_row_exists(self, *, owner: uuid.UUID, key: str) -> bool:
+        """Whether any row — fresh or stale — currently holds ``key`` for ``owner``.
+
+        Only a genuinely existing row justifies treating an ``IntegrityError``
+        as the idempotency-key race handled by :meth:`create_upload`; anything
+        else means the conflict came from an unrelated constraint.
+        """
+        stmt = (
+            select(Upload.id).where(Upload.user_id == owner, Upload.idempotency_key == key).limit(1)
+        )
+        with self._sm() as session:
+            return session.scalars(stmt).first() is not None
+
+    def _retry_after_releasing_stale_key(
+        self,
+        *,
+        owner: uuid.UUID,
+        idempotency_key: str,
+        user_id: str,
+        new_row: Callable[[], Upload],
+        since: datetime,
+    ) -> uuid.UUID:
+        """Null out a stale idempotency key and retry the insert once.
+
+        Only rows older than ``since`` are released — a fresh row must never
+        have its key erased here, or a concurrent winner's own future
+        dedupe lookups would silently stop matching it.
+
+        A second, concurrent request can win the same race between the
+        moment this releases the key and the moment it retries its own
+        insert: its retry then raises a second ``IntegrityError``, this
+        time against a fresh row. That is resolved exactly like the first
+        race above, rather than left to escape as an unhandled 500.
+        """
+        try:
             with self._sm.begin() as session:
                 session.execute(
                     update(Upload)
-                    .where(Upload.user_id == owner, Upload.idempotency_key == idempotency_key)
+                    .where(
+                        Upload.user_id == owner,
+                        Upload.idempotency_key == idempotency_key,
+                        Upload.created_at < since,
+                    )
                     .values(idempotency_key=None)
                 )
-                row = _new_row()
+                row = new_row()
                 session.add(row)
                 session.flush()
                 return row.id
+        except IntegrityError:
+            existing = self.find_by_idempotency_key(
+                user_id=user_id, key=idempotency_key, since=since
+            )
+            if existing is not None:
+                return existing.id
+            raise
 
     def find_by_idempotency_key(
         self, *, user_id: str, key: str, since: datetime
