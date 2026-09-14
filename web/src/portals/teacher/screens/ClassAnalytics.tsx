@@ -3,6 +3,7 @@ import { useMemo, useState } from "react"
 import { Link } from "react-router-dom"
 import { DownloadSimple } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
+import { SectionHead } from "@/components/ui/section-head"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
@@ -387,24 +388,24 @@ export function ClassAnalytics() {
             <>
               {/* Centrepiece: topic x student weakness heatmap */}
               <section className="flex flex-col gap-3 min-w-0">
-                <div className="flex items-end justify-between gap-3 flex-wrap gap-y-2">
-                  <div>
-                    <div className="text-display-md text-ink">Topic weakness heatmap</div>
-                    <div className="text-eyebrow text-ink-faint mt-1">
-                      Ranked by class-wide marks lost, so you can see what to teach next week
-                    </div>
-                  </div>
-                  {data.topicWeaknesses.length > 0 ? (
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onClick={() => downloadHeatmapCsv(classDetail.label, data.topicWeaknesses, students, cellMap)}
-                    >
-                      <DownloadSimple size={14} aria-hidden />
-                      Export CSV
-                    </Button>
-                  ) : null}
-                </div>
+                <SectionHead
+                  title="Topic weakness heatmap"
+                  kicker="Ranked by class-wide marks lost, so you can see what to teach next week"
+                  rung="display-md"
+                  className="flex-wrap gap-y-2"
+                  action={
+                    data.topicWeaknesses.length > 0 ? (
+                      <Button
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => downloadHeatmapCsv(classDetail.label, data.topicWeaknesses, students, cellMap)}
+                      >
+                        <DownloadSimple size={14} aria-hidden />
+                        Export CSV
+                      </Button>
+                    ) : undefined
+                  }
+                />
 
                 {data.topicWeaknesses.length === 0 ? (
                   <EmptyState
@@ -519,7 +520,7 @@ export function ClassAnalytics() {
 
                 {/* Engagement */}
                 <section className="flex flex-col gap-3 min-w-0">
-                  <div className="text-display-md text-ink">Engagement</div>
+                  <SectionHead title="Engagement" rung="display-md" />
                   <div className="bg-paper-raised border border-rule rounded-lg p-6 grid grid-cols-2 gap-4">
                     <div>
                       <div className="text-eyebrow text-ink-faint">
@@ -567,7 +568,7 @@ export function ClassAnalytics() {
 
               {/* Per-paper comparison */}
               <section className="flex flex-col gap-3 min-w-0">
-                <div className="text-display-md text-ink">Per-paper comparison</div>
+                <SectionHead title="Per-paper comparison" rung="display-md" />
                 {data.paperComparison.length === 0 ? (
                   <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
                 ) : (

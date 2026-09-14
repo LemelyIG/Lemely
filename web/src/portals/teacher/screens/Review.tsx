@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { SectionHead } from "@/components/ui/section-head"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
@@ -341,16 +342,13 @@ export function Review() {
 
           return (
             <>
-              <div className="flex flex-col gap-1">
-                <div className="text-eyebrow text-ink-faint">
-                  The teacher's core recurring task
-                </div>
-                <h1 className="text-display-md mt-1">Review queue</h1>
-                <p className="text-body-md text-ink-muted mt-1 max-w-[560px] text-pretty">
-                  Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
-                  trivially fine ones. Open anything that needs a real look.
-                </p>
-              </div>
+              <SectionHead
+                eyebrow="The teacher's core recurring task"
+                title="Review queue"
+                kicker="Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the trivially fine ones. Open anything that needs a real look."
+                rung="display-md"
+                level={1}
+              />
 
               <div className="flex items-end gap-4 flex-wrap">
                 <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">

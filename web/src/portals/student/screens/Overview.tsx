@@ -4,6 +4,7 @@ import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
+import { SectionHead } from "@/components/ui/section-head"
 import { buttonVariants } from "@/components/ui/button"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
@@ -506,16 +507,16 @@ export function Overview() {
                   this header — the Operate lane runs texture low (§13), and
                   the paper grain on the portal shell is already carrying the
                   notebook feel underneath. */}
-              <header className="margin-rule flex flex-col gap-1">
-                <h1 className="text-display-lg text-ink">
-                  {greeting}, {greetingName}.
-                </h1>
-                {/* Both numbers are counted from the rows on this page, so the
-                    sentence cannot drift from what is rendered below it. */}
-                <p className="text-body-md text-ink-muted">
-                  {subjects.length} {subjects.length === 1 ? "subject" : "subjects"}, {paperCount}{" "}
-                  {paperCount === 1 ? "paper" : "papers"} corrected so far.
-                </p>
+              <header className="margin-rule">
+                <SectionHead
+                  title={`${greeting}, ${greetingName}.`}
+                  // Both numbers are counted from the rows on this page, so
+                  // the kicker sentence cannot drift from what is rendered
+                  // below it.
+                  kicker={`${subjects.length} ${subjects.length === 1 ? "subject" : "subjects"}, ${paperCount} ${paperCount === 1 ? "paper" : "papers"} corrected so far.`}
+                  level={1}
+                  rung="display-lg"
+                />
               </header>
 
               <Card className="overflow-hidden">

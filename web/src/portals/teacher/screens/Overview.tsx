@@ -2,6 +2,7 @@
 import { useNavigate, Link } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { SectionHead } from "@/components/ui/section-head"
 import { EmptyState } from "@/components/ui/state-views"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { GettingStarted } from "@/components/ui/getting-started"
@@ -191,12 +192,7 @@ function OverviewLoaded({
   if (classes.length === 0 && recentActivity.length === 0) {
     return (
       <>
-        <div>
-          <div className="text-eyebrow text-ink-faint">
-            {today}
-          </div>
-          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
-        </div>
+        <SectionHead eyebrow={today} title={`${greeting}.`} level={1} rung="display-lg" />
         <GettingStarted
           heading="Start with one class"
           body="Everything else in Lemely hangs off a class: marking, at-risk flags and the analytics all read from who is in it."
@@ -230,52 +226,46 @@ function OverviewLoaded({
     )
   }
 
+  // P3.2. This eyebrow read "Helwan Science Centre · Sunday 27 July", both
+  // halves hardcoded. The school name is the same fabricated affiliation
+  // P3.7 chunk b deleted from the teacher sidebar and P3.10 chunk c from the
+  // student one — no field in any DTO supplies a school name, so it is shown
+  // to every teacher regardless of where they teach. The date was a literal,
+  // so it read "Sunday 27 July" on every day of the year.
+  //
+  // The date is real now. The school name is simply gone rather than
+  // replaced: there is nothing to replace it with, and inventing an
+  // affiliation is the defect, not the formatting.
+  const heroKicker = `${papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}${
+    needsEyes ? `${needsEyes.value} answers want your eyes` : ""
+  }${
+    atRisk.length > 0
+      ? `, and ${atRisk.length} student${atRisk.length === 1 ? "" : "s"} want${
+          atRisk.length === 1 ? "s" : ""
+        } your attention.`
+      : "."
+  }`
+
   return (
     <>
-      <div className="flex items-end gap-5 flex-wrap gap-y-2.5">
-        <div>
-          {/*
-            * P3.2. This eyebrow read "Helwan Science Centre · Sunday 27 July",
-            * both halves hardcoded. The school name is the same fabricated
-            * affiliation P3.7 chunk b deleted from the teacher sidebar and
-            * P3.10 chunk c from the student one — no field in any DTO supplies
-            * a school name, so it is shown to every teacher regardless of where
-            * they teach. The date was a literal, so it read "Sunday 27 July"
-            * on every day of the year.
-            *
-            * The date is real now. The school name is simply gone rather than
-            * replaced: there is nothing to replace it with, and inventing an
-            * affiliation is the defect, not the formatting.
-            */}
-          <div className="text-eyebrow text-ink-faint">
-            {today}
-          </div>
-          <h1 className="text-display-lg text-ink mt-2">{greeting}.</h1>
-          <div className="text-body-lg text-ink-muted mt-2 max-w-[62ch] text-pretty">
-            {papersGraded ? `${papersGraded.value} papers graded so far. ` : ""}
-            {needsEyes
-              ? `${needsEyes.value} answers want your eyes`
-              : ""}
-            {atRisk.length > 0
-              ? `, and ${atRisk.length} student${atRisk.length === 1 ? "" : "s"} want${
-                  atRisk.length === 1 ? "s" : ""
-                } your attention.`
-              : "."}
-          </div>
-        </div>
-        <div className="flex-1" />
-        <Button variant="ink" size="lg" onClick={() => navigate("/teacher/review")}>
-          Open review queue <ForwardArrow />
-        </Button>
-      </div>
+      <SectionHead
+        eyebrow={today}
+        title={`${greeting}.`}
+        kicker={heroKicker}
+        level={1}
+        rung="display-lg"
+        action={
+          <Button variant="ink" size="lg" onClick={() => navigate("/teacher/review")}>
+            Open review queue <ForwardArrow />
+          </Button>
+        }
+        className="flex-wrap gap-y-2.5"
+      />
 
       {/* 1. Needs you — the permanent top item */}
       <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden w-full">
         <div className="px-6 pt-5 pb-3.5">
-          <div className="text-display-md text-ink">Needs you</div>
-          <div className="text-eyebrow text-ink-faint mt-1.5">
-            Flagged by trajectory, not by one bad day
-          </div>
+          <SectionHead title="Needs you" kicker="Flagged by trajectory, not by one bad day" rung="display-md" />
         </div>
         {atRisk.length === 0 ? (
           <div className="border-t border-rule px-6 py-4 text-body-md text-ok">
