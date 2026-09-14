@@ -15,6 +15,7 @@ import {
   useMarkAnnouncementRead,
 } from "@/lib/hooks/useAnnouncementApi"
 import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
+import { daysUntil, formatCountdown } from "@/lib/countdown"
 import type {
   ExamDate,
   StudentAnnouncement,
@@ -54,27 +55,6 @@ import { cn } from "@/lib/utils"
  */
 
 /* ── Dates ──────────────────────────────────────────────────────────────── */
-
-/**
- * Whole days from today to `examDate`, both read as civil dates.
- *
- * Deliberately **not** hour-based: a student opening this at 23:00 and again at
- * 01:00 should not see "3 days" become "2 days" over one night's sleep when the
- * exam is the same calendar distance away. `startsAtLocal` is often absent
- * anyway (the timetable does not always print one), so an hour-precise
- * countdown would be precision we do not have.
- */
-export function daysUntil(examDate: string, today: Date): number {
-  const exam = new Date(`${examDate}T00:00:00`)
-  const start = new Date(today.getFullYear(), today.getMonth(), today.getDate())
-  return Math.round((exam.getTime() - start.getTime()) / 86_400_000)
-}
-
-export function formatCountdown(days: number): string {
-  if (days === 0) return "Today"
-  if (days === 1) return "Tomorrow"
-  return `${days} days`
-}
 
 /** Long-form date for display: "12 May 2026". */
 function formatExamDate(examDate: string): string {

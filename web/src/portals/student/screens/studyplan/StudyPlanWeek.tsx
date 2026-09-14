@@ -1,8 +1,10 @@
+import { useMemo } from "react"
 import { Link, useNavigate, useParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { ProgressBar } from "@/components/ui/progress-bar"
+import { SectionHead } from "@/components/ui/section-head"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import {
@@ -10,16 +12,21 @@ import {
   useCurrentStudyPlan,
   useRebuildStudyPlan,
 } from "@/lib/hooks/useStudyPlanApi"
+import { useStudentProfile } from "@/lib/hooks/useMeApi"
+import { useExamCalendar } from "@/lib/hooks/useAnnouncementApi"
 import type { StudyPlanSessionDTO, StudyPlanWeekDTO } from "@/lib/studyPlanTypes"
 import { studentActionFailureMessage, studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useSubjectName } from "@/lib/hooks/useReferenceApi"
 import {
+  activityIcon,
   activityLabel,
   formatDayHeading,
   formatDuration,
   groupSessionsByDay,
+  nextExamDateForSubject,
   planUnavailableMessage,
   studyPlanView,
+  weekHeaderKicker,
   weekProgress,
 } from "./studyPlanData"
 
@@ -67,29 +74,35 @@ function PlanBasis() {
 function WeekHeader({
   plan,
   subjectName,
+  kicker,
   onRebuild,
   rebuilding,
 }: {
   plan: StudyPlanWeekDTO
   subjectName: string
+  /** "Target grade B · Exam in 41 days", or `undefined` when neither fact is
+   * known — `SectionHead` renders no kicker line at all in that case. See
+   * `weekHeaderKicker`. */
+  kicker: string | undefined
   onRebuild: () => void
   rebuilding: boolean
 }) {
   const progress = weekProgress(plan)
   return (
     <div className="flex flex-col gap-4">
-      <div className="flex flex-wrap items-end gap-4">
-        <div className="flex flex-col gap-2">
-          <h1 className="text-display-lg text-ink">Your {subjectName} week</h1>
-          <p className="text-body-md text-ink-muted">
-            Week of {formatDayHeading(plan.weekStart)}
-          </p>
-        </div>
-        <div className="flex-1" />
-        <Button variant="secondary" size="md" onClick={onRebuild} disabled={rebuilding}>
-          {rebuilding ? "Rebuilding…" : REBUILD_LABEL}
-        </Button>
-      </div>
+      <SectionHead
+        eyebrow="This week"
+        title={subjectName}
+        kicker={kicker}
+        level={1}
+        rung="display-lg"
+        action={
+          <Button variant="secondary" size="md" onClick={onRebuild} disabled={rebuilding}>
+            {rebuilding ? "Rebuilding…" : REBUILD_LABEL}
+          </Button>
+        }
+      />
+      <p className="text-body-md text-ink-muted">Week of {formatDayHeading(plan.weekStart)}</p>
 
       <Card>
         <CardBody className="flex flex-col gap-3">
@@ -160,8 +173,13 @@ function SessionRow({
   completing: boolean
 }) {
   const done = session.completedAt !== null
+  const Icon = activityIcon(session.activityType)
   return (
     <div className="flex flex-wrap items-center gap-x-4 gap-y-2 border-t border-rule px-5 py-3.5 first:border-t-0">
+      {/* Decorative: `activityLabel` beside it already carries the meaning
+          in text (§8's restraint rule), so the glyph carries no `aria-label`
+          of its own and is never the only way to tell activities apart. */}
+      <Icon size={20} className="shrink-0 text-ink-muted" aria-hidden />
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         {/* Opts out of §6.1's two-line-clickable rule: the label is a syllabus
             topic name ("2.1 Thermal physics"), which is content, not a control
@@ -210,6 +228,19 @@ export function StudyPlanWeek() {
   const planQuery = useCurrentStudyPlan(subjectCode)
   const rebuild = useRebuildStudyPlan()
   const complete = useCompleteStudyPlanSession()
+
+  // The header's kicker draws on two facts this screen otherwise has no
+  // reason to fetch: the student's per-subject target grade (S-01's
+  // enrolment answer) and the same exam calendar `Announcements.tsx`'s
+  // countdown reads. Neither gates the screen — a pending or failed fetch
+  // just means the kicker is briefly absent, not that the plan can't render.
+  const profileQuery = useStudentProfile()
+  const calendarQuery = useExamCalendar()
+  const today = useMemo(() => new Date(), [])
+  const targetGrade =
+    profileQuery.data?.enrolments.find((e) => e.subjectCode === subjectCode)?.targetGrade ?? null
+  const examDate = nextExamDateForSubject(calendarQuery.data, subjectCode, today)
+  const kicker = weekHeaderKicker(targetGrade, examDate, today)
 
   const heading = `Your ${subjectName} week`
   const onRebuild = () => rebuild.mutate({ subjectCode })
@@ -317,6 +348,7 @@ export function StudyPlanWeek() {
               <WeekHeader
                 plan={plan}
                 subjectName={subjectName}
+                kicker={kicker}
                 onRebuild={onRebuild}
                 rebuilding={rebuild.isPending}
               />
