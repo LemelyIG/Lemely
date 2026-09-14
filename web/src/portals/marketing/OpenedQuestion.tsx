@@ -25,7 +25,12 @@ import { openedQuestion, type LineTone, type MarkState } from "./data"
  * replays the whole body."
  */
 
-const lineIcon: Record<LineTone, Icon> = {
+/*
+ * Exported because `ScanSequence`'s step 2 renders the same scheme lines
+ * inside its expandable `QuestionRow`s. One mapping, so a tone can never
+ * mean `CircleHalf` in one place and something else in the other.
+ */
+export const lineIcon: Record<LineTone, Icon> = {
   ok: Check,
   warn: CircleHalf,
   err: XCircle,

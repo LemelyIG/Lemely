@@ -6,6 +6,7 @@ import { Chip } from "@/components/ui/chip"
 import { QuestionRow } from "@/components/ui/question-row"
 import { Stepper } from "@/components/ui/stepper"
 import { prefersReducedMotion } from "@/lib/celebration"
+import { lineIcon } from "./OpenedQuestion"
 import { openedQuestion, scanSequence } from "./data"
 
 /*
@@ -148,8 +149,36 @@ export function ScanSequence() {
                   awarded={q.awarded}
                   available={q.available}
                   state={q.state}
+                  topic={q.title}
                   confidence={q.confidenceTier}
-                />
+                >
+                  {/*
+                    The row's own note promises "Every row opens onto the
+                    scheme line it came from", and `QuestionRow` renders its
+                    detail only when it HAS children — so without these the
+                    caret toggles, rotates, and reveals nothing. The imported
+                    design passes the same lines here; the port dropped the
+                    children argument along with `topic`.
+                  */}
+                  <ul className="lines">
+                    {q.lines.map((line) => {
+                      const Glyph = lineIcon[line.tone]
+                      return (
+                        <li key={line.code} className="line" data-tone={line.tone}>
+                          {/* `.line` is a three-column grid (icon / code / text,
+                              marketing.css) — the icon cell is not optional, or
+                              the code and text land in the wrong columns. Same
+                              markup as OpenedQuestion's lines, deliberately. */}
+                          <span className="line__icon">
+                            <Glyph size={16} weight="bold" aria-hidden />
+                          </span>
+                          <span className="line__code text-data-sm">{line.code}</span>
+                          <span className="line__text text-body-sm">{line.text}</span>
+                        </li>
+                      )
+                    })}
+                  </ul>
+                </QuestionRow>
               </div>
             ))}
             <p className="seq__note text-body-sm">{scanSequence.mark.note}</p>
