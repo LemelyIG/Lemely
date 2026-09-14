@@ -706,13 +706,23 @@ async def student_upload(
         # request would have owned was never created, so the object(s) just
         # written above are referenced by nothing and must not be left
         # orphaned in storage.
-        await anyio.to_thread.run_sync(storage_backend.delete, settings.storage.bucket, object_path)
-        if mark_scheme is not None:
+        # Best-effort: the winner's row already exists and this request's
+        # scan already succeeded under it, so a cleanup failure here (a
+        # transient storage hiccup) must not turn that success into a 500
+        # for a client that did nothing wrong. An orphaned object left
+        # behind on the rare failure is an accepted cost, not a new bug.
+        try:
             await anyio.to_thread.run_sync(
-                storage_backend.delete,
-                settings.storage.bucket,
-                f"{object_prefix}/mark_scheme.pdf",
+                storage_backend.delete, settings.storage.bucket, object_path
             )
+            if mark_scheme is not None:
+                await anyio.to_thread.run_sync(
+                    storage_backend.delete,
+                    settings.storage.bucket,
+                    f"{object_prefix}/mark_scheme.pdf",
+                )
+        except Exception:
+            log.exception("orphaned_upload_cleanup_failed", paper_id=str(new_id))
     return StudentUploadResponse(paperId=str(new_id))
 
 

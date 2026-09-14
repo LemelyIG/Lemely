@@ -1070,6 +1070,73 @@ def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
     app.dependency_overrides.clear()
 
 
+def test_upload_orphaned_storage_delete_failure_still_returns_winner_paperid(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The losing side of an idempotency race cleans up its own orphaned
+    storage object as a courtesy, not as a condition of success: the
+    client's scan already succeeded, just under the winner's row. If the
+    cleanup ``delete`` call itself fails (a transient GCS hiccup), that must
+    not turn this already-successful request into a 500 — the caller did
+    nothing wrong and has nothing to retry."""
+    from lemely.db.models.attempts import Upload
+    from lemely.db.upload_repo import StudentUploadRepository
+    from lemely.runtime.errors import ExternalServiceError
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-delete-fails-00001"
+
+    class _RaceInjectingRepo(StudentUploadRepository):
+        def __init__(self, session_factory: sessionmaker[Session]) -> None:
+            super().__init__(session_factory)
+            self.winner_id = uuid.uuid4()
+            self._injected = False
+
+        def create_upload(self, **kwargs: object) -> uuid.UUID:
+            if not self._injected and kwargs.get("idempotency_key") == race_key:
+                self._injected = True
+                with self._sm.begin() as session:
+                    session.add(
+                        Upload(
+                            id=self.winner_id,
+                            user_id=student_id,
+                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
+                            original_filename="scan.pdf",
+                            content_type="application/pdf",
+                            byte_size=5,
+                            idempotency_key=race_key,
+                        )
+                    )
+            return super().create_upload(**kwargs)  # type: ignore[arg-type]
+
+    class _DeleteFailsStorageBackend(FakeStorageBackend):
+        def delete(self, bucket: str, object_path: str) -> None:
+            raise ExternalServiceError("simulated transient GCS delete failure")
+
+    repo = _RaceInjectingRepo(pg_sessionmaker)
+    storage_backend = _DeleteFailsStorageBackend()
+
+    app = create_app()
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(student_id), role="student"
+    )
+    app.dependency_overrides[get_student_upload_repo] = lambda: repo
+    app.dependency_overrides[get_storage_backend] = lambda: storage_backend
+    api = TestClient(app)
+
+    resp = api.post(
+        "/api/student/uploads",
+        headers={"Idempotency-Key": race_key},
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["paperId"] == str(repo.winner_id)
+    app.dependency_overrides.clear()
+
+
 def test_create_upload_second_integrity_error_on_stale_retry_resolves(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
