@@ -315,11 +315,19 @@ class PracticeTopicCount:
     same defect P4.4 chunk B-3 hit when breadth counted subtopics as topics,
     which is why the helper it produced is reused here rather than a second
     parser being written for the frontend.
+
+    :attr:`marks_lost` is the caller's own net lost marks on this topic,
+    aggregated across every attempt (Task 8 C3c) — the same
+    ``WeaknessRecord`` totals :meth:`PracticeService._weak_topics_for`
+    computes, read here per-topic instead of filtered to the weak ones. 0
+    for a topic with no recorded attempts or no net loss; the frontend omits
+    the stat entirely rather than rendering "0 marks lost" as decoration.
     """
 
     topic: str
     available_count: int
     syllabus_group: str
+    marks_lost: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -643,7 +651,8 @@ class PracticeService:
                 )
                 or 0
             )
-            weak_topics = self._weak_topics_for(session, student_uuid, subject_code)
+            lost_marks_by_topic = self._lost_marks_by_topic(session, student_uuid, subject_code)
+            weak_topics = sorted(topic for topic, lost in lost_marks_by_topic.items() if lost > 0)
 
             return PracticeTopicsResult(
                 subject_code=subject_code,
@@ -653,6 +662,7 @@ class PracticeService:
                             topic=topic,
                             available_count=count,
                             syllabus_group=syllabus_group(topic),
+                            marks_lost=lost_marks_by_topic.get(topic, 0),
                         )
                         for topic, count in topic_rows
                     ),
@@ -792,18 +802,18 @@ class PracticeService:
             clauses.append(sa.or_(Paper.paper_number.is_(None), Paper.paper_number.in_(enrolled)))
         return clauses
 
-    def _weak_topics_for(
+    def _lost_marks_by_topic(
         self, session: Session, student_uuid: uuid.UUID, subject_code: str
-    ) -> list[str]:
-        """Distinct topics with net lost marks, aggregated across every attempt.
+    ) -> dict[str, int]:
+        """Net lost marks per topic, aggregated across every attempt.
 
         Reads ``WeaknessRecord`` rows verbatim, joined to ``Attempt`` for
         ``subject_code`` (``WeaknessRecord`` itself carries no subject) — no
-        re-derivation of the weakness engine. The "zero net lost marks is not
-        a weakness" exclusion mirrors
-        :func:`~lemely.core.analytics.group_weak_areas`'s identical rule,
-        applied here as an aggregate across every attempt rather than one.
-        Sorted, for a deterministic S-20 preview.
+        re-derivation of the weakness engine. Shared by :meth:`_weak_topics_for`
+        (filtered to the topics with net loss) and :meth:`topics` (Task 8
+        C3c's per-topic ``marks_lost`` stat, read for every servable topic
+        regardless of whether it clears the "weak" threshold) — one query,
+        not two drifting copies.
         """
         rows = session.execute(
             select(WeaknessRecord.topic, WeaknessRecord.lost_marks, WeaknessRecord.maximum_marks)
@@ -815,7 +825,20 @@ class PracticeService:
             bucket = totals.setdefault(topic, [0, 0])
             bucket[0] += lost
             bucket[1] += maximum
-        return sorted(topic for topic, (lost, _maximum) in totals.items() if lost > 0)
+        return {topic: lost for topic, (lost, _maximum) in totals.items()}
+
+    def _weak_topics_for(
+        self, session: Session, student_uuid: uuid.UUID, subject_code: str
+    ) -> list[str]:
+        """Distinct topics with net lost marks, aggregated across every attempt.
+
+        The "zero net lost marks is not a weakness" exclusion mirrors
+        :func:`~lemely.core.analytics.group_weak_areas`'s identical rule,
+        applied here as an aggregate across every attempt rather than one.
+        Sorted, for a deterministic S-20 preview.
+        """
+        totals = self._lost_marks_by_topic(session, student_uuid, subject_code)
+        return sorted(topic for topic, lost in totals.items() if lost > 0)
 
 
 def _practice_title(subject_code: str) -> str:

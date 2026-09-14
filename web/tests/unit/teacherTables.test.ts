@@ -55,6 +55,16 @@ const FILES: FileCheck[] = [
     mustContain: ['<Table density="operate"'],
     mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
   },
+  {
+    file: "ClassAnalytics.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
+  {
+    file: "MarkSchemes.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]", "grid-cols-[minmax"],
+  },
 ]
 
 function sourceOf(file: string): string {
@@ -77,6 +87,34 @@ describe("teacher screens render tables through the Table primitive", () => {
           expect(source).not.toContain(needle)
         })
       }
+    })
+  }
+})
+
+/*
+ * `ClassAnalytics.tsx` renders three tables: the cohort trend table (inside
+ * its own `max-h-48 overflow-y-auto` region — `THead sticky` stays default),
+ * the topic x student heatmap (no vertical scroll container of its own, and
+ * already carries a hand-rolled sticky *left column* — a default sticky
+ * *top* header there would fight that column's own background/z-index, so
+ * this is the one table in the whole migration that opts out explicitly),
+ * and the per-paper comparison table (`THead sticky` stays default). Exactly
+ * one `sticky={false}` should appear, and nowhere else across the 8 files.
+ */
+describe("ClassAnalytics.tsx sticky={false} appears exactly once", () => {
+  const source = sourceOf("ClassAnalytics.tsx")
+
+  it("contains exactly one sticky={false}", () => {
+    const matches = source.match(/sticky=\{false\}/g) ?? []
+    expect(matches).toHaveLength(1)
+  })
+})
+
+describe("sticky={false} appears nowhere else across the migrated files", () => {
+  for (const { file } of FILES) {
+    if (file === "ClassAnalytics.tsx") continue
+    it(`${file} contains no sticky={false}`, () => {
+      expect(sourceOf(file)).not.toContain("sticky={false}")
     })
   }
 })

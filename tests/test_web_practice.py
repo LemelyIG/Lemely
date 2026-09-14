@@ -476,7 +476,12 @@ def test_topics_route_shape(
     assert resp.status_code == 200
     body = resp.json()
     assert body["subjectCode"] == "0625"
-    assert {"topic": "1 Motion", "availableCount": 5, "syllabusGroup": "1"} in body["topics"]
+    assert {
+        "topic": "1 Motion",
+        "availableCount": 5,
+        "syllabusGroup": "1",
+        "marksLost": 0,
+    } in body["topics"]
     assert body["weakTopics"] == []
     assert body["untopicedCount"] == 0
 

@@ -10,6 +10,7 @@ import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/line-chart"
 import { BarChart } from "@/components/ui/bar-chart"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { gradeBand } from "@/components/ui/grade-badge"
 import { useNivoTheme } from "@/lib/nivoTheme"
 import { cn, downloadCsv } from "@/lib/utils"
@@ -232,46 +233,40 @@ function CohortTrendPanel({
         </div>
       ) : null}
       <div
-        className="-mx-1 max-h-[180px] overflow-y-auto border-t border-rule pt-2"
+        className="-mx-1 max-h-48 overflow-y-auto border-t border-rule pt-2"
         tabIndex={0}
         role="region"
         aria-label="Cohort mean percentage over time, scrollable"
       >
-        <table className="w-full border-collapse">
+        <Table density="operate">
           <caption className="sr-only">Cohort mean percentage over time</caption>
-          <thead>
-            <tr className="text-ink-faint">
-              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
-                Date
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Mean
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Students
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+          <THead>
+            <TR>
+              <TH>Date</TH>
+              <TH numeric>Mean</TH>
+              <TH numeric>Students</TH>
+            </TR>
+          </THead>
+          <TBody>
             {trend.map((p) => (
-              <tr key={p.timestamp} className="border-t border-rule">
-                <td className="px-1 py-1 text-body-sm text-ink-muted">
+              <TR key={p.timestamp}>
+                <TD className="text-body-sm text-ink-muted">
                   {new Date(p.timestamp).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
                   })}
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                </TD>
+                <TD numeric className="text-data-sm text-ink">
                   {Math.round(p.meanPercentage)}%
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink-faint">
+                </TD>
+                <TD numeric className="text-data-sm text-ink-faint">
                   {p.sampleSize}
-                </td>
-              </tr>
+                </TD>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </ChartFrame>
   )
@@ -413,62 +408,86 @@ export function ClassAnalytics() {
                     body="Once students submit graded papers or quizzes, topics they lose marks on will rank here."
                   />
                 ) : (
-                  <div
-                    className="bg-paper-raised border border-rule rounded-lg p-3 overflow-x-auto min-w-0"
+                  <Table density="operate"
+                    className="p-3"
                     tabIndex={0}
                     role="region"
                     aria-label="Topic weakness heatmap, scrollable horizontally"
                   >
-                    <table className="border-collapse">
-                      <caption className="sr-only">
-                        Topic accuracy by student. Blank cells with a dash mean no recorded attempt, not a
-                        zero score.
-                      </caption>
-                      <thead>
-                        <tr>
-                          <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
-                            <span className="sr-only">Topic</span>
+                    <caption className="sr-only">
+                      Topic accuracy by student. Blank cells with a dash mean no recorded attempt, not a
+                      zero score.
+                    </caption>
+                    {/*
+                     * `THead sticky={false}`: this table already carries its own
+                     * hand-rolled sticky *left* column (the `sticky start-0`
+                     * topic/corner cells below — there is no primitive for that
+                     * shape yet), and it has no vertical scroll region of its own
+                     * (only the horizontal `overflow-x-auto` `Table` already gives
+                     * it) — unlike the trend panel's own table just above, which
+                     * sits inside a real `max-h-48 overflow-y-auto` region a
+                     * sticky *top* header can correctly stick within. Turning on
+                     * `THead`'s default top-sticky here would fight the left
+                     * column's own background/z-index at the shared corner cell
+                     * for no scrolling benefit this container doesn't already
+                     * provide. The one deliberate opt-out in this migration.
+                     */}
+                    <THead sticky={false}>
+                      <TR>
+                        {/*
+                         * Plain `<th>`, not the `TH` primitive, for every header
+                         * cell in this table: `TH`'s `text-eyebrow` face is
+                         * `text-transform: uppercase` at a CSS-layer specificity a
+                         * Tailwind utility on a child cannot undo (see
+                         * `index.css`'s own note on why `.text-label-sm` exists),
+                         * and every cell here carries a free-text proper name — a
+                         * student's, a topic's — that must render in the case it
+                         * was typed in, not shouted. Same category of documented
+                         * exception this file already logs for the heatmap's
+                         * Nivo opt-out, above.
+                         */}
+                        <th scope="col" className="sticky start-0 bg-paper-raised px-2 py-1.5 text-start align-bottom">
+                          <span className="sr-only">Topic</span>
+                        </th>
+                        {students.map((s) => (
+                          <th
+                            key={s.studentId}
+                            scope="col"
+                            className="px-0.5 py-1.5 align-bottom"
+                            title={s.name}
+                          >
+                            <span
+                              className="block w-11 text-data-sm text-ink-faint truncate"
+                              style={{ writingMode: "vertical-rl" }}
+                            >
+                              {s.name}
+                            </span>
+                          </th>
+                        ))}
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {data.topicWeaknesses.map((t) => (
+                        <TR key={t.topic}>
+                          <th
+                            scope="row"
+                            className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
+                            title={t.topic}
+                          >
+                            {t.topic}
                           </th>
                           {students.map((s) => (
-                            <th
+                            <HeatmapCellView
                               key={s.studentId}
-                              scope="col"
-                              className="px-0.5 py-1.5 align-bottom"
-                              title={s.name}
-                            >
-                              <span
-                                className="block w-11 text-data-sm text-ink-faint truncate"
-                                style={{ writingMode: "vertical-rl" }}
-                              >
-                                {s.name}
-                              </span>
-                            </th>
+                              cell={data.heatmap.find(
+                                (c) => c.topic === t.topic && c.studentId === s.studentId,
+                              )}
+                            />
                           ))}
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.topicWeaknesses.map((t) => (
-                          <tr key={t.topic}>
-                            <th
-                              scope="row"
-                              className="sticky start-0 bg-paper-raised px-2 py-1 text-start text-body-sm font-normal whitespace-nowrap max-w-[180px] truncate"
-                              title={t.topic}
-                            >
-                              {t.topic}
-                            </th>
-                            {students.map((s) => (
-                              <HeatmapCellView
-                                key={s.studentId}
-                                cell={data.heatmap.find(
-                                  (c) => c.topic === t.topic && c.studentId === s.studentId,
-                                )}
-                              />
-                            ))}
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
                 )}
 
                 {/* Ranked topic list — click to drill into affected students (-> T-05) */}
@@ -572,50 +591,39 @@ export function ClassAnalytics() {
                 {data.paperComparison.length === 0 ? (
                   <div className="text-body-md text-ink-muted">No papers recorded for this class yet.</div>
                 ) : (
-                  <div
-                    className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                  <Table density="operate"
                     tabIndex={0}
                     role="region"
                     aria-label="Per-paper comparison, scrollable horizontally"
                   >
-                    <table className="w-full text-body-md border-collapse">
-                      <caption className="sr-only">Cohort stats per paper</caption>
-                      <thead>
-                        <tr className="bg-paper-sunk border-b border-rule">
-                          <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                            Paper
-                          </th>
-                          <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                            Mean
-                          </th>
-                          <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                            Attempts
-                          </th>
-                          <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                            Students
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {data.paperComparison.map((p) => (
-                          <tr key={p.paperId} className="border-b border-rule last:border-b-0">
-                            <td className="px-4 py-2.5 text-data-sm text-ink">
-                              {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
-                            </td>
-                            <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                              {Math.round(p.meanPercentage)}%
-                            </td>
-                            <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                              {p.attemptCount}
-                            </td>
-                            <td className="px-4 py-2.5 text-end text-data-sm text-ink">
-                              {p.studentCount}
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                    <caption className="sr-only">Cohort stats per paper</caption>
+                    <THead>
+                      <TR>
+                        <TH>Paper</TH>
+                        <TH numeric>Mean</TH>
+                        <TH numeric>Attempts</TH>
+                        <TH numeric>Students</TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {data.paperComparison.map((p) => (
+                        <TR key={p.paperId}>
+                          <TD className="text-data-sm text-ink">
+                            {p.subjectCode} · Paper {p.paperNumber} Variant {p.paperVariant}
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {Math.round(p.meanPercentage)}%
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {p.attemptCount}
+                          </TD>
+                          <TD numeric className="text-data-sm text-ink">
+                            {p.studentCount}
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
                 )}
               </section>
             </>
