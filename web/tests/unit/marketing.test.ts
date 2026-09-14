@@ -171,8 +171,26 @@ describe("design import: token purity and the z-nav rename", () => {
     .filter((f) => /\.(tsx?|css)$/.test(f))
     .map((f) => ({ name: f, source: fs.readFileSync(path.join(marketingDir, f), "utf8") }))
 
-  it("has files to check (sanity — the glob above did not silently match nothing)", () => {
-    expect(files.length).toBeGreaterThan(0)
+  /*
+   * `files.length > 0` used to be the whole check, and passes with a single
+   * file — it cannot prove the (non-recursive) glob actually swept the
+   * directory rather than matching one leftover. A real floor plus the five
+   * specimen filenames by name means a renamed or moved component, or a glob
+   * that stops matching, fails here instead of silently shrinking the swept
+   * set (M-3).
+   */
+  it("has files to check, including every specimen component (sanity — the glob above did not silently match nothing or drop a renamed file)", () => {
+    expect(files.length).toBeGreaterThan(5)
+    const names = files.map((f) => f.name)
+    for (const specimen of [
+      "OpenedQuestion.tsx",
+      "ScanSequence.tsx",
+      "SchemeExcerpt.tsx",
+      "ClassBatch.tsx",
+      "Readings.tsx",
+    ]) {
+      expect(names).toContain(specimen)
+    }
   })
 
   it.each(files.map((f) => f.name))("contains no raw oklch(...) literal (%s)", (name) => {
@@ -226,6 +244,41 @@ describe("design import: part B's five specimen components are all mounted", () 
   it.each(specimens)("imports and renders %s", (name) => {
     expect(source).toMatch(new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*"\\./${name}"`))
     expect(source).toMatch(new RegExp(`<${name}\\s*/>`))
+  })
+})
+
+/*
+ * M-4: the copy gate above checks classification, string-ness and banned
+ * claims, but nothing pinned an exact sentence. The derived-wording failure
+ * (a paraphrase quietly replacing the design's verbatim text) has happened
+ * THREE times on this import and was caught by human diffing every time —
+ * never by a test. These `toBe` checks pin the load-bearing strings: the
+ * ones whose exact wording is the point, not every string on the page.
+ */
+describe("landing copy pins the design's exact wording — M-4", () => {
+  it("keeps the hero headline verbatim", () => {
+    expect(hero.headline).toBe("Marking you can check, line by line.")
+  })
+
+  it("keeps the hero subtext verbatim", () => {
+    expect(hero.sub).toBe(
+      "Lemely marks a scanned script against the official mark scheme, then shows the scheme line behind every mark it awards or withholds. Nothing counts until you sign it off.",
+    )
+  })
+
+  it("keeps the trust band's h2 verbatim", () => {
+    expect(marketingData.trustBand.heading).toBe(
+      "A mark is an argument, so it arrives with its reasons.",
+    )
+  })
+
+  it("keeps every readings panel title verbatim", () => {
+    const titles = Object.fromEntries(marketingData.readings.map((panel) => [panel.id, panel.title]))
+    expect(titles).toEqual({
+      teacher: "You see the marking, and the doubt.",
+      student: "They see where the marks went.",
+      parent: "They see an answer they can read.",
+    })
   })
 })
 

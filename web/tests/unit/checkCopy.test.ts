@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest"
 import {
   findEmDashes,
   findExclamationMarks,
+  isClosedCompound,
   isPlaceholder,
   isRange,
   proseSpans,
@@ -115,6 +116,61 @@ describe("en-dashes in ranges are not findings", () => {
   })
 
   it("does not treat a dash between words as a range", () => {
+    const line = "marks — they've"
+    expect(isRange(line, line.indexOf("—"))).toBe(false)
+  })
+})
+
+/*
+ * M-1 (design import, feat/landing-redesign): `data.ts` restores the design's
+ * verbatim "distance–time graph", an en dash joining two coordinate terms
+ * with no surrounding space — Chicago Manual of Style's closed-compound
+ * construction, and neither a range nor prose. Before this rule existed the
+ * gate reported it, which is what the import's review fix actually ran into:
+ * `isRange` only recognises a NUMERIC neighbour, and a letter is not one.
+ * These tests pin the new rule in both directions, same discipline as every
+ * other classifier here — what it must let through, and what it must not.
+ */
+describe("en-dashes in closed compounds are not findings", () => {
+  it.each([
+    ["Gradient of the distance–time graph"],
+    ["<h3>New York–London flight</h3>"],
+    ['const title = "speed–time graph"'],
+  ])("allows %s", (source) => {
+    expect(find(source)).toHaveLength(0)
+  })
+
+  it("recognises a closed compound by a letter on both sides, no space", () => {
+    const line = "distance–time"
+    expect(isClosedCompound(line, line.indexOf("–"))).toBe(true)
+  })
+
+  it("does not treat a spaced dash between words as a closed compound", () => {
+    // Same boundary `isRange`'s own test above pins: a space on either side
+    // means prose, not a compound. This must stay a finding.
+    const line = "marks — they've"
+    expect(isClosedCompound(line, line.indexOf("—"))).toBe(false)
+    expect(find(line)).toHaveLength(1)
+  })
+
+  it("does not exempt a compound with a space on only one side", () => {
+    expect(isClosedCompound("distance– time", "distance– time".indexOf("–"))).toBe(false)
+    expect(isClosedCompound("distance –time", "distance –time".indexOf("–"))).toBe(false)
+  })
+
+  it("is en-dash only — an em dash glued to letters is still prose", () => {
+    // CMOS reserves the closed-compound construction for the en dash. A
+    // glued em dash is not a known typographic convention in this codebase
+    // and should not silently become a new way to smuggle prose past the
+    // gate.
+    const line = "distance—time"
+    expect(isClosedCompound(line, line.indexOf("—"))).toBe(false)
+    expect(find(line)).toHaveLength(1)
+  })
+
+  it("does not weaken the range rule's own word-dash boundary", () => {
+    // isRange's existing "not a range" pin stays exactly as strict; the new
+    // rule is additive, not a replacement.
     const line = "marks — they've"
     expect(isRange(line, line.indexOf("—"))).toBe(false)
   })

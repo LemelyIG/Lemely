@@ -16,11 +16,15 @@ import { useReveal, useRevealSelfClean } from "./motion"
  * render `<CountUp from={0}>` once this block has genuinely entered the
  * viewport, matching `CountUp`'s own rule (`components/ui/celebration.tsx`)
  * that `from` is reserved for a value that arrives while the reader is
- * watching. Before that, the head shows a static "0" — never a half-animated
- * number a reader could catch mid-flight on first paint. Under reduced
- * motion, `useReveal`'s `isIn` starts `true` (see motion.tsx), so the count
- * is already 24 on first render — CountUp's own reduced-motion check confirms
- * it rather than animating.
+ * watching. Before that, the head shows `classBatch.total` as a static
+ * pre-reveal number, not "0" — the count-up is a progressive enhancement
+ * over the honest total, not a substitute for it, so a reader who never
+ * triggers the reveal (a stalled observer, `IntersectionObserver` absent)
+ * still sees the true count rather than a page that visibly claims zero
+ * scripts above a table of six rows. Under reduced motion, `useReveal`'s
+ * `isIn` starts `true` (see motion.tsx), so the count is already 24 on first
+ * render — CountUp's own reduced-motion check confirms it rather than
+ * animating.
  */
 export function ClassBatch() {
   const { ref, className, style, isIn, reduced } = useReveal()
@@ -33,7 +37,7 @@ export function ClassBatch() {
           <span className="text-label">
             {classBatch.headPrefix}{" "}
             <span className="batch__count text-data-md">
-              {isIn ? <CountUp value={classBatch.total} from={0} /> : 0}
+              {isIn ? <CountUp value={classBatch.total} from={0} /> : classBatch.total}
             </span>{" "}
             {classBatch.headSuffix}
           </span>

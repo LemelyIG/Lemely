@@ -23,11 +23,23 @@ import { openedQuestion, scanSequence } from "./data"
  * pins it — a `pinnedRef` flag the observer's callback checks and, once
  * set, ignores every further report, so a reader who jumps ahead by hand
  * is never dragged back by the next scroll tick. Reduced motion skips the
- * whole mechanism and mounts straight on the final step. A 2600ms failsafe
- * disconnects the observer if it never reports anything at all (a stalled
- * layout, a test environment's partial DOM) — the default first step is
- * already a valid, stable display, so there is nothing to correct beyond
- * ending the wait.
+ * whole mechanism and mounts straight on the final step.
+ *
+ * The failsafe is armed by a SECOND observer, on `.seq` itself, with no
+ * `rootMargin` narrowing — it fires as soon as the card is anywhere on
+ * screen, well before the `-45%` band the sentinels need. Only once that
+ * happens does the 2600ms clock start, so it measures "visible but the
+ * sentinel band never reported" (a stalled layout, a test environment's
+ * partial DOM), not "not yet scrolled to" — which is what a clock started
+ * at mount was measuring, and why review flagged it (I-1): a reader
+ * scrolling at ordinary speed takes longer than 2600ms just to REACH the
+ * card, so the old timer fired before the mechanism it was guarding ever
+ * had a chance to run, freezing the stepper on step 1 for every reader.
+ * When the failsafe does fire, it settles the step at the final one rather
+ * than disconnecting the sentinel observer — disconnecting only stops the
+ * stepper from ever correcting itself again, which is the same defect
+ * class as the reveal failsafe fixed in `ad2b206d`: a recovery path that
+ * disables the feature instead of completing it.
  */
 
 const SENTINEL_COUNT = 3
@@ -39,6 +51,7 @@ export function ScanSequence() {
   const pinnedRef = useRef(false)
   const observedRef = useRef(false)
   const sentinelRefs = useRef<(HTMLDivElement | null)[]>([])
+  const containerRef = useRef<HTMLDivElement | null>(null)
 
   useEffect(() => {
     if (reduced) return
@@ -62,13 +75,20 @@ export function ScanSequence() {
     )
     nodes.forEach((node) => observer.observe(node))
 
-    const failsafe = window.setTimeout(() => {
-      if (!observedRef.current) observer.disconnect()
-    }, FAILSAFE_MS)
+    let failsafe: number | undefined
+    const visibilityObserver = new IntersectionObserver((entries) => {
+      if (!entries.some((entry) => entry.isIntersecting)) return
+      visibilityObserver.disconnect()
+      failsafe = window.setTimeout(() => {
+        if (!pinnedRef.current && !observedRef.current) setStep(SENTINEL_COUNT)
+      }, FAILSAFE_MS)
+    })
+    if (containerRef.current) visibilityObserver.observe(containerRef.current)
 
     return () => {
       observer.disconnect()
-      window.clearTimeout(failsafe)
+      visibilityObserver.disconnect()
+      if (failsafe !== undefined) window.clearTimeout(failsafe)
     }
   }, [reduced])
 
@@ -78,7 +98,7 @@ export function ScanSequence() {
   }
 
   return (
-    <div className="seq">
+    <div className="seq" ref={containerRef}>
       {!reduced &&
         Array.from({ length: SENTINEL_COUNT }, (_, i) => (
           <div

@@ -261,7 +261,7 @@ export const openedQuestion = {
     {
       id: "4b",
       label: "4 (b)",
-      title: "Gradient of the distance-time graph",
+      title: "Gradient of the distance–time graph",
       awarded: 2,
       available: 2,
       state: "correct",
@@ -348,7 +348,7 @@ export const scanSequence = {
     /* Not quoted in the spec — see file header note. */
     shapes: [
       "Gradient from two plotted points",
-      "Gradient of a distance-time graph",
+      "Gradient of a distance–time graph",
       "Gradient from a table of values",
     ],
     note: "Twelve questions on that shape are ready to set.",

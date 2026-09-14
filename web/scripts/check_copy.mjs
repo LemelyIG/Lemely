@@ -20,7 +20,21 @@
  *   3. **En-dashes in ranges** — "70–79%", "12 May – 18 May". Correct
  *      typography for a span of values, and not prose punctuation either.
  *
- * So the check is narrow on purpose. A checker that flags all three is a
+ *   4. **En-dashes in closed compounds** — "distance–time graph", "New
+ *      York–London flight". Two coordinate terms joined by an en dash with
+ *      no surrounding space (Chicago Manual of Style §6.80), not a range and
+ *      not prose punctuation. The signal is the missing space on both sides:
+ *      every real prose dash this gate has ever found in this codebase sets
+ *      the dash off with a space either side ("counted — you are",
+ *      "work — it may"), which is also what "does not treat a dash between
+ *      words as a range" (`checkCopy.test.ts`) already pins for the range
+ *      rule's own boundary. A letter glued to the dash on BOTH sides is a
+ *      compound; a letter with a space on either side is a sentence break.
+ *      En dash only (U+2013) — CMOS reserves this construction for the en
+ *      dash, never the em dash, so an em dash glued to letters on both sides
+ *      still reports as prose.
+ *
+ * So the check is narrow on purpose. A checker that flags all four is a
  * checker whose output gets ignored, which is worse than no checker.
  *
  * ── Rule 2: exclamation marks (REDESIGN-MISSION §3.2 item 10, DESIGN.md §12)
@@ -170,6 +184,26 @@ export function isRange(line, index) {
 }
 
 /**
+ * Is this an en-dash directly joining two words with no surrounding space,
+ * i.e. a closed compound ("distance–time graph", "New York–London flight")?
+ *
+ * En dash only: a letter (never a digit — that shape is `isRange`'s job, and
+ * an en dash glued to a digit on one side and a letter on the other is
+ * neither rule's business) immediately on each side of the dash, with no
+ * whitespace between. That is the one shape a real prose dash never takes in
+ * this codebase — every prose finding pinned in `checkCopy.test.ts` sets the
+ * dash off with a space on both sides — so requiring BOTH sides glued, not
+ * just one, is what keeps this permissive without also exempting a sentence
+ * that merely omits the space on one side.
+ */
+export function isClosedCompound(line, index) {
+  if (line[index] !== "–") return false
+  const before = line[index - 1]
+  const after = line[index + 1]
+  return !!before && !!after && /[A-Za-z]/.test(before) && /[A-Za-z]/.test(after)
+}
+
+/**
  * Every prose em-dash in one file's source, as `{line, text}`.
  *
  * Exported and pure so the three judgement calls this gate encodes
@@ -218,6 +252,7 @@ export function findEmDashes(source) {
       if (/^[—–]$/.test(line.trim())) continue
 
       if (isRange(line, i)) continue
+      if (isClosedCompound(line, i)) continue
 
       findings.push({ line: lineIndex + 1, text: line.trim().slice(0, 120) })
       break // one finding per line is enough to send someone to it
