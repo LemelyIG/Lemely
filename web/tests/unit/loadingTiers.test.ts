@@ -40,6 +40,30 @@ describe("index.css declares the loading-tier tokens", () => {
     expect(css).toMatch(/--loading-tier-slow:\s*5000ms\s*;/)
   })
 
+  /*
+   * The invariant a token check cannot see. Both tiers stage on
+   * `animation-delay` with a `0s` duration and a `both` fill, so the delay IS
+   * the gate that holds `visibility: hidden`. A global
+   * `animation-delay: 0 !important` under `prefers-reduced-motion` therefore
+   * collapses both windows and puts tier 3's "Still loading" message on
+   * screen, announced and tabbable, from the first frame of every navigation
+   * — for reduced-motion users only.
+   *
+   * That regression shipped once (commit 2156e8f2, caught in review) while
+   * this file's token assertions stayed green, because they pin the values
+   * and not the interaction. This pins the interaction.
+   */
+  it("exempts both staging tiers from the reduced-motion delay reset", () => {
+    const reduced = css.slice(css.indexOf("@media (prefers-reduced-motion: reduce)"))
+    expect(reduced).toMatch(/animation-delay:\s*0\.001ms\s*!important/)
+    expect(reduced).toMatch(
+      /\.lm-tier-skeleton\s*\{[^}]*animation-delay:\s*var\(--loading-tier-skeleton\)\s*!important/,
+    )
+    expect(reduced).toMatch(
+      /\.lm-tier-slow\s*\{[^}]*animation-delay:\s*var\(--loading-tier-slow\)\s*!important/,
+    )
+  })
+
   it("names DESIGN.md §12 near the tokens", () => {
     const start = css.indexOf("--loading-tier-skeleton")
     const context = css.slice(Math.max(0, start - 800), start)

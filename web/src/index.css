@@ -1425,9 +1425,11 @@ body {
    (`vite/preMountShell.ts`), which paints before this stylesheet is even
    requested.
 
-   The reduced-motion rule at the bottom of this file only forces
-   `animation-duration` (and `transition-duration`) toward zero — it never
-   touches `animation-delay` — so these two classes still stage under
+   The reduced-motion rule at the bottom of this file forces
+   `animation-duration`, `transition-duration` AND both delays toward zero,
+   because a staggered entrance whose delay survives holds `opacity: 0`
+   through it. That rule therefore carries an explicit carve-out for the two
+   classes below, which stage rather than animate, so they still stage under
    `prefers-reduced-motion`: `--loading-tier-skeleton` and
    `--loading-tier-slow` still gate when tier 2 and tier 3 become visible,
    only the (already instantaneous) opacity fade itself is affected, which is
@@ -1492,5 +1494,21 @@ body {
     transition-delay: 0.001ms !important;
     transition-duration: 0.001ms !important;
     scroll-behavior: auto !important;
+  }
+
+  /* The two exceptions, and the reason the blanket rule above needs one.
+     These classes use `animation-delay` as a TIMER, not as motion: duration
+     is `0s` and the backwards `both` fill holds `visibility: hidden` until
+     the delay elapses, so the delay IS the tier gate. Zeroing it collapses
+     both windows — tier 2's skeleton flashes on instant transitions, and
+     tier 3's "Still loading, reload the page" is on screen, announced, and
+     tabbable from the first frame of every navigation. That is the defect
+     §9.3 above documents having already fixed once, and it would land only
+     on reduced-motion users. Staging is not animation; it survives here. */
+  .lm-tier-skeleton {
+    animation-delay: var(--loading-tier-skeleton) !important;
+  }
+  .lm-tier-slow {
+    animation-delay: var(--loading-tier-slow) !important;
   }
 }
