@@ -111,13 +111,14 @@ function GradeDistributionPanel({
   const total = buckets.reduce((sum, b) => sum + b.count, 0)
   // Task 9 (C3d): the headline count this panel was missing — "how many are
   // already doing well" beside "how many need help" (the heatmap/weakness
-  // panels' whole focus). Omitted (not "0 students on A* or A") when nobody
+  // panels' whole focus). Omitted (not "0 students on A*, A or B") when nobody
   // is in the top band yet, rather than a clause that reads as a claim about
-  // an empty class.
+  // an empty class. Copy matches gradeBand's "top" band (A*/A/B, grade-badge.tsx)
+  // exactly, not just A*/A — undercounting the label would misstate the count.
   const topCount = topGradeCount(buckets)
   const subtitle =
     topCount > 0
-      ? `${topCount} student${topCount === 1 ? "" : "s"} on A* or A · Students by their latest paper grade`
+      ? `${topCount} student${topCount === 1 ? "" : "s"} on A*, A or B · Students by their latest paper grade`
       : "Students by their latest paper grade"
 
   return (
