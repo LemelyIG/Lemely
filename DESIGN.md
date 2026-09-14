@@ -715,6 +715,22 @@ Sign-out clears the queue (`AuthContext.tsx`'s `logout()` calls
 the scan's own bytes, which must not sit on a shared device across an
 account switch (`offline-1`, `offline-3`).
 
+**Persisted query cache (Task 10, B6).** `main.tsx` wraps the app in
+`PersistQueryClientProvider` (`@tanstack/react-query-persist-client`) with
+an `idb-keyval`-backed persister (`lib/offline/queryPersister.ts`). Which
+queries are written to IndexedDB at all is an allowlist, not a denylist —
+`isPersistableQueryKey` (`lib/offline/persistAllowlist.ts`) only persists
+the reference catalogue, the student's/teacher's class list, announcements,
+the notifications inbox, the flashcard deck list, and the signed-in
+profile, by their real, re-grepped `queryKey` prefixes. Grades, an active
+marking run, and the teacher review queue are never written, not merely
+excluded on read: `dehydrateOptions.shouldDehydrateQuery` is checked before
+a query is ever serialized, so a stale number on a report card cannot
+happen by way of this cache. `maxAge` (24h) matches the upload queue's own
+abandon window, and `buster: currentBuildId()` invalidates the whole
+persisted cache on a new deploy, the same build-id guard `lib/staleChunk.ts`
+already uses for chunk URLs.
+
 **Safe areas.** `viewport-fit=cover` (`index.html`) opts into the notch/
 home-indicator layout in the first place; without it `env(safe-area-inset-*)`
 resolves to `0` everywhere and every rule below is a no-op. Standalone-only
