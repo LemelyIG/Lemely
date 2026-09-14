@@ -48,6 +48,50 @@ describe("the @media print block", () => {
   })
 
   /*
+   * C4/C5 review fix: `@media` adds no specificity, so a bare `:root`
+   * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
+   * (0,2,0) regardless of source order — printing while the theme preference
+   * was dark left the print surface on the dark paper/ink pair unchanged
+   * (near-white ink on white paper, since browsers don't print backgrounds
+   * by default). The override must also match `:root[data-theme="dark"]`
+   * directly, at the same specificity the dark ladder itself uses.
+   */
+  it("also targets :root[data-theme=\"dark\"] directly, at the same specificity the dark ladder uses", () => {
+    expect(printBlock).toMatch(/:root\[data-theme="dark"\]/)
+  })
+
+  /*
+   * Specificity alone is not enough: the pre-fix block reset only
+   * `--paper*`, never `--ink*` — so even where the override DID apply, dark
+   * mode's near-white `--ink` would have survived onto the printed page.
+   * This asserts the `:root` and `:root[data-theme="dark"]` selectors reset
+   * an EQUIVALENT set of custom properties (not just that the dark selector
+   * exists), so a future edit that adds a new `--paper-*`/`--ink-*` variant
+   * to one but not the other fails here rather than shipping silently.
+   */
+  it("resets the same custom properties for :root and :root[data-theme=\"dark\"]", () => {
+    // Split the print block into its top-level `selector { body }` rules.
+    const rules = [...printBlock.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map(([, selector, body]) => ({
+      selector,
+      props: [...body.matchAll(/(--[\w-]+)\s*:/g)].map((m) => m[1]).sort(),
+    }))
+
+    const lightRootRules = rules.filter((r) => /(^|[\s,])\.?:root(?!\[)/.test(r.selector))
+    const darkRootRules = rules.filter((r) => /:root\[data-theme="dark"\]/.test(r.selector))
+
+    expect(lightRootRules.length).toBeGreaterThan(0)
+    expect(darkRootRules.length).toBeGreaterThan(0)
+
+    const lightProps = [...new Set(lightRootRules.flatMap((r) => r.props))].sort()
+    const darkProps = [...new Set(darkRootRules.flatMap((r) => r.props))].sort()
+
+    // At minimum, the paper AND ink triples travel together.
+    expect(lightProps).toEqual(expect.arrayContaining(["--paper", "--paper-raised", "--paper-sunk"]))
+    expect(lightProps).toEqual(expect.arrayContaining(["--ink", "--ink-muted", "--ink-faint"]))
+    expect(darkProps).toEqual(lightProps)
+  })
+
+  /*
    * §14 rule 3: tokens only, no arbitrary literals — except the one place
    * this file's own comment calls out as the allowed exception, the print
    * override itself. A declaration assigning `#fff` anywhere else in

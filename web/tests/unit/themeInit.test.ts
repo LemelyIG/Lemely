@@ -72,8 +72,19 @@ describe("index.css: data-theme is the single theme switch", () => {
     expect(css).not.toMatch(/prefers-color-scheme/)
   })
 
-  it("still declares exactly one dark token block", () => {
-    const matches = css.match(/:root\[data-theme="dark"\]\s*\{/g) ?? []
+  it("still declares exactly one dark token block outside the @media print override", () => {
+    // C4/C5 review fix: `@media print` now also targets
+    // `:root[data-theme="dark"]` directly, at the same specificity the dark
+    // ladder itself uses — otherwise `@media` adds no specificity of its own
+    // and a bare `:root` print override loses the cascade to the ladder,
+    // which is exactly how printing under a dark theme preference used to
+    // leave the printed page on dark paper/ink (see printStyles.test.ts).
+    // That occurrence is a print-scoped override forcing LIGHT values, not a
+    // second dark *ladder* — this invariant is about the ladder itself
+    // (Task 13's "one ladder, one switch"), so it excludes the print block
+    // before counting.
+    const withoutPrintBlock = css.replace(/@media print \{[\s\S]*?\n\}/, "")
+    const matches = withoutPrintBlock.match(/:root\[data-theme="dark"\]\s*\{/g) ?? []
     expect(matches).toHaveLength(1)
   })
 })

@@ -1155,16 +1155,38 @@ body {
 
   /*
    * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
-   * dark mode (Phase C5) re-themes `--paper*` per `data-theme`, but ink on
-   * physical paper must stay legible regardless of which theme was active on
-   * screen when the student printed. Forcing the literal, not a token,
-   * guarantees that even if a future dark-mode token swap runs *inside* this
-   * block by mistake, print still resolves to white.
+   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*` per
+   * `data-theme`, but ink on physical paper must stay legible regardless of
+   * which theme was active on screen when the student printed. Forcing the
+   * literal, not a token, guarantees that even if a future dark-mode token
+   * swap runs *inside* this block by mistake, print still resolves to a
+   * light page.
+   *
+   * C4/C5 review fix: `@media` adds no specificity, so a bare `:root` here
+   * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
+   * (0,2,0) regardless of source order — printing while the theme preference
+   * was dark left the print surface on the dark `--paper`/`--ink` pair,
+   * which is near-white ink on white paper (browsers don't print
+   * backgrounds by default). The selector below now also matches
+   * `:root[data-theme="dark"]` directly, at the SAME (0,2,0) specificity the
+   * dark ladder uses, and wins there by source order (this block comes
+   * after it in the file) — and it now resets `--ink*` and `--rule` too,
+   * not just `--paper*`, since PaperResult.tsx/question-row.tsx print real
+   * ink-coloured text and `--rule`-based borders. Values are the light
+   * ladder's own (§3.1/§3.2/§3.3 above), literal rather than `var()`, for
+   * the same "survives a future mistake inside this block" reason `--paper*`
+   * already relied on.
    */
-  :root {
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
     --paper: #fff;
     --paper-raised: #fff;
     --paper-sunk: #fff;
+    --ink: oklch(0.321 0.009 234);
+    --ink-muted: oklch(0.48 0.006 240);
+    --ink-faint: oklch(0.52 0.006 240);
+    --rule: oklch(0.905 0.004 85);
   }
 }
 

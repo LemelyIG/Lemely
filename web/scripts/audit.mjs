@@ -2915,6 +2915,39 @@ async function main() {
       await page.emulateMediaFeatures([])
     }
 
+    // ── S-15/S-17 · Paper result under print media AND dark mode — C4/C5
+    // review fix ─────────────────────────────────────────────────────────
+    // Not Lighthouse-scored (same reasoning as the two captures above). The
+    // two features above are independent emulations (Puppeteer's
+    // `emulateMediaType` and `emulateMediaFeatures` are separate calls, not
+    // mutually exclusive), so this combines both in the same pass rather
+    // than adding a third bespoke code path — the exact repro for the C4/C5
+    // review fix: `@media print`'s `:root` selector was losing the cascade
+    // to the dark ladder's `:root[data-theme="dark"]` (higher specificity,
+    // `@media` adds none), so printing while the theme preference was dark
+    // left the print surface on dark `--paper`/`--ink` — near-white ink on
+    // white paper, since browsers don't print backgrounds by default. This
+    // capture is the only place that would have shown that regression.
+    log("S-15/S-17 /student/result/:paperId — print-media + dark capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaType("print")
+    await page.emulateMediaFeatures([{ name: "prefers-color-scheme", value: "dark" }])
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "print-dark", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-print-dark"))
+      recordKitFields(
+        kitFieldsSummary,
+        routeFailures,
+        await runKitFieldsCheck(page, "student-result-print-dark"),
+        { screenId: "S-15/S-17", path: resultUrl.slice(PREVIEW_URL.length), state: "print-dark" },
+      )
+    } finally {
+      await page.emulateMediaType(null)
+      await page.emulateMediaFeatures([])
+    }
+
     // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
     // The registry's G-13 entry audits the EMPTY state, which is the state the
     // screen genuinely ships in (the seed writes no notification rows), and it
