@@ -70,6 +70,8 @@ async function main() {
       args: [
         `--host-resolver-rules=MAP ${HOST} 127.0.0.1`,
         `--unsafely-treat-insecure-origin-as-secure=${ORIGIN}`,
+        "--no-sandbox",
+        "--disable-setuid-sandbox",
       ],
     })
 
