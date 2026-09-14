@@ -174,7 +174,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 154 | `sw-push-listener-real` | pwa | PASS | A | A7 | no-action | dossier: no change — push listener already correctly implemented (A7 re-verify) |
 | 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) — root cause confirmed: `PushAutoEnable` (mounted unconditionally in `main.tsx`, above the router) called `usePushConfig()` with no auth gate, firing `GET /api/notifications/push/config` on a cold, logged-out `/login` load | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
 | 156 | `parent-paid-tutoring-marketplace-ui` | ui | critical |  |  | skipped | exploration-only paid tutoring marketplace — skip marketplace/bookings/checkout |
-| 157 | `brand-color-system-superseded` | ui | high | C | C3 | pending |  |
+| 157 | `brand-color-system-superseded` | ui | high | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 158 | `brand-cover-headline-and-stats-fabricated` | ui | high |  |  | skipped | skip: cover stat trio / fabricated headline not built |
 | 159 | `content-classified-practice-mental-model` | ui | high | C | C3 | pending |  |
 | 160 | `x-completeness-admin-portals-uncovered` | ui | high |  |  | no-action | production already better |
@@ -204,7 +204,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 184 | `x-responsive-canvas-blind-production-full-breakpoint-system` | ui | high |  |  | no-action | production already better |
 | 185 | `x-tokens-canvas-accents-fail-wcag` | ui | high |  |  | no-action | production already better |
 | 186 | `brand-corner-tick-vs-texture-budget` | ui | medium |  |  | no-action | dossier: no production change |
-| 187 | `brand-subject-color-mapping-mismatch` | ui | medium | C | C3 | pending |  |
+| 187 | `brand-subject-color-mapping-mismatch` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 188 | `center-commerce-deliberately-out-of-scope` | ui | medium |  |  | skipped | skip: center-commerce explicitly out of scope |
 | 189 | `content-flashcard-interval-hints-omitted` | ui | medium | D | D2 | pending |  |
 | 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | pending |  |
@@ -231,7 +231,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 211 | `teacher-tools-pool-source-single-select` | ui | medium | D | D2 | pending |  |
 | 212 | `teacher-tools-predicted-class-average-fabricated` | ui | medium | D | D2 | pending |  |
 | 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | pending |  |
-| 214 | `trust-ops-device-limit-count-divergence` | ui | medium | C | C3 | pending |  |
+| 214 | `trust-ops-device-limit-count-divergence` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 215 | `trust-ops-suspicious-login-geoip-rejected` | ui | medium |  |  | skipped | skip: suspicious-login geo-IP explicitly rejected |
 | 216 | `x-a11y-canvas-icon-buttons-unlabeled` | ui | medium |  |  | no-action | production already better |
 | 217 | `x-a11y-canvas-touch-targets-undersized` | ui | medium |  |  | no-action | production already better |
@@ -243,7 +243,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | done C1 | `npx vitest run tests/unit/sectionHead.test.ts` — `section-head.tsx` replaces the ad hoc eyebrow/title/kicker divs on student Overview, teacher Overview, ClassAnalytics and Review |
 | 224 | `x-copy-gamification-hype-voice` | ui | medium |  |  | skipped | skip: hype copy not adopted |
 | 225 | `x-dark-deliberately-deferred` | ui | medium | C | C5 | pending |  |
-| 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | pending |  |
+| 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/marketingCardPadding.test.ts tests/unit/designDocs.test.ts` — `DataHandling.tsx`'s marketing card turns the padding knob to `space-8`; `DESIGN.md` §13 range corrected to `space-6` … `space-8` |
 | 227 | `x-ia-breadcrumbs-canvas-regression` | ui | medium |  |  | no-action | production already better |
 | 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done f71dcc10 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
@@ -255,7 +255,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 235 | `x-tokens-sky-info-subject-collision-persists` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/design-tokens.test.ts` — pass |
 | 236 | `x-tokens-subject-remap-collision` | ui | medium |  |  | no-action | dossier: no production change |
 | 237 | `x-type-dead-font-packages-stale-docs` | ui | medium | A | A3 | done A3 | `npm install && npm run build` — pass |
-| 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | pending |  |
+| 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 239 | `brand-mark-a11y-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 240 | `brand-mark-geometry-diverges` | ui | low |  |  | no-action | dossier: no production change |
 | 241 | `brand-subject-glyph-vs-subject-tag` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-tag.tsx`'s `SubjectTag` gains an `icon?: boolean` prop rendering `subjectGlyphFor`'s glyph, sharing one tone/glyph table with `SubjectGlyph` instead of two independent lookups |
@@ -278,7 +278,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 258 | `parent-weakness-panel-tone-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 259 | `student-home-first-run-state-better-than-canvas` | ui | low |  |  | no-action | production already better |
 | 260 | `student-home-mastery-garden-not-adopted` | ui | low |  |  | skipped | skip: mastery-garden visual not adopted |
-| 261 | `student-home-no-hero-grade` | ui | low | C | C3 | pending |  |
+| 261 | `student-home-no-hero-grade` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 262 | `student-home-no-recent-activity-feed` | ui | low | D | D2 | pending |  |
 | 263 | `paper-no-question-filter-tabs` | ui | low | C | C3 | pending |  |
 | 264 | `paper-quiz-robustness-regression` | ui | low |  |  | no-action | production already better |

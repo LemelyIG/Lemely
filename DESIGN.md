@@ -593,7 +593,7 @@ that bind every component:
 - **Every interactive component implements all 8 states:** default, hover, focus-visible, active, disabled, loading, error, success. A component missing one does not merge (§9 gate 4).
 - **Buttons.** Solid ink or accent fill, `radius-md`, `scale(0.98)` press, subtle hover shift. Primary (accent fill), secondary (paper-raised + rule border), ghost (no fill or border). No pills. No button-in-button.
 - **Inputs.** Visible label always, never placeholder-as-label. `radius-md`, `--rule` border going `--rule-strong` on hover and `--focus-ring` on focus. Errors inline and adjacent to the field, never only at the top of the form.
-- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
+- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom. Marketing cards turn the knob to `space-8`.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
 - **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is.
@@ -613,7 +613,7 @@ these knobs. Anything else is drift.
 | Knob | Range | Notes |
 |---|---|---|
 | Section spacing | `space-12` … `space-32` | Marketing turns it up, Operate turns it down. |
-| Card padding | `space-5` … `space-10` | Density. |
+| Card padding | `space-6` … `space-8` | Density. |
 | Display rung | `display-md` … `display-hero` | Which rung a page's title uses. |
 | Texture intensity | 0 … 3 elements/viewport | Read lane high, Operate low, per §8's budget. |
 | Motion | per §3.3 dials | Marketing 7, auth 5, student 7, teacher/parent 6. |
@@ -923,3 +923,25 @@ removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
 build served under the real `lemelyig.com` origin family so the manifest's
 `scope_extensions` and service-worker scope are checked the way a real
 install actually would be, not against `127.0.0.1`.
+
+---
+
+## 16. Recorded decisions (audit remediation)
+
+Five audit-ledger findings compare a pre-redesign exploration canvas against
+this document and find a mismatch. In every case this document (or
+`PRODUCT.md`) is what shipped, and the canvas fact is the one that is stale.
+Full write-up: `docs/design-canvas-notes.md`.
+
+1. **Device limit** (`trust-ops-device-limit-count-divergence`) — the canvas
+   diverges from `PRODUCT.md`'s "Maximum 3 concurrent devices per account".
+   `PRODUCT.md` wins.
+2. **Subject colour mapping** (`brand-subject-color-mapping-mismatch`) — §3.8
+   is authoritative; the canvas mapping is superseded.
+3. **Instrument Serif** (`x-type-instrument-serif-rejected`) — rejected as a
+   typeface; §4 names the four faces actually used.
+4. **"Academic Warmth" colour system** (`brand-color-system-superseded`) —
+   superseded by §3's OKLCH ladder.
+5. **Hero grade on the student home** (`student-home-no-hero-grade`) — not
+   built. Overview reports per-subject predicted grades; a single hero grade
+   would be a cross-subject aggregate the product does not compute.
