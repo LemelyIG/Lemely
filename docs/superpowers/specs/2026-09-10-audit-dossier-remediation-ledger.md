@@ -196,7 +196,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 176 | `trust-ops-whatsapp-feature-gap` | ui | high |  |  | skipped | skip: WhatsApp integration out of scope |
 | 177 | `x-a11y-canvas-ink-tokens-fail-aa` | ui | high |  |  | no-action | production already better |
 | 178 | `x-a11y-canvas-no-focus-visible` | ui | high |  |  | no-action | production already better |
-| 179 | `x-brandlockup-duplicated-5x` | ui | high | C | C1 | pending |  |
+| 179 | `x-brandlockup-duplicated-5x` | ui | high | C | C1 | done C1 | `npx vitest run tests/unit/brandLockup.test.ts` — `brand-lockup.tsx` replaces 7 duplicated BrandMark+span sites (the ledger's count was stale; Task 0 re-verified 7, not 5) |
 | 180 | `x-copy-fabricated-metrics-must-not-adopt` | ui | high |  |  | no-action | production already better |
 | 181 | `x-copy-onboarding-grade-guarantee` | ui | high |  |  | skipped | skip: grade-guarantee headline not built |
 | 182 | `x-ia-tutoring-center-cluster-unscoped` | ui | high |  |  | skipped | skip: tutoring-center cluster explicitly unscoped |
@@ -209,7 +209,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 189 | `content-flashcard-interval-hints-omitted` | ui | medium | D | D2 | pending |  |
 | 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | pending |  |
 | 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | pending |  |
-| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline |
+| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline. C4: `check_ui_gates.py` now also gates `teacher-class-analytics` + `teacher-review` on the Lighthouse performance floor (`PERF_GATED_TEACHER_SLUGS`), `tests/test_check_ui_gates.py` |
 | 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | done C4 | `npx vitest run tests/unit/printStyles.test.ts` — `web/src/index.css`'s `@media print` block gains `[data-print="hide"]`, `.lm-print-avoid-break`, forced-white paper; `question-row.tsx` carries `lm-print-avoid-break`; `audit.mjs` captures `student-result-print` under `page.emulateMediaType("print")` |
 | 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |
@@ -240,7 +240,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 220 | `x-imageplaceholder-vs-honest-fallback` | ui | medium |  |  | no-action | production already better |
 | 221 | `x-mark-grade-boundary-family-superset` | ui | medium |  |  | no-action | production already better |
 | 222 | `x-navshells-dead-code` | ui | medium | B | B3 | done 2a503cd6 | `npx vitest run tests/unit/navShells.test.ts` — `nav-shells.tsx`'s header no longer says the wiring is pending; `BottomNav`/`SidebarNav` are real, mounted call sites in all three portals, not dead code |
-| 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | pending |  |
+| 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | done C1 | `npx vitest run tests/unit/sectionHead.test.ts` — `section-head.tsx` replaces the ad hoc eyebrow/title/kicker divs on student Overview, teacher Overview, ClassAnalytics and Review |
 | 224 | `x-copy-gamification-hype-voice` | ui | medium |  |  | skipped | skip: hype copy not adopted |
 | 225 | `x-dark-deliberately-deferred` | ui | medium | C | C5 | pending |  |
 | 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | pending |  |
@@ -248,7 +248,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done f71dcc10 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
 | 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | done C2 | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-glyph.tsx` adds the `SubjectGlyph` pastel tile, consumed by `Subject.tsx`'s header and `student/index.tsx`'s subject nav rows |
-| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done 7b2f1101 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair |
+| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done 7b2f1101 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair. C4: unit half `npx vitest run tests/unit/reducedMotionDecision.test.ts` — `prefersReducedMotion(matchMedia?)` takes an injected `MatchMediaLike`, `useCountUp`/`Flourish` unchanged |
 | 232 | `x-responsive-phone-locked-surfaces-get-real-desktop-containers` | ui | medium |  |  | no-action | production already better |
 | 233 | `x-responsive-teacher-dense-tables-scoped-overflow` | ui | medium |  |  | no-action | production already better |
 | 234 | `x-tokens-card-pure-white` | ui | medium |  |  | no-action | production already better |

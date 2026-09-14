@@ -634,6 +634,7 @@ Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
 6. Check the four mobile widths (320/375/414/768) and desktop.
 7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
 8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
+9. Logical properties only (P3.4): `inline-start`/`inline-end`, `ms-`/`me-`/`ps-`/`pe-`, `text-start`/`text-end`; never `left`/`right`, `ml-`/`mr-`, `text-left`/`text-right`. `scripts/adapt_audit.mjs` and the responsive gate read `dir="rtl"`.
 
 ---
 

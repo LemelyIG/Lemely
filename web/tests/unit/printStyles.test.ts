@@ -1,0 +1,81 @@
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
+import { describe, expect, it } from "vitest"
+
+/*
+ * C4 (Task 11): the print stylesheet, `web/src/index.css`'s `@media print`
+ * block. Source-text assertions only — this repo's vitest runner is
+ * `environment: "node"` (D3.20), no jsdom, so a real cascade/media-query
+ * evaluation is out of reach here; that behaviour is Playwright's job.
+ *
+ * These tests pin the rules a printed portal screen depends on:
+ *   - `[data-print="hide"]` collapses chrome the print block does not own
+ *     the removal of (that removal itself lives in the components that carry
+ *     the attribute; this only pins that the selector exists and hides).
+ *   - `.lm-print-avoid-break` keeps a question block from splitting across a
+ *     page boundary.
+ *   - the paper surface is forced to white for print regardless of the
+ *     on-screen theme (dark mode, a later task, must never bleed onto paper).
+ */
+
+const ROOT = join(import.meta.dirname, "..", "..")
+const read = (p: string) => readFileSync(join(ROOT, p), "utf8")
+
+describe("the @media print block", () => {
+  const css = read("src/index.css")
+  const printBlockMatch = css.match(/@media print \{([\s\S]*?)\n\}/)
+
+  it("exists", () => {
+    expect(printBlockMatch).not.toBeNull()
+  })
+
+  const printBlock = printBlockMatch?.[1] ?? ""
+
+  it("hides any element carrying data-print=\"hide\"", () => {
+    expect(printBlock).toMatch(/\[data-print="hide"\]\s*\{[^}]*display:\s*none\s*!important/)
+  })
+
+  it("keeps a print-avoid-break block from splitting across a page", () => {
+    expect(printBlock).toMatch(/\.lm-print-avoid-break\s*\{[^}]*break-inside:\s*avoid/)
+    // Vendor fallback for engines that only understand the legacy property.
+    expect(printBlock).toMatch(/\.lm-print-avoid-break\s*\{[^}]*page-break-inside:\s*avoid/)
+  })
+
+  it("forces the paper surface to white, independent of the on-screen theme", () => {
+    expect(printBlock).toMatch(/--paper:\s*#fff/)
+    expect(printBlock).toMatch(/--paper-raised:\s*#fff/)
+    expect(printBlock).toMatch(/--paper-sunk:\s*#fff/)
+  })
+
+  /*
+   * §14 rule 3: tokens only, no arbitrary literals — except the one place
+   * this file's own comment calls out as the allowed exception, the print
+   * override itself. A declaration assigning `#fff` anywhere else in
+   * index.css would be an unreviewed literal smuggled past that rule.
+   *
+   * Scoped to `: #fff` (an actual declared value), not a bare substring
+   * match — this file also has a *prose* comment ("Never pure #FFF") that
+   * legitimately names the literal without declaring it.
+   */
+  it("is the only place index.css declares #fff as a value", () => {
+    const withoutPrintBlock = css.replace(/@media print \{[\s\S]*?\n\}/, "")
+    expect(withoutPrintBlock).not.toMatch(/:\s*#fff\b/i)
+  })
+})
+
+describe("question-row.tsx", () => {
+  it("carries the print-avoid-break class on its root", () => {
+    const src = read("src/components/ui/question-row.tsx")
+    expect(src).toMatch(/lm-print-avoid-break/)
+  })
+})
+
+describe("PaperResult.tsx", () => {
+  it("hides the Share action from print — an on-screen affordance with no printed target", () => {
+    const src = read("src/portals/student/screens/PaperResult.tsx")
+    const shareButtonStart = src.indexOf("<Button")
+    expect(shareButtonStart).toBeGreaterThan(-1)
+    const shareButtonTag = src.slice(shareButtonStart, src.indexOf(">", shareButtonStart))
+    expect(shareButtonTag).toMatch(/data-print="hide"/)
+  })
+})

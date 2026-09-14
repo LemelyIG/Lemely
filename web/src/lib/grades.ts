@@ -68,7 +68,7 @@ function mergeLadders(a: readonly string[], b: readonly string[]): string[] {
       // misordered ladder is the kind of wrong that looks plausible. This
       // turns it into something a developer can actually see.
       console.warn(
-        `mergeLadders: ordering conflict between served vocabularies at "${a[i]}" and "${b[j]}" — ` +
+        `mergeLadders: ordering conflict between served vocabularies at "${a[i]}" and "${b[j]}", ` +
           `emitting "${a[i]}" first; the resulting grade ladder may be misordered.`,
         { a, b },
       )

@@ -110,7 +110,10 @@ export function QuestionRow({
       align="end"
       renderTrigger={({ triggerProps }) => (
         <div
-          className={cn("border-b border-border last:border-b-0", className)}
+          className={cn(
+            "border-b border-border last:border-b-0 lm-print-avoid-break",
+            className,
+          )}
           {...(hasMenu ? longPress : {})}
         >
           <div className="flex items-center gap-3 py-3 px-2 -mx-2">

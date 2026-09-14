@@ -1019,6 +1019,36 @@ body {
     background-image: none;
     transform: none;
   }
+
+  /* Chrome that exists to navigate the app, not to be read on paper: portal
+     sidebars/headers, bottom nav, drawers, toasts, banners, tab strips. Any
+     component that should not print sets this attribute; the removal itself
+     stays that component's own decision, not a selector list kept here. */
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  /* A question block (C-6 QuestionRow) is one printed unit; it must not be
+     torn across a page boundary. `page-break-inside` is the legacy property
+     kept for engines that predate `break-inside`. */
+  .lm-print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /*
+   * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
+   * dark mode (Phase C5) re-themes `--paper*` per `data-theme`, but ink on
+   * physical paper must stay legible regardless of which theme was active on
+   * screen when the student printed. Forcing the literal, not a token,
+   * guarantees that even if a future dark-mode token swap runs *inside* this
+   * block by mistake, print still resolves to white.
+   */
+  :root {
+    --paper: #fff;
+    --paper-raised: #fff;
+    --paper-sunk: #fff;
+  }
 }
 
 /* ── §9 Motion ─────────────────────────────────────────────────────────── */

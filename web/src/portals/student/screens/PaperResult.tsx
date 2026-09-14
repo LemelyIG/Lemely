@@ -160,9 +160,12 @@ function ResultHeader({
               {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
             </div>
             {paperId ? (
+              // C4 (Task 11): an interactive action, not paper content — a
+              // printed sheet has no click target for it.
               <Button
                 variant="secondary"
                 size="sm"
+                data-print="hide"
                 onClick={() =>
                   void shareResult(
                     {

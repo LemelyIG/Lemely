@@ -206,7 +206,7 @@ export const AUTH_LINK_EXPIRED =
  * their *link* had expired, when they may never have opened one.
  */
 export const AUTH_CODE_REJECTED =
-  "That code didn't work — it may be wrong, expired, or already used. Ask for a new email and we'll send one straight away."
+  "That code didn't work. It may be wrong, expired, or already used. Ask for a new email and we'll send one straight away."
 
 /**
  * D7.5's soft gate, reached from outside this module's own two routes — see

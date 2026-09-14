@@ -1050,6 +1050,16 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
     const ready = st.ready ?? route.ready
     const waitUntil = st.waitUntil ?? "networkidle0"
     try {
+      // C4 (Task 11): a state may declare `media: "print"` to capture the
+      // route under `@media print` rather than the default screen media.
+      // Puppeteer's call is `page.emulateMediaType(type)` — NOT Playwright's
+      // `page.emulateMedia({ media })`; this file imports `puppeteer`
+      // (see the file's own imports), a different tool from the Playwright
+      // specs under web/e2e/.
+      if (st.media) {
+        await page.emulateMediaType(st.media)
+      }
+
       if (st.setup) {
         log(`${route.screenId} ${route.path} [${st.state}] — setup...`)
         await st.setup(page)
@@ -1082,6 +1092,12 @@ async function visitRoute(page, route, { axeSummary, lighthouseSummary, responsi
         })
       }
     } finally {
+      // Reset media emulation before the next state (or the next route)
+      // runs under whatever media it expects — `null` restores Puppeteer's
+      // default ("screen").
+      if (st.media) {
+        await page.emulateMediaType(null)
+      }
       if (st.teardown) {
         log(`${route.screenId} ${route.path} [${st.state}] — teardown...`)
         await st.teardown(page)
@@ -2685,6 +2701,26 @@ async function main() {
       path: resultUrl.slice(PREVIEW_URL.length),
       ...(await runLighthouseAudit(resultUrl, page, "student-result", { authed: true })),
     })
+
+    // ── S-15/S-17 · Paper result under print media — C4 (Task 11) ──────────
+    // Not Lighthouse-scored (the perf/a11y/SEO categories are properties of
+    // the shipped code, not of which media type happened to be emulated —
+    // see visitRoute()'s own doc comment on the same decision) — a plain
+    // screenshot + axe pass under `page.emulateMediaType("print")`, proving
+    // the `@media print` block (web/src/index.css) actually applies: portal
+    // chrome hidden, the paper surface forced white, question rows not torn
+    // across a page boundary.
+    log("S-15/S-17 /student/result/:paperId — print-media capture...")
+    await page.setViewport(AUDIT_VIEWPORT)
+    await page.emulateMediaType("print")
+    try {
+      await gotoWithRetry(page, resultUrl, { waitUntil: "networkidle0" })
+      await page.waitForSelector('[aria-label*="out of"]', { timeout: 15_000 })
+      await shoot(page, "S-17", "print-media", AUDIT_VIEWPORT.width)
+      axeSummary.push(await runAxe(page, "student-result-print"))
+    } finally {
+      await page.emulateMediaType(null)
+    }
 
     // ── G-13 · Notification inbox — POPULATED (P5.11) ──────────────────────
     // The registry's G-13 entry audits the EMPTY state, which is the state the
