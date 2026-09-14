@@ -20,7 +20,7 @@ describe("Task 8 (B5b) · multi-file picker source wiring", () => {
   it("CorrectPaper.tsx wires onFilesChange and assemblePagesToPdf from lib/pdf", () => {
     const source = readSource("portals/student/screens/CorrectPaper.tsx")
     expect(source).toContain("onFilesChange")
-    expect(source).toContain('from "@/lib/pdf/assemblePages"')
+    expect(source).toContain('await import("@/lib/pdf/assemblePages")')
     expect(source).toContain("assemblePagesToPdf")
   })
 
