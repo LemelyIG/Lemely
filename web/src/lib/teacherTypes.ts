@@ -685,10 +685,16 @@ export interface ReviewQueueItem {
  * `nextCursor` (Task 9) is an opaque keyset token to echo back as `cursor` on
  * the next `useReviewQueue` call to continue this page; `null` once the
  * caller's whole queue (under the current filters) fits on this page —
- * `Review.tsx`'s "Load more" button (Task 11, B6c) is gated on it. */
+ * `Review.tsx`'s "Load more" button (Task 11, B6c) is gated on it.
+ *
+ * `total` (C3d) is the count of every item matching the request's filters,
+ * ignoring `limit`/`cursor` — the same tenant scope as `items`. Powers the
+ * sidebar/bottom-nav Review badge (`useReviewQueueCount`) and the "Item N of
+ * total" queue strip on `ReviewItem.tsx`. */
 export interface ReviewQueueList {
   items: ReviewQueueItem[]
   nextCursor: string | null
+  total: number
 }
 
 /**

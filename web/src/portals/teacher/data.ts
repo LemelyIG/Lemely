@@ -39,8 +39,10 @@ export interface NavItem {
     | "settings"
   /** Index route match (Overview lives at /teacher). */
   end?: boolean
-  /** A live count rendered beside the label. Only the inbox has one. */
-  badge?: "unread-notifications"
+  /** A live count rendered beside the label. `"unread-notifications"` is the
+   * inbox's own count; `"review-queue"` (Task 9, C3d) is the open
+   * review-queue depth (`useReviewQueueCount`), rendered only when > 0. */
+  badge?: "unread-notifications" | "review-queue"
 }
 
 /*
@@ -61,7 +63,7 @@ export interface NavItem {
 export const navItems: NavItem[] = [
   { to: "/teacher", label: "Overview", icon: "overview", end: true },
   { to: "/teacher/grading", label: "Grading", icon: "grading" },
-  { to: "/teacher/review", label: "Review", icon: "review" },
+  { to: "/teacher/review", label: "Review", icon: "review", badge: "review-queue" },
   // `end: true`: without it this row also matched `/teacher/classes/:id`, so
   // opening a class from "Your classes" below highlighted both rows at once.
   { to: "/teacher/classes", label: "Classes", icon: "classes", end: true },

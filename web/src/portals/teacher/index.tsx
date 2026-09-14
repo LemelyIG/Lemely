@@ -37,6 +37,7 @@ import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
+import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
@@ -136,7 +137,10 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
  * which is a plain `string | number`) and passed down as the notifications
  * row's own badge value.
  */
-function toNavShellItem(item: NavItem, options: { forceActive?: boolean; badge?: string } = {}): NavShellItem {
+function toNavShellItem(
+  item: NavItem,
+  options: { forceActive?: boolean; badge?: string | number } = {},
+): NavShellItem {
   const Glyph = NAV_ICON[item.icon]
   return {
     id: item.to,
@@ -284,6 +288,12 @@ function TeacherNav() {
   // request, only a second subscriber to the one query.
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts) ?? undefined
+  // Task 9 (C3d): the sidebar's own subscriber to `useReviewQueueCount` —
+  // `BottomNav`'s Review tab below subscribes to the same hook, so the two
+  // badges share one deduped `limit: 1` request (see that hook's own doc
+  // comment on why).
+  const reviewQueueCount = useReviewQueueCount()
+  const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
 
   const shellItems: NavShellItem[] = navItems.map((item) =>
     toNavShellItem(item, {
@@ -291,7 +301,12 @@ function TeacherNav() {
         item.to === "/teacher/classes"
           ? classesItemActive(location.pathname, visibleClassIds)
           : undefined,
-      badge: item.badge === "unread-notifications" ? unread : undefined,
+      badge:
+        item.badge === "unread-notifications"
+          ? unread
+          : item.badge === "review-queue"
+            ? reviewBadge
+            : undefined,
     }),
   )
 
@@ -469,6 +484,10 @@ function TeacherLayout() {
    * still never redirects.
    */
   const classesQuery = useTeacherClasses()
+  // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
+  // `useReviewQueueCount()` subscriber (same query key) — mounting both the
+  // desktop sidebar and this bottom bar costs one network request, not two.
+  const reviewQueueCount = useReviewQueueCount()
   const firstClassRedirect = teacherFirstClassRedirect(
     classesQuery.status,
     classesQuery.data?.classes.length ?? 0,
@@ -568,11 +587,8 @@ function TeacherLayout() {
 
       {/* Below the `sidebar` breakpoint, the primary navigation — same
           shape as the student portal's own BottomNav, see that file's
-          comment on the identical mount. Review carries no badge: no
-          client-side count of the review queue's depth exists outside the
-          queue screen's own filtered query (re-grepped — `useReviewQueue`
-          has no caller in this file), and adding one would be a new fetch
-          this task's scope does not cover. */}
+          comment on the identical mount. The Review tab's badge (Task 9,
+          C3d) is `reviewQueueCount` above. */}
       <BottomNav
         items={[
           ...TEACHER_BOTTOM_TABS.map(
@@ -582,6 +598,10 @@ function TeacherLayout() {
               end: tab.end,
               label: tab.label,
               icon: <tab.icon size={22} aria-hidden="true" />,
+              badge:
+                tab.id === "review" && reviewQueueCount && reviewQueueCount > 0
+                  ? reviewQueueCount
+                  : undefined,
             }),
           ),
           {
