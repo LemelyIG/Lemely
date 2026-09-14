@@ -263,13 +263,13 @@ Phase end: `superpowers:finishing-a-development-branch` → push + PR into `deve
 3. Below `sm`, Overview's greeting header shows the compact streak chip; at `sm` and above the header's existing chip shows and Overview's is hidden — never both.
 4. DESIGN.md §3.6 carries the register's scope and the PRODUCT.md caveat.
 
-- [ ] **Step 1: Re-grep** `ConfidenceTier` union in `lib/markingConfidence.ts`, `Tabs`/`TabsList` API at `tabs.tsx:47-110`, the xp hook in `student/index.tsx`, `EmptyState` props.
-- [ ] **Step 2: Failing tests.** `questionFilter.test.ts`: `markState` for full/zero/between/`maxMarks 0`; `isFlagged` true on `reviewReason`, true on the lowest tier, false otherwise; `filterQuestions` for each filter on a 4-question fixture. Source-text tests as in Files.
-- [ ] **Step 3: Run** `npx vitest run tests/unit/questionFilter.test.ts tests/unit/redPen.test.ts tests/unit/streakChip.test.ts` → FAIL.
-- [ ] **Step 4: Implement behaviours 1–4; DESIGN.md first.**
-- [ ] **Step 5: Run** the three files → PASS; `npm run typecheck && npm run lint && npm run build && npm run check:copy`; `npx playwright test e2e/student-journey.spec.ts` if the backend is up (it opens PaperResult), else "deferred to CI".
-- [ ] **Step 6: Ledger:** `paper-no-question-filter-tabs`, `paper-red-pen-register-missing`, `student-home-streak-hidden-on-phone` → `done C3`.
-- [ ] **Step 7: Commits** (three): `feat(web): PaperResult All/Lost/Flagged question filter (C3)`, `feat(web): red-pen register on wrong-answer explanations, DESIGN.md §3.6 scope (C3)`, `fix(web): streak chip visible on Overview below sm, header breakpoint on the scale (C3)`.
+- [x] **Step 1: Re-grep** `ConfidenceTier` union in `lib/markingConfidence.ts`, `Tabs`/`TabsList` API at `tabs.tsx:47-110`, the xp hook in `student/index.tsx`, `EmptyState` props.
+- [x] **Step 2: Failing tests.** `questionFilter.test.ts`: `markState` for full/zero/between/`maxMarks 0`; `isFlagged` true on `reviewReason`, true on the lowest tier, false otherwise; `filterQuestions` for each filter on a 4-question fixture. Source-text tests as in Files.
+- [x] **Step 3: Run** `npx vitest run tests/unit/questionFilter.test.ts tests/unit/redPen.test.ts tests/unit/streakChip.test.ts` → FAIL.
+- [x] **Step 4: Implement behaviours 1–4; DESIGN.md first.**
+- [x] **Step 5: Run** the three files → PASS; `npm run typecheck && npm run lint && npm run build && npm run check:copy`; `npx playwright test e2e/student-journey.spec.ts` if the backend is up (it opens PaperResult), else "deferred to CI". (Backend was not up this run — deferred to CI.)
+- [x] **Step 6: Ledger:** `paper-no-question-filter-tabs`, `paper-red-pen-register-missing`, `student-home-streak-hidden-on-phone` → `done C3`.
+- [x] **Step 7: Commits** (three): `feat(web): PaperResult All/Lost/Flagged question filter (C3)`, `feat(web): red-pen register on wrong-answer explanations, DESIGN.md §3.6 scope (C3)`, `fix(web): streak chip visible on Overview below sm, header breakpoint on the scale (C3)`.
 
 ---
 

@@ -218,7 +218,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 198 | `onboarding-plan-rows-no-icon-coding-no-live-type` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/activityIcon.test.ts` — `studyPlanData.ts`'s `activityIcon` maps each activity type to a Phosphor glyph; `StudyPlanWeek.tsx`'s `SessionRow` renders it (`aria-hidden`) before the label |
 | 199 | `parent-add-child-affordance-rejected` | ui | medium |  |  | skipped | skip: parent add-child affordance explicitly rejected |
 | 200 | `parent-weekly-digest-framing-lost` | ui | medium | D | D2 | pending |  |
-| 201 | `student-home-streak-hidden-on-phone` | ui | medium | C | C3 | pending |  |
+| 201 | `student-home-streak-hidden-on-phone` | ui | medium | C | C3 | done C3 | `npx vitest run tests/unit/streakChip.test.ts` — `Overview.tsx` now shows `<XPStreak variant="compact">` beside the greeting on `sm:hidden` |
 | 202 | `paper-no-boundary-proximity` | ui | medium | D | D2 | pending |  |
 | 203 | `quiz-live-coach-vs-exam-model` | ui | medium | D | D3 | pending |  |
 | 204 | `teacher-analytics-group-mean-no-trend` | ui | medium | D | D2 | pending |  |
@@ -280,9 +280,9 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 260 | `student-home-mastery-garden-not-adopted` | ui | low |  |  | skipped | skip: mastery-garden visual not adopted |
 | 261 | `student-home-no-hero-grade` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 262 | `student-home-no-recent-activity-feed` | ui | low | D | D2 | pending |  |
-| 263 | `paper-no-question-filter-tabs` | ui | low | C | C3 | pending |  |
+| 263 | `paper-no-question-filter-tabs` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/questionFilter.test.ts` — `PaperResult.tsx`'s `QuestionList` renders All/Lost/Flagged `TabsList` with counts from `filterQuestions`, state in `?q=` |
 | 264 | `paper-quiz-robustness-regression` | ui | low |  |  | no-action | production already better |
-| 265 | `paper-red-pen-register-missing` | ui | low | C | C3 | pending |  |
+| 265 | `paper-red-pen-register-missing` | ui | low | C | C3 | done C3 | `npx vitest run tests/unit/redPen.test.ts` — `.lm-red-pen` (ink + left rule, no background) applied to the expanded slot of a `register="red-pen"` `QuestionRow` |
 | 266 | `teacher-analytics-chart-register-exceeds-canvas` | ui | low |  |  | no-action | production already better |
 | 267 | `teacher-analytics-heatmap-exceeds-canvas` | ui | low |  |  | no-action | production already better |
 | 268 | `teacher-analytics-no-headline-top-grade-count` | ui | low | C | C3 | pending |  |

@@ -569,7 +569,7 @@ function HeaderStreak() {
     <Link
       to="/student/profile"
       aria-label={`Your training log: ${streak} day streak, ${total} XP`}
-      className="hidden flex-none min-[640px]:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+      className="hidden flex-none sm:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
     >
       <XPStreak variant="compact" streakDays={streak} xpTotal={total} />
     </Link>
