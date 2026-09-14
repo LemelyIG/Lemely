@@ -8,6 +8,7 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { EmptyState } from "@/components/ui/state-views"
 import { cn, relativeTime } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { useEnrollStudent, useRemoveStudent } from "@/lib/hooks/useTeacherApi"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { teacherMutationFailureMessage } from "@/lib/teacherOutcome"
@@ -120,10 +121,10 @@ function compareStudents(
   return ((av as number) - (bv as number)) * dir
 }
 
-const COLUMNS: { key: SortColumn; label: string }[] = [
+const COLUMNS: { key: SortColumn; label: string; numeric?: boolean }[] = [
   { key: "name", label: "Name" },
-  { key: "paperCount", label: "Papers" },
-  { key: "mark", label: "Latest mark" },
+  { key: "paperCount", label: "Papers", numeric: true },
+  { key: "mark", label: "Latest mark", numeric: true },
   { key: "grade", label: "Predicted grade" },
   { key: "delta", label: "Trend" },
   { key: "atRisk", label: "At risk" },
@@ -270,96 +271,93 @@ export function ClassRoster() {
           action={{ label: "Add students", onClick: () => setShowAdd(true) }}
         />
       ) : (
-        <div
-          className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+        <Table density="operate"
           tabIndex={0}
           role="region"
           aria-label="Class roster, scrollable horizontally"
         >
-          <table className="w-full text-body-md border-collapse">
-            <caption className="sr-only">Class roster, sortable by every column</caption>
-            <thead>
-              <tr className="bg-paper-sunk border-b border-rule">
-                {COLUMNS.map((col) => {
-                  const active = col.key === sortColumn
-                  return (
-                    <th
-                      key={col.key}
-                      scope="col"
-                      aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                      className="text-start px-[16px] py-[10px] align-bottom"
+          <caption className="sr-only">Class roster, sortable by every column</caption>
+          <THead>
+            <TR>
+              {COLUMNS.map((col) => {
+                const active = col.key === sortColumn
+                return (
+                  <TH
+                    key={col.key}
+                    numeric={col.numeric}
+                    aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                    className="align-bottom"
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleSort(col.key)}
+                      className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
                     >
-                      <button
-                        type="button"
-                        onClick={() => toggleSort(col.key)}
-                        className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0"
-                      >
-                        {col.label}
-                        {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                      </button>
-                    </th>
-                  )
-                })}
-                <th scope="col" className="px-[16px] py-[10px]">
-                  <span className="sr-only">Actions</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {sorted.map((s) => (
-                <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
-                  <td className="px-[16px] py-[13px]">
-                    <div className="flex items-center gap-2.5">
-                      <Avatar name={s.name} size="sm" />
-                      <Link
-                        to={`/teacher/students/${s.studentId}`}
-                        className="text-ink hover:underline"
-                      >
-                        {s.name}
-                      </Link>
-                    </div>
-                  </td>
-                  <td className="px-[16px] py-[13px] text-data-sm">
-                    {s.paperCount ?? 0}
-                  </td>
-                  <td className="px-[16px] py-[13px] text-data-sm">
-                    {s.mark || "—"}
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <div className="flex items-center gap-1.5">
-                      {s.grade ? (
-                        <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                      ) : (
-                        <span className="text-body-sm text-ink-faint">No grade yet</span>
-                      )}
-                      {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
-                    </div>
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <TrendCell delta={s.delta} />
-                  </td>
-                  <td className="px-[16px] py-[13px]">
-                    <AtRiskCell flags={s.flags} />
-                  </td>
-                  <td className="px-[16px] py-[13px] text-body-sm text-ink-muted whitespace-nowrap">
-                    {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
-                  </td>
-                  <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                    <Button
-                      size="sm"
-                      variant="ghost"
-                      className={cn("text-err", removeStudent.isPending && "opacity-50")}
-                      disabled={removeStudent.isPending}
-                      onClick={() => setPendingRemove(s)}
+                      {col.label}
+                      {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                    </button>
+                  </TH>
+                )
+              })}
+              <TH>
+                <span className="sr-only">Actions</span>
+              </TH>
+            </TR>
+          </THead>
+          <TBody>
+            {sorted.map((s) => (
+              <TR key={s.studentId} className="align-top">
+                <TD>
+                  <div className="flex items-center gap-2.5">
+                    <Avatar name={s.name} size="sm" />
+                    <Link
+                      to={`/teacher/students/${s.studentId}`}
+                      className="text-ink hover:underline"
                     >
-                      Remove
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+                      {s.name}
+                    </Link>
+                  </div>
+                </TD>
+                <TD numeric className="text-data-sm">
+                  {s.paperCount ?? 0}
+                </TD>
+                <TD numeric className="text-data-sm">
+                  {s.mark || "—"}
+                </TD>
+                <TD>
+                  <div className="flex items-center gap-1.5">
+                    {s.grade ? (
+                      <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                    ) : (
+                      <span className="text-body-sm text-ink-faint">No grade yet</span>
+                    )}
+                    {s.gradeAtRisk ? <Chip tone="warn">Low</Chip> : null}
+                  </div>
+                </TD>
+                <TD>
+                  <TrendCell delta={s.delta} />
+                </TD>
+                <TD>
+                  <AtRiskCell flags={s.flags} />
+                </TD>
+                <TD className="text-body-sm text-ink-muted whitespace-nowrap">
+                  {s.lastActiveAt ? relativeTime(s.lastActiveAt) : "Never"}
+                </TD>
+                <TD className="text-end whitespace-nowrap">
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className={cn("text-err", removeStudent.isPending && "opacity-50")}
+                    disabled={removeStudent.isPending}
+                    onClick={() => setPendingRemove(s)}
+                  >
+                    Remove
+                  </Button>
+                </TD>
+              </TR>
+            ))}
+          </TBody>
+        </Table>
       )}
 
       {/* Reversible: the student can be enrolled again from the form above,

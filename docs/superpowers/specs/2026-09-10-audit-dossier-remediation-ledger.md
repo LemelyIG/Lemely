@@ -180,7 +180,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 160 | `x-completeness-admin-portals-uncovered` | ui | high |  |  | no-action | production already better |
 | 161 | `x-completeness-auth-funnel-uncovered` | ui | high |  |  | no-action | production already better |
 | 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly; `OfflineState` reachability from QueryState's error branch verified by source-level check (no jsdom/RTL in this repo — see test file header) |
-| 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending |  |
+| 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending | 2 of 8 files (Task 0 re-verification: 12 tables in 8 files, not 9 in 6) — `Review.tsx`, `ClassRoster.tsx` migrated onto `Table`/`THead`/`TBody`/`TR`/`TH`/`TD` at `density="operate"` (C2a); `StudentDetail.tsx`, `AtRiskList.tsx`, `ClassAnalytics.tsx`, `Classes.tsx`, `MarkSchemes.tsx`, `QuizResults.tsx`, `Quizzes.tsx` remain (C2b, Task 4) |
 | 164 | `gamification-no-leaderboard-climb-celebration` | ui | high | D | D1 | pending |  |
 | 165 | `onboarding-semantic-sliders-no-personalization-signal` | ui | high | D | D3 | pending |  |
 | 166 | `parent-no-notifications-inbox` | ui | high | D | D2 | already-fixed | web/src/portals/parent/screens/Notifications.tsx exists on develop, ToastProvider mounted main.tsx:14/toast.tsx:90 — confirmed A-Task0 |
