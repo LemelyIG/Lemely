@@ -5,6 +5,7 @@ import { Minus, TrendDown, TrendUp } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
 import { GradeBadge } from "@/components/ui/grade-badge"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/state-views"
 import { cn, relativeTime } from "@/lib/utils"
 import { Avatar } from "@/components/ui/avatar"
@@ -190,16 +191,14 @@ function AddStudentsPanel({ classId, hasSchool }: { classId: string; hasSchool: 
       </p>
       {hasSchool ? (
         <form onSubmit={handleEnroll} className="flex flex-wrap items-end gap-3 pt-2 border-t border-rule">
-          <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted flex-1 min-w-[220px]">
-            Or add a student already seated in this school, by id
-            <input
-              required
-              value={studentId}
-              onChange={(e) => setStudentId(e.target.value)}
-              placeholder="Student id (uuid)"
-              className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-            />
-          </label>
+          <Input
+            label="Or add a student already seated in this school, by id"
+            required
+            value={studentId}
+            onChange={(e) => setStudentId(e.target.value)}
+            placeholder="Student id (uuid)"
+            wrapperClassName="flex-1 min-w-[220px]"
+          />
           <Button type="submit" variant="secondary" disabled={enroll.isPending}>
             {enroll.isPending ? "Adding…" : "Add"}
           </Button>

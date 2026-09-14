@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Select } from "@/components/ui/select"
 import { SectionHead } from "@/components/ui/section-head"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
@@ -352,49 +353,37 @@ export function Review() {
               />
 
               <div className="flex items-end gap-4 flex-wrap">
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Class
-                  <select
-                    value={classId}
-                    onChange={(e) => updateFilter("class_id", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring min-w-[170px]"
-                  >
-                    <option value="">All classes</option>
-                    {(classesQuery.data?.classes ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Reason
-                  <select
-                    value={reason}
-                    onChange={(e) => updateFilter("reason", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  >
-                    {REASON_FILTER_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Waiting at least
-                  <select
-                    value={minAgeHours}
-                    onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  >
-                    {AGE_FILTER_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Class"
+                  value={classId}
+                  onChange={(e) => updateFilter("class_id", e.target.value)}
+                  wrapperClassName="min-w-[170px]"
+                >
+                  <option value="">All classes</option>
+                  {(classesQuery.data?.classes ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
+                  {REASON_FILTER_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  label="Waiting at least"
+                  value={minAgeHours}
+                  onChange={(e) => updateFilter("min_age_hours", e.target.value)}
+                >
+                  {AGE_FILTER_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
               </div>
 
               {/*

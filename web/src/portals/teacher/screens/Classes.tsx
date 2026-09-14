@@ -4,6 +4,7 @@ import { Link } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
@@ -196,16 +197,15 @@ export function Classes() {
                 <h1 className="text-display-md mt-1.5">Classes</h1>
               </div>
               <div className="flex-1" />
-              <label className="flex flex-col gap-1">
-                <span className="sr-only">Search classes</span>
-                <input
-                  type="search"
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Search classes or subjects…"
-                  className="border border-rule bg-paper-raised rounded-lg px-3.5 py-2 text-body-md w-[240px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
+              <Input
+                label="Search classes"
+                labelClassName="sr-only"
+                type="search"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                placeholder="Search classes or subjects…"
+                wrapperClassName="w-[240px]"
+              />
               <Button variant="ink" onClick={() => setShowCreate((v) => !v)}>
                 {showCreate ? "Cancel" : "+ New class"}
               </Button>
@@ -216,25 +216,21 @@ export function Classes() {
                 onSubmit={handleCreate}
                 className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-wrap items-end gap-3"
               >
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted flex-1 min-w-[200px]">
-                  Class name
-                  <input
-                    required
-                    value={name}
-                    onChange={(e) => setName(e.target.value)}
-                    placeholder="e.g. Y11 Physics"
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  />
-                </label>
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted w-[180px]">
-                  Subject code (optional)
-                  <input
-                    value={subjectCode}
-                    onChange={(e) => setSubjectCode(e.target.value)}
-                    placeholder="e.g. 0625"
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  />
-                </label>
+                <Input
+                  label="Class name"
+                  required
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. Y11 Physics"
+                  wrapperClassName="flex-1 min-w-[200px]"
+                />
+                <Input
+                  label="Subject code (optional)"
+                  value={subjectCode}
+                  onChange={(e) => setSubjectCode(e.target.value)}
+                  placeholder="e.g. 0625"
+                  wrapperClassName="w-[180px]"
+                />
                 <Button type="submit" variant="ink" disabled={createClass.isPending}>
                   {createClass.isPending ? "Creating…" : "Create class"}
                 </Button>
@@ -312,13 +308,15 @@ export function Classes() {
                                   nothing to say what editing it would do. There is
                                   no room for a visible label inside a table cell
                                   that is standing in for one line of text, so the
-                                  name is carried by `aria-label`. */}
-                              <input
+                                  kit's own `sr-only` label path carries the name
+                                  instead of a bare `aria-label` string. */}
+                              <Input
                                 autoFocus
-                                aria-label={`Rename class ${c.label}`}
+                                label={`Rename class ${c.label}`}
+                                labelClassName="sr-only"
                                 value={editName}
                                 onChange={(e) => setEditName(e.target.value)}
-                                className="border border-rule bg-paper-raised rounded-lg px-2.5 py-1.5 text-body-md text-ink w-[160px] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+                                wrapperClassName="w-[160px]"
                               />
                               <Button
                                 size="sm"
