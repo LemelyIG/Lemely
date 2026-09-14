@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useMemo, useState } from "react"
+import { useMemo, useRef, useState } from "react"
 import { useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -8,11 +8,13 @@ import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
+import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useAnnouncements,
   useExamCalendar,
   useMarkAnnouncementRead,
 } from "@/lib/hooks/useAnnouncementApi"
+import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import type {
   ExamDate,
   StudentAnnouncement,
@@ -476,8 +478,29 @@ export function Announcements() {
   // about the date even if the component re-renders across midnight.
   const today = useMemo(() => new Date(), [])
 
+  // Task 6 (B4b): pull-to-refresh. This screen shows two independent
+  // queries (`AnnouncementsPanel`'s own `useAnnouncements`, and
+  // `useExamCalendar` shared by `ExamCalendarPanel`/`Countdown`) — calling
+  // both hooks again here is not a second fetch, react-query dedupes by
+  // query key (the same sharing `Countdown`'s own comment already relies
+  // on), it is just how this component gets a `refetch` for each. Same
+  // `document.documentElement` container as `Notifications`/`Overview` —
+  // see that screen's comment for why.
+  const announcementsQuery = useAnnouncements()
+  const examQuery = useExamCalendar()
+  const containerRef = useRef<HTMLElement | null>(document.documentElement)
+  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+    onRefresh: () => Promise.all([announcementsQuery.refetch(), examQuery.refetch()]),
+  })
+
   return (
-    <div className="flex flex-col gap-8">
+    <div className="relative flex flex-col gap-8">
+      <div
+        className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
+        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
+      >
+        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
+      </div>
       <header className="flex flex-col gap-1">
         <Eyebrow>Announcements &amp; exams</Eyebrow>
         {/* P4.4, cross-surface: `text-display` is not a class. Nothing defines

@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P5 H4 E4 S5 R5 V4 */
-import { useEffect } from "react"
+import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate } from "react-router-dom"
 import { Card, CardBody } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
@@ -8,6 +8,8 @@ import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Button } from "@/components/ui/button"
+import { Popover } from "@/components/ui/popover"
+import { PullIndicator } from "@/components/ui/pull-indicator"
 import {
   useMarkAllNotificationsRead,
   useMarkNotificationRead,
@@ -16,6 +18,8 @@ import {
 import { setAppBadge } from "@/lib/badging"
 import type { Notification } from "@/lib/notificationTypes"
 import { cn } from "@/lib/utils"
+import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
+import { useLongPress } from "@/lib/gestures/useLongPress"
 
 /*
  * G-13 · The notification inbox (P5.9 chunk B).
@@ -129,66 +133,92 @@ function NotificationRow({ notification }: { notification: Notification }) {
     if (destination !== null) void navigate(destination)
   }
 
+  // Task 6 (B4b): long-press → "Mark read", only where that action makes
+  // sense (an already-read row has nothing left to mark) — same condition
+  // the visible "Mark as read" button below already uses. The gesture is
+  // additive: that button keeps working exactly as before.
+  const [menuOpen, setMenuOpen] = useState(false)
+  const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
+
   return (
-    <Card
-      className={cn(
-        "transition-colors",
-        // Same unread marker as S-28's, for the same reason: a bold title
-        // fights the heading hierarchy and stops reading as emphasis once
-        // three in a row are unread.
-        unread && "border-s-2 border-s-accent",
+    <Popover
+      open={unread && menuOpen}
+      onOpenChange={setMenuOpen}
+      className="block"
+      renderTrigger={() => (
+        <Card
+          className={cn(
+            "transition-colors",
+            // Same unread marker as S-28's, for the same reason: a bold title
+            // fights the heading hierarchy and stops reading as emphasis once
+            // three in a row are unread.
+            unread && "border-s-2 border-s-accent",
+          )}
+          {...(unread ? longPress : {})}
+        >
+          <CardBody className="flex flex-col gap-2">
+            <div className="flex items-start gap-3">
+              <div className="min-w-0 flex-1">
+                {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
+                    with no section heading between them, so an <h3> skips a level
+                    (axe `heading-order`, moderate — found the moment the audit
+                    registry grew a POPULATED state for this screen in P5.11 chunk
+                    E, and invisible for as long as it only probed the empty one).
+                    S-28 uses <h3> for its cards legitimately, because it really
+                    does have "Notices"/"Calendar" <h2>s above them. Do not
+                    normalize the two to the same level; the level has to describe
+                    the actual outline, not match a sibling screen. */}
+                <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
+                <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
+                  <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
+                    {typeLabel(notification.type)}
+                  </Chip>
+                  <time dateTime={notification.createdAt}>{formatAge(notification.createdAt)}</time>
+                </div>
+              </div>
+              {unread ? (
+                <Chip tone="warn" className="flex-none">
+                  Unread
+                </Chip>
+              ) : null}
+            </div>
+
+            {notification.body !== null ? (
+              <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
+            ) : null}
+
+            <div className="flex flex-wrap gap-2">
+              {destination !== null ? (
+                <Button size="sm" onClick={open}>
+                  Open
+                </Button>
+              ) : null}
+              {unread ? (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  onClick={() => markRead.mutate(notification.notificationId)}
+                  disabled={markRead.isPending}
+                >
+                  Mark as read
+                </Button>
+              ) : null}
+            </div>
+          </CardBody>
+        </Card>
       )}
     >
-      <CardBody className="flex flex-col gap-2">
-        <div className="flex items-start gap-3">
-          <div className="min-w-0 flex-1">
-            {/* <h2>, not <h3>: these rows sit directly under the page's <h1>
-                with no section heading between them, so an <h3> skips a level
-                (axe `heading-order`, moderate — found the moment the audit
-                registry grew a POPULATED state for this screen in P5.11 chunk
-                E, and invisible for as long as it only probed the empty one).
-                S-28 uses <h3> for its cards legitimately, because it really
-                does have "Notices"/"Calendar" <h2>s above them. Do not
-                normalize the two to the same level; the level has to describe
-                the actual outline, not match a sibling screen. */}
-            <h2 className="text-body-lg font-medium text-ink">{notification.title}</h2>
-            <div className="mt-1 flex flex-wrap items-center gap-2 text-body-sm text-ink-faint">
-              <Chip tone={notification.type === "at_risk_alert" ? "warn" : "neutral"}>
-                {typeLabel(notification.type)}
-              </Chip>
-              <time dateTime={notification.createdAt}>{formatAge(notification.createdAt)}</time>
-            </div>
-          </div>
-          {unread ? (
-            <Chip tone="warn" className="flex-none">
-              Unread
-            </Chip>
-          ) : null}
-        </div>
-
-        {notification.body !== null ? (
-          <p className="max-w-[65ch] text-body-md text-ink-muted">{notification.body}</p>
-        ) : null}
-
-        <div className="flex flex-wrap gap-2">
-          {destination !== null ? (
-            <Button size="sm" onClick={open}>
-              Open
-            </Button>
-          ) : null}
-          {unread ? (
-            <Button
-              size="sm"
-              variant="ghost"
-              onClick={() => markRead.mutate(notification.notificationId)}
-              disabled={markRead.isPending}
-            >
-              Mark as read
-            </Button>
-          ) : null}
-        </div>
-      </CardBody>
-    </Card>
+      <button
+        type="button"
+        onClick={() => {
+          setMenuOpen(false)
+          markRead.mutate(notification.notificationId)
+        }}
+        className="block w-full rounded-md px-3 py-2 text-start text-body-sm text-ink hover:bg-paper-sunk"
+      >
+        Mark read
+      </button>
+    </Popover>
   )
 }
 
@@ -227,6 +257,20 @@ export function Notifications() {
     void setAppBadge(0)
   }, [])
 
+  // Task 6 (B4b): pull-to-refresh. This screen has no scroll container of
+  // its own — the portal shell scrolls `document` — so the gesture and the
+  // scroll-top check both key off `document.documentElement`, the same
+  // target `EdgeSwipeBack` (B3) already listens on; `usePullToRefresh`'s
+  // `startFilter` only ever engages at real scroll-top, so the two coexist
+  // the way that component's own comment already anticipates. The indicator
+  // itself is positioned against the screen's own root below (`relative`),
+  // not against `containerRef` — `--lm-pull-progress` cascades from the
+  // `<html>` element it's set on, so any descendant can read it.
+  const containerRef = useRef<HTMLElement | null>(document.documentElement)
+  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+    onRefresh: () => query.refetch(),
+  })
+
   return (
     /*
      * `InboxHeading` sits outside `QueryState`, not inside each branch.
@@ -242,7 +286,16 @@ export function Notifications() {
      * already put the heading on its own line above their content, and only
      * the loaded render had it sharing a row with the controls.
      */
-    <div className="flex flex-col gap-4">
+    <div className="relative flex flex-col gap-4">
+      {/* `top` maps the hook's own `--lm-pull-progress` (0..1) onto the
+          40px the indicator travels to reveal itself, off-screen at rest
+          (`-40px`) and fully in view once the pull is armed (`0`). */}
+      <div
+        className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
+        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
+      >
+        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
+      </div>
       <InboxHeading />
       <QueryState
         query={query}

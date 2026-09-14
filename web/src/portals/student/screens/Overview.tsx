@@ -1,5 +1,5 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import { useMemo } from "react"
+import { useMemo, useRef } from "react"
 import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
@@ -10,6 +10,8 @@ import { LineChart } from "@/components/ui/lazy-chart"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { QueryState } from "@/components/ui/query-state"
 import { GettingStarted } from "@/components/ui/getting-started"
+import { PullIndicator } from "@/components/ui/pull-indicator"
+import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useReference } from "@/lib/hooks/useReferenceApi"
@@ -370,8 +372,22 @@ function JoinClassPrompt() {
 export function Overview() {
   const query = useOverview()
 
+  // Task 6 (B4b): pull-to-refresh, same `document.documentElement` target
+  // as `Notifications`/`Announcements` — this is the student's landing
+  // screen, and has no scroll container of its own either.
+  const containerRef = useRef<HTMLElement | null>(document.documentElement)
+  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+    onRefresh: () => query.refetch(),
+  })
+
   return (
-    <div className="flex flex-col gap-8">
+    <div className="relative flex flex-col gap-8">
+      <div
+        className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
+        style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
+      >
+        <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
+      </div>
       <JoinClassPrompt />
       <QueryState
         query={query}
