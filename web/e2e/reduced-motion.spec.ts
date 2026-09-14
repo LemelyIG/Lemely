@@ -103,6 +103,56 @@ test.describe("motion allowed (the default)", () => {
 
     expect(errors, "console errors").toEqual([])
   })
+
+  /*
+   * The loading tiers stage on `animation-delay` with a `0s` duration and a
+   * `both` fill, so the backwards fill holds `visibility: hidden` until the
+   * delay elapses: the delay IS the gate. The global rule above zeroes every
+   * delay, so it carries an explicit carve-out for these two
+   * (`index.css`, the `@media (prefers-reduced-motion: reduce)` block).
+   *
+   * Without that carve-out, tier 3's "Still loading, reload the page" sits in
+   * `RouteFallback`'s `role="status"` from the first frame of every
+   * navigation — announced, and reachable by Tab, for a page that is not
+   * stuck. That shipped once and was caught in review, while a unit test
+   * pinning the token VALUES stayed green throughout.
+   *
+   * `loadingTiers.test.ts` now pins the carve-out's text, which catches
+   * someone deleting it. This asserts the BEHAVIOUR, which additionally
+   * catches the variants that leave the carve-out present and green: a
+   * `visibility` declaration added to the blanket rule, a change to
+   * `lm-appear`'s explicit `from`, or the `both` fill being dropped.
+   */
+  test("the staging tiers still stage, because their delay is a timer not motion", async ({
+    page,
+  }) => {
+    const errors = watchConsole(page)
+    await page.emulateMedia({ reducedMotion: "reduce" })
+    await gotoSchemes(page)
+
+    const staged = await page.evaluate(() => {
+      const probe = (className: string) => {
+        const el = document.createElement("div")
+        el.className = className
+        document.body.appendChild(el)
+        const { visibility, animationDelay } = getComputedStyle(el)
+        el.remove()
+        return { visibility, animationDelay }
+      }
+      return { skeleton: probe("lm-tier-skeleton"), slow: probe("lm-tier-slow") }
+    })
+
+    // Hidden on the first frame is the whole point: the tier has not elapsed.
+    expect(staged.skeleton.visibility, "tier 2 must not paint before its delay").toBe("hidden")
+    expect(staged.slow.visibility, "tier 3 must not paint before its delay").toBe("hidden")
+
+    // And the delays survive as real times rather than collapsing with the
+    // rest, which is what keeps the `both` fill's window open at all.
+    expect(parseFloat(staged.skeleton.animationDelay)).toBeGreaterThan(0.1)
+    expect(parseFloat(staged.slow.animationDelay)).toBeGreaterThan(1)
+
+    expect(errors, "console errors").toEqual([])
+  })
 })
 
 test.describe("prefers-reduced-motion: reduce", () => {
@@ -128,6 +178,56 @@ test.describe("prefers-reduced-motion: reduce", () => {
     // mid-frame. Assert "effectively instant", not an exact literal.
     expect(animation, "the entry animation should be effectively instant").toBeLessThan(1)
     expect(transition, "the button transition should be effectively instant").toBeLessThan(1)
+
+    expect(errors, "console errors").toEqual([])
+  })
+
+  /*
+   * The loading tiers stage on `animation-delay` with a `0s` duration and a
+   * `both` fill, so the backwards fill holds `visibility: hidden` until the
+   * delay elapses: the delay IS the gate. The global rule above zeroes every
+   * delay, so it carries an explicit carve-out for these two
+   * (`index.css`, the `@media (prefers-reduced-motion: reduce)` block).
+   *
+   * Without that carve-out, tier 3's "Still loading, reload the page" sits in
+   * `RouteFallback`'s `role="status"` from the first frame of every
+   * navigation — announced, and reachable by Tab, for a page that is not
+   * stuck. That shipped once and was caught in review, while a unit test
+   * pinning the token VALUES stayed green throughout.
+   *
+   * `loadingTiers.test.ts` now pins the carve-out's text, which catches
+   * someone deleting it. This asserts the BEHAVIOUR, which additionally
+   * catches the variants that leave the carve-out present and green: a
+   * `visibility` declaration added to the blanket rule, a change to
+   * `lm-appear`'s explicit `from`, or the `both` fill being dropped.
+   */
+  test("the staging tiers still stage, because their delay is a timer not motion", async ({
+    page,
+  }) => {
+    const errors = watchConsole(page)
+    await page.emulateMedia({ reducedMotion: "reduce" })
+    await gotoSchemes(page)
+
+    const staged = await page.evaluate(() => {
+      const probe = (className: string) => {
+        const el = document.createElement("div")
+        el.className = className
+        document.body.appendChild(el)
+        const { visibility, animationDelay } = getComputedStyle(el)
+        el.remove()
+        return { visibility, animationDelay }
+      }
+      return { skeleton: probe("lm-tier-skeleton"), slow: probe("lm-tier-slow") }
+    })
+
+    // Hidden on the first frame is the whole point: the tier has not elapsed.
+    expect(staged.skeleton.visibility, "tier 2 must not paint before its delay").toBe("hidden")
+    expect(staged.slow.visibility, "tier 3 must not paint before its delay").toBe("hidden")
+
+    // And the delays survive as real times rather than collapsing with the
+    // rest, which is what keeps the `both` fill's window open at all.
+    expect(parseFloat(staged.skeleton.animationDelay)).toBeGreaterThan(0.1)
+    expect(parseFloat(staged.slow.animationDelay)).toBeGreaterThan(1)
 
     expect(errors, "console errors").toEqual([])
   })
