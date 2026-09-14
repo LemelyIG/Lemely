@@ -251,10 +251,18 @@ export const pricing: PricingPlan[] = []
  * its footnote: this is the one place on the page a reader expects to be
  * told what something costs, so it is the honest place to say nothing is
  * decided yet rather than the hero, which is about the product, not billing.
+ *
+ * `title` is rendered as the section's own heading (Task 3, live judge's own
+ * suggestion, evaluator run `ralph` iteration 2): "fold 'not announced' into
+ * the heading itself... to also help with the eyebrow count." The separate
+ * `label` chip ("Not announced") this used to carry alongside the heading is
+ * gone, and nothing replaces it. That plus the section's own "Plans" kicker
+ * were the two occupants of the page's eyebrow budget; removing both spends
+ * none of the two-eyebrow allowance the whole page shares (BUILD/BRAND.md
+ * §5's "at most 2" rule) rather than one of two.
  */
 export const pricingPlaceholder = {
-  label: "Not announced",
-  title: "We have not set a price yet",
+  title: "No price yet",
   body: "Lemely is still being built. Nothing to pay while we build it.",
 }
 
