@@ -148,6 +148,9 @@ export function NavDrawer({ open, onClose, title, children, footer }: NavDrawerP
   useDragGesture(panelRef, {
     axis: "x",
     enabled: mounted,
+    // The nav list inside still scrolls vertically; only the horizontal
+    // direction belongs to the drag-dismiss.
+    touchAction: "pan-y",
     commitThreshold: (panelRef.current?.getBoundingClientRect().width ?? 320) * 0.4,
     startFilter: (event) => {
       const target = event.target

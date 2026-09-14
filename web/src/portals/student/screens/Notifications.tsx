@@ -136,7 +136,16 @@ function NotificationRow({ notification }: { notification: Notification }) {
   // Task 6 (B4b): long-press → "Mark read", only where that action makes
   // sense (an already-read row has nothing left to mark) — same condition
   // the visible "Mark as read" button below already uses. The gesture is
-  // additive: that button keeps working exactly as before.
+  // additive: that button keeps working exactly as before, which is also why
+  // this row needs no "More actions" trigger of its own the way
+  // `question-row` does — the menu's only item is already a visible,
+  // keyboard-reachable button two lines down.
+  //
+  // `triggerProps` is still wired, minus its `onClick`: a *tap* on a
+  // notification must not open the menu, but the popover needs the trigger's
+  // ref and ARIA attributes to describe the relationship correctly and to
+  // hand focus back here when Escape closes it (`tabIndex={-1}` makes the
+  // card focusable programmatically without adding a tab stop).
   const [menuOpen, setMenuOpen] = useState(false)
   const longPress = useLongPress({ onLongPress: () => setMenuOpen(true) })
 
@@ -145,10 +154,15 @@ function NotificationRow({ notification }: { notification: Notification }) {
       open={unread && menuOpen}
       onOpenChange={setMenuOpen}
       className="block"
-      renderTrigger={() => (
+      renderTrigger={({ triggerProps }) => (
         <Card
+          ref={triggerProps.ref}
+          tabIndex={-1}
+          aria-haspopup={unread ? triggerProps["aria-haspopup"] : undefined}
+          aria-expanded={unread ? triggerProps["aria-expanded"] : undefined}
+          aria-controls={unread ? triggerProps["aria-controls"] : undefined}
           className={cn(
-            "transition-colors",
+            "transition-colors outline-none",
             // Same unread marker as S-28's, for the same reason: a bold title
             // fights the heading hierarchy and stops reading as emphasis once
             // three in a row are unread.
@@ -257,17 +271,17 @@ export function Notifications() {
     void setAppBadge(0)
   }, [])
 
-  // Task 6 (B4b): pull-to-refresh. This screen has no scroll container of
-  // its own — the portal shell scrolls `document` — so the gesture and the
-  // scroll-top check both key off `document.documentElement`, the same
-  // target `EdgeSwipeBack` (B3) already listens on; `usePullToRefresh`'s
-  // `startFilter` only ever engages at real scroll-top, so the two coexist
-  // the way that component's own comment already anticipates. The indicator
-  // itself is positioned against the screen's own root below (`relative`),
-  // not against `containerRef` — `--lm-pull-progress` cascades from the
-  // `<html>` element it's set on, so any descendant can read it.
-  const containerRef = useRef<HTMLElement | null>(document.documentElement)
-  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+  // Task 6 (B4b): pull-to-refresh. The surface is this screen's own content
+  // wrapper, never `document.documentElement`: the hook translates whatever
+  // it is given, and a transformed root is the containing block for every
+  // `position: fixed` descendant, so pulling here used to drag `BottomNav`
+  // and any open scrim down with the list. `usePullToRefresh` still asks the
+  // *window* whether we are at the scroll top (this wrapper does not scroll
+  // itself — the portal shell scrolls `document`). The wrapper is the screen
+  // root rather than something narrower so `--lm-pull-progress`, which the
+  // hook sets on it, still cascades to the indicator positioned inside it.
+  const pullSurfaceRef = useRef<HTMLDivElement>(null)
+  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
     onRefresh: () => query.refetch(),
   })
 
@@ -286,7 +300,7 @@ export function Notifications() {
      * already put the heading on its own line above their content, and only
      * the loaded render had it sharing a row with the controls.
      */
-    <div className="relative flex flex-col gap-4">
+    <div ref={pullSurfaceRef} className="relative flex flex-col gap-4">
       {/* `top` maps the hook's own `--lm-pull-progress` (0..1) onto the
           40px the indicator travels to reveal itself, off-screen at rest
           (`-40px`) and fully in view once the pull is armed (`0`). */}

@@ -447,6 +447,10 @@ export function QuizTaker({ assignmentId, onSubmitted, onExit, className }: Quiz
     axis: "x",
     enabled: !(remaining !== null && remaining <= 60),
     commitThreshold: 60,
+    // Vertical panning still scrolls the question; the browser must not
+    // claim the horizontal direction before the 60px commit threshold is
+    // reached, or the swipe is stolen before this hook ever sees it.
+    touchAction: "pan-y",
     startFilter: (event) => {
       const target = event.target
       const interactive = target instanceof Element ? target.closest(SWIPE_INTERACTIVE_SELECTOR) : null

@@ -1,5 +1,5 @@
 import { useEffect, useRef, type RefObject } from "react"
-import { shouldCommitDrag, type DragAxis } from "./dragMath"
+import { clampDelta, shouldCommitDrag, type DragAxis, type DragClamp } from "./dragMath"
 
 /*
  * Packet B3 (Task 4) · the single source of truth for a one-finger drag
@@ -37,7 +37,24 @@ export interface DragGestureOptions {
    * gesture surface (a document-wide edge-swipe listener, say) usually wants
    * a different element to actually move. */
   transformTarget?: RefObject<HTMLElement | null>
+  /** Restricts the direction the imperative transform may move in, without
+   * touching the raw deltas `onProgress`/`onCommit` receive. Default
+   * `"none"`. Pull-to-refresh uses `"positive"`: its surface may only be
+   * pushed down, never pulled up out of the viewport. */
+  transformClamp?: DragClamp
+  /** Set as `touch-action` on `ref` for as long as the gesture is attached,
+   * and restored on cleanup. A horizontal-drag surface wants `"pan-y"`, so
+   * the browser keeps vertical scrolling but stops claiming the horizontal
+   * direction before this hook has seen enough movement to commit. Left
+   * unset by default — a *vertical* drag surface must NOT declare `pan-x`,
+   * which would stop the page scrolling through it altogether. */
+  touchAction?: string
 }
+
+/** How long to wait for `springBack`'s `transitionend` before clearing the
+ * transition anyway. Longer than `--dur-base` (320ms) with room for a slow
+ * frame; the listener normally wins this race. */
+const SPRING_FALLBACK_MS = 600
 
 interface DragState {
   pointerId: number
@@ -63,15 +80,33 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       t.style.transform = ""
     }
 
+    let springTimer: ReturnType<typeof setTimeout> | null = null
+
     function springBack() {
       const t = target()
+      if (springTimer !== null) {
+        clearTimeout(springTimer)
+        springTimer = null
+      }
+      // A tap that never moved the target wrote no transform, so setting it
+      // back to "" changes nothing and no `transitionend` will ever fire.
+      // Waiting for one left `style.transition` set on the element forever.
+      if (!t.style.transform) {
+        t.style.transition = ""
+        return
+      }
       t.style.transition = "transform var(--dur-base) var(--ease-spring)"
       t.style.transform = ""
-      const onTransitionEnd = () => {
+      const finish = () => {
+        if (springTimer !== null) {
+          clearTimeout(springTimer)
+          springTimer = null
+        }
         t.style.transition = ""
-        t.removeEventListener("transitionend", onTransitionEnd)
+        t.removeEventListener("transitionend", finish)
       }
-      t.addEventListener("transitionend", onTransitionEnd)
+      t.addEventListener("transitionend", finish, { once: true })
+      springTimer = setTimeout(finish, SPRING_FALLBACK_MS)
     }
 
     function detachDragListeners() {
@@ -86,7 +121,13 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       const dx = event.clientX - state.startX
       const dy = event.clientY - state.startY
       const t = target()
-      t.style.transform = optionsRef.current.axis === "x" ? `translateX(${dx}px)` : `translateY(${dy}px)`
+      const axis = optionsRef.current.axis
+      const moved = clampDelta(axis === "x" ? dx : dy, optionsRef.current.transformClamp)
+      // A clamped-away drag writes no transform at all rather than
+      // `translate(0)`: a transformed element becomes the containing block
+      // for its `position: fixed` descendants, and paying that for a drag
+      // that visibly moves nothing is how C2 shifted the bottom nav.
+      t.style.transform = moved === 0 ? "" : axis === "x" ? `translateX(${moved}px)` : `translateY(${moved}px)`
       optionsRef.current.onProgress?.(dx, dy)
     }
 
@@ -129,6 +170,9 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
     }
 
     function onPointerDown(event: PointerEvent) {
+      // A second finger landing mid-drag would otherwise overwrite the
+      // in-flight state and strand the first pointer's capture.
+      if (stateRef.current !== null) return
       if (optionsRef.current.startFilter && !optionsRef.current.startFilter(event)) return
       stateRef.current = { pointerId: event.pointerId, startX: event.clientX, startY: event.clientY }
       el!.setPointerCapture(event.pointerId)
@@ -137,11 +181,43 @@ export function useDragGesture(ref: RefObject<HTMLElement | null>, options: Drag
       el!.addEventListener("pointercancel", onPointerCancel)
     }
 
+    /*
+     * Everything this hook wrote imperatively, put back. Detaching the
+     * listeners alone was H5: `QuizTaker` recomputes `enabled` on a 1s tick
+     * (the last-60-seconds lock), so a drag in progress when that boundary
+     * crossed left the question card permanently offset by its last
+     * `translateX`, still holding pointer capture and swallowing every tap
+     * that landed on it. Same shape on `FlashcardReview` and `NavDrawer`.
+     */
+    function abortDrag() {
+      if (springTimer !== null) {
+        clearTimeout(springTimer)
+        springTimer = null
+      }
+      const state = stateRef.current
+      stateRef.current = null
+      detachDragListeners()
+      if (state !== null) {
+        try {
+          el!.releasePointerCapture(state.pointerId)
+        } catch {
+          // Already released — see `endDrag`'s own note.
+        }
+      }
+      const t = target()
+      t.style.transform = ""
+      t.style.transition = ""
+    }
+
+    const previousTouchAction = el.style.touchAction
+    if (options.touchAction !== undefined) el.style.touchAction = options.touchAction
+
     el.addEventListener("pointerdown", onPointerDown)
     return () => {
       el.removeEventListener("pointerdown", onPointerDown)
-      detachDragListeners()
+      if (options.touchAction !== undefined) el.style.touchAction = previousTouchAction
+      abortDrag()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [ref, options.enabled])
+  }, [ref, options.enabled, options.touchAction])
 }

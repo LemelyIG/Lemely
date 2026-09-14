@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest"
-import { dragProgress, shouldCommitDrag } from "@/lib/gestures/dragMath"
+import { clampDelta, dragProgress, shouldCommitDrag } from "@/lib/gestures/dragMath"
 
 /*
  * Packet B3 (Task 4) · the pure commit/progress math `useDragGesture` (and
@@ -60,5 +60,32 @@ describe("dragProgress", () => {
   it("clamps at 0 for a non-positive distance", () => {
     expect(dragProgress(10, 0)).toBe(0)
     expect(dragProgress(10, -5)).toBe(0)
+  })
+})
+
+/*
+ * C2 fix · the imperative `translateY`/`translateX` `useDragGesture` writes
+ * while dragging is unsigned, so a pull-to-refresh surface translated
+ * *upward* on a drag that should have scrolled normally. `clampDelta` is the
+ * one-directional restriction the hook applies to the transform only — the
+ * raw delta still reaches `onProgress`/`onCommit`, which have their own
+ * direction rules (`pullState`, `flashcardSwipeAction`).
+ */
+describe("clampDelta", () => {
+  it("passes a delta through unchanged with no clamp", () => {
+    expect(clampDelta(40, "none")).toBe(40)
+    expect(clampDelta(-40, "none")).toBe(-40)
+    expect(clampDelta(-40)).toBe(-40)
+  })
+
+  it("floors a negative delta at 0 when clamped positive", () => {
+    expect(clampDelta(-40, "positive")).toBe(0)
+    expect(clampDelta(0, "positive")).toBe(0)
+    expect(clampDelta(40, "positive")).toBe(40)
+  })
+
+  it("caps a positive delta at 0 when clamped negative", () => {
+    expect(clampDelta(40, "negative")).toBe(0)
+    expect(clampDelta(-40, "negative")).toBe(-40)
   })
 })

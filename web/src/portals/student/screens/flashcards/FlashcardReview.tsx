@@ -149,6 +149,9 @@ export function FlashcardReview() {
     axis: "x",
     enabled: current !== null && !finished,
     commitThreshold: revealed ? 80 : 60,
+    // See `QuizTaker`'s own note: keep vertical scrolling, keep the
+    // horizontal direction for this hook.
+    touchAction: "pan-y",
     startFilter: (event) => {
       const target = event.target
       return !(target instanceof Element && target.closest("button, a, input, textarea, select"))

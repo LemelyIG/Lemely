@@ -372,16 +372,16 @@ function JoinClassPrompt() {
 export function Overview() {
   const query = useOverview()
 
-  // Task 6 (B4b): pull-to-refresh, same `document.documentElement` target
-  // as `Notifications`/`Announcements` — this is the student's landing
-  // screen, and has no scroll container of its own either.
-  const containerRef = useRef<HTMLElement | null>(document.documentElement)
-  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+  // Task 6 (B4b): pull-to-refresh on this screen's own root element, the
+  // same arrangement as `Notifications`/`Announcements` — see that screen's
+  // comment for why the surface must never be `document.documentElement`.
+  const pullSurfaceRef = useRef<HTMLDivElement>(null)
+  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
     onRefresh: () => query.refetch(),
   })
 
   return (
-    <div className="relative flex flex-col gap-8">
+    <div ref={pullSurfaceRef} className="relative flex flex-col gap-8">
       <div
         className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
         style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}

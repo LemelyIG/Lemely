@@ -24,3 +24,44 @@ export function pullState(
   const progress = Math.min(1, dy / threshold)
   return { progress, armed: dy >= threshold }
 }
+
+/**
+ * Whether the element the pull gesture is attached to answers "am I at the
+ * scroll top?" with its own `scrollTop`, or whether that question belongs to
+ * the window.
+ *
+ * The pull surface is an inner content wrapper (it has to be: transforming
+ * `document.documentElement` makes the root the containing block for every
+ * `position: fixed` descendant, so the bottom nav, the scrim and the drawer
+ * all shift during a pull). A wrapper that does not scroll itself reports
+ * `scrollTop === 0` forever, which would arm a pull half-way down a long
+ * list, so its own reading is only trusted when it really is a scroller.
+ */
+export function usesOwnScrollTop(
+  overflowY: string,
+  scrollHeight: number,
+  clientHeight: number,
+): boolean {
+  const scrolls = overflowY === "auto" || overflowY === "scroll" || overflowY === "overlay"
+  return scrolls && scrollHeight > clientHeight
+}
+
+/**
+ * Whether a pull may start at `clientX`, given the leading/trailing strips
+ * `EdgeSwipeBack` reserves for itself (`EDGE_ZONE_PX`).
+ *
+ * `EdgeSwipeBack` listens on `document`, so a pointerdown on a pull surface
+ * bubbles to it: without this the top-left 24px at `scrollY === 0` passed
+ * both gestures' `startFilter`, giving two `setPointerCapture` calls, two
+ * move handlers writing one `style.transform`, and two racing `springBack`s.
+ * Excluding the strips here makes the two zones disjoint by construction —
+ * the edge swipe owns `x <= EDGE_ZONE_PX` (and the mirrored trailing strip),
+ * the pull owns everything strictly between them.
+ */
+export function pullStartAllowed(
+  clientX: number,
+  viewportWidth: number,
+  edgeZonePx: number,
+): boolean {
+  return clientX > edgeZonePx && clientX < viewportWidth - edgeZonePx
+}

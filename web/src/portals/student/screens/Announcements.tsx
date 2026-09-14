@@ -483,18 +483,19 @@ export function Announcements() {
   // `useExamCalendar` shared by `ExamCalendarPanel`/`Countdown`) — calling
   // both hooks again here is not a second fetch, react-query dedupes by
   // query key (the same sharing `Countdown`'s own comment already relies
-  // on), it is just how this component gets a `refetch` for each. Same
-  // `document.documentElement` container as `Notifications`/`Overview` —
-  // see that screen's comment for why.
+  // on), it is just how this component gets a `refetch` for each. The pull
+  // surface is this screen's own root element, same as
+  // `Notifications`/`Overview` — see that screen's comment for why it must
+  // never be `document.documentElement`.
   const announcementsQuery = useAnnouncements()
   const examQuery = useExamCalendar()
-  const containerRef = useRef<HTMLElement | null>(document.documentElement)
-  const { pulling, refreshing } = usePullToRefresh(containerRef, {
+  const pullSurfaceRef = useRef<HTMLDivElement>(null)
+  const { pulling, refreshing } = usePullToRefresh(pullSurfaceRef, {
     onRefresh: () => Promise.all([announcementsQuery.refetch(), examQuery.refetch()]),
   })
 
   return (
-    <div className="relative flex flex-col gap-8">
+    <div ref={pullSurfaceRef} className="relative flex flex-col gap-8">
       <div
         className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
         style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}

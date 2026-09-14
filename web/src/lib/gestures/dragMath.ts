@@ -31,3 +31,22 @@ export function dragProgress(delta: number, distance: number): number {
   const ratio = Math.abs(delta) / distance
   return Math.min(1, Math.max(0, ratio))
 }
+
+/** Which direction along the axis the drag's imperative transform is allowed
+ * to move in. `"none"` is the historical behaviour. */
+export type DragClamp = "none" | "positive" | "negative"
+
+/**
+ * The delta `useDragGesture` is allowed to write into `style.transform`,
+ * restricted to one direction along the axis. The raw delta still reaches
+ * `onProgress`/`onCommit` — this clamp is only about what visibly moves.
+ *
+ * Pull-to-refresh is why it exists: its surface may only ever be pushed
+ * *down*, and an unsigned `translateY(dy)` meant an upward drag at the scroll
+ * top translated the screen up instead of leaving the browser to scroll.
+ */
+export function clampDelta(delta: number, clamp: DragClamp = "none"): number {
+  if (clamp === "positive") return Math.max(0, delta)
+  if (clamp === "negative") return Math.min(0, delta)
+  return delta
+}
