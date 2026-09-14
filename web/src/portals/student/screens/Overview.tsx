@@ -383,7 +383,8 @@ export function Overview() {
   return (
     <div ref={pullSurfaceRef} className="relative flex flex-col gap-8">
       <div
-        className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
+        // P6.3: `z-dropdown`, not `z-10` — see Notifications.tsx's comment.
+        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
         style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
       >
         <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />

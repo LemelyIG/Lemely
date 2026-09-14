@@ -305,7 +305,10 @@ export function Notifications() {
           40px the indicator travels to reveal itself, off-screen at rest
           (`-40px`) and fully in view once the pull is armed (`0`). */}
       <div
-        className="pointer-events-none absolute inset-x-0 z-10 flex justify-center"
+        // P6.3: `z-dropdown`, not the raw `z-10` this carried. 10 is
+        // `--z-index-sticky`'s value, i.e. this floating indicator declared
+        // the band that belongs to sticky table headers and portal top bars.
+        className="pointer-events-none absolute inset-x-0 z-dropdown flex justify-center"
         style={{ top: "calc(var(--lm-pull-progress, 0) * 40px - 40px)" }}
       >
         <PullIndicator progress={pulling ? 1 : 0} refreshing={refreshing} />
