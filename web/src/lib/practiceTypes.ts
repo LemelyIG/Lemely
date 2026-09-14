@@ -107,11 +107,15 @@ export interface PracticeResult {
  * sits under. The bank mixes taxonomy levels — a broad group
  * ("1 Motion, forces and energy") and a narrower one ("1.2 Motion") can come
  * back as peers with disjoint rows, so `syllabusGroup` is what S-20 nests
- * on, never a flat list. */
+ * on, never a flat list. `marksLost` (Task 8 C3c) is the caller's own net
+ * lost marks on this topic across every attempt — 0 when there's no
+ * recorded loss; the screen omits the stat entirely rather than rendering
+ * "0 marks lost" as decoration. */
 export interface PracticeTopicCount {
   topic: string
   availableCount: number
   syllabusGroup: string
+  marksLost: number
 }
 
 /**
