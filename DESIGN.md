@@ -217,6 +217,24 @@ adjusted, the ordering must be preserved; a test enforces it
 icon or a text label. A student who cannot distinguish the teal from the red
 must still be able to read their paper.
 
+**The red-pen register.** Its scope is narrow and deliberate: the per-question
+wrong-answer explanation on `PaperResult`, and nothing else. `.lm-red-pen`
+(`web/src/index.css`) sets `--mark-wrong` ink at weight 500 with a 2px
+`border-inline-start` rule, applied only to the expanded explanation slot a
+wrong `QuestionRow` renders — never the row itself, never the feedback panel
+beneath it (that keeps its own `bg-paper-sunk`), and never a red fill of any
+kind. PRODUCT.md's accessibility section sets the boundary this register stays
+inside of: "avoid red-heavy error states; prefer amber/neutral for 'needs
+attention.'" `PaperResult` is the screen a student opens the moment their
+marking finishes, already carrying whatever exam stress sent them there — an
+error-red panel fill on that screen is exactly the red-heavy state the caveat
+warns against. Ink and a rule read as a correction mark in the margin of a
+graded paper, which is what this actually is; a filled red block reads as an
+alarm. No Caveat here either — §4.1's rule that Caveat decorates and never
+carries meaning applies with particular force to a wrong answer, where the
+one thing the register may not do is soften or embellish what happened to the
+mark.
+
 ### 3.7 Product scales
 
 These three scales are load-bearing product semantics, not decoration. They

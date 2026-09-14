@@ -621,6 +621,23 @@
   grid-template-columns: minmax(0, 1fr) 300px;
 }
 
+/* ── §3.6 The red-pen register (C3a) ──────────────────────────────────────
+   A wrong answer's expanded explanation reads in --mark-wrong ink at weight
+   500 with a 2px left rule — ink and a rule, never a fill. PRODUCT.md is
+   explicit: "avoid red-heavy error states; prefer amber/neutral for 'needs
+   attention.'" A red background on the one screen a student reads right
+   after seeing their score would be exactly that. Scoped to the expanded
+   explanation slot only (question-row.tsx) — never the row, never the
+   feedback panel's own bg-paper-sunk — and it carries no Caveat: this is
+   state the reader needs, not marginalia they can lose (§4.1). See
+   DESIGN.md §3.6. */
+.lm-red-pen {
+  color: var(--mark-wrong);
+  font-weight: 500;
+  border-inline-start: 2px solid var(--mark-wrong);
+  padding-inline-start: var(--space-3);
+}
+
 /* ── Base ──────────────────────────────────────────────────────────────── */
 
 * {
