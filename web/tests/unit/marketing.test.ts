@@ -203,27 +203,29 @@ describe("design import: token purity and the z-nav rename", () => {
 })
 
 /*
- * Every specimen component this part of the import does not build yet
- * mounts a clearly-marked placeholder instead, so the page still compiles
- * and renders end to end. Pinned so part B's swap-in is visible as a diff
- * here (each `StubMount` call disappearing) rather than something this file
- * stays silent about either way.
+ * Part B swapped every `StubMount` placeholder for the real specimen
+ * component. Pinned the other direction from part A's own check: this
+ * asserts the stubs are GONE and each real component is both imported and
+ * mounted, so a future edit that reverts one to a placeholder (or imports
+ * it without ever rendering it) fails here rather than silently.
  */
-describe("design import: part B's five stub mounts are all present", () => {
+describe("design import: part B's five specimen components are all mounted", () => {
   const source = fs.readFileSync(
     path.resolve(__dirname, "../../src/portals/marketing/Landing.tsx"),
     "utf8",
   )
   const specimens = ["OpenedQuestion", "ScanSequence", "SchemeExcerpt", "ClassBatch", "Readings"]
 
-  it.each(specimens)("mounts a StubMount placeholder for %s", (label) => {
-    expect(source).toMatch(new RegExp(`StubMount label="${label}`))
+  it("mounts no StubMount placeholder anywhere", () => {
+    // A regex on the literal call/definition forms, not the bare word —
+    // the surrounding prose (this file's own comments included) narrates
+    // the swap using the word "StubMount" without it being a live call.
+    expect(source).not.toMatch(/<StubMount\b|function StubMount\b/)
   })
 
-  it("marks every stub with a TODO(part B) comment", () => {
-    expect(source.match(/TODO\(part B\)/g) ?? []).toHaveLength(1)
-    // One shared comment above the StubMount definition covers all five call
-    // sites; each call site itself is pinned individually above.
+  it.each(specimens)("imports and renders %s", (name) => {
+    expect(source).toMatch(new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from\\s*"\\./${name}"`))
+    expect(source).toMatch(new RegExp(`<${name}\\s*/>`))
   })
 })
 
@@ -258,6 +260,11 @@ describe("landing copy claims only what the product does — P4.9", () => {
     "classBatchSection",
     "readingsIntro",
     "close",
+    "openedQuestion",
+    "scanSequence",
+    "schemeExcerpt",
+    "classBatch",
+    "readings",
   ] as const
 
   /** Exports deliberately excluded from the copy gate, one reason each. */

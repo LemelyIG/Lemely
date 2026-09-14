@@ -29,7 +29,15 @@
  * `prefers-reduced-motion` is read in JS, at mount, so a reduced-motion
  * reader never receives the pre-animation hidden state in markup at all.
  */
-import { useEffect, useRef, useState, type CSSProperties, type ElementType, type ReactNode } from "react"
+import {
+  Fragment,
+  useEffect,
+  useRef,
+  useState,
+  type CSSProperties,
+  type ElementType,
+  type ReactNode,
+} from "react"
 import { cn } from "@/lib/utils"
 import { prefersReducedMotion } from "@/lib/celebration"
 
@@ -143,12 +151,22 @@ export function Words({
   return (
     <Tag ref={ref as never} className={cn("words", revealClassName, className)} style={style}>
       {words.map((word, i) => (
-        <span className="w" key={`${word}-${i}`}>
-          <span className="wi" style={{ "--i": i } as CSSProperties}>
-            {word}
+        // The inter-word space is a SIBLING of `.w`, not its child. `.w` is
+        // `overflow:clip` (marketing.css), and a browser trims trailing
+        // whitespace at the end of an inline-block box's own content — a
+        // space nested as `.w`'s last child was silently disappearing,
+        // rendering "Marking you can" as "Markingyoucan". Moving it outside
+        // the clipped box, as plain text between two `.w` spans, keeps the
+        // word-rise clip working (each word still animates inside its own
+        // box) while the space between words survives normal inline layout.
+        <Fragment key={`${word}-${i}`}>
+          <span className="w">
+            <span className="wi" style={{ "--i": i } as CSSProperties}>
+              {word}
+            </span>
           </span>
           {i < words.length - 1 ? " " : null}
-        </span>
+        </Fragment>
       ))}
     </Tag>
   )
@@ -220,5 +238,67 @@ export function useScrollProgress(ref: React.RefObject<HTMLElement | null>) {
     }
     frame = requestAnimationFrame(tick)
     return () => cancelAnimationFrame(frame)
+  }, [ref])
+}
+
+/**
+ * The `--draw` progress behind `.scheme::before`/`.close__copy::before`'s
+ * accent rule (spec: "a rule that draws" — `marketing.css`'s `@supports`
+ * block animates `scaleY(var(--draw))` via `animation-timeline: view()`
+ * where the browser has it). This is part B's fallback for the one element
+ * it builds that uses `--draw` (`SchemeExcerpt`'s rule); `.close__copy`'s
+ * own rule is part A's territory and, like `.drift`/`.band .wrap`/
+ * `.readings`'s parallax, has no JS fallback — the same "CSS owns it where
+ * supported, otherwise the effect is simply absent rather than broken"
+ * precedent `useScrollProgress`'s docstring already sets for this file.
+ *
+ * Gated by IntersectionObserver, never a bare scroll listener: the observer
+ * turns an rAF sampler on only while the element is near the viewport, and
+ * the sampler reads `getBoundingClientRect()` once per frame to approximate
+ * the same `entry 20% cover 45%` range the CSS timeline targets, clamped to
+ * [0, 1]. Reduced motion sets the rule fully drawn once and never touches it
+ * again — matching `marketing.css`'s own reduced-motion block, which removes
+ * the animation and resets `transform: none` (i.e. fully drawn).
+ */
+export function useScrollDraw(ref: React.RefObject<HTMLElement | null>) {
+  useEffect(() => {
+    const node = ref.current
+    if (!node) return
+    if (prefersReducedMotion()) {
+      node.style.setProperty("--draw", "1")
+      return
+    }
+    if (typeof CSS !== "undefined" && CSS.supports?.("animation-timeline: view()")) return
+    if (typeof IntersectionObserver === "undefined") {
+      node.style.setProperty("--draw", "1")
+      return
+    }
+    let frame = 0
+    const sample = () => {
+      const rect = node.getBoundingClientRect()
+      const vh = window.innerHeight || document.documentElement.clientHeight
+      const start = vh * 0.8 // entry 20%: rule starts drawing here
+      const end = vh * 0.45 // cover 45%: fully drawn here
+      const fraction = start === end ? 1 : (start - rect.top) / (start - end)
+      node.style.setProperty("--draw", String(Math.min(1, Math.max(0, fraction))))
+      frame = requestAnimationFrame(sample)
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        const inView = entries.some((entry) => entry.isIntersecting)
+        if (inView) {
+          frame = requestAnimationFrame(sample)
+        } else if (frame) {
+          cancelAnimationFrame(frame)
+          frame = 0
+        }
+      },
+      { rootMargin: "20% 0px -45% 0px" },
+    )
+    observer.observe(node)
+    return () => {
+      observer.disconnect()
+      if (frame) cancelAnimationFrame(frame)
+    }
   }, [ref])
 }

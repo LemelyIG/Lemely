@@ -1,8 +1,7 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — design import, part A.
-   V4, not 5: five sections mount a StubMount placeholder rather than their
-   real visual, by design — part B builds OpenedQuestion, ScanSequence,
-   SchemeExcerpt, ClassBatch and Readings next. Every other section's copy
-   is now the verbatim source text, no gaps left open. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 — design import, part B.
+   All five specimen components (OpenedQuestion, ScanSequence, SchemeExcerpt,
+   ClassBatch, Readings) now render for real; the StubMount placeholders
+   part A left are gone. */
 import type { CSSProperties } from "react"
 import { useNavigate } from "react-router-dom"
 import { ArrowDown, Books, CursorClick } from "@phosphor-icons/react"
@@ -11,6 +10,11 @@ import { SubjectTag } from "@/components/ui/subject-tag"
 import { prefersReducedMotion } from "@/lib/celebration"
 import { RevealBlock, Words } from "./motion"
 import { close, hero, howItWorks, readingsIntro, schemeSection, subjects, trustBand, classBatchSection } from "./data"
+import { OpenedQuestion } from "./OpenedQuestion"
+import { ScanSequence } from "./ScanSequence"
+import { SchemeExcerpt } from "./SchemeExcerpt"
+import { ClassBatch } from "./ClassBatch"
+import { Readings } from "./Readings"
 
 /*
  * The public landing page, rebuilt from the imported design
@@ -19,13 +23,12 @@ import { close, hero, howItWorks, readingsIntro, schemeSection, subjects, trustB
  * `.superpowers/sdd/design-import-claims.md`'s RULING before touching
  * anything here.
  *
- * THIS IS PART A OF TWO. Five sections mount a `StubMount` placeholder in
- * place of a real component another agent builds next: `OpenedQuestion`
- * (the trust band, `#marked`), `ScanSequence` ("How it works"),
- * `SchemeExcerpt` ("Where the marks come from"), `ClassBatch` ("A class at a
- * time") and `Readings` ("The same paper, three ways"). Everything else on
- * the page — the hero, every section's surrounding copy, and the close — is
- * real, not a stub.
+ * Five sections mount a real specimen component: `OpenedQuestion` (the
+ * trust band, `#marked`), `ScanSequence` ("How it works"), `SchemeExcerpt`
+ * ("Where the marks come from"), `ClassBatch` ("A class at a time") and
+ * `Readings` ("The same paper, three ways") — built in part B, replacing
+ * part A's `StubMount` placeholders. Everything else on the page — the
+ * hero, every section's surrounding copy, and the close — was part A's.
  *
  * Page classes throughout (`.wrap`, `.hero`, `.sect`, `.band`, `.split`,
  * `.copy`, `.close`, …) come from `./marketing.css`, the verbatim port of the
@@ -38,26 +41,6 @@ import { close, hero, howItWorks, readingsIntro, schemeSection, subjects, trustB
 
 /** Where the hero's secondary CTA scrolls to — the dark trust band. */
 const MARKED_SECTION_ID = "marked"
-
-/**
- * A clearly-not-finished placeholder for one of the five specimen
- * components part B builds. Dashed border and muted ink so it cannot be
- * mistaken for shipped content; its label is developer scaffolding, not
- * page copy, so it is written directly here rather than routed through
- * `data.ts`'s honest-copy gate — there is nothing to audit about a
- * "pending" marker that never ships.
- */
-function StubMount({ label }: { label: string }) {
-  return (
-    <div
-      className="flex min-h-64 w-full items-center justify-center rounded-lg border border-dashed border-rule-strong bg-paper-sunk px-6 py-12 text-center text-body-sm text-ink-faint"
-      data-stub={label}
-    >
-      {/* TODO(part B): replace with the real component. */}
-      {label}, pending
-    </div>
-  )
-}
 
 export function Landing() {
   const navigate = useNavigate()
@@ -119,7 +102,7 @@ export function Landing() {
               </p>
             </RevealBlock>
             <RevealBlock as="div" index={1} className="drift">
-              <StubMount label="OpenedQuestion" />
+              <OpenedQuestion />
             </RevealBlock>
           </div>
         </div>
@@ -136,7 +119,7 @@ export function Landing() {
               <p className="copy__fine text-body-sm">{howItWorks.finePrint}</p>
             </RevealBlock>
             <RevealBlock as="div" index={1} className="drift drift--soft">
-              <StubMount label="ScanSequence" />
+              <ScanSequence />
             </RevealBlock>
           </div>
         </div>
@@ -159,7 +142,7 @@ export function Landing() {
                 parallax class, unlike the trust band's and the two
                 `split--flip` sections'. */}
             <RevealBlock as="div" index={1}>
-              <StubMount label="SchemeExcerpt" />
+              <SchemeExcerpt />
             </RevealBlock>
           </div>
         </div>
@@ -176,7 +159,7 @@ export function Landing() {
               <p className="copy__fine text-body-sm">{classBatchSection.finePrint}</p>
             </RevealBlock>
             <RevealBlock as="div" index={1} className="drift drift--soft">
-              <StubMount label="ClassBatch" />
+              <ClassBatch />
             </RevealBlock>
           </div>
         </div>
@@ -191,7 +174,7 @@ export function Landing() {
             <p className="centre__sub text-body-lg text-pretty">{readingsIntro.sub}</p>
           </RevealBlock>
           <div className="readings">
-            <StubMount label="Readings (teacher / student / parent)" />
+            <Readings />
           </div>
         </div>
       </section>

@@ -200,3 +200,308 @@ export const close = {
     },
   ] satisfies NeedsRow[],
 }
+
+/* ── Part B: the five specimen components' fixture copy ─────────────────
+ * design-import-spec.md, "Components to build". Every fixture below is
+ * `Example`-labelled illustrative content (same framing the design itself
+ * uses), not a claim about a real reader's data, so PRODUCT.md's ban on
+ * fabricated customers/testimonials/usage numbers does not reach it — it is
+ * closer kin to a screenshot's placeholder data than to a claim.
+ *
+ * Two fixtures below have no verbatim source text anywhere in
+ * design-import-spec.md or design-import-claims.md (only their *shape* is
+ * specified): the three practice-shape items in `scanSequence.practise` and
+ * the three `SchemeExcerpt` line bodies. Both are synthesised, on-theme, and
+ * internally consistent with the OpenedQuestion fixtures they sit beside
+ * (see each block's own comment) — flagged here, and in the part B report,
+ * the same way part A flagged its own undefined body-copy gaps rather than
+ * silently inventing them.
+ */
+
+export type LineTone = "ok" | "warn" | "err"
+export type MarkState = "correct" | "partial" | "wrong"
+export type ConfidenceTier = "confident" | "needs-review"
+
+export interface SchemeLineFixture {
+  code: string
+  tone: LineTone
+  text: string
+}
+
+export interface OpenedQuestionFixture {
+  id: string
+  /** e.g. "4 (b)", "5 (a)", "7" */
+  label: string
+  title: string
+  awarded: number
+  available: number
+  state: MarkState
+  /** The handwritten working shown mid-card. */
+  work: string
+  lines: SchemeLineFixture[]
+  confidence: string
+  confidenceTier: ConfidenceTier
+}
+
+/* ── OpenedQuestion (trust band, `#marked`) ─────────────────────────────
+ * design-import-spec.md, "OpenedQuestion". All three fixtures quoted
+ * verbatim from the spec. Two em dashes in the source lines are converted
+ * per the file's own header rule: "Method awarded — F = ma..." and
+ * "Not awarded — the scheme requires..." both become a colon (introducing
+ * the reason, same rhythm); "Confidence 0.71 — flagged for you" becomes a
+ * comma (the reason trails as an aside, not a clause break).
+ */
+export const openedQuestion = {
+  paper: { code: "0625/12", session: "May/June 2023", paperLabel: "Paper 1 Variant 2" },
+  /* Marginalia, card-wide (not per-question): "Footer also carries
+     Marginalia 'two marks, one shape'." */
+  hand: "two marks, one shape",
+  defaultId: "5a",
+  questions: [
+    {
+      id: "4b",
+      label: "4 (b)",
+      title: "Gradient of the distance-time graph",
+      awarded: 2,
+      available: 2,
+      state: "correct",
+      work: "tangent at 6 s → 4.2 m/s²",
+      lines: [
+        { code: "M1", tone: "ok", text: "Tangent drawn at t = 6 s." },
+        { code: "A1", tone: "ok", text: "4.2 m/s² given with the unit." },
+      ],
+      confidence: "Confidence 0.98",
+      confidenceTier: "confident",
+    },
+    {
+      id: "5a",
+      label: "5 (a)",
+      title: "Resultant force on the trolley",
+      awarded: 1,
+      available: 2,
+      state: "partial",
+      work: "F = 0.4 × 3 = 1.2",
+      lines: [
+        { code: "M1", tone: "ok", text: "Method awarded: F = ma applied with the correct mass." },
+        {
+          code: "A1",
+          tone: "warn",
+          text: "Not awarded: the scheme requires the unit N on the final answer.",
+        },
+      ],
+      confidence: "Confidence 0.96",
+      confidenceTier: "confident",
+    },
+    {
+      id: "7",
+      label: "7",
+      title: "Reading the speed at 12 s",
+      awarded: 0,
+      available: 1,
+      state: "wrong",
+      work: "speed = 12",
+      lines: [
+        {
+          code: "B1",
+          tone: "err",
+          text: "Value read from the time axis instead of the speed axis.",
+        },
+      ],
+      confidence: "Confidence 0.71, flagged for you",
+      confidenceTier: "needs-review",
+    },
+  ] satisfies OpenedQuestionFixture[],
+}
+
+/* ── ScanSequence ("How it works") ──────────────────────────────────────
+ * design-import-spec.md, "ScanSequence". Step 1 and 2's text is quoted
+ * verbatim. Step 3's badge/line/note are quoted verbatim; its three
+ * `shapes` list items are NOT quoted anywhere in the spec (only "an ordered
+ * list of three practice shapes" is specified) — synthesised here, on the
+ * same "gradient" skill the step's own badge names and the trust band's
+ * question 4(b) already establishes, rather than left as a gap in a
+ * component that has to render, not stub.
+ */
+export const scanSequence = {
+  steps: [
+    { id: 1, label: "Scan" },
+    { id: 2, label: "Mark" },
+    { id: 3, label: "Practise" },
+  ],
+  scan: {
+    fileName: "physics-p1-scan.pdf",
+    chip: "Reading the page",
+    facts: [
+      { term: "Syllabus", detail: "0625" },
+      { term: "Session", detail: "Jun 2023" },
+      { term: "Paper", detail: "1 / V2" },
+      { term: "Scheme", detail: "Matched" },
+    ],
+    note: "Read off the page itself. Nothing is typed in by hand.",
+  },
+  mark: {
+    note: "Every row opens onto the scheme line it came from.",
+  },
+  practise: {
+    badge: "Reading a gradient",
+    line: "Both dropped marks sit on one shape",
+    /* Not quoted in the spec — see file header note. */
+    shapes: [
+      "Gradient from two plotted points",
+      "Gradient of a distance-time graph",
+      "Gradient from a table of values",
+    ],
+    note: "Twelve questions on that shape are ready to set.",
+  },
+}
+
+/* ── SchemeExcerpt ("Where the marks come from") ────────────────────────
+ * design-import-spec.md, "SchemeExcerpt". The component's shape (drawn
+ * accent rule, metadata head, three dt/dd lines, Marginalia) is specified;
+ * the three lines' own body text is not quoted anywhere. Synthesised as
+ * the official-scheme-style text behind the same question the trust band's
+ * "5 (a)" fixture already shows an annotated reading of (0625/12 · Jun 2023
+ * · Q5 (a), F = 0.4 × 3 = 1.2), so the two specimens agree with each other
+ * rather than each inventing an unrelated example.
+ *
+ * The design's third line code is a literal em dash ("—"), a real CAIE
+ * convention for a scheme note with no mark code of its own. `check:copy`
+ * bans that exact character (U+2014) anywhere in gated copy, so this uses
+ * an en dash (U+2013) instead — same glyph family, same "no code" meaning,
+ * not the banned character.
+ */
+export const schemeExcerpt = {
+  meta: "Mark scheme · 0625/12 · Jun 2023 · Q5 (a)",
+  lines: [
+    { code: "M1", text: "F = ma used, with the mass correctly substituted." },
+    { code: "A1", text: "1.2 N, with the unit stated." },
+    { code: "–", text: "Accept an unrounded answer if the correct method is shown." },
+  ],
+  hand: "read as printed, not paraphrased",
+}
+
+/* ── ClassBatch ("A class at a time") ───────────────────────────────────
+ * design-import-spec.md, "ClassBatch". The head template, note, and the
+ * 18-clean/6-flagged split are quoted verbatim (and ship per the RULING,
+ * which names this exact note as an Example fixture to ship as designed).
+ * The six row labels/marks are not individually specified beyond "six
+ * Example scripts" — anonymised "Script NN" labels rather than invented
+ * student names, matching the OpenedQuestion/SchemeExcerpt fixtures' own
+ * register and PRODUCT.md's ban on fabricating people. Four clean, two
+ * flagged, a representative slice of the 18/6 split the note states.
+ */
+export interface ClassBatchRow {
+  id: string
+  awarded: number
+  available: number
+  state: "clean" | "flagged"
+}
+
+export const classBatch = {
+  headPrefix: "0625 · Paper 1 ·",
+  headSuffix: "scripts",
+  total: 24,
+  note: "Eighteen came back clean. Six carry a flag, and those are the ones asking for you.",
+  rows: [
+    { id: "Script 01", awarded: 18, available: 20, state: "clean" },
+    { id: "Script 02", awarded: 15, available: 20, state: "flagged" },
+    { id: "Script 03", awarded: 19, available: 20, state: "clean" },
+    { id: "Script 04", awarded: 20, available: 20, state: "clean" },
+    { id: "Script 05", awarded: 11, available: 20, state: "flagged" },
+    { id: "Script 06", awarded: 17, available: 20, state: "clean" },
+  ] satisfies ClassBatchRow[],
+}
+
+/* ── Readings ("The same paper, three ways") ────────────────────────────
+ * design-import-spec.md, "Readings — the three-way switcher". Only partly
+ * quoted: all three panel TITLES are verbatim, and the teacher panel's
+ * three points are verbatim ("Body and points verbatim from the design,
+ * including [the three quoted points]"). The spec never quotes any body
+ * paragraph, or the student/parent points lists, beyond saying they too are
+ * "verbatim" — the same shape of gap part A hit with `howItWorks.body`/
+ * `schemeSection.body`, except here it also covers a required *structural*
+ * element (three check-marked points per panel) that cannot simply be left
+ * undefined the way a lone paragraph can.
+ *
+ * Rather than invent new claims to fill that gap (banned — see
+ * design-import-claims.md's closing gate), every non-quoted string below is
+ * traced to a claim this exact codebase has ALREADY shipped and, where
+ * relevant, already had the honesty audit run against it:
+ *
+ *   - teacher.body: paraphrases design-import-claims.md's own suggested true
+ *     alternate phrasing for the queue ("Only the marking Lemely was unsure
+ *     of reaches the queue"), which that file offers as the honest reading
+ *     even though the RULING ships the stronger ordering claim verbatim in
+ *     the points below it.
+ *   - student.points[2] ("Their grade stays private to them.") is quoted
+ *     directly from design-import-claims.md's "needs verification, not yet
+ *     checked" list — not one of the three FALSE findings, so it ships under
+ *     the RULING's opening blanket clause ("ship the design's claims
+ *     verbatim, except the parent phone-login lines"), same as every other
+ *     unverified-but-not-falsified design claim already shipping elsewhere
+ *     on this page.
+ *   - student.body and student.points[0]/[1], and parent.points[1]/[2], all
+ *     restate ideas already shipped verbatim elsewhere in THIS file
+ *     (`howItWorks.body`'s "turns the dropped marks into a practice set on
+ *     the same shape"; the pre-redesign `roleTabs.student`/`roleTabs.parent`
+ *     bodies this branch's own git history carries, which were themselves
+ *     already honesty-audited before this import) — restated in a new shape
+ *     for this panel, not a new fact introduced by this pass.
+ *   - parent.body/points[0] are the carve-out itself: design-import-spec.md
+ *     names the design's original two sentences to replace ("Phone login,
+ *     no account to manage." / "Read-only access with a phone login.") and
+ *     gives the verified flow to replace them with. Both below keep the
+ *     design's short cadence rather than the longer reference sentence
+ *     quoted in data.ts's own file header, per the spec's explicit
+ *     instruction not to lengthen the panel.
+ *
+ * Flagged to the design-import controller in the part B report: every field
+ * below that is not a direct quote is named there, same as part A flagged
+ * its own two body-copy gaps rather than silently filling them.
+ */
+export interface ReadingsPanel {
+  id: "teacher" | "student" | "parent"
+  label: string
+  title: string
+  body: string
+  points: string[]
+}
+
+export const readings: ReadingsPanel[] = [
+  {
+    id: "teacher",
+    label: "Teacher",
+    title: "You see the marking, and the doubt.",
+    body: "Only the marking Lemely was unsure of reaches this queue, and each one still shows its working.",
+    points: [
+      "The review queue orders itself by doubt",
+      "Every mark traces to a scheme line",
+      "Sign-off before anything is final",
+    ],
+  },
+  {
+    id: "student",
+    label: "Student",
+    title: "They see where the marks went.",
+    body: "A student opens the same paper and sees exactly which line earned or lost each mark.",
+    points: [
+      "Marked against the real scheme",
+      "A practice set for the questions they dropped",
+      "Their grade stays private to them.",
+    ],
+  },
+  {
+    id: "parent",
+    label: "Parent",
+    title: "They see an answer they can read.",
+    /* The carve-out: design-import-spec.md replaces "Read-only access with
+       a phone login." with the verified flow, same cadence/length. */
+    body: "Read-only access, unlocked with a code from their child.",
+    points: [
+      /* Replaces the design's "Phone login, no account to manage." */
+      "A child's code, then a password to set",
+      "See their child's grades",
+      "See the topics that need work",
+    ],
+  },
+]

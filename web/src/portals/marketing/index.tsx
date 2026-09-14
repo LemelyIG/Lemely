@@ -159,7 +159,13 @@ export function MarketingFrame({ children }: { children: React.ReactNode }) {
                 in a new tab, and a `<button onClick={navigate}>` takes that
                 away), styled to match the kit exactly.
               */}
-              <Link to="/signup" className={cn(buttonVariants({ variant: "primary", size: "sm" }))}>
+              {/* `nav__cta`: scopes `.nav__links a`'s muted-ink colour rule
+                  (marketing.css) away from this one link — see that rule's
+                  own comment for the contrast bug it fixes. */}
+              <Link
+                to="/signup"
+                className={cn(buttonVariants({ variant: "primary", size: "sm" }), "nav__cta")}
+              >
                 Get started
               </Link>
             </nav>

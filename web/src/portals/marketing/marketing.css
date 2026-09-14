@@ -112,7 +112,17 @@
 .brand--sm img{width:20px;height:20px}
 .brand--sm span{font-family:var(--font-sans);font-size:var(--fs-body-sm);color:var(--ink-muted)}
 .nav__links{display:flex;align-items:center;gap:var(--space-6)}
-.nav__links a{color:var(--ink-muted);font-size:var(--fs-label);font-weight:500;text-decoration:none}
+/* :not(.nav__cta) is the one deviation from the verbatim port in this file:
+ * the design's generic "every link in .nav__links is muted ink" rule (class +
+ * element selector, specificity 0,1,1) was overriding the "Get started"
+ * button's own `text-accent-on` Tailwind utility (specificity 0,1,0),
+ * repainting its label in the muted-ink tone on the coral accent fill, a
+ * 1.4:1 contrast ratio, an axe `color-contrast` failure against WCAG's
+ * 4.5:1 floor. The
+ * `.nav__cta` class (added in index.tsx to that one Link) scopes the muted
+ * colour back to the plain "Log in"/"Parents" text links it was written for,
+ * leaving the design's chosen colours for both unchanged. */
+.nav__links a:not(.nav__cta){color:var(--ink-muted);font-size:var(--fs-label);font-weight:500;text-decoration:none}
 .nav__links a:hover{color:var(--ink)}
 
 /* hero */
