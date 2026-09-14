@@ -97,6 +97,32 @@ describe("lib/utils.ts and index.css agree in both directions", () => {
 })
 
 /*
+ * Task C5a (Phase C, dark ladder). `index.css` now carries a second token
+ * block, `:root[data-theme="dark"]`, redefining every literal-value colour
+ * token the light `:root` block declares. `cssBlock` bounds a selector to its
+ * own braces (depth-matched, not "up to the next `}`") so parsing one block
+ * never picks up the other's declarations — the two blocks share every
+ * property NAME, so an unscoped regex would silently prefer whichever
+ * occurrence its match order landed on.
+ */
+const LIGHT_SELECTOR = ":root {"
+const DARK_SELECTOR = ':root[data-theme="dark"] {'
+
+function cssBlock(selector: string): string {
+  const start = css.indexOf(selector)
+  if (start === -1) throw new Error(`${selector} not found in index.css`)
+  const bodyStart = css.indexOf("{", start) + 1
+  let depth = 1
+  let i = bodyStart
+  while (depth > 0) {
+    if (css[i] === "{") depth++
+    else if (css[i] === "}") depth--
+    i++
+  }
+  return css.slice(bodyStart, i - 1)
+}
+
+/*
  * Packet A3 (audit-dossier remediation). `--info` and `--info-wash` were
  * pinned at hue 240/235 — identical to `--pastel-sky-ink`'s hue (240) and
  * `--focus-ring`'s hue (240), and `--info-wash` literally identical to
@@ -106,8 +132,14 @@ describe("lib/utils.ts and index.css agree in both directions", () => {
  * notice banner painted in either is a false subject/focus cue. Hue-only
  * check: lightness/chroma already carry the measured AA contrast
  * (`tests/test_design_tokens.py`), which a hue change alone does not disturb.
+ *
+ * Task C5a: run against both the light AND dark blocks, so the guarantee
+ * carries over to the theme swap instead of being proven for light only.
  */
-describe("--info does not collide with a subject pastel or --focus-ring", () => {
+describe.each([
+  ["light", LIGHT_SELECTOR],
+  ["dark", DARK_SELECTOR],
+] as const)("--info does not collide with a subject pastel or --focus-ring (%s)", (theme, selector) => {
   const HUE_TOKENS = [
     "pastel-rose",
     "pastel-rose-ink",
@@ -124,28 +156,58 @@ describe("--info does not collide with a subject pastel or --focus-ring", () => 
     "focus-ring",
   ]
 
+  const block = cssBlock(selector)
+
   function hueOf(name: string): number {
-    const match = css.match(new RegExp(`--${name}:\\s*oklch\\(\\s*[\\d.]+\\s+[\\d.]+\\s+([\\d.]+)\\s*\\)`))
-    if (!match) throw new Error(`--${name} not found in index.css`)
+    const match = block.match(new RegExp(`--${name}:\\s*oklch\\(\\s*[\\d.]+\\s+[\\d.]+\\s+([\\d.]+)\\s*\\)`))
+    if (!match) throw new Error(`--${name} not found in the ${theme} block of index.css`)
     return Number(match[1])
   }
 
-  it("finds --info in index.css", () => {
+  it(`[${theme}] finds --info in index.css`, () => {
     expect(() => hueOf("info")).not.toThrow()
   })
 
-  it("--info's hue is not identical to any subject pastel or --focus-ring", () => {
+  it(`[${theme}] --info's hue is not identical to any subject pastel or --focus-ring`, () => {
     const infoHue = hueOf("info")
     for (const name of HUE_TOKENS) {
-      expect(hueOf(name), `--info hue ${infoHue} collides with --${name}`).not.toBe(infoHue)
+      expect(hueOf(name), `[${theme}] --info hue ${infoHue} collides with --${name}`).not.toBe(infoHue)
     }
   })
 
-  it("--info-wash's hue is not identical to any subject pastel", () => {
+  it(`[${theme}] --info-wash's hue is not identical to any subject pastel`, () => {
     const washHue = hueOf("info-wash")
     for (const name of HUE_TOKENS) {
-      expect(hueOf(name), `--info-wash hue ${washHue} collides with --${name}`).not.toBe(washHue)
+      expect(hueOf(name), `[${theme}] --info-wash hue ${washHue} collides with --${name}`).not.toBe(washHue)
     }
+  })
+})
+
+/*
+ * Task C5a: the dark block is a token swap, not a partial one. Every
+ * literal-value colour token declared as a plain 3-component `oklch(L C H)`
+ * triple (which excludes the `var()`-aliasing tokens like
+ * `--grade-*`/`--mark-*` on both sides equally, AND excludes `--scrim`,
+ * whose light-only `oklch(L C H / alpha)` form is deliberately not part of
+ * this ladder — see the note above `:root[data-theme="dark"]` in index.css)
+ * the light block declares must reappear in the dark block, and vice versa.
+ * Same shape as `tests/test_design_tokens.py::css_root_tokens`'s regex, so
+ * the two languages' notions of "a token" agree.
+ */
+describe("the dark ladder declares the same oklch() token names as light", () => {
+  function declaredOklchNames(block: string): Set<string> {
+    return new Set(
+      [...block.matchAll(/--([a-z0-9-]+):\s*oklch\(\s*[\d.]+\s+[\d.]+\s+[\d.]+\s*\)\s*;/g)].map((m) => m[1]),
+    )
+  }
+
+  it("light and dark token-name sets are identical", () => {
+    const light = declaredOklchNames(cssBlock(LIGHT_SELECTOR))
+    const dark = declaredOklchNames(cssBlock(DARK_SELECTOR))
+    const missingFromDark = [...light].filter((name) => !dark.has(name)).sort()
+    const extraInDark = [...dark].filter((name) => !light.has(name)).sort()
+    expect(missingFromDark, `declared in light but not redefined in dark: ${missingFromDark.join(", ")}`).toEqual([])
+    expect(extraInDark, `declared in dark but not present in light: ${extraInDark.join(", ")}`).toEqual([])
   })
 })
 

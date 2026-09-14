@@ -301,7 +301,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 281 | `x-copy-error-state-canvas-gap` | ui | low |  |  | no-action | production already better |
 | 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | done C4 | `npx vitest run tests/unit/ciCopyGate.test.ts` — `npm run check:copy` (0 findings) now runs in `.github/workflows/ci.yml`'s web job, not just locally/on demand |
 | 283 | `x-dark-nav-badge-raw-white` | ui | low | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
-| 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | pending |  |
+| 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | done C5 | `pytest --no-cov tests/test_design_tokens.py` (215 pass) + `npx vitest run tests/unit/design-tokens.test.ts` (196 pass) — `:root[data-theme="dark"]` in `index.css` redefines every literal-value colour token the light `:root` block declares (paper/ink/rule/accent/pastel/semantic/focus-ring); `--grade-*`/`--mark-*`/`--confidence-*`/`--subject-*`, the `--bg`/`--surface`/`--t1` compat layer, and `@theme inline` are untouched `var()` aliases that repaint automatically. Zero component/`.tsx` changes — `git diff --stat` touches only `index.css`, both test files, and `DESIGN.md`. |
 | 285 | `x-density-canvas-knob-is-decorative` | ui | low |  |  | no-action | dossier: no production change |
 | 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/tableDensity.test.ts` — `table.tsx`'s `CELL_PADDING.operate` codifies the `px-4 py-2.5` rhythm via a `density` prop + `TableDensityContext` |
 | 287 | `x-ia-navshells-unused-abstraction` | ui | low | B | B3 | done 2a503cd6 | `npx vitest run tests/unit/navShells.test.ts` — `BottomNav`/`SidebarNav` render through `NavShellItem`'s `NavLink` wiring in all three portals; no longer an unused abstraction |
@@ -315,7 +315,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 295 | `x-motion-canvas-static-production-elaborate` | ui | low |  |  | no-action | production already better |
 | 296 | `x-motion-progress-ring-no-production-equivalent` | ui | low | C | C1 | done C2 | `npx vitest run tests/unit/progressRing.test.ts` — `ProgressRing` ships in production on `Grading.tsx`, with no `stroke-dasharray` transition per DESIGN.md §9.2 |
 | 297 | `x-tokens-canvas-honey-hierarchy-inversion` | ui | low |  |  | no-action | dossier: no production change |
-| 298 | `x-tokens-dark-theme-deferred` | ui | low | C | C5 | pending |  |
+| 298 | `x-tokens-dark-theme-deferred` | ui | low | C | C5 | done C5 | `pytest --no-cov tests/test_design_tokens.py` (215 pass) — dark ladder AA-measured against every guarantee the light ladder makes (paper/pastel/tinted-fill matrix, `--accent-on` decision, §3.6 greyscale ladder ascending instead of descending); DESIGN.md §3.10 is the transcribed record. `x-dark-deliberately-deferred` and `x-a11y-dark-theme-exploration-correctly-unshipped` stay `pending` — the toggle and captures (Task 13/14) are what close those. |
 | 299 | `x-type-canvas-italic-heading` | ui | low |  |  | skipped | skip: italic hero heading not adopted |
 | 300 | `x-type-scale-discipline` | ui | low |  |  | no-action | production already better |
 | 301 | `x-type-tabular-nums-scope` | ui | low |  |  | no-action | dossier: no production change |
