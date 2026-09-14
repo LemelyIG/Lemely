@@ -1,5 +1,5 @@
 import type { ActivityEvent } from "./types"
-import { clearSession, getSession, markSessionExpired, setSession } from "./auth/storage"
+import { endSession, getSession, markSessionExpired, setSession } from "./auth/storage"
 import { isTokenExpired } from "./auth/jwt"
 import { parseRetryAfter } from "./routeError"
 
@@ -155,8 +155,14 @@ async function refreshSession(): Promise<string | null> {
     // `loginPathForRole` resolves the right sign-in screen for whichever
     // role this reader was, and only the dying session still knows which
     // one that is once it's cleared.
+    //
+    // `endSession`, not the bare `clearSession` this used to call directly
+    // (H1/H2, security review): a refused refresh is a session ending just
+    // as completely as a deliberate sign-out, so it must drop the persisted
+    // query cache and the offline upload queue too, not just the session
+    // object — see `endSession`'s own doc comment (`auth/storage.ts`).
     const role = getSession()?.role
-    clearSession()
+    endSession()
     markSessionExpired(role)
   }
   return null

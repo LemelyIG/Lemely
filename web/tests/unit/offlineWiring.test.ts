@@ -53,10 +53,28 @@ describe("CorrectPaper.tsx — offline enqueue and queued banner", () => {
   })
 })
 
-describe("AuthContext.tsx — sign-out clears the offline upload queue", () => {
+describe("AuthContext.tsx — sign-out ends the session completely (H1/H2)", () => {
   const source = read("src/lib/auth/AuthContext.tsx")
 
-  it("calls clearUploadQueue", () => {
-    expect(source).toMatch(/clearUploadQueue\(/)
+  // H1/H2 (security review): `logout` used to call `clearSession()` plus its
+  // own direct `clearUploadQueue()` — the offline upload queue's clearing
+  // duplicated here, and the persisted query cache never cleared at all.
+  // `endSession` (`auth/storage.ts`) now owns both, alongside
+  // `RequireAuth.tsx`'s stranded-session redirect and `api.ts`'s refused
+  // silent refresh — see `endSession`'s own doc comment for the full guard.
+  it("calls endSession, not a bare clearSession or a direct clearUploadQueue", () => {
+    expect(source).toMatch(/endSession\(/)
+    expect(source).not.toMatch(/clearSession\(/)
+    expect(source).not.toMatch(/clearUploadQueue\(/)
+  })
+})
+
+describe("storage.ts — endSession clears every session-scoped cache (H1/H2)", () => {
+  const source = read("src/lib/auth/storage.ts")
+
+  it("wires its default caches to the real query client, persister and upload queue", () => {
+    expect(source).toMatch(/queryClient\.clear\(\)/)
+    expect(source).toMatch(/persister\.removeClient\(\)/)
+    expect(source).toMatch(/clearUploadQueue,/)
   })
 })
