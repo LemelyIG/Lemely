@@ -12,9 +12,10 @@ import { stripComments } from "./support/jsxSource"
  *
  * Task 3 (C2a) covers `Review.tsx` and `ClassRoster.tsx`. Task 4 (C2b)
  * extends `FILES` below with `StudentDetail.tsx`, `AtRiskList.tsx`,
- * `ClassAnalytics.tsx`, `Classes.tsx`, and `MarkSchemes.tsx` — the array
- * shape is what makes that extension a one-line addition per file rather
- * than a new describe block.
+ * `ClassAnalytics.tsx`, `Classes.tsx`, `MarkSchemes.tsx`, and the real-count
+ * correction's `QuizResults.tsx`/`Quizzes.tsx` — the array shape is what
+ * makes that extension a one-line addition per file rather than a new
+ * describe block.
  */
 
 const ROOT = path.join(import.meta.dirname, "..", "..")
@@ -36,6 +37,21 @@ const FILES: FileCheck[] = [
   },
   {
     file: "ClassRoster.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
+  {
+    file: "StudentDetail.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
+  {
+    file: "AtRiskList.tsx",
+    mustContain: ['<Table density="operate"'],
+    mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
+  },
+  {
+    file: "Classes.tsx",
     mustContain: ['<Table density="operate"'],
     mustNotContain: ["<table", "px-[16px]", "py-[10px]"],
   },

@@ -9,6 +9,7 @@ import { QueryState } from "@/components/ui/query-state"
 import { cn, relativeTime } from "@/lib/utils"
 import { Select } from "@/components/ui/select"
 import { Textarea } from "@/components/ui/textarea"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
@@ -364,90 +365,86 @@ export function AtRiskList() {
                 }
               />
             ) : (
-              <div
-                className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+              <Table density="operate"
                 tabIndex={0}
                 role="region"
                 aria-label="At-risk students, scrollable horizontally"
               >
-                <table className="w-full text-body-md border-collapse">
-                  <caption className="sr-only">
-                    Flagged students across your classes, sortable by every column. Severity mirrors
-                    the order this list already arrives in from the server: most flags, then worst
-                    grade, first.
-                  </caption>
-                  <thead>
-                    <tr className="bg-paper-sunk border-b border-rule">
-                      {COLUMNS.map((col) => {
-                        const active = col.key === sortColumn
-                        return (
-                          <th
-                            key={col.key}
-                            scope="col"
-                            aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
-                            className="text-start px-4 py-2.5 align-bottom"
+                <caption className="sr-only">
+                  Flagged students across your classes, sortable by every column. Severity mirrors
+                  the order this list already arrives in from the server: most flags, then worst
+                  grade, first.
+                </caption>
+                <THead>
+                  <TR>
+                    {COLUMNS.map((col) => {
+                      const active = col.key === sortColumn
+                      return (
+                        <TH
+                          key={col.key}
+                          aria-sort={active ? (sortDir === 1 ? "ascending" : "descending") : "none"}
+                          className="align-bottom"
+                        >
+                          <button
+                            type="button"
+                            onClick={() => toggleSort(col.key)}
+                            className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
                           >
-                            <button
-                              type="button"
-                              onClick={() => toggleSort(col.key)}
-                              className="inline-flex items-center gap-1 text-eyebrow text-ink-faint transition-colors hover:text-ink cursor-pointer bg-transparent border-0 p-0 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                            >
-                              {col.label}
-                              {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
-                            </button>
-                          </th>
-                        )
-                      })}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {students.map((s) => (
-                      <tr key={s.studentId} className="border-b border-rule last:border-b-0 align-top">
-                        <td className="px-4 py-3.5">
-                          <div className="flex items-center gap-2.5">
-                            <Avatar name={s.displayName} size="sm" />
-                            <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
-                              {s.displayName}
-                            </Link>
-                          </div>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <Link
-                            to={`/teacher/classes/${s.classId}`}
-                            className="text-ink-muted transition-colors hover:text-ink hover:underline"
-                          >
-                            {s.className}
+                            {col.label}
+                            {active ? <SortArrow direction={sortDir === 1 ? "asc" : "desc"} /> : null}
+                          </button>
+                        </TH>
+                      )
+                    })}
+                  </TR>
+                </THead>
+                <TBody>
+                  {students.map((s) => (
+                    <TR key={s.studentId} className="align-top">
+                      <TD>
+                        <div className="flex items-center gap-2.5">
+                          <Avatar name={s.displayName} size="sm" />
+                          <Link to={`/teacher/students/${s.studentId}`} className="text-ink hover:underline">
+                            {s.displayName}
                           </Link>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          {s.grade ? (
-                            // `AtRiskListEntryDTO.grade` is the student's latest
-                            // recorded grade — the same underlying value as
-                            // `StudentRowDTO.grade` (T-03) and
-                            // `SubjectPredictionDTO.predictedGrade` (T-05), both of
-                            // which render `basis="predicted"` for exactly this
-                            // reason (their own docstrings: "the same domain
-                            // notion... already uses for its below-target rule").
-                            // Matching that here, not `"achieved"` — the same
-                            // value must never read differently on two screens.
-                            <GradeBadge grade={s.grade} size="inline" basis="predicted" />
-                          ) : (
-                            <span className="text-body-sm text-ink-faint">No paper grade yet</span>
-                          )}
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
-                            {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
-                          </div>
-                        </td>
-                        <td className="px-4 py-3.5">
-                          <FlagsCell studentId={s.studentId} flags={s.flags} />
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
+                        </div>
+                      </TD>
+                      <TD>
+                        <Link
+                          to={`/teacher/classes/${s.classId}`}
+                          className="text-ink-muted transition-colors hover:text-ink hover:underline"
+                        >
+                          {s.className}
+                        </Link>
+                      </TD>
+                      <TD>
+                        {s.grade ? (
+                          // `AtRiskListEntryDTO.grade` is the student's latest
+                          // recorded grade — the same underlying value as
+                          // `StudentRowDTO.grade` (T-03) and
+                          // `SubjectPredictionDTO.predictedGrade` (T-05), both of
+                          // which render `basis="predicted"` for exactly this
+                          // reason (their own docstrings: "the same domain
+                          // notion... already uses for its below-target rule").
+                          // Matching that here, not `"achieved"` — the same
+                          // value must never read differently on two screens.
+                          <GradeBadge grade={s.grade} size="inline" basis="predicted" />
+                        ) : (
+                          <span className="text-body-sm text-ink-faint">No paper grade yet</span>
+                        )}
+                      </TD>
+                      <TD>
+                        <div className={cn("text-data-md", s.flags.length >= 2 ? "text-err" : "text-ink-muted")}>
+                          {s.flags.length} flag{s.flags.length === 1 ? "" : "s"}
+                        </div>
+                      </TD>
+                      <TD>
+                        <FlagsCell studentId={s.studentId} flags={s.flags} />
+                      </TD>
+                    </TR>
+                  ))}
+                </TBody>
+              </Table>
             )}
             </>
           )
