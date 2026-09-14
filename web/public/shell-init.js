@@ -8,6 +8,55 @@
  * it paints.
  */
 ;(function () {
+  // Theme preference (C5b). Resolves and paints the theme BEFORE the shell
+  // markup below is parsed, so a cold load in dark mode never flashes light
+  // first — the same "runs early, parser-blocking, no defer/async" timing
+  // the `data-shell` setter below relies on. Wrapped in its own try/catch,
+  // separate from the click-handler block below: `localStorage` throws in
+  // some contexts (private browsing, storage disabled by policy), and a
+  // theme-resolution failure here must never stop `data-shell` from being
+  // set afterwards.
+  try {
+    var storedTheme = null
+    try {
+      storedTheme = localStorage.getItem("lemely.theme")
+    } catch (storageError) {
+      storedTheme = null
+    }
+    var prefersDark = false
+    try {
+      prefersDark = !!(window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches)
+    } catch (mediaError) {
+      prefersDark = false
+    }
+    // Same three-way table as `src/lib/theme/theme.ts`'s `resolveTheme` —
+    // this file cannot import that module (it runs before any bundle
+    // exists), so the table is duplicated here in plain ES5;
+    // `tests/unit/themeInit.test.ts` pins the two against each other.
+    var resolvedTheme
+    if (storedTheme === "light") {
+      resolvedTheme = "light"
+    } else if (storedTheme === "dark") {
+      resolvedTheme = "dark"
+    } else {
+      resolvedTheme = prefersDark ? "dark" : "light"
+    }
+    document.documentElement.dataset.theme = resolvedTheme
+    var themeMeta = document.querySelector('meta[name="theme-color"]')
+    if (themeMeta) {
+      var resolvedColor =
+        resolvedTheme === "dark"
+          ? themeMeta.getAttribute("data-theme-dark")
+          : themeMeta.getAttribute("data-theme-light")
+      if (resolvedColor) {
+        themeMeta.setAttribute("content", resolvedColor)
+      }
+    }
+  } catch (themeError) {
+    // Never let a theme-resolution failure block the data-shell setter
+    // below — worst case the shell paints in the light ladder.
+  }
+
   // Sets `data-shell="portal"` on `#root` before the shell markup is parsed,
   // so the browser never paints the portal chrome skeleton and then has to
   // hide it again for a non-portal path. Portal prefixes read off

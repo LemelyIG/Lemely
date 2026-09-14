@@ -36,6 +36,18 @@ const COLOR_PLACEHOLDERS = [
   "%LEMELY_COLOR_ACCENT%",
 ]
 
+// Task 13 (C5b): the dark counterpart of every COLOR_PLACEHOLDERS entry
+// except %LEMELY_COLOR_ACCENT% (which, per that entry's own comment above,
+// was never a real placeholder in index.html to begin with).
+const COLOR_PLACEHOLDERS_DARK = [
+  "%LEMELY_COLOR_DARK_PAPER%",
+  "%LEMELY_COLOR_DARK_PAPER_SUNK%",
+  "%LEMELY_COLOR_DARK_PAPER_RAISED%",
+  "%LEMELY_COLOR_DARK_RULE%",
+  "%LEMELY_COLOR_DARK_INK%",
+  "%LEMELY_COLOR_DARK_INK_MUTED%",
+]
+
 const DURATION_PLACEHOLDERS = ["%LEMELY_LOADING_TIER_SKELETON%", "%LEMELY_LOADING_TIER_SLOW%"]
 
 // Packet B3 (Task 4): the sidebar width/breakpoint literals index.html's
@@ -85,7 +97,12 @@ describe("readSidebarTokens", () => {
 describe("fillPreMountShell", () => {
   it("replaces every colour, duration and size placeholder in the real index.html", () => {
     const filled = fillPreMountShell(REAL_INDEX_HTML)
-    for (const placeholder of [...COLOR_PLACEHOLDERS, ...DURATION_PLACEHOLDERS, ...SIZE_PLACEHOLDERS]) {
+    for (const placeholder of [
+      ...COLOR_PLACEHOLDERS,
+      ...COLOR_PLACEHOLDERS_DARK,
+      ...DURATION_PLACEHOLDERS,
+      ...SIZE_PLACEHOLDERS,
+    ]) {
       expect(filled).not.toContain(placeholder)
     }
   })
@@ -96,6 +113,18 @@ describe("fillPreMountShell", () => {
     // rather than the exact value so a deliberate token nudge doesn't break
     // this test for an unrelated reason.
     expect(filled).toMatch(/#[0-9a-f]{6}/)
+  })
+
+  it("substitutes a distinct real hex colour for each dark colour placeholder (Task 13, C5b)", () => {
+    // Resolve `[data-theme="dark"] #root { ... }`'s own dark paper directly,
+    // rather than just asserting "some hex exists" — that would also pass
+    // if this override block resolved to the LIGHT paper by mistake.
+    const filled = fillPreMountShell(REAL_INDEX_HTML)
+    const darkPaperMatch = filled.match(/\[data-theme="dark"\][^{]*\{\s*background:\s*(#[0-9a-f]{6})/)
+    const lightPaperMatch = filled.match(/#root\s*\{\s*background:\s*(#[0-9a-f]{6})/)
+    expect(darkPaperMatch?.[1]).toBeDefined()
+    expect(lightPaperMatch?.[1]).toBeDefined()
+    expect(darkPaperMatch![1]).not.toBe(lightPaperMatch![1])
   })
 
   it("substitutes the real durations for the duration placeholders", () => {
@@ -113,6 +142,11 @@ describe("fillPreMountShell", () => {
   it("throws when a colour placeholder is missing from the source", () => {
     const withoutPaper = REAL_INDEX_HTML.replaceAll("%LEMELY_COLOR_PAPER%", "")
     expect(() => fillPreMountShell(withoutPaper)).toThrow(/LEMELY_COLOR_PAPER/)
+  })
+
+  it("throws when a dark colour placeholder is missing from the source (Task 13, C5b)", () => {
+    const withoutDarkPaper = REAL_INDEX_HTML.replaceAll("%LEMELY_COLOR_DARK_PAPER%", "")
+    expect(() => fillPreMountShell(withoutDarkPaper)).toThrow(/LEMELY_COLOR_DARK_PAPER/)
   })
 
   it("throws when a duration placeholder is missing from the source", () => {
@@ -146,13 +180,27 @@ describe("fillPreMountShell", () => {
 
   it("leaves no %LEMELY_COLOR_...%, %LEMELY_LOADING_TIER_...% or %LEMELY_SIDEBAR_...% placeholder in the resolved real index.html", () => {
     // Scoped to this plugin's three placeholder families, not every
-    // `%LEMELY_..._%` in the document: `%LEMELY_THEME_COLOR%` on the
-    // `theme-color` meta tag belongs to `themeColor.ts`'s own plugin and is
-    // never touched by `fillPreMountShell` alone, so it is expected to still
-    // be present here.
+    // `%LEMELY_..._%` in the document: `%LEMELY_THEME_COLOR%`/
+    // `%LEMELY_THEME_COLOR_DARK%` on the `theme-color` meta tag belong to
+    // `themeColor.ts`'s own plugin and are never touched by
+    // `fillPreMountShell` alone, so both are expected to still be present
+    // here.
     const filled = fillPreMountShell(REAL_INDEX_HTML)
     expect(filled).not.toMatch(/%LEMELY_(?:COLOR|LOADING_TIER|SIDEBAR)_[A-Z_]+%/)
     expect(filled).toContain("%LEMELY_THEME_COLOR%")
+    expect(filled).toContain("%LEMELY_THEME_COLOR_DARK%")
+  })
+
+  it("throws, naming it, on a new %LEMELY_COLOR_DARK_..._% placeholder with no map entry", () => {
+    // Mirror of the %LEMELY_COLOR_SURPRISE% case above, for the dark family
+    // specifically — pins that COLOR_PLACEHOLDERS_DARK's own leftover sweep
+    // (piggybacking on the shared COLOR-prefix branch of the regex) actually
+    // catches an unmapped dark placeholder rather than silently shipping it.
+    const withStray = REAL_INDEX_HTML.replace(
+      "%LEMELY_COLOR_DARK_PAPER%",
+      "%LEMELY_COLOR_DARK_PAPER% %LEMELY_COLOR_DARK_SURPRISE%",
+    )
+    expect(() => fillPreMountShell(withStray)).toThrow(/LEMELY_COLOR_DARK_SURPRISE/)
   })
 })
 

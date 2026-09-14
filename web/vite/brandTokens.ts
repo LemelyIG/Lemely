@@ -106,22 +106,32 @@ export function toHex(rgb: readonly [number, number, number]): string {
 }
 
 /**
- * Parses every `--name: oklch(L C H)` declaration out of `:root`.
+ * Parses every `--name: oklch(L C H)` declaration out of a top-level CSS
+ * block, located by its selector text (e.g. `:root` or
+ * `:root[data-theme="dark"]`).
  *
- * Scoped to `:root` on purpose. `index.css` also carries per-portal blocks that
- * *override* accents (`[data-portal="teacher"]` and friends), and a manifest
- * colour has no portal — an installed app is one icon and one splash screen for
- * whichever role signs in. Taking the `:root` value is therefore the correct
- * reading and not merely the convenient one.
+ * Scoped to one block at a time on purpose. `index.css` carries several
+ * top-level blocks that *override* colours — the per-portal accent blocks
+ * (`[data-portal="teacher"]` and friends) and, as of Task 12/C5a, the dark
+ * ladder (`:root[data-theme="dark"]`) — and a manifest/meta/icon colour has
+ * no portal and (bar the dark variants Task 13 adds) no theme: an installed
+ * app is one icon and one splash screen for whichever role signs in, in
+ * whichever theme is being resolved. Taking one named block's value is
+ * therefore the correct reading and not merely the convenient one.
+ *
+ * `parseRootTokens` below is this function specialised to `:root`, kept as
+ * its own export for the existing call sites that only ever meant the light
+ * block.
  */
-export function parseRootTokens(css: string): Map<string, [number, number, number]> {
-  const start = css.indexOf(":root {")
+export function readTokenBlock(css: string, selector: string): Map<string, [number, number, number]> {
+  const start = css.indexOf(`${selector} {`)
   if (start === -1) {
-    throw new Error("brandTokens: no `:root {` block in index.css — the token layer has moved.")
+    throw new Error(`brandTokens: no \`${selector} {\` block in index.css — the token layer has moved.`)
   }
   // Up to the first closing brace at column 0, which is how this file formats
   // the end of a top-level block. Matching braces properly would be better, but
-  // `:root` here contains no nested blocks and a wrong answer throws below.
+  // neither block this reads contains nested blocks, and a wrong answer throws
+  // below (the caller's requested token simply won't be in the map).
   const end = css.indexOf("\n}", start)
   const block = css.slice(start, end === -1 ? undefined : end)
 
@@ -133,18 +143,35 @@ export function parseRootTokens(css: string): Map<string, [number, number, numbe
   return tokens
 }
 
+/** `readTokenBlock` scoped to the light `:root` block — see that function's
+ * doc comment for why a block is located by selector rather than assumed. */
+export function parseRootTokens(css: string): Map<string, [number, number, number]> {
+  return readTokenBlock(css, ":root")
+}
+
+const SELECTOR_FOR_THEME: Readonly<Record<"light" | "dark", string>> = {
+  light: ":root",
+  dark: ':root[data-theme="dark"]',
+}
+
 /**
  * One token, as a hex string, read fresh off disk.
  *
  * Not cached. This runs a handful of times in a build, and a cache would mean a
  * dev server that keeps serving a stale colour after `index.css` is edited.
+ *
+ * `theme` defaults to `"light"` so every pre-existing call site (the PWA
+ * manifest, `markOutlineMarkup`'s stroke colours, the light `theme-color`
+ * meta) keeps resolving exactly the value it always has — Task 13 (C5b) is
+ * the first caller that ever needs the dark ladder instead.
  */
-export function tokenHex(name: string): string {
-  const tokens = parseRootTokens(readFileSync(INDEX_CSS, "utf8"))
+export function tokenHex(name: string, theme: "light" | "dark" = "light"): string {
+  const selector = SELECTOR_FOR_THEME[theme]
+  const tokens = readTokenBlock(readFileSync(INDEX_CSS, "utf8"), selector)
   const value = tokens.get(name)
   if (!value) {
     throw new Error(
-      `brandTokens: \`--${name}\` is not declared as an oklch() value in :root of ` +
+      `brandTokens: \`--${name}\` is not declared as an oklch() value in ${selector} of ` +
         `${INDEX_CSS}. The PWA manifest, the theme-color meta tag and the generated app ` +
         `icons all read it from there. If the token was renamed, update the callers; ` +
         `do not transcribe a hex, which is the drift this module exists to remove.`,
