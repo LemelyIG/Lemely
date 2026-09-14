@@ -43,11 +43,7 @@ describe("longPressDecision", () => {
  * Both decisions are pure, and both are pinned here.
  */
 describe("shouldStartLongPress", () => {
-  it("starts on a touch or pen press (button 0)", () => {
-    expect(shouldStartLongPress({ button: 0, startedOnInteractive: false })).toBe(true)
-  })
-
-  it("starts on a primary mouse press", () => {
+  it("starts on button 0 — touch, pen and a primary mouse press all report it the same way", () => {
     expect(shouldStartLongPress({ button: 0, startedOnInteractive: false })).toBe(true)
   })
 

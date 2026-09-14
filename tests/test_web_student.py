@@ -36,6 +36,8 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
     from pathlib import Path
 
+    from lemely.db.upload_repo import StudentUploadRepository
+
 from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
@@ -999,34 +1001,23 @@ def test_upload_idempotency_key_older_than_window_creates_new_row(
     app.dependency_overrides.clear()
 
 
-def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
-    pg_sessionmaker: sessionmaker[Session],
-) -> None:
-    """A genuine concurrent race — two requests with the same key both miss
-    the router's pre-check — must not leak the losing request's storage
-    object. `create_upload` hands back the *winner's* row id when its own
-    insert loses the unique-index race; the router must then delete the
-    object it just wrote for *this* request before returning that id, or the
-    blob sits in storage forever, referenced by nothing."""
+def _make_race_injecting_repo(
+    session_factory: sessionmaker[Session], *, student_id: uuid.UUID, race_key: str
+) -> StudentUploadRepository:
+    """Simulates a second request's insert winning the race.
+
+    Injects a competing row holding ``race_key`` immediately before
+    delegating to the real ``create_upload`` — so *this* call's own insert
+    loses the unique-index race deterministically, without real threads.
+    Shared by the two orphaned-storage-cleanup tests below, which differ
+    only in the storage backend they wire in.
+    """
     from lemely.db.models.attempts import Upload
     from lemely.db.upload_repo import StudentUploadRepository
-    from lemely.web.deps import get_storage_backend, get_student_upload_repo
-    from tests.storage_fakes import FakeStorageBackend
-
-    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
-    race_key = "concurrent-race-00001"
 
     class _RaceInjectingRepo(StudentUploadRepository):
-        """Simulates a second request's insert winning the race.
-
-        Injects a competing row holding ``race_key`` immediately before
-        delegating to the real ``create_upload`` — so *this* call's own
-        insert loses the unique-index race deterministically, without real
-        threads.
-        """
-
-        def __init__(self, session_factory: sessionmaker[Session]) -> None:
-            super().__init__(session_factory)
+        def __init__(self, sm: sessionmaker[Session]) -> None:
+            super().__init__(sm)
             self.winner_id = uuid.uuid4()
             self._injected = False
 
@@ -1047,7 +1038,24 @@ def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
                     )
             return super().create_upload(**kwargs)  # type: ignore[arg-type]
 
-    repo = _RaceInjectingRepo(pg_sessionmaker)
+    return _RaceInjectingRepo(session_factory)
+
+
+def test_upload_orphaned_storage_cleaned_up_on_idempotency_race(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A genuine concurrent race — two requests with the same key both miss
+    the router's pre-check — must not leak the losing request's storage
+    object. `create_upload` hands back the *winner's* row id when its own
+    insert loses the unique-index race; the router must then delete the
+    object it just wrote for *this* request before returning that id, or the
+    blob sits in storage forever, referenced by nothing."""
+    from lemely.web.deps import get_storage_backend, get_student_upload_repo
+    from tests.storage_fakes import FakeStorageBackend
+
+    student_id = _seed_pg_user(pg_sessionmaker, Role.student)
+    race_key = "concurrent-race-00001"
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
     storage_backend = FakeStorageBackend()
 
     app = create_app()
@@ -1079,8 +1087,6 @@ def test_upload_orphaned_storage_delete_failure_still_returns_winner_paperid(
     cleanup ``delete`` call itself fails (a transient GCS hiccup), that must
     not turn this already-successful request into a 500 — the caller did
     nothing wrong and has nothing to retry."""
-    from lemely.db.models.attempts import Upload
-    from lemely.db.upload_repo import StudentUploadRepository
     from lemely.runtime.errors import ExternalServiceError
     from lemely.web.deps import get_storage_backend, get_student_upload_repo
     from tests.storage_fakes import FakeStorageBackend
@@ -1088,34 +1094,11 @@ def test_upload_orphaned_storage_delete_failure_still_returns_winner_paperid(
     student_id = _seed_pg_user(pg_sessionmaker, Role.student)
     race_key = "concurrent-race-delete-fails-00001"
 
-    class _RaceInjectingRepo(StudentUploadRepository):
-        def __init__(self, session_factory: sessionmaker[Session]) -> None:
-            super().__init__(session_factory)
-            self.winner_id = uuid.uuid4()
-            self._injected = False
-
-        def create_upload(self, **kwargs: object) -> uuid.UUID:
-            if not self._injected and kwargs.get("idempotency_key") == race_key:
-                self._injected = True
-                with self._sm.begin() as session:
-                    session.add(
-                        Upload(
-                            id=self.winner_id,
-                            user_id=student_id,
-                            storage_path=f"uploads/{student_id}/{self.winner_id.hex}/scan.pdf",
-                            original_filename="scan.pdf",
-                            content_type="application/pdf",
-                            byte_size=5,
-                            idempotency_key=race_key,
-                        )
-                    )
-            return super().create_upload(**kwargs)  # type: ignore[arg-type]
-
     class _DeleteFailsStorageBackend(FakeStorageBackend):
         def delete(self, bucket: str, object_path: str) -> None:
             raise ExternalServiceError("simulated transient GCS delete failure")
 
-    repo = _RaceInjectingRepo(pg_sessionmaker)
+    repo = _make_race_injecting_repo(pg_sessionmaker, student_id=student_id, race_key=race_key)
     storage_backend = _DeleteFailsStorageBackend()
 
     app = create_app()
