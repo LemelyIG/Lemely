@@ -472,7 +472,7 @@ export const readings: ReadingsPanel[] = [
     id: "teacher",
     label: "Teacher",
     title: "You see the marking, and the doubt.",
-    body: "Only the marking Lemely was unsure of reaches this queue, and each one still shows its working.",
+    body: "Per-question marks, the scheme line behind each one, and the questions Lemely was not sure about. Override any mark you disagree with, and your version is the one that counts.",
     points: [
       "The review queue orders itself by doubt",
       "Every mark traces to a scheme line",
@@ -483,11 +483,11 @@ export const readings: ReadingsPanel[] = [
     id: "student",
     label: "Student",
     title: "They see where the marks went.",
-    body: "A student opens the same paper and sees exactly which line earned or lost each mark.",
+    body: "The same marking, written as the next thing to work on rather than a verdict. A dropped mark comes back as the shape it sat on, and a set of questions on that shape.",
     points: [
-      "Marked against the real scheme",
-      "A practice set for the questions they dropped",
-      "Their grade stays private to them.",
+      "Marks with the reason, not a percentage",
+      "Practice built from what they missed",
+      "Their grade stays private to them",
     ],
   },
   {
@@ -496,12 +496,12 @@ export const readings: ReadingsPanel[] = [
     title: "They see an answer they can read.",
     /* The carve-out: design-import-spec.md replaces "Read-only access with
        a phone login." with the verified flow, same cadence/length. */
-    body: "Read-only access, unlocked with a code from their child.",
+    body: "Access from a code your child sends you. What was sat, what it came back as, what it is being worked on next. No syllabus jargon and nothing to configure.",
     points: [
       /* Replaces the design's "Phone login, no account to manage." */
-      "A child's code, then a password to set",
-      "See their child's grades",
-      "See the topics that need work",
+      "A code from your child, then a password",
+      "Plain summary of each paper",
+      "No marking controls",
     ],
   },
 ]
