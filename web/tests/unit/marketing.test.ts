@@ -297,6 +297,91 @@ describe("landing copy claims only what the product does — P4.9", () => {
     expect(actualExportNames).toEqual(classifiedNames)
   })
 
+  /*
+   * KEY-SET GATE, orthogonal to the value walk above. `collectStrings` throws
+   * on an `undefined` leaf, but `Object.values({})` is `[]`: a field that is
+   * deleted outright, rather than set to `undefined`, passes that walk
+   * silently. Today that gap is closed by the compiler (`howItWorks` and
+   * `schemeSection` are bare object literals dereferenced with `.body`/
+   * `.aside` in Landing.tsx, so dropping a key is a type error) rather than
+   * by this test file, which means an optional field added later
+   * (`aside?: string`) and left unset would sail through both `tsc` and the
+   * value walk. These assertions read the expected key set from `data.ts`
+   * itself (never from the object under test, which would prove nothing) and
+   * check the runtime export's keys against it exactly, so the gate stands
+   * on its own instead of leaning on the compiler.
+   */
+
+  /** Expected top-level key set for every object-shaped COPY_EXPORTS entry. */
+  const TOP_LEVEL_KEYS: Record<string, readonly string[]> = {
+    hero: ["eyebrow", "headline", "sub", "primaryCta", "secondaryCta"],
+    trustBand: ["eyebrow", "heading", "body", "aside"],
+    howItWorks: ["eyebrow", "heading", "body", "finePrint"],
+    schemeSection: ["eyebrow", "heading", "body", "aside"],
+    classBatchSection: ["eyebrow", "heading", "body", "finePrint"],
+    readingsIntro: ["eyebrow", "heading", "sub"],
+    close: ["heading", "sub", "cta", "aside", "needs"],
+    openedQuestion: ["paper", "hand", "defaultId", "questions"],
+    scanSequence: ["steps", "scan", "mark", "practise"],
+    schemeExcerpt: ["meta", "lines", "hand"],
+    classBatch: ["headPrefix", "headSuffix", "total", "note", "rows"],
+  }
+
+  it.each(Object.entries(TOP_LEVEL_KEYS))("keeps %s's top-level keys exactly as authored", (name, keys) => {
+    const value = (marketingData as unknown as Record<string, unknown>)[name]
+    expect(Object.keys(value as object).sort()).toEqual([...keys].sort())
+  })
+
+  /*
+   * `subjects`, `readings`, `openedQuestion.questions` and `classBatch.rows`
+   * are arrays of objects, so an index-keyed check (`Object.keys` on the
+   * array) would be meaningless. Instead this checks the ELEMENT shape, and
+   * checks it against every element, not just the first, so one malformed
+   * row can't hide behind its neighbours.
+   */
+  const ELEMENT_KEYS: [string, readonly string[], unknown[]][] = [
+    ["subjects", ["code", "name"], marketingData.subjects],
+    [
+      "readings",
+      ["id", "label", "title", "body", "points"],
+      marketingData.readings,
+    ],
+    [
+      "openedQuestion.questions",
+      [
+        "id",
+        "label",
+        "title",
+        "awarded",
+        "available",
+        "state",
+        "work",
+        "lines",
+        "confidence",
+        "confidenceTier",
+      ],
+      marketingData.openedQuestion.questions,
+    ],
+    [
+      "classBatch.rows",
+      ["id", "awarded", "available", "state"],
+      marketingData.classBatch.rows,
+    ],
+  ]
+
+  it.each(ELEMENT_KEYS)("keeps every element of %s to its authored key set", (_label, keys, elements) => {
+    expect(elements.length).toBeGreaterThan(0)
+    elements.forEach((el) => {
+      expect(Object.keys(el as object).sort()).toEqual([...keys].sort())
+    })
+  })
+
+  it("covers every COPY_EXPORTS entry with a key-set check above", () => {
+    const arrayShapedExports = ["subjects", "readings"]
+    const covered = [...Object.keys(TOP_LEVEL_KEYS), ...arrayShapedExports].sort()
+    expect(covered).toEqual([...COPY_EXPORTS].sort())
+  })
+
   const copyValues: string[] = []
   for (const name of COPY_EXPORTS) {
     collectStrings((marketingData as unknown as Record<string, unknown>)[name], copyValues)
