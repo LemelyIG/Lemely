@@ -80,6 +80,18 @@ LIGHT_TOKENS: dict[str, tuple[float, float, float]] = {
     "paper-raised": (0.992, 0.003, 85),
     "paper-sunk": (0.952, 0.006, 85),
     "paper-inverse": (0.28, 0.008, 250),
+    # §3.1 rule (borders — non-text, WCAG 1.4.11's 3:1, not the 4.5:1 text
+    # floor). These three are transcribed for the "token exists and matches
+    # index.css" guard below, but NOT wired into a contrast assertion: this
+    # file has no non-text/border-contrast helper (`contrast()` is only ever
+    # called here for text-on-fill pairs), and none of the three clears 3:1
+    # on `--paper` even before this diff (light: 1.24/1.50/1.10, dark:
+    # 1.33/1.67/1.17) — a pre-existing gap the reviewer flagged as
+    # out-of-scope for this fix, not something to paper over by inflating the
+    # assertion to something these values don't actually meet.
+    "rule": (0.905, 0.004, 85),
+    "rule-strong": (0.845, 0.005, 85),
+    "rule-faint": (0.945, 0.003, 85),
     # §3.2 ink
     "ink": (0.321, 0.009, 234),
     "ink-muted": (0.48, 0.006, 240),
@@ -129,6 +141,11 @@ DARK_TOKENS: dict[str, tuple[float, float, float]] = {
     "paper-raised": (0.24, 0.003, 85),
     "paper-sunk": (0.17, 0.006, 85),
     "paper-inverse": (0.92, 0.008, 250),
+    # §3.1 rule — see LIGHT_TOKENS' comment: non-text, no assertion here
+    # either, same disclosed pre-existing gap (1.33/1.67/1.17 on --paper).
+    "rule": (0.3, 0.004, 85),
+    "rule-strong": (0.36, 0.005, 85),
+    "rule-faint": (0.26, 0.003, 85),
     # §3.2 ink
     "ink": (0.93, 0.009, 234),
     "ink-muted": (0.78, 0.006, 240),
@@ -170,6 +187,21 @@ THEMES: dict[str, dict[str, tuple[float, float, float]]] = {
     "dark": DARK_TOKENS,
 }
 
+# `--accent-on` (DESIGN.md §3.4/§3.10) is deliberately absent from
+# LIGHT_TOKENS/DARK_TOKENS: it is not a literal `oklch()` triple in either
+# `:root` block — light ships `#ffffff` and dark aliases `var(--paper)`
+# instead of a second literal — so `css_root_tokens()`'s oklch-only regex
+# would never find it there and the transcription guard below would always
+# report it missing. Pinned here instead, in OKLCH terms so `ratio()`/
+# `oklch_to_srgb()` still apply: light's `(1.0, 0.0, 0.0)` is pure white
+# (chroma 0 makes the hue irrelevant), and dark's value is
+# `DARK_TOKENS["paper"]` itself, because that is literally what
+# `var(--paper)` resolves to.
+ACCENT_ON: dict[str, tuple[float, float, float]] = {
+    "light": (1.0, 0.0, 0.0),
+    "dark": DARK_TOKENS["paper"],
+}
+
 # The CSS selector each theme's literal-value tokens are declared under.
 SELECTORS: dict[str, str] = {
     "light": ":root {",
@@ -188,6 +220,11 @@ TEXT_SURFACES = ("paper", "paper-raised", "paper-sunk")
 def ratio(theme: str, fg: str, bg: str) -> float:
     tokens = THEMES[theme]
     return contrast(oklch_to_srgb(*tokens[fg]), oklch_to_srgb(*tokens[bg]))
+
+
+def accent_on_ratio(theme: str, bg: str) -> float:
+    """Like :func:`ratio`, but for `--accent-on` (see :data:`ACCENT_ON`)."""
+    return contrast(oklch_to_srgb(*ACCENT_ON[theme]), oklch_to_srgb(*THEMES[theme][bg]))
 
 
 @pytest.mark.parametrize("theme", sorted(THEMES))
@@ -262,6 +299,23 @@ def test_accent_on_aliases_paper_in_dark_because_white_fails_aa() -> None:
     assert contrast(dark_paper, dark_accent) >= AA_NORMAL, (
         f"the dark --paper is {contrast(dark_paper, dark_accent):.2f}:1 on the dark --accent, "
         "below AA — --accent-on's fallback in index.css (`var(--paper)`) no longer clears the bar."
+    )
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+@pytest.mark.parametrize("surface", ["accent", "accent-hover"])
+def test_accent_on_clears_aa_on_accent_and_accent_hover(theme: str, surface: str) -> None:
+    """`--accent-on` is the button-label colour (`button.tsx`: `bg-accent
+    text-accent-on hover:bg-accent-hover`) — the label stays `--accent-on`
+    across both the default and the `:hover` fill, so it must clear AA on
+    BOTH, in both themes. The `--accent` half of this was already implied by
+    `test_white_not_ink_inverse_is_used_on_accent_fills` (light) and
+    `test_accent_on_aliases_paper_in_dark_because_white_fails_aa` (dark); the
+    `--accent-hover` half was previously asserted nowhere.
+    """
+    assert accent_on_ratio(theme, surface) >= AA_NORMAL, (
+        f"[{theme}] --accent-on on --{surface} is {accent_on_ratio(theme, surface):.2f}:1, "
+        f"below the {AA_NORMAL}:1 AA floor for normal text (button labels are 13px/500)."
     )
 
 
