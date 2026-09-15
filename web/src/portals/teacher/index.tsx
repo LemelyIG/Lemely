@@ -6,7 +6,7 @@ import { OfflineBanner } from "@/components/ui/offline-banner"
 import { VerifyEmailBanner } from "@/components/ui/verify-email-banner"
 import { InstallBanner } from "@/components/InstallBanner"
 import { BadgeSync } from "@/components/badge-sync"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
@@ -37,6 +37,7 @@ import { Breadcrumbs } from "@/components/ui/breadcrumbs"
 import { useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import { useProfile } from "@/lib/hooks/useMeApi"
 import { useNotificationCounts } from "@/lib/hooks/useNotificationApi"
+import { useReviewQueueCount } from "@/lib/hooks/useReviewQueueCount"
 import { unreadBadgeLabel } from "@/lib/staffInbox"
 import { navItems, resolveTrail, classesItemActive, type NavItem } from "./data"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
@@ -136,7 +137,10 @@ const NAV_ICON: Record<NavItem["icon"], Icon> = {
  * which is a plain `string | number`) and passed down as the notifications
  * row's own badge value.
  */
-function toNavShellItem(item: NavItem, options: { forceActive?: boolean; badge?: string } = {}): NavShellItem {
+function toNavShellItem(
+  item: NavItem,
+  options: { forceActive?: boolean; badge?: string | number } = {},
+): NavShellItem {
   const Glyph = NAV_ICON[item.icon]
   return {
     id: item.to,
@@ -284,6 +288,12 @@ function TeacherNav() {
   // request, only a second subscriber to the one query.
   const { data: counts } = useNotificationCounts()
   const unread = unreadBadgeLabel(counts) ?? undefined
+  // Task 9 (C3d): the sidebar's own subscriber to `useReviewQueueCount` —
+  // `BottomNav`'s Review tab below subscribes to the same hook, so the two
+  // badges share one deduped `limit: 1` request (see that hook's own doc
+  // comment on why).
+  const reviewQueueCount = useReviewQueueCount()
+  const reviewBadge = reviewQueueCount && reviewQueueCount > 0 ? reviewQueueCount : undefined
 
   const shellItems: NavShellItem[] = navItems.map((item) =>
     toNavShellItem(item, {
@@ -291,7 +301,12 @@ function TeacherNav() {
         item.to === "/teacher/classes"
           ? classesItemActive(location.pathname, visibleClassIds)
           : undefined,
-      badge: item.badge === "unread-notifications" ? unread : undefined,
+      badge:
+        item.badge === "unread-notifications"
+          ? unread
+          : item.badge === "review-queue"
+            ? reviewBadge
+            : undefined,
     }),
   )
 
@@ -321,37 +336,12 @@ function SidebarFooter() {
   )
 }
 
-/*
- * The real mark, replacing the accent-circle-with-an-italic-*l* that stood in
- * for it. That placeholder is audit finding M9 ("the logo is a lowercase
- * italic *l* in a filled circle, stamped in three places"); the student
- * sidebar's copy was replaced when surface 1 landed and this one was still
- * live, which is P4.2's second lesson exactly — a defect fixed on one portal
- * can still be shipping on another.
- *
- * It was also the last `font-serif` call site in this file, i.e. the D4.1
- * defect: the class resolves to Tailwind's default Georgia stack, so the
- * placeholder was not even rendering in the display face it was reaching for.
- *
- * `alt=""` and `aria-hidden`, not a described image: the wordmark beside it
- * already says "Lemely", so describing the mark too makes a screen reader
- * announce the brand twice.
- */
-function BrandLockup() {
-  return (
-    <div className="flex items-center gap-2.5 px-2">
-      <BrandMark className="h-6 w-8 shrink-0" />
-      <span className="text-display-sm text-ink">Lemely</span>
-    </div>
-  )
-}
-
 function Sidebar() {
   return (
     // A well, per DESIGN.md §3.1: `--paper-sunk` is the token whose stated use
     // is "sidebars, table headers, code blocks, inset areas".
     <aside className="hidden sidebar:flex w-sidebar flex-none bg-paper-sunk border-e border-rule px-4 py-[22px] flex-col gap-[26px] sticky top-0 h-screen">
-      <BrandLockup />
+      <BrandLockup className="px-2" />
 
       <div className="lm-scroll min-h-0 flex-1 overflow-y-auto">
         <TeacherNav />
@@ -494,6 +484,10 @@ function TeacherLayout() {
    * still never redirects.
    */
   const classesQuery = useTeacherClasses()
+  // Task 9 (C3d): shares its cache/request with `TeacherNav`'s own
+  // `useReviewQueueCount()` subscriber (same query key) — mounting both the
+  // desktop sidebar and this bottom bar costs one network request, not two.
+  const reviewQueueCount = useReviewQueueCount()
   const firstClassRedirect = teacherFirstClassRedirect(
     classesQuery.status,
     classesQuery.data?.classes.length ?? 0,
@@ -593,11 +587,8 @@ function TeacherLayout() {
 
       {/* Below the `sidebar` breakpoint, the primary navigation — same
           shape as the student portal's own BottomNav, see that file's
-          comment on the identical mount. Review carries no badge: no
-          client-side count of the review queue's depth exists outside the
-          queue screen's own filtered query (re-grepped — `useReviewQueue`
-          has no caller in this file), and adding one would be a new fetch
-          this task's scope does not cover. */}
+          comment on the identical mount. The Review tab's badge (Task 9,
+          C3d) is `reviewQueueCount` above. */}
       <BottomNav
         items={[
           ...TEACHER_BOTTOM_TABS.map(
@@ -607,6 +598,10 @@ function TeacherLayout() {
               end: tab.end,
               label: tab.label,
               icon: <tab.icon size={22} aria-hidden="true" />,
+              badge:
+                tab.id === "review" && reviewQueueCount && reviewQueueCount > 0
+                  ? reviewQueueCount
+                  : undefined,
             }),
           ),
           {

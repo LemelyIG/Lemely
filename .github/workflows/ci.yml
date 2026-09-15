@@ -154,6 +154,14 @@ jobs:
       - name: Lint (oxlint + native invariants)
         run: npm run lint
 
+      # C4 (Task 11): `npm run check:copy` (scripts/check_copy.mjs) enforces
+      # the no-em-dash, copy-friendly-tone rule on user-facing strings — run
+      # locally/on demand only until now, so a violation could land on this
+      # branch and never fail CI. Already 0 findings on this branch; this
+      # step keeps it that way going forward.
+      - name: Copy gate
+        run: npm run check:copy
+
       # `npm run build` runs `vite build` via the `build` script, so npm's
       # `postbuild` convention fires `check:bundle` automatically once
       # `dist/` exists (packet A8) — no separate step needed here.

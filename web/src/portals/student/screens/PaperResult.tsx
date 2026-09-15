@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { ReactNode } from "react"
-import { useLocation, useNavigate, useParams } from "react-router-dom"
+import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Check, Minus, ShareNetwork, Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
@@ -10,13 +10,15 @@ import { MarkDisplay } from "@/components/ui/mark-display"
 import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
-import { QuestionRow, type MarkState } from "@/components/ui/question-row"
+import { QuestionRow } from "@/components/ui/question-row"
 import { EmptyState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
+import { Tabs, TabsList } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useResult } from "@/lib/hooks/useStudentApi"
@@ -81,14 +83,6 @@ const NO_BOUNDARIES: GradeBoundary[] = []
 const NO_QUESTION_DETAIL = {
   heading: "No per-question detail for this paper",
   body: "Per-question detail is only available right after correcting a paper.",
-}
-
-/** correct = full marks, wrong = zero, partial = anything between. */
-function markState(q: QuestionResult): MarkState {
-  if (q.maxMarks <= 0) return q.awardedMarks > 0 ? "correct" : "wrong"
-  if (q.awardedMarks >= q.maxMarks) return "correct"
-  if (q.awardedMarks <= 0) return "wrong"
-  return "partial"
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {
@@ -160,9 +154,12 @@ function ResultHeader({
               {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
             </div>
             {paperId ? (
+              // C4 (Task 11): an interactive action, not paper content — a
+              // printed sheet has no click target for it.
               <Button
                 variant="secondary"
                 size="sm"
+                data-print="hide"
                 onClick={() =>
                   void shareResult(
                     {
@@ -268,6 +265,29 @@ function ResultHeader({
 }
 
 /**
+ * C3a (Task 6): copy for the two ways a *filtered* list can come up empty.
+ * Distinct from `NO_QUESTION_DETAIL` above, which is the "this paper has no
+ * per-question detail at all" case — these fire only when real questions
+ * exist but none of them match the selected tab (a perfect paper filtered to
+ * "Lost", say).
+ */
+const FILTER_EMPTY_COPY: Record<
+  Exclude<QuestionFilter, "all">,
+  { heading: string; body: string; marginalia: string }
+> = {
+  lost: {
+    heading: "Every question here is correct",
+    body: "No marks were dropped on this paper.",
+    marginalia: "Nothing lost here",
+  },
+  flagged: {
+    heading: "Nothing needs a second look",
+    body: "No question was flagged for review or came back below the confidence floor.",
+    marginalia: "Nothing flagged",
+  },
+}
+
+/**
  * S-16's full question list (C-6 `QuestionRow` per row), expandable in place
  * for the marker-source/feedback/review-reason detail S-17 calls for — the
  * app has no separate question-detail route, so the expand affordance is
@@ -279,11 +299,18 @@ function ResultHeader({
  * student-facing screen. `plagiarismFlagged`/`aiDetectionFlagged` stay on the
  * DTO (no data-flow change) but are no longer rendered to the student. Noted
  * in the P2.5.3 report as a deliberate deviation.
+ *
+ * C3a adds the All / Lost / Flagged tabs above the row list, reading
+ * `filterQuestions` — the tabs themselves only render when there is a real
+ * list to filter (`questions.length > 0`); the "no per-question detail for
+ * this paper" state above stays exactly as it was.
  */
 function QuestionList({
   questions,
   subjectCode,
   onShare,
+  filter,
+  onFilterChange,
 }: {
   questions: QuestionResult[]
   /** The paper's subject code (`res.code.split("/")[0]`), used to build
@@ -296,6 +323,8 @@ function QuestionList({
    * to build a permalink from, so its share falls back to the current URL
    * rather than losing the affordance entirely. */
   onShare?: () => void
+  filter: QuestionFilter
+  onFilterChange: (filter: QuestionFilter) => void
 }) {
   if (questions.length === 0) {
     // Inside a Card, like the populated list it stands in for. Bare, it
@@ -307,43 +336,78 @@ function QuestionList({
       </Card>
     )
   }
+
+  const lostCount = filterQuestions(questions, "lost").length
+  const flaggedCount = filterQuestions(questions, "flagged").length
+  const visible = filterQuestions(questions, filter)
+
   return (
     <Card className="px-3">
-      {questions.map((q) => (
-        <QuestionRow
-          key={q.questionId}
-          number={q.questionId}
-          awarded={q.awardedMarks}
-          available={q.maxMarks}
-          state={markState(q)}
-          confidence={confidenceTierFor(q)}
-          topic={q.topic}
-          practiceHref={
-            q.topic
-              ? `/student/practice/${subjectCode}?topic=${encodeURIComponent(q.topic)}`
-              : undefined
-          }
-          onShare={onShare}
-        >
-          <div className="flex flex-col gap-2.5">
-            <Chip tone="neutral" className="w-fit">
-              {q.markerSource}
-            </Chip>
-            {q.feedback ? (
-              <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
-                {q.feedback}
-              </div>
-            ) : null}
-            {q.reviewReason ? (
-              <div className="text-body-md leading-snug text-warn">
-                Needs review: {q.reviewReason}
-              </div>
-            ) : null}
-          </div>
-        </QuestionRow>
-      ))}
+      <Tabs
+        value={filter}
+        onValueChange={(next) => onFilterChange(next as QuestionFilter)}
+        className="px-0.5 pt-1"
+      >
+        <TabsList
+          label="Filter questions"
+          tabs={[
+            { value: "all", label: `All (${questions.length})` },
+            { value: "lost", label: `Lost (${lostCount})` },
+            { value: "flagged", label: `Flagged (${flaggedCount})` },
+          ]}
+        />
+      </Tabs>
+      {visible.length === 0 && filter !== "all" ? (
+        <EmptyState
+          heading={FILTER_EMPTY_COPY[filter].heading}
+          body={FILTER_EMPTY_COPY[filter].body}
+          marginalia={FILTER_EMPTY_COPY[filter].marginalia}
+        />
+      ) : (
+        visible.map((q) => (
+          <QuestionRow
+            key={q.questionId}
+            number={q.questionId}
+            awarded={q.awardedMarks}
+            available={q.maxMarks}
+            state={markState(q)}
+            confidence={confidenceTierFor(q)}
+            topic={q.topic}
+            practiceHref={
+              q.topic
+                ? `/student/practice/${subjectCode}?topic=${encodeURIComponent(q.topic)}`
+                : undefined
+            }
+            onShare={onShare}
+            register={markState(q) === "wrong" ? "red-pen" : "plain"}
+          >
+            <div className="flex flex-col gap-2.5">
+              <Chip tone="neutral" className="w-fit">
+                {q.markerSource}
+              </Chip>
+              {q.feedback ? (
+                <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">
+                  {q.feedback}
+                </div>
+              ) : null}
+              {q.reviewReason ? (
+                <div className="text-body-md leading-snug text-warn">
+                  Needs review: {q.reviewReason}
+                </div>
+              ) : null}
+            </div>
+          </QuestionRow>
+        ))
+      )}
     </Card>
   )
+}
+
+/** `?q=` values that map onto a real `QuestionFilter`; anything else (absent,
+ * malformed, stale) reads as the default `"all"`. */
+function filterFromParams(searchParams: URLSearchParams): QuestionFilter {
+  const raw = searchParams.get("q")
+  return raw === "lost" || raw === "flagged" ? raw : "all"
 }
 
 export function PaperResult() {
@@ -354,6 +418,26 @@ export function PaperResult() {
   const live = isLiveResult(location.state) ? location.state : null
 
   const query = useResult(live ? "" : (paperId ?? ""))
+
+  // C3a (Task 6): the All/Lost/Flagged filter lives in `?q=`, not local
+  // component state, so it survives a round trip through a practice-topic
+  // link and back (the router restores search params on a POP navigation;
+  // local state does not). `replace: true` keeps a tab switch from stacking
+  // a browser-history entry per tap — the URL still carries the current
+  // filter whenever the reader lands here from elsewhere.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const filter = filterFromParams(searchParams)
+  function setFilter(next: QuestionFilter) {
+    setSearchParams(
+      (prev) => {
+        const params = new URLSearchParams(prev)
+        if (next === "all") params.delete("q")
+        else params.set("q", next)
+        return params
+      },
+      { replace: true },
+    )
+  }
 
   // Task 6 (B4b): the same share action `ResultHeader`'s own Share button
   // builds, reused for every question row's long-press "Share" item. A
@@ -390,6 +474,8 @@ export function PaperResult() {
           questions={live.questions}
           subjectCode={live.code.split("/")[0]}
           onShare={shareHandler(live)}
+          filter={filter}
+          onFilterChange={setFilter}
         />
       </ResultScreen>
     )
@@ -492,6 +578,8 @@ export function PaperResult() {
               questions={[]}
               subjectCode={data.code.split("/")[0]}
               onShare={paperId ? shareHandler(data, paperId) : undefined}
+              filter={filter}
+              onFilterChange={setFilter}
             />
           </>
         )}

@@ -338,6 +338,12 @@ export function useUnacknowledgeAtRisk(
  * consumed by Task 11's "Load more" (`Review.tsx`). Both are part of the
  * query key so a page fetched under one cursor is cached separately from
  * every other page, the same as the three filters already are.
+ *
+ * `staleTime` (C3d) defaults to react-query's own default (effectively
+ * "always stale") when omitted, matching every existing caller's behaviour
+ * unchanged; `useReviewQueueCount` passes `60_000` so the sidebar/bottom-nav
+ * badge doesn't refetch on every mount or focus for a number that is a hint,
+ * not a live counter.
  */
 export function useReviewQueue(params?: {
   classId?: string
@@ -345,6 +351,7 @@ export function useReviewQueue(params?: {
   minAgeHours?: number
   limit?: number
   cursor?: string
+  staleTime?: number
 }): UseQueryResult<ReviewQueueList, Error> {
   const classId = params?.classId
   const reason = params?.reason
@@ -370,6 +377,7 @@ export function useReviewQueue(params?: {
       cursor ?? null,
     ],
     queryFn: () => request<ReviewQueueList>(`/teacher/review${qs ? `?${qs}` : ""}`),
+    staleTime: params?.staleTime,
   })
 }
 

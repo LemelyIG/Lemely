@@ -4,6 +4,7 @@ import { Link } from "react-router-dom"
 import { ArrowDownRight, ArrowUpRight, Minus } from "@phosphor-icons/react"
 import { Card } from "@/components/ui/card"
 import { Meter } from "@/components/ui/primitives"
+import { SectionHead } from "@/components/ui/section-head"
 import { buttonVariants } from "@/components/ui/button"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
@@ -15,6 +16,8 @@ import { usePullToRefresh } from "@/lib/gestures/usePullToRefresh"
 import { subjectToneForCode } from "@/components/ui/subject-tag"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import { useReference } from "@/lib/hooks/useReferenceApi"
+import { useXpProfile } from "@/lib/hooks/useXpApi"
+import { XPStreak } from "@/components/ui/xp-streak"
 import { toneFill } from "@/components/ui/badge"
 import {
   PageHeaderSkeleton,
@@ -372,6 +375,15 @@ function JoinClassPrompt() {
 export function Overview() {
   const query = useOverview()
 
+  // C3a (Task 6): the same streak read `student/index.tsx`'s header chip
+  // uses, shown here instead only below `sm` — the two chips must never
+  // both render (see the `sm:hidden`/`sm:inline-flex` pair below and on the
+  // header). Nothing renders until the read lands, matching the header's
+  // own "no placeholder, no zero" rule for a figure a student may not have.
+  const xp = useXpProfile()
+  const streak = xp.data?.streak?.current
+  const xpTotal = xp.data?.totalXp
+
   // Task 6 (B4b): pull-to-refresh on this screen's own root element, the
   // same arrangement as `Notifications`/`Announcements` — see that screen's
   // comment for why the surface must never be `document.documentElement`.
@@ -506,16 +518,31 @@ export function Overview() {
                   this header — the Operate lane runs texture low (§13), and
                   the paper grain on the portal shell is already carrying the
                   notebook feel underneath. */}
-              <header className="margin-rule flex flex-col gap-1">
-                <h1 className="text-display-lg text-ink">
-                  {greeting}, {greetingName}.
-                </h1>
-                {/* Both numbers are counted from the rows on this page, so the
-                    sentence cannot drift from what is rendered below it. */}
-                <p className="text-body-md text-ink-muted">
-                  {subjects.length} {subjects.length === 1 ? "subject" : "subjects"}, {paperCount}{" "}
-                  {paperCount === 1 ? "paper" : "papers"} corrected so far.
-                </p>
+              <header className="margin-rule">
+                <SectionHead
+                  title={`${greeting}, ${greetingName}.`}
+                  // Both numbers are counted from the rows on this page, so
+                  // the kicker sentence cannot drift from what is rendered
+                  // below it.
+                  kicker={`${subjects.length} ${subjects.length === 1 ? "subject" : "subjects"}, ${paperCount} ${paperCount === 1 ? "paper" : "papers"} corrected so far.`}
+                  level={1}
+                  rung="display-lg"
+                  action={
+                    // C3a (Task 6): below `sm` the header's own streak chip
+                    // is `hidden` (`student/index.tsx`), so it shows here,
+                    // beside the greeting, instead — the training-log figure
+                    // stays one tap away on every viewport, not just >= 640px.
+                    typeof streak === "number" && typeof xpTotal === "number" ? (
+                      <Link
+                        to="/student/profile"
+                        aria-label={`Your training log: ${streak} day streak, ${xpTotal} XP`}
+                        className="sm:hidden inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center"
+                      >
+                        <XPStreak variant="compact" streakDays={streak} xpTotal={xpTotal} />
+                      </Link>
+                    ) : null
+                  }
+                />
               </header>
 
               <Card className="overflow-hidden">

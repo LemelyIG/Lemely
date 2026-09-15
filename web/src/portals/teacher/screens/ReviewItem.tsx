@@ -1,10 +1,12 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
-import { useNavigate, useParams, useSearchParams } from "react-router-dom"
+import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 import { Flag } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
+import { Input } from "@/components/ui/input"
 import { Kbd } from "@/components/ui/kbd"
+import { Textarea } from "@/components/ui/textarea"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { relativeTime } from "@/lib/utils"
@@ -16,6 +18,7 @@ import {
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
 import type { ReviewBreakdown, ReviewItemDetail } from "@/lib/teacherTypes"
+import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
   teacherLoadFailureMessage,
@@ -129,15 +132,13 @@ function DismissForm({ itemId, onDone }: { itemId: string; onDone: () => void })
       }}
       className="flex flex-col gap-2.5"
     >
-      <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-        Internal note (optional, visible only to you, never the student)
-        <textarea
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          rows={2}
-          className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-        />
-      </label>
+      <Textarea
+        label="Internal note (optional, visible only to you, never the student)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        rows={2}
+        className="resize-none"
+      />
       <div>
         <Button type="submit" variant="ink" disabled={dismiss.isPending}>
           {dismiss.isPending ? "Dismissing…" : "Dismiss flag"}
@@ -227,15 +228,13 @@ function ResolveControls({
       <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
         {mode === "accept" ? (
           <>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Internal note (optional, visible only to you and other teachers, not the student)
-              <textarea
-                value={acceptNote}
-                onChange={(e) => setAcceptNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Internal note (optional, visible only to you and other teachers, not the student)"
+              value={acceptNote}
+              onChange={(e) => setAcceptNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             <div className="flex items-center gap-2.5 flex-wrap">
               <Button type="button" variant="ink" disabled={resolve.isPending} onClick={handleAccept}>
                 {resolve.isPending ? "Saving…" : "Accept as-is"}
@@ -254,66 +253,54 @@ function ResolveControls({
         ) : (
           <form onSubmit={handleSaveCorrection} className="flex flex-col gap-3">
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Marks to award
-                <input
-                  type="number"
-                  min={0}
-                  max={detail.maximumMarks ?? undefined}
-                  value={overrideMarks}
-                  onChange={(e) => setOverrideMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Method
-                <input
-                  type="number"
-                  min={0}
-                  value={methodMarks}
-                  onChange={(e) => setMethodMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Accuracy
-                <input
-                  type="number"
-                  min={0}
-                  value={accuracyMarks}
-                  onChange={(e) => setAccuracyMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
-              <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                Other
-                <input
-                  type="number"
-                  min={0}
-                  value={otherMarks}
-                  onChange={(e) => setOtherMarks(e.target.value)}
-                  className="border border-rule bg-paper-raised rounded-md px-2.5 py-1.5 text-data-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                />
-              </label>
+              <Input
+                label="Marks to award"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                max={detail.maximumMarks ?? undefined}
+                value={overrideMarks}
+                onChange={(e) => setOverrideMarks(e.target.value)}
+              />
+              <Input
+                label="Method"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={methodMarks}
+                onChange={(e) => setMethodMarks(e.target.value)}
+              />
+              <Input
+                label="Accuracy"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={accuracyMarks}
+                onChange={(e) => setAccuracyMarks(e.target.value)}
+              />
+              <Input
+                label="Other"
+                type="number"
+                inputMode="numeric"
+                min={0}
+                value={otherMarks}
+                onChange={(e) => setOtherMarks(e.target.value)}
+              />
             </div>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Breakdown notes (internal: how you split the marks)
-              <textarea
-                value={breakdownNotes}
-                onChange={(e) => setBreakdownNotes(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
-            <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-              Note to the student, saved on their corrected result as the reason for the change
-              <textarea
-                value={studentNote}
-                onChange={(e) => setStudentNote(e.target.value)}
-                rows={2}
-                className="border border-rule bg-paper-raised rounded-md px-2.5 py-2 text-body-sm text-ink resize-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-              />
-            </label>
+            <Textarea
+              label="Breakdown notes (internal: how you split the marks)"
+              value={breakdownNotes}
+              onChange={(e) => setBreakdownNotes(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
+            <Textarea
+              label="Note to the student, saved on their corrected result as the reason for the change"
+              value={studentNote}
+              onChange={(e) => setStudentNote(e.target.value)}
+              rows={2}
+              className="resize-none"
+            />
             {validationError ? (
               <div role="alert" className="text-body-sm text-err">
                 {validationError}
@@ -339,6 +326,55 @@ function ResolveControls({
   )
 }
 
+/**
+ * Task 9 (C3d) · "Item N of total" under the page header, with Prev/Next
+ * links carrying the same filter querystring the teacher was triaging
+ * under. Built from `queuePosition` over `ReviewItem`'s own already-fetched
+ * `queueIds` — no second fetch, and the identical "am I even still in this
+ * filtered queue" question the existing `nextItemId` logic below already
+ * answers (a resolved/dismissed item, or one that no longer matches the
+ * filters, falls out of `queueIds` and `queuePosition` returns `null`); the
+ * strip renders nothing rather than a stale or misleading position.
+ */
+function QueueStrip({
+  position,
+  total,
+  filterQs,
+}: {
+  position: { index: number; total: number; prevId: string | null; nextId: string | null }
+  total: number
+  filterQs: string
+}) {
+  const suffix = filterQs ? `?${filterQs}` : ""
+  return (
+    <div className="flex items-center justify-between gap-3 text-body-sm text-ink-faint">
+      <span>
+        Item {position.index + 1} of {total}
+      </span>
+      <div className="flex items-center gap-3">
+        {position.prevId ? (
+          <Link
+            to={`/teacher/review/${position.prevId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            <BackArrow /> Prev
+          </Link>
+        ) : null}
+        {position.nextId ? (
+          <Link
+            to={`/teacher/review/${position.nextId}${suffix}`}
+            viewTransition
+            className="flex items-center gap-1 text-ink-muted transition-colors hover:text-ink rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+          >
+            Next <ForwardArrow />
+          </Link>
+        ) : null}
+      </div>
+    </div>
+  )
+}
+
 export function ReviewItem() {
   const { itemId } = useParams<{ itemId: string }>()
   const navigate = useNavigate()
@@ -361,6 +397,10 @@ export function ReviewItem() {
   const queueIds = queueQuery.data?.items.map((i) => i.itemId) ?? []
   const currentIndex = itemId ? queueIds.indexOf(itemId) : -1
   const nextItemId = currentIndex >= 0 ? queueIds[currentIndex + 1] : undefined
+  // Task 9 (C3d): the `QueueStrip`'s data — same `queueIds` as the "next"
+  // logic just above, so "falls out of the filtered queue" is one answer,
+  // not two that could disagree.
+  const position = itemId ? queuePosition(queueIds, itemId) : null
 
   const goToQueue = useCallback(() => {
     navigate(`/teacher/review${filterQs ? `?${filterQs}` : ""}`)
@@ -480,6 +520,14 @@ export function ReviewItem() {
                   </div>
                 </div>
               </div>
+
+              {position ? (
+                <QueueStrip
+                  position={position}
+                  total={queueQuery.data?.total ?? position.total}
+                  filterQs={filterQs}
+                />
+              ) : null}
 
               <div className="flex items-center justify-between gap-3 flex-wrap border-y border-rule py-2.5">
                 <div className="flex items-center gap-4 flex-wrap text-data-sm text-ink-faint">

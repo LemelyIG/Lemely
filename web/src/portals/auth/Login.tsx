@@ -3,7 +3,7 @@ import { useState, type FormEvent } from "react"
 import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom"
 import { useAuth } from "@/lib/auth/AuthContext"
 import { postLoginTarget } from "@/lib/auth/postLoginTarget"
-import { BrandMark } from "@/components/ui/brand-mark"
+import { BrandLockup } from "@/components/ui/brand-lockup"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ApiError } from "@/lib/api"
@@ -92,12 +92,7 @@ export function AuthFrame({
       data-portal={dataPortal}
       className="paper-grain flex min-h-dvh flex-col items-center justify-start gap-6 bg-paper px-4 pt-20 pb-12 sm:pt-28"
     >
-      {/* `alt=""` and `aria-hidden`: the wordmark beside it already says
-          "Lemely", so describing the mark too announces the brand twice. */}
-      <div className="flex items-center gap-2.5">
-        <BrandMark className="h-7 w-9 shrink-0" />
-        <span className="text-display-md text-ink">Lemely</span>
-      </div>
+      <BrandLockup size="md" />
       {children}
       {footer}
     </main>

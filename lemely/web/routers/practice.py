@@ -153,6 +153,7 @@ def _topics_to_dto(row: PracticeTopicsResult) -> PracticeTopicsDTO:
                 topic=t.topic,
                 availableCount=t.available_count,
                 syllabusGroup=t.syllabus_group,
+                marksLost=t.marks_lost,
             )
             for t in row.topics
         ],

@@ -1,6 +1,7 @@
 /* Hallmark · pre-emit critique: P5 H5 E4 S5 R5 V4 */
 import { useNavigate, useParams } from "react-router-dom"
 import { Card } from "@/components/ui/card"
+import { SubjectGlyph } from "@/components/ui/subject-glyph"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { PageHeaderSkeleton, CardGridSkeleton } from "@/components/ui/loading-shapes"
@@ -134,7 +135,10 @@ export function Subject() {
                   {secondary ? (
                     <div className="text-data-sm text-ink-muted">{secondary}</div>
                   ) : null}
-                  <h1 className="mt-1 text-display-lg text-ink">{primary}</h1>
+                  <div className="mt-1 flex items-center gap-3">
+                    <SubjectGlyph subject={subjectHeader.name} className="mt-0.5" />
+                    <h1 className="text-display-lg text-ink">{primary}</h1>
+                  </div>
                   <div className="mt-2 max-w-[62ch] text-pretty text-body-md text-ink-muted">
                     {subjectHeader.intro}
                   </div>

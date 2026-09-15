@@ -3,6 +3,7 @@ import { useRef, type ChangeEvent } from "react"
 import { useQueryClient } from "@tanstack/react-query"
 import { Button } from "@/components/ui/button"
 import { QueryState } from "@/components/ui/query-state"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { cn } from "@/lib/utils"
 import { StatCard } from "../components/StatCard"
 import { useSchemes, useUploadScheme } from "@/lib/hooks/useTeacherApi"
@@ -37,8 +38,6 @@ const STATUS_CHIP: Record<SchemeStatus, string> = {
   pending: "bg-accent-wash text-accent-ink",
   custom: "bg-paper-sunk text-ink-muted",
 }
-
-const COLS = "grid grid-cols-[minmax(0,1.6fr)_84px_104px_62px_74px_92px] gap-[14px]"
 
 export function MarkSchemes() {
   const schemesQuery = useSchemes()
@@ -94,6 +93,7 @@ export function MarkSchemes() {
                 accept="application/pdf"
                 className="hidden"
                 onChange={handleFileChange}
+                data-kit-field="file"
               />
               <Button
                 variant="secondary"
@@ -126,48 +126,50 @@ export function MarkSchemes() {
               ))}
             </div>
 
-            <div className="bg-paper-raised border border-rule rounded-lg overflow-hidden">
-              <div
-                className={cn(
-                  COLS,
-                  "px-[22px] py-2.5 bg-paper-sunk border-b border-rule text-eyebrow text-ink-faint",
-                )}
-              >
-                <div>Document</div>
-                <div>Paper</div>
-                <div>Session</div>
-                <div>Marks</div>
-                <div>Questions</div>
-                <div>Status</div>
-              </div>
-              {schemes.map((m) => (
-                <div
-                  key={m.doc}
-                  className={cn(
-                    COLS,
-                    "items-center px-[22px] py-[13px] border-b border-rule",
-                  )}
-                >
-                  <div className="text-data-sm min-w-0 overflow-hidden text-ellipsis whitespace-nowrap">
-                    {m.doc}
-                  </div>
-                  <div className="text-body-md text-ink-muted">{m.paper}</div>
-                  <div className="text-body-md text-ink-muted">{m.session}</div>
-                  <div className="text-data-sm">{m.maxMarks ?? "-"}</div>
-                  <div className="text-data-sm text-ink-faint">{m.questionCount ?? "-"}</div>
-                  <div>
-                    <span
-                      className={cn(
-                        "text-body-sm rounded-full px-[11px] py-[3px]",
-                        STATUS_CHIP[m.status],
-                      )}
-                    >
-                      {m.status}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
+            <Table density="operate"
+              tabIndex={0}
+              role="region"
+              aria-label="Uploaded mark schemes, scrollable horizontally"
+            >
+              <caption className="sr-only">Uploaded mark schemes</caption>
+              <THead>
+                <TR>
+                  <TH>Document</TH>
+                  <TH>Paper</TH>
+                  <TH>Session</TH>
+                  <TH numeric>Marks</TH>
+                  <TH numeric>Questions</TH>
+                  <TH>Status</TH>
+                </TR>
+              </THead>
+              <TBody>
+                {schemes.map((m) => (
+                  <TR key={m.doc}>
+                    <TD className="min-w-0 max-w-[280px] overflow-hidden text-ellipsis whitespace-nowrap text-data-sm">
+                      {m.doc}
+                    </TD>
+                    <TD className="text-body-md text-ink-muted">{m.paper}</TD>
+                    <TD className="text-body-md text-ink-muted">{m.session}</TD>
+                    <TD numeric className="text-data-sm">
+                      {m.maxMarks ?? "-"}
+                    </TD>
+                    <TD numeric className="text-data-sm text-ink-faint">
+                      {m.questionCount ?? "-"}
+                    </TD>
+                    <TD>
+                      <span
+                        className={cn(
+                          "text-body-sm rounded-full px-[11px] py-[3px]",
+                          STATUS_CHIP[m.status],
+                        )}
+                      >
+                        {m.status}
+                      </span>
+                    </TD>
+                  </TR>
+                ))}
+              </TBody>
+            </Table>
           </>
         )}
       </QueryState>

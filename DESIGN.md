@@ -67,10 +67,13 @@ layer most heavily. No sidebar; navigation collapses to a back path and progress
 
 ## 3. Colour tokens (OKLCH)
 
-OKLCH throughout, so lightness is perceptually uniform and a future dark theme
-is a lightness inversion rather than a re-pick. **Light mode only ships now**
-(§3.2 item 8); the scale is built so dark is a token swap, but dark is not
-implemented and not tested.
+OKLCH throughout, so lightness is perceptually uniform and dark mode is a
+lightness inversion rather than a re-pick. **Both light and dark ship.** Dark
+is a token swap under `data-theme="dark"` (§3.10) — REDESIGN-MISSION §3.2 item
+8's "build tokens so a future dark theme is a token swap" is what §3.10 now
+is, shipped in Phase C, task C5a. No component file changes for the swap to
+work, and every contrast guarantee this section makes is measured for both
+ladders by `tests/test_design_tokens.py`.
 
 Every value below is a token. Raw hex, `rgb()`, or `oklch()` written inline in a
 component is a gate failure (§3.2 item 13); lift the value here first.
@@ -217,6 +220,24 @@ adjusted, the ordering must be preserved; a test enforces it
 icon or a text label. A student who cannot distinguish the teal from the red
 must still be able to read their paper.
 
+**The red-pen register.** Its scope is narrow and deliberate: the per-question
+wrong-answer explanation on `PaperResult`, and nothing else. `.lm-red-pen`
+(`web/src/index.css`) sets `--mark-wrong` ink at weight 500 with a 2px
+`border-inline-start` rule, applied only to the expanded explanation slot a
+wrong `QuestionRow` renders — never the row itself, never the feedback panel
+beneath it (that keeps its own `bg-paper-sunk`), and never a red fill of any
+kind. PRODUCT.md's accessibility section sets the boundary this register stays
+inside of: "avoid red-heavy error states; prefer amber/neutral for 'needs
+attention.'" `PaperResult` is the screen a student opens the moment their
+marking finishes, already carrying whatever exam stress sent them there — an
+error-red panel fill on that screen is exactly the red-heavy state the caveat
+warns against. Ink and a rule read as a correction mark in the margin of a
+graded paper, which is what this actually is; a filled red block reads as an
+alarm. No Caveat here either — §4.1's rule that Caveat decorates and never
+carries meaning applies with particular force to a wrong answer, where the
+one thing the register may not do is soften or embellish what happened to the
+mark.
+
 ### 3.7 Product scales
 
 These three scales are load-bearing product semantics, not decoration. They
@@ -275,6 +296,80 @@ accent: it must be distinguishable from the accent's own hover and selected
 states, and it must read as "the browser is talking to you" rather than as
 brand. `:focus-visible` only, never `:focus` (no rings on mouse click). It is
 never removed, on any element, for any reason.
+
+### 3.10 Dark ladder
+
+Shipped in Phase C, task C5a, as `:root[data-theme="dark"]` in `index.css` — a
+token swap and nothing more. Every token below already has a job assigned by
+its light-mode counterpart (§3.1–3.9); no component file changed to ship this.
+Hue and chroma are kept from the light ladder except where a row says
+otherwise; every value is measured, and `tests/test_design_tokens.py` runs
+every contrast guarantee this file makes about the light ladder against this
+one too, in the same test bodies (parametrised by theme, not duplicated).
+
+**The greyscale ladder (§3.6) survives the swap but flips direction.** Light
+DESCENDS with severity (`--ok` > `--warn` > `--err` in relative luminance —
+darkest text reads loudest against white paper). Dark ASCENDS (`--ok` <
+`--warn` < `--err` — brightest text reads loudest against near-black paper).
+`--ok`/`--warn` sit a little below the natural 0.78–0.82 starting band (L
+0.74/0.77) because at equal lightness `--err`'s higher chroma (0.145 vs
+0.075/0.085) suppresses its luminance enough to break the monotonic step;
+nudging lightness rather than touching hue or chroma keeps the step ≥0.02 in
+relative luminance — the same floor the light ladder is held to.
+
+**`--accent-on` does not carry its own literal in dark mode.** Pure white
+measures **2.61:1** on the dark `--accent` (fails AA); the dark `--paper`
+measures **6.93:1** and reads as the fill "recessing" into the page, so
+`index.css` sets `--accent-on: var(--paper)` instead of a second literal.
+
+| Token | Dark OKLCH | ≈ hex | Measured | Binding surface / use |
+|---|---|---|---|---|
+| `--paper` | `oklch(0.20 0.004 85)` | `#171614` | — | The page. |
+| `--paper-raised` | `oklch(0.24 0.003 85)` | `#201F1E` | — | Cards and panels — lighter than the canvas, same "sheet catches more light" logic as light. |
+| `--paper-sunk` | `oklch(0.17 0.006 85)` | `#110F0C` | — | Wells: sidebars, table headers, insets. |
+| `--paper-inverse` | `oklch(0.92 0.008 250)` | `#E1E5EA` | — | The one deliberately LIGHT surface in the dark theme — mirrors light's one deliberately dark surface. |
+| `--ink` | `oklch(0.93 0.009 234)` | `#E2E9ED` | 10.97:1 | Primary text, headings. Binding (tightest) surface: `--pastel-sage`. |
+| `--ink-muted` | `oklch(0.78 0.006 240)` | `#B4B8BB` | 6.73:1 | Secondary text. Binding surface: `--pastel-sage`. |
+| `--ink-faint` | `oklch(0.72 0.006 240)` | `#A1A5A8` | 5.43:1 | Captions, metadata. The floor. Binding surface: `--pastel-sage` — NOT `--paper-sunk`, and not `--err-wash` (light's binding surface). |
+| `--ink-inverse` | `oklch(0.25 0.004 85)` | `#22211F` | 12.64:1 | Text on `--paper-inverse`. |
+| `--rule` | `oklch(0.30 0.004 85)` | `#2F2E2C` | — | Default 1px border. |
+| `--rule-strong` | `oklch(0.36 0.005 85)` | `#3E3D3A` | — | Emphasis border. |
+| `--rule-faint` | `oklch(0.26 0.003 85)` | `#252422` | — | Ruled/dotted texture. |
+| `--accent` | `oklch(0.72 0.13 33)` | `#EA846E` | 6.93:1 on `--paper` (large text/UI) | Buttons, active nav, marks. Chroma down from light's 0.146, kept legible (not glowing) at this lightness. |
+| `--accent-hover` | `oklch(0.78 0.13 34)` | `#FF977F` | — | Hover/pressed — LIGHTER than `--accent`. Light's hover is darker (paper deepens under a press); dark's hover glows brighter instead — the equivalent "more emphasis" cue for its own surface. |
+| `--accent-wash` | `oklch(0.28 0.05 34)` | `#3E1F18` | — | Tinted backgrounds, selected rows, tag fills. |
+| `--accent-ink` | `oklch(0.80 0.10 34)` | `#F7A693` | 6.95:1 | Accent-coloured text. Binding surface: `--pastel-sage`. |
+| `--accent-on` | `var(--paper)` | `#171614` | 6.93:1 on `--accent` | Text/icons on an `--accent` fill. White fails AA (2.61:1); aliases `--paper` instead of a second literal. |
+| `--focus-ring` | `oklch(0.72 0.14 240)` | `#3FAFF3` | 7.42:1 on `--paper` | Focus ring. |
+| `--pastel-rose` / `-ink` | `oklch(0.30 0.032 20)` / `oklch(0.85 0.11 20)` | `#3C2727` / `#FFB1B0` | 7.98:1 on own fill | Unassigned / other subject. |
+| `--pastel-amber` / `-ink` | `oklch(0.30 0.045 85)` / `oklch(0.85 0.08 70)` | `#382C11` / `#F0C595` | 8.55:1 on own fill | English. |
+| `--pastel-sage` / `-ink` | `oklch(0.30 0.032 155)` / `oklch(0.85 0.07 160)` | `#213327` / `#A6DCBE` | 8.75:1 on own fill | Chemistry. |
+| `--pastel-sky` / `-ink` | `oklch(0.30 0.030 235)` / `oklch(0.85 0.08 240)` | `#1F303B` / `#9ED5FD` | 8.67:1 on own fill | Mathematics. |
+| `--pastel-lilac` / `-ink` | `oklch(0.30 0.030 300)` / `oklch(0.85 0.08 300)` | `#302A3B` / `#D5C2FB` | 8.51:1 on own fill | Physics. |
+| `--pastel-clay` / `-ink` | `oklch(0.30 0.022 55)` / `oklch(0.85 0.06 50)` | `#372B23` / `#EFC3AB` | 8.54:1 on own fill | Biology. |
+| `--ok` / `--ok-wash` | `oklch(0.74 0.075 175)` / `oklch(0.28 0.030 175)` | `#76BBA8` / `#182E28` | 6.47:1 on own wash | Correct, complete, on track. Ladder position: lowest. |
+| `--warn` / `--warn-wash` | `oklch(0.77 0.085 70)` / `oklch(0.28 0.045 85)` | `#D7AB78` / `#33270C` | 6.97:1 on own wash | Partial, uncertain, borderline. Ladder position: middle. |
+| `--err` / `--err-wash` | `oklch(0.82 0.145 27)` / `oklch(0.27 0.035 27)` | `#FF9D90` / `#36201D` | 7.61:1 on own wash | Wrong, failed, destructive. Ladder position: highest. |
+| `--info` / `--info-wash` | `oklch(0.80 0.080 265)` / `oklch(0.29 0.030 265)` | `#A5BDF2` / `#242B3B` | 7.54:1 on own wash | Neutral notices. Not part of the §3.6 ladder in either theme. |
+
+Every "Binding surface" above naming a tinted fill is the tightest of all
+fourteen surfaces the token may sit on (the three paper rungs plus the eleven
+tinted fills — the same matrix §3.2's prose describes for light); every pastel
+and semantic pair's ratio is against its own fill, which is tighter than
+`--paper` in every case, same as light.
+
+`--grade-*`, `--mark-*`, `--confidence-*`, and `--subject-*` (§3.7–3.8) are
+`var()` aliases of the tokens above, not redefined here — they repaint
+automatically the instant `data-theme="dark"` lands on `<html>`, and the same
+is true of the `--bg`/`--surface`/`--t1` compatibility layer and the
+`@theme inline` Tailwind mapping.
+
+**Out of scope for this ladder:** `--shadow-float` and `--scrim` (§7). Resting
+cards carry no shadow in either theme, and the only consumers are floating
+layers (popovers, dropdowns, modals, toasts). A dark-appropriate elevation
+treatment — shadows read as holes on a dark surface; Material's answer is
+lighter panels, not darker shadows — is a decision for whichever task first
+ships a floating layer against this ladder, not a token-value nudge here.
 
 ---
 
@@ -582,6 +677,7 @@ from these tokens; no chart sets its own colours.
 - **Legends and tooltips are required.** Tooltips give exact values. Meaning is never encoded by colour alone: pair with direct labels, shape, or pattern.
 - **Empty-data state is mandatory** on every chart, in the Read/Operate voice, with marginalia rather than a blank box.
 - A scoped D3 component is permitted if a viz genuinely exceeds Nivo, matching this theme; log the exception in the Phase 7 report.
+- **Dark mode (C5c).** Tokens re-resolve when `data-theme` changes: `useNivoTheme` (`web/src/lib/nivoTheme.ts`) watches `document.documentElement` with a `MutationObserver` on `data-theme` and re-runs `resolveChartTokens()`, so a chart already open when the reader flips Appearance repaints in the new ladder rather than holding the palette it mounted with.
 
 ---
 
@@ -593,10 +689,10 @@ that bind every component:
 - **Every interactive component implements all 8 states:** default, hover, focus-visible, active, disabled, loading, error, success. A component missing one does not merge (§9 gate 4).
 - **Buttons.** Solid ink or accent fill, `radius-md`, `scale(0.98)` press, subtle hover shift. Primary (accent fill), secondary (paper-raised + rule border), ghost (no fill or border). No pills. No button-in-button.
 - **Inputs.** Visible label always, never placeholder-as-label. `radius-md`, `--rule` border going `--rule-strong` on hover and `--focus-ring` on focus. Errors inline and adjacent to the field, never only at the top of the form.
-- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom.
+- **Cards.** `--paper-raised`, 1px `--rule`, `radius-lg`, 24px padding, no shadow. No forced equal-height rows; align titles and CTAs across siblings and pin CTAs to the bottom. Marketing cards turn the knob to `space-8`.
 - **Tags and badges.** Pastel fill with its paired text colour, `radius-full`, `eyebrow` type, tight padding. This is the *only* place pills are legal.
 - **Tables.** `--paper-sunk` header, `--rule` row dividers, tabular-nums on every numeric column, right-aligned numbers, sticky header at `z-sticky`.
-- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is.
+- **Skeletons, not spinners.** Loading states match the layout they replace so nothing shifts (CLS < 0.1). A spinner is permitted only for an indeterminate action under ~1s inside a button — the practice generator's "Create" button's `loading` prop is exactly this case (a sub-second mutation, not a route or content wait) and stays as it is. Token-driven (`bg-paper-sunk`), so a skeleton needs no dark-mode variant of its own — it works in both themes for free (C5c).
 - **Loading tiers.** Every full-page wait has three tiers, gated by two tokens (`--loading-tier-skeleton` 200ms, `--loading-tier-slow` 5s): tier 1 (0 to `--loading-tier-skeleton`) is warm paper only, nothing visible; tier 2 (`--loading-tier-skeleton` to `--loading-tier-slow`) is a skeleton matching the layout being waited for; tier 3 (after `--loading-tier-slow`) is the brand mark drawing itself, "Still loading", and a reload action. Applies both before React mounts (the pre-mount shell in `index.html`) and inside the app (`RouteFallback` for lazy route chunks).
 - **Route skeletons.** Every route with an `element` declares `handle.skeleton` (`"standalone" | "card-grid" | "list" | "page-header"`, `web/src/lib/meta/documentMeta.ts`): `"standalone"` for a top-level auth/settings/misc route with no portal chrome to promise; `"card-grid"` for a dashboard of tiles; `"list"` for a queue/roster/feed; `"page-header"` for everything else (a form, a single record, a drilldown). `<RouteSkeleton />` (`web/src/components/ui/route-skeleton.tsx`) reads the deepest matched route's declared shape and renders `RouteFallback`'s tier-2 skeleton accordingly, so a route that forgets to declare one is caught by a test rather than silently rendering the wrong shape. iOS home-screen splash screens (`web/vite/splashScreens.ts`) cover the one loading window this system cannot reach at all: iOS paints a blank rectangle before the pre-mount shell's own markup is even shown, unless the page's `<head>` carries a matching `apple-touch-startup-image` link for the device's exact size, dpr and orientation.
 - **Empty states** are composed, never blank: a line of Caveat marginalia, a one-sentence explanation, and the action that fills it.
@@ -613,7 +709,7 @@ these knobs. Anything else is drift.
 | Knob | Range | Notes |
 |---|---|---|
 | Section spacing | `space-12` … `space-32` | Marketing turns it up, Operate turns it down. |
-| Card padding | `space-5` … `space-10` | Density. |
+| Card padding | `space-6` … `space-8` | Density. |
 | Display rung | `display-md` … `display-hero` | Which rung a page's title uses. |
 | Texture intensity | 0 … 3 elements/viewport | Read lane high, Operate low, per §8's budget. |
 | Motion | per §3.3 dials | Marketing 7, auth 5, student 7, teacher/parent 6. |
@@ -634,6 +730,7 @@ Per-surface dial rows are in REDESIGN-MISSION §3.3 and are authoritative.
 6. Check the four mobile widths (320/375/414/768) and desktop.
 7. Check `prefers-reduced-motion`, keyboard traversal, and focus-visible on every control.
 8. Ask the §1 question last: does this still feel like a well-kept notebook? If not, the texture layer (§8) is the first thing to reach for, and restraint is the second.
+9. Logical properties only (P3.4): `inline-start`/`inline-end`, `ms-`/`me-`/`ps-`/`pe-`, `text-start`/`text-end`; never `left`/`right`, `ml-`/`mr-`, `text-left`/`text-right`. `scripts/adapt_audit.mjs` and the responsive gate read `dir="rtl"`.
 
 ---
 
@@ -922,3 +1019,29 @@ removal left (`scripts/audit.mjs:210-214`): it calls the same CDP
 build served under the real `lemelyig.com` origin family so the manifest's
 `scope_extensions` and service-worker scope are checked the way a real
 install actually would be, not against `127.0.0.1`.
+
+---
+
+## 16. Recorded decisions (audit remediation)
+
+Six audit-ledger findings compare a pre-redesign exploration canvas against
+this document and find a mismatch. In every case this document (or
+`PRODUCT.md`) is what shipped, and the canvas fact is the one that is stale.
+Full write-up (findings 1–5): `docs/design-canvas-notes.md`; finding 6's is
+§3.10 itself.
+
+1. **Device limit** (`trust-ops-device-limit-count-divergence`) — the canvas
+   diverges from `PRODUCT.md`'s "Maximum 3 concurrent devices per account".
+   `PRODUCT.md` wins.
+2. **Subject colour mapping** (`brand-subject-color-mapping-mismatch`) — §3.8
+   is authoritative; the canvas mapping is superseded.
+3. **Instrument Serif** (`x-type-instrument-serif-rejected`) — rejected as a
+   typeface; §4 names the four faces actually used.
+4. **"Academic Warmth" colour system** (`brand-color-system-superseded`) —
+   superseded by §3's OKLCH ladder.
+5. **Hero grade on the student home** (`student-home-no-hero-grade`) — not
+   built. Overview reports per-subject predicted grades; a single hero grade
+   would be a cross-subject aggregate the product does not compute.
+6. **Dark mode** (`x-a11y-dark-theme-exploration-correctly-unshipped`) —
+   shipped as a token swap; the exploration artboards' bespoke dark palette
+   was not adopted — see §3.10.

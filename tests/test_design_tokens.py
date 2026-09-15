@@ -14,6 +14,12 @@ the exact ratio, rather than an axe finding on a screenshot three phases later.
 
 Ratios are WCAG 2.x relative luminance. The AA floor is 4.5:1 for normal text
 and 3.0:1 for large text (>=18.66px, or >=14px bold) and for UI components.
+
+Phase C task C5a extends every guarantee below to a second ladder: the dark
+theme, shipped as `:root[data-theme="dark"]` in `index.css` (a token swap, no
+component changes). `THEMES` holds both palettes; parametrised tests run
+against both so a guarantee the light ladder makes is proven for the dark one
+by the same test body, not a hand-duplicated copy that can drift.
 """
 
 from __future__ import annotations
@@ -68,12 +74,24 @@ def contrast(fg: tuple[float, float, float], bg: tuple[float, float, float]) -> 
 
 # ── The tokens, transcribed from DESIGN.md §3 ───────────────────────────────
 
-TOKENS: dict[str, tuple[float, float, float]] = {
+LIGHT_TOKENS: dict[str, tuple[float, float, float]] = {
     # §3.1 paper
     "paper": (0.976, 0.004, 85),
     "paper-raised": (0.992, 0.003, 85),
     "paper-sunk": (0.952, 0.006, 85),
     "paper-inverse": (0.28, 0.008, 250),
+    # §3.1 rule (borders — non-text, WCAG 1.4.11's 3:1, not the 4.5:1 text
+    # floor). These three are transcribed for the "token exists and matches
+    # index.css" guard below, but NOT wired into a contrast assertion: this
+    # file has no non-text/border-contrast helper (`contrast()` is only ever
+    # called here for text-on-fill pairs), and none of the three clears 3:1
+    # on `--paper` even before this diff (light: 1.24/1.50/1.10, dark:
+    # 1.33/1.67/1.17) — a pre-existing gap the reviewer flagged as
+    # out-of-scope for this fix, not something to paper over by inflating the
+    # assertion to something these values don't actually meet.
+    "rule": (0.905, 0.004, 85),
+    "rule-strong": (0.845, 0.005, 85),
+    "rule-faint": (0.945, 0.003, 85),
     # §3.2 ink
     "ink": (0.321, 0.009, 234),
     "ink-muted": (0.48, 0.006, 240),
@@ -110,6 +128,86 @@ TOKENS: dict[str, tuple[float, float, float]] = {
     "info-wash": (0.94, 0.030, 265),
 }
 
+# Task C5a (DESIGN.md §3.10). Hue and chroma are kept from LIGHT_TOKENS for
+# every token except `--accent*` (chroma nudged down, see index.css) and
+# `--ok`/`--warn` (lightness nudged below the 0.78-0.82 starting band so the
+# §3.6 ladder's step size survives greyscale — see
+# `test_state_colours_form_a_monotonic_lightness_ladder`). Values here must
+# match `web/src/index.css`'s `:root[data-theme="dark"]` block exactly;
+# `test_transcribed_token_matches_the_css_the_product_ships` is the guard.
+DARK_TOKENS: dict[str, tuple[float, float, float]] = {
+    # §3.1 paper
+    "paper": (0.20, 0.004, 85),
+    "paper-raised": (0.24, 0.003, 85),
+    "paper-sunk": (0.17, 0.006, 85),
+    "paper-inverse": (0.92, 0.008, 250),
+    # §3.1 rule — see LIGHT_TOKENS' comment: non-text, no assertion here
+    # either, same disclosed pre-existing gap (1.33/1.67/1.17 on --paper).
+    "rule": (0.3, 0.004, 85),
+    "rule-strong": (0.36, 0.005, 85),
+    "rule-faint": (0.26, 0.003, 85),
+    # §3.2 ink
+    "ink": (0.93, 0.009, 234),
+    "ink-muted": (0.78, 0.006, 240),
+    "ink-faint": (0.72, 0.006, 240),
+    "ink-inverse": (0.25, 0.004, 85),
+    # §3.4 accent
+    "accent": (0.72, 0.13, 33),
+    "accent-hover": (0.78, 0.13, 34),
+    "accent-wash": (0.28, 0.05, 34),
+    "accent-ink": (0.80, 0.10, 34),
+    # §3.9 focus
+    "focus-ring": (0.72, 0.14, 240),
+    # §3.5 pastels
+    "pastel-rose": (0.30, 0.032, 20),
+    "pastel-rose-ink": (0.85, 0.11, 20),
+    "pastel-amber": (0.30, 0.045, 85),
+    "pastel-amber-ink": (0.85, 0.08, 70),
+    "pastel-sage": (0.30, 0.032, 155),
+    "pastel-sage-ink": (0.85, 0.07, 160),
+    "pastel-sky": (0.30, 0.030, 235),
+    "pastel-sky-ink": (0.85, 0.08, 240),
+    "pastel-lilac": (0.30, 0.030, 300),
+    "pastel-lilac-ink": (0.85, 0.08, 300),
+    "pastel-clay": (0.30, 0.022, 55),
+    "pastel-clay-ink": (0.85, 0.06, 50),
+    # §3.6 semantic
+    "ok": (0.74, 0.075, 175),
+    "ok-wash": (0.28, 0.030, 175),
+    "warn": (0.77, 0.085, 70),
+    "warn-wash": (0.28, 0.045, 85),
+    "err": (0.82, 0.145, 27),
+    "err-wash": (0.27, 0.035, 27),
+    "info": (0.80, 0.080, 265),
+    "info-wash": (0.29, 0.030, 265),
+}
+
+THEMES: dict[str, dict[str, tuple[float, float, float]]] = {
+    "light": LIGHT_TOKENS,
+    "dark": DARK_TOKENS,
+}
+
+# `--accent-on` (DESIGN.md §3.4/§3.10) is deliberately absent from
+# LIGHT_TOKENS/DARK_TOKENS: it is not a literal `oklch()` triple in either
+# `:root` block — light ships `#ffffff` and dark aliases `var(--paper)`
+# instead of a second literal — so `css_root_tokens()`'s oklch-only regex
+# would never find it there and the transcription guard below would always
+# report it missing. Pinned here instead, in OKLCH terms so `ratio()`/
+# `oklch_to_srgb()` still apply: light's `(1.0, 0.0, 0.0)` is pure white
+# (chroma 0 makes the hue irrelevant), and dark's value is
+# `DARK_TOKENS["paper"]` itself, because that is literally what
+# `var(--paper)` resolves to.
+ACCENT_ON: dict[str, tuple[float, float, float]] = {
+    "light": (1.0, 0.0, 0.0),
+    "dark": DARK_TOKENS["paper"],
+}
+
+# The CSS selector each theme's literal-value tokens are declared under.
+SELECTORS: dict[str, str] = {
+    "light": ":root {",
+    "dark": ':root[data-theme="dark"] {',
+}
+
 AA_NORMAL = 4.5
 AA_LARGE = 3.0
 
@@ -119,37 +217,51 @@ AA_LARGE = 3.0
 TEXT_SURFACES = ("paper", "paper-raised", "paper-sunk")
 
 
-def ratio(fg: str, bg: str) -> float:
-    return contrast(oklch_to_srgb(*TOKENS[fg]), oklch_to_srgb(*TOKENS[bg]))
+def ratio(theme: str, fg: str, bg: str) -> float:
+    tokens = THEMES[theme]
+    return contrast(oklch_to_srgb(*tokens[fg]), oklch_to_srgb(*tokens[bg]))
 
 
+def accent_on_ratio(theme: str, bg: str) -> float:
+    """Like :func:`ratio`, but for `--accent-on` (see :data:`ACCENT_ON`)."""
+    return contrast(oklch_to_srgb(*ACCENT_ON[theme]), oklch_to_srgb(*THEMES[theme][bg]))
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
 @pytest.mark.parametrize("token", ["ink", "ink-muted", "ink-faint", "accent-ink"])
 @pytest.mark.parametrize("surface", TEXT_SURFACES)
-def test_text_tokens_clear_aa_on_every_surface_they_may_sit_on(token: str, surface: str) -> None:
+def test_text_tokens_clear_aa_on_every_surface_they_may_sit_on(
+    theme: str, token: str, surface: str
+) -> None:
     """The rule the build-era system broke three times.
 
     A text token is not "accessible" against its best-case background. It has to
     clear AA against every surface it is allowed to appear on, and `paper-sunk`
-    (sidebars, table headers, wells) is darker than the canvas.
+    (sidebars, table headers, wells) is darker than the canvas — in EITHER
+    theme, which is why this runs against both ladders.
     """
-    assert ratio(token, surface) >= AA_NORMAL, (
-        f"--{token} on --{surface} is {ratio(token, surface):.2f}:1, below the "
-        f"{AA_NORMAL}:1 AA floor for normal text. Darken the text token; do not "
-        f"lighten the surface and do not add a lighter text step (DESIGN.md §3.2)."
+    assert ratio(theme, token, surface) >= AA_NORMAL, (
+        f"[{theme}] --{token} on --{surface} is {ratio(theme, token, surface):.2f}:1, below the "
+        f"{AA_NORMAL}:1 AA floor for normal text. Darken (light) or lighten (dark) the text "
+        f"token; do not touch the surface and do not add another text step (DESIGN.md §3.2)."
     )
 
 
-def test_ink_faint_is_the_floor_and_has_real_margin_on_the_darkest_surface() -> None:
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_ink_faint_is_the_floor_and_has_real_margin_on_the_darkest_surface(theme: str) -> None:
     """Pins the specific value that a draft of DESIGN.md got wrong.
 
     At L 0.575 this measured 3.80:1 on paper-sunk and would have shipped a
-    system-wide caption failure. It is set at L 0.529 for that reason.
+    system-wide caption failure. It is set at L 0.529 for that reason (light);
+    the dark ladder's `--ink-faint` is held to the same floor.
     """
-    assert ratio("ink-faint", "paper-sunk") >= AA_NORMAL
-    # And it must genuinely be the lightest text token, or the hierarchy lies.
+    assert ratio(theme, "ink-faint", "paper-sunk") >= AA_NORMAL
+    # And it must genuinely be the lightest-contrast text token, or the
+    # hierarchy lies.
     for lighter in ("ink", "ink-muted", "accent-ink"):
-        assert ratio(lighter, "paper") > ratio("ink-faint", "paper"), (
-            f"--{lighter} is more muted than --ink-faint, which is supposed to be the floor"
+        assert ratio(theme, lighter, "paper") > ratio(theme, "ink-faint", "paper"), (
+            f"[{theme}] --{lighter} is more muted than --ink-faint, which is supposed to be "
+            "the floor"
         )
 
 
@@ -157,68 +269,144 @@ def test_white_not_ink_inverse_is_used_on_accent_fills() -> None:
     """DESIGN.md §3.4's exception to the no-pure-white rule, and why it exists.
 
     Button labels are `label` (13px/500), i.e. normal text, so they need 4.5:1.
+    Light-theme-specific: this is the historical bug this test was written to
+    pin. The dark theme's equivalent decision is a different answer (below).
     """
     white = (1.0, 1.0, 1.0)
-    accent = oklch_to_srgb(*TOKENS["accent"])
+    accent = oklch_to_srgb(*LIGHT_TOKENS["accent"])
     assert contrast(white, accent) >= AA_NORMAL, "pure white must clear AA on the accent fill"
-    assert contrast(oklch_to_srgb(*TOKENS["ink-inverse"]), accent) < AA_NORMAL, (
+    assert contrast(oklch_to_srgb(*LIGHT_TOKENS["ink-inverse"]), accent) < AA_NORMAL, (
         "--ink-inverse now passes on --accent, so DESIGN.md's stated reason for "
         "permitting pure white there is stale. Re-check the token and the prose together."
     )
 
 
-def test_accent_clears_large_text_and_ui_component_contrast() -> None:
+def test_accent_on_aliases_paper_in_dark_because_white_fails_aa() -> None:
+    """DESIGN.md §3.4's dark-ladder rule for `--accent-on`.
+
+    Pure white measures 2.61:1 on the dark `--accent` (fails AA), so
+    `index.css` makes `--accent-on: var(--paper)` in the dark block instead of
+    a second literal. This pins the measurement that decision is based on, so
+    a future nudge to the dark accent's lightness/chroma has to re-check it.
+    """
+    white = (1.0, 1.0, 1.0)
+    dark_accent = oklch_to_srgb(*DARK_TOKENS["accent"])
+    assert contrast(white, dark_accent) < AA_NORMAL, (
+        f"white now clears AA on the dark --accent ({contrast(white, dark_accent):.2f}:1). "
+        "--accent-on could go back to a literal #ffffff; update index.css and this test together."
+    )
+    dark_paper = oklch_to_srgb(*DARK_TOKENS["paper"])
+    assert contrast(dark_paper, dark_accent) >= AA_NORMAL, (
+        f"the dark --paper is {contrast(dark_paper, dark_accent):.2f}:1 on the dark --accent, "
+        "below AA — --accent-on's fallback in index.css (`var(--paper)`) no longer clears the bar."
+    )
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+@pytest.mark.parametrize("surface", ["accent", "accent-hover"])
+def test_accent_on_clears_aa_on_accent_and_accent_hover(theme: str, surface: str) -> None:
+    """`--accent-on` is the button-label colour (`button.tsx`: `bg-accent
+    text-accent-on hover:bg-accent-hover`) — the label stays `--accent-on`
+    across both the default and the `:hover` fill, so it must clear AA on
+    BOTH, in both themes. The `--accent` half of this was already implied by
+    `test_white_not_ink_inverse_is_used_on_accent_fills` (light) and
+    `test_accent_on_aliases_paper_in_dark_because_white_fails_aa` (dark); the
+    `--accent-hover` half was previously asserted nowhere.
+    """
+    assert accent_on_ratio(theme, surface) >= AA_NORMAL, (
+        f"[{theme}] --accent-on on --{surface} is {accent_on_ratio(theme, surface):.2f}:1, "
+        f"below the {AA_NORMAL}:1 AA floor for normal text (button labels are 13px/500)."
+    )
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_accent_clears_large_text_and_ui_component_contrast(theme: str) -> None:
     """--accent is for fills, marks and large text, not for body copy."""
-    assert ratio("accent", "paper") >= AA_LARGE
-    assert ratio("accent-ink", "paper") >= AA_NORMAL
+    assert ratio(theme, "accent", "paper") >= AA_LARGE
+    assert ratio(theme, "accent-ink", "paper") >= AA_NORMAL
 
 
+@pytest.mark.parametrize("theme", sorted(THEMES))
 @pytest.mark.parametrize("name", ["rose", "amber", "sage", "sky", "lilac", "clay"])
-def test_every_pastel_pair_is_aa_on_its_own_fill_and_on_paper(name: str) -> None:
+def test_every_pastel_pair_is_aa_on_its_own_fill_and_on_paper(theme: str, name: str) -> None:
     """A tag must be legible on its fill, and still legible if the fill is dropped."""
-    assert ratio(f"pastel-{name}-ink", f"pastel-{name}") >= AA_NORMAL
-    assert ratio(f"pastel-{name}-ink", "paper") >= AA_NORMAL
+    assert ratio(theme, f"pastel-{name}-ink", f"pastel-{name}") >= AA_NORMAL
+    assert ratio(theme, f"pastel-{name}-ink", "paper") >= AA_NORMAL
 
 
+@pytest.mark.parametrize("theme", sorted(THEMES))
 @pytest.mark.parametrize("name", ["ok", "warn", "err", "info"])
-def test_every_semantic_pair_is_aa_on_its_own_wash_and_on_paper(name: str) -> None:
-    assert ratio(name, f"{name}-wash") >= AA_NORMAL
-    assert ratio(name, "paper") >= AA_NORMAL
+def test_every_semantic_pair_is_aa_on_its_own_wash_and_on_paper(theme: str, name: str) -> None:
+    assert ratio(theme, name, f"{name}-wash") >= AA_NORMAL
+    assert ratio(theme, name, "paper") >= AA_NORMAL
 
 
-def test_focus_ring_is_visible_against_the_page() -> None:
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_focus_ring_is_visible_against_the_page(theme: str) -> None:
     """A focus ring is a UI component: 3:1. It clears the stricter bar anyway."""
-    assert ratio("focus-ring", "paper") >= AA_NORMAL
+    assert ratio(theme, "focus-ring", "paper") >= AA_NORMAL
 
 
-def test_inverse_text_is_legible_on_the_one_permitted_dark_surface() -> None:
-    assert ratio("ink-inverse", "paper-inverse") >= AA_NORMAL
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_inverse_text_is_legible_on_the_one_permitted_inverse_surface(theme: str) -> None:
+    """`--ink-inverse` on `--paper-inverse`.
+
+    In light theme, `--paper-inverse` is the one deliberately dark surface in
+    an otherwise light system. In the dark theme it flips: `--paper-inverse`
+    is the one deliberately LIGHT surface. Either way it is a single
+    intentional exception, and the text token paired with it must clear AA.
+    """
+    assert ratio(theme, "ink-inverse", "paper-inverse") >= AA_NORMAL
 
 
-def test_state_colours_form_a_monotonic_lightness_ladder() -> None:
-    """DESIGN.md §3.6's greyscale guarantee, which a draft of that file did not keep.
+@pytest.mark.parametrize(
+    ("theme", "expect_ascending"),
+    [("light", False), ("dark", True)],
+)
+def test_state_colours_form_a_monotonic_lightness_ladder(
+    theme: str, expect_ascending: bool
+) -> None:
+    """DESIGN.md §3.6's greyscale guarantee, in both directions.
 
     Teal-instead-of-green protects the red/green colour-blind case, but it does
     nothing for a reader who gets no hue at all. The structural guarantee is
-    that ok, warn and err descend in luminance, so the three states stay
-    distinguishable with hue removed entirely.
+    that ok, warn and err form a monotonic luminance ladder, so the three
+    states stay distinguishable with hue removed entirely.
 
-    A draft set all three at roughly L 0.45. They measured as three near
-    identical greys, which made the teal decision pointless. This test is what
-    caught that.
+    Light DESCENDS: ok > warn > err (darkest text reads loudest on white
+    paper). Dark ASCENDS: ok < warn < err (brightest text reads loudest on
+    near-black paper) — the theme swap keeps the same *steps*, not the same
+    *direction*, which is why this is parametrized rather than one assertion.
+
+    A draft set all three at roughly the same lightness in light mode. They
+    measured as three near-identical greys, which made the teal decision
+    pointless. This test is what caught that, in both ladders.
     """
-    ok_l = relative_luminance(oklch_to_srgb(*TOKENS["ok"]))
-    warn_l = relative_luminance(oklch_to_srgb(*TOKENS["warn"]))
-    err_l = relative_luminance(oklch_to_srgb(*TOKENS["err"]))
+    tokens = THEMES[theme]
+    ok_l = relative_luminance(oklch_to_srgb(*tokens["ok"]))
+    warn_l = relative_luminance(oklch_to_srgb(*tokens["warn"]))
+    err_l = relative_luminance(oklch_to_srgb(*tokens["err"]))
 
-    assert ok_l > warn_l > err_l, (
-        f"the state ladder is not monotonic: ok={ok_l:.4f} warn={warn_l:.4f} "
-        f"err={err_l:.4f}. DESIGN.md §3.6 promises a descending lightness step."
-    )
+    if expect_ascending:
+        assert ok_l < warn_l < err_l, (
+            f"[{theme}] the state ladder is not ascending: ok={ok_l:.4f} warn={warn_l:.4f} "
+            f"err={err_l:.4f}. The dark ladder is supposed to ASCEND with severity "
+            "(ok < warn < err) — the mirror image of the light ladder's descent."
+        )
+        gap = min(warn_l - ok_l, err_l - warn_l)
+    else:
+        assert ok_l > warn_l > err_l, (
+            f"[{theme}] the state ladder is not descending: ok={ok_l:.4f} warn={warn_l:.4f} "
+            f"err={err_l:.4f}. DESIGN.md §3.6 promises the light ladder DESCENDS with severity "
+            "(ok > warn > err)."
+        )
+        gap = min(ok_l - warn_l, warn_l - err_l)
+
     # A gap too small to see is the same as no gap. 0.02 in relative luminance
     # is roughly the smallest step that survives greyscale conversion legibly.
-    assert min(ok_l - warn_l, warn_l - err_l) >= 0.02, (
-        "the state ladder is monotonic but the steps are too small to perceive in greyscale"
+    assert gap >= 0.02, (
+        f"[{theme}] the state ladder is monotonic but the steps are too small to perceive "
+        "in greyscale"
     )
 
 
@@ -246,6 +434,10 @@ def test_state_colours_form_a_monotonic_lightness_ladder() -> None:
 # is therefore floored by the worst TINT now, not by the worst paper rung, and
 # `ink-faint` joins the other three in the matrix below rather than sitting in
 # a split of passing and xfailing lists.
+#
+# Task C5a extends the whole matrix to the dark ladder, where `--ink-faint`'s
+# binding constraint turns out to be `--pastel-sage` rather than `--err-wash`
+# (see `test_binding_constraint_on_ink_faint` below).
 
 TINTED_SURFACES = (
     "accent-wash",
@@ -262,12 +454,14 @@ TINTED_SURFACES = (
 )
 
 
+@pytest.mark.parametrize("theme", sorted(THEMES))
 @pytest.mark.parametrize("token", ["ink", "ink-muted", "ink-faint", "accent-ink"])
 @pytest.mark.parametrize("surface", TINTED_SURFACES)
-def test_ink_tokens_clear_aa_on_every_tinted_fill(token: str, surface: str) -> None:
+def test_ink_tokens_clear_aa_on_every_tinted_fill(theme: str, token: str, surface: str) -> None:
     """The same rule as on paper, extended to the fills the product actually paints."""
-    assert ratio(token, surface) >= AA_NORMAL, (
-        f"--{token} on --{surface} is {ratio(token, surface):.2f}:1, below {AA_NORMAL}:1."
+    assert ratio(theme, token, surface) >= AA_NORMAL, (
+        f"[{theme}] --{token} on --{surface} is {ratio(theme, token, surface):.2f}:1, "
+        f"below {AA_NORMAL}:1."
     )
 
 
@@ -275,69 +469,128 @@ def test_ink_tokens_clear_aa_on_every_tinted_fill(token: str, surface: str) -> N
 # on is the one that decides its value. Pinned by name so that a later nudge to
 # either colour reports WHICH pair went under rather than one of eleven
 # parametrised cases going red with no indication that this specific pair is
-# the binding constraint on the whole token.
-def test_err_wash_is_the_binding_constraint_on_ink_faint() -> None:
-    """The floor under `--ink-faint`. Everything else has more room than this."""
-    tightest = min(ratio("ink-faint", s) for s in TINTED_SURFACES)
-    assert ratio("ink-faint", "err-wash") == tightest, (
-        "the tightest ink-faint pairing is no longer --err-wash. D6.7 chose L 0.52 "
-        "because err-wash was the worst of fourteen surfaces; if that is no longer "
-        "true, the value was derived against a constraint that has moved."
+# the binding constraint on the whole token. The binding surface differs by
+# theme (light: `--err-wash`; dark: `--pastel-sage`), which is exactly why it
+# is named explicitly per theme rather than assumed to carry over.
+@pytest.mark.parametrize(
+    ("theme", "binding_surface"),
+    [("light", "err-wash"), ("dark", "pastel-sage")],
+)
+def test_binding_constraint_on_ink_faint(theme: str, binding_surface: str) -> None:
+    """The floor under `--ink-faint`, per theme. Everything else has more room than this."""
+    tightest = min(ratio(theme, "ink-faint", s) for s in TINTED_SURFACES)
+    actual_binding = min(TINTED_SURFACES, key=lambda s: ratio(theme, "ink-faint", s))
+    assert actual_binding == binding_surface, (
+        f"[{theme}] the tightest ink-faint pairing is now --{actual_binding}, "
+        f"not --{binding_surface}. The token's value was derived against a constraint "
+        "that has moved — re-derive it, or update this test's expected binding surface "
+        "to match the new evidence."
     )
-    assert tightest >= AA_NORMAL, f"--ink-faint's tightest pairing is {tightest:.2f}:1"
+    assert tightest >= AA_NORMAL, (
+        f"[{theme}] --ink-faint's tightest pairing ({binding_surface}) is {tightest:.2f}:1"
+    )
 
 
 # ── The transcription itself (P6.5, found while applying D6.7) ──────────────
 #
-# `TOKENS` above is transcribed BY HAND from DESIGN.md §3, and until now nothing
-# checked it against `web/src/index.css`, which is what the product actually
-# paints. So this file could measure one palette while the browser rendered
-# another, and every ratio it asserts would still be green.
+# `LIGHT_TOKENS`/`DARK_TOKENS` above are transcribed BY HAND from DESIGN.md §3,
+# and until now nothing checked either against `web/src/index.css`, which is
+# what the product actually paints. So this file could measure one palette
+# while the browser rendered another, and every ratio it asserts would still
+# be green.
 #
-# That is not hypothetical: it happened during D6.7's own application. The token
-# was changed in `index.css` first, the suite was re-run, and eight tests went
-# red reporting the OLD value — the file that calls itself this project's
-# contrast authority was still measuring 0.529 because the edit had not been
-# mirrored here. The failure was loud in that direction, which is luck. The
-# opposite edit order is silent: nudge a colour in `index.css` alone, and this
-# file happily proves AA about a value nothing renders.
+# That is not hypothetical: it happened during D6.7's own application. The
+# token was changed in `index.css` first, the suite was re-run, and eight
+# tests went red reporting the OLD value — the file that calls itself this
+# project's contrast authority was still measuring 0.529 because the edit had
+# not been mirrored here. The failure was loud in that direction, which is
+# luck. The opposite edit order is silent: nudge a colour in `index.css`
+# alone, and this file happily proves AA about a value nothing renders.
 #
-# Parsed rather than transcribed a third time, so the check cannot itself drift.
+# Parsed rather than transcribed a third time, so the check cannot itself
+# drift. Task C5a: the parser is now selector-scoped rather than "everything
+# after the first `:root {`", because the file now has a second block
+# (`:root[data-theme="dark"]`) with property names that collide with the
+# first — an unscoped regex would let the dark block's values silently
+# overwrite the light ones (or vice versa) in the parsed dict.
 
 
-def css_root_tokens() -> dict[str, tuple[float, float, float]]:
-    """Every three-component `oklch()` custom property declared in `:root`."""
-    root = INDEX_CSS.read_text(encoding="utf-8").split(":root {", 1)[1]
+def css_root_tokens(selector: str) -> dict[str, tuple[float, float, float]]:
+    """Every three-component `oklch()` custom property declared directly inside `selector`'s block.
+
+    Bounded to the block's own braces (brace-depth matching, not "to the next
+    `}`") so a selector whose block happens to contain a nested rule would
+    still be parsed correctly. Neither current block does, but the guard is
+    cheap and this function is the project's one source of truth for "what
+    does the CSS actually say", so it should not be the thing that's wrong.
+    """
+    text = INDEX_CSS.read_text(encoding="utf-8")
+    start = text.index(selector)
+    body_start = text.index("{", start) + 1
+    depth = 1
+    i = body_start
+    while depth > 0:
+        if text[i] == "{":
+            depth += 1
+        elif text[i] == "}":
+            depth -= 1
+        i += 1
+    block = text[body_start : i - 1]
     return {
         name: (float(lightness), float(chroma), float(hue))
         for name, lightness, chroma, hue in re.findall(
-            r"--([a-z0-9-]+):\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)\s*;", root
+            r"--([a-z0-9-]+):\s*oklch\(\s*([0-9.]+)\s+([0-9.]+)\s+([0-9.]+)\s*\)\s*;", block
         )
     }
 
 
-def test_the_css_actually_declares_the_tokens_this_file_measures() -> None:
+@pytest.mark.parametrize("theme", sorted(THEMES))
+def test_the_css_actually_declares_the_tokens_this_file_measures(theme: str) -> None:
     """A guard on the parser, so an empty match set cannot pass everything below."""
-    parsed = css_root_tokens()
-    assert len(parsed) >= len(TOKENS), (
-        f"parsed only {len(parsed)} oklch tokens out of {INDEX_CSS.name} but this file "
-        f"measures {len(TOKENS)}. The regex has stopped matching the way the tokens are "
+    parsed = css_root_tokens(SELECTORS[theme])
+    tokens = THEMES[theme]
+    assert len(parsed) >= len(tokens), (
+        f"[{theme}] parsed only {len(parsed)} oklch tokens out of {INDEX_CSS.name} but this file "
+        f"measures {len(tokens)}. The regex has stopped matching the way the tokens are "
         "written — fix the parser, do not narrow the assertions below it."
     )
 
 
-@pytest.mark.parametrize("token", sorted(TOKENS))
-def test_transcribed_token_matches_the_css_the_product_ships(token: str) -> None:
-    """DESIGN.md's value and the implementation's value are the same value."""
-    parsed = css_root_tokens()
-    assert token in parsed, (
-        f"--{token} is measured here but is not declared as an oklch() triple in "
-        f"{INDEX_CSS.name}. Either the token was renamed or removed and this file was "
-        "not updated, or it is now defined by reference and cannot be checked."
+def test_dark_ladder_declares_the_same_token_set_as_light() -> None:
+    """The dark block is a token swap, not a partial one.
+
+    Every literal-value colour token the light `:root` block declares
+    (paper/ink/rule/accent/pastel/semantic/focus-ring — the aliases like
+    `--grade-*` and `--mark-*` are `var()` references and never match the
+    oklch() regex in either block, so they are already excluded on both
+    sides) must reappear in the dark block. A name present in one ladder and
+    missing from the other means some surface silently keeps its light-mode
+    colour when `data-theme="dark"` is set.
+    """
+    light_names = set(css_root_tokens(SELECTORS["light"]))
+    dark_names = set(css_root_tokens(SELECTORS["dark"]))
+    missing_from_dark = light_names - dark_names
+    extra_in_dark = dark_names - light_names
+    assert not missing_from_dark, (
+        f"declared in light but not redefined in dark: {sorted(missing_from_dark)}"
     )
-    expected, actual = TOKENS[token], parsed[token]
+    assert not extra_in_dark, f"declared in dark but not present in light: {sorted(extra_in_dark)}"
+
+
+@pytest.mark.parametrize("theme", sorted(THEMES))
+@pytest.mark.parametrize("token", sorted(LIGHT_TOKENS))
+def test_transcribed_token_matches_the_css_the_product_ships(theme: str, token: str) -> None:
+    """DESIGN.md's value and the implementation's value are the same value, in both ladders."""
+    parsed = css_root_tokens(SELECTORS[theme])
+    tokens = THEMES[theme]
+    assert token in parsed, (
+        f"[{theme}] --{token} is measured here but is not declared as an oklch() triple under "
+        f"{SELECTORS[theme]!r} in {INDEX_CSS.name}. Either the token was renamed or removed and "
+        "this file was not updated, or it is now defined by reference and cannot be checked."
+    )
+    expected, actual = tokens[token], parsed[token]
     assert tuple(round(v, 6) for v in actual) == tuple(round(v, 6) for v in expected), (
-        f"--{token} is oklch{actual} in {INDEX_CSS.name} but oklch{expected} here. "
+        f"[{theme}] --{token} is oklch{actual} in {INDEX_CSS.name} but oklch{expected} here. "
         "Every ratio this file asserts about that token is therefore about a colour "
         "the product does not paint. Change both, or neither."
     )

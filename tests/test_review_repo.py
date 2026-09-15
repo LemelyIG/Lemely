@@ -250,12 +250,12 @@ def test_list_queue_scoped_to_callers_students(
         [_question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)],
     )
 
-    rows_a = review_service.list_queue(teacher_a, Role.teacher)
+    rows_a = review_service.list_queue(teacher_a, Role.teacher).rows
     assert len(rows_a) == 1
     assert rows_a[0].student_id == student_a
     assert rows_a[0].student_display_name == "A"
 
-    rows_b = review_service.list_queue(teacher_b, Role.teacher)
+    rows_b = review_service.list_queue(teacher_b, Role.teacher).rows
     assert len(rows_b) == 1
     assert rows_b[0].student_id == student_b
 
@@ -273,7 +273,9 @@ def test_list_queue_platform_admin_sees_none(
     )
     admin = _seed_user(pg_sessionmaker, Role.platform_admin)
 
-    assert review_service.list_queue(admin, Role.platform_admin) == []
+    result = review_service.list_queue(admin, Role.platform_admin)
+    assert result.rows == []
+    assert result.total == 0
 
 
 def test_list_queue_filters_by_class(
@@ -301,8 +303,9 @@ def test_list_queue_filters_by_class(
         [_question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)],
     )
 
-    rows = review_service.list_queue(teacher, Role.teacher, class_id=class_x.class_id)
-    assert [r.student_id for r in rows] == [student_x]
+    result = review_service.list_queue(teacher, Role.teacher, class_id=class_x.class_id)
+    assert [r.student_id for r in result.rows] == [student_x]
+    assert result.total == 1
 
 
 def test_list_queue_filters_by_reason(
@@ -327,9 +330,13 @@ def test_list_queue_filters_by_reason(
         ],
     )
 
-    assert len(review_service.list_queue(teacher, Role.teacher, reason="plagiarism_flag")) == 1
+    matched = review_service.list_queue(teacher, Role.teacher, reason="plagiarism_flag")
+    assert len(matched.rows) == 1
+    assert matched.total == 1
     # Unrecognised reason values yield no matches, never a 500.
-    assert review_service.list_queue(teacher, Role.teacher, reason="not_a_real_reason") == []
+    unmatched = review_service.list_queue(teacher, Role.teacher, reason="not_a_real_reason")
+    assert unmatched.rows == []
+    assert unmatched.total == 0
 
 
 def test_list_queue_min_age_hours(
@@ -351,8 +358,8 @@ def test_list_queue_min_age_hours(
         session.execute(sa.text("UPDATE review_queue SET created_at = :ts"), {"ts": stale})
         session.commit()
 
-    assert len(review_service.list_queue(teacher, Role.teacher, min_age_hours=48)) == 1
-    assert len(review_service.list_queue(teacher, Role.teacher, min_age_hours=1000)) == 0
+    assert len(review_service.list_queue(teacher, Role.teacher, min_age_hours=48).rows) == 1
+    assert len(review_service.list_queue(teacher, Role.teacher, min_age_hours=1000).rows) == 0
 
 
 # ── Cursor pagination (B6a) ──────────────────────────────────────────────────
@@ -399,15 +406,20 @@ def test_list_queue_cursor_pagination_no_overlap_no_gap(
         pg_sessionmaker, student, [base + timedelta(minutes=i) for i in range(5)]
     )
 
-    page1 = review_service.list_queue(teacher, Role.teacher, limit=2)
+    page1_result = review_service.list_queue(teacher, Role.teacher, limit=2)
     # `limit + 1` rows come back so the caller can detect `has_more`.
+    page1 = page1_result.rows
     assert len(page1) == 3
     assert [r.item_id for r in page1[:2]] == item_ids[:2]
+    # `total` is the count ignoring `cursor`/`limit`, not `len(rows)`.
+    assert page1_result.total == 5
 
     cursor = (page1[1].created_at, page1[1].item_id)
-    page2 = review_service.list_queue(teacher, Role.teacher, limit=2, cursor=cursor)
+    page2_result = review_service.list_queue(teacher, Role.teacher, limit=2, cursor=cursor)
+    page2 = page2_result.rows
     assert len(page2) == 3
     assert [r.item_id for r in page2[:2]] == item_ids[2:4]
+    assert page2_result.total == 5
 
     seen = [r.item_id for r in page1[:2]] + [r.item_id for r in page2[:2]]
     assert seen == item_ids[:4]
@@ -425,15 +437,15 @@ def test_list_queue_cursor_stable_under_equal_created_at(
     same_ts = datetime.now(UTC)
     item_ids = _seed_n_items_with_created_at(pg_sessionmaker, student, [same_ts] * 3)
 
-    full = review_service.list_queue(teacher, Role.teacher)
+    full = review_service.list_queue(teacher, Role.teacher).rows
     assert [r.item_id for r in full] == sorted(item_ids)
 
-    page1 = review_service.list_queue(teacher, Role.teacher, limit=1)
+    page1 = review_service.list_queue(teacher, Role.teacher, limit=1).rows
     assert len(page1) == 2
     assert page1[0].item_id == full[0].item_id
 
     cursor = (page1[0].created_at, page1[0].item_id)
-    page2 = review_service.list_queue(teacher, Role.teacher, limit=1, cursor=cursor)
+    page2 = review_service.list_queue(teacher, Role.teacher, limit=1, cursor=cursor).rows
     assert page2[0].item_id == full[1].item_id
 
 

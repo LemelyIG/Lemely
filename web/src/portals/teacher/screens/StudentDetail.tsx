@@ -8,6 +8,7 @@ import { QueryState } from "@/components/ui/query-state"
 import { ChartFrame } from "@/components/ui/chart-frame"
 import { LineChart } from "@/components/ui/lazy-chart"
 import { WeaknessChip, type WeaknessSeverity } from "@/components/ui/weakness-chip"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { relativeTime } from "@/lib/utils"
 import { useStudentDetail } from "@/lib/hooks/useTeacherApi"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -147,35 +148,31 @@ function StudentTrendPanel({
         role="region"
         aria-label="Percentage over time, scrollable"
       >
-        <table className="w-full border-collapse text-body-sm">
+        <Table density="operate">
           <caption className="sr-only">This student's percentage over time</caption>
-          <thead>
-            <tr className="text-ink-faint">
-              <th scope="col" className="px-1 py-1 text-start text-eyebrow">
-                Date
-              </th>
-              <th scope="col" className="px-1 py-1 text-end text-eyebrow">
-                Percentage
-              </th>
-            </tr>
-          </thead>
-          <tbody>
+          <THead>
+            <TR>
+              <TH>Date</TH>
+              <TH numeric>Percentage</TH>
+            </TR>
+          </THead>
+          <TBody>
             {trend.map((p) => (
-              <tr key={p.recordedAt} className="border-t border-rule">
-                <td className="px-1 py-1 text-ink-muted">
+              <TR key={p.recordedAt}>
+                <TD className="text-ink-muted">
                   {new Date(p.recordedAt).toLocaleDateString(undefined, {
                     year: "numeric",
                     month: "short",
                     day: "numeric",
                   })}
-                </td>
-                <td className="px-1 py-1 text-end text-data-sm text-ink">
+                </TD>
+                <TD numeric className="text-data-sm text-ink">
                   {Math.round(p.percentage)}%
-                </td>
-              </tr>
+                </TD>
+              </TR>
             ))}
-          </tbody>
-        </table>
+          </TBody>
+        </Table>
       </div>
     </ChartFrame>
   )
@@ -357,83 +354,70 @@ export function StudentDetail() {
               {student.attempts.length === 0 ? (
                 <div className="text-body-md text-ink-muted">No papers recorded yet.</div>
               ) : (
-                <div
-                  className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                <Table density="operate"
                   tabIndex={0}
                   role="region"
                   aria-label="Attempt history, scrollable horizontally"
                 >
-                  <table className="w-full text-body-md border-collapse">
-                    <caption className="sr-only">Full attempt history, newest first</caption>
-                    <thead>
-                      <tr className="bg-paper-sunk border-b border-rule">
-                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                          Paper
-                        </th>
-                        <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                          Marks
-                        </th>
-                        <th scope="col" className="text-end px-4 py-2.5 text-eyebrow text-ink-faint">
-                          Percentage
-                        </th>
-                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                          Grade
-                        </th>
-                        <th scope="col" className="text-start px-4 py-2.5 text-eyebrow text-ink-faint">
-                          Recorded
-                        </th>
-                        <th scope="col" className="px-4 py-2.5">
-                          <span className="sr-only">Actions</span>
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {student.attempts.map((a) => (
-                        // `AttemptDTO.paperId` is a "human paper identity"
-                        // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
-                        // year, no per-attempt id — see `_paper_id` in
-                        // `lemely/web/routers/teacher.py`), NOT a unique key: a
-                        // student who re-sits the same paper (a realistic
-                        // scenario — practice, specimen papers, repeats) has
-                        // multiple attempt rows sharing one `paperId`, which
-                        // produced a real duplicate-React-key console error when
-                        // verified against seeded multi-attempt data. `recordedAt`
-                        // (a full ISO timestamp, one per submission) disambiguates.
-                        <tr key={`${a.paperId}-${a.recordedAt}`} className="border-b border-rule last:border-b-0">
-                          <td className="px-4 py-2.5 text-data-sm whitespace-nowrap">
-                            {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
-                          </td>
-                          <td className="px-4 py-2.5 text-end text-data-sm">
-                            {a.awardedMarks}/{a.maximumMarks}
-                          </td>
-                          <td className="px-4 py-2.5 text-end text-data-sm">
-                            {Math.round(a.percentage)}%
-                          </td>
-                          <td className="px-4 py-2.5">
-                            <GradeBadge grade={a.grade} size="inline" basis="achieved" />
-                          </td>
-                          <td className="px-4 py-2.5 text-ink-muted whitespace-nowrap">
-                            {relativeTime(a.recordedAt)}
-                          </td>
-                          <td className="px-4 py-2.5 text-end whitespace-nowrap">
-                            <div className="inline-flex items-center gap-2">
-                              <Button
-                                size="sm"
-                                variant="ghost"
-                                disabled
-                                aria-disabled="true"
-                                title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
-                              >
-                                View / remark
-                              </Button>
-                              <Chip tone="neutral">Coming soon</Chip>
-                            </div>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
+                  <caption className="sr-only">Full attempt history, newest first</caption>
+                  <THead>
+                    <TR>
+                      <TH>Paper</TH>
+                      <TH numeric>Marks</TH>
+                      <TH numeric>Percentage</TH>
+                      <TH>Grade</TH>
+                      <TH>Recorded</TH>
+                      <TH>
+                        <span className="sr-only">Actions</span>
+                      </TH>
+                    </TR>
+                  </THead>
+                  <TBody>
+                    {student.attempts.map((a) => (
+                      // `AttemptDTO.paperId` is a "human paper identity"
+                      // (`{subjectCode}/{paperNumber}{paperVariant}`, no session/
+                      // year, no per-attempt id — see `_paper_id` in
+                      // `lemely/web/routers/teacher.py`), NOT a unique key: a
+                      // student who re-sits the same paper (a realistic
+                      // scenario — practice, specimen papers, repeats) has
+                      // multiple attempt rows sharing one `paperId`, which
+                      // produced a real duplicate-React-key console error when
+                      // verified against seeded multi-attempt data. `recordedAt`
+                      // (a full ISO timestamp, one per submission) disambiguates.
+                      <TR key={`${a.paperId}-${a.recordedAt}`}>
+                        <TD className="whitespace-nowrap text-data-sm">
+                          {a.subjectCode} · Paper {a.paperNumber} Variant {a.paperVariant}
+                        </TD>
+                        <TD numeric className="text-data-sm">
+                          {a.awardedMarks}/{a.maximumMarks}
+                        </TD>
+                        <TD numeric className="text-data-sm">
+                          {Math.round(a.percentage)}%
+                        </TD>
+                        <TD>
+                          <GradeBadge grade={a.grade} size="inline" basis="achieved" />
+                        </TD>
+                        <TD className="whitespace-nowrap text-ink-muted">
+                          {relativeTime(a.recordedAt)}
+                        </TD>
+                        <TD className="whitespace-nowrap text-end">
+                          <div className="inline-flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled
+                              aria-disabled="true"
+                              title="Remarking a specific attempt lands with the review-queue remark tool (T-08)"
+                            >
+                              View / remark
+                            </Button>
+                            <Chip tone="neutral">Coming soon</Chip>
+                          </div>
+                        </TD>
+                      </TR>
+                    ))}
+                  </TBody>
+                </Table>
               )}
             </section>
 

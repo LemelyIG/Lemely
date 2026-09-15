@@ -8,10 +8,7 @@
  */
 
 import {
-  Atom,
   Bell,
-  Books,
-  Calculator,
   ChalkboardTeacher,
   Gear,
   HandHeart,
@@ -110,25 +107,6 @@ export const navGroups: NavGroup[] = [
     items: [{ to: "/student/correct", label: "Correct a paper", icon: NotePencil }],
   },
 ]
-
-/**
- * Glyph per subject code. `SubjectRow` (the real `/student/overview` DTO)
- * carries no icon field — a syllabus code is curriculum data, not a UI
- * concern the backend should own — so the mapping lives here, same spot the
- * old hardcoded Physics row's `Atom` came from. `Books` is the fallback for
- * any subject added to the curriculum before this map is.
- */
-export function subjectIcon(code: string): Icon {
-  switch (code) {
-    case "0625":
-      return Atom
-    case "0580":
-    case "0606":
-      return Calculator
-    default:
-      return Books
-  }
-}
 
 /**
  * The enrolled subject a pathname is currently inside, or null. Drives which

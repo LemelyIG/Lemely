@@ -86,6 +86,7 @@ export const Checkbox = forwardRef<HTMLInputElement, CheckboxProps>(function Che
             ref={ref}
             type="checkbox"
             disabled={disabled || isLoading}
+            data-kit-field="checkbox"
             className="peer absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none rounded-sm disabled:cursor-not-allowed"
             {...props}
           />

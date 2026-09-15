@@ -174,13 +174,13 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 154 | `sw-push-listener-real` | pwa | PASS | A | A7 | no-action | dossier: no change — push listener already correctly implemented (A7 re-verify) |
 | 155 | `emp-console-401` | pwa | FAIL (401s in console confirmed via Lighthouse artifact) — root cause confirmed: `PushAutoEnable` (mounted unconditionally in `main.tsx`, above the router) called `usePushConfig()` with no auth gate, firing `GET /api/notifications/push/config` on a cold, logged-out `/login` load | A | A7 | done A7 | `npx vitest run tests/unit/pushConfigColdLoad.test.ts; chrome-devtools live check on cold /login: 0 requests to push/config (was 2)` |
 | 156 | `parent-paid-tutoring-marketplace-ui` | ui | critical |  |  | skipped | exploration-only paid tutoring marketplace — skip marketplace/bookings/checkout |
-| 157 | `brand-color-system-superseded` | ui | high | C | C3 | pending |  |
+| 157 | `brand-color-system-superseded` | ui | high | C | C3 | done b8373885 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 158 | `brand-cover-headline-and-stats-fabricated` | ui | high |  |  | skipped | skip: cover stat trio / fabricated headline not built |
-| 159 | `content-classified-practice-mental-model` | ui | high | C | C3 | pending |  |
+| 159 | `content-classified-practice-mental-model` | ui | high | C | C3 | done 35270904 | `npm run check:copy` (no em-dashes) — `PracticeGenerator.tsx`'s header is now a `SectionHead` whose `kicker` states the mental model in one sentence: "Questions come from past papers, your own marked papers, or Lemely's practice bank; pick a source or use all." |
 | 160 | `x-completeness-admin-portals-uncovered` | ui | high |  |  | no-action | production already better |
 | 161 | `x-completeness-auth-funnel-uncovered` | ui | high |  |  | no-action | production already better |
 | 162 | `x-completeness-offline-state-dead` | ui | high | A | A4 | done A4 | `npx vitest run tests/unit/offlineClassification.test.ts` — `isOfflineFailure` predicate tested directly; `OfflineState` reachability from QueryState's error branch verified by source-level check (no jsdom/RTL in this repo — see test file header) |
-| 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | pending |  |
+| 163 | `x-completeness-teacher-tables-bypass-table-primitive` | ui | high | C | C2 | done b144ed89 | 12 tables in 8 files + MarkSchemes grid, migrated across Tasks 3-4; ClassDetail has no table (real count, correcting the plan's stated 9-in-6) — `Review.tsx`, `ClassRoster.tsx` (C2a); `StudentDetail.tsx`, `AtRiskList.tsx`, `Classes.tsx`, `ClassAnalytics.tsx`, `MarkSchemes.tsx`, `QuizResults.tsx`, `Quizzes.tsx` (C2b, Task 4) — all onto `Table`/`THead`/`TBody`/`TR`/`TH`/`TD` at `density="operate"`; `npx vitest run tests/unit/teacherTables.test.ts` — 46/46 |
 | 164 | `gamification-no-leaderboard-climb-celebration` | ui | high | D | D1 | pending |  |
 | 165 | `onboarding-semantic-sliders-no-personalization-signal` | ui | high | D | D3 | pending |  |
 | 166 | `parent-no-notifications-inbox` | ui | high | D | D2 | already-fixed | web/src/portals/parent/screens/Notifications.tsx exists on develop, ToastProvider mounted main.tsx:14/toast.tsx:90 — confirmed A-Task0 |
@@ -196,7 +196,7 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 176 | `trust-ops-whatsapp-feature-gap` | ui | high |  |  | skipped | skip: WhatsApp integration out of scope |
 | 177 | `x-a11y-canvas-ink-tokens-fail-aa` | ui | high |  |  | no-action | production already better |
 | 178 | `x-a11y-canvas-no-focus-visible` | ui | high |  |  | no-action | production already better |
-| 179 | `x-brandlockup-duplicated-5x` | ui | high | C | C1 | pending |  |
+| 179 | `x-brandlockup-duplicated-5x` | ui | high | C | C1 | done f88d3f81 | `npx vitest run tests/unit/brandLockup.test.ts` — `brand-lockup.tsx` replaces 7 duplicated BrandMark+span sites (the ledger's count was stale; Task 0 re-verified 7, not 5) |
 | 180 | `x-copy-fabricated-metrics-must-not-adopt` | ui | high |  |  | no-action | production already better |
 | 181 | `x-copy-onboarding-grade-guarantee` | ui | high |  |  | skipped | skip: grade-guarantee headline not built |
 | 182 | `x-ia-tutoring-center-cluster-unscoped` | ui | high |  |  | skipped | skip: tutoring-center cluster explicitly unscoped |
@@ -204,21 +204,21 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 184 | `x-responsive-canvas-blind-production-full-breakpoint-system` | ui | high |  |  | no-action | production already better |
 | 185 | `x-tokens-canvas-accents-fail-wcag` | ui | high |  |  | no-action | production already better |
 | 186 | `brand-corner-tick-vs-texture-budget` | ui | medium |  |  | no-action | dossier: no production change |
-| 187 | `brand-subject-color-mapping-mismatch` | ui | medium | C | C3 | pending |  |
+| 187 | `brand-subject-color-mapping-mismatch` | ui | medium | C | C3 | done b8373885 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 188 | `center-commerce-deliberately-out-of-scope` | ui | medium |  |  | skipped | skip: center-commerce explicitly out of scope |
 | 189 | `content-flashcard-interval-hints-omitted` | ui | medium | D | D2 | pending |  |
-| 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | pending |  |
-| 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | pending |  |
-| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline |
-| 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | pending |  |
+| 190 | `content-practice-source-filter-dead-in-ui` | ui | medium | C | C3 | done 35270904 | `npx vitest run tests/unit/practiceSources.test.ts` — `filters.source` is no longer hardcoded `null`; `PracticeGenerator.tsx` now has a `source` state wired to a `role="radiogroup"` control (`lib/practiceSources.ts`'s `PRACTICE_SOURCES`, pinned against the backend `QuestionSource` enum) that drives `usePracticePreview` |
+| 191 | `x-completeness-forms-dimension-unaudited` | ui | medium | C | C2 | done 227199af | Real count (re-grepped, not the plan's 39 — 7 sites were already migrated by intervening Phase-C work, and the plan's `student/screens/Announcements.tsx`/`parent/index.tsx` counts were off by one file and one site respectively): 30 raw `<input\|<select\|<textarea>` sites across 10 files needing migration (`Classes.tsx` 4, `Review.tsx` 3, `ClassRoster.tsx` 1, `ReviewItem.tsx` 8, `teacher/screens/Announcements.tsx` 6 — the plan named `student/screens/Announcements.tsx`, which has no form fields at all — `MarkSchemes.tsx` 1, `QuestionnaireStep.tsx` 2, `ProfileSettings.tsx` 2, `parent/index.tsx` 1, plus `Grading.tsx`'s 2 file inputs), `AtRiskList.tsx`/`CreateFirstClass.tsx`/`SubjectsStep.tsx`/`FlashcardDecks.tsx` already migrated. 24 fields migrated onto `Input`/`Select`/`Textarea`; 6 allowlisted survivors (Grading.tsx x2 file, ProfileSettings.tsx x1 file, MarkSchemes.tsx x1 file, Announcements.tsx x2 radio — all marked `data-kit-field`). `npx vitest run tests/unit/formsMigration.test.ts tests/unit/kitFieldMarker.test.ts` — pass (8/8); full suite `npx vitest run` — pass (3241/3241). `npm run typecheck && npm run lint && npm run build && npm run check:copy` — all pass. `audit.mjs` gains a `kit-fields` per-route/per-state assertion (after axe, via `page.evaluate` — Puppeteer, not Playwright) that fails a route with any unmarked field, recorded into the existing `route-failures.json` mechanism; exercised in CI (no `--help`/dry-run flag exists in the script — verified via `node --check` and full read of the edited sections instead). |
+| 192 | `x-completeness-perf-floor-student-only` | ui | medium | A | A8 | done A8 | `scripts/check-bundle-budget.mjs` (200KB gzip/chunk, wired into `npm run build` via `postbuild`) is the mechanical floor this packet owns; primary C4 (full extension to ClassAnalytics+Review) remains open. Real build: `CorrectPaper-*.js` 180.03KB gzip (top chunk) — B6's baseline. C4: `check_ui_gates.py` now also gates `teacher-class-analytics` + `teacher-review` on the Lighthouse performance floor (`PERF_GATED_TEACHER_SLUGS`), `tests/test_check_ui_gates.py` |
+| 193 | `x-completeness-print-only-one-screen` | ui | medium | C | C4 | done aa3c9fdb | `npx vitest run tests/unit/printStyles.test.ts` — `web/src/index.css`'s `@media print` block gains `[data-print="hide"]`, `.lm-print-avoid-break`, forced-white paper; `question-row.tsx` carries `lm-print-avoid-break`; `audit.mjs` captures `student-result-print` under `page.emulateMediaType("print")` |
 | 194 | `x-completeness-rtl-unwireable` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
 | 195 | `gamification-no-achievement-badges` | ui | medium | D | D1 | pending |  |
 | 196 | `gamification-no-daily-quests` | ui | medium | D | D1 | pending |  |
 | 197 | `gamification-production-states-exceed-canvas` | ui | medium |  |  | no-action | production already better |
-| 198 | `onboarding-plan-rows-no-icon-coding-no-live-type` | ui | medium | C | C3 | pending |  |
+| 198 | `onboarding-plan-rows-no-icon-coding-no-live-type` | ui | medium | C | C3 | done 5350bc28 | `npx vitest run tests/unit/activityIcon.test.ts` — `studyPlanData.ts`'s `activityIcon` maps each activity type to a Phosphor glyph; `StudyPlanWeek.tsx`'s `SessionRow` renders it (`aria-hidden`) before the label |
 | 199 | `parent-add-child-affordance-rejected` | ui | medium |  |  | skipped | skip: parent add-child affordance explicitly rejected |
 | 200 | `parent-weekly-digest-framing-lost` | ui | medium | D | D2 | pending |  |
-| 201 | `student-home-streak-hidden-on-phone` | ui | medium | C | C3 | pending |  |
+| 201 | `student-home-streak-hidden-on-phone` | ui | medium | C | C3 | done ca24777e | `npx vitest run tests/unit/streakChip.test.ts` — `Overview.tsx` now shows `<XPStreak variant="compact">` beside the greeting on `sm:hidden` |
 | 202 | `paper-no-boundary-proximity` | ui | medium | D | D2 | pending |  |
 | 203 | `quiz-live-coach-vs-exam-model` | ui | medium | D | D3 | pending |  |
 | 204 | `teacher-analytics-group-mean-no-trend` | ui | medium | D | D2 | pending |  |
@@ -226,12 +226,12 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 206 | `teacher-analytics-national-benchmark-absent` | ui | medium |  |  | skipped | skip: backlog #20 national benchmark excluded |
 | 207 | `teacher-analytics-no-lesson-plan-action` | ui | medium | D | D3 | pending |  |
 | 208 | `teacher-flow-canvas-fake-progress-ring` | ui | medium |  |  | no-action | production already better |
-| 209 | `teacher-flow-no-camera-capture-on-upload` | ui | medium | C | C3 | pending |  |
-| 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | pending | compact prev/next queue strip in ReviewItem reusing queueQuery; route model kept (ReviewItem.tsx:30-40) |
+| 209 | `teacher-flow-no-camera-capture-on-upload` | ui | medium | C | C3 | done 30a0e779 | `npx vitest run tests/unit/gradingCamera.test.ts` — `Grading.tsx` offers "Use camera" beside the plain file input, opening `CameraCapture` (`autoStart`, gated on the tap); `assemblePagesToPdf` stays a separate lazy chunk (`node scripts/check-bundle-budget.mjs` — all 139 chunks within budget, `Grading-*` at 4.02KB gzip) |
+| 210 | `teacher-flow-no-queue-rail-during-review` | ui | medium | C | C3 | done c565e3ce | `npx vitest run tests/unit/queuePosition.test.ts` — `ReviewItem.tsx`'s `QueueStrip` shows "Item N of total" with Prev/Next `Link`s (`viewTransition`, same filter querystring), built from the pure `queuePosition` (`lib/queuePosition.ts`) over the screen's existing `queueQuery`/`queueIds` (no second fetch); route model kept (`ReviewItem.tsx` ~342-365). **Known gap, open into Phase D:** the displayed count is the server's real `total` (`queueQuery.data?.total`, the `a62ef62e` review fix, matching the sidebar badge), but `prevId`/`nextId` still come from the fetched page only — `ReviewItem` calls `useReviewQueue` with no `limit`, so the route's default `limit=50` applies. On a queue deeper than 50 the strip can read "Item 50 of 87" with no Next link. The `QueueStrip` docstring (`ReviewItem.tsx:329-338`) still describes the whole strip as built from `queueIds` and does not yet state this split; flagged at the Phase C close (Task 15) rather than fixed, since it is a behaviour change, not record-keeping |
 | 211 | `teacher-tools-pool-source-single-select` | ui | medium | D | D2 | pending |  |
 | 212 | `teacher-tools-predicted-class-average-fabricated` | ui | medium | D | D2 | pending |  |
-| 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | pending |  |
-| 214 | `trust-ops-device-limit-count-divergence` | ui | medium | C | C3 | pending |  |
+| 213 | `teacher-tools-quizbuilder-structure-divergence` | ui | medium | C | C3 | done 933d94fc | `npx vitest run tests/unit/quizBuilderSummary.test.ts` — `QuizBuilder.tsx` now shows a "So far" rail (`SectionHead` + `dl`) beside the `Stepper` from `md` up (a single line below it), listing `settingsSoFar`'s label/value pairs for every step strictly behind the current one |
+| 214 | `trust-ops-device-limit-count-divergence` | ui | medium | C | C3 | done b8373885 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 215 | `trust-ops-suspicious-login-geoip-rejected` | ui | medium |  |  | skipped | skip: suspicious-login geo-IP explicitly rejected |
 | 216 | `x-a11y-canvas-icon-buttons-unlabeled` | ui | medium |  |  | no-action | production already better |
 | 217 | `x-a11y-canvas-touch-targets-undersized` | ui | medium |  |  | no-action | production already better |
@@ -240,25 +240,25 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 220 | `x-imageplaceholder-vs-honest-fallback` | ui | medium |  |  | no-action | production already better |
 | 221 | `x-mark-grade-boundary-family-superset` | ui | medium |  |  | no-action | production already better |
 | 222 | `x-navshells-dead-code` | ui | medium | B | B3 | done 2a503cd6 | `npx vitest run tests/unit/navShells.test.ts` — `nav-shells.tsx`'s header no longer says the wiring is pending; `BottomNav`/`SidebarNav` are real, mounted call sites in all three portals, not dead code |
-| 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | pending |  |
+| 223 | `x-sectionhead-no-equivalent` | ui | medium | C | C1 | done 09cc15c4 | `npx vitest run tests/unit/sectionHead.test.ts` — `section-head.tsx` replaces the ad hoc eyebrow/title/kicker divs on student Overview, teacher Overview, ClassAnalytics and Review |
 | 224 | `x-copy-gamification-hype-voice` | ui | medium |  |  | skipped | skip: hype copy not adopted |
-| 225 | `x-dark-deliberately-deferred` | ui | medium | C | C5 | pending |  |
-| 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | pending |  |
+| 225 | `x-dark-deliberately-deferred` | ui | medium | C | C5 | done 18db97d2 | `npx vitest run tests/unit/theme.test.ts tests/unit/themeInit.test.ts tests/unit/themeColor.test.ts tests/unit/preMountShell.test.ts` (all pass) — Appearance setting (System/Light/Dark) ships on Profile, `shell-init.js` resolves and paints the theme before the shell markup parses (no flash), `theme-color` meta swaps between the light/dark `--paper` hexes; `e2e/theme.spec.ts` (deferred to CI — no backend running in this worktree). `x-a11y-dark-theme-exploration-correctly-unshipped` stays `pending` until Task 14's captures. |
+| 226 | `x-density-card-padding-knob-underused` | ui | medium | C | C3 | done c95d2485 | `npx vitest run tests/unit/marketingCardPadding.test.ts tests/unit/designDocs.test.ts` — `DataHandling.tsx`'s marketing card turns the padding knob to `space-8`; `DESIGN.md` §13 range corrected to `space-6` … `space-8` |
 | 227 | `x-ia-breadcrumbs-canvas-regression` | ui | medium |  |  | no-action | production already better |
 | 228 | `x-ia-sidebar-cross-portal-mismatch` | ui | medium | B | B3 | done f71dcc10 | `npx vitest run tests/unit/design-tokens.test.ts tests/unit/nativeMechanics.test.ts` — the student sidebar's old 246px and the teacher/admin 252px are unified onto one `--sidebar-width: 252px` token (`w-sidebar`), one `--breakpoint-sidebar: 820px` breakpoint (`sidebar:`) across all three portals |
 | 229 | `x-motifs-subject-color-remap` | ui | medium |  |  | no-action | dossier: no production change |
-| 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | pending |  |
-| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done 7b2f1101 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair |
+| 230 | `x-motifs-subjectglyph-tile-missing` | ui | medium | C | C1 | done 53cdc76d | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-glyph.tsx` adds the `SubjectGlyph` pastel tile, consumed by `Subject.tsx`'s header and `student/index.tsx`'s subject nav rows |
+| 231 | `x-motion-reduced-motion-e2e-narrow-scope` | ui | medium | B | B7 | done 7b2f1101 | e2e half; unit half stays with C4. `web/e2e/native-feel.spec.ts` Assertion 8 broadens coverage to every animated/transitioning element on `/student` plus synchronous overlay unmount, beyond `reduced-motion.spec.ts`'s single route/Button pair. C4: unit half `npx vitest run tests/unit/reducedMotionDecision.test.ts` — `prefersReducedMotion(matchMedia?)` takes an injected `MatchMediaLike`, `useCountUp`/`Flourish` unchanged |
 | 232 | `x-responsive-phone-locked-surfaces-get-real-desktop-containers` | ui | medium |  |  | no-action | production already better |
 | 233 | `x-responsive-teacher-dense-tables-scoped-overflow` | ui | medium |  |  | no-action | production already better |
 | 234 | `x-tokens-card-pure-white` | ui | medium |  |  | no-action | production already better |
 | 235 | `x-tokens-sky-info-subject-collision-persists` | ui | medium | A | A3 | done A3 | `npx vitest run tests/unit/design-tokens.test.ts` — pass |
 | 236 | `x-tokens-subject-remap-collision` | ui | medium |  |  | no-action | dossier: no production change |
 | 237 | `x-type-dead-font-packages-stale-docs` | ui | medium | A | A3 | done A3 | `npm install && npm run build` — pass |
-| 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | pending |  |
+| 238 | `x-type-instrument-serif-rejected` | ui | medium | C | C3 | done b8373885 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 239 | `brand-mark-a11y-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 240 | `brand-mark-geometry-diverges` | ui | low |  |  | no-action | dossier: no production change |
-| 241 | `brand-subject-glyph-vs-subject-tag` | ui | low | C | C1 | pending |  |
+| 241 | `brand-subject-glyph-vs-subject-tag` | ui | low | C | C1 | done 53cdc76d | `npx vitest run tests/unit/subjectGlyph.test.ts` — `subject-tag.tsx`'s `SubjectTag` gains an `icon?: boolean` prop rendering `subjectGlyphFor`'s glyph, sharing one tone/glyph table with `SubjectGlyph` instead of two independent lookups |
 | 242 | `center-activation-queue-more-honest-than-canvas-checkout` | ui | low |  |  | no-action | production already better |
 | 243 | `classes-naming-collision-caveat` | ui | low |  |  | no-action | dossier: no production change |
 | 244 | `classes-no-live-video-tutoring` | ui | low |  |  | skipped | skip: live video tutoring out of scope |
@@ -269,41 +269,41 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 249 | `x-completeness-kbd-primitive-bypassed` | ui | low | A | A3 | done A3 | `npm run typecheck && npm run build` — pass |
 | 250 | `gamification-frozen-streak-unwired` | ui | low | D | D1 | pending |  |
 | 251 | `gamification-restrained-visual-register` | ui | low |  |  | no-action | dossier: no production change |
-| 252 | `onboarding-14day-framing-vs-perpetual-week` | ui | low | C | C3 | pending |  |
+| 252 | `onboarding-14day-framing-vs-perpetual-week` | ui | low | C | C3 | done 5350bc28 | `npx vitest run tests/unit/studyPlanHeader.test.ts` — `StudyPlanWeek.tsx`'s `WeekHeader` reads through `SectionHead` with eyebrow "This week" (perpetual-week framing), no leftover 14-day literal |
 | 253 | `onboarding-plan-calendar-sync-not-built` | ui | low | D | D2 | pending | .ics export of study-plan sessions (Apple/Google Calendar); WhatsApp channel skipped |
 | 254 | `onboarding-production-exceeds-canvas-state-handling` | ui | low |  |  | no-action | production already better |
 | 255 | `onboarding-progress-indicator-pattern-mismatch` | ui | low |  |  | skipped | skip: 5-pip progress bar pattern not adopted |
-| 256 | `onboarding-session-length-chips-vs-weekly-hours-slider` | ui | low | C | C3 | pending |  |
+| 256 | `onboarding-session-length-chips-vs-weekly-hours-slider` | ui | low | C | C3 | done 0954d819 | `npx vitest run tests/unit/sessionLengthPresets.test.ts` — `onboardingData.ts`'s `SESSION_LENGTH_PRESETS`/`presetForWeeklyHours`; `QuestionnaireStep.tsx` renders the three preset chips above `SkippableSlider` |
 | 257 | `parent-activity-feed-badges-not-built` | ui | low | D | D1 | pending |  |
 | 258 | `parent-weakness-panel-tone-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 259 | `student-home-first-run-state-better-than-canvas` | ui | low |  |  | no-action | production already better |
 | 260 | `student-home-mastery-garden-not-adopted` | ui | low |  |  | skipped | skip: mastery-garden visual not adopted |
-| 261 | `student-home-no-hero-grade` | ui | low | C | C3 | pending |  |
+| 261 | `student-home-no-hero-grade` | ui | low | C | C3 | done b8373885 | `npx vitest run tests/unit/designDocs.test.ts` — `DESIGN.md` §16 records the decision, `docs/design-canvas-notes.md` has the full write-up |
 | 262 | `student-home-no-recent-activity-feed` | ui | low | D | D2 | pending |  |
-| 263 | `paper-no-question-filter-tabs` | ui | low | C | C3 | pending |  |
+| 263 | `paper-no-question-filter-tabs` | ui | low | C | C3 | done 53933d06 | `npx vitest run tests/unit/questionFilter.test.ts` — `PaperResult.tsx`'s `QuestionList` renders All/Lost/Flagged `TabsList` with counts from `filterQuestions`, state in `?q=` |
 | 264 | `paper-quiz-robustness-regression` | ui | low |  |  | no-action | production already better |
-| 265 | `paper-red-pen-register-missing` | ui | low | C | C3 | pending |  |
+| 265 | `paper-red-pen-register-missing` | ui | low | C | C3 | done 856a6c08 | `npx vitest run tests/unit/redPen.test.ts` — `.lm-red-pen` (ink + left rule, no background) applied to the expanded slot of a `register="red-pen"` `QuestionRow` |
 | 266 | `teacher-analytics-chart-register-exceeds-canvas` | ui | low |  |  | no-action | production already better |
 | 267 | `teacher-analytics-heatmap-exceeds-canvas` | ui | low |  |  | no-action | production already better |
-| 268 | `teacher-analytics-no-headline-top-grade-count` | ui | low | C | C3 | pending |  |
-| 269 | `teacher-flow-no-nav-badge-counts` | ui | low | C | C3 | pending |  |
+| 268 | `teacher-analytics-no-headline-top-grade-count` | ui | low | C | C3 | done c565e3ce | `npx vitest run tests/unit/gradeSummary.test.ts` — `GradeDistributionPanel`'s subtitle leads with "N students on A* or A" (`topGradeCount`, `lib/gradeSummary.ts`, summing buckets `gradeBand` classes "top"), omitted when N is 0 |
+| 269 | `teacher-flow-no-nav-badge-counts` | ui | low | C | C3 | done 1d96b6a6 | `npx vitest run tests/unit/reviewBadge.test.ts` — `useReviewQueueCount` (`lib/hooks/useReviewQueueCount.ts`) backs a `badge` on both the sidebar "Review" item and the bottom-nav Review tab (`portals/teacher/index.tsx`, `data.ts`'s `NavItem.badge: "review-queue"`); backed by `GET /teacher/review`'s new `total` (`lemely/web/schemas_review.py`, `pytest --no-cov tests/test_teacher_review_total.py`) |
 | 270 | `teacher-flow-real-keyboard-shortcuts` | ui | low |  |  | no-action | production already better |
 | 271 | `teacher-flow-review-promoted-to-nav` | ui | low |  |  | no-action | production already better |
 | 272 | `teacher-flow-safer-bulk-approve` | ui | low |  |  | no-action | production already better |
-| 273 | `teacher-tools-quiz-length-slider-vs-input` | ui | low | C | C3 | pending |  |
+| 273 | `teacher-tools-quiz-length-slider-vs-input` | ui | low | C | C3 | done 933d94fc | `npx vitest run tests/unit/quizBuilderSummary.test.ts` — `StepPool`'s `Input type="number"` is now a `Slider` (1..`quizLengthUpperBound(poolCount)`), showing the value plus an "~N min" caption from `estimateQuizMinutes` |
 | 274 | `trust-ops-device-mgmt-canvas-regression` | ui | low |  |  | no-action | production already better |
 | 275 | `trust-ops-fraud-toggles-unbuilt` | ui | low |  |  | skipped | skip: fraud toggles out of scope |
-| 276 | `x-a11y-dark-theme-exploration-correctly-unshipped` | ui | low | C | C5 | pending |  |
+| 276 | `x-a11y-dark-theme-exploration-correctly-unshipped` | ui | low | C | C5 | done 5a694d52 | `npx vitest run tests/unit/darkConsumers.test.ts` (9 pass) — `useNivoTheme` re-resolves chart tokens on `data-theme` change via a `MutationObserver`; literal-colour sweep of `web/src` (`.ts`/`.tsx`, comments stripped) finds nothing outside the theme's own permitted tooltip-shadow exception; `scripts/audit.mjs` gained a `colorScheme` state option (mirrors Task 11's `media`) and five dark captures — `student-overview-dark`, `student-result-dark`, `teacher-review-dark`, `teacher-class-analytics-dark`, `login-dark` — each `lighthouse: false`; `e2e/theme.spec.ts`'s `test.fixme` (Task 13's named placeholder) replaced with a real assertion that the ClassAnalytics chart's tick-text fill matches the resolved dark `--ink-muted`; DESIGN.md §11/§12/§16 record the behaviour. Playwright/`npm run audit` runs deferred to CI — no backend running in this worktree. |
 | 277 | `x-celebration-stepper-production-only` | ui | low |  |  | no-action | production already better |
 | 278 | `x-chip-badge-taxonomy-split` | ui | low |  |  | no-action | dossier: no production change |
-| 279 | `x-progressring-inline-duplication-risk` | ui | low | C | C1 | pending |  |
+| 279 | `x-progressring-inline-duplication-risk` | ui | low | C | C1 | done 53cdc76d | `npx vitest run tests/unit/progressRing.test.ts` — `Grading.tsx`'s inline `CIRC`/`dash` ring math is now `progress-ring.tsx`'s `ringDash`/`ProgressRing` |
 | 280 | `x-copy-bulk-approve-honesty` | ui | low |  |  | no-action | production already better |
 | 281 | `x-copy-error-state-canvas-gap` | ui | low |  |  | no-action | production already better |
-| 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | pending |  |
+| 282 | `x-copy-friendly-tone-em-dash` | ui | low | C | C4 | done aa3c9fdb | `npx vitest run tests/unit/ciCopyGate.test.ts` — `npm run check:copy` (0 findings) now runs in `.github/workflows/ci.yml`'s web job, not just locally/on demand |
 | 283 | `x-dark-nav-badge-raw-white` | ui | low | A | A3 | done A3 | `npx vitest run tests/unit/a11yRules.test.ts` — pass |
-| 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | pending |  |
+| 284 | `x-dark-retrofit-token-surface` | ui | low | C | C5 | done bfc0088d | `pytest --no-cov tests/test_design_tokens.py` (215 pass) + `npx vitest run tests/unit/design-tokens.test.ts` (196 pass) — `:root[data-theme="dark"]` in `index.css` redefines every literal-value colour token the light `:root` block declares (paper/ink/rule/accent/pastel/semantic/focus-ring); `--grade-*`/`--mark-*`/`--confidence-*`/`--subject-*`, the `--bg`/`--surface`/`--t1` compat layer, and `@theme inline` are untouched `var()` aliases that repaint automatically. Zero component/`.tsx` changes — `git diff --stat` touches only `index.css`, both test files, and `DESIGN.md`. |
 | 285 | `x-density-canvas-knob-is-decorative` | ui | low |  |  | no-action | dossier: no production change |
-| 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | pending |  |
+| 286 | `x-density-operate-row-rhythm-matches-but-uncodified` | ui | low | C | C1 | done 53cdc76d | `npx vitest run tests/unit/tableDensity.test.ts` — `table.tsx`'s `CELL_PADDING.operate` codifies the `px-4 py-2.5` rhythm via a `density` prop + `TableDensityContext` |
 | 287 | `x-ia-navshells-unused-abstraction` | ui | low | B | B3 | done 2a503cd6 | `npx vitest run tests/unit/navShells.test.ts` — `BottomNav`/`SidebarNav` render through `NavShellItem`'s `NavLink` wiring in all three portals; no longer an unused abstraction |
 | 288 | `x-ia-quests-badges-not-built` | ui | low | D | D1 | pending |  |
 | 289 | `x-ia-student-home-abc-exploration` | ui | low |  |  | no-action | dossier: no production change |
@@ -311,11 +311,11 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | 291 | `x-motifs-lemely-mark-superseded` | ui | low |  |  | no-action | dossier: no production change |
 | 292 | `x-motifs-margin-note-vs-caveat-rule` | ui | low |  |  | no-action | production already better |
 | 293 | `x-motifs-marking-glyph-system` | ui | low |  |  | no-action | production already better |
-| 294 | `x-motifs-progress-ring-not-systematized` | ui | low | C | C1 | pending |  |
+| 294 | `x-motifs-progress-ring-not-systematized` | ui | low | C | C1 | done 53cdc76d | `npx vitest run tests/unit/progressRing.test.ts` — `progress-ring.tsx`'s `ProgressRing` is the one reusable ring primitive, replacing Grading's one-off SVG |
 | 295 | `x-motion-canvas-static-production-elaborate` | ui | low |  |  | no-action | production already better |
-| 296 | `x-motion-progress-ring-no-production-equivalent` | ui | low | C | C1 | pending |  |
+| 296 | `x-motion-progress-ring-no-production-equivalent` | ui | low | C | C1 | done 53cdc76d | `npx vitest run tests/unit/progressRing.test.ts` — `ProgressRing` ships in production on `Grading.tsx`, with no `stroke-dasharray` transition per DESIGN.md §9.2 |
 | 297 | `x-tokens-canvas-honey-hierarchy-inversion` | ui | low |  |  | no-action | dossier: no production change |
-| 298 | `x-tokens-dark-theme-deferred` | ui | low | C | C5 | pending |  |
+| 298 | `x-tokens-dark-theme-deferred` | ui | low | C | C5 | done bfc0088d | `pytest --no-cov tests/test_design_tokens.py` (215 pass) — dark ladder AA-measured against every guarantee the light ladder makes (paper/pastel/tinted-fill matrix, `--accent-on` decision, §3.6 greyscale ladder ascending instead of descending); DESIGN.md §3.10 is the transcribed record. `x-dark-deliberately-deferred` and `x-a11y-dark-theme-exploration-correctly-unshipped` stay `pending` — the toggle and captures (Task 13/14) are what close those. |
 | 299 | `x-type-canvas-italic-heading` | ui | low |  |  | skipped | skip: italic hero heading not adopted |
 | 300 | `x-type-scale-discipline` | ui | low |  |  | no-action | production already better |
 | 301 | `x-type-tabular-nums-scope` | ui | low |  |  | no-action | dossier: no production change |
@@ -326,14 +326,23 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 
 | status | rows |
 |---|---|
-| pending | 60 |
-| done | 125 |
+| pending | 24 |
+| done | 161 |
 | no-action | 92 |
 | skipped | 21 |
 | already-fixed | 3 |
 | **total** | **301** |
 
-(Recounted mechanically at the Phase B close (Task 13) from the rows above, not carried forward by hand. Phase B moved 40 rows into `done`; the remaining 60 `pending` rows are all phase C (36), phase D (25) — less the one D row already `already-fixed` — i.e. no `pending` row with `phase = B` survives. The four tables below are recounts of the same rows and were already correct.)
+(Recounted mechanically at the Phase C close (Task 15) from the rows above, not
+carried forward by hand — `awk` over the status column, all five buckets summing
+to 301. Phase C moved its 36 rows from `pending` into `done` (125 → 161), leaving
+24 `pending` rows: every one of them is `phase = D` (25 D rows, less the one
+already `already-fixed`). No `pending` row with `phase = A`, `B` or `C` survives.
+The prior revision of this note said "the remaining 60 `pending` rows are all
+phase C (36), phase D (25)" — true at the Phase B close, false from Phase C
+onward; it is corrected here rather than left to be read as current. The four
+tables below are recounts of the same rows and were re-verified unchanged at this
+close: by lane 146/89/66, by phase 87/42/36/25 + 111, and the packet table exact.)
 
 ### By lane
 
@@ -381,3 +390,91 @@ hand-assigned to phase/packet per the design's `Findings:` lists and ledger-buck
 | D1 | 6 |
 | D2 | 11 |
 | D3 | 8 |
+
+### Phase C re-verification note (Task 0 / C0)
+
+Re-verified against `develop` at `521edaf1` (the branch point for
+`feat/ui-kit-and-dark-mode`) on 2026-09-14. All 36 `phase = C` rows above are
+still `pending`; none are already fixed. The real counts behind the Phase C
+plan's packet briefs supersede the design spec's original claims of 5/29/8:
+
+- Brand lockup copies: **7** sites (`student/index.tsx:509`,
+  `teacher/index.tsx:343`, `parent/index.tsx:212`, `admin/index.tsx:243`,
+  `settings/SettingsFrame.tsx:161`, `auth/Login.tsx:98`,
+  `marketing/index.tsx:125`), not 5.
+- Raw form fields under `web/src/portals`: **39** sites in **14** files, not
+  29 — `rg -c "<input|<select|<textarea" web/src/portals` sums to 39 across
+  14 files, matching the plan's per-file breakdown exactly (`ReviewItem.tsx`
+  8, `Announcements.tsx` 6, `Classes.tsx` 4, `Review.tsx` 3, `AtRiskList.tsx`
+  3, `QuestionnaireStep.tsx` 3, `Grading.tsx` 2, `FlashcardDecks.tsx` 2,
+  `ProfileSettings.tsx` 2, `parent/index.tsx` 2, `MarkSchemes.tsx` 1,
+  `CreateFirstClass.tsx` 1, `ClassRoster.tsx` 1, `SubjectsStep.tsx` 1).
+- Teacher `<table>` sites, not 8: the plan's Task 0 claims **9 tables in 6
+  files**, but `rg -c "<table" web/src/portals/teacher` at `521edaf1` finds
+  **12 `<table>` elements across 8 files** — the plan's list omits
+  `QuizResults.tsx` (2 tables, lines 205 and 293) and `Quizzes.tsx` (1
+  table, line 289), which both exist on `develop` at this commit and are
+  not new to this branch. This is a real mismatch between the plan and the
+  tree, not re-confirmed as written; flagged for whichever task (C2,
+  Tasks 3–4) migrates teacher tables onto the `Table` primitive, so its
+  file list and Table-related ledger rows (packet C2) account for these
+  two extra files rather than silently under-scoping the migration.
+
+All other spot-checked Task 0 claims (raw form field count/breakdown,
+7 brand lockup sites including the untouched `marketing/index.tsx` footer
+mark, `check:copy` absent from `.github/workflows/ci.yml`, and
+`ReviewQueueList` in `web/src/lib/teacherTypes.ts:689` carrying `items` +
+`nextCursor` with no `total` field) were re-confirmed exactly as written.
+
+### Phase C close note (Task 15)
+
+Branch `feat/ui-kit-and-dark-mode`, 44 commits on top of `develop` at `521edaf1`
+(`git log --oneline origin/develop..HEAD | wc -l` = 44).
+
+All 36 `phase = C` rows above are `done` and carry the short SHA of the commit
+that closed them, replacing the packet markers (`done C1`…`done C5`) the
+implementing tasks wrote. Each SHA was resolved mechanically, not from commit
+prose: for every row, the artifact its own evidence column names (its unit-test
+file, or the source file the change lives in) was traced with
+`git log --diff-filter=A` / `git log -S` over `origin/develop..HEAD`. Rows whose
+evidence is one shared test file share one SHA (the five `DESIGN.md` §16
+decision rows → `b8373885`; the four ProgressRing/SubjectGlyph/table-density kit
+rows → `53cdc76d`), which is correct — one commit closed them together.
+
+Fresh evidence at this close (all re-run in this worktree, none carried forward
+from an implementing task's claim):
+
+- `npm run typecheck && npm run lint && npm run build && npm run check:copy` —
+  exit 0. `check-bundle-budget`: all 138 chunks within budget (150KB gzipped,
+  175KB named exemption for `assemblePages-*`); largest are
+  `assemblePages-*` 170.97KB (exempt, under 175) and `index-*` 135.17KB
+  (under 150). `check_copy`: no em-dashes or exclamation marks in UI copy.
+- `ruff check .` — all checks passed. `mypy lemely` — no issues in 287 source
+  files.
+- `npx vitest run tests/unit/theme.test.ts tests/unit/printStyles.test.ts
+  tests/unit/teacherTables.test.ts tests/unit/hallmarkStamp.test.ts` — 4 files,
+  81 tests, all pass.
+- `pytest --no-cov tests/test_teacher_review_total.py tests/test_design_tokens.py`
+  — 228 passed, 0 skipped.
+- Placeholder sweep over the full diff and the changed files' current state:
+  zero `TODO`/`FIXME`/`XXX`/`test.skip`/`test.only`/`test.fixme`. The two
+  `pytest.skip("local Postgres not reachable")` calls added by this branch
+  (`tests/test_practice_topics_marks_lost.py`,
+  `tests/test_teacher_review_total.py`) are the repo's existing house-style
+  environment guard, present in ~10 pre-existing test modules on `develop`.
+
+Honestly-deferred, not claimed as passing: `web/e2e/theme.spec.ts`,
+`web/e2e/screenshots.spec.ts` and `npm run audit` (Puppeteer) never ran in this
+worktree — no backend was running — and the C5 rows say so in their evidence
+rather than reporting a pass. CI runs them.
+
+Commit `54e7549a` ("refactor(web): ClassAnalytics tables and MarkSchemes grid
+onto the Table primitive (C2)") carries five files its message does not
+describe — `lemely/db/practice_repo.py`, `lemely/web/routers/practice.py`,
+`lemely/web/schemas_practice.py`, `tests/test_practice_topics_marks_lost.py`,
+`tests/test_web_practice.py` — the per-topic marks-lost backend that belongs
+with `35270904`. A git-index race during the C2/C3 interleave staged them into
+the earlier commit. Nothing was lost or duplicated: the tree at `HEAD` is
+correct, both changes are present exactly once, and the whole branch merges as
+one PR. Recorded here so the mismatch is findable rather than rediscovered
+during review.

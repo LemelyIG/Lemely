@@ -122,6 +122,14 @@ export interface BrandMarkProps {
    * preference that will eventually be forgotten.
    */
   animated?: boolean
+  /**
+   * Always `"true"` on the rendered `<svg>` regardless of what is passed here
+   * (see the comment on the element below) — accepted so a caller composing
+   * the mark next to its own wordmark, e.g. `BrandLockup`, can state the
+   * contract explicitly at the call site rather than relying on a reader
+   * knowing this component hardcodes it.
+   */
+  "aria-hidden"?: "true"
 }
 
 /**

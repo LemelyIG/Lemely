@@ -42,7 +42,19 @@
       app. A hardcoded value here is unreachable by every gate in this repo: no
       test opens it and no screenshot captures browser chrome.
     -->
-    <meta name="theme-color" content="%LEMELY_THEME_COLOR%" />
+    <!--
+      Task 13 (C5b): `data-theme-light`/`data-theme-dark` carry BOTH resolved
+      hexes on the tag itself, so `public/shell-init.js` (no bundle, no
+      imports) and `applyTheme.ts` (the mounted app) can swap `content`
+      between them with nothing to keep in sync beyond this one element —
+      see `vite/themeColor.ts`'s header for the full reasoning.
+    -->
+    <meta
+      name="theme-color"
+      content="%LEMELY_THEME_COLOR%"
+      data-theme-light="%LEMELY_THEME_COLOR%"
+      data-theme-dark="%LEMELY_THEME_COLOR_DARK%"
+    />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="default" />
@@ -606,6 +618,67 @@
           animation: none;
           stroke-dashoffset: 0;
         }
+      }
+
+      /*
+        Task 13 (C5b): the dark override. `shell-init.js` sets
+        `data-theme="dark"` on `<html>` before this markup is even parsed
+        (see that file's own comment), so `[data-theme="dark"]` below always
+        matches before the browser paints — there is no flash of the light
+        rules above being repainted.
+
+        This block cannot be `[data-theme="dark"] #root { ... }` alone: the
+        rules above paint literal colours on several different selectors
+        (`body`, `.lm-shell-sidebar`, `.sk`, `.lm-shell-reload`, ...), not one
+        shared custom property this shell could redeclare in one place — the
+        same "cannot reach var(...) before index.css has loaded" constraint
+        that made those placeholders literal in the first place (see the
+        header comment above) means the dark override needs its own literal
+        value per selector too. Six placeholders (`%LEMELY_COLOR_DARK_*%`,
+        one per light placeholder above), resolved by
+        `vite/preMountShell.ts` from the dark ladder (`index.css`'s
+        `:root[data-theme="dark"]` block, Task 12) — never a hand-typed hex,
+        for the same reason as every other colour in this shell.
+      */
+      [data-theme="dark"] body,
+      [data-theme="dark"] #root,
+      [data-theme="dark"] .lm-shell-tier3 {
+        background: %LEMELY_COLOR_DARK_PAPER%;
+      }
+      [data-theme="dark"] .lm-shell-sidebar {
+        background: %LEMELY_COLOR_DARK_PAPER_SUNK%;
+        border-right-color: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .lm-shell-header {
+        border-bottom-color: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .lm-shell-list,
+      [data-theme="dark"] .lm-shell-panel {
+        border-color: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .lm-shell-row {
+        border-bottom-color: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .sk {
+        background: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .lm-shell-footer {
+        border-top-color: %LEMELY_COLOR_DARK_RULE%;
+      }
+      [data-theme="dark"] .lm-shell-wordmark,
+      [data-theme="dark"] .lm-shell-heading,
+      [data-theme="dark"] .lm-shell-reload {
+        color: %LEMELY_COLOR_DARK_INK%;
+      }
+      [data-theme="dark"] .lm-shell-body-copy {
+        color: %LEMELY_COLOR_DARK_INK_MUTED%;
+      }
+      [data-theme="dark"] .lm-shell-reload {
+        border-color: %LEMELY_COLOR_DARK_RULE%;
+        background: %LEMELY_COLOR_DARK_PAPER_RAISED%;
+      }
+      [data-theme="dark"] .lm-shell-reload:hover {
+        border-color: %LEMELY_COLOR_DARK_INK_MUTED%;
       }
     </style>
   </head>

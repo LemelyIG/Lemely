@@ -2,7 +2,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
+import { Camera } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
+import { CameraCapture } from "@/components/CameraCapture"
+import { ProgressRing } from "@/components/ui/progress-ring"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
 import {
@@ -86,8 +89,6 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  *  - `onOpen` on a card selects the paper (updates the sidebar) instead of
  *    navigating to `/teacher/review`, which is queue-wide, not per-paper.
  */
-
-const CIRC = 2 * Math.PI * 42
 
 /* `PipelineStep.state` is the stored per-paper summary's vocabulary; the kit's
  * `ProcessingStage` is the live stream's. They mean the same three things and
@@ -241,6 +242,11 @@ export function Grading() {
   const [scanFile, setScanFile] = useState<File | null>(null)
   const [schemeFile, setSchemeFile] = useState<File | null>(null)
   const [uploading, setUploading] = useState(false)
+  // Task 8 (C3c) · `teacher-flow-no-camera-capture-on-upload`. A third scan
+  // source beside the plain file input: opening the camera is itself the
+  // tap `CameraCapture`'s `autoStart` requires, so this never acquires
+  // `getUserMedia` on mount without a gesture behind it.
+  const [showCamera, setShowCamera] = useState(false)
   const [stages, setStages] = useState<ProcessingStage[]>(UPLOAD_STAGES)
 
   /*
@@ -358,7 +364,6 @@ export function Grading() {
           const reviewCount = Number(tabs.find((t) => t.id === "review")?.count ?? "0")
           const processingCount = Number(tabs.find((t) => t.id === "processing")?.count ?? "0")
           const progress = allCount > 0 ? gradedCount / allCount : 0
-          const dash = `${(CIRC * progress).toFixed(1)} ${CIRC.toFixed(1)}`
 
           return (
             <>
@@ -415,29 +420,14 @@ export function Grading() {
                   </div>
 
                   <div className="bg-paper-raised border border-rule rounded-lg p-5 flex gap-5 items-center">
-                    <svg
-                      viewBox="0 0 100 100"
-                      className="w-[92px] h-[92px] flex-none -rotate-90"
-                    >
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="42"
-                        fill="none"
-                        stroke="var(--border)"
-                        strokeWidth="10"
-                      />
-                      <circle
-                        cx="50"
-                        cy="50"
-                        r="42"
-                        fill="none"
-                        stroke="var(--accent)"
-                        strokeWidth="10"
-                        strokeLinecap="round"
-                        strokeDasharray={dash}
-                      />
-                    </svg>
+                    <ProgressRing
+                      value={progress * 100}
+                      tone="accent"
+                      label={`${gradedCount} of ${allCount} paper${allCount === 1 ? "" : "s"} graded`}
+                      size={92}
+                      strokeWidth={10}
+                      className="flex-none"
+                    />
                     <div className="flex-1">
                       <div className="text-display-sm text-ink">Auto-grading</div>
                       {processingCount > 0 ? (
@@ -542,20 +532,66 @@ export function Grading() {
                   <div className="border border-rule rounded-lg p-5 bg-paper-sunk flex flex-col gap-3">
                     <div className="text-body-md font-medium">Upload a scan</div>
                     <div>
-                      <label
-                        htmlFor="grading-scan-file"
-                        className="text-body-sm font-medium block mb-1.5"
-                      >
-                        Scanned paper
-                      </label>
-                      <input
-                        id="grading-scan-file"
-                        type="file"
-                        accept="application/pdf,image/*"
-                        disabled={uploading}
-                        onChange={handleScanChange}
-                        className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
-                      />
+                      <div className="flex items-center justify-between gap-2 mb-1.5">
+                        <label htmlFor="grading-scan-file" className="text-body-sm font-medium">
+                          Scanned paper
+                        </label>
+                        {/* A third source beside drop/browse — opening the camera
+                            is itself the tap `autoStart` requires below, so this
+                            never acquires `getUserMedia` on mount unprompted. */}
+                        {!showCamera && !scanFile ? (
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={uploading}
+                            onClick={() => setShowCamera(true)}
+                          >
+                            <Camera /> Use camera
+                          </Button>
+                        ) : null}
+                      </div>
+                      {showCamera ? (
+                        <CameraCapture
+                          autoStart
+                          onComplete={(file) => {
+                            // The captured pages already arrive assembled into
+                            // one PDF (`CameraCapture`'s own lazy
+                            // `assemblePagesToPdf` import) — this is the same
+                            // `File` the native input's `onChange` would have
+                            // produced, so it goes through the identical
+                            // `scanFile` state and upload path.
+                            setScanFile(file)
+                            setShowCamera(false)
+                          }}
+                          onCancel={() => setShowCamera(false)}
+                        />
+                      ) : scanFile ? (
+                        <div className="flex flex-wrap items-center gap-3 rounded-lg border border-rule bg-paper-raised px-4 py-3">
+                          <span className="min-w-0 flex-1 truncate text-body-sm text-ink">
+                            Scan ready · {scanFile.name}
+                          </span>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            size="sm"
+                            disabled={uploading}
+                            onClick={() => setScanFile(null)}
+                          >
+                            Choose a different scan
+                          </Button>
+                        </div>
+                      ) : (
+                        <input
+                          id="grading-scan-file"
+                          type="file"
+                          accept="application/pdf,image/*"
+                          disabled={uploading}
+                          onChange={handleScanChange}
+                          className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                          data-kit-field="file"
+                        />
+                      )}
                     </div>
                     <div>
                       <label
@@ -571,6 +607,7 @@ export function Grading() {
                         disabled={uploading}
                         onChange={handleSchemeChange}
                         className="text-body-sm text-ink-muted file:me-3 file:border file:border-rule file:bg-paper-raised file:rounded-lg file:px-3 file:py-1.5 file:text-body-sm file:cursor-pointer file:font-sans"
+                        data-kit-field="file"
                       />
                       {!schemeFile ? (
                         <div className="text-data-sm text-ink-faint mt-1.5">

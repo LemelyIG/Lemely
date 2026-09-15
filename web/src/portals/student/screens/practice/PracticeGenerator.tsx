@@ -5,12 +5,14 @@ import { Button } from "@/components/ui/button"
 import { Card, CardBody } from "@/components/ui/card"
 import { Checkbox } from "@/components/ui/checkbox"
 import { ListSkeleton, PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
+import { SectionHead } from "@/components/ui/section-head"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { Slider } from "@/components/ui/slider"
 import { ApiError } from "@/lib/api"
 import { useCreatePractice, usePracticePreview, usePracticeTopics } from "@/lib/hooks/usePracticeApi"
 import type { CreatePracticeResponse, PracticeFilterSet, PracticePreview } from "@/lib/practiceTypes"
+import { PRACTICE_SOURCES } from "@/lib/practiceSources"
 import { useReference, useSubjectName } from "@/lib/hooks/useReferenceApi"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import {
@@ -46,6 +48,7 @@ export function PracticeGenerator() {
   const [selectedTopics, setSelectedTopics] = useState<Set<string>>(new Set())
   const [weakTopicsOnly, setWeakTopicsOnly] = useState(false)
   const [difficultyBands, setDifficultyBands] = useState<Set<string>>(new Set())
+  const [source, setSource] = useState<string | null>(null)
   const [raceUnavailable, setRaceUnavailable] = useState<PracticePreview | null>(null)
   const [created, setCreated] = useState<CreatePracticeResponse | null>(null)
 
@@ -74,7 +77,7 @@ export function PracticeGenerator() {
     topics: [...selectedTopics],
     weakTopicsOnly,
     difficultyBands: [...difficultyBands],
-    source: null,
+    source,
   }
   // Independent of `topicsQuery` below and left hand-rolled rather than
   // nested in its own `<QueryState>`: it drives a single inline line of live
@@ -197,13 +200,14 @@ export function PracticeGenerator() {
 
           return (
             <>
-              <div className="flex flex-col gap-2">
-                <h1 className="text-display-lg text-ink">Practice for {subjectName}</h1>
-                <p className="lm-prose text-body-lg text-ink-muted">
-                  Build a set of real past-paper questions from the topics and difficulty you
-                  choose.
-                </p>
-              </div>
+              {/* content-classified-practice-mental-model: one sentence stating
+                  the mental model — where a practice question actually comes
+                  from — before the source control below asks the student to
+                  choose among them. */}
+              <SectionHead
+                title={`Practice for ${subjectName}`}
+                kicker="Questions come from past papers, your own marked papers, or Lemely's practice bank; pick a source or use all."
+              />
 
               <Card>
                 <CardBody className="flex flex-col gap-3">
@@ -219,6 +223,42 @@ export function PracticeGenerator() {
                     step={5}
                     aria-label="Number of practice questions"
                   />
+                </CardBody>
+              </Card>
+
+              {/* content-practice-source-filter-dead-in-ui: `filters.source`
+                  used to be hardcoded `null` — this is what actually wires
+                  it to a control. A single-select filter among mutually
+                  exclusive sources, not a set of content panels, so this
+                  mirrors `QuizBuilder.tsx`'s "Question source"
+                  `role="radiogroup"` rather than reaching for `Tabs` (which
+                  pairs `role="tab"` with a matching `tabpanel` per value —
+                  there is no separate panel of content per source here, just
+                  this same preview re-filtering). */}
+              <Card>
+                <CardBody className="flex flex-col gap-3">
+                  <h2 className="text-eyebrow text-ink-faint">Source</h2>
+                  <div role="radiogroup" aria-label="Question source" className="flex flex-wrap gap-2">
+                    {PRACTICE_SOURCES.map((opt) => {
+                      const on = source === opt.value
+                      return (
+                        <Button
+                          key={opt.value ?? "all"}
+                          type="button"
+                          variant={on ? "accent" : "secondary"}
+                          size="sm"
+                          role="radio"
+                          aria-checked={on}
+                          onClick={() => {
+                            setRaceUnavailable(null)
+                            setSource(opt.value)
+                          }}
+                        >
+                          {opt.label}
+                        </Button>
+                      )
+                    })}
+                  </div>
                 </CardBody>
               </Card>
 
@@ -262,12 +302,20 @@ export function PracticeGenerator() {
                           <h3 className="text-label text-ink">{group.syllabusGroup}</h3>
                           <div className="flex flex-col gap-1.5 ps-1">
                             {group.topics.map((t) => (
-                              <Checkbox
-                                key={t.topic}
-                                label={`${t.topic} (${t.availableCount})`}
-                                checked={selectedTopics.has(t.topic)}
-                                onChange={() => toggleTopic(t.topic)}
-                              />
+                              <div key={t.topic} className="flex items-center justify-between gap-3">
+                                <Checkbox
+                                  label={`${t.topic} (${t.availableCount})`}
+                                  checked={selectedTopics.has(t.topic)}
+                                  onChange={() => toggleTopic(t.topic)}
+                                />
+                                {/* Omitted, never rendered as "0 marks lost" — the
+                                    figure is decoration only when it's real. */}
+                                {t.marksLost > 0 ? (
+                                  <span className="text-data-sm text-ink-faint shrink-0">
+                                    {t.marksLost} mark{t.marksLost === 1 ? "" : "s"} lost
+                                  </span>
+                                ) : null}
+                              </div>
                             ))}
                           </div>
                         </div>

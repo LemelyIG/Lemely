@@ -106,6 +106,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(function Input(
           aria-invalid={resolvedState === "error" || undefined}
           aria-busy={isLoading || undefined}
           aria-describedby={cn(errorId, hintId) || undefined}
+          data-kit-field="input"
           className={cn(
             "w-full rounded-md border bg-paper-raised px-3 py-2 text-field text-ink placeholder:text-ink-faint",
             "transition-colors duration-[var(--dur-instant)] ease-out-soft",

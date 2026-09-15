@@ -207,6 +207,22 @@ describe("lm-nav-chrome coverage", () => {
  * exemption for the opposite reason (a sidebar is legitimately desktop-only,
  * `min-h-screen`), so this block is this file's mirror — a sidebar tag itself
  * must use the token, never the literal it replaces.
+ *
+ * C3 review fix: the original `BANNED` list was four LITERAL strings lifted
+ * from that one migration (`min-[820px]`, `md:flex`, `w-[246px]`,
+ * `w-[252px]`) — it caught the exact QuizBuilder regression (fixed in
+ * d9f2c821/a62ef62e) but is blind to the general bug class: any *other*
+ * arbitrary-value width (e.g. `w-[220px]`) or any *other* standard-breakpoint
+ * display variant (`lg:flex`, `xl:hidden`, `md:block`, ...) on an `<aside>`
+ * line. `WIDTH_LITERAL`/`STANDARD_BREAKPOINT_DISPLAY` below generalise those
+ * two shapes — every real sidebar in this codebase must size itself with
+ * `w-sidebar` (never a bracketed literal) and gate itself with
+ * `sidebar:`/`max-sidebar:` (never a standard Tailwind breakpoint), so
+ * *any* match of either general pattern on an `<aside` line is a regression
+ * of this same bug class, not just a repeat of the one historical migration.
+ * The four original literals stay in `BANNED` too — harmless once the
+ * general patterns are added, and they keep this regression's specific
+ * history named for anyone grepping test failures later.
  */
 describe("no literal sidebar breakpoint/width on any <aside> in portals", () => {
   function* walk(dir: string): Generator<string> {
@@ -217,7 +233,23 @@ describe("no literal sidebar breakpoint/width on any <aside> in portals", () => 
     }
   }
 
-  const BANNED = [/min-\[820px\]/, /\bmd:flex\b/, /w-\[246px\]/, /w-\[252px\]/]
+  // The historical QuizBuilder regression's exact literals (named, not just
+  // subsumed by the general patterns below, so a failure here still reads as
+  // "this specific past bug came back").
+  const HISTORICAL_LITERALS = [/min-\[820px\]/, /\bmd:flex\b/, /w-\[246px\]/, /w-\[252px\]/]
+  // General bug class 1: ANY arbitrary bracket-syntax width, not just the
+  // two literal pixel values above. A real sidebar sizes itself with the
+  // named `w-sidebar` token, never `w-[...]`.
+  const WIDTH_LITERAL = /\bw-\[[^\]]+\]/
+  // General bug class 2: a standard Tailwind breakpoint gating a display
+  // utility (`flex`/`hidden`/`block`/`grid`/`inline-flex`/`inline-block`/
+  // `inline-grid`). A real sidebar gates itself with the custom
+  // `sidebar:`/`max-sidebar:` breakpoint, never `sm:`/`md:`/`lg:`/`xl:`/`2xl:`
+  // — `md:flex` above is just the one instance of this shape that actually
+  // shipped.
+  const STANDARD_BREAKPOINT_DISPLAY =
+    /\b(?:sm|md|lg|xl|2xl):(?:inline-flex|inline-block|inline-grid|flex|hidden|block|grid)\b/
+  const BANNED = [...HISTORICAL_LITERALS, WIDTH_LITERAL, STANDARD_BREAKPOINT_DISPLAY]
   const offenders: string[] = []
 
   for (const file of walk(join(SRC, "portals"))) {

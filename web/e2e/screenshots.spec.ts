@@ -13,7 +13,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url))
  * paper, S-15/S-17 Paper result) against the real backend
  * (scripts/e2e_server.py — real Postgres/GoTrue/Storage, only Gemini-vision
  * mocked with the tests/golden/0625_m20_qp_12_mcq fixture) at three
- * breakpoints (380/768/1440). No dark mode — this product is single-theme.
+ * breakpoints (380/768/1440). Light only, by design: dark mode shipped in
+ * C5, but its captures live in `scripts/audit.mjs` (five named
+ * `*-dark` states, Puppeteer's `emulateMediaFeatures`), not here. Keeping
+ * this Playwright corpus light-only means every baseline in it stays a
+ * stable pixel diff across a run — a corpus that alternated light/dark
+ * per screen would double as an implicit "did the theme also change"
+ * assertion nobody asked this suite to make.
  *
  * Kept separate from correct-paper.spec.ts / _smoke.spec.ts: this suite
  * captures a corpus rather than asserting product behaviour end to end, so

@@ -3,6 +3,8 @@ import { useEffect, useRef, useState } from "react"
 import { Link, useNavigate, useSearchParams } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Checkbox } from "@/components/ui/checkbox"
+import { Select } from "@/components/ui/select"
+import { SectionHead } from "@/components/ui/section-head"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
@@ -14,6 +16,7 @@ import {
   teacherMutationFailureMessage,
 } from "@/lib/teacherOutcome"
 import { Avatar } from "@/components/ui/avatar"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { useBulkApproveReview, useReviewQueue, useTeacherClasses } from "@/lib/hooks/useTeacherApi"
 import type { BulkApproveResponse, ReviewQueueItem, ReviewQueueList } from "@/lib/teacherTypes"
 import { ForwardArrow } from "@/components/ui/inline-arrow"
@@ -341,61 +344,46 @@ export function Review() {
 
           return (
             <>
-              <div className="flex flex-col gap-1">
-                <div className="text-eyebrow text-ink-faint">
-                  The teacher's core recurring task
-                </div>
-                <h1 className="text-display-md mt-1">Review queue</h1>
-                <p className="text-body-md text-ink-muted mt-1 max-w-[560px] text-pretty">
-                  Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the
-                  trivially fine ones. Open anything that needs a real look.
-                </p>
-              </div>
+              <SectionHead
+                eyebrow="The teacher's core recurring task"
+                title="Review queue"
+                kicker="Low-confidence marks and integrity flags land here, oldest first. Bulk-approve the trivially fine ones. Open anything that needs a real look."
+                rung="display-md"
+                level={1}
+              />
 
               <div className="flex items-end gap-4 flex-wrap">
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Class
-                  <select
-                    value={classId}
-                    onChange={(e) => updateFilter("class_id", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring min-w-[170px]"
-                  >
-                    <option value="">All classes</option>
-                    {(classesQuery.data?.classes ?? []).map((c) => (
-                      <option key={c.id} value={c.id}>
-                        {c.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Reason
-                  <select
-                    value={reason}
-                    onChange={(e) => updateFilter("reason", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  >
-                    {REASON_FILTER_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1.5 text-body-sm text-ink-muted">
-                  Waiting at least
-                  <select
-                    value={minAgeHours}
-                    onChange={(e) => updateFilter("min_age_hours", e.target.value)}
-                    className="border border-rule bg-paper-raised rounded-lg px-3 py-2 text-body-md text-ink focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
-                  >
-                    {AGE_FILTER_OPTIONS.map((o) => (
-                      <option key={o.value} value={o.value}>
-                        {o.label}
-                      </option>
-                    ))}
-                  </select>
-                </label>
+                <Select
+                  label="Class"
+                  value={classId}
+                  onChange={(e) => updateFilter("class_id", e.target.value)}
+                  wrapperClassName="min-w-[170px]"
+                >
+                  <option value="">All classes</option>
+                  {(classesQuery.data?.classes ?? []).map((c) => (
+                    <option key={c.id} value={c.id}>
+                      {c.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select label="Reason" value={reason} onChange={(e) => updateFilter("reason", e.target.value)}>
+                  {REASON_FILTER_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
+                <Select
+                  label="Waiting at least"
+                  value={minAgeHours}
+                  onChange={(e) => updateFilter("min_age_hours", e.target.value)}
+                >
+                  {AGE_FILTER_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </Select>
               </div>
 
               {/*
@@ -487,98 +475,61 @@ export function Review() {
                     </div>
                   ) : null}
 
-                  <div
-                    className="bg-paper-raised border border-rule rounded-lg overflow-hidden overflow-x-auto min-w-0"
+                  <Table density="operate"
                     tabIndex={0}
                     role="region"
                     aria-label="Review queue, scrollable horizontally"
                   >
-                    <table className="w-full text-body-md border-collapse">
-                      <caption className="sr-only">
-                        Review queue, oldest-waiting item first, which is the priority order the server already
-                        returns this list in
-                      </caption>
-                      <thead>
-                        <tr className="bg-paper-sunk border-b border-rule">
-                          <th scope="col" className="px-[16px] py-[10px]">
-                            <span className="sr-only">Select</span>
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Student
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Paper
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Question
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Why it's here
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-start px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Waiting
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint whitespace-nowrap"
-                          >
-                            AI mark
-                          </th>
-                          <th
-                            scope="col"
-                            className="text-end px-[16px] py-[10px] text-eyebrow text-ink-faint"
-                          >
-                            Confidence
-                          </th>
-                          <th scope="col" className="px-[16px] py-[10px]">
-                            <span className="sr-only">Actions</span>
-                          </th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {items.map((item) => (
-                          <tr key={item.itemId} className="border-b border-rule last:border-b-0 align-top">
-                            <td className="px-[16px] py-[13px]">
-                              <Checkbox
-                                checked={selected.has(item.itemId)}
-                                disabled={isIntegrityReason(item.reason)}
-                                onChange={() => toggleSelected(item.itemId)}
-                                title={
-                                  isIntegrityReason(item.reason)
-                                    ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
-                                    : undefined
-                                }
-                                aria-label={
-                                  isIntegrityReason(item.reason)
-                                    ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
-                                    : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
-                                }
-                              />
-                            </td>
-                            <td className="px-[16px] py-[13px]">
-                              {/* Two row shapes, because the queue has two
-                                  sources. A console-uploaded paper has no
-                                  student and no class (D1.12), so it gets
-                                  neither an avatar nor the two links below:
-                                  rendering a person's avatar for a scan, or a
-                                  link to `/teacher/students/null`, would be
-                                  inventing a student this row does not have. */}
-                              {isConsolePaperItem(item) ? (
+                    <caption className="sr-only">
+                      Review queue, oldest-waiting item first, which is the priority order the server already
+                      returns this list in
+                    </caption>
+                    <THead>
+                      <TR>
+                        <TH>
+                          <span className="sr-only">Select</span>
+                        </TH>
+                        <TH>Student</TH>
+                        <TH>Paper</TH>
+                        <TH>Question</TH>
+                        <TH>Why it's here</TH>
+                        <TH>Waiting</TH>
+                        <TH numeric>AI mark</TH>
+                        <TH numeric>Confidence</TH>
+                        <TH>
+                          <span className="sr-only">Actions</span>
+                        </TH>
+                      </TR>
+                    </THead>
+                    <TBody>
+                      {items.map((item) => (
+                        <TR key={item.itemId} className="align-top">
+                          <TD>
+                            <Checkbox
+                              checked={selected.has(item.itemId)}
+                              disabled={isIntegrityReason(item.reason)}
+                              onChange={() => toggleSelected(item.itemId)}
+                              title={
+                                isIntegrityReason(item.reason)
+                                  ? "Integrity flags aren't selectable for bulk-approve. Open this item instead"
+                                  : undefined
+                              }
+                              aria-label={
+                                isIntegrityReason(item.reason)
+                                  ? `${item.studentDisplayName}'s ${questionLabel(item)} is an integrity flag and isn't selectable here. Open it instead`
+                                  : `Select ${item.studentDisplayName}'s ${questionLabel(item)} for bulk approve`
+                              }
+                            />
+                          </TD>
+                          <TD>
+                            {/* Two row shapes, because the queue has two
+                                sources. A console-uploaded paper has no
+                                student and no class (D1.12), so it gets
+                                neither an avatar nor the two links below:
+                                rendering a person's avatar for a scan, or a
+                                link to `/teacher/students/null`, would be
+                                inventing a student this row does not have. */}
+                            {isConsolePaperItem(item) ? (
                                 <div className="flex items-center gap-2.5 min-w-0">
                                   <span
                                     aria-hidden="true"
@@ -669,60 +620,57 @@ export function Review() {
                                 </div>
                               </div>
                               )}
-                            </td>
-                            <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
-                              {paperIdentityLabel(item)}
-                            </td>
-                            <td className="px-[16px] py-[13px] text-data-sm whitespace-nowrap">
-                              {item.questionId ?? "—"}
-                            </td>
-                            <td className="px-[16px] py-[13px]">
-                              <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
-                                {reasonLabel(item.reason)}
+                          </TD>
+                          <TD className="whitespace-nowrap text-body-sm text-ink-muted">
+                            {paperIdentityLabel(item)}
+                          </TD>
+                          <TD className="text-data-sm whitespace-nowrap">
+                            {item.questionId ?? "—"}
+                          </TD>
+                          <TD>
+                            <Chip tone={isIntegrityReason(item.reason) ? "warn" : "neutral"}>
+                              {reasonLabel(item.reason)}
+                            </Chip>
+                          </TD>
+                          <TD className="whitespace-nowrap text-body-sm text-ink-muted">
+                            {relativeTime(item.createdAt)}
+                          </TD>
+                          {/* The confidence gets its own column rather than sitting
+                              unlabelled under the mark. Stacked, a tone-coloured
+                              "85%" read as a second figure about the *mark* — the
+                              same shape as surface 4's unlabelled rank column, where
+                              a coloured number beside another number invited the two
+                              to be read as a pair. A percentage under "2/3" is
+                              especially open to being read as a score. */}
+                          <TD numeric className="whitespace-nowrap text-data-sm">
+                            {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
+                          </TD>
+                          <TD numeric className="whitespace-nowrap">
+                            {item.confidenceScore != null ? (
+                              <Chip tone={confidenceTone(item.confidenceScore)}>
+                                {Math.round(item.confidenceScore * 100)}%
                               </Chip>
-                            </td>
-                            <td className="px-[16px] py-[13px] whitespace-nowrap text-body-sm text-ink-muted">
-                              {relativeTime(item.createdAt)}
-                            </td>
-                            {/* The confidence gets its own column rather than sitting
-                                unlabelled under the mark. Stacked, a tone-coloured
-                                "85%" read as a second figure about the *mark* — the
-                                same shape as surface 4's unlabelled rank column, where
-                                a coloured number beside another number invited the two
-                                to be read as a pair. A percentage under "2/3" is
-                                especially open to being read as a score. */}
-                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                              <div className="text-data-sm text-ink">
-                                {item.aiAwardedMarks ?? "–"}/{item.maximumMarks ?? "–"}
-                              </div>
-                            </td>
-                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                              {item.confidenceScore != null ? (
-                                <Chip tone={confidenceTone(item.confidenceScore)}>
-                                  {Math.round(item.confidenceScore * 100)}%
-                                </Chip>
-                              ) : (
-                                <span className="text-body-sm text-ink-faint">–</span>
-                              )}
-                            </td>
-                            <td className="px-[16px] py-[13px] text-end whitespace-nowrap">
-                              <Button
-                                size="sm"
-                                variant="secondary"
-                                onClick={() =>
-                                  navigate(
-                                    `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
-                                  )
-                                }
-                              >
-                                Review <ForwardArrow />
-                              </Button>
-                            </td>
-                          </tr>
-                        ))}
-                      </tbody>
-                    </table>
-                  </div>
+                            ) : (
+                              <span className="text-body-sm text-ink-faint">–</span>
+                            )}
+                          </TD>
+                          <TD className="text-end whitespace-nowrap">
+                            <Button
+                              size="sm"
+                              variant="secondary"
+                              onClick={() =>
+                                navigate(
+                                  `/teacher/review/${item.itemId}${filterQsString ? `?${filterQsString}` : ""}`,
+                                )
+                              }
+                            >
+                              Review <ForwardArrow />
+                            </Button>
+                          </TD>
+                        </TR>
+                      ))}
+                    </TBody>
+                  </Table>
 
                   {/* Task 11 (B6c): keyset "Load more", not a virtualized
                       list or infinite scroll — deferred by design. The

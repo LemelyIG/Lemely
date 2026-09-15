@@ -71,6 +71,27 @@ const COLOR_PLACEHOLDERS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * Task 13 (C5b): the dark counterpart of `COLOR_PLACEHOLDERS` above, one
+ * `%LEMELY_COLOR_DARK_*%` per light placeholder, resolved from the dark
+ * `--paper`/`--ink`/etc. ladder (`tokenHex(name, "dark")` — index.css's
+ * `:root[data-theme="dark"]` block, Task 12). The shell cannot reach
+ * `var(...)` in either theme (see this file's header), so it needs its own
+ * literal dark values the same way it needs its own literal light ones —
+ * these are what the `[data-theme="dark"] ...` override block in
+ * `index.html`'s inline `<style>` resolves against, guarded by the
+ * `data-theme` attribute `shell-init.js` sets on `<html>` before this markup
+ * is even parsed.
+ */
+const COLOR_PLACEHOLDERS_DARK: Readonly<Record<string, string>> = {
+  "%LEMELY_COLOR_DARK_PAPER%": "paper",
+  "%LEMELY_COLOR_DARK_PAPER_SUNK%": "paper-sunk",
+  "%LEMELY_COLOR_DARK_PAPER_RAISED%": "paper-raised",
+  "%LEMELY_COLOR_DARK_RULE%": "rule",
+  "%LEMELY_COLOR_DARK_INK%": "ink",
+  "%LEMELY_COLOR_DARK_INK_MUTED%": "ink-muted",
+}
+
+/**
  * The two places the pre-mount shell draws the brand mark: the skeleton
  * sidebar's lockup (static, 24px) and the slow-load screen's (drawing itself).
  *
@@ -214,6 +235,18 @@ export function fillPreMountShell(html: string): string {
     out = out.replaceAll(placeholder, tokenHex(tokenName))
   }
 
+  for (const [placeholder, tokenName] of Object.entries(COLOR_PLACEHOLDERS_DARK)) {
+    if (!out.includes(placeholder)) {
+      throw new Error(
+        `preMountShell: index.html no longer contains ${placeholder}. The pre-mount shell's ` +
+          "dark override colours are injected from the dark token ladder at build time, the " +
+          "same way the light ones are (see COLOR_PLACEHOLDERS above) — never written as " +
+          "literal hex.",
+      )
+    }
+    out = out.replaceAll(placeholder, tokenHex(tokenName, "dark"))
+  }
+
   for (const [placeholder, { animated }] of Object.entries(MARK_PLACEHOLDERS)) {
     if (!out.includes(placeholder)) {
       throw new Error(
@@ -262,10 +295,16 @@ export function fillPreMountShell(html: string): string {
   // like one of THIS plugin's three placeholder families may remain.
   //
   // Scoped to those prefixes, not every `%LEMELY_..._%` in the document:
-  // `themeColor.ts` owns a further placeholder, `%LEMELY_THEME_COLOR%`, on
-  // the same `<meta name="theme-color">` line, resolved by its own plugin in
-  // its own build step — a bare `%LEMELY_[A-Z_]+%` sweep here would
-  // misreport that one as this plugin's failure to resolve.
+  // `themeColor.ts` owns two further placeholders, `%LEMELY_THEME_COLOR%`
+  // and `%LEMELY_THEME_COLOR_DARK%`, on the same `<meta name="theme-color">`
+  // line, resolved by its own plugin in its own build step — a bare
+  // `%LEMELY_[A-Z_]+%` sweep here would misreport those as this plugin's
+  // failure to resolve.
+  //
+  // Task 13 (C5b): `%LEMELY_COLOR_DARK_*%` (COLOR_PLACEHOLDERS_DARK above)
+  // needs no separate entry in this sweep — `COLOR_DARK_PAPER`, etc. already
+  // matches the `COLOR` branch's `[A-Z_]+` tail below, so a dark placeholder
+  // left unresolved is caught the same way a light one is.
   const leftover = out.match(/%LEMELY_(?:COLOR|LOADING_TIER|MARK|SIDEBAR)_[A-Z_]+%/g)
   if (leftover) {
     throw new Error(

@@ -129,11 +129,17 @@ class PracticeTopicCountDTO(ApiModel):
     ``"1.2 Motion"`` (6) as peers, and the rows are disjoint — picking the
     parent chip does not include the children. S-20 nests by this key rather
     than rendering a flat menu that would quietly mislead.
+
+    ``marksLost`` (Task 8 C3c) is the caller's own net lost marks on this
+    topic across every attempt — 0 when there is no recorded loss, and the
+    frontend omits the stat entirely rather than rendering "0 marks lost"
+    as decoration.
     """
 
     topic: str
     availableCount: int
     syllabusGroup: str
+    marksLost: int
 
 
 class PracticeTopicsDTO(ApiModel):

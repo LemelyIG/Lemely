@@ -228,6 +228,106 @@
   --fs-field: 16px;
 }
 
+/* ============================================================================
+ * DARK LADDER (Phase C, task C5a) — DESIGN.md §3.10 is the measured record.
+ *
+ * A token swap, nothing more. Every name below already has a job assigned in
+ * the light `:root` block above; nothing here is a new colour concept, and no
+ * component file changes for this to work. `--bg`/`--surface`/`--t1` (the
+ * compatibility layer, `:root, [data-portal="..."]` below) and `--grade-*` /
+ * `--mark-*` / `--confidence-*` / `--subject-*` (the alias layer, §3.7–3.8
+ * above) are all `var(--paper)`-style references, resolved against whatever
+ * is cascaded on the element — so the instant `data-theme="dark"` lands on
+ * `<html>`, they repaint for free. `@theme inline` (below) maps Tailwind
+ * utilities to `var(--token)` the same way and needs no changes either.
+ *
+ * Hue and chroma are kept from the light ladder for every token except where
+ * a comment below says otherwise; every value here is transcribed into
+ * DESIGN.md §3.10 exactly as shipped, and `tests/test_design_tokens.py` runs
+ * every contrast guarantee the light ladder makes against this one too.
+ *
+ * Out of scope for C5a, deliberately: `--shadow-float` and `--scrim` (§7).
+ * Resting cards carry no shadow in either theme, floating layers (popovers,
+ * modals, toasts) are the only consumers, and neither is a text/surface
+ * contrast pair this task's AA gate covers — a dark-appropriate elevation
+ * treatment (shadows read as "holes" on a dark surface; Material's answer is
+ * lighter panels, not darker shadows) is a design decision for whichever
+ * task first ships a floating layer against this ladder, not a token-value
+ * nudge. `tests/unit/design-tokens.test.ts`'s "same token set" check
+ * excludes both by construction: neither is a plain `oklch(L C H)` triple.
+ * ==========================================================================
+ */
+:root[data-theme="dark"] {
+  color-scheme: dark;
+
+  /* ── §3.1 Paper ──────────────────────────────────────────────────────── */
+  --paper: oklch(0.2 0.004 85);
+  --paper-raised: oklch(0.24 0.003 85);
+  --paper-sunk: oklch(0.17 0.006 85);
+  --paper-inverse: oklch(0.92 0.008 250);
+
+  /* ── §3.2 Ink ────────────────────────────────────────────────────────── */
+  --ink: oklch(0.93 0.009 234);
+  --ink-muted: oklch(0.78 0.006 240);
+  --ink-faint: oklch(0.72 0.006 240);
+  --ink-inverse: oklch(0.25 0.004 85);
+
+  /* ── §3.3 Rules ──────────────────────────────────────────────────────── */
+  --rule: oklch(0.3 0.004 85);
+  --rule-strong: oklch(0.36 0.005 85);
+  --rule-faint: oklch(0.26 0.003 85);
+
+  /* ── §3.4 Accent ─────────────────────────────────────────────────────── */
+  /* Chroma nudged down from the light ladder's 0.146/0.132/0.028/0.10 (still
+     the same hues) so the fill does not glow past legibility at this
+     lightness. `--accent-on`: pure white measures 2.61:1 on this accent
+     (fails AA); the dark `--paper` measures 6.93:1 and reads as the fill
+     "recessing" into the page rather than sitting on it, so it aliases
+     `--paper` instead of carrying a second literal. */
+  --accent: oklch(0.72 0.13 33);
+  --accent-hover: oklch(0.78 0.13 34);
+  --accent-wash: oklch(0.28 0.05 34);
+  --accent-ink: oklch(0.8 0.1 34);
+  --accent-on: var(--paper);
+
+  /* ── §3.5 Pastels ────────────────────────────────────────────────────── */
+  --pastel-rose: oklch(0.3 0.032 20);
+  --pastel-rose-ink: oklch(0.85 0.11 20);
+  --pastel-amber: oklch(0.3 0.045 85);
+  --pastel-amber-ink: oklch(0.85 0.08 70);
+  --pastel-sage: oklch(0.3 0.032 155);
+  --pastel-sage-ink: oklch(0.85 0.07 160);
+  --pastel-sky: oklch(0.3 0.03 235);
+  --pastel-sky-ink: oklch(0.85 0.08 240);
+  --pastel-lilac: oklch(0.3 0.03 300);
+  --pastel-lilac-ink: oklch(0.85 0.08 300);
+  --pastel-clay: oklch(0.3 0.022 55);
+  --pastel-clay-ink: oklch(0.85 0.06 50);
+
+  /* ── §3.6 Semantic states ────────────────────────────────────────────── */
+  /* The §3.6 greyscale guarantee survives the theme swap but the ladder
+     flips direction: light DESCENDS (ok > warn > err — darkest reads
+     loudest against white paper); dark ASCENDS (ok < warn < err — brightest
+     reads loudest against near-black paper). `ok`/`warn` sit a little below
+     the 0.78-0.82 starting band (0.74/0.77) because at equal L the higher
+     chroma on `err` (0.145 vs 0.075/0.085) suppresses its luminance enough
+     to break monotonicity; nudging ok/warn down instead of touching any
+     hue/chroma keeps the full step >=0.02 in relative luminance, the same
+     floor §3.6 sets for the light ladder. `info` is not part of the ladder
+     (it never was, in either theme) and sits at the band's midpoint. */
+  --ok: oklch(0.74 0.075 175);
+  --ok-wash: oklch(0.28 0.03 175);
+  --warn: oklch(0.77 0.085 70);
+  --warn-wash: oklch(0.28 0.045 85);
+  --err: oklch(0.82 0.145 27);
+  --err-wash: oklch(0.27 0.035 27);
+  --info: oklch(0.8 0.08 265);
+  --info-wash: oklch(0.29 0.03 265);
+
+  /* ── §3.9 Focus ──────────────────────────────────────────────────────── */
+  --focus-ring: oklch(0.72 0.14 240);
+}
+
 @theme inline {
   /* ── Colours ─────────────────────────────────────────────────────────── */
   --color-paper: var(--paper);
@@ -619,6 +719,23 @@
 }
 @utility grid-result-cols {
   grid-template-columns: minmax(0, 1fr) 300px;
+}
+
+/* ── §3.6 The red-pen register (C3a) ──────────────────────────────────────
+   A wrong answer's expanded explanation reads in --mark-wrong ink at weight
+   500 with a 2px left rule — ink and a rule, never a fill. PRODUCT.md is
+   explicit: "avoid red-heavy error states; prefer amber/neutral for 'needs
+   attention.'" A red background on the one screen a student reads right
+   after seeing their score would be exactly that. Scoped to the expanded
+   explanation slot only (question-row.tsx) — never the row, never the
+   feedback panel's own bg-paper-sunk — and it carries no Caveat: this is
+   state the reader needs, not marginalia they can lose (§4.1). See
+   DESIGN.md §3.6. */
+.lm-red-pen {
+  color: var(--mark-wrong);
+  font-weight: 500;
+  border-inline-start: 2px solid var(--mark-wrong);
+  padding-inline-start: var(--space-3);
 }
 
 /* ── Base ──────────────────────────────────────────────────────────────── */
@@ -1018,6 +1135,74 @@ body {
     display: none;
     background-image: none;
     transform: none;
+  }
+
+  /* Chrome that exists to navigate the app, not to be read on paper: portal
+     sidebars/headers, bottom nav, drawers, toasts, banners, tab strips. Any
+     component that should not print sets this attribute; the removal itself
+     stays that component's own decision, not a selector list kept here. */
+  [data-print="hide"] {
+    display: none !important;
+  }
+
+  /* A question block (C-6 QuestionRow) is one printed unit; it must not be
+     torn across a page boundary. `page-break-inside` is the legacy property
+     kept for engines that predate `break-inside`. */
+  .lm-print-avoid-break {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+
+  /*
+   * §14 rule 3 ("tokens only") is deliberately broken here, and only here:
+   * dark mode (Phase C5) re-themes `--paper*`/`--ink*`/`--rule*`/semantic
+   * per `data-theme`, but ink on physical paper must stay legible regardless
+   * of which theme was active on screen when the student printed. Forcing
+   * the literal, not a token, guarantees that even if a future dark-mode
+   * token swap runs *inside* this block by mistake, print still resolves to
+   * a light page.
+   *
+   * C4/C5 review fix: `@media` adds no specificity, so a bare `:root` here
+   * (0,1,0) loses the cascade to the dark ladder's `:root[data-theme="dark"]`
+   * (0,2,0) regardless of source order — printing while the theme preference
+   * was dark left the print surface on the dark `--paper`/`--ink` pair,
+   * which is near-white ink on white paper (browsers don't print
+   * backgrounds by default). The selector below now also matches
+   * `:root[data-theme="dark"]` directly, at the SAME (0,2,0) specificity the
+   * dark ladder uses, and wins there by source order (this block comes
+   * after it in the file) — and it now resets `--ink*` and `--rule` too,
+   * not just `--paper*`, since PaperResult.tsx/question-row.tsx print real
+   * ink-coloured text and `--rule`-based borders.
+   *
+   * Re-verification review fix: `--ok`/`--warn`/`--err` are ALSO re-themed
+   * by the dark ladder (index.css:318-323) and ALSO print — PaperResult.tsx's
+   * `IntegrityMark` (border-ok/text-ok, border-warn/text-warn) and its
+   * "Needs review" copy (text-warn) sit on the print surface with no
+   * `data-print="hide"`. Same bug, one tier milder (washed out, not
+   * invisible: dark `--warn` measures 2.10:1 on forced white paper vs light
+   * `--warn`'s 7.58:1) — reset alongside the paper/ink/rule triple for the
+   * same reason.
+   *
+   * Values are the light ladder's own (§3.1/§3.2/§3.3 above), literal
+   * rather than `var()`, for the same "survives a future mistake inside
+   * this block" reason `--paper*` already relied on.
+   */
+  :root,
+  :root[data-theme="dark"] {
+    color-scheme: light;
+    --paper: #fff;
+    --paper-raised: #fff;
+    --paper-sunk: #fff;
+    --ink: oklch(0.321 0.009 234);
+    --ink-muted: oklch(0.48 0.006 240);
+    --ink-faint: oklch(0.52 0.006 240);
+    --rule: oklch(0.905 0.004 85);
+    --ok: oklch(0.48 0.075 175);
+    --ok-wash: oklch(0.945 0.03 175);
+    --warn: oklch(0.45 0.085 70);
+    --warn-wash: oklch(0.945 0.045 85);
+    --err: oklch(0.38 0.145 27);
+    --err-wash: oklch(0.94 0.035 27);
   }
 }
 

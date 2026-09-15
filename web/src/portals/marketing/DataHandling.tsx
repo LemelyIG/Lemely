@@ -76,7 +76,7 @@ export function DataHandling() {
           because a reader who stops early should still have met it.
         */}
         <Reveal>
-          <Card className="p-6">
+          <Card className="p-8">
             <Badge tone="warn">{notYetBuilt.tag}</Badge>
             <h2 className="mt-3.5 text-display-sm text-ink">{notYetBuilt.heading}</h2>
             <p className="lm-prose mt-2.5 text-body-md text-ink-muted">{notYetBuilt.body}</p>

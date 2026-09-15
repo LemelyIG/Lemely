@@ -62,6 +62,12 @@ export interface QuestionRowProps {
    * 7's `shareResult`). Omitted (the menu item does not render) when the
    * caller has nothing shareable to offer. */
   onShare?: () => void
+  /** C3a (Task 6): the red-pen register. `"red-pen"` puts the *expanded
+   * explanation slot* — `children`, not the row itself and not any nested
+   * panel's own background — in `--mark-wrong` ink with a left rule
+   * (`.lm-red-pen`, DESIGN.md §3.6). Callers pass this for a wrong answer
+   * only; correct and partial rows stay `"plain"` (the default). */
+  register?: "plain" | "red-pen"
 }
 
 export function QuestionRow({
@@ -77,6 +83,7 @@ export function QuestionRow({
   className,
   practiceHref,
   onShare,
+  register = "plain",
 }: QuestionRowProps) {
   const [internalOpen, setInternalOpen] = useState(false)
   const open = expanded ?? internalOpen
@@ -110,7 +117,10 @@ export function QuestionRow({
       align="end"
       renderTrigger={({ triggerProps }) => (
         <div
-          className={cn("border-b border-border last:border-b-0", className)}
+          className={cn(
+            "border-b border-border last:border-b-0 lm-print-avoid-break",
+            className,
+          )}
           {...(hasMenu ? longPress : {})}
         >
           <div className="flex items-center gap-3 py-3 px-2 -mx-2">
@@ -173,7 +183,11 @@ export function QuestionRow({
               </button>
             </span>
           </div>
-          {open && children && <div className="pb-4 px-2">{children}</div>}
+          {open && children && (
+            <div className={cn("pb-4 px-2", register === "red-pen" && "lm-red-pen")}>
+              {children}
+            </div>
+          )}
         </div>
       )}
     >

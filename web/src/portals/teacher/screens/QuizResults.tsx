@@ -7,6 +7,7 @@ import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { WeaknessChip } from "@/components/ui/weakness-chip"
+import { Table, THead, TBody, TR, TH, TD } from "@/components/ui/table"
 import { cn, downloadCsv, relativeTime } from "@/lib/utils"
 import { accuracyTone, TONE_CLASS, TONE_TO_SEVERITY } from "@/lib/severity"
 import { PageHeaderSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
@@ -196,81 +197,74 @@ function QuestionAnalysisTable({ questions }: { questions: QuizQuestionAnalysis[
     return <p className="text-body-sm text-ink-faint m-0">This quiz has no included questions.</p>
   }
   return (
-    <div
-      className="bg-paper-raised border border-rule rounded-lg overflow-x-auto min-w-0"
+    <Table density="operate"
       tabIndex={0}
       role="region"
       aria-label="Per-question analysis, scrollable horizontally"
     >
-      <table className="w-full border-collapse text-body-md">
-        <thead>
-          <tr className="text-start">
-            {[
-              "Q",
-              "Question",
-              "Topic",
-              "Accuracy",
-              "Avg marks",
-              "Full marks",
-              "Zero",
-              "Answered",
-              "Flags",
-            ].map((h) => (
-              <th
-                key={h}
-                scope="col"
-                className="text-eyebrow text-ink-faint font-normal px-3 py-2.5 border-b border-rule whitespace-nowrap"
-              >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {questions.map((q) => (
-            <tr key={q.questionRef} className="border-b border-rule last:border-b-0">
-              <td className="px-3 py-2.5 text-data-sm text-ink-faint">{q.questionRef}</td>
-              <td className="px-3 py-2.5 text-ink max-w-[320px]">
-                <span className="line-clamp-2">{q.prompt}</span>
-              </td>
-              <td className="px-3 py-2.5 text-ink-faint">{q.topic ?? "–"}</td>
-              <td className="px-3 py-2.5 tabular-nums">
-                {q.accuracy == null ? (
-                  <span className="text-ink-faint" title="Nobody has been marked on this question yet">
-                    –
-                  </span>
-                ) : (
-                  <span
-                    className={cn(
-                      "px-1.5 py-0.5 rounded font-medium",
-                      TONE_CLASS[accuracyTone(q.accuracy)],
-                    )}
-                  >
-                    {pct(q.accuracy)}
-                  </span>
-                )}
-              </td>
-              <td className="px-3 py-2.5 text-ink-faint tabular-nums">
-                {q.averageMarks == null ? "—" : `${q.averageMarks.toFixed(1)} / ${q.totalMarks}`}
-              </td>
-              <td className="px-3 py-2.5 text-ink-faint tabular-nums">{q.fullMarksCount}</td>
-              <td className="px-3 py-2.5 text-ink-faint tabular-nums">{q.zeroMarksCount}</td>
-              <td className="px-3 py-2.5 text-ink-faint tabular-nums">{q.answeredCount}</td>
-              <td className="px-3 py-2.5">
-                <div className="flex gap-1 flex-wrap">
-                  {q.needsReviewCount > 0 ? (
-                    <Chip tone="warn">{q.needsReviewCount} to review</Chip>
-                  ) : null}
-                  {q.overriddenCount > 0 ? (
-                    <Chip tone="neutral">{q.overriddenCount} overridden</Chip>
-                  ) : null}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+      <THead>
+        <TR>
+          <TH>Q</TH>
+          <TH>Question</TH>
+          <TH>Topic</TH>
+          <TH numeric>Accuracy</TH>
+          <TH numeric>Avg marks</TH>
+          <TH numeric>Full marks</TH>
+          <TH numeric>Zero</TH>
+          <TH numeric>Answered</TH>
+          <TH>Flags</TH>
+        </TR>
+      </THead>
+      <TBody>
+        {questions.map((q) => (
+          <TR key={q.questionRef}>
+            <TD className="text-data-sm text-ink-faint">{q.questionRef}</TD>
+            <TD className="max-w-[320px] text-ink">
+              <span className="line-clamp-2">{q.prompt}</span>
+            </TD>
+            <TD className="text-ink-faint">{q.topic ?? "–"}</TD>
+            <TD numeric className="tabular-nums">
+              {q.accuracy == null ? (
+                <span className="text-ink-faint" title="Nobody has been marked on this question yet">
+                  –
+                </span>
+              ) : (
+                <span
+                  className={cn(
+                    "px-1.5 py-0.5 rounded font-medium",
+                    TONE_CLASS[accuracyTone(q.accuracy)],
+                  )}
+                >
+                  {pct(q.accuracy)}
+                </span>
+              )}
+            </TD>
+            <TD numeric className="text-ink-faint tabular-nums">
+              {q.averageMarks == null ? "—" : `${q.averageMarks.toFixed(1)} / ${q.totalMarks}`}
+            </TD>
+            <TD numeric className="text-ink-faint tabular-nums">
+              {q.fullMarksCount}
+            </TD>
+            <TD numeric className="text-ink-faint tabular-nums">
+              {q.zeroMarksCount}
+            </TD>
+            <TD numeric className="text-ink-faint tabular-nums">
+              {q.answeredCount}
+            </TD>
+            <TD>
+              <div className="flex gap-1 flex-wrap">
+                {q.needsReviewCount > 0 ? (
+                  <Chip tone="warn">{q.needsReviewCount} to review</Chip>
+                ) : null}
+                {q.overriddenCount > 0 ? (
+                  <Chip tone="neutral">{q.overriddenCount} overridden</Chip>
+                ) : null}
+              </div>
+            </TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
   )
 }
 
@@ -284,71 +278,64 @@ function StudentTable({ students }: { students: QuizStudentResult[] }) {
     )
   }
   return (
-    <div
-      className="bg-paper-raised border border-rule rounded-lg overflow-x-auto min-w-0"
+    <Table density="operate"
       tabIndex={0}
       role="region"
       aria-label="Per-student results, scrollable horizontally"
     >
-      <table className="w-full border-collapse text-body-md">
-        <thead>
-          <tr className="text-start">
-            {["Student", "Status", "Score", "Submitted", "Notes"].map((h) => (
-              <th
-                key={h}
-                scope="col"
-                className="text-eyebrow text-ink-faint font-normal px-3 py-2.5 border-b border-rule whitespace-nowrap"
+      <THead>
+        <TR>
+          <TH>Student</TH>
+          <TH>Status</TH>
+          <TH numeric>Score</TH>
+          <TH>Submitted</TH>
+          <TH>Notes</TH>
+        </TR>
+      </THead>
+      <TBody>
+        {students.map((s) => (
+          <TR key={s.studentId}>
+            <TD>
+              <Link
+                to={`/teacher/students/${s.studentId}`}
+                className="text-ink no-underline hover:underline"
               >
-                {h}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {students.map((s) => (
-            <tr key={s.studentId} className="border-b border-rule last:border-b-0">
-              <td className="px-3 py-2.5">
-                <Link
-                  to={`/teacher/students/${s.studentId}`}
-                  className="text-ink no-underline hover:underline"
+                {s.displayName}
+              </Link>
+            </TD>
+            <TD className="text-ink-faint">{statusLabel(s.status)}</TD>
+            <TD numeric className="tabular-nums">
+              {s.percentage == null ? (
+                <span className="text-ink-faint">—</span>
+              ) : (
+                <span
+                  className={cn(
+                    "px-1.5 py-0.5 rounded font-medium",
+                    TONE_CLASS[accuracyTone(s.percentage)],
+                  )}
                 >
-                  {s.displayName}
-                </Link>
-              </td>
-              <td className="px-3 py-2.5 text-ink-faint">{statusLabel(s.status)}</td>
-              <td className="px-3 py-2.5 tabular-nums">
-                {s.percentage == null ? (
-                  <span className="text-ink-faint">—</span>
-                ) : (
-                  <span
-                    className={cn(
-                      "px-1.5 py-0.5 rounded font-medium",
-                      TONE_CLASS[accuracyTone(s.percentage)],
-                    )}
-                  >
-                    {s.awardedMarks}/{s.maximumMarks} · {pct(s.percentage)}
+                  {s.awardedMarks}/{s.maximumMarks} · {pct(s.percentage)}
+                </span>
+              )}
+            </TD>
+            <TD className="text-ink-faint">
+              {s.submittedAt ? relativeTime(s.submittedAt) : "—"}
+            </TD>
+            <TD>
+              <div className="flex gap-1 flex-wrap items-center">
+                {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
+                {s.markingError ? (
+                  <span className="inline-flex items-center gap-1 text-body-sm text-err">
+                    <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
+                    Marking failed: {s.markingError}
                   </span>
-                )}
-              </td>
-              <td className="px-3 py-2.5 text-ink-faint">
-                {s.submittedAt ? relativeTime(s.submittedAt) : "—"}
-              </td>
-              <td className="px-3 py-2.5">
-                <div className="flex gap-1 flex-wrap items-center">
-                  {s.needsTeacherReview ? <Chip tone="warn">Needs review</Chip> : null}
-                  {s.markingError ? (
-                    <span className="inline-flex items-center gap-1 text-body-sm text-err">
-                      <Warning weight="fill" className="h-3.5 w-3.5 flex-none" />
-                      Marking failed: {s.markingError}
-                    </span>
-                  ) : null}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
+                ) : null}
+              </div>
+            </TD>
+          </TR>
+        ))}
+      </TBody>
+    </Table>
   )
 }
 

@@ -1719,7 +1719,7 @@ def _count_review_items(review_service: ReviewService, auth: AuthContext) -> int
     above (which runs, and raises its 422, before this is called) — no
     redundant validation here.
     """
-    return len(review_service.list_queue(auth.user_id, auth.role))
+    return review_service.list_queue(auth.user_id, auth.role).total
 
 
 def _at_risk(

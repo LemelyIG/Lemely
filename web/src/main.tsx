@@ -14,6 +14,7 @@ import { installFileHandlerBridge } from "./lib/sharedScan"
 import { registerWidgetClientBridge } from "./lib/widget/widgetClientBridge"
 import { PushAutoEnable } from "./components/push-auto-enable"
 import { RecoveryEffects } from "./components/recovery-effects"
+import { ThemeSync } from "./components/theme-sync"
 import { TimezoneSync } from "./components/timezone-sync"
 import { UpdateToast } from "./components/UpdateToast"
 import { ToastProvider } from "./components/ui/toast"
@@ -122,6 +123,11 @@ createRoot(document.getElementById("root")!).render(
               post-reload "Updated" toast) run for the app's whole lifetime
               rather than only while some particular screen is mounted. */}
           <RecoveryEffects />
+          {/* Applies the resolved theme (and keeps "System" tracking the OS
+              live) for the app's whole lifetime, not only while the settings
+              screen that also calls `useTheme()` happens to be mounted. See
+              the component for the full reasoning. */}
+          <ThemeSync />
           {/* Sends the device zone once per session, so every civil-date
               calculation for this reader runs where they actually are. See
               the component for why it lives here and not in a screen. */}

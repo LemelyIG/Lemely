@@ -61,6 +61,7 @@ export function Slider({
         step={step}
         value={value}
         onChange={(event) => onValueChange(Number(event.target.value))}
+        data-kit-field="slider"
         className="w-full h-1.5 cursor-pointer appearance-none rounded-full bg-surface-2 accent-accent focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent"
         {...props}
       />

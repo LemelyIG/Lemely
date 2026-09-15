@@ -4,17 +4,20 @@ import type {
   StudyPlanSessionDTO,
   StudyPlanWeekDTO,
 } from "@/lib/studyPlanTypes"
+import type { ExamDate, StudentExamCalendar, StudentExamEntry } from "@/lib/announcementTypes"
 import {
   activityLabel,
   formatDayHeading,
   formatDuration,
   groupSessionsByDay,
   locateSession,
+  nextExamDateForSubject,
   planUnavailableMessage,
   rationaleCopy,
   sessionRationale,
   sessionStartAction,
   studyPlanView,
+  weekHeaderKicker,
   weekProgress,
 } from "@/portals/student/screens/studyplan/studyPlanData"
 import { resolveCrumb } from "@/portals/student/data"
@@ -412,5 +415,100 @@ describe("resolveCrumb", () => {
 
   it("returns Home for an unknown path rather than throwing", () => {
     expect(resolveCrumb("/student/nothing/here/at/all")).toBe("Home")
+  })
+})
+
+/* ── C3b: countdown header ─────────────────────────────────────────────── */
+
+function examDate(overrides: Partial<ExamDate> = {}): ExamDate {
+  return {
+    paperVariant: "42",
+    examDate: "2026-05-12",
+    startsAtLocal: null,
+    durationMinutes: null,
+    source: "Cambridge June 2026 timetable",
+    ...overrides,
+  }
+}
+
+function examEntry(overrides: Partial<StudentExamEntry> = {}): StudentExamEntry {
+  return {
+    subjectCode: "0625",
+    sessionMonth: "May/June",
+    sessionYear: 2026,
+    paperNumber: 4,
+    availability: "dated",
+    dates: [examDate()],
+    ...overrides,
+  }
+}
+
+function examCalendar(entries: StudentExamEntry[]): StudentExamCalendar {
+  return { availability: "available", entries }
+}
+
+describe("nextExamDateForSubject", () => {
+  const today = new Date(2026, 4, 1, 9, 0)
+
+  it("is null with no calendar at all", () => {
+    expect(nextExamDateForSubject(undefined, "0625", today)).toBeNull()
+  })
+
+  it("ignores entries for other subjects", () => {
+    const other = examEntry({ subjectCode: "0580", dates: [examDate({ examDate: "2026-05-06" })] })
+    expect(nextExamDateForSubject(examCalendar([other]), "0625", today)).toBeNull()
+  })
+
+  it("picks the soonest future date for the requested subject", () => {
+    const later = examEntry({
+      subjectCode: "0625",
+      paperNumber: 4,
+      dates: [examDate({ examDate: "2026-05-20" })],
+    })
+    const sooner = examEntry({
+      subjectCode: "0625",
+      paperNumber: 2,
+      dates: [examDate({ examDate: "2026-05-06" })],
+    })
+    expect(nextExamDateForSubject(examCalendar([later, sooner]), "0625", today)).toBe(
+      "2026-05-06",
+    )
+  })
+
+  it("skips exams that have already happened", () => {
+    const past = examEntry({ dates: [examDate({ examDate: "2026-04-20" })] })
+    const future = examEntry({ dates: [examDate({ examDate: "2026-05-14" })] })
+    expect(nextExamDateForSubject(examCalendar([past, future]), "0625", today)).toBe(
+      "2026-05-14",
+    )
+  })
+})
+
+describe("weekHeaderKicker", () => {
+  const today = new Date(2026, 3, 1, 9, 0)
+
+  it("joins both halves when both are known", () => {
+    expect(weekHeaderKicker("B", "2026-05-12", today)).toBe("Target grade B · Exam in 41 days")
+  })
+
+  it("omits the exam half when the exam date is unknown", () => {
+    expect(weekHeaderKicker("B", null, today)).toBe("Target grade B")
+  })
+
+  it("omits the target-grade half when it is unknown", () => {
+    expect(weekHeaderKicker(null, "2026-05-12", today)).toBe("Exam in 41 days")
+  })
+
+  it("is undefined, not an empty string, when both are unknown", () => {
+    expect(weekHeaderKicker(null, null, today)).toBeUndefined()
+  })
+
+  it("reads naturally for an exam today or tomorrow", () => {
+    expect(weekHeaderKicker(null, "2026-04-01", today)).toBe("Exam today")
+    expect(weekHeaderKicker(null, "2026-04-02", today)).toBe("Exam tomorrow")
+  })
+
+  it("omits the exam half for a date that has already passed", () => {
+    expect(weekHeaderKicker("B", "2026-03-01", today)).toBe("Target grade B")
   })
 })

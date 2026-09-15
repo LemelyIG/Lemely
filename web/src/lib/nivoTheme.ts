@@ -251,6 +251,30 @@ export function useNivoTheme(): {
 
   useEffect(() => {
     setTokens(resolveChartTokens())
+
+    // C5c: a chart mounted before the reader ever touches Appearance still has
+    // to repaint if they do — `useTheme()` flips `document.documentElement`'s
+    // `data-theme` attribute with no reload (Task 13), and this file's whole
+    // reason for existing (the block comment above) is that a chart's colours
+    // are read from the document, not passed as `var()` strings that would
+    // update on their own. Resolved once at mount and never again, a chart
+    // left open across a theme toggle would keep drawing the OLD theme's
+    // colours — silently, since nothing here would throw or warn.
+    //
+    // `data-theme` is the one attribute this needs to watch (index.css's own
+    // rule, DESIGN.md §5's intro: "the attribute is the single switch" — no
+    // `prefers-color-scheme` query to also listen for). A `MutationObserver`
+    // is the only primitive that reports an attribute change on an element
+    // already in the document; unlike `useTheme()` itself, this hook has no
+    // access to the preference that drives the attribute, only the attribute.
+    if (typeof document === "undefined" || typeof MutationObserver === "undefined") {
+      return
+    }
+    const observer = new MutationObserver(() => {
+      setTokens(resolveChartTokens())
+    })
+    observer.observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] })
+    return () => observer.disconnect()
   }, [])
 
   return useMemo(() => {

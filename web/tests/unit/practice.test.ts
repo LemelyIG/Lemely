@@ -11,7 +11,7 @@ import {
 import type { PracticePreview, PracticeResult, PracticeTopicCount } from "@/lib/practiceTypes"
 
 function topicCount(overrides: Partial<PracticeTopicCount> & { topic: string }): PracticeTopicCount {
-  return { availableCount: 10, syllabusGroup: overrides.topic, ...overrides }
+  return { availableCount: 10, syllabusGroup: overrides.topic, marksLost: 0, ...overrides }
 }
 
 describe("groupTopicsBySyllabusGroup — nesting keeps parent and child distinct rows", () => {

@@ -191,6 +191,7 @@ export const Radio = forwardRef<HTMLInputElement, RadioProps>(function Radio(
               group.onValueChange(String(value))
             }
           }}
+          data-kit-field="radio"
           className="peer absolute inset-0 m-0 h-full w-full cursor-pointer appearance-none rounded-full disabled:cursor-not-allowed"
           {...props}
         />
