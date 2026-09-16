@@ -69,7 +69,7 @@ export function DeviceLimitNotice({
           <strong className="font-medium text-ink">
             {selected ? deviceTitle(selected) : "the device you pick below"}
           </strong>
-          . We&rsquo;ve picked the one you used least recently — choose a different one if
+          . We&rsquo;ve picked the one you used least recently, but choose a different one if
           you&rsquo;d rather keep it.
         </p>
       </div>
