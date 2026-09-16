@@ -1,6 +1,6 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
-import { lazy, Suspense, useEffect, useState, type ReactElement } from "react"
+import { isValidElement, lazy, Suspense, useEffect, useState, type ReactElement } from "react"
 import { Link, Navigate, NavLink, useLocation, useMatches } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import {
@@ -291,15 +291,15 @@ function NavRow({
               `SubjectGlyph` tile (see `icon`'s doc above) skips this
               treatment: it already carries its own tone and has no
               active/inactive variant of its own. */}
-          {typeof Glyph === "function" ? (
+          {isValidElement(Glyph) ? (
+            Glyph
+          ) : (
             <Glyph
               size={16}
               weight={isActive ? "fill" : "regular"}
               className={cn("shrink-0", isActive ? "text-accent" : "text-ink-faint")}
               aria-hidden="true"
             />
-          ) : (
-            Glyph
           )}
           <span className="flex-1">{label}</span>
           {tag ? <span className="text-data-sm text-ink-faint">{tag}</span> : null}
