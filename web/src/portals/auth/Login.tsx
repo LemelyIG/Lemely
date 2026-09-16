@@ -138,9 +138,9 @@ export function Login() {
   // reaches shows the notice — never both, since the read consumes it.
   const [expired] = useState(() => takeSessionExpired())
 
-  const signIn = (confirmDeviceEviction: boolean) => {
+  const signIn = (confirmDeviceEviction: boolean, deviceToSignOut?: string) => {
     login.mutate(
-      { email, password, confirmDeviceEviction },
+      { email, password, confirmDeviceEviction, deviceToSignOut },
       {
         // Packet B2a: `postLoginTarget` prefers `next` (present whenever the
         // reader was bounced off a specific page); failing that, `from` —
@@ -175,7 +175,7 @@ export function Login() {
           challenge={challenge}
           isPending={login.isPending}
           error={failedConfirm ? signInFailureMessage(login.error) : null}
-          onConfirm={() => signIn(true)}
+          onConfirm={(deviceId) => signIn(true, deviceId)}
           onCancel={() => {
             setChallenge(null)
             login.reset()

@@ -78,6 +78,7 @@ class StubRegistry(DeviceRegistry):
         user_agent: str | None = None,
         device_label: str | None = None,
         allow_eviction: bool = True,
+        evict_device_id: uuid.UUID | str | None = None,
         now: datetime | None = None,
     ) -> DeviceRegistration:
         self.registered.append(allow_eviction)
@@ -85,7 +86,13 @@ class StubRegistry(DeviceRegistry):
             raise DeviceLimitReachedError(list(self.rows))
         evicted = []
         if len(self.rows) >= MAX_DEVICES:
-            evicted = [self.rows.pop().device_id]
+            picked = None
+            if evict_device_id is not None:
+                target = str(evict_device_id)
+                picked = next((r for r in self.rows if str(r.device_id) == target), None)
+            victim = picked or self.rows[-1]
+            self.rows.remove(victim)
+            evicted = [victim.device_id]
         fresh = _row(f"device-{len(self.rows)}")
         self.rows.insert(0, fresh)
         return DeviceRegistration(
