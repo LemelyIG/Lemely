@@ -4,8 +4,8 @@ import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
 
 /*
  * Task 11 (B6c) — `prefetchOnIntent` backs the CorrectPaper chunk prefetch
- * wired onto the Header CTA, `BottomActionBar` and the BottomNav "Correct"
- * tab (`portals/student/index.tsx`). All three call sites share one
+ * wired onto the Header CTA and the BottomNav "Correct" tab
+ * (`portals/student/index.tsx`). Both call sites share one
  * `prefetchOnIntent(loadCorrectPaper)` result, so `load` must fire at most
  * once total across every handler and every call to it — not once per
  * handler — or hovering the CTA and then focusing the tab would kick off
