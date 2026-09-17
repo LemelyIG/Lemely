@@ -1,7 +1,7 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
 import type { RouteObject } from "react-router-dom"
 import { isValidElement, lazy, Suspense, useEffect, useState, type ReactElement } from "react"
-import { Link, Navigate, NavLink, useLocation, useMatches } from "react-router-dom"
+import { Link, Navigate, NavLink, useLocation } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
 import {
   CalendarBlank,
@@ -31,7 +31,6 @@ import { RouteSkeleton } from "@/components/ui/route-skeleton"
 import { ScreenOutlet } from "@/components/ui/screen-outlet"
 import { NavDrawer, NavDrawerTrigger } from "@/components/ui/nav-drawer"
 import { BottomNav, SidebarNav, type NavShellItem } from "@/components/ui/nav-shells"
-import { BottomActionBar } from "@/components/ui/bottom-action-bar"
 import { EdgeSwipeBack } from "@/components/edge-swipe-back"
 import { SkipLink, MAIN_CONTENT_ID } from "@/components/ui/skip-link"
 import { PortalNotFound } from "@/portals/misc/NotFound"
@@ -43,7 +42,6 @@ import { useXpProfile } from "@/lib/hooks/useXpApi"
 import { useOverview } from "@/lib/hooks/useStudentApi"
 import { subjectIdentifier } from "@/lib/subjectIdentifier"
 import type { SubjectRow } from "@/lib/studentTypes"
-import { pageMetaFromMatches } from "@/lib/meta/documentMeta"
 import { prefetchOnIntent } from "@/lib/prefetchOnIntent"
 import { currentSubjectCode, navGroups, resolveCrumbTrail } from "./data"
 
@@ -74,8 +72,8 @@ const loadCorrectPaper = () =>
   import("./screens/CorrectPaper").then((m) => ({ default: m.CorrectPaper }))
 const CorrectPaper = lazy(loadCorrectPaper)
 // One shared fire-once gate across every call site below (Header CTA,
-// BottomActionBar, BottomNav's "Correct" tab) — see `prefetchOnIntent`'s own
-// doc comment for why this must be a single call, not one per site.
+// BottomNav's "Correct" tab) — see `prefetchOnIntent`'s own doc comment for
+// why this must be a single call, not one per site.
 const prefetchCorrectPaper = prefetchOnIntent(loadCorrectPaper)
 const StudyPlanSession = lazy(() =>
   import("./screens/studyplan/StudyPlanSession").then((m) => ({ default: m.StudyPlanSession })),
@@ -647,10 +645,12 @@ function Header({ onOpenNav }: { onOpenNav: () => void }) {
         <Link
           to="/student/correct"
           viewTransition
-          // Packet B3 (Task 4): below the `sidebar` breakpoint the thumb-zone
-          // `BottomActionBar` takes over this same action — a fixed CTA at
-          // the very top of a tall phone is the least reachable spot for a
-          // one-handed thumb. See that component's own doc comment.
+          // Below the `sidebar` breakpoint this CTA hides (`hidden
+          // sidebar:inline-flex` below) — a fixed control at the very top of
+          // a tall phone is the least reachable spot for a one-handed thumb.
+          // `BottomNav`'s raised "Correct" tab, always mounted at the bottom
+          // of the screen below that breakpoint, carries the same action
+          // there instead of a second fixed CTA stacked above it.
           className={cn(buttonVariants({ variant: "primary", size: "md" }), "hidden sidebar:inline-flex")}
           {...prefetchCorrectPaper}
         >
@@ -739,11 +739,6 @@ function StudentLayout() {
   const [navOpen, setNavOpen] = useState(false)
   const location = useLocation()
   const queryClient = useQueryClient()
-  // Packet B3 (Task 4): deepest-match lookup, same as `applyDocumentMeta`'s
-  // own title/description resolution — see `PageMeta.primaryAction`'s doc
-  // comment for why the CTA's visibility is read off the route table rather
-  // than a hand-maintained path list.
-  const showBottomActionBar = pageMetaFromMatches(useMatches())?.primaryAction === "correct"
 
   /*
    * The wiring for `studentOnboardingRedirect` above: `useStudentProfile()`
@@ -882,14 +877,6 @@ function StudentLayout() {
         </main>
       </div>
 
-      {showBottomActionBar ? (
-        <BottomActionBar
-          to="/student/correct"
-          label="Correct a paper"
-          hideOn={["/student/correct"]}
-          prefetch={prefetchCorrectPaper.onPointerEnter}
-        />
-      ) : null}
       {/* Below the `sidebar` breakpoint, the primary navigation. "Correct" is
           the emphasis tab — a raised accent circle, the thumb-zone twin of
           the header's own CTA at ≥ the breakpoint. */}
@@ -941,10 +928,7 @@ export const studentRoute: RouteObject = {
     {
       index: true,
       element: <Overview />,
-      // Packet B3 (Task 4): one of the three screens `BottomActionBar`
-      // appears on below the `sidebar` breakpoint — see `PageMeta
-      // .primaryAction`'s own doc comment.
-      handle: { title: "Dashboard", skeleton: "card-grid", primaryAction: "correct" },
+      handle: { title: "Dashboard", skeleton: "card-grid" },
     },
     {
       path: "classes",
@@ -954,7 +938,7 @@ export const studentRoute: RouteObject = {
     {
       path: "subject/:code",
       element: <Subject />,
-      handle: { title: "Subject", skeleton: "page-header", primaryAction: "correct" },
+      handle: { title: "Subject", skeleton: "page-header" },
     },
     {
       path: "result/:paperId",
@@ -969,7 +953,6 @@ export const studentRoute: RouteObject = {
         title: "Paper result",
         skeleton: "page-header",
         viewTransition: false,
-        primaryAction: "correct",
       },
     },
     {

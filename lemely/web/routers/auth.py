@@ -279,6 +279,7 @@ def login(
             body.password,
             device=_device_context(body.deviceId, user_agent),
             confirm_device_eviction=body.confirmDeviceEviction,
+            evict_device_id=body.deviceToSignOut,
         )
     except DeviceLimitReachedError as exc:
         raise HTTPException(status_code=409, detail=_to_challenge(exc).model_dump()) from exc

@@ -52,12 +52,18 @@ class LoginRequestDTO(ApiModel):
     that would consume a fourth device slot answers **409** with the account's
     signed-in devices and mints nothing, and the client re-sends the same login
     with this flag set once the user has confirmed the sign-out.
+
+    ``deviceToSignOut`` is the device the user picked from that 409's list
+    (G-10). Optional: an absent or stale value (the list can have moved on
+    between the 409 and the confirm) falls back to oldest-first, same as
+    before this field existed.
     """
 
     email: str
     password: str
     deviceId: str | None = None
     confirmDeviceEviction: bool = False
+    deviceToSignOut: str | None = None
 
 
 class ParentCodeRequestDTO(ApiModel):

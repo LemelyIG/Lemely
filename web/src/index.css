@@ -1714,11 +1714,6 @@ html[data-direction="back"]::view-transition-new(root) {
 .pb-bottom-nav {
   padding-bottom: calc(var(--bottom-nav-height) + env(safe-area-inset-bottom));
 }
-/* `BottomActionBar`'s own position: pinned directly above `BottomNav`
-   rather than at the true viewport bottom — the two stack, never overlap. */
-.lm-bottom-action-bar {
-  bottom: var(--bottom-nav-height);
-}
 
 .lm-scroll::-webkit-scrollbar {
   width: 10px;

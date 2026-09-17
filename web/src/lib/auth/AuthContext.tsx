@@ -68,6 +68,8 @@ export interface LoginVariables {
   email: string
   password: string
   confirmDeviceEviction?: boolean
+  /** Which device to sign out (G-10); see `LoginRequest.deviceToSignOut`. */
+  deviceToSignOut?: string
 }
 
 /**
@@ -159,7 +161,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   const login = useMutation({
-    mutationFn: ({ email, password, confirmDeviceEviction }: LoginVariables) =>
+    mutationFn: ({ email, password, confirmDeviceEviction, deviceToSignOut }: LoginVariables) =>
       request<TokenResponse>("/auth/login", {
         method: "POST",
         body: JSON.stringify({
@@ -167,6 +169,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           password,
           deviceId: getDeviceId(),
           confirmDeviceEviction: confirmDeviceEviction ?? false,
+          deviceToSignOut,
         } satisfies LoginRequest),
       }),
     onSuccess: applySession,

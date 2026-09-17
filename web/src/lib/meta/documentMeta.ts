@@ -94,16 +94,6 @@ export interface PageMeta {
    * `true`) everywhere else: the ordinary case needs no marker.
    */
   viewTransition?: false
-  /**
-   * Packet B3 (Task 4): `"correct"` marks a route as one of the screens the
-   * student portal's thumb-zone `BottomActionBar` ("Correct a paper")
-   * appears on below the `sidebar` breakpoint — Overview, Subject and
-   * PaperResult. Read via `pageMetaFromMatches(useMatches())` in
-   * `StudentLayout`, the same deepest-match lookup `applyDocumentMeta` uses
-   * for the title, so a route's CTA visibility can never disagree with which
-   * route the reader is actually looking at.
-   */
-  primaryAction?: "correct"
 }
 
 /** The product name, appended to every page title. */
