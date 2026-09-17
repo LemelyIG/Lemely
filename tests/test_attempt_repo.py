@@ -946,3 +946,24 @@ def test_snapshot_is_independent_of_later_scheme_edits(
     snapshot = _revisions_for(pg_sessionmaker, attempt_id)[0].points_snapshot[0]
     assert snapshot["point_text"] == "Correct method"
     assert snapshot["tariff"] == 1
+
+
+def test_quiz_correction_persists_with_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """persist_quiz_correction passes no scheme and must be unaffected."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_quiz_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        correction=_report_with_one_question(matched_point_ids=["p1"]).correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+    )
+
+    with pg_sessionmaker() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        assert attempt.paper_id is None
+
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    assert len(_revisions_for(pg_sessionmaker, attempt_id)) == 1, (
+        "revision 1 is written even with no points"
+    )
