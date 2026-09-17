@@ -39,7 +39,8 @@ def derive_point_rows(
 
     Returns:
         A list of dicts carrying ``mark_point_id``, ``ordinal``, ``mark_type``,
-        ``tariff``, ``point_text``, ``awarded`` and ``rationale``. Empty when
+        ``tariff``, ``tariff_defaulted``, ``point_text``, ``awarded``,
+        ``is_alternative``, ``is_optional`` and ``rationale``. Empty when
         there is no scheme, no matching question, or the question has no
         answer points.
     """
@@ -71,8 +72,11 @@ def derive_point_rows(
                 "ordinal": len(rows),
                 "mark_type": point.math_mark_type.value if point.math_mark_type else None,
                 "tariff": point.marks,
+                "tariff_defaulted": point.marks_defaulted,
                 "point_text": point.point,
                 "awarded": point.id in matched,
+                "is_alternative": point.is_alternative,
+                "is_optional": point.is_optional,
                 "rationale": notes.get(point.id),
             }
         )

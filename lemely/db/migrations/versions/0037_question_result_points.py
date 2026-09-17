@@ -61,8 +61,15 @@ def upgrade() -> None:
         sa.Column("ordinal", sa.Integer(), nullable=False),
         sa.Column("mark_type", sa.Text(), nullable=True),
         sa.Column("tariff", sa.Integer(), nullable=False),
+        sa.Column(
+            "tariff_defaulted", sa.Boolean(), server_default=sa.text("false"), nullable=False
+        ),
         sa.Column("point_text", sa.Text(), nullable=False),
         sa.Column("awarded", sa.Boolean(), nullable=False),
+        sa.Column(
+            "is_alternative", sa.Boolean(), server_default=sa.text("false"), nullable=False
+        ),
+        sa.Column("is_optional", sa.Boolean(), server_default=sa.text("false"), nullable=False),
         sa.Column("rationale", sa.Text(), nullable=True),
         sa.Column("student_selfmark", sa.Boolean(), nullable=True),
         sa.Column("student_selfmark_at", sa.DateTime(timezone=True), nullable=True),
@@ -102,7 +109,7 @@ def upgrade() -> None:
         sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.Column("updated_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
         sa.ForeignKeyConstraint(["question_result_id"], ["question_results.id"], ondelete="CASCADE"),
-        sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"]),
+        sa.ForeignKeyConstraint(["actor_user_id"], ["users.id"], ondelete="SET NULL"),
         sa.PrimaryKeyConstraint("id"),
         sa.UniqueConstraint("question_result_id", "revision", name="uq_question_result_revisions_revision"),
     )

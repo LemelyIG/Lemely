@@ -238,8 +238,11 @@ class QuestionResult(TimestampMixin, Base):
     )
     """Integrity flags, persisted rather than only fanned out to the review queue.
 
-    Teacher-only on every surface (QUALITY-BAR.md): these must never reach a
-    student-facing screen, where they would read as an accusation.
+    Teacher-only on every surface (QUALITY-BAR.md): these must never be
+    rendered on a student-facing screen, where they would read as an
+    accusation. They are, however, present in the ``/api/student/correct``
+    complete frame (``lemely/web/schemas.py``) and typed on the frontend
+    (``web/src/lib/studentTypes.ts``) — the UI simply does not render them.
     """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
@@ -298,6 +301,14 @@ class QuestionResultPoint(TimestampMixin, Base):
 
     ``mark_type`` is text, not an enum. ``MathMarkType`` has fifteen members
     and a narrower DB enum would silently drop most of them.
+
+    Not re-derived on a teacher override: :meth:`ReviewRepository.resolve`
+    (``lemely/db/review_repo.py``) sets ``QuestionResult.teacher_awarded_marks``
+    directly and never touches this table. After an override,
+    ``QuestionResult.effective_marks`` returns the teacher's mark while every
+    row here (``awarded``, and the sum of ``tariff`` where ``awarded``) still
+    describes the AI's original marking. A reader that wants "why this many
+    marks" must check ``is_overridden`` first.
     """
 
     __tablename__ = "question_result_points"
@@ -320,8 +331,33 @@ class QuestionResultPoint(TimestampMixin, Base):
     ordinal: Mapped[int] = mapped_column(sa.Integer, nullable=False)
     mark_type: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     tariff: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    tariff_defaulted: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """True when ``tariff`` was minted (``AnswerPoint.marks_defaulted``), not read
+
+    from the source — the marks cell was absent or unparseable. Provenance
+    only: without this, a minted tariff and one CAIE actually printed are
+    indistinguishable on this row (spec 2026-09-17 fix).
+    """
     point_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
     awarded: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
+    is_alternative: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    is_optional: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """``is_alternative``/``is_optional`` (from ``AnswerPoint``) mark a point as
+
+    part of a non-additive OR/optional group (``correction_ai._check_coherence``):
+    summing every ``awarded`` point's ``tariff`` on this table does NOT
+    generally equal ``QuestionResult.awarded_marks`` when either flag is set on
+    a matched point, because the mark scheme allows at most the group's own
+    cap, not the sum of its members. A consumer that sums ticked tariffs
+    without checking these flags will show a breakdown that disagrees with the
+    student's own mark.
+    """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
     student_selfmark_at: Mapped[datetime | None] = mapped_column(
@@ -370,7 +406,7 @@ class QuestionResultRevision(TimestampMixin, Base):
         JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
     )
     actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
     )
     reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
 

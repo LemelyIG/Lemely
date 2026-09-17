@@ -350,10 +350,14 @@ class InviteRole(enum.StrEnum):
 class RevisionSource(enum.Enum):
     """What produced a :class:`QuestionResultRevision`.
 
-    ``ai`` is written at correction time. ``teacher`` is written by the
-    override path. ``student_selfmark`` and ``remark`` are written by the
-    student self-review spec; they exist here so that spec needs no enum
-    migration of its own (spec 2026-09-17 D5).
+    ``ai`` is written at correction time (the only writer today —
+    ``AttemptRepository._persist``). ``teacher`` exists for a future writer:
+    the current override path (``ReviewRepository.resolve``) records a
+    teacher's correction on ``QuestionResult.teacher_awarded_marks`` directly
+    and never writes a ``QuestionResultRevision``, so no revision with
+    ``source=teacher`` is produced today. ``student_selfmark`` and ``remark``
+    are likewise written by the student self-review spec; all three exist
+    here so that spec needs no enum migration of its own (spec 2026-09-17 D5).
     """
 
     ai = "ai"
