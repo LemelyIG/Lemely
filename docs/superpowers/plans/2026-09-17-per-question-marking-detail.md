@@ -15,6 +15,9 @@
 - Signed commits only: `git commit -S`. Conventional messages with scopes (`feat(db):`, `test(db):`, `refactor(core):`).
 - Run `pre-commit run --all-files` and fix every failure before creating any commit. The venv must be on PATH for `mypy` and `lint-imports` to resolve: `PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files`.
 - Do not run the full test suite locally. Run only the test files this plan touches.
+- **Every `pytest` command in this plan ends with `--no-cov`.** This repo's pytest config enforces a 70% global coverage gate, which any single-file run fails on total coverage regardless of whether the tests themselves passed. Without `--no-cov` every task's "Expected: PASS" reads as a red FAIL.
+- DB-backed tests use the `pg_sessionmaker` fixture (a `sessionmaker[Session]`, not a `Session`). It creates and drops a throwaway database per test and skips cleanly when Postgres is unreachable. Schema comes from `Base.metadata.create_all`, **not** from Alembic — so these tests do not exercise the migration, and Task 4 Step 6 is the only thing that does. `_seed_user(pg_sessionmaker)` takes the sessionmaker and returns a user-id string.
+- Verified at plan time: `DatabaseSettings().url` resolves to `127.0.0.1:54322` (the project's Supabase container) and `pytest tests/test_attempt_repo.py --no-cov` passes 21 tests there. If tests skip with "local Postgres not reachable", start that container rather than editing the fixture.
 - `awarded_marks` on `question_results` is never mutated or erased by anything in this plan. It is what keeps `lemely/eval` accuracy measurement honest.
 - Per-point reasons are never invented. `rationale` stays NULL until a marker emits one (spec D2).
 - Nothing in this plan may cause a correction to fail. A derivation error yields no point rows and a log line; it never propagates.
@@ -100,7 +103,7 @@ def test_rationale_and_point_notes_round_trip_when_supplied() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
 ```
 
 Expected: FAIL. `CorrectedQuestion` is a `StrictModel`, so the second test raises a Pydantic `ValidationError` for unexpected keyword arguments `rationale` and `point_notes`.
@@ -129,7 +132,7 @@ In `lemely/core/schemas.py`, inside `class CorrectedQuestion(StrictModel)`, imme
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
 ```
 
 Expected: PASS, 2 passed.
@@ -204,7 +207,7 @@ def test_existing_review_reasons_are_untouched() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
 ```
 
 Expected: FAIL with `ImportError: cannot import name 'EvidenceVerdict'`.
@@ -249,7 +252,7 @@ class EvidenceVerdict(enum.Enum):
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
 ```
 
 Expected: PASS, 4 passed.
@@ -441,7 +444,7 @@ def test_mark_type_is_none_for_a_non_maths_point() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
 ```
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'lemely.db.question_points'`.
@@ -523,7 +526,7 @@ def derive_point_rows(
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
 ```
 
 Expected: PASS, 9 passed.
@@ -558,7 +561,7 @@ tests need no Postgres."
 Add to `tests/test_attempt_repo.py`, and add `QuestionResultPoint, QuestionResultRevision` to the existing `from lemely.db.models.attempts import ...` line:
 
 ```python
-def test_marking_detail_tables_exist_and_relate(session: Session) -> None:
+def test_marking_detail_tables_exist_and_relate(pg_sessionmaker: sessionmaker[Session]) -> None:
     """The two new tables and the six additive columns are reachable from the ORM.
 
     A schema-shape test, not a behaviour test — Task 5 is what fills them.
@@ -584,7 +587,7 @@ def test_marking_detail_tables_exist_and_relate(session: Session) -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
 ```
 
 Expected: FAIL with `ImportError: cannot import name 'QuestionResultPoint'`.
@@ -901,7 +904,7 @@ Note for the implementer: `ALTER TYPE … ADD VALUE` cannot run inside a transac
 - [ ] **Step 5: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
 ```
 
 Expected: PASS. (The suite skips cleanly if no local Postgres is reachable; if it skips, start Postgres before continuing — Task 5 cannot be verified without it.)
@@ -947,21 +950,53 @@ honest mark scheme to derive their rows from (spec 2026-09-17 D7)."
 Add to `tests/test_attempt_repo.py`:
 
 ```python
-def test_persist_writes_point_rows_including_missed_points(session: Session) -> None:
+def _points_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultPoint]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultPoint)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResultPoint.ordinal)
+            ).all()
+        )
+
+
+def _revisions_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultRevision]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultRevision)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+            ).all()
+        )
+
+
+def _only_result(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> QuestionResult:
+    with pg_sessionmaker() as session:
+        return session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).one()
+
+
+def test_persist_writes_point_rows_including_missed_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
     """The inversion, end to end: a missed point is a row with awarded=False."""
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"]),
         mark_scheme=_scheme(),
     )
 
-    points = session.scalars(
-        select(QuestionResultPoint)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-        .order_by(QuestionResultPoint.ordinal)
-    ).all()
+    points = _points_for(pg_sessionmaker, attempt_id)
 
     assert [p.mark_point_id for p in points] == ["p1", "p2", "p3"]
     assert [p.awarded for p in points] == [True, False, False]
@@ -969,19 +1004,14 @@ def test_persist_writes_point_rows_including_missed_points(session: Session) -> 
     assert points[0].mark_type == "M"
 
 
-def test_persist_writes_revision_one(session: Session) -> None:
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> None:
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"]),
         mark_scheme=_scheme(),
     )
 
-    revisions = session.scalars(
-        select(QuestionResultRevision)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-    ).all()
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
 
     assert len(revisions) == 1
     assert revisions[0].revision == 1
@@ -989,29 +1019,26 @@ def test_persist_writes_revision_one(session: Session) -> None:
     assert len(revisions[0].points_snapshot) == 3
 
 
-def test_persist_without_a_scheme_writes_no_points(session: Session) -> None:
+def test_persist_without_a_scheme_writes_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
     """The quiz case. The attempt itself must still persist normally."""
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"]),
         mark_scheme=None,
     )
 
-    points = session.scalars(
-        select(QuestionResultPoint)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-    ).all()
-
-    assert points == []
-    assert session.get(Attempt, attempt_id) is not None
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
 
 
-def test_persist_carries_the_previously_dropped_fields(session: Session) -> None:
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+def test_persist_carries_the_previously_dropped_fields(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(
             matched_point_ids=["p1"],
             extraction_confidence=0.82,
@@ -1021,9 +1048,7 @@ def test_persist_carries_the_previously_dropped_fields(session: Session) -> None
         mark_scheme=_scheme(),
     )
 
-    result = session.scalars(
-        select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
-    ).one()
+    result = _only_result(pg_sessionmaker, attempt_id)
 
     assert result.extraction_confidence == 0.82
     assert result.plagiarism_flagged is True
@@ -1031,29 +1056,29 @@ def test_persist_carries_the_previously_dropped_fields(session: Session) -> None
     assert result.rationale == "Method correct, rounding wrong."
 
 
-def test_awarded_marks_is_untouched_by_the_point_ledger(session: Session) -> None:
+def test_awarded_marks_is_untouched_by_the_point_ledger(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
     """The accuracy guard: lemely/eval reads awarded_marks and must not shift."""
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=1),
         mark_scheme=_scheme(),
     )
 
-    result = session.scalars(
-        select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
-    ).one()
+    result = _only_result(pg_sessionmaker, attempt_id)
 
     assert result.awarded_marks == 1
     assert result.effective_marks == 1
 
 
-def test_snapshot_is_independent_of_later_scheme_edits(session: Session) -> None:
+def test_snapshot_is_independent_of_later_scheme_edits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
     """D3: a re-parsed scheme must not change a paper already marked."""
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
     scheme = _scheme()
-    attempt_id = repo.persist_correction(
-        user_id=str(_seed_user(session)),
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"]),
         mark_scheme=scheme,
     )
@@ -1061,12 +1086,7 @@ def test_snapshot_is_independent_of_later_scheme_edits(session: Session) -> None
     scheme.questions[0].answer_points[0].point = "COMPLETELY DIFFERENT TEXT"
     scheme.questions[0].answer_points[0].marks = 99
 
-    point = session.scalars(
-        select(QuestionResultPoint)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-        .order_by(QuestionResultPoint.ordinal)
-    ).first()
+    point = _points_for(pg_sessionmaker, attempt_id)[0]
 
     assert point.point_text == "Correct method"
     assert point.tariff == 1
@@ -1124,7 +1144,7 @@ If `AccuracyReport`'s real field names differ from `correction`/`weaknesses`/`pr
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k "point_rows or revision_one or without_a_scheme or dropped_fields or untouched or snapshot" -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k "point_rows or revision_one or without_a_scheme or dropped_fields or untouched or snapshot" -v --no-cov
 ```
 
 Expected: FAIL with `TypeError: persist_correction() got an unexpected keyword argument 'mark_scheme'`.
@@ -1202,7 +1222,7 @@ Add the imports: `derive_point_rows` from `lemely.db.question_points`, `Question
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -v --no-cov
 ```
 
 Expected: PASS, including every pre-existing test in the file — none of them pass `mark_scheme`, and all must still work because it defaults to `None`.
@@ -1293,7 +1313,7 @@ When patching anything used as a context manager on this path (the storage downl
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py -v --no-cov
 ```
 
 Expected: the first test FAILS with `KeyError: 'mark_scheme'`. The second already passes — it is a guard against a plausible wrong fix, not a driver.
@@ -1316,7 +1336,7 @@ Do not add `paper_id=payload.paperId`. That value is an upload id (`:978`), and 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py tests/test_attempt_repo.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py tests/test_attempt_repo.py -v --no-cov
 ```
 
 Expected: PASS.
@@ -1347,37 +1367,31 @@ No paper_id: payload.paperId is an upload id, not a papers.id."
 - [ ] **Step 1: Write the test**
 
 ```python
-def test_quiz_correction_persists_with_no_points(session: Session) -> None:
+def test_quiz_correction_persists_with_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
     """persist_quiz_correction passes no scheme and must be unaffected."""
-    repo = AttemptRepository(sessionmaker(bind=session.get_bind()))
-    attempt_id = repo.persist_quiz_correction(
-        user_id=str(_seed_user(session)),
-        correction=_correction_with_one_question(matched_point_ids=["p1"]),
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_quiz_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        correction=_report_with_one_question(matched_point_ids=["p1"]).correction,
         weaknesses=WeaknessReport(weak_areas=[]),
     )
 
-    attempt = session.get(Attempt, attempt_id)
-    points = session.scalars(
-        select(QuestionResultPoint)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-    ).all()
-    revisions = session.scalars(
-        select(QuestionResultRevision)
-        .join(QuestionResult)
-        .where(QuestionResult.attempt_id == attempt_id)
-    ).all()
+    with pg_sessionmaker() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        assert attempt.paper_id is None
 
-    assert attempt is not None
-    assert attempt.paper_id is None
-    assert points == []
-    assert len(revisions) == 1, "revision 1 is written even with no points"
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    assert len(_revisions_for(pg_sessionmaker, attempt_id)) == 1, (
+        "revision 1 is written even with no points"
+    )
 ```
 
 - [ ] **Step 2: Run it**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k quiz_correction -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k quiz_correction -v --no-cov
 ```
 
 Expected: PASS with no production change. If it fails, fix Task 5 rather than this test.
@@ -1385,7 +1399,7 @@ Expected: PASS with no production change. If it fails, fix Task 5 rather than th
 - [ ] **Step 3: Run the full set of touched files and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
 PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
 git add tests/test_attempt_repo.py
 git commit -S -m "test(db): pin that the quiz path persists with no point rows
@@ -1401,7 +1415,7 @@ written, so history exists for every marked question regardless."
 Before calling this plan complete:
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v
+PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
 PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
 PATH="$PWD/.venv/bin:$PATH" alembic heads
 ```
