@@ -54,6 +54,8 @@ EXPECTED_TABLES = {
     "uploads",
     "attempts",
     "question_results",
+    "question_result_points",
+    "question_result_revisions",
     "weakness_records",
     "review_queue",
     "announcements",
