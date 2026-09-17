@@ -740,6 +740,10 @@ def _report_with_one_question(**overrides: object) -> AccuracyReport:
         "matched_point_ids": ["p1"],
     }
     question.update(overrides)
+    awarded = question["awarded_marks"]
+    maximum = question["maximum_marks"]
+    assert isinstance(awarded, int)
+    assert isinstance(maximum, int)
 
     correction = CorrectionResult(
         metadata=ExamMetadata(
@@ -754,10 +758,14 @@ def _report_with_one_question(**overrides: object) -> AccuracyReport:
     return AccuracyReport(
         correction=correction,
         weaknesses=WeaknessReport(weak_areas=[]),
+        # Kept in step with an overridden awarded_marks/maximum_marks so the
+        # prediction never reads as an error next to the QuestionResult it
+        # nominally summarizes (nothing here validates the two against each
+        # other; this is legibility only).
         grade_prediction=GradePrediction(
-            awarded_marks=1,
-            maximum_marks=3,
-            percentage=33.33,
+            awarded_marks=awarded,
+            maximum_marks=maximum,
+            percentage=round(awarded / maximum * 100, 2) if maximum else 0.0,
             grade="E",
             confidence=ConfidenceBand.HIGH,
         ),
@@ -817,9 +825,18 @@ def test_persist_writes_point_rows_including_missed_points(
 
 
 def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """``awarded_marks=3`` (not 1) so pass-through and point-ledger recomputation
+
+    disagree: ``matched_point_ids=["p1"]`` against three tariff-1 points sums
+    to 1 on the ledger, so a wrong implementation that recomputed the
+    revision's ``awarded_marks`` from the ledger instead of passing it
+    through would write 1 here, not 3 — see
+    ``test_awarded_marks_is_untouched_by_the_point_ledger`` for the same
+    reasoning against ``QuestionResult`` itself.
+    """
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=_seed_user(pg_sessionmaker),
-        report=_report_with_one_question(matched_point_ids=["p1"]),
+        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=3),
         mark_scheme=_scheme(),
     )
 
@@ -828,7 +845,7 @@ def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> 
     assert len(revisions) == 1
     assert revisions[0].revision == 1
     assert revisions[0].source is RevisionSource.ai
-    assert revisions[0].awarded_marks == 1
+    assert revisions[0].awarded_marks == 3
     assert len(revisions[0].points_snapshot) == 3
 
 
