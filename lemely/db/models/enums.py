@@ -179,6 +179,7 @@ class ReviewReason(enum.Enum):
     plagiarism_flag = "plagiarism_flag"
     ai_detection_flag = "ai_detection_flag"
     manual = "manual"
+    student_evidence_unjudged = "student_evidence_unjudged"
 
 
 class NotificationType(enum.Enum):
@@ -346,6 +347,32 @@ class InviteRole(enum.StrEnum):
     parent = "parent"
 
 
+class RevisionSource(enum.Enum):
+    """What produced a :class:`QuestionResultRevision`.
+
+    ``ai`` is written at correction time. ``teacher`` is written by the
+    override path. ``student_selfmark`` and ``remark`` are written by the
+    student self-review spec; they exist here so that spec needs no enum
+    migration of its own (spec 2026-09-17 D5).
+    """
+
+    ai = "ai"
+    teacher = "teacher"
+    student_selfmark = "student_selfmark"
+    remark = "remark"
+
+
+class EvidenceVerdict(enum.Enum):
+    """Outcome of judging a student's written claim on a mark point.
+
+    Written by the student self-review spec; created here per D5.
+    """
+
+    accepted = "accepted"
+    rejected = "rejected"
+    not_required = "not_required"
+
+
 # ---------------------------------------------------------------------------
 # Shared ORM mixins
 # ---------------------------------------------------------------------------
@@ -383,6 +410,7 @@ __all__ = [
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
+    "EvidenceVerdict",
     "ExamBoard",
     "FriendshipStatus",
     "InviteRole",
@@ -400,6 +428,7 @@ __all__ = [
     "QuizSubmissionStatus",
     "ReviewReason",
     "ReviewStatus",
+    "RevisionSource",
     "Role",
     "SeatStatus",
     "SessionMonth",
