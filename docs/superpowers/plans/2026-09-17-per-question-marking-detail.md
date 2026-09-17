@@ -903,7 +903,9 @@ def downgrade() -> None:
     _REVISION_SOURCE.drop(bind, checkfirst=True)
 ```
 
-Note for the implementer: `ALTER TYPE … ADD VALUE` cannot run inside a transaction block on older Postgres. If the migration fails with `ALTER TYPE ... ADD VALUE cannot run inside a transaction block`, move that one statement into its own migration with `op.execute("COMMIT")` before it, following whatever pattern this repo's existing enum-extending migrations use — check `0034_review_queue_paper_source.py` first, since it extended `reviewreason` already and will show the established approach.
+Note for the implementer: this repo has a settled pattern for extending a Postgres enum — read `lemely/db/migrations/versions/0019_activation_review.py` and follow it. It calls `op.execute("ALTER TYPE <type> ADD VALUE IF NOT EXISTS '<value>'")` directly in `upgrade()`, and its own docstring records why that is safe: `ALTER TYPE ... ADD VALUE` is transaction-safe from PostgreSQL 12 onward provided the new value is not *used* in the same transaction, which it is not here — this migration only declares it. `0034_parent_invites.py` follows the same pattern.
+
+Its downgrade is deliberately asymmetric and yours must be too: PostgreSQL has no `ALTER TYPE ... DROP VALUE`, and rebuilding the type would have to decide what to do with rows already holding the value. Drop the tables, the columns, and the two enum types this migration creates; leave the added `reviewreason` value in place.
 
 - [ ] **Step 5: Run the test to verify it passes**
 
