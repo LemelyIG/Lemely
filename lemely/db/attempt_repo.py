@@ -58,6 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
+from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.core.topics import classify, is_writable
@@ -340,17 +341,35 @@ class AttemptRepository:
                 # plagiarism/AI-detection-flagged doesn't also get a duplicate,
                 # mislabeled low_confidence row.
                 point_rows = _safe_derive_point_rows(cq, mark_scheme, qr.id)
-                for row in point_rows:
-                    session.add(QuestionResultPoint(question_result_id=qr.id, **row))
-                session.add(
-                    QuestionResultRevision(
-                        question_result_id=qr.id,
-                        revision=1,
-                        source=RevisionSource.ai,
-                        awarded_marks=qr.awarded_marks,
-                        points_snapshot=point_rows,
+                # ``_safe_derive_point_rows`` only guards the pure derivation —
+                # a value Postgres itself rejects (an overflowing ``tariff``, a
+                # NUL byte in ``point_text``, ...) still reaches the flush, and
+                # without this savepoint that would abort the *whole*
+                # transaction, taking the attempt, every ``QuestionResult``,
+                # ``WeaknessRecord`` and ``ReviewQueueItem`` with it — the
+                # student loses their marked paper over a broken ledger row.
+                # Nothing on this path may fail a correction (spec
+                # 2026-09-17, "Error handling"), so a bad ledger costs only
+                # the ledger.
+                try:
+                    with session.begin_nested():
+                        for row in point_rows:
+                            session.add(QuestionResultPoint(question_result_id=qr.id, **row))
+                        session.add(
+                            QuestionResultRevision(
+                                question_result_id=qr.id,
+                                revision=1,
+                                source=RevisionSource.ai,
+                                awarded_marks=qr.awarded_marks,
+                                points_snapshot=point_rows,
+                            )
+                        )
+                except SQLAlchemyError as exc:
+                    log.warning(
+                        "question_point_write_failed",
+                        question_result_id=str(qr.id),
+                        error=str(exc),
                     )
-                )
 
                 marking_flagged = qr.needs_teacher_review and not (
                     cq.plagiarism_flagged or cq.ai_detection_flagged
@@ -451,13 +470,22 @@ def _safe_derive_point_rows(
         )
         return []
 
-    _warn_if_point_ids_were_deduplicated(cq, mark_scheme, question_result_id, len(rows))
+    # Resolve the question once here and hand it down, rather than making
+    # ``_warn_if_point_ids_were_deduplicated`` repeat the same depth-first
+    # ``get_question_by_id`` search ``derive_point_rows`` already just did.
+    question = None
+    if mark_scheme is not None:
+        try:
+            question = mark_scheme.get_question_by_id(cq.question_id)
+        except Exception:
+            question = None
+    _warn_if_point_ids_were_deduplicated(cq, question, question_result_id, len(rows))
     return rows
 
 
 def _warn_if_point_ids_were_deduplicated(
     cq: CorrectedQuestion,
-    mark_scheme: MarkScheme | None,
+    question: Question | None,
     question_result_id: uuid.UUID,
     row_count: int,
 ) -> None:
@@ -470,16 +498,14 @@ def _warn_if_point_ids_were_deduplicated(
     duplicate is a real data-quality signal worth recording. Comparing the
     row count to the scheme's own ``answer_points`` count for the same
     question is enough to detect it without duplicating any of
-    ``derive_point_rows``'s dedup logic.
+    ``derive_point_rows``'s dedup logic. ``question`` is the caller's
+    already-resolved lookup, not looked up again here.
 
     Guarded end-to-end: nothing on this path may ever fail a correction
-    (spec 2026-09-17, "Error handling"), so a failure in the scheme lookup
-    used purely for this comparison is swallowed, not raised.
+    (spec 2026-09-17, "Error handling"), so a failure while comparing is
+    swallowed, not raised.
     """
     try:
-        if mark_scheme is None:
-            return
-        question = mark_scheme.get_question_by_id(cq.question_id)
         if question is None:
             return
         scheme_count = len(question.answer_points)
