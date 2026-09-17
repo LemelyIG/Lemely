@@ -184,9 +184,9 @@ Both are student-scoped and reach only the caller's own attempt.
   queue row while the student is mid-pass, the submission still *records* the
   self-mark and its misconception signal; it just does not move marks. The
   learning data is not discarded because of a timing accident.
-- **No point rows** (quiz, missing scheme, unbackfillable old attempt) — the
-  self-review action is absent. Derived from the absence of rows, not a separate
-  flag that can drift.
+- **No point rows** (a quiz, or any attempt corrected before spec 1 shipped —
+  there is no backfill, spec 1 D7) — the self-review action is absent. Derived
+  from the absence of rows, not a separate flag that can drift.
 - **Ownership.** Cross-student access is a 404, not a 403, matching the existing
   student routes.
 - **Atomicity.** Self-mark rows, the revision, the queue resolve and the totals
@@ -223,6 +223,11 @@ The rest:
 
 - **Quizzes are out of scope at launch**, inherited from spec 1: a quiz has no
   mark scheme, so it has no point rows to self-mark against.
+- **Papers corrected before spec 1 shipped are out of scope too**, inherited
+  from spec 1 D7 (no backfill). The surface appears only on papers marked from
+  that point on, so uptake is gradual rather than retroactive. Worth saying in
+  the UI copy rather than leaving a student to wonder why one paper offers
+  self-review and an older one does not.
 - **Judge model and cost** are unspecified here. One call per challenged point
   is the budget; which model serves it is an implementation decision to make
   against the accept-rate metric above.

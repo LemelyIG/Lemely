@@ -33,13 +33,24 @@ Three things are genuinely missing.
 3. **Re-mark history.** A teacher override mutates the single row in place.
    "What changed, when, and who changed it" is not answerable.
 
-### The finding that shapes the design
+### The two findings that shape the design
 
-`mark_schemes.parsed_payload` (`lemely/db/models/academic.py:106`, JSONB,
-`unique` on `paper_id`) already holds the full parsed mark scheme for every
-paper. Per-point tariff, mark type and point text are therefore **already
-retrievable** by joining `matched_point_ids` against it. The gap is one of
-persistence and shape, not of missing information.
+**The mark scheme is already in hand.** `mark_schemes.parsed_payload`
+(`lemely/db/models/academic.py:106`, JSONB, `unique` on `paper_id`) holds the
+full parsed scheme for every paper, and more usefully, the parsed `MarkScheme`
+object is live at correction time — `lemely/web/services/grading.py:105` already
+passes it to `fill_correction_topics`. Per-point tariff, mark type and point
+text are therefore already available. The gap is one of persistence and shape,
+not of missing information.
+
+**`attempts.paper_id` is dead weight.** The column exists
+(`lemely/db/models/attempts.py:96`, nullable FK to `papers.id`) but
+`AttemptRepository._persist` constructs `Attempt(...)` without it
+(`lemely/db/attempt_repo.py:262-280`) and no `paper_id=` assignment exists in
+that file. It is NULL on every row. Any design that derives per-point rows by
+joining from an attempt to its paper is therefore building on a link that does
+not exist — which rules out both the obvious derivation route and any backfill
+of existing attempts.
 
 ## Decisions
 
@@ -65,6 +76,24 @@ student's marked paper must not change meaning underneath them months later.
 **D4 — The existing row stays the current projection.** Revisions are an
 append-only side table. `question_results` keeps working exactly as it does
 today, so no existing read surface changes in this spec.
+
+**D6 — Derive from the `MarkScheme` object, threaded explicitly; and start
+populating `attempts.paper_id`.** The scheme is passed into
+`persist_correction` from the correction call site, where it is already live.
+This is not merely a workaround for the dead `paper_id` — it is more correct
+than a join would have been, because it uses the exact scheme the paper was
+marked against rather than whatever a later re-parse produced, which is what D3
+is reaching for. Separately, `_persist` starts writing `attempts.paper_id`,
+fixing the latent bug on its own merits so that anything future wanting
+attempt → paper has a working link.
+
+**D7 — No backfill.** Existing attempts have no usable link to a paper, so
+there is no honest scheme to derive their point rows from. A best-effort match
+on `(subject_code, session_month, session_year, paper_number, paper_variant)`
+was considered and rejected: it would attach *today's* parsed scheme to a paper
+marked against a possibly different one, which is exactly the drift D3 forbids.
+Existing attempts therefore have no point rows, and spec 2's surface is absent
+for them. This is stated plainly to users rather than faked.
 
 **D5 — Ship the columns spec 2 writes.** The student self-review columns are
 created here, nullable and unwritten, so spec 2 adds no migration of its own.
@@ -152,9 +181,14 @@ and `persist_quiz_correction` already call. The derivation runs inside the
 existing `with self._sm.begin()` block, after `session.flush()`, beside the
 review-queue fan-out. One transaction, no second write path to drift.
 
-**Derivation.** For each `(qr, cq)` pair, join `cq.matched_point_ids` against
-`mark_schemes.parsed_payload` for the attempt's `paper_id`, and write one row
-per point **in the scheme** — not per point in `matched_point_ids`.
+`persist_correction` and `_persist` take a new keyword-only
+`mark_scheme: MarkScheme | None = None`, threaded from the correction call site
+(D6). `_persist` also now sets `attempt.paper_id` when the caller supplies it.
+
+**Derivation.** For each `(qr, cq)` pair, look up the question in the supplied
+`mark_scheme`, and write one row per point **in the scheme** — not per point in
+`cq.matched_point_ids` — setting `awarded` from membership in
+`cq.matched_point_ids`.
 
 That inversion is the crux. Missed points must become rows too, with
 `awarded = false`. A table of only the matched points has nothing for a student
@@ -167,12 +201,13 @@ to self-mark against, and no missed-point breakdown for a teacher to read.
 
 Each resolves to writing nothing rather than fabricating something.
 
-- `paper_id IS NULL` — quizzes have no real paper and no mark-scheme row. No
-  scheme, no point rows; the question behaves exactly as it does today.
-  **Consequence: the spec-2 self-review surface is past-papers-only at launch.**
-  Quizzes get it when quiz mark schemes exist, not before.
-- Mark scheme row missing, or `parsed_payload` carries no entry for this
-  `question_id` — no point rows.
+- `mark_scheme is None` — the caller passed no scheme. Quizzes are the standing
+  case: `persist_quiz_correction` has no scheme to pass. No scheme, no point
+  rows; the question behaves exactly as it does today. **Consequence: the
+  spec-2 self-review surface is past-papers-only at launch.** Quizzes get it
+  when quiz mark schemes exist, not before.
+- The supplied scheme carries no entry for this `question_id` — no point rows
+  for that question; the others are unaffected.
 - A dangling point id (one `matched_point_ids` claims but the scheme lacks).
   `_check_coherence` (`lemely/io/correction_ai.py:441`) already detects these
   upstream, but if one survives, no row is written for it. Never a row with a
@@ -180,10 +215,10 @@ Each resolves to writing nothing rather than fabricating something.
 
 ## Backfill
 
-The migration backfills point rows and revision 1 for existing attempts wherever
-the paper's mark scheme is still available. Where it is not, that attempt simply
-has no point rows, and spec 2's surface is absent for it. No reconstruction from
-marks alone.
+There is none, per D7. The migration creates tables and columns only. Existing
+attempts keep working exactly as they do today; they have no point rows, and
+spec 2's surface is absent for them. Point rows accrue from the first attempt
+corrected after this ships.
 
 ## Error handling
 
@@ -199,9 +234,11 @@ marks alone.
 ## Testing
 
 - Derivation unit tests against a mark-scheme fixture, covering the inversion
-  (missed points become rows), dangling ids, missing scheme, malformed payload,
-  and null `paper_id`.
-- Snapshot independence: mutating `parsed_payload` after an attempt is written
+  (missed points become rows), dangling ids, `mark_scheme is None`, and a
+  scheme with no entry for a given `question_id`.
+- `attempts.paper_id` is written when the caller supplies it and stays NULL when
+  it does not (D6) — the latent bug this spec fixes, pinned.
+- Snapshot independence: mutating the source scheme after an attempt is written
   must not change that attempt's stored `point_text` or `tariff` (D3).
 - Revision 1 written exactly once per question result, with `points_snapshot`
   matching the derived rows.
@@ -210,7 +247,8 @@ marks alone.
   `CorrectedQuestion` to the row.
 - An accuracy guard asserting `awarded_marks` is untouched by anything in this
   spec, which is what keeps `lemely/eval` measurement honest.
-- Migration test covering backfill with schemes present and absent.
+- Migration test asserting upgrade and downgrade are clean, and that existing
+  attempt rows are untouched by it (D7).
 
 ## Open items
 
