@@ -135,6 +135,20 @@ class CorrectedQuestion(StrictModel):
     this question was built from, distinct from ``confidence_score`` which is the
     marking-stage confidence. ``None`` when no answer was extracted for this
     question (spec §4 M1.1)."""
+    rationale: str | None = None
+    """The marker's own reasoning for this question's mark, verbatim.
+
+    Distinct from ``feedback``, which is written for the student. This is the
+    marker explaining itself. ``None`` until a marker emits one — never
+    synthesised from the mark scheme text, per spec 2026-09-17 D2.
+    """
+    point_notes: dict[str, str] | None = None
+    """Per-mark-point reasoning, keyed by ``AnswerPoint.id``.
+
+    ``None`` until a marker emits it. Keys that do not correspond to a point in
+    the mark scheme are ignored by the derivation rather than written as rows
+    for points that do not exist.
+    """
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:
