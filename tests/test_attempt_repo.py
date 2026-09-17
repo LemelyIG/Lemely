@@ -52,10 +52,11 @@ from lemely.db.models.attempts import (
     QuestionResultRevision,
     WeaknessRecord,
 )
-from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, Role
+from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, RevisionSource, Role
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.runtime.config import DatabaseSettings
+from tests.test_question_points import _scheme
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -720,3 +721,184 @@ def test_marking_detail_tables_exist_and_relate() -> None:
 
     assert "points" in QuestionResult.__mapper__.relationships
     assert "revisions" in QuestionResult.__mapper__.relationships
+
+
+def _report_with_one_question(**overrides: object) -> AccuracyReport:
+    """An AccuracyReport carrying exactly one question against ``_scheme()``.
+
+    Keyword overrides land on the CorrectedQuestion, so a test can vary
+    ``matched_point_ids``, ``extraction_confidence``, the integrity flags or
+    ``rationale`` without rebuilding the whole report.
+    """
+    question: dict[str, object] = {
+        "question_id": "1a",
+        "awarded_marks": 1,
+        "maximum_marks": 3,
+        "confidence": ConfidenceBand.HIGH,
+        "confidence_score": 0.95,
+        "needs_teacher_review": False,
+        "matched_point_ids": ["p1"],
+    }
+    question.update(overrides)
+
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0580",
+            session_month="May/June",
+            session_year=2024,
+            paper_number=2,
+            paper_variant=1,
+        ),
+        questions=[CorrectedQuestion(**question)],  # type: ignore[arg-type]
+    )
+    return AccuracyReport(
+        correction=correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=3,
+            percentage=33.33,
+            grade="E",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+
+
+def _points_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultPoint]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultPoint)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResultPoint.ordinal)
+            ).all()
+        )
+
+
+def _revisions_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultRevision]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultRevision)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+            ).all()
+        )
+
+
+def _only_result(pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID) -> QuestionResult:
+    with pg_sessionmaker() as session:
+        return session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).one()
+
+
+def test_persist_writes_point_rows_including_missed_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The inversion, end to end: a missed point is a row with awarded=False."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    points = _points_for(pg_sessionmaker, attempt_id)
+
+    assert [p.mark_point_id for p in points] == ["p1", "p2", "p3"]
+    assert [p.awarded for p in points] == [True, False, False]
+    assert [p.tariff for p in points] == [1, 1, 1]
+    assert points[0].mark_type == "M"
+
+
+def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> None:
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+
+    assert len(revisions) == 1
+    assert revisions[0].revision == 1
+    assert revisions[0].source is RevisionSource.ai
+    assert len(revisions[0].points_snapshot) == 3
+
+
+def test_persist_without_a_scheme_writes_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The quiz case. The attempt itself must still persist normally."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=None,
+    )
+
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+
+
+def test_persist_carries_the_previously_dropped_fields(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(
+            matched_point_ids=["p1"],
+            extraction_confidence=0.82,
+            plagiarism_flagged=True,
+            rationale="Method correct, rounding wrong.",
+        ),
+        mark_scheme=_scheme(),
+    )
+
+    result = _only_result(pg_sessionmaker, attempt_id)
+
+    assert result.extraction_confidence == 0.82
+    assert result.plagiarism_flagged is True
+    assert result.ai_detection_flagged is False
+    assert result.rationale == "Method correct, rounding wrong."
+
+
+def test_awarded_marks_is_untouched_by_the_point_ledger(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The accuracy guard: lemely/eval reads awarded_marks and must not shift."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=1),
+        mark_scheme=_scheme(),
+    )
+
+    result = _only_result(pg_sessionmaker, attempt_id)
+
+    assert result.awarded_marks == 1
+    assert result.effective_marks == 1
+
+
+def test_snapshot_is_independent_of_later_scheme_edits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D3: a re-parsed scheme must not change a paper already marked."""
+    scheme = _scheme()
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    scheme.questions[0].answer_points[0].point = "COMPLETELY DIFFERENT TEXT"
+    scheme.questions[0].answer_points[0].marks = 99
+
+    point = _points_for(pg_sessionmaker, attempt_id)[0]
+
+    assert point.point_text == "Correct method"
+    assert point.tariff == 1
