@@ -77,15 +77,22 @@ student's marked paper must not change meaning underneath them months later.
 append-only side table. `question_results` keeps working exactly as it does
 today, so no existing read surface changes in this spec.
 
-**D6 — Derive from the `MarkScheme` object, threaded explicitly; and start
-populating `attempts.paper_id`.** The scheme is passed into
-`persist_correction` from the correction call site, where it is already live.
-This is not merely a workaround for the dead `paper_id` — it is more correct
-than a join would have been, because it uses the exact scheme the paper was
-marked against rather than whatever a later re-parse produced, which is what D3
-is reaching for. Separately, `_persist` starts writing `attempts.paper_id`,
-fixing the latent bug on its own merits so that anything future wanting
-attempt → paper has a working link.
+**D6 — Derive from the `MarkScheme` object, threaded explicitly.** The scheme is
+passed into `persist_correction` from the correction call site, where it is
+already live. This is not merely a workaround for the dead `paper_id` — it is
+more correct than a join would have been, because it uses the exact scheme the
+paper was marked against rather than whatever a later re-parse produced, which
+is what D3 is reaching for.
+
+`attempts.paper_id` stays NULL and is **not** fixed here. An earlier draft of
+this decision said it would be. That was wrong: `payload.paperId` on the
+correction route is an *upload* id, not a `papers.id`
+(`lemely/web/routers/student.py:978` resolves it via
+`upload_repo.get_owned_upload(..., upload_id=payload.paperId)`), and that path
+never resolves a `papers` row at all — `resolve_mark_scheme` builds a parsed
+scheme from the corpus or an uploaded PDF without one. Populating the column
+means resolving or minting a `papers` row from detected metadata and deciding
+what to do when none matches. That is its own design. See Open items.
 
 **D7 — No backfill.** Existing attempts have no usable link to a paper, so
 there is no honest scheme to derive their point rows from. A best-effort match
@@ -110,8 +117,12 @@ question_result_id     fk -> question_results.id, on delete cascade, indexed
 mark_point_id          text        -- id as it appears in the parsed scheme
 ordinal                int         -- index of the point within the question, as the
                                    -- parsed scheme orders them; stable display order
-mark_type              enum M/A/B/null  -- from MathMarkType, lemely/core/loose_schemas.py:79;
-                                        -- null where the scheme's points carry no type
+mark_type              text null   -- AnswerPoint.math_mark_type verbatim, or null.
+                                   -- Deliberately text, not a DB enum: MathMarkType
+                                   -- (lemely/core/loose_schemas.py:79) has 15 members
+                                   -- (M A B C dep ft isw cao oe SC nfww soi ora bo),
+                                   -- and a narrower enum would silently drop the rest.
+                                   -- Null for non-maths questions.
 tariff                 int         -- marks this point is worth
 point_text             text        -- verbatim from the scheme, snapshotted (D3)
 awarded                bool        -- AI verdict: id present in matched_point_ids
@@ -183,7 +194,7 @@ review-queue fan-out. One transaction, no second write path to drift.
 
 `persist_correction` and `_persist` take a new keyword-only
 `mark_scheme: MarkScheme | None = None`, threaded from the correction call site
-(D6). `_persist` also now sets `attempt.paper_id` when the caller supplies it.
+(D6). `attempts.paper_id` is untouched and stays NULL.
 
 **Derivation.** For each `(qr, cq)` pair, look up the question in the supplied
 `mark_scheme`, and write one row per point **in the scheme** — not per point in
@@ -236,8 +247,6 @@ corrected after this ships.
 - Derivation unit tests against a mark-scheme fixture, covering the inversion
   (missed points become rows), dangling ids, `mark_scheme is None`, and a
   scheme with no entry for a given `question_id`.
-- `attempts.paper_id` is written when the caller supplies it and stays NULL when
-  it does not (D6) — the latent bug this spec fixes, pinned.
 - Snapshot independence: mutating the source scheme after an attempt is written
   must not change that attempt's stored `point_text` or `tariff` (D3).
 - Revision 1 written exactly once per question result, with `points_snapshot`
@@ -251,6 +260,14 @@ corrected after this ships.
   attempt rows are untouched by it (D7).
 
 ## Open items
+
+- **`attempts.paper_id` is still dead** (D6). It is a nullable FK to `papers.id`
+  that nothing writes, and the student correction path has no `papers` row to
+  write into it. Fixing it means deciding what happens when detected metadata
+  matches no catalogued paper — resolve, mint, or leave NULL — which is a
+  design question about the paper catalogue, not about marking detail. Worth
+  its own small spec, because anything future wanting attempt → paper hits the
+  same wall.
 
 - **Source page and bounding box** were raised as part of "marker reasoning and
   evidence" and are deliberately **not** in this spec. Whether the extraction
