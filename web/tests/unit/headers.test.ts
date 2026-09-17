@@ -50,6 +50,19 @@ describe("public/_headers", () => {
       expect(cspLine).not.toMatch(/script-src[^;]*unsafe-inline/)
     })
 
+    /*
+     * Avatars are V4 signed GCS URLs (`_avatar_url_for` in
+     * `lemely/web/routers/me.py`) rendered by `<Avatar src=...>`, so the
+     * image load is cross-origin. Without this host the browser blocked
+     * every avatar and the initials fallback rendered instead — the exact
+     * regression this pins. `data:`/`blob:` stay for the local preview
+     * `ProfileSettings` shows while an upload is in flight.
+     */
+    it("allows the signed-URL avatar host in img-src, and nothing broader", () => {
+      expect(cspLine).toContain("img-src 'self' data: blob: https://storage.googleapis.com;")
+      expect(cspLine).not.toMatch(/img-src[^;]*\*/)
+    })
+
     it("blocks framing entirely and disables plugin content", () => {
       expect(cspLine).toContain("frame-ancestors 'none'")
       expect(cspLine).toContain("object-src 'none'")
