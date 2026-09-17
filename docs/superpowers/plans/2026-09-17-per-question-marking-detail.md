@@ -77,7 +77,7 @@ def _question(**overrides: object) -> CorrectedQuestion:
         "question_id": "1a",
         "awarded_marks": 2,
         "maximum_marks": 3,
-        "confidence": ConfidenceBand.high,
+        "confidence": ConfidenceBand.HIGH,
         "confidence_score": 0.95,
         "needs_teacher_review": False,
     }
@@ -322,32 +322,36 @@ from lemely.db.question_points import derive_point_rows
 
 
 def _scheme() -> MarkScheme:
-    """A one-question scheme with three points: p1 (M, 1), p2 (A, 1), p3 (B, 1)."""
+    """A one-question scheme with three points: p1 (M, 1), p2 (A, 1), p3 (B, 1).
+
+    Field names here are verified against the real schema, not guessed:
+    ``Question`` takes ``type=`` (not ``question_type=``), every enum member is
+    UPPERCASE, and ``MarkSchemeMetadata`` requires ``subject`` and
+    ``maximum_mark`` as well as the obvious fields.
+    """
+    question = SchemeQuestion(
+        id="1a",
+        marks=3,
+        type=SchemeQuestionType.CALCULATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="Correct method", marks=1, math_mark_type=MathMarkType.M),
+            AnswerPoint(id="p2", point="Answer to 3sf", marks=1, math_mark_type=MathMarkType.A),
+            AnswerPoint(id="p3", point="Units stated", marks=1, math_mark_type=MathMarkType.B),
+        ],
+    )
     return MarkScheme(
         metadata=MarkSchemeMetadata(
+            subject="Mathematics",
             subject_code="0580",
-            session_month=LooseSessionMonth.may_june,
-            session_year=2024,
             paper_number=2,
             paper_variant=1,
-            paper_type=PaperType.mark_scheme,
-            scheme_format=SchemeFormat.point_based,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_EXTENDED,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
         ),
-        questions=[
-            SchemeQuestion(
-                id="1a",
-                question_type=SchemeQuestionType.point_based,
-                marks=3,
-                answer_points=[
-                    AnswerPoint(id="p1", point="Correct method", marks=1,
-                                math_mark_type=MathMarkType.M),
-                    AnswerPoint(id="p2", point="Answer to 3sf", marks=1,
-                                math_mark_type=MathMarkType.A),
-                    AnswerPoint(id="p3", point="Units stated", marks=1,
-                                math_mark_type=MathMarkType.B),
-                ],
-            )
-        ],
+        questions=[question],
     )
 
 
@@ -356,7 +360,7 @@ def _corrected(**overrides: object) -> CorrectedQuestion:
         "question_id": "1a",
         "awarded_marks": 1,
         "maximum_marks": 3,
-        "confidence": ConfidenceBand.high,
+        "confidence": ConfidenceBand.HIGH,
         "confidence_score": 0.95,
         "needs_teacher_review": False,
         "matched_point_ids": ["p1"],
@@ -1109,7 +1113,7 @@ def _report_with_one_question(**overrides: object) -> AccuracyReport:
         "question_id": "1a",
         "awarded_marks": 1,
         "maximum_marks": 3,
-        "confidence": ConfidenceBand.high,
+        "confidence": ConfidenceBand.HIGH,
         "confidence_score": 0.95,
         "needs_teacher_review": False,
         "matched_point_ids": ["p1"],
@@ -1134,7 +1138,7 @@ def _report_with_one_question(**overrides: object) -> AccuracyReport:
             maximum_marks=3,
             percentage=33.33,
             grade="E",
-            confidence=ConfidenceBand.high,
+            confidence=ConfidenceBand.HIGH,
         ),
     )
 ```
