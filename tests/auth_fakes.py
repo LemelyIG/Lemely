@@ -161,9 +161,10 @@ class FakeDeviceRegistry:
         user_agent: str | None = None,
         device_label: str | None = None,
         allow_eviction: bool = True,
+        evict_device_id: uuid.UUID | str | None = None,
         now: datetime | None = None,
     ) -> DeviceRegistration:
-        del user_agent, device_label, allow_eviction, now
+        del user_agent, device_label, allow_eviction, evict_device_id, now
         existing = next(
             (
                 sid
