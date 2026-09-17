@@ -39,7 +39,7 @@
 | `lemely/web/routers/student.py` | Modify. One call site (`:1059`) gains `mark_scheme=mark_scheme`. |
 | `tests/test_question_points.py` | Create. Pure-function derivation tests. No database needed. |
 | `tests/test_attempt_repo.py` | Modify. Integration tests for persistence, revision 1, the snapshot rule, and the dropped fields. |
-| `tests/test_student_correct_persists_points.py` | Create. Pins that the route actually passes the scheme. |
+| `tests/test_student_correct.py` | Modify. Two tests pinning that the route passes the scheme and no paper_id, reusing its existing `client` fixture. |
 
 Derivation lives in its own module rather than inside `attempt_repo.py` because it is pure and the interesting logic: it deserves fast tests that need no Postgres, and `attempt_repo.py` is already 400+ lines doing persistence.
 
@@ -1312,7 +1312,11 @@ def test_persist_correction_is_not_passed_a_paper_id() -> None:
     assert "paper_id" not in persist.call_args.kwargs
 ```
 
-`_run_one_correction()` drives `POST /api/student/correct` through the app's `TestClient` far enough to reach the persist call, with `resolve_mark_scheme`, `extract_answers` and `grade_paper` patched to return fixtures. Follow whatever pattern the existing student-router tests already use to authenticate and to stub the storage backend — do not invent a new harness.
+**Do not build a harness — one already exists.** `tests/test_student_correct.py` has a `client` fixture (at its line ~300) that yields `(TestClient, student_id, upload_repo)` wired to real repos over a throwaway database, with `student.resolve_mark_scheme` monkeypatched to return `_mcq_scheme()` and `student.extract_answers` to return `_extracted()`, and Gemini replaced by a `MagicMock`. Existing tests there drive the endpoint with `api.post("/api/student/correct", json={"paperId": paper_id})`.
+
+Put these two tests in that file, reuse that fixture and its upload-seeding helper the way the neighbouring tests do, and monkeypatch `AttemptRepository.persist_correction` to capture its kwargs. Because the fixture already pins `resolve_mark_scheme` to `_mcq_scheme()`, the assertion is precise: the object handed to `persist_correction` as `mark_scheme` must be that same scheme, not merely non-`None`.
+
+Delete the `tests/test_student_correct_persists_points.py` file named earlier in this task — it is not needed.
 
 When patching anything used as a context manager on this path (the storage download, the temp directory), set `mock.__enter__ = MagicMock(return_value=mock)`. The default `MagicMock.__enter__()` returns a *new* mock, so the test would appear to configure the right object while assertions ran against an unconfigured one.
 
