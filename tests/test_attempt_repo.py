@@ -696,10 +696,13 @@ def test_persist_quiz_correction_writes_weakness_records_grouped_by_real_topic(
         assert {r.topic for r in records} == {"5.2 Radioactivity"}
 
 
-def test_marking_detail_tables_exist_and_relate(pg_sessionmaker: sessionmaker[Session]) -> None:
+def test_marking_detail_tables_exist_and_relate() -> None:
     """The two new tables and the six additive columns are reachable from the ORM.
 
-    A schema-shape test, not a behaviour test — Task 5 is what fills them.
+    A schema-shape test, not a behaviour test — Task 5 is what fills them. It
+    takes no ``pg_sessionmaker``: every assertion here reads SQLAlchemy mapper
+    metadata, and that fixture creates and drops a throwaway database per test,
+    which this would pay for and never use.
     """
     assert QuestionResultPoint.__tablename__ == "question_result_points"
     assert QuestionResultRevision.__tablename__ == "question_result_revisions"
