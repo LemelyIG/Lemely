@@ -13,7 +13,7 @@
 ## Global Constraints
 
 - Signed commits only: `git commit -S`. Conventional messages with scopes (`feat(db):`, `test(db):`, `refactor(core):`).
-- Run `pre-commit run --all-files` and fix every failure before creating any commit. The venv must be on PATH for `mypy` and `lint-imports` to resolve: `PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files`.
+- Run `pre-commit run --all-files` and fix every failure before creating any commit. The venv must be on PATH for `mypy` and `lint-imports` to resolve: `PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files`.
 - Do not run the full test suite locally. Run only the test files this plan touches.
 - **Every `pytest` command in this plan ends with `--no-cov`.** This repo's pytest config enforces a 70% global coverage gate, which any single-file run fails on total coverage regardless of whether the tests themselves passed. Without `--no-cov` every task's "Expected: PASS" reads as a red FAIL.
 - DB-backed tests use the `pg_sessionmaker` fixture (a `sessionmaker[Session]`, not a `Session`). It creates and drops a throwaway database per test and skips cleanly when Postgres is unreachable. Schema comes from `Base.metadata.create_all`, **not** from Alembic — so these tests do not exercise the migration, and Task 4 Step 6 is the only thing that does. `_seed_user(pg_sessionmaker)` takes the sessionmaker and returns a user-id string.
@@ -103,7 +103,7 @@ def test_rationale_and_point_notes_round_trip_when_supplied() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
 ```
 
 Expected: FAIL. `CorrectedQuestion` is a `StrictModel`, so the second test raises a Pydantic `ValidationError` for unexpected keyword arguments `rationale` and `point_notes`.
@@ -132,7 +132,7 @@ In `lemely/core/schemas.py`, inside `class CorrectedQuestion(StrictModel)`, imme
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_schemas_corrected_question.py -v --no-cov
 ```
 
 Expected: PASS, 2 passed.
@@ -140,7 +140,7 @@ Expected: PASS, 2 passed.
 - [ ] **Step 5: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/core/schemas.py tests/test_schemas_corrected_question.py
 git commit -S -m "feat(core): add rationale and point_notes to CorrectedQuestion
 
@@ -207,7 +207,7 @@ def test_existing_review_reasons_are_untouched() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
 ```
 
 Expected: FAIL with `ImportError: cannot import name 'EvidenceVerdict'`.
@@ -252,7 +252,7 @@ class EvidenceVerdict(enum.Enum):
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_enums_marking_detail.py -v --no-cov
 ```
 
 Expected: PASS, 4 passed.
@@ -260,7 +260,7 @@ Expected: PASS, 4 passed.
 - [ ] **Step 5: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/db/models/enums.py tests/test_enums_marking_detail.py
 git commit -S -m "feat(db): add RevisionSource, EvidenceVerdict, student_evidence_unjudged
 
@@ -448,7 +448,7 @@ def test_mark_type_is_none_for_a_non_maths_point() -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
 ```
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'lemely.db.question_points'`.
@@ -530,7 +530,7 @@ def derive_point_rows(
 - [ ] **Step 4: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
 ```
 
 Expected: PASS, 9 passed.
@@ -538,7 +538,7 @@ Expected: PASS, 9 passed.
 - [ ] **Step 5: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/db/question_points.py tests/test_question_points.py
 git commit -S -m "feat(db): derive a per-mark-point ledger from a scheme and a marked question
 
@@ -591,7 +591,7 @@ def test_marking_detail_tables_exist_and_relate(pg_sessionmaker: sessionmaker[Se
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
 ```
 
 Expected: FAIL with `ImportError: cannot import name 'QuestionResultPoint'`.
@@ -908,7 +908,7 @@ Note for the implementer: `ALTER TYPE … ADD VALUE` cannot run inside a transac
 - [ ] **Step 5: Run the test to verify it passes**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k marking_detail_tables -v --no-cov
 ```
 
 Expected: PASS. (The suite skips cleanly if no local Postgres is reachable; if it skips, start Postgres before continuing — Task 5 cannot be verified without it.)
@@ -916,9 +916,9 @@ Expected: PASS. (The suite skips cleanly if no local Postgres is reachable; if i
 - [ ] **Step 6: Verify the migration applies and reverses**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" alembic upgrade head
-PATH="$PWD/.venv/bin:$PATH" alembic downgrade -1
-PATH="$PWD/.venv/bin:$PATH" alembic upgrade head
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic upgrade head
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic downgrade -1
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic upgrade head
 ```
 
 Expected: three clean runs, no error. Confirm a single head with `alembic heads` — output must be exactly one revision, `0037_question_result_pts`.
@@ -926,7 +926,7 @@ Expected: three clean runs, no error. Confirm a single head with `alembic heads`
 - [ ] **Step 7: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/db/models/attempts.py lemely/db/migrations/versions/0037_question_result_points.py tests/test_attempt_repo.py
 git commit -S -m "feat(db): add question_result_points and question_result_revisions
 
@@ -1148,7 +1148,7 @@ If `AccuracyReport`'s real field names differ from `correction`/`weaknesses`/`pr
 - [ ] **Step 2: Run the tests to verify they fail**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k "point_rows or revision_one or without_a_scheme or dropped_fields or untouched or snapshot" -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k "point_rows or revision_one or without_a_scheme or dropped_fields or untouched or snapshot" -v --no-cov
 ```
 
 Expected: FAIL with `TypeError: persist_correction() got an unexpected keyword argument 'mark_scheme'`.
@@ -1226,7 +1226,7 @@ Add the imports: `derive_point_rows` from `lemely.db.question_points`, `Question
 - [ ] **Step 4: Run the tests to verify they pass**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -v --no-cov
 ```
 
 Expected: PASS, including every pre-existing test in the file — none of them pass `mark_scheme`, and all must still work because it defaults to `None`.
@@ -1234,7 +1234,7 @@ Expected: PASS, including every pre-existing test in the file — none of them p
 - [ ] **Step 5: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/db/attempt_repo.py tests/test_attempt_repo.py
 git commit -S -m "feat(db): persist the per-point ledger, revision 1, and the dropped fields
 
@@ -1317,7 +1317,7 @@ When patching anything used as a context manager on this path (the storage downl
 - [ ] **Step 2: Run the test to verify it fails**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py -v --no-cov
 ```
 
 Expected: the first test FAILS with `KeyError: 'mark_scheme'`. The second already passes — it is a guard against a plausible wrong fix, not a driver.
@@ -1340,7 +1340,7 @@ Do not add `paper_id=payload.paperId`. That value is an upload id (`:978`), and 
 - [ ] **Step 5: Run the tests to verify they pass**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py tests/test_attempt_repo.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_student_correct_persists_points.py tests/test_attempt_repo.py -v --no-cov
 ```
 
 Expected: PASS.
@@ -1348,7 +1348,7 @@ Expected: PASS.
 - [ ] **Step 6: Run pre-commit and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add lemely/web/routers/student.py tests/test_student_correct_persists_points.py
 git commit -S -m "feat(web): pass the parsed mark scheme into persist_correction
 
@@ -1395,7 +1395,7 @@ def test_quiz_correction_persists_with_no_points(
 - [ ] **Step 2: Run it**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k quiz_correction -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_attempt_repo.py -k quiz_correction -v --no-cov
 ```
 
 Expected: PASS with no production change. If it fails, fix Task 5 rather than this test.
@@ -1403,8 +1403,8 @@ Expected: PASS with no production change. If it fails, fix Task 5 rather than th
 - [ ] **Step 3: Run the full set of touched files and commit**
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
 git add tests/test_attempt_repo.py
 git commit -S -m "test(db): pin that the quiz path persists with no point rows
 
@@ -1419,9 +1419,9 @@ written, so history exists for every marked question regardless."
 Before calling this plan complete:
 
 ```bash
-PATH="$PWD/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
-PATH="$PWD/.venv/bin:$PATH" pre-commit run --all-files
-PATH="$PWD/.venv/bin:$PATH" alembic heads
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py tests/test_attempt_repo.py tests/test_enums_marking_detail.py tests/test_schemas_corrected_question.py tests/test_student_correct_persists_points.py -v --no-cov
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic heads
 ```
 
 Expected: all tests pass; every pre-commit hook passes; `alembic heads` prints exactly one revision.
