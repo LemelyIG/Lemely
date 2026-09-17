@@ -14,7 +14,9 @@ from lemely.db.models.enums import (
     AttemptOrigin,
     BoundarySource,
     ConfidenceBand,
+    EvidenceVerdict,
     MarkerSource,
+    RevisionSource,
     SessionMonth,
     TimestampMixin,
     UploadStatus,
@@ -222,10 +224,45 @@ class QuestionResult(TimestampMixin, Base):
     overridden_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    extraction_confidence: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    """Extraction-stage confidence, distinct from ``confidence_score``.
+
+    Computed by the pipeline (``CorrectedQuestion.extraction_confidence``) and,
+    before spec 2026-09-17, discarded at persist time.
+    """
+    plagiarism_flagged: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    ai_detection_flagged: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """Integrity flags, persisted rather than only fanned out to the review queue.
+
+    Teacher-only on every surface (QUALITY-BAR.md): these must never reach a
+    student-facing screen, where they would read as an accusation.
+    """
+    rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    student_selfmarked_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Written by the student self-review spec. Created here per its D5."""
 
     attempt: Mapped[Attempt] = relationship("Attempt", back_populates="question_results")
     review_queue_items: Mapped[list] = relationship(  # type: ignore[type-arg]
         "ReviewQueueItem", back_populates="question_result"
+    )
+    points: Mapped[list[QuestionResultPoint]] = relationship(
+        "QuestionResultPoint",
+        back_populates="question_result",
+        cascade="all, delete-orphan",
+        order_by="QuestionResultPoint.ordinal",
+    )
+    revisions: Mapped[list[QuestionResultRevision]] = relationship(
+        "QuestionResultRevision",
+        back_populates="question_result",
+        cascade="all, delete-orphan",
+        order_by="QuestionResultRevision.revision",
     )
 
     @property
@@ -248,6 +285,98 @@ class QuestionResult(TimestampMixin, Base):
     def is_overridden(self) -> bool:
         """Whether a teacher has recorded a correction for this question."""
         return self.teacher_awarded_marks is not None
+
+
+class QuestionResultPoint(TimestampMixin, Base):
+    """One mark point of one marked question.
+
+    Derived at attempt-write time from the parsed mark scheme
+    (:func:`lemely.db.question_points.derive_point_rows`). ``tariff``,
+    ``point_text`` and ``mark_type`` are **snapshotted**, not joined live: mark
+    schemes get re-parsed and corrected, and a student's marked paper must not
+    change meaning underneath them months later (spec 2026-09-17 D3).
+
+    ``mark_type`` is text, not an enum. ``MathMarkType`` has fifteen members
+    and a narrower DB enum would silently drop most of them.
+    """
+
+    __tablename__ = "question_result_points"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "question_result_id", "mark_point_id", name="uq_question_result_points_point"
+        ),
+        sa.Index("ix_question_result_points_question_result_id", "question_result_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    question_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("question_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mark_point_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    mark_type: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    tariff: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    point_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    awarded: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
+    rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
+    student_selfmark_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    student_evidence: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    evidence_verdict: Mapped[EvidenceVerdict | None] = mapped_column(
+        sa.Enum(EvidenceVerdict, name="evidenceverdict"), nullable=True
+    )
+
+    question_result: Mapped[QuestionResult] = relationship(
+        "QuestionResult", back_populates="points"
+    )
+
+
+class QuestionResultRevision(TimestampMixin, Base):
+    """One recorded state of a question's marks. Append-only.
+
+    Revision 1 is written at correction time with ``source=ai``. The existing
+    ``question_results`` row stays the current projection, so no read surface
+    has to change to keep working (spec 2026-09-17 D4).
+    """
+
+    __tablename__ = "question_result_revisions"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "question_result_id", "revision", name="uq_question_result_revisions_revision"
+        ),
+        sa.Index("ix_question_result_revisions_question_result_id", "question_result_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    question_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("question_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    source: Mapped[RevisionSource] = mapped_column(
+        sa.Enum(RevisionSource, name="revisionsource"), nullable=False
+    )
+    awarded_marks: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    points_snapshot: Mapped[list] = mapped_column(  # type: ignore[type-arg]
+        JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("users.id"), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+
+    question_result: Mapped[QuestionResult] = relationship(
+        "QuestionResult", back_populates="revisions"
+    )
 
 
 class WeaknessRecord(TimestampMixin, Base):
@@ -282,4 +411,11 @@ class WeaknessRecord(TimestampMixin, Base):
     attempt: Mapped[Attempt | None] = relationship("Attempt", back_populates="weakness_records")
 
 
-__all__ = ["Attempt", "QuestionResult", "Upload", "WeaknessRecord"]
+__all__ = [
+    "Attempt",
+    "QuestionResult",
+    "QuestionResultPoint",
+    "QuestionResultRevision",
+    "Upload",
+    "WeaknessRecord",
+]

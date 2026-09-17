@@ -45,7 +45,13 @@ from lemely.db.attempt_repo import AttemptRepository, fill_correction_topics
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.attempts import (
+    Attempt,
+    QuestionResult,
+    QuestionResultPoint,
+    QuestionResultRevision,
+    WeaknessRecord,
+)
 from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, Role
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
@@ -688,3 +694,26 @@ def test_persist_quiz_correction_writes_weakness_records_grouped_by_real_topic(
     with pg_sessionmaker() as session:
         records = session.scalars(select(WeaknessRecord)).all()
         assert {r.topic for r in records} == {"5.2 Radioactivity"}
+
+
+def test_marking_detail_tables_exist_and_relate(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """The two new tables and the six additive columns are reachable from the ORM.
+
+    A schema-shape test, not a behaviour test — Task 5 is what fills them.
+    """
+    assert QuestionResultPoint.__tablename__ == "question_result_points"
+    assert QuestionResultRevision.__tablename__ == "question_result_revisions"
+
+    columns = QuestionResult.__table__.columns
+    for name in (
+        "extraction_confidence",
+        "plagiarism_flagged",
+        "ai_detection_flagged",
+        "rationale",
+        "student_selfmark_marks",
+        "student_selfmarked_at",
+    ):
+        assert name in columns, f"{name} missing from question_results"
+
+    assert "points" in QuestionResult.__mapper__.relationships
+    assert "revisions" in QuestionResult.__mapper__.relationships
