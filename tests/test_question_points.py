@@ -138,6 +138,30 @@ def test_question_with_no_answer_points_yields_no_rows() -> None:
     assert derive_point_rows(_corrected(), scheme) == []
 
 
+def test_duplicate_point_ids_collapse_to_one_row_first_occurrence_wins() -> None:
+    """A malformed scheme with two points sharing an id must not emit two rows:
+    that would violate the DB's uniqueness constraint on
+    ``(question_result_id, mark_point_id)`` and lose the whole attempt at
+    commit (spec 2026-09-17, "Error handling"). The first occurrence wins and
+    ``ordinal`` stays contiguous over the emitted rows, not the raw index.
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points = [
+        AnswerPoint(id="p1", point="Correct method", marks=1, math_mark_type=MathMarkType.M),
+        AnswerPoint(
+            id="p1", point="Duplicate, should be dropped", marks=5, math_mark_type=MathMarkType.B
+        ),
+        AnswerPoint(id="p2", point="Answer to 3sf", marks=1, math_mark_type=MathMarkType.A),
+    ]
+
+    rows = derive_point_rows(_corrected(matched_point_ids=["p1"]), scheme)
+
+    assert [row["mark_point_id"] for row in rows] == ["p1", "p2"]
+    assert [row["ordinal"] for row in rows] == [0, 1]
+    assert rows[0]["point_text"] == "Correct method"
+    assert rows[0]["tariff"] == 1
+
+
 def test_mark_type_is_none_for_a_non_maths_point() -> None:
     scheme = _scheme()
     scheme.questions[0].answer_points[0].math_mark_type = None

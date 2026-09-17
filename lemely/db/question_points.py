@@ -53,15 +53,27 @@ def derive_point_rows(
     matched = set(cq.matched_point_ids)
     notes = cq.point_notes or {}
 
-    return [
-        {
-            "mark_point_id": point.id,
-            "ordinal": ordinal,
-            "mark_type": point.math_mark_type.value if point.math_mark_type else None,
-            "tariff": point.marks,
-            "point_text": point.point,
-            "awarded": point.id in matched,
-            "rationale": notes.get(point.id),
-        }
-        for ordinal, point in enumerate(question.answer_points)
-    ]
+    rows: list[dict[str, object]] = []
+    seen_ids: set[str] = set()
+    for point in question.answer_points:
+        # A malformed scheme carrying two points with the same id must still
+        # degrade to a partial-but-writable ledger, never to a lost paper: the
+        # unique constraint on (question_result_id, mark_point_id) would abort
+        # the whole attempt at commit otherwise. First occurrence wins — it is
+        # the one the scheme's own reading order and this row's ``ordinal``
+        # refer to.
+        if point.id in seen_ids:
+            continue
+        seen_ids.add(point.id)
+        rows.append(
+            {
+                "mark_point_id": point.id,
+                "ordinal": len(rows),
+                "mark_type": point.math_mark_type.value if point.math_mark_type else None,
+                "tariff": point.marks,
+                "point_text": point.point,
+                "awarded": point.id in matched,
+                "rationale": notes.get(point.id),
+            }
+        )
+    return rows
