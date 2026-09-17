@@ -441,7 +441,7 @@ def _safe_derive_point_rows(
     worse than a missing breakdown (spec 2026-09-17, "Error handling").
     """
     try:
-        return derive_point_rows(cq, mark_scheme)
+        rows = derive_point_rows(cq, mark_scheme)
     except Exception as exc:
         log.warning(
             "question_point_derivation_failed",
@@ -450,6 +450,49 @@ def _safe_derive_point_rows(
             error=str(exc),
         )
         return []
+
+    _warn_if_point_ids_were_deduplicated(cq, mark_scheme, question_result_id, len(rows))
+    return rows
+
+
+def _warn_if_point_ids_were_deduplicated(
+    cq: CorrectedQuestion,
+    mark_scheme: MarkScheme | None,
+    question_result_id: uuid.UUID,
+    row_count: int,
+) -> None:
+    """Log when ``derive_point_rows`` silently dropped duplicate mark-point ids.
+
+    ``derive_point_rows`` (``lemely/db/question_points.py``) drops a
+    duplicate ``mark_point_id`` (first wins) rather than aborting the whole
+    ledger — that is what keeps a malformed scheme from failing a student's
+    correction. But an ``AnswerPoint.id`` is an LLM-parsed loose field, so a
+    duplicate is a real data-quality signal worth recording. Comparing the
+    row count to the scheme's own ``answer_points`` count for the same
+    question is enough to detect it without duplicating any of
+    ``derive_point_rows``'s dedup logic.
+
+    Guarded end-to-end: nothing on this path may ever fail a correction
+    (spec 2026-09-17, "Error handling"), so a failure in the scheme lookup
+    used purely for this comparison is swallowed, not raised.
+    """
+    try:
+        if mark_scheme is None:
+            return
+        question = mark_scheme.get_question_by_id(cq.question_id)
+        if question is None:
+            return
+        scheme_count = len(question.answer_points)
+        if row_count != scheme_count:
+            log.warning(
+                "question_point_ids_deduplicated",
+                question_result_id=str(question_result_id),
+                question_id=cq.question_id,
+                row_count=row_count,
+                scheme_count=scheme_count,
+            )
+    except Exception:
+        return
 
 
 def _parse_recorded_at(value: str | None) -> datetime:
