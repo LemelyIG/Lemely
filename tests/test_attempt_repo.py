@@ -56,7 +56,7 @@ from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, R
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.runtime.config import DatabaseSettings
-from tests.test_question_points import _scheme
+from tests.conftest import _scheme
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -967,3 +967,118 @@ def test_quiz_correction_persists_with_no_points(
     assert len(_revisions_for(pg_sessionmaker, attempt_id)) == 1, (
         "revision 1 is written even with no points"
     )
+
+
+def test_persist_survives_derive_point_rows_raising(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_safe_derive_point_rows``'s except branch, exercised end to end.
+
+    Nothing in the suite previously called ``derive_point_rows`` in a way that
+    could raise, so this branch — and ``_warn_if_point_ids_were_deduplicated``,
+    which it also guards downstream of — could be deleted with the suite
+    staying green (fix 4). Monkeypatching the name as imported into
+    ``lemely.db.attempt_repo`` (not the original module) is what actually
+    exercises the call site.
+    """
+    import lemely.db.attempt_repo as attempt_repo_module
+
+    def _boom(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise RuntimeError("scheme derivation exploded")
+
+    monkeypatch.setattr(attempt_repo_module, "derive_point_rows", _boom)
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        assert session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    # A revision is still written, with an empty snapshot — the same contract
+    # as the no-scheme case.
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+    assert len(revisions) == 1
+    assert revisions[0].points_snapshot == []
+
+
+def test_persist_deduplicates_shared_point_ids_at_the_database(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The end-to-end proof that deduped rows satisfy the DB's own unique
+
+    constraint (``uq_question_result_points_point``): the pure-function test
+    in ``tests/test_question_points.py`` proves ``derive_point_rows`` never
+    *emits* two rows for one id, but only a real flush proves that dedup is
+    what's needed to satisfy the constraint at all (fix 4).
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points = [
+        AnswerPoint(id="p1", point="Correct method", marks=1),
+        AnswerPoint(id="p1", point="Duplicate, should be dropped", marks=5),
+        AnswerPoint(id="p2", point="Answer to 3sf", marks=1),
+    ]
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+
+    points = _points_for(pg_sessionmaker, attempt_id)
+    assert [p.mark_point_id for p in points] == ["p1", "p2"]
+    assert len({p.mark_point_id for p in points}) == len(points)
+
+
+def test_persist_savepoint_isolates_a_ledger_row_postgres_rejects(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """FIX 1, proven at the database: a tariff Postgres itself rejects must
+
+    cost only the ledger, not the attempt. ``AnswerPoint.marks`` is
+    ``ge=0`` with no upper bound in pydantic, and an ``is_optional`` point is
+    excluded from ``Question.validate_mark_point_sum``'s primary-sum check —
+    so a point with ``marks=3_000_000_000`` escapes every validator upstream
+    and only fails at the Postgres ``tariff`` column (``sa.Integer``, int4) on
+    flush.
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points = [
+        AnswerPoint(id="p1", point="Correct method", marks=1),
+        AnswerPoint(
+            id="p2",
+            point="Optional point with an out-of-range tariff",
+            marks=3_000_000_000,
+            is_optional=True,
+        ),
+        AnswerPoint(id="p3", point="Units stated", marks=1),
+    ]
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+        assert len(results) == 1
+        assert results[0].awarded_marks == 1
+
+    # The revision insert lives in the same savepoint as the point rows (it
+    # carries the same bad tariff in its ``points_snapshot``), so it rolls
+    # back with them — unlike the no-scheme/derivation-failure cases, where
+    # there is nothing bad to roll back and a revision is still written.
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    assert _revisions_for(pg_sessionmaker, attempt_id) == []

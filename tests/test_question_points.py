@@ -8,53 +8,10 @@ for.
 
 from __future__ import annotations
 
-from lemely.core.loose_schemas import (
-    AnswerPoint,
-    MarkScheme,
-    MarkSchemeMetadata,
-    MathMarkType,
-    PaperType,
-    SchemeFormat,
-)
-from lemely.core.loose_schemas import Question as SchemeQuestion
-from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
-from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
+from lemely.core.loose_schemas import AnswerPoint, MathMarkType
 from lemely.core.schemas import ConfidenceBand, CorrectedQuestion
 from lemely.db.question_points import derive_point_rows
-
-
-def _scheme() -> MarkScheme:
-    """A one-question scheme with three points: p1 (M, 1), p2 (A, 1), p3 (B, 1).
-
-    Field names here are verified against the real schema, not guessed:
-    ``Question`` takes ``type=`` (not ``question_type=``), every enum member is
-    UPPERCASE, and ``MarkSchemeMetadata`` requires ``subject`` and
-    ``maximum_mark`` as well as the obvious fields.
-    """
-    question = SchemeQuestion(
-        id="1a",
-        marks=3,
-        type=SchemeQuestionType.CALCULATION,
-        answer_points=[
-            AnswerPoint(id="p1", point="Correct method", marks=1, math_mark_type=MathMarkType.M),
-            AnswerPoint(id="p2", point="Answer to 3sf", marks=1, math_mark_type=MathMarkType.A),
-            AnswerPoint(id="p3", point="Units stated", marks=1, math_mark_type=MathMarkType.B),
-        ],
-    )
-    return MarkScheme(
-        metadata=MarkSchemeMetadata(
-            subject="Mathematics",
-            subject_code="0580",
-            paper_number=2,
-            paper_variant=1,
-            session_month=LooseSessionMonth.MAY_JUNE,
-            session_year=2024,
-            paper_type=PaperType.THEORY_EXTENDED,
-            maximum_mark=3,
-            scheme_format=SchemeFormat.POINT_BASED,
-        ),
-        questions=[question],
-    )
+from tests.conftest import _scheme
 
 
 def _corrected(**overrides: object) -> CorrectedQuestion:
@@ -87,8 +44,11 @@ def test_carries_tariff_mark_type_and_text_from_the_scheme() -> None:
         "ordinal": 1,
         "mark_type": "A",
         "tariff": 1,
+        "tariff_defaulted": False,
         "point_text": "Answer to 3sf",
         "awarded": False,
+        "is_alternative": False,
+        "is_optional": False,
         "rationale": None,
     }
 
@@ -169,3 +129,38 @@ def test_mark_type_is_none_for_a_non_maths_point() -> None:
     rows = derive_point_rows(_corrected(), scheme)
 
     assert rows[0]["mark_type"] is None
+
+
+def test_defaulted_marks_are_flagged_as_tariff_defaulted() -> None:
+    """A point whose marks were minted (not read from the source) must carry
+
+    that provenance onto the ledger row, so a reader never mistakes a guessed
+    tariff for one CAIE actually printed (spec 2026-09-17 fix 2).
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points[0].marks_defaulted = True
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert rows[0]["tariff_defaulted"] is True
+    assert rows[1]["tariff_defaulted"] is False
+
+
+def test_alternative_and_optional_flags_are_carried_from_the_scheme() -> None:
+    """OR-group / pool membership must survive onto the ledger row, since the
+
+    ledger's ``tariff``/``awarded`` alone cannot say whether summing them
+    should match ``awarded_marks`` (spec 2026-09-17 fix 3).
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points[1].is_alternative = True
+    scheme.questions[0].answer_points[2].is_optional = True
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert rows[0]["is_alternative"] is False
+    assert rows[0]["is_optional"] is False
+    assert rows[1]["is_alternative"] is True
+    assert rows[1]["is_optional"] is False
+    assert rows[2]["is_alternative"] is False
+    assert rows[2]["is_optional"] is True
