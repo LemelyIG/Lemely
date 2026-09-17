@@ -828,13 +828,18 @@ def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> 
     assert len(revisions) == 1
     assert revisions[0].revision == 1
     assert revisions[0].source is RevisionSource.ai
+    assert revisions[0].awarded_marks == 1
     assert len(revisions[0].points_snapshot) == 3
 
 
 def test_persist_without_a_scheme_writes_no_points(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The quiz case. The attempt itself must still persist normally."""
+    """The quiz case. The attempt itself must still persist normally, and a
+    revision is still written for the question result — with an empty
+    snapshot, not skipped — because ``awarded_marks`` still needs a revision
+    trail even when there is no scheme to derive points from.
+    """
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=_seed_user(pg_sessionmaker),
         report=_report_with_one_question(matched_point_ids=["p1"]),
@@ -844,6 +849,10 @@ def test_persist_without_a_scheme_writes_no_points(
     assert _points_for(pg_sessionmaker, attempt_id) == []
     with pg_sessionmaker() as session:
         assert session.get(Attempt, attempt_id) is not None
+
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+    assert len(revisions) == 1
+    assert revisions[0].points_snapshot == []
 
 
 def test_persist_carries_the_previously_dropped_fields(
@@ -871,23 +880,38 @@ def test_persist_carries_the_previously_dropped_fields(
 def test_awarded_marks_is_untouched_by_the_point_ledger(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The accuracy guard: lemely/eval reads awarded_marks and must not shift."""
+    """The accuracy guard: lemely/eval reads awarded_marks and must not shift.
+
+    ``matched_point_ids=["p1"]`` against three tariff-1 points sums to 1 on
+    the ledger, so ``awarded_marks`` is deliberately set to 3 instead of 1: a
+    wrong implementation that recomputed ``awarded_marks`` from the ledger
+    would yield 1 here, not 3, and this assertion would catch it. With the
+    previous awarded_marks=1 fixture, pass-through and recomputation produced
+    the same number and the test could not fail.
+    """
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=_seed_user(pg_sessionmaker),
-        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=1),
+        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=3),
         mark_scheme=_scheme(),
     )
 
     result = _only_result(pg_sessionmaker, attempt_id)
 
-    assert result.awarded_marks == 1
-    assert result.effective_marks == 1
+    assert result.awarded_marks == 3
+    assert result.effective_marks == 3
 
 
 def test_snapshot_is_independent_of_later_scheme_edits(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """D3: a re-parsed scheme must not change a paper already marked."""
+    """D3: a re-parsed scheme must not change a paper already marked.
+
+    The row read back through ``_points_for`` is a plain committed row and
+    cannot change regardless of implementation, so it proves nothing about
+    D3's "snapshot, do not join live" rule on its own. The stored JSON
+    snapshot on the revision is what that rule is actually about, so it is
+    asserted here too.
+    """
     scheme = _scheme()
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=_seed_user(pg_sessionmaker),
@@ -899,6 +923,9 @@ def test_snapshot_is_independent_of_later_scheme_edits(
     scheme.questions[0].answer_points[0].marks = 99
 
     point = _points_for(pg_sessionmaker, attempt_id)[0]
-
     assert point.point_text == "Correct method"
     assert point.tariff == 1
+
+    snapshot = _revisions_for(pg_sessionmaker, attempt_id)[0].points_snapshot[0]
+    assert snapshot["point_text"] == "Correct method"
+    assert snapshot["tariff"] == 1
