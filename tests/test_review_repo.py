@@ -964,3 +964,47 @@ def test_non_uuid_caller_id_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="must be a UUID"):
         review_service.list_queue("not-a-uuid", Role.teacher)
+
+
+def test_module_level_recompute_is_what_the_service_uses(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+) -> None:
+    """The self-review path calls the module-level functions directly; the
+    override path must run the *same* code, not a private copy. Both
+    recompute a two-question attempt to the identical total."""
+    from lemely.db.review_repo import recompute_attempt_totals, recompute_weakness_records
+    from lemely.io.grade_boundaries import GradeBoundaryStore
+
+    _teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    attempt_id = _seed_attempt_with_review_items(
+        pg_sessionmaker,
+        student,
+        [
+            _question("1", awarded=2, maximum=2),
+            _question("2", awarded=0, maximum=3, confidence_score=0.2, needs_review=True),
+        ],
+    )
+    with pg_sessionmaker() as session, session.begin():
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+        # Simulate a correction on "2" through the accessor's student tier.
+        next(qr for qr in results if qr.question_id == "2").student_selfmark_marks = 3
+        recompute_attempt_totals(session, attempt, results, boundary_store=GradeBoundaryStore())
+        recompute_weakness_records(session, attempt, results)
+
+    with pg_sessionmaker() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        assert attempt.awarded_marks == 5
+        assert attempt.percentage == 100.0
+        assert attempt.grade == "A"
+        assert (
+            session.scalars(
+                select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt_id)
+            ).all()
+            == []
+        )
