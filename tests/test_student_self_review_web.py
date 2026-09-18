@@ -28,7 +28,7 @@ from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.models.attempts import QuestionResult
 from lemely.db.self_review_repo import SelfReviewService
 from lemely.web.deps import get_self_review_service
-from lemely.web.schemas_student_self_review import SelfReviewPendingPointDTO
+from lemely.web.schemas_student_self_review import SelfReviewPendingDTO, SelfReviewPendingPointDTO
 from tests.conftest import _scheme
 from tests.test_student_correct import (  # noqa: F401 — pytest fixtures, reused by import
     _seed_user,
@@ -99,7 +99,7 @@ def _wire(
     sm: sessionmaker[Session],
 ) -> tuple[TestClient, str]:
     api, student_id, _ = client
-    app = cast(FastAPI, api.app)
+    app = cast("FastAPI", api.app)
     app.dependency_overrides[get_self_review_service] = lambda: SelfReviewService(sm, judge=None)
     return api, student_id
 
@@ -161,6 +161,25 @@ def test_pending_point_dto_has_exactly_the_allowlisted_fields() -> None:
     }
 
 
+def test_pending_dto_has_exactly_the_allowlisted_fields() -> None:
+    """Container-level allowlist companion to the point-level one above.
+
+    The point-level test alone doesn't stop a verdict-bearing field being
+    added to the *container* DTO itself (``markerFeedback``, ``hint``,
+    ``rationale``, ``confidence``, ``reviewReason``, ``judgeReason``, ...) —
+    none of those would be caught by asserting only the points' shape.
+    """
+    assert set(SelfReviewPendingDTO.model_fields) == {
+        "state",
+        "attemptId",
+        "questionResultId",
+        "questionId",
+        "maxMarks",
+        "evidenceRequired",
+        "points",
+    }
+
+
 def test_get_before_submission_withholds_the_verdict_entirely(
     client: tuple[TestClient, str, StudentUploadRepository],
     pg_sessionmaker: sessionmaker[Session],
@@ -175,6 +194,15 @@ def test_get_before_submission_withholds_the_verdict_entirely(
 
     assert resp.status_code == 200, resp.text
     body = resp.json()
+    assert set(body) == {
+        "state",
+        "attemptId",
+        "questionResultId",
+        "questionId",
+        "maxMarks",
+        "evidenceRequired",
+        "points",
+    }
     assert body["state"] == "not_started"
     assert body["attemptId"] == attempt_id
     assert body["questionResultId"] == qr_id
@@ -201,9 +229,7 @@ def test_get_before_submission_withholds_the_verdict_entirely(
     # no aiMarks / effectiveMarks / studentMarks; maxMarks and groupMaxMarks
     # (Task 6a) are scheme-derived and verdict-free, already asserted above
     # via the exact points[0] dict.
-    _assert_no_key_containing(
-        body, "marks", except_keys=frozenset({"maxMarks", "groupMaxMarks"})
-    )
+    _assert_no_key_containing(body, "marks", except_keys=frozenset({"maxMarks", "groupMaxMarks"}))
 
 
 def test_post_reveals_and_applies_a_low_confidence_self_mark(
@@ -260,8 +286,12 @@ def test_partial_submission_is_422(
 
     assert resp.status_code == 422
     assert "missing" in resp.json()["detail"]
-    # Nothing was revealed by the refused pass.
-    _assert_no_key_containing(api.get(_path(attempt_id, qr_id)).json(), "awarded")
+    # Nothing was revealed by the refused pass — and the request underneath
+    # actually succeeded and returned the pending shape, so the absence of
+    # "awarded" below isn't just an error body passing the check trivially.
+    after = api.get(_path(attempt_id, qr_id))
+    assert after.json()["state"] == "not_started"
+    _assert_no_key_containing(after.json(), "awarded")
 
 
 def test_another_students_attempt_is_404_on_both_verbs(
@@ -276,12 +306,30 @@ def test_another_students_attempt_is_404_on_both_verbs(
     assert api.post(_path(attempt_id, qr_id), json=_full_pass()).status_code == 404
 
 
+def test_mismatched_attempt_and_question_is_404_on_both_verbs(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The IDOR shape an actual probe takes: both attempts owned by the
+    caller, but the question_result_id in the URL belongs to a *different*
+    attempt than the attempt_id in the URL. This exercises the mismatch
+    branch (``qr.attempt_id != attempt.id``) in ``_owned_question``, distinct
+    from the other-student ownership branch covered above."""
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_a_id, _ = _seed_attempt(pg_sessionmaker, student_id)
+    _, qr_b_id = _seed_attempt(pg_sessionmaker, student_id)
+
+    assert api.get(_path(attempt_a_id, qr_b_id)).status_code == 404
+    assert api.post(_path(attempt_a_id, qr_b_id), json=_full_pass()).status_code == 404
+
+
 def test_malformed_ids_are_404(
     client: tuple[TestClient, str, StudentUploadRepository],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     api, _ = _wire(client, pg_sessionmaker)
     assert api.get(_path("not-a-uuid", "nope")).status_code == 404
+    assert api.post(_path("not-a-uuid", "nope"), json=_full_pass()).status_code == 404
 
 
 def test_evidence_input_is_bounded_at_the_edge(
