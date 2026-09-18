@@ -53,6 +53,21 @@ costume.
 
 ## Flow
 
+**Correction (2026-09-18, found while planning).** This spec placed the surface
+on `PaperResult.tsx` without checking where that screen's per-question rows come
+from. They come from `location.state`, set by `CorrectPaper`'s `navigate()`
+immediately after a `/student/correct` run — the screen's own docstring says so.
+A refresh, or reaching the same result from history, goes through
+`GET /student/result/{paper_id}`, whose docstring records `theory` as
+**"structurally empty"**: no per-question rows and no attempt id.
+
+So as originally written, self-review would work exactly once, in the tab that
+marked the paper, and vanish on reload — and the Playwright requirement below
+would be unmeetable, because the seed persists attempts directly rather than
+through the SSE flow. Making the result reachable after a refresh is therefore
+in scope for this spec, not an optional extra: an attempt id on the result
+payload and an endpoint serving a persisted attempt's question rows.
+
 States per question: `not_started` → `self_marking` → `revealed` → `settled`.
 
 **The reveal is server-enforced, not client-hidden.**
@@ -101,14 +116,20 @@ reuses it rather than re-deriving it.
 One bounded call per challenged point. Input: `point_text`, `mark_type`,
 `tariff`, the student's transcribed answer, the marker's rationale for missing
 the point, and the student's evidence. Output: accept or reject plus a short
-reason, stored in `evidence_verdict` and shown to the student.
+reason, shown to the student.
+
+**Correction (2026-09-18, found while planning):** an earlier draft said the
+reason is "stored in `evidence_verdict`". It cannot be — `evidence_verdict` is a
+three-value enum (`accepted` / `rejected` / `not_required`) and has no room for
+prose. The verdict goes there; the reason is carried in the
+`student_selfmark` revision's `points_snapshot`, which needs no new column.
 
 "Lenient" is operational, not a vibe: **accept unless the student's evidence is
 contradicted by their own recorded answer.** The burden sits on rejection.
 Plausible-but-unproven clears the bar; only a direct contradiction with what
 they actually wrote does not.
 
-**Judge failure is not a silent decision.** On timeout or error there is no mark
+**Judge failure is not a silent decision.** On any exception there is no mark
 change, `evidence_verdict` stays null, and a queue row opens under a new
 `ReviewReason.student_evidence_unjudged`. The student is told a teacher will
 look. Defaulting to accept turns an outage into automatic grade inflation;
@@ -176,9 +197,11 @@ Both are student-scoped and reach only the caller's own attempt.
 
 ## Error handling
 
-- **Double submission.** The unique constraint on
-  `(question_result_id, mark_point_id)` plus a non-null `student_selfmarked_at`
-  makes the second POST a 409, not a second self-mark.
+- **Double submission.** An earlier draft credited this to "the unique
+  constraint on `(question_result_id, mark_point_id)`". That is wrong: the rows
+  already exist, so a second pass is an UPDATE and no unique constraint objects.
+  One-pass is enforced by taking `SELECT ... FOR UPDATE` on the `QuestionResult`
+  row and rejecting when `student_selfmarked_at` is already set — a 409.
 - **Teacher override races the student.** Precedence settles marks regardless of
   arrival order — the teacher wins either way. But if a teacher resolves the
   queue row while the student is mid-pass, the submission still *records* the
