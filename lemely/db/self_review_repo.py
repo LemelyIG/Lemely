@@ -35,12 +35,22 @@ judge's reason for a *rejected* claim has no column of its own and the
 student must be able to read it again, so it lives in the revision's
 ``points_snapshot``. An unchanged-marks revision is honest history.
 
-**Marks move by delta**, not by re-summing ticked tariffs: ``awarded_marks``
-plus the tariff of every granted upward point minus every granted downward
-one, clamped to ``[0, maximum_marks]``. ``is_alternative``/``is_optional``
-groups make a re-sum wrong (see ``QuestionResultPoint``), and a delta honours
-"on the same terms" in both directions (D6). ``awarded_marks`` itself is never
-written — ``lemely/eval`` reads it.
+**Marks move by delta, settled per scheme group**, not by re-summing ticked
+tariffs: for each group (an independent point is its own group with cap
+``tariff``), the credit is ``min(group_max_marks, sum of tariffs counted as
+earned)`` before and after the granted verdicts are applied, and the question
+moves by the sum of those differences from ``awarded_marks``, clamped to
+``[0, maximum_marks]``. So a grant can never lift an either/or or "any N
+from" group above what the scheme says it is worth (D6's grade-inflation
+guard), a downward grant that another member still covers removes nothing,
+and the marker's own total is never contradicted. ``awarded_marks`` itself is
+never written — ``lemely/eval`` reads it.
+
+**A grant the cap absorbs is recorded, not hidden and not escalated.** The
+claim was accepted (``evidence_verdict`` says so); the mark did not follow
+(``mark_changed`` is false, ``absorbed_by_group`` is true, both in the
+revision's snapshot and on :class:`RevealedPoint`). Nothing is uncertain, so
+no teacher row is opened.
 """
 
 from __future__ import annotations
@@ -156,6 +166,7 @@ class RevealedPoint:
     student_evidence: str | None
     evidence_verdict: str | None
     mark_changed: bool
+    absorbed_by_group: bool
     judge_reason: str | None
 
 
@@ -269,10 +280,8 @@ class SelfReviewService:
             now = datetime.now(UTC)
             low_confidence = is_marking_low_confidence(qr)
             teacher_settled = qr.is_overridden
-            delta = 0
-            changed = False
             unjudged = False
-            snapshot: list[dict[str, object]] = []
+            passes: list[_PointPass] = []
 
             for point in qr.points:
                 verdict = by_point[point.mark_point_id]
@@ -325,21 +334,31 @@ class SelfReviewService:
                         judge_reason = outcome.reason
                         granted = outcome.accepted
 
-                if granted:
-                    delta += point.tariff if verdict.earned else -point.tariff
-                    changed = True
-                snapshot.append(
-                    {
-                        "mark_point_id": point.mark_point_id,
-                        "ai_awarded": point.awarded,
-                        "student_selfmark": verdict.earned,
-                        "evidence_verdict": (
-                            point.evidence_verdict.value if point.evidence_verdict else None
-                        ),
-                        "mark_changed": granted,
-                        "judge_reason": judge_reason,
-                    }
+                passes.append(
+                    _PointPass(
+                        point=point,
+                        earned=verdict.earned,
+                        granted=granted,
+                        judge_reason=judge_reason,
+                    )
                 )
+
+            delta = _settle_groups(passes)
+            changed = any(item.mark_changed for item in passes)
+            snapshot: list[dict[str, object]] = [
+                {
+                    "mark_point_id": item.point.mark_point_id,
+                    "ai_awarded": item.point.awarded,
+                    "student_selfmark": item.earned,
+                    "evidence_verdict": (
+                        item.point.evidence_verdict.value if item.point.evidence_verdict else None
+                    ),
+                    "mark_changed": item.mark_changed,
+                    "absorbed_by_group": item.absorbed_by_group,
+                    "judge_reason": item.judge_reason,
+                }
+                for item in passes
+            ]
 
             qr.student_selfmarked_at = now
             if changed:
@@ -416,6 +435,65 @@ class SelfReviewService:
 # ── Internals ────────────────────────────────────────────────────────────────
 
 
+@dataclass(slots=True)
+class _PointPass:
+    """One point's passage through ``submit``.
+
+    The student's verdict, whether authority granted it, and — once
+    :func:`_settle_groups` has run — whether it moved a mark or was absorbed
+    by its group.
+    """
+
+    point: QuestionResultPoint
+    earned: bool
+    granted: bool
+    judge_reason: str | None
+    mark_changed: bool = False
+    absorbed_by_group: bool = False
+
+
+def _settle_groups(passes: list[_PointPass]) -> int:
+    """Turn granted verdicts into a marks delta, one scheme group at a time.
+
+    A point without ``group_key`` is its own group with cap ``tariff``, for
+    which this is exactly the per-point rule: +tariff for a granted upward
+    verdict, -tariff for a granted downward one. For an either/or or any-N
+    group the credit is ``min(group_max_marks, sum of tariffs of the members
+    that count as earned)`` — before, the marker's ``awarded`` flags; after,
+    the same flags with every *granted* verdict applied — and the group moves
+    by the difference. A grant therefore never lifts a group above what the
+    scheme says it is worth, and a downward grant on a member another earned
+    member still covers removes nothing; in both directions the result is
+    never further from the marker's total than the per-point rule was.
+
+    Per point: the granted members whose direction is the group's are
+    ``mark_changed``; every other granted member is ``absorbed_by_group`` —
+    recorded, never silent (module docstring).
+    """
+    by_group: dict[str, list[_PointPass]] = {}
+    for index, item in enumerate(passes):
+        by_group.setdefault(item.point.group_key or f"point:{index}", []).append(item)
+
+    delta = 0
+    for members in by_group.values():
+        cap = members[0].point.group_max_marks
+        if cap is None:
+            cap = sum(m.point.tariff for m in members)
+        before = min(cap, sum(m.point.tariff for m in members if m.point.awarded))
+        after = min(
+            cap,
+            sum(m.point.tariff for m in members if (m.earned if m.granted else m.point.awarded)),
+        )
+        group_delta = after - before
+        delta += group_delta
+        for m in members:
+            if not m.granted:
+                continue
+            m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
+            m.absorbed_by_group = not m.mark_changed
+    return delta
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce to UUID; a malformed id is a 404, like every other student route."""
     if isinstance(value, uuid.UUID):
@@ -486,7 +564,7 @@ def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | Reveal
 def _revealed_view(
     session: Session, qr: QuestionResult, *, evidence_required: bool
 ) -> RevealedSelfReview:
-    reasons = _judge_reasons(session, qr)
+    entries = _selfmark_snapshot(session, qr)
     pending_teacher = _has_open_unjudged_row(session, qr)
     # Defensive and unreachable today: the only caller (_to_view) enters this
     # branch when qr.is_self_marked is true, which is precisely
@@ -522,8 +600,9 @@ def _revealed_view(
                 student_selfmark=bool(p.student_selfmark),
                 student_evidence=p.student_evidence,
                 evidence_verdict=p.evidence_verdict.value if p.evidence_verdict else None,
-                mark_changed=_mark_changed(p),
-                judge_reason=reasons.get(p.mark_point_id),
+                mark_changed=_snapshot_bool(entries, p, "mark_changed", default=_mark_changed(p)),
+                absorbed_by_group=_snapshot_bool(entries, p, "absorbed_by_group", default=False),
+                judge_reason=_snapshot_str(entries, p, "judge_reason"),
             )
             for p in qr.points
         ],
@@ -531,14 +610,23 @@ def _revealed_view(
 
 
 def _mark_changed(point: QuestionResultPoint) -> bool:
-    """Whether this point's verdict was applied: a disagreement that was granted."""
+    """Column-derived fallback when the snapshot has no ``mark_changed``.
+
+    A disagreement that was granted.
+    """
     if point.student_selfmark is None or point.student_selfmark == point.awarded:
         return False
     return point.evidence_verdict in (EvidenceVerdict.not_required, EvidenceVerdict.accepted)
 
 
-def _judge_reasons(session: Session, qr: QuestionResult) -> dict[str, str | None]:
-    """``mark_point_id -> judge_reason`` from the latest self-mark revision's snapshot."""
+def _selfmark_snapshot(session: Session, qr: QuestionResult) -> dict[str, dict[str, object]]:
+    """``mark_point_id -> entry`` from the latest ``student_selfmark`` revision's snapshot.
+
+    The snapshot is where ``submit`` records what the columns cannot: the
+    judge's reason, and whether a granted verdict actually moved a mark or was
+    absorbed by its group — ``evidence_verdict`` says the claim was accepted;
+    only the snapshot says whether marks followed.
+    """
     revision = session.scalars(
         select(QuestionResultRevision)
         .where(
@@ -549,12 +637,25 @@ def _judge_reasons(session: Session, qr: QuestionResult) -> dict[str, str | None
     ).first()
     if revision is None:
         return {}
-    reasons: dict[str, str | None] = {}
-    for entry in revision.points_snapshot:
-        if isinstance(entry, dict) and isinstance(entry.get("mark_point_id"), str):
-            reason = entry.get("judge_reason")
-            reasons[entry["mark_point_id"]] = reason if isinstance(reason, str) else None
-    return reasons
+    return {
+        entry["mark_point_id"]: entry
+        for entry in revision.points_snapshot
+        if isinstance(entry, dict) and isinstance(entry.get("mark_point_id"), str)
+    }
+
+
+def _snapshot_bool(
+    entries: dict[str, dict[str, object]], point: QuestionResultPoint, key: str, *, default: bool
+) -> bool:
+    value = entries.get(point.mark_point_id, {}).get(key)
+    return value if isinstance(value, bool) else default
+
+
+def _snapshot_str(
+    entries: dict[str, dict[str, object]], point: QuestionResultPoint, key: str
+) -> str | None:
+    value = entries.get(point.mark_point_id, {}).get(key)
+    return value if isinstance(value, str) else None
 
 
 def _has_open_unjudged_row(session: Session, qr: QuestionResult) -> bool:

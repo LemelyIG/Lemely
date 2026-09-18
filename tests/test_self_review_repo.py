@@ -915,8 +915,8 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
 ) -> None:
     """The delta rule vs. a re-sum, made to disagree on purpose. p1 (2 marks)
     and p2 (1 mark) are alternatives worth 2 marks combined (the group's best
-    member); the marker matched both and capped the award at 2
-    (``QuestionResultPoint.awarded`` is True on *both* rows,
+    member, ``group_max_marks == 2``); the marker matched both and capped the
+    award at 2 (``QuestionResultPoint.awarded`` is True on *both* rows,
     ``awarded_marks == 2``).
 
     Finding 4: the original version of this test was all-AGREE (student
@@ -925,21 +925,25 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     sum(tariff for ticked)`` implementation passed it (and all other tests in
     this file) despite being wrong. This fixture forces both points to
     actually change: the student says p1 was **not** earned (ungranting a
-    point the marker awarded, delta -2) and p2 **was** earned — but p2 is
-    already AI-awarded True, so that is an AGREE, not a grant, and
-    contributes nothing. The correct delta is ``awarded_marks(2) + (-2) ==
-    0``. A ``sum(tariff for verdict.earned)`` re-sum would instead total the
-    tariff of every point the student ticked ``True`` — just p2 — giving 1,
-    diverging from the delta result.
+    point the marker awarded) and p2 **was** earned — but p2 is already
+    AI-awarded True, so that is an AGREE, not a grant, and contributes
+    nothing on its own.
 
-    Verified by hand against a re-sum stand-in
-    (``student_selfmark_marks = sum(p.tariff for p in qr.points if
-    by_point[p.mark_point_id].earned)`` in place of the delta line): it
-    produced 1 where this test asserts 0, confirming the fixture
-    discriminates. Using unequal tariffs (2 and 1, not 1 and 1) means this
-    also discriminates from a summing bug: ``min(total, sum(...))`` would
-    otherwise clamp a wrong sum to the same 1-mark cap a correct "best
-    member" answer produces, hiding the bug (Finding 4)."""
+    **Updated for Task 6b's per-group settlement** (was ``0`` under Task 6's
+    per-point-independent delta, which simply subtracted p1's own tariff from
+    ``awarded_marks`` without asking whether another member of the group
+    still supported credit). The group's ``before`` is
+    ``min(2, tariff(p1)=2 + tariff(p2)=1) == 2`` (reconstructing
+    ``awarded_marks``); its ``after`` — p1's flag cleared by the grant, p2's
+    flag unchanged at its own AI-awarded value (AGREE, not granted) — is
+    ``min(2, tariff(p2)=1) == 1``: p2's own award still supports 1 of the
+    group's 2 marks on its own, so ungranting p1 does not zero the group, it
+    reduces it to what p2 alone earns. Group delta ``1 - 2 == -1``; question
+    delta ``awarded_marks(2) + (-1) == 1``. A plain re-sum of ticked tariffs
+    (``sum(tariff for verdict.earned)`` == 1, same fixture) happens to land on
+    the same number here — this fixture's job now is Task 6's original one
+    (Finding 4) is covered elsewhere; what it still catches is a regression
+    to the pre-6b independent-point rule, which would give ``0``, not ``1``."""
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_alt_attempt(pg_sessionmaker, student, low_confidence=True)
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
@@ -954,12 +958,13 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     p1 = next(p for p in view.points if p.mark_point_id == "p1")
     p2 = next(p for p in view.points if p.mark_point_id == "p2")
     assert p1.mark_changed is True  # ungranted: the marker's award is withdrawn
+    assert p1.absorbed_by_group is False
     assert p2.mark_changed is False  # agreement: ai_awarded is already True
-    assert view.student_marks == 0  # delta: 2 - 2 == 0, NOT a re-sum's 1
-    assert view.effective_marks == 0
+    assert view.student_marks == 1  # group delta: min(2,1) - min(2,3) == -1, NOT the old -2
+    assert view.effective_marks == 1
     qr = _load_qr(pg_sessionmaker, qr_id)
     assert qr.awarded_marks == 2  # the AI's mark is never mutated
-    assert qr.student_selfmark_marks == 0
+    assert qr.student_selfmark_marks == 1
 
 
 # ── concurrent submissions on one attempt ───────────────────────────────────
@@ -1055,3 +1060,200 @@ def test_pending_view_carries_the_scheme_group_and_so_do_the_ledger_and_the_ai_r
         ("alt:1", 2),
         ("alt:1", 2),
     ]
+
+
+# ── group caps (Task 6b): a grant can never take a group above its worth ────
+
+
+def _group_scheme() -> MarkScheme:
+    """Question "4" (2 marks): p1 independent; p2 OR p3 (either/or, worth 1 → alt:1).
+    Question "5" (3 marks): p0 independent; p1..p4 "any 2 from" (pool:1, worth 2).
+    Both questions have room above their group's cap, so a forgotten cap shows
+    in the total instead of being hidden by the question-level clamp."""
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=5,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="4",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the law", marks=1),
+                    AnswerPoint(id="p2", point="Either form", marks=1),
+                    AnswerPoint(id="p3", point="Or this form", marks=1, is_alternative=True),
+                ],
+            ),
+            SchemeQuestion(
+                id="5",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                select_count=2,
+                answer_points=[
+                    AnswerPoint(id="p0", point="Names the process", marks=1),
+                    AnswerPoint(id="p1", point="Any: reason one", marks=1, is_optional=True),
+                    AnswerPoint(id="p2", point="Any: reason two", marks=1, is_optional=True),
+                    AnswerPoint(id="p3", point="Any: reason three", marks=1, is_optional=True),
+                    AnswerPoint(id="p4", point="Any: reason four", marks=1, is_optional=True),
+                ],
+            ),
+        ],
+    )
+
+
+def _seed_group_attempt(
+    sm: sessionmaker[Session],
+    student: uuid.UUID,
+    *,
+    question_id: str,
+    matched: list[str],
+    awarded: int,
+    maximum: int,
+) -> uuid.UUID:
+    """One low-confidence question from `_group_scheme`. The marker's total is
+    given explicitly: a marker that matched both alternatives still awards
+    the group once, so `awarded` is deliberately not `len(matched)`."""
+    question = CorrectedQuestion(
+        question_id=question_id,
+        awarded_marks=awarded,
+        maximum_marks=maximum,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.2,
+        needs_teacher_review=True,
+        student_answer=f"answer-{question_id}",
+        expected_answer=f"expected-{question_id}",
+        topic="Waves",
+        marker_source="ai",
+        feedback="Unsure.",
+        matched_point_ids=matched,
+    )
+    return AttemptRepository(sm).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_group_scheme()
+    )
+
+
+def _verdicts(**earned: bool) -> list[PointVerdict]:
+    return [PointVerdict(mark_point_id=pid, earned=flag) for pid, flag in earned.items()]
+
+
+def test_a_grant_cannot_lift_an_either_or_group_above_its_worth(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The exploit, closed. Q4 (2 marks): marker awarded p2 (1 mark). Student
+    ticks p2 AND p3 on a low-confidence question, so p3 is GRANTED. Uncapped:
+    1 + 1 = 2, which fits under maximum_marks = 2 — the question clamp does
+    NOT catch it. Capped: alt:1 before = min(1, 1) = 1, after = min(1, 2) = 1,
+    delta 0. The grant is recorded as absorbed, nothing moves, and GET reads
+    the same answer back from the snapshot."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2"], awarded=1, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=True, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, None, 1)
+    p3 = view.points[2]
+    assert p3.evidence_verdict == "not_required"  # the claim was accepted…
+    assert p3.mark_changed is False  # …and no mark followed…
+    assert p3.absorbed_by_group is True  # …for a stated reason.
+    assert [p.absorbed_by_group for p in view.points] == [False, False, True]
+    assert view.state == "settled" and view.pending_teacher is False
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 1
+    assert qr.student_selfmark_marks is None
+    assert qr.revisions[1].reason == "Student self-mark: no change"
+    entry = next(e for e in qr.revisions[1].points_snapshot if e["mark_point_id"] == "p3")
+    assert (entry["mark_changed"], entry["absorbed_by_group"]) == (False, True)
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [
+        (ReviewReason.low_confidence, ReviewStatus.open)
+    ]
+    assert _service(pg_sessionmaker).get(student, attempt_id, qr_id) == view
+
+
+def test_a_grant_inside_a_group_with_room_moves_exactly_the_room(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q4: marker awarded nothing. Student ticks p2 AND p3, both GRANTED.
+    Uncapped: 0 + 1 + 1 = 2. Capped: alt:1 before = 0, after = min(1, 2) = 1,
+    delta +1 → 1. Both granted points share the group's upward move."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=[], awarded=0, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=True, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (0, 1, 1)
+    assert [p.mark_changed for p in view.points] == [False, True, True]
+    assert [p.absorbed_by_group for p in view.points] == [False, False, False]
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 0
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+    assert _queue_rows(pg_sessionmaker, qr_id)[0].status is ReviewStatus.resolved
+
+
+def test_a_downward_grant_the_other_member_still_covers_removes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q4: marker matched p2 AND p3 but awarded 1 (its own coherence cap).
+    Student says p2 not earned, p3 earned — p2 is GRANTED downward. Naive
+    delta: 1 - 1 = 0 marks. Capped: alt:1 before = min(1, 2) = 1, after =
+    min(1, 1) = 1, delta 0 — the student's own claim still supports the
+    group's one mark, so it stays."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2", "p3"], awarded=1, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=False, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, None, 1)
+    p2 = view.points[1]
+    assert p2.evidence_verdict == "not_required"
+    assert (p2.mark_changed, p2.absorbed_by_group) == (False, True)
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+
+
+def test_pool_grants_stop_at_select_count(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q5 (3 marks): "any 2 from" p1..p4; marker awarded p1 (1 mark). Student
+    ticks all four; p2, p3, p4 GRANTED. Uncapped: 1 + 3 = 4 → clamped to
+    maximum_marks 3. Capped: pool:1 before = min(2, 1) = 1, after =
+    min(2, 4) = 2, delta +1 → 2. Three versus two."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="5", matched=["p1"], awarded=1, maximum=3
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "5")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p0=False, p1=True, p2=True, p3=True, p4=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, 2, 2)
+    assert [p.mark_changed for p in view.points] == [False, False, True, True, True]
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 2
