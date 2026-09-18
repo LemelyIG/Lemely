@@ -41,7 +41,11 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
-from lemely.db.attempt_repo import AttemptRepository, fill_correction_topics
+from lemely.db.attempt_repo import (
+    AttemptRepository,
+    fill_correction_topics,
+    is_marking_low_confidence,
+)
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
@@ -1082,3 +1086,59 @@ def test_persist_savepoint_isolates_a_ledger_row_postgres_rejects(
     # there is nothing bad to roll back and a revision is still written.
     assert _points_for(pg_sessionmaker, attempt_id) == []
     assert _revisions_for(pg_sessionmaker, attempt_id) == []
+
+
+# ── The one definition of "low confidence" (self-review spec, Authority) ──────
+
+
+def _qr_for_authority(
+    *,
+    confidence_score: float,
+    needs_review: bool,
+    plagiarism: bool = False,
+    ai_detection: bool = False,
+) -> QuestionResult:
+    return QuestionResult(
+        question_id="1a",
+        awarded_marks=1,
+        maximum_marks=3,
+        confidence_band=DBConfidenceBand.low if needs_review else DBConfidenceBand.high,
+        confidence_score=confidence_score,
+        needs_teacher_review=needs_review,
+        marker_source=MarkerSource.ai,
+        plagiarism_flagged=plagiarism,
+        ai_detection_flagged=ai_detection,
+    )
+
+
+def test_low_confidence_score_is_low_confidence() -> None:
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.55, needs_review=True))
+
+
+def test_structural_review_flag_without_integrity_flags_is_low_confidence() -> None:
+    # The D2.4 out-of-range / value-mismatch signal: high score, review forced.
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.99, needs_review=True))
+
+
+def test_integrity_only_flag_is_not_low_confidence() -> None:
+    # Purely plagiarism/AI-flagged: review is needed, but not for a marking reason.
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.99, needs_review=True, plagiarism=True)
+    )
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.99, needs_review=True, ai_detection=True)
+    )
+
+
+def test_low_score_with_integrity_flag_is_still_low_confidence() -> None:
+    # The score is a marking-side signal in its own right; an integrity flag
+    # on top does not launder it away.
+    assert is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.55, needs_review=True, plagiarism=True)
+    )
+
+
+def test_confident_unflagged_question_is_not_low_confidence() -> None:
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.95, needs_review=False)
+    )

@@ -371,10 +371,7 @@ class AttemptRepository:
                         error=str(exc),
                     )
 
-                marking_flagged = qr.needs_teacher_review and not (
-                    cq.plagiarism_flagged or cq.ai_detection_flagged
-                )
-                if marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
+                if is_marking_low_confidence(qr):
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,
@@ -422,6 +419,32 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
         (DBConfidenceBand(cq.confidence.value) for cq in questions),
         key=lambda band: _CONFIDENCE_BAND_WEAKNESS_ORDER[band],
     )
+
+
+def is_marking_low_confidence(qr: QuestionResult) -> bool:
+    """Whether a question was flagged for a *marking* reason — the one definition.
+
+    True when the marker's own score is below ``REVIEW_CONFIDENCE_THRESHOLD``
+    or when review was forced by a marking-side structural signal (the D2.4
+    out-of-range / value-mismatch flag) rather than *only* by an integrity
+    check. This is exactly the condition under which :meth:`AttemptRepository._persist`
+    opens a ``low_confidence`` review-queue row, and it is also the condition
+    under which a student's self-mark carries authority (self-review spec,
+    "Authority"). Both read this function so the two can never draw the line
+    differently: a question flagged purely ``plagiarism_flag`` /
+    ``ai_detection_flag`` is *not* low-confidence — integrity flags grant no
+    authority and are never shown to a student.
+
+    Reads the persisted ``QuestionResult`` columns, which
+    :func:`_to_question_result` fills from the same ``CorrectedQuestion``
+    fields ``_persist`` used to read directly — so calling this on a freshly
+    built row inside ``_persist`` and on a loaded row months later gives the
+    same answer.
+    """
+    marking_flagged = qr.needs_teacher_review and not (
+        qr.plagiarism_flagged or qr.ai_detection_flagged
+    )
+    return marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
 
 
 def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
@@ -654,4 +677,9 @@ def _classification_text(question: Question) -> str:
     return "\n".join(p for p in parts if p)
 
 
-__all__ = ["REVIEW_CONFIDENCE_THRESHOLD", "AttemptRepository", "fill_correction_topics"]
+__all__ = [
+    "REVIEW_CONFIDENCE_THRESHOLD",
+    "AttemptRepository",
+    "fill_correction_topics",
+    "is_marking_low_confidence",
+]
