@@ -58,6 +58,7 @@ from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
+from lemely.db.self_review_repo import SelfReviewService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
@@ -440,6 +441,18 @@ def get_review_service() -> ReviewService:
     service built on a throwaway Postgres database.
     """
     return ReviewService(get_sessionmaker(get_settings()), get_class_service())
+
+
+@lru_cache(maxsize=1)
+def get_self_review_service() -> SelfReviewService:
+    """Return the process-wide :class:`SelfReviewService` singleton.
+
+    ``judge=None`` here: until the lenient judge is wired (Part 2 of the
+    self-review plan) every high-confidence challenge that carries evidence
+    is a judge *failure* and lands in the teacher queue as
+    ``student_evidence_unjudged`` — never a silent accept or reject.
+    """
+    return SelfReviewService(get_sessionmaker(get_settings()), judge=None)
 
 
 @lru_cache(maxsize=1)
@@ -1101,6 +1114,7 @@ def reset_singletons() -> None:
     get_notification_prefs_service.cache_clear()
     get_user_mirror.cache_clear()
     get_review_service.cache_clear()
+    get_self_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()
     get_quiz_service.cache_clear()

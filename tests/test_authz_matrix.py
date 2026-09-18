@@ -51,6 +51,10 @@ STUDENT_GET_ROUTES = [
     "/api/student/study-plan/0625",
     # Onboarding profile (P4.3) — per-route guards, so every route is listed.
     "/api/me/student-profile",
+    # Student self-review (spec 2026-09-17) — per-route guards, so both verbs
+    # are listed. Ownership is enforced inside SelfReviewService (a 404, see
+    # tests/test_student_self_review_web.py), not here.
+    "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions/00000000-0000-0000-0000-000000000003/self-review",
 ]
 STUDENT_POST_ROUTES = [
     # /student/correct takes no body (the SSE self-mark stream); an empty POST
@@ -58,6 +62,10 @@ STUDENT_POST_ROUTES = [
     ("/api/student/correct", None),
     ("/api/student/study-plan", {"subjectCode": "0625"}),
     ("/api/me/student-profile/complete-onboarding", None),
+    (
+        "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions/00000000-0000-0000-0000-000000000003/self-review",
+        {"points": [{"markPointId": "p1", "earned": True}]},
+    ),
 ]
 # PATCH/PUT halves of the /api/me/student-profile surface. Listed separately
 # because this file parametrizes by method, and individually because me.py has
