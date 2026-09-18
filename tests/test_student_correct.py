@@ -391,6 +391,63 @@ def test_upload_then_correct_persists_attempt(
         assert {item.reason.value for item in items} == {"low_confidence"}
 
 
+def test_correct_passes_the_resolved_mark_scheme_to_persist_correction(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this, ``persist_correction``'s ``mark_scheme`` default of
+
+    ``None`` silently applies and no paper ever gets a point ledger — a
+    failure with no error, which is why it is pinned here rather than left to
+    integration.
+    """
+    api, _, _ = client
+
+    persist = MagicMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(AttemptRepository, "persist_correction", persist)
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert persist.call_count == 1
+    scheme = persist.call_args.kwargs["mark_scheme"]
+    assert isinstance(scheme, MarkScheme), "route passed no scheme; ledger would be empty"
+    assert scheme == _mcq_scheme(), (
+        "route passed a different scheme than resolve_mark_scheme returned"
+    )
+
+
+def test_correct_does_not_pass_the_upload_id_as_paper_id(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``payload.paperId`` is an UPLOAD id and must never reach ``attempts.paper_id``."""
+    api, _, _ = client
+
+    persist = MagicMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(AttemptRepository, "persist_correction", persist)
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert persist.call_count == 1
+    assert "paper_id" not in persist.call_args.kwargs
+
+
 def test_correct_complete_frame_includes_full_questions(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:

@@ -1057,7 +1057,10 @@ def student_correct(
                     integrity_settings=settings.integrity,
                 )
                 attempt_id = attempt_repo.persist_correction(
-                    user_id=auth.user_id, report=report, upload_id=owned.id
+                    user_id=auth.user_id,
+                    report=report,
+                    upload_id=owned.id,
+                    mark_scheme=mark_scheme,
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
                 # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
