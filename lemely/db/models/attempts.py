@@ -272,17 +272,36 @@ class QuestionResult(TimestampMixin, Base):
     def effective_marks(self) -> int:
         """The mark that must reach every student-facing surface.
 
-        The teacher's override when one has been recorded, else the AI's
-        ``awarded_marks`` unchanged. **The single accessor** — anything
-        (a route, a DTO converter, a future report) that needs "this
-        question's mark" reads this, never ``awarded_marks`` directly, so a
-        teacher correction can never be shown on one screen and silently
-        missing on another (P3.4; the same anti-drift discipline D3.3 applied
-        to "at risk").
+        Precedence: the teacher's override, else the student's self-mark, else
+        the AI's ``awarded_marks`` unchanged. **The single accessor** — anything
+        (a route, a DTO converter, a report) that needs "this question's mark"
+        reads this, never ``awarded_marks`` directly, so a correction can never
+        be shown on one screen and silently missing on another (P3.4).
+
+        The student tier (spec 2026-09-17 self-review, D5) is an accepted
+        trade-off, not an oversight: self-reported marks reach teacher class
+        analytics (``quiz_results_repo``), placement (``placement_repo``) and
+        the student's own grade. The alternative — a second accessor for
+        teacher-facing surfaces — was rejected as two numbers for one question.
+        ``student_selfmark_marks`` is only ever set where the marker was
+        low-confidence or a lenient judge accepted the student's evidence;
+        a self-mark that moved marks *down* (D6) is honoured on the same terms.
         """
         if self.teacher_awarded_marks is not None:
             return self.teacher_awarded_marks
+        if self.student_selfmark_marks is not None:
+            return self.student_selfmark_marks
         return self.awarded_marks
+
+    @property
+    def is_self_marked(self) -> bool:
+        """Whether the student has completed their one self-review pass.
+
+        Reads the timestamp, not the marks: a pass that agreed with the marker
+        on every point sets ``student_selfmarked_at`` and leaves
+        ``student_selfmark_marks`` NULL, and it still counts as the pass.
+        """
+        return self.student_selfmarked_at is not None
 
     @property
     def is_overridden(self) -> bool:
