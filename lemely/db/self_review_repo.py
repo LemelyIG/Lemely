@@ -47,7 +47,7 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC, datetime  # noqa: F401
+from datetime import UTC  # noqa: F401
 from typing import TYPE_CHECKING, Literal
 
 import structlog
@@ -76,6 +76,7 @@ from lemely.io.grade_boundaries import GradeBoundaryStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
+    from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -128,6 +129,8 @@ class PendingPoint:
     mark_type: str | None
     tariff: int
     point_text: str
+    is_alternative: bool
+    is_optional: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,6 +142,8 @@ class RevealedPoint:
     mark_type: str | None
     tariff: int
     point_text: str
+    is_alternative: bool
+    is_optional: bool
     awarded: bool
     student_selfmark: bool
     student_evidence: str | None
@@ -287,6 +292,8 @@ def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | Reveal
                     mark_type=p.mark_type,
                     tariff=p.tariff,
                     point_text=p.point_text,
+                    is_alternative=p.is_alternative,
+                    is_optional=p.is_optional,
                 )
                 for p in qr.points
             ],
@@ -299,6 +306,9 @@ def _revealed_view(
 ) -> RevealedSelfReview:
     reasons = _judge_reasons(session, qr)
     pending_teacher = _has_open_unjudged_row(session, qr)
+    # Defensive and unreachable today: the only caller (_to_view) enters this
+    # branch when qr.is_self_marked is true, which is precisely
+    # student_selfmarked_at is not None.
     submitted_at = qr.student_selfmarked_at
     if submitted_at is None:
         raise ValueError(f"Question {qr.id} is not self-marked")
@@ -322,6 +332,8 @@ def _revealed_view(
                 mark_type=p.mark_type,
                 tariff=p.tariff,
                 point_text=p.point_text,
+                is_alternative=p.is_alternative,
+                is_optional=p.is_optional,
                 awarded=p.awarded,
                 student_selfmark=bool(p.student_selfmark),
                 student_evidence=p.student_evidence,
