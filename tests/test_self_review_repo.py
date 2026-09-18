@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import dataclasses
 import uuid
-from datetime import UTC, datetime  # noqa: F401
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -42,19 +42,19 @@ from lemely.core.self_review import JudgeRequest, JudgeVerdict  # noqa: F401
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult  # noqa: F401
-from lemely.db.models.enums import ReviewReason, ReviewStatus, RevisionSource, Role  # noqa: F401
+from lemely.db.models.attempts import Attempt, QuestionResult
+from lemely.db.models.enums import ReviewReason, ReviewStatus, RevisionSource, Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.self_review_repo import (
-    SELFMARK_RESOLUTION_NOTE,  # noqa: F401
+    SELFMARK_RESOLUTION_NOTE,
     PendingPoint,
     PendingSelfReview,
     PointVerdict,
-    RevealedSelfReview,  # noqa: F401
-    SelfReviewAlreadySubmittedError,  # noqa: F401
+    RevealedSelfReview,
+    SelfReviewAlreadySubmittedError,
     SelfReviewNotFoundError,
     SelfReviewService,
-    SelfReviewValidationError,  # noqa: F401
+    SelfReviewValidationError,
 )
 from lemely.runtime.config import DatabaseSettings
 
@@ -399,3 +399,409 @@ def test_get_before_self_mark_is_pending_even_when_teacher_already_overrode(
 
     assert isinstance(view, PendingSelfReview)
     assert view.state == "not_started"
+
+
+# ── submit, no judge configured ────────────────────────────────────────────
+
+
+def _attempt_row(sm: sessionmaker[Session], attempt_id: uuid.UUID) -> Attempt:
+    with sm() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        _ = attempt.weakness_records
+        return attempt
+
+
+def test_low_confidence_grant_moves_marks_through_the_whole_attempt(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The headline path (D2 + D4 + D5): student says earned on every point of
+    a low-confidence question the marker gave 0/3 — the marks, the attempt
+    total, the grade, the weakness rows and the queue row all move together,
+    and the AI's mark is untouched."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1", "p2"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    before = _attempt_row(pg_sessionmaker, attempt_id)
+    assert before.awarded_marks == 2 and before.percentage == 40.0
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"])
+    )
+
+    assert isinstance(view, RevealedSelfReview)
+    assert view.state == "settled"
+    assert view.ai_marks == 0
+    assert view.student_marks == 3
+    assert view.effective_marks == 3
+    assert view.teacher_settled is False and view.pending_teacher is False
+    assert [p.awarded for p in view.points] == [False, False, False]
+    assert [p.student_selfmark for p in view.points] == [True, True, True]
+    assert [p.evidence_verdict for p in view.points] == ["not_required"] * 3
+    assert all(p.mark_changed for p in view.points)
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 0  # the accuracy guard: lemely/eval reads this
+    assert qr.student_selfmark_marks == 3
+    assert qr.student_selfmarked_at is not None
+    assert all(p.student_selfmark is True and p.student_selfmark_at is not None for p in qr.points)
+    assert [r.revision for r in qr.revisions] == [1, 2]
+    assert qr.revisions[1].source is RevisionSource.student_selfmark
+    assert qr.revisions[1].awarded_marks == 3
+    assert qr.revisions[1].actor_user_id == student
+    assert {e["mark_point_id"] for e in qr.revisions[1].points_snapshot} == {"p1", "p2", "p3"}
+
+    after = _attempt_row(pg_sessionmaker, attempt_id)
+    assert after.awarded_marks == 5
+    assert after.percentage == 100.0
+    assert after.grade == "A" and after.predicted_grade == "A"
+    assert after.weakness_records == []  # "Waves" no longer loses marks
+
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.low_confidence]
+    assert rows[0].status is ReviewStatus.resolved
+    assert rows[0].resolved_by == student
+    assert rows[0].resolved_at is not None
+    assert rows[0].resolution_note == SELFMARK_RESOLUTION_NOTE
+
+
+def test_low_confidence_downward_self_mark_is_honoured(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D6: a student who says they did *not* earn an awarded point loses it."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low(matched=["p1", "p2"])])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", earned=False),
+            PointVerdict("p2", earned=True),
+            PointVerdict("p3", earned=False),
+        ],
+    )
+
+    assert view.ai_marks == 2
+    assert view.student_marks == 1
+    assert view.effective_marks == 1
+    assert [p.mark_changed for p in view.points] == [True, False, False]
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 2
+
+
+def test_agreement_changes_nothing_but_records_the_pass(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low(matched=["p1"])])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", earned=True),
+            PointVerdict("p2", earned=False),
+            PointVerdict("p3", earned=False),
+        ],
+    )
+
+    assert view.state == "settled"
+    assert view.student_marks is None
+    assert view.effective_marks == 1
+    assert not any(p.mark_changed for p in view.points)
+    assert [p.evidence_verdict for p in view.points] == [None, None, None]
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked
+    # Agreement does nothing beyond confirming it: the queue row stays open.
+    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+    # ...but the pass itself is history.
+    assert [r.source for r in qr.revisions] == [RevisionSource.ai, RevisionSource.student_selfmark]
+    assert qr.revisions[1].awarded_marks == 1
+
+
+def test_second_submission_is_rejected_and_writes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    service = _service(pg_sessionmaker)
+    service.submit(student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"]))
+    first = _load_qr(pg_sessionmaker, qr_id)
+
+    with pytest.raises(SelfReviewAlreadySubmittedError):
+        service.submit(
+            student,
+            attempt_id,
+            qr_id,
+            [PointVerdict(p, earned=False) for p in ("p1", "p2", "p3")],
+        )
+
+    second = _load_qr(pg_sessionmaker, qr_id)
+    assert second.student_selfmarked_at == first.student_selfmarked_at
+    assert second.student_selfmark_marks == 3
+    assert len(second.revisions) == 2
+
+
+@pytest.mark.parametrize(
+    ("verdicts", "message"),
+    [
+        (_all_earned(["p1", "p2"]), "missing"),  # partial: reveal-by-halves is refused
+        (_all_earned(["p1", "p2", "p3", "p9"]), "Unknown"),
+        (_all_earned(["p1", "p2", "p3", "p3"]), "Duplicate"),
+        ([], "missing"),
+    ],
+)
+def test_incomplete_or_malformed_submissions_are_rejected_before_any_write(
+    pg_sessionmaker: sessionmaker[Session], verdicts: list[PointVerdict], message: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    with pytest.raises(SelfReviewValidationError, match=message):
+        _service(pg_sessionmaker).submit(student, attempt_id, qr_id, verdicts)
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert not qr.is_self_marked
+    assert all(p.student_selfmark is None for p in qr.points)
+    assert len(qr.revisions) == 1
+
+
+def test_high_confidence_disagreement_without_evidence_is_a_misconception_only(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D3: on a confident point a bare self-mark changes nothing — but the
+    misconception (claimed, not awarded, nothing granted) is recorded."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    assert view.state == "settled"
+    assert view.effective_marks == 1 and view.student_marks is None
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.awarded is False and p2.student_selfmark is True
+    assert p2.evidence_verdict is None and p2.mark_changed is False
+    assert _queue_rows(pg_sessionmaker, qr_id) == []
+
+
+def test_high_confidence_challenge_with_evidence_and_no_judge_goes_to_a_teacher(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """No judge configured is a judge failure: never a silent accept or reject."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker, judge=None).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert view.state == "revealed"
+    assert view.pending_teacher is True
+    assert view.effective_marks == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict is None and p2.mark_changed is False
+    assert p2.student_evidence == "I wrote the unit, N."
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.student_evidence_unjudged]
+    assert rows[0].status is ReviewStatus.open
+
+
+def test_integrity_only_flag_behaves_as_high_confidence(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    flagged = _question(
+        "1", matched=["p1"], maximum=2, needs_review=True, ai_detection_flagged=True
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [flagged, _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    assert view.effective_marks == 1 and view.student_marks is None
+    # The integrity row is never touched by a self-mark.
+    assert [r.reason for r in _queue_rows(pg_sessionmaker, qr_id)] == [
+        ReviewReason.ai_detection_flag
+    ]
+    assert _queue_rows(pg_sessionmaker, qr_id)[0].status is ReviewStatus.open
+
+
+def test_teacher_override_already_recorded_wins_and_skips_nothing_else(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The race: a teacher settled this question mid-pass. The self-mark and
+    its misconception signal are still recorded; marks do not move."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    with pg_sessionmaker() as session, session.begin():
+        qr = session.get(QuestionResult, qr_id)
+        assert qr is not None
+        qr.teacher_awarded_marks = 2
+        qr.overridden_at = datetime.now(UTC)
+        for row in session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.question_result_id == qr_id)
+        ):
+            row.status = ReviewStatus.resolved
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"])
+    )
+
+    assert view.teacher_settled is True
+    assert view.effective_marks == 2
+    assert view.student_marks is None
+    assert not any(p.mark_changed for p in view.points)
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert all(p.student_selfmark is True for p in qr.points)
+    assert qr.is_self_marked
+
+
+def test_evidence_with_a_nul_byte_is_stored_stripped_not_fatal(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Postgres rejects NUL in text and JSONB; a student's paste must not
+    abort their own pass (the spec-1 lesson: loose input meeting a strict
+    constraint lost a whole transaction)."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"], evidence="see\x00 line 2")
+    )
+
+    assert view.points[0].student_evidence == "see line 2"
+    assert _load_qr(pg_sessionmaker, qr_id).is_self_marked
+
+
+def test_self_marked_and_teacher_overridden_attempts_with_identical_marks_agree(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The totals invariant: one recompute, so the two paths cannot round
+    differently. Attempt A is self-marked to 3/3 on question 2; attempt B has
+    a teacher override to 3 on the same question."""
+    from lemely.db.review_repo import recompute_attempt_totals, recompute_weakness_records
+    from lemely.io.grade_boundaries import GradeBoundaryStore
+
+    student = _seed_user(pg_sessionmaker)
+    a = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    b = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+
+    _service(pg_sessionmaker).submit(
+        student, a, _qr_id(pg_sessionmaker, a, "2"), _all_earned(["p1", "p2", "p3"])
+    )
+    with pg_sessionmaker() as session, session.begin():
+        attempt_b = session.get(Attempt, b)
+        assert attempt_b is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == b)
+        ).all()
+        next(qr for qr in results if qr.question_id == "2").teacher_awarded_marks = 3
+        recompute_attempt_totals(session, attempt_b, results, boundary_store=GradeBoundaryStore())
+        recompute_weakness_records(session, attempt_b, results)
+
+    ra, rb = _attempt_row(pg_sessionmaker, a), _attempt_row(pg_sessionmaker, b)
+    assert (ra.awarded_marks, ra.percentage, ra.grade) == (
+        rb.awarded_marks,
+        rb.percentage,
+        rb.grade,
+    )
+    assert {(w.topic, w.lost_marks) for w in ra.weakness_records} == {
+        (w.topic, w.lost_marks) for w in rb.weakness_records
+    }
+
+
+# ── delta vs. re-sum: an either/or group must not double-credit ────────────
+
+
+def _alt_group_scheme() -> MarkScheme:
+    """Question "3" (1 mark): p1/p2 are alternatives worth 1 mark combined."""
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=1,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="3",
+                marks=1,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Either form", marks=1, is_alternative=True),
+                    AnswerPoint(id="p2", point="Or this form", marks=1, is_alternative=True),
+                ],
+            ),
+        ],
+    )
+
+
+def _seed_alt_attempt(sm: sessionmaker[Session], student: uuid.UUID) -> uuid.UUID:
+    """One question, "3": both alternative points matched, capped to 1 mark —
+    exactly what correction_ai's own coherence check would produce for an
+    either/or group, and the situation the delta rule (not a re-sum) exists
+    for (see the module docstring of ``lemely/db/self_review_repo.py``)."""
+    question = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=1,  # capped: NOT len(matched) == 2
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer="answer-3",
+        expected_answer="expected-3",
+        topic="Waves",
+        marker_source="ai",
+        feedback="Either form accepted.",
+        matched_point_ids=["p1", "p2"],
+    )
+    return AttemptRepository(sm).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_alt_group_scheme(),
+    )
+
+
+def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_credit(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The delta rule vs. a re-sum, made to disagree on purpose: p1 and p2 are
+    alternatives worth 1 mark combined, and the marker correctly capped the
+    award at 1 despite matching both (``QuestionResultPoint.awarded`` is True
+    on *both* rows). A student who agrees with both leaves nothing to grant,
+    so the delta is 0 and the mark stays 1 — but a buggy implementation that
+    re-summed every ticked point's tariff instead of applying the delta would
+    total 1 + 1 = 2, silently doubling the mark. This is the case the module
+    docstring's "is_alternative/is_optional... a re-sum would credit a
+    student twice" warning describes; none of the other tests in this file
+    can distinguish delta from re-sum, because their schemes have no
+    alternative/optional points and tariff-1 additive arithmetic makes the
+    two formulas coincide."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_alt_attempt(pg_sessionmaker, student)
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    assert not any(p.mark_changed for p in view.points)
+    assert view.student_marks is None  # nothing was granted: delta is 0
+    assert view.effective_marks == 1  # NOT 2 — a re-sum would double-count
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1

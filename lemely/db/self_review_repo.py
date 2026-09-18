@@ -47,13 +47,13 @@ from __future__ import annotations
 
 import uuid
 from dataclasses import dataclass
-from datetime import UTC  # noqa: F401
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Literal
 
 import structlog
 from sqlalchemy import func, select
 
-from lemely.core.self_review import (  # noqa: F401
+from lemely.core.self_review import (
     JudgeRequest,
     JudgeVerdict,
     PointDecision,
@@ -68,7 +68,7 @@ from lemely.db.models.attempts import (
 )
 from lemely.db.models.enums import EvidenceVerdict, ReviewReason, ReviewStatus, RevisionSource
 from lemely.db.models.ops import ReviewQueueItem
-from lemely.db.review_repo import (  # noqa: F401
+from lemely.db.review_repo import (
     recompute_attempt_totals,
     recompute_weakness_records,
 )
@@ -76,7 +76,6 @@ from lemely.io.grade_boundaries import GradeBoundaryStore
 
 if TYPE_CHECKING:
     from collections.abc import Sequence
-    from datetime import datetime
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -235,8 +234,157 @@ class SelfReviewService:
         question_result_id: uuid.UUID | str,
         verdicts: Sequence[PointVerdict],
     ) -> RevealedSelfReview:
-        """Record the student's one self-mark pass and reveal the marker's verdict."""
-        raise NotImplementedError  # Task 6
+        """Record the student's one self-mark pass and reveal the marker's verdict.
+
+        One transaction; see the module docstring for what moves and why.
+
+        Raises:
+            SelfReviewNotFoundError: as :meth:`get` (404).
+            SelfReviewAlreadySubmittedError: the pass already happened (409).
+            SelfReviewValidationError: not exactly one verdict per point of
+                the question — a partial pass would let a student reveal
+                three points and calibrate the other two (422).
+        """
+        student_uuid = _as_uuid(student_id)
+        attempt_uuid = _as_uuid(attempt_id)
+        qr_uuid = _as_uuid(question_result_id)
+        with self._sessionmaker() as session, session.begin():
+            attempt, qr = _owned_question(
+                session, student_uuid, attempt_uuid, qr_uuid, for_update=True
+            )
+            if qr.is_self_marked:
+                raise SelfReviewAlreadySubmittedError(
+                    f"Question {qr.id} has already been self-marked"
+                )
+            by_point = _verdicts_by_point(verdicts, qr.points)
+
+            now = datetime.now(UTC)
+            low_confidence = is_marking_low_confidence(qr)
+            teacher_settled = qr.is_overridden
+            delta = 0
+            changed = False
+            unjudged = False
+            snapshot: list[dict[str, object]] = []
+
+            for point in qr.points:
+                verdict = by_point[point.mark_point_id]
+                evidence = _clean_text(verdict.evidence, MAX_EVIDENCE_CHARS)
+                point.student_selfmark = verdict.earned
+                point.student_selfmark_at = now
+                point.student_evidence = evidence
+                point.evidence_verdict = None
+                judge_reason: str | None = None
+                granted = False
+
+                decision = decide_point(
+                    ai_awarded=point.awarded,
+                    student_earned=verdict.earned,
+                    low_confidence=low_confidence,
+                    has_evidence=evidence is not None,
+                )
+                if teacher_settled and decision is not PointDecision.AGREE:
+                    # Precedence already settles this question; the self-mark
+                    # is recorded for its learning signal and nothing moves,
+                    # so a judge call could not change any outcome.
+                    decision = PointDecision.NO_CHANGE
+
+                if decision is PointDecision.GRANT:
+                    point.evidence_verdict = EvidenceVerdict.not_required
+                    granted = True
+                elif decision is PointDecision.JUDGE:
+                    outcome = self._judge_safely(
+                        JudgeRequest(
+                            subject_code=attempt.subject_code or "",
+                            question_id=qr.question_id,
+                            point_text=point.point_text,
+                            mark_type=point.mark_type,
+                            tariff=point.tariff,
+                            student_answer=qr.student_answer,
+                            marker_rationale=point.rationale or qr.rationale or qr.feedback,
+                            student_claims_earned=verdict.earned,
+                            student_evidence=evidence or "",
+                        ),
+                        qr,
+                    )
+                    if outcome is None:
+                        unjudged = True
+                    else:
+                        point.evidence_verdict = (
+                            EvidenceVerdict.accepted
+                            if outcome.accepted
+                            else EvidenceVerdict.rejected
+                        )
+                        judge_reason = outcome.reason
+                        granted = outcome.accepted
+
+                if granted:
+                    delta += point.tariff if verdict.earned else -point.tariff
+                    changed = True
+                snapshot.append(
+                    {
+                        "mark_point_id": point.mark_point_id,
+                        "ai_awarded": point.awarded,
+                        "student_selfmark": verdict.earned,
+                        "evidence_verdict": (
+                            point.evidence_verdict.value if point.evidence_verdict else None
+                        ),
+                        "mark_changed": granted,
+                        "judge_reason": judge_reason,
+                    }
+                )
+
+            qr.student_selfmarked_at = now
+            if changed:
+                qr.student_selfmark_marks = max(0, min(qr.maximum_marks, qr.awarded_marks + delta))
+            session.flush()
+            _append_revision(session, qr, actor=student_uuid, snapshot=snapshot, changed=changed)
+
+            if changed:
+                results = session.scalars(
+                    select(QuestionResult).where(QuestionResult.attempt_id == attempt.id)
+                ).all()
+                recompute_attempt_totals(session, attempt, results, boundary_store=self._boundaries)
+                recompute_weakness_records(session, attempt, results)
+                _resolve_low_confidence_rows(session, qr, resolver=student_uuid, now=now)
+            if unjudged:
+                session.add(
+                    ReviewQueueItem(
+                        attempt_id=attempt.id,
+                        question_result_id=qr.id,
+                        reason=ReviewReason.student_evidence_unjudged,
+                    )
+                )
+            session.flush()
+            log.info(
+                "self_review_submitted",
+                attempt_id=str(attempt.id),
+                question_result_id=str(qr.id),
+                low_confidence=low_confidence,
+                marks_changed=changed,
+                unjudged=unjudged,
+                teacher_settled=teacher_settled,
+            )
+            return _revealed_view(session, qr, evidence_required=not low_confidence)
+
+    def _judge_safely(self, request: JudgeRequest, qr: QuestionResult) -> JudgeVerdict | None:
+        """Ask the judge; ``None`` on any failure (no judge, exception, junk).
+
+        A failure is never a decision — the caller opens a
+        ``student_evidence_unjudged`` queue row. The verdict's reason is an
+        LLM string bound for JSONB, so it is NUL-stripped and truncated here.
+        """
+        if self._judge is None:
+            log.warning("self_review_judge_unavailable", question_result_id=str(qr.id))
+            return None
+        try:
+            verdict = self._judge.judge(request)
+        except Exception as exc:
+            log.warning("self_review_judge_failed", question_result_id=str(qr.id), error=str(exc))
+            return None
+        return JudgeVerdict(
+            accepted=bool(verdict.accepted),
+            reason=_clean_text(verdict.reason, MAX_JUDGE_REASON_CHARS) or "",
+        )
 
 
 # ── Internals ────────────────────────────────────────────────────────────────
@@ -384,6 +532,90 @@ def _has_open_unjudged_row(session: Session, qr: QuestionResult) -> bool:
         )
     )
     return (count or 0) > 0
+
+
+def _verdicts_by_point(
+    verdicts: Sequence[PointVerdict], points: Sequence[QuestionResultPoint]
+) -> dict[str, PointVerdict]:
+    """Exactly one verdict per point of the question, or a validation error.
+
+    Checked before anything is written, so a rejected submission leaves the
+    question exactly as it was — a second, complete POST is still allowed.
+    """
+    expected = {p.mark_point_id for p in points}
+    seen: dict[str, PointVerdict] = {}
+    for verdict in verdicts:
+        if verdict.mark_point_id in seen:
+            raise SelfReviewValidationError(f"Duplicate verdict for point {verdict.mark_point_id}")
+        if verdict.mark_point_id not in expected:
+            raise SelfReviewValidationError(f"Unknown point {verdict.mark_point_id}")
+        seen[verdict.mark_point_id] = verdict
+    missing = expected - seen.keys()
+    if missing:
+        raise SelfReviewValidationError(f"Every point needs a verdict; missing {sorted(missing)}")
+    return seen
+
+
+def _clean_text(text: str | None, limit: int) -> str | None:
+    """Strip NUL bytes (Postgres text/JSONB reject them), trim, bound, blank→None."""
+    if text is None:
+        return None
+    cleaned = text.replace("\x00", "").strip()
+    if not cleaned:
+        return None
+    return cleaned[:limit]
+
+
+def _append_revision(
+    session: Session,
+    qr: QuestionResult,
+    *,
+    actor: uuid.UUID,
+    snapshot: list[dict[str, object]],
+    changed: bool,
+) -> None:
+    """Append the ``student_selfmark`` revision — on every pass (module docstring)."""
+    latest = session.scalar(
+        select(func.max(QuestionResultRevision.revision)).where(
+            QuestionResultRevision.question_result_id == qr.id
+        )
+    )
+    session.add(
+        QuestionResultRevision(
+            question_result_id=qr.id,
+            revision=(latest or 0) + 1,
+            source=RevisionSource.student_selfmark,
+            awarded_marks=qr.effective_marks,
+            points_snapshot=snapshot,
+            actor_user_id=actor,
+            reason=(
+                "Student self-mark: marks changed" if changed else "Student self-mark: no change"
+            ),
+        )
+    )
+    session.flush()
+
+
+def _resolve_low_confidence_rows(
+    session: Session, qr: QuestionResult, *, resolver: uuid.UUID, now: datetime
+) -> None:
+    """D4: close the open ``low_confidence`` row(s) with the student as resolver.
+
+    Only that reason. An integrity row on the same question is a teacher's
+    to dismiss and is never touched here.
+    """
+    rows = session.scalars(
+        select(ReviewQueueItem).where(
+            ReviewQueueItem.question_result_id == qr.id,
+            ReviewQueueItem.reason == ReviewReason.low_confidence,
+            ReviewQueueItem.status == ReviewStatus.open,
+        )
+    ).all()
+    for row in rows:
+        row.status = ReviewStatus.resolved
+        row.resolved_by = resolver
+        row.resolved_at = now
+        row.resolution_note = SELFMARK_RESOLUTION_NOTE
 
 
 __all__ = [
