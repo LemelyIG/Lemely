@@ -252,16 +252,42 @@ def test_a_lone_flag_is_not_a_group() -> None:
 
 
 def test_pool_with_select_count_is_capped_at_the_n_largest_tariffs() -> None:
-    """'Any 2 from' four one-mark points: the pool is worth 2, not 4."""
+    """'Any 2 from' four one-mark points on a 4-mark question: the pool is
+
+    worth 2 (the two largest tariffs), not 4 (every tariff) and not
+    coincidentally equal to the question's own total — ``marks=4`` keeps
+    sum-of-N (2), ``total`` (4) and ``leftover`` (4, no independents here)
+    from agreeing by accident, unlike the old ``marks=2`` fixture where all
+    three collapsed to the same number (Finding 3)."""
     scheme = _scheme_with(
         _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
-        marks=2,
+        marks=4,
         select_count=2,
     )
 
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [("pool:1", 2)] * 4
+
+
+def test_pool_select_count_takes_the_largest_tariffs_not_the_first_or_smallest() -> None:
+    """Every existing pool test used uniform 1-mark tariffs, so
+    ``sorted(..., reverse=True)`` was never exercised (Finding 2): deleting
+    the sort, or sorting ascending, passed all of them. A mixed pool where
+    the three plausible implementations diverge — largest-two (5), first-two
+    in scheme order (1 + 3 = 4), smallest-two (1 + 2 = 3) — catches that. No
+    independent point here: mixing one in would let Finding 1's subtraction
+    confound what this test measures, so ``total`` (10) is chosen well clear
+    of every candidate to isolate the sort."""
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 3, "opt"), ("p3", 2, "opt")),
+        marks=10,
+        select_count=2,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 5)] * 3
 
 
 def test_pool_cap_never_exceeds_the_question_total() -> None:
@@ -290,6 +316,26 @@ def test_pool_without_select_count_gets_the_marks_the_question_has_left() -> Non
     assert _groups(rows) == [(None, None), ("pool:1", 2), ("pool:1", 2), ("pool:1", 2)]
 
 
+def test_pool_select_count_cap_still_subtracts_independent_and_alt_marks() -> None:
+    """Finding 1: the ``select_count`` branch used to cap the pool at
+    ``min(total, sum of the N largest tariffs)``, ignoring what independent
+    points had already spent — so a low-confidence question could be granted
+    every pool point even though the question had no room left for them.
+    p1 is independent worth 2; p2/p3/p4 are a 'any 3 from' pool worth 1 each
+    on a 3-mark question. The unsubtracted formula gives 3 (sum of all three
+    tariffs, which is also ``total``); the question actually has only
+    3 - 2 == 1 mark of room left once p1's independent 2 is spent."""
+    scheme = _scheme_with(
+        _points(("p1", 2, ""), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
+        marks=3,
+        select_count=3,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), ("pool:1", 1), ("pool:1", 1), ("pool:1", 1)]
+
+
 def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
     scheme = _scheme_with(
         _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "alt")), marks=3, select_count=2
@@ -311,6 +357,32 @@ def test_two_groups_get_distinct_keys_and_the_leftover_subtracts_the_either_or_c
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), ("pool:1", 2), ("pool:1", 2)]
+
+
+def test_two_alt_groups_in_one_question_are_numbered_alt_1_and_alt_2() -> None:
+    """Finding 5: every prior either/or test used exactly one group.
+    p1|p2 and p3|p4 are two separate either/or runs in the same question;
+    they must get distinct, gapless keys (``alt:1``, ``alt:2``), not share
+    one key or collide with a later pool's ``pool:1`` numbering."""
+    scheme = _scheme_with(
+        _points(("p1", 1, ""), ("p2", 1, "alt"), ("p3", 2, ""), ("p4", 1, "alt")), marks=3
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), ("alt:2", 2), ("alt:2", 2)]
+
+
+def test_pool_leftover_is_zero_when_independents_consume_the_whole_total() -> None:
+    """Finding 5: when independent points already claim every mark, a pool
+    without a ``select_count`` is worth 0 — no grant in it can ever be
+    correct, since the question has nothing left to give. Conservative and
+    correct, not previously asserted."""
+    scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "opt"), ("p3", 1, "opt")), marks=2)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), ("pool:1", 0), ("pool:1", 0)]
 
 
 def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:

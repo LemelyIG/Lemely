@@ -848,7 +848,13 @@ def test_self_marked_and_teacher_overridden_attempts_with_identical_marks_agree(
 
 
 def _alt_group_scheme() -> MarkScheme:
-    """Question "3" (1 mark): p1/p2 are alternatives worth 1 mark combined."""
+    """Question "3" (2 marks): p1/p2 are alternatives worth 2 marks combined
+
+    (the group's best member, 2 and 1 respectively — deliberately unequal:
+    ``min(total, ...)`` would clamp a summing bug to the same 1 mark as a
+    correct "best member" answer if both tariffs were 1, so this fixture
+    can't tell them apart on marks alone. With 2 and 1 a sum gives 3
+    (Finding 4)."""
     return MarkScheme(
         metadata=MarkSchemeMetadata(
             subject="Physics",
@@ -858,16 +864,16 @@ def _alt_group_scheme() -> MarkScheme:
             session_month=LooseSessionMonth.MAY_JUNE,
             session_year=2020,
             paper_type=PaperType.THEORY_CORE,
-            maximum_mark=1,
+            maximum_mark=2,
             scheme_format=SchemeFormat.POINT_BASED,
         ),
         questions=[
             SchemeQuestion(
                 id="3",
-                marks=1,
+                marks=2,
                 type=SchemeQuestionType.RECALL,
                 answer_points=[
-                    AnswerPoint(id="p1", point="Either form", marks=1, is_alternative=True),
+                    AnswerPoint(id="p1", point="Either form", marks=2, is_alternative=True),
                     AnswerPoint(id="p2", point="Or this form", marks=1, is_alternative=True),
                 ],
             ),
@@ -878,14 +884,15 @@ def _alt_group_scheme() -> MarkScheme:
 def _seed_alt_attempt(
     sm: sessionmaker[Session], student: uuid.UUID, *, low_confidence: bool = False
 ) -> uuid.UUID:
-    """One question, "3": both alternative points matched, capped to 1 mark —
-    exactly what correction_ai's own coherence check would produce for an
-    either/or group, and the situation the delta rule (not a re-sum) exists
-    for (see the module docstring of ``lemely/db/self_review_repo.py``)."""
+    """One question, "3": both alternative points matched, capped to 2 marks
+    (the group's best member) — exactly what correction_ai's own coherence
+    check would produce for an either/or group, and the situation the delta
+    rule (not a re-sum) exists for (see the module docstring of
+    ``lemely/db/self_review_repo.py``)."""
     question = CorrectedQuestion(
         question_id="3",
-        awarded_marks=1,  # capped: NOT len(matched) == 2
-        maximum_marks=1,
+        awarded_marks=2,  # capped: NOT p1.tariff + p2.tariff == 3
+        maximum_marks=2,
         confidence=ConfidenceBand.LOW if low_confidence else ConfidenceBand.HIGH,
         confidence_score=0.2 if low_confidence else 0.95,
         needs_teacher_review=low_confidence,
@@ -906,10 +913,11 @@ def _seed_alt_attempt(
 def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_credit(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The delta rule vs. a re-sum, made to disagree on purpose. p1 and p2 are
-    alternatives worth 1 mark combined; the marker matched both and capped
-    the award at 1 (``QuestionResultPoint.awarded`` is True on *both* rows,
-    ``awarded_marks == 1``).
+    """The delta rule vs. a re-sum, made to disagree on purpose. p1 (2 marks)
+    and p2 (1 mark) are alternatives worth 2 marks combined (the group's best
+    member); the marker matched both and capped the award at 2
+    (``QuestionResultPoint.awarded`` is True on *both* rows,
+    ``awarded_marks == 2``).
 
     Finding 4: the original version of this test was all-AGREE (student
     ticks both points, same as the marker), so ``changed`` was ``False`` and
@@ -917,9 +925,9 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     sum(tariff for ticked)`` implementation passed it (and all other tests in
     this file) despite being wrong. This fixture forces both points to
     actually change: the student says p1 was **not** earned (ungranting a
-    point the marker awarded, delta -1) and p2 **was** earned — but p2 is
+    point the marker awarded, delta -2) and p2 **was** earned — but p2 is
     already AI-awarded True, so that is an AGREE, not a grant, and
-    contributes nothing. The correct delta is ``awarded_marks(1) + (-1) ==
+    contributes nothing. The correct delta is ``awarded_marks(2) + (-2) ==
     0``. A ``sum(tariff for verdict.earned)`` re-sum would instead total the
     tariff of every point the student ticked ``True`` — just p2 — giving 1,
     diverging from the delta result.
@@ -928,7 +936,10 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     (``student_selfmark_marks = sum(p.tariff for p in qr.points if
     by_point[p.mark_point_id].earned)`` in place of the delta line): it
     produced 1 where this test asserts 0, confirming the fixture
-    discriminates."""
+    discriminates. Using unequal tariffs (2 and 1, not 1 and 1) means this
+    also discriminates from a summing bug: ``min(total, sum(...))`` would
+    otherwise clamp a wrong sum to the same 1-mark cap a correct "best
+    member" answer produces, hiding the bug (Finding 4)."""
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_alt_attempt(pg_sessionmaker, student, low_confidence=True)
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
@@ -944,10 +955,10 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     p2 = next(p for p in view.points if p.mark_point_id == "p2")
     assert p1.mark_changed is True  # ungranted: the marker's award is withdrawn
     assert p2.mark_changed is False  # agreement: ai_awarded is already True
-    assert view.student_marks == 0  # delta: 1 - 1 == 0, NOT a re-sum's 1
+    assert view.student_marks == 0  # delta: 2 - 2 == 0, NOT a re-sum's 1
     assert view.effective_marks == 0
     qr = _load_qr(pg_sessionmaker, qr_id)
-    assert qr.awarded_marks == 1  # the AI's mark is never mutated
+    assert qr.awarded_marks == 2  # the AI's mark is never mutated
     assert qr.student_selfmark_marks == 0
 
 
@@ -1027,8 +1038,8 @@ def test_pending_view_carries_the_scheme_group_and_so_do_the_ledger_and_the_ai_r
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """Scheme-derived, verdict-free, and needed before the reveal: the panel
-    must show p1/p2 as one either/or unit worth 1, or it invites the double
-    tick Task 6b exists to stop."""
+    must show p1/p2 as one either/or unit worth 2 (the group's best member),
+    or it invites the double tick Task 6b exists to stop."""
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_alt_attempt(pg_sessionmaker, student)
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
@@ -1036,11 +1047,11 @@ def test_pending_view_carries_the_scheme_group_and_so_do_the_ledger_and_the_ai_r
     view = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
 
     assert isinstance(view, PendingSelfReview)
-    assert [(p.group_key, p.group_max_marks) for p in view.points] == [("alt:1", 1), ("alt:1", 1)]
+    assert [(p.group_key, p.group_max_marks) for p in view.points] == [("alt:1", 2), ("alt:1", 2)]
 
     qr = _load_qr(pg_sessionmaker, qr_id)
-    assert [(p.group_key, p.group_max_marks) for p in qr.points] == [("alt:1", 1), ("alt:1", 1)]
+    assert [(p.group_key, p.group_max_marks) for p in qr.points] == [("alt:1", 2), ("alt:1", 2)]
     assert [(e["group_key"], e["group_max_marks"]) for e in qr.revisions[0].points_snapshot] == [
-        ("alt:1", 1),
-        ("alt:1", 1),
+        ("alt:1", 2),
+        ("alt:1", 2),
     ]

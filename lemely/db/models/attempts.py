@@ -377,10 +377,12 @@ class QuestionResultPoint(TimestampMixin, Base):
     without checking these flags will show a breakdown that disagrees with the
     student's own mark.
     """
+
     group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
-    """The scheme group this point belongs to, recorded at derivation time
+    """``group_key``/``group_max_marks``: the scheme group this point belongs
 
+    to, recorded at derivation time
     (:func:`lemely.db.question_points.derive_point_rows`): ``alt:n`` for an
     either/or run, ``pool:n`` for an "any N from" pool, ``NULL`` for an
     independent point. ``group_max_marks`` is the most the whole group can

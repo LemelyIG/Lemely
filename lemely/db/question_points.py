@@ -84,6 +84,9 @@ def derive_point_rows(
         kept,
         # ``Question.marks == 0`` is the scheme's "container" convention; the
         # marker's maximum is the next-best statement of the question's worth.
+        # When both are 0 this still yields 0, collapsing every cap to 0 —
+        # harmless while group_max_marks is advisory-only, but load-bearing
+        # once a future task enforces it against a student's grant.
         total=question.marks or cq.maximum_marks,
         select_count=question.select_count,
     )
@@ -128,9 +131,13 @@ def _group_points(
 
     ``group_max_marks`` is the most the group can contribute, never above
     ``total``: an either/or group is worth its best member; a pool with a
-    ``select_count`` is worth its N largest tariffs; a pool without one is
-    worth whatever ``total`` has left after every independent point and every
-    either/or group — the tightest cap the scheme supports when N is unstated.
+    ``select_count`` is worth its N largest tariffs, further capped by
+    whatever ``total`` has left after every independent point and every
+    either/or group (the same leftover a select_count-less pool is worth in
+    full) — a pool can never claim more room than the question actually has
+    once its siblings are paid for; a pool without a ``select_count`` is
+    worth exactly that leftover — the tightest cap the scheme supports when N
+    is unstated.
     """
     groups: list[tuple[str, list[int]]] = []
     member_of: dict[int, int] = {}
@@ -177,7 +184,10 @@ def _group_points(
             group_max = alt_cap(members)
         elif select_count is not None:
             tariffs = sorted((points[index].marks for index in members), reverse=True)
-            group_max = min(total, sum(tariffs[:select_count]))
+            group_max = max(
+                0,
+                min(total - independent_total - alt_cap_total, sum(tariffs[:select_count])),
+            )
         else:
             group_max = leftover
         key = f"{kind}:{counters[kind]}"
