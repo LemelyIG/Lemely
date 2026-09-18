@@ -1062,6 +1062,9 @@ def student_correct(
                     upload_id=owned.id,
                     mark_scheme=mark_scheme,
                 )
+                # The self-review routes address a question by its
+                # question_results row id, which only exists once persisted.
+                result_ids = attempt_repo.question_result_ids(attempt_id)
                 upload_repo.set_status(owned.id, UploadStatus.complete)
                 # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
                 # never for how well it was corrected — no mark/score/grade
@@ -1164,7 +1167,14 @@ def student_correct(
                     confidence=report.grade_prediction.confidence.value,
                     needs_review=report.correction.needs_teacher_review,
                     questions=[
-                        question_to_dto(q).model_dump(by_alias=True)
+                        question_to_dto(
+                            q,
+                            question_result_id=(
+                                str(result_ids[q.question_id])
+                                if q.question_id in result_ids
+                                else None
+                            ),
+                        ).model_dump(by_alias=True)
                         for q in report.correction.questions
                     ],
                     # SSE frames are raw kwargs forwarded snake_case (bypassing the

@@ -43,6 +43,10 @@ class QuestionResultDTO(ApiModel):
     plagiarismFlagged: bool = False
     aiDetectionFlagged: bool = False
     topic: str | None = None
+    questionResultId: str | None = None
+    """``question_results.id`` once the attempt is persisted; the address the
+    self-review routes take. ``None`` on a frame built before persistence
+    (a teacher-console grade, which has no ``question_results`` row)."""
 
 
 class WeakAreaDTO(ApiModel):
@@ -91,7 +95,9 @@ class HealthDTO(ApiModel):
     gradeBoundariesLoaded: bool
 
 
-def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
+def question_to_dto(
+    question: CorrectedQuestion, *, question_result_id: str | None = None
+) -> QuestionResultDTO:
     """Convert a core :class:`CorrectedQuestion` into a :class:`QuestionResultDTO`."""
     return QuestionResultDTO(
         questionId=question.question_id,
@@ -105,6 +111,7 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         plagiarismFlagged=question.plagiarism_flagged,
         aiDetectionFlagged=question.ai_detection_flagged,
         topic=question.topic,
+        questionResultId=question_result_id,
     )
 
 

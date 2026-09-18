@@ -965,3 +965,33 @@ def test_resolver_corpus_near_miss_returns_none_not_a_different_papers_scheme(
     assert (
         resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=near_miss) is None
     )
+
+
+def test_correct_complete_frame_carries_question_result_ids(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The self-review surface (spec 2026-09-17) is addressed by
+    ``question_results.id``; the live result must carry it per question."""
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionResult.question_id, QuestionResult.id).where(
+                QuestionResult.attempt_id == uuid.UUID(complete_frame["attempt_id"])
+            )
+        ).all()
+    expected = {question_id: str(row_id) for question_id, row_id in rows}
+    assert {q["questionId"]: q["questionResultId"] for q in complete_frame["questions"]} == expected

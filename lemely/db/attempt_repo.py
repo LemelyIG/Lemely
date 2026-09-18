@@ -58,6 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
@@ -221,6 +222,26 @@ class AttemptRepository:
             upload_id=None,
             recorded_at=recorded_at,
         )
+
+    def question_result_ids(self, attempt_id: uuid.UUID) -> dict[str, uuid.UUID]:
+        """``question_id -> question_results.id`` for one attempt.
+
+        The student self-review routes (spec 2026-09-17) address a question
+        by its ``question_results`` row id, so the ``/student/correct``
+        complete frame carries one per question. First occurrence wins on a
+        duplicated question id, mirroring ``get_question_by_id``'s
+        depth-first "first match". Empty for an unknown attempt.
+        """
+        ids: dict[str, uuid.UUID] = {}
+        with self._sm() as session:
+            rows = session.execute(
+                select(QuestionResult.question_id, QuestionResult.id)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResult.created_at, QuestionResult.id)
+            ).all()
+        for question_id, row_id in rows:
+            ids.setdefault(question_id, row_id)
+        return ids
 
     def _persist(
         self,

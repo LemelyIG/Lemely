@@ -1142,3 +1142,20 @@ def test_confident_unflagged_question_is_not_low_confidence() -> None:
     assert not is_marking_low_confidence(
         _qr_for_authority(confidence_score=0.95, needs_review=False)
     )
+
+
+def test_question_result_ids_maps_question_id_to_row_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    assert set(ids) == {"1a"}
+    assert ids["1a"] == _only_result(pg_sessionmaker, attempt_id).id
+    assert repo.question_result_ids(uuid.uuid4()) == {}

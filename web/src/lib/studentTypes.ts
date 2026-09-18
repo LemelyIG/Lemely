@@ -245,6 +245,13 @@ export interface CorrectRequest {
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
   aiDetectionFlagged: boolean
+  /**
+   * `question_results.id`, the address the self-review routes take
+   * (`/student/attempts/{attemptId}/questions/{questionResultId}/self-review`).
+   * Present on every question of a `/student/correct` complete frame since
+   * the self-review spec; absent on frames from before it.
+   */
+  questionResultId?: string | null
 }
 
 // ── Standings ─────────────────────────────────────────────────────────────
