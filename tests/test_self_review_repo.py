@@ -237,7 +237,7 @@ def _qr_id(sm: sessionmaker[Session], attempt_id: uuid.UUID, question_id: str) -
         ).one()
 
 
-def _load_qr(sm: sessionmaker[Session], qr_id: uuid.UUID) -> QuestionResult:  # noqa: F401
+def _load_qr(sm: sessionmaker[Session], qr_id: uuid.UUID) -> QuestionResult:
     with sm() as session:
         qr = session.get(QuestionResult, qr_id)
         assert qr is not None
@@ -245,7 +245,7 @@ def _load_qr(sm: sessionmaker[Session], qr_id: uuid.UUID) -> QuestionResult:  # 
         return qr
 
 
-def _queue_rows(sm: sessionmaker[Session], qr_id: uuid.UUID) -> list[ReviewQueueItem]:  # noqa: F401
+def _queue_rows(sm: sessionmaker[Session], qr_id: uuid.UUID) -> list[ReviewQueueItem]:
     with sm() as session:
         return list(
             session.scalars(
@@ -258,7 +258,7 @@ def _service(sm: sessionmaker[Session], judge: object | None = None) -> SelfRevi
     return SelfReviewService(sm, judge=judge)  # type: ignore[arg-type]
 
 
-def _all_earned(point_ids: list[str], evidence: str | None = None) -> list[PointVerdict]:  # noqa: F401
+def _all_earned(point_ids: list[str], evidence: str | None = None) -> list[PointVerdict]:
     return [PointVerdict(mark_point_id=pid, earned=True, evidence=evidence) for pid in point_ids]
 
 
@@ -282,9 +282,31 @@ def test_get_before_submission_is_pending_and_carries_no_verdict(
     assert [p.mark_point_id for p in view.points] == ["p1", "p2", "p3"]
     assert [p.tariff for p in view.points] == [1, 1, 1]
     assert view.points[0].point_text == "Correct method"
+    # is_alternative/is_optional are scheme-derived (not verdict-bearing) and
+    # must reach the pending view so the UI can render OR-groups.
+    assert [p.is_alternative for p in view.points] == [False, False, False]
+    assert [p.is_optional for p in view.points] == [False, False, False]
     # The reveal is server-enforced: the pending point type has no such field.
-    assert "awarded" not in {f.name for f in dataclasses.fields(PendingPoint)}
-    assert not any("awarded" in f.name for f in dataclasses.fields(PendingSelfReview))
+    # Exact field-set equality (not a denylist) so any new field forces a
+    # deliberate decision about whether it leaks the marker's verdict.
+    assert {f.name for f in dataclasses.fields(PendingPoint)} == {
+        "mark_point_id",
+        "ordinal",
+        "mark_type",
+        "tariff",
+        "point_text",
+        "is_alternative",
+        "is_optional",
+    }
+    assert {f.name for f in dataclasses.fields(PendingSelfReview)} == {
+        "state",
+        "attempt_id",
+        "question_result_id",
+        "question_id",
+        "maximum_marks",
+        "evidence_required",
+        "points",
+    }
 
 
 def test_get_reports_evidence_required_on_a_high_confidence_question(
@@ -292,7 +314,9 @@ def test_get_reports_evidence_required_on_a_high_confidence_question(
 ) -> None:
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
-    view = _service(pg_sessionmaker).get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1"))
+    view = _service(pg_sessionmaker).get(
+        student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1")
+    )
     assert view.evidence_required is True
 
 
@@ -303,7 +327,9 @@ def test_get_treats_an_integrity_only_flag_as_high_confidence(
     student = _seed_user(pg_sessionmaker)
     flagged = _question("1", matched=["p1"], maximum=2, needs_review=True, plagiarism_flagged=True)
     attempt_id = _seed_attempt(pg_sessionmaker, student, [flagged, _low()])
-    view = _service(pg_sessionmaker).get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1"))
+    view = _service(pg_sessionmaker).get(
+        student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "1")
+    )
     assert view.evidence_required is True
     assert not any("plagiar" in f.name or "integrity" in f.name for f in dataclasses.fields(view))
 
@@ -349,3 +375,27 @@ def test_get_without_point_rows_is_not_found(pg_sessionmaker: sessionmaker[Sessi
     attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()], with_scheme=False)
     with pytest.raises(SelfReviewNotFoundError):
         _service(pg_sessionmaker).get(student, attempt_id, _qr_id(pg_sessionmaker, attempt_id, "2"))
+
+
+def test_get_before_self_mark_is_pending_even_when_teacher_already_overrode(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``_to_view`` branches on ``qr.is_self_marked`` alone. A teacher override
+    sets ``teacher_awarded_marks`` (``is_overridden``) but never touches
+    ``student_selfmarked_at`` — so a question the teacher has already
+    corrected, but the student has not yet self-marked, must still come back
+    as the pending view. Pinning this so a later widening of the gate to
+    consult ``is_overridden`` is caught here, not in production."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    with pg_sessionmaker() as session:
+        qr = session.get(QuestionResult, qr_id)
+        assert qr is not None
+        qr.teacher_awarded_marks = 3
+        session.commit()
+
+    view = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+
+    assert isinstance(view, PendingSelfReview)
+    assert view.state == "not_started"
