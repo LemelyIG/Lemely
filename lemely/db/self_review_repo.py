@@ -335,7 +335,21 @@ class SelfReviewService:
 
             qr.student_selfmarked_at = now
             if changed:
-                qr.student_selfmark_marks = max(0, min(qr.maximum_marks, qr.awarded_marks + delta))
+                unclamped = qr.awarded_marks + delta
+                clamped = max(0, min(qr.maximum_marks, unclamped))
+                if clamped != unclamped:
+                    # The clamp is load-bearing but otherwise invisible: on a
+                    # 1-mark either/or question it silently turns a
+                    # double-credit bug into the right answer, and on a
+                    # larger question the same bug would leak through
+                    # unnoticed. Surface every time it actually binds.
+                    log.warning(
+                        "self_review_delta_clamped",
+                        question_result_id=str(qr.id),
+                        unclamped_marks=unclamped,
+                        clamped_marks=clamped,
+                    )
+                qr.student_selfmark_marks = clamped
             session.flush()
             _append_revision(session, qr, actor=student_uuid, snapshot=snapshot, changed=changed)
 
@@ -378,13 +392,17 @@ class SelfReviewService:
             return None
         try:
             verdict = self._judge.judge(request)
+            return JudgeVerdict(
+                accepted=bool(verdict.accepted),
+                reason=_clean_text(verdict.reason, MAX_JUDGE_REASON_CHARS) or "",
+            )
         except Exception as exc:
+            # A malformed verdict (None, a dict, anything missing .accepted /
+            # .reason) is caught here too, not just a raised exception from
+            # the judge call itself — junk from a judge must never abort the
+            # student's whole self-mark (finding 1).
             log.warning("self_review_judge_failed", question_result_id=str(qr.id), error=str(exc))
             return None
-        return JudgeVerdict(
-            accepted=bool(verdict.accepted),
-            reason=_clean_text(verdict.reason, MAX_JUDGE_REASON_CHARS) or "",
-        )
 
 
 # ── Internals ────────────────────────────────────────────────────────────────
@@ -409,7 +427,13 @@ def _owned_question(
     for_update: bool,
 ) -> tuple[Attempt, QuestionResult]:
     """Load the caller's question or raise 404. Every failure is the same 404."""
-    attempt = session.get(Attempt, attempt_uuid)
+    # Locked before the QuestionResult (attempt-then-question is already the
+    # access order elsewhere in this module and in review_repo, so this
+    # introduces no new deadlock risk). Without this lock, two submissions on
+    # different questions of the same attempt each read a stale Attempt,
+    # recompute totals from it, and the second overwrites the first's write —
+    # silently losing one question's contribution to awarded_marks (finding 3).
+    attempt = session.get(Attempt, attempt_uuid, with_for_update=for_update)
     if attempt is None or attempt.user_id != student_uuid:
         raise SelfReviewNotFoundError(f"No question {qr_uuid} on attempt {attempt_uuid}")
     qr = session.get(QuestionResult, qr_uuid, with_for_update=for_update)
@@ -557,10 +581,16 @@ def _verdicts_by_point(
 
 
 def _clean_text(text: str | None, limit: int) -> str | None:
-    """Strip NUL bytes (Postgres text/JSONB reject them), trim, bound, blank→None."""
+    """Strip NUL bytes and unencodable characters, trim, bound, blank→None.
+
+    Postgres text/JSONB reject both — a lone surrogate survives
+    ``json.loads`` of a student's evidence string but cannot be encoded as
+    UTF-8, and aborts the transaction on flush if it reaches the database
+    unchanged.
+    """
     if text is None:
         return None
-    cleaned = text.replace("\x00", "").strip()
+    cleaned = text.encode("utf-8", "ignore").decode("utf-8").replace("\x00", "").strip()
     if not cleaned:
         return None
     return cleaned[:limit]

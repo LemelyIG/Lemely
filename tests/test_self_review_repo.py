@@ -8,6 +8,9 @@ p1/p2/p3); each test chooses the confidence of each question.
 from __future__ import annotations
 
 import dataclasses
+import json
+import threading
+import time
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -38,7 +41,7 @@ from lemely.core.schemas import (
     ExamMetadata,
     GradePrediction,
 )
-from lemely.core.self_review import JudgeRequest, JudgeVerdict  # noqa: F401
+from lemely.core.self_review import JudgeRequest, JudgeVerdict
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
@@ -46,6 +49,8 @@ from lemely.db.models.attempts import Attempt, QuestionResult
 from lemely.db.models.enums import ReviewReason, ReviewStatus, RevisionSource, Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.self_review_repo import (
+    MAX_EVIDENCE_CHARS,
+    MAX_JUDGE_REASON_CHARS,
     SELFMARK_RESOLUTION_NOTE,
     PendingPoint,
     PendingSelfReview,
@@ -686,6 +691,120 @@ def test_evidence_with_a_nul_byte_is_stored_stripped_not_fatal(
     assert _load_qr(pg_sessionmaker, qr_id).is_self_marked
 
 
+def test_evidence_with_a_lone_surrogate_is_stored_stripped_not_fatal(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A lone surrogate survives ``json.loads`` of a student's evidence string
+    (reachable straight through the API, since evidence arrives as JSON) but
+    cannot be encoded as UTF-8 — it must not abort the transaction on flush
+    into ``student_evidence`` (``sa.Text``) or the JSONB snapshot."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    lone_surrogate = json.loads('"\\ud800"')
+    assert lone_surrogate == "\ud800"
+
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        _all_earned(["p1", "p2", "p3"], evidence=f"see{lone_surrogate} line 2"),
+    )
+
+    assert view.points[0].student_evidence == "see line 2"
+    assert _load_qr(pg_sessionmaker, qr_id).is_self_marked
+
+
+def test_evidence_longer_than_the_max_is_truncated(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    long_evidence = "x" * (MAX_EVIDENCE_CHARS + 500)
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"], evidence=long_evidence)
+    )
+
+    stored = view.points[0].student_evidence
+    assert stored is not None
+    assert len(stored) == MAX_EVIDENCE_CHARS
+    assert _load_qr(pg_sessionmaker, qr_id).points[0].student_evidence == stored
+
+
+class _JunkJudge:
+    """Returns whatever junk it was constructed with, ignoring the request."""
+
+    def __init__(self, junk: object) -> None:
+        self._junk = junk
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        return self._junk  # type: ignore[return-value]
+
+
+@pytest.mark.parametrize("junk", [None, {"accepted": True, "reason": "looks fine"}])
+def test_a_malformed_judge_return_does_not_abort_the_pass(
+    pg_sessionmaker: sessionmaker[Session], junk: object
+) -> None:
+    """Finding 1: ``JudgeVerdict(bool(verdict.accepted), ...)`` used to sit
+    outside the ``try``, so a judge returning ``None`` or a dict raised
+    ``AttributeError`` there and rolled back the student's whole self-mark.
+    Any junk from a judge must be treated exactly like a raised exception:
+    unjudged, not fatal."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker, judge=_JunkJudge(junk)).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert view.state == "revealed"
+    assert view.pending_teacher is True
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict is None and p2.mark_changed is False
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.student_evidence_unjudged]
+    assert rows[0].status is ReviewStatus.open
+    assert _load_qr(pg_sessionmaker, qr_id).is_self_marked
+
+
+class _StubJudge:
+    """Always returns the verdict it was constructed with."""
+
+    def __init__(self, verdict: JudgeVerdict) -> None:
+        self._verdict = verdict
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        return self._verdict
+
+
+def test_judge_reason_longer_than_the_max_is_truncated(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    long_reason = "y" * (MAX_JUDGE_REASON_CHARS + 500)
+    judge = _StubJudge(JudgeVerdict(accepted=True, reason=long_reason))
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.judge_reason is not None
+    assert len(p2.judge_reason) == MAX_JUDGE_REASON_CHARS
+    assert p2.mark_changed is True
+
+
 def test_self_marked_and_teacher_overridden_attempts_with_identical_marks_agree(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -754,7 +873,9 @@ def _alt_group_scheme() -> MarkScheme:
     )
 
 
-def _seed_alt_attempt(sm: sessionmaker[Session], student: uuid.UUID) -> uuid.UUID:
+def _seed_alt_attempt(
+    sm: sessionmaker[Session], student: uuid.UUID, *, low_confidence: bool = False
+) -> uuid.UUID:
     """One question, "3": both alternative points matched, capped to 1 mark —
     exactly what correction_ai's own coherence check would produce for an
     either/or group, and the situation the delta rule (not a re-sum) exists
@@ -763,9 +884,9 @@ def _seed_alt_attempt(sm: sessionmaker[Session], student: uuid.UUID) -> uuid.UUI
         question_id="3",
         awarded_marks=1,  # capped: NOT len(matched) == 2
         maximum_marks=1,
-        confidence=ConfidenceBand.HIGH,
-        confidence_score=0.95,
-        needs_teacher_review=False,
+        confidence=ConfidenceBand.LOW if low_confidence else ConfidenceBand.HIGH,
+        confidence_score=0.2 if low_confidence else 0.95,
+        needs_teacher_review=low_confidence,
         student_answer="answer-3",
         expected_answer="expected-3",
         topic="Waves",
@@ -783,25 +904,115 @@ def _seed_alt_attempt(sm: sessionmaker[Session], student: uuid.UUID) -> uuid.UUI
 def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_credit(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The delta rule vs. a re-sum, made to disagree on purpose: p1 and p2 are
-    alternatives worth 1 mark combined, and the marker correctly capped the
-    award at 1 despite matching both (``QuestionResultPoint.awarded`` is True
-    on *both* rows). A student who agrees with both leaves nothing to grant,
-    so the delta is 0 and the mark stays 1 — but a buggy implementation that
-    re-summed every ticked point's tariff instead of applying the delta would
-    total 1 + 1 = 2, silently doubling the mark. This is the case the module
-    docstring's "is_alternative/is_optional... a re-sum would credit a
-    student twice" warning describes; none of the other tests in this file
-    can distinguish delta from re-sum, because their schemes have no
-    alternative/optional points and tariff-1 additive arithmetic makes the
-    two formulas coincide."""
+    """The delta rule vs. a re-sum, made to disagree on purpose. p1 and p2 are
+    alternatives worth 1 mark combined; the marker matched both and capped
+    the award at 1 (``QuestionResultPoint.awarded`` is True on *both* rows,
+    ``awarded_marks == 1``).
+
+    Finding 4: the original version of this test was all-AGREE (student
+    ticks both points, same as the marker), so ``changed`` was ``False`` and
+    the write never ran — a buggy ``if changed: student_selfmark_marks =
+    sum(tariff for ticked)`` implementation passed it (and all other tests in
+    this file) despite being wrong. This fixture forces both points to
+    actually change: the student says p1 was **not** earned (ungranting a
+    point the marker awarded, delta -1) and p2 **was** earned — but p2 is
+    already AI-awarded True, so that is an AGREE, not a grant, and
+    contributes nothing. The correct delta is ``awarded_marks(1) + (-1) ==
+    0``. A ``sum(tariff for verdict.earned)`` re-sum would instead total the
+    tariff of every point the student ticked ``True`` — just p2 — giving 1,
+    diverging from the delta result.
+
+    Verified by hand against a re-sum stand-in
+    (``student_selfmark_marks = sum(p.tariff for p in qr.points if
+    by_point[p.mark_point_id].earned)`` in place of the delta line): it
+    produced 1 where this test asserts 0, confirming the fixture
+    discriminates."""
     student = _seed_user(pg_sessionmaker)
-    attempt_id = _seed_alt_attempt(pg_sessionmaker, student)
+    attempt_id = _seed_alt_attempt(pg_sessionmaker, student, low_confidence=True)
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
 
-    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+    view = _service(pg_sessionmaker).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", earned=False), PointVerdict("p2", earned=True)],
+    )
 
-    assert not any(p.mark_changed for p in view.points)
-    assert view.student_marks is None  # nothing was granted: delta is 0
-    assert view.effective_marks == 1  # NOT 2 — a re-sum would double-count
-    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p1.mark_changed is True  # ungranted: the marker's award is withdrawn
+    assert p2.mark_changed is False  # agreement: ai_awarded is already True
+    assert view.student_marks == 0  # delta: 1 - 1 == 0, NOT a re-sum's 1
+    assert view.effective_marks == 0
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 1  # the AI's mark is never mutated
+    assert qr.student_selfmark_marks == 0
+
+
+# ── concurrent submissions on one attempt ───────────────────────────────────
+
+
+def test_concurrent_submissions_on_different_questions_of_one_attempt_do_not_lose_a_total(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Finding 3: ``submit`` used to lock only the ``QuestionResult`` row, not
+    the ``Attempt``. Two submissions on *different* questions of the same
+    attempt take different QuestionResult locks, then both call
+    ``recompute_attempt_totals`` / ``recompute_weakness_records`` for the same
+    attempt from their own read. Under READ COMMITTED the second overwrites
+    the first, and one question's change silently vanishes from
+    ``attempts.awarded_marks``.
+
+    Real threads against real Postgres locks: a monkeypatched
+    ``recompute_attempt_totals`` sleeps while holding the (now-fixed) Attempt
+    lock, widening the window in which the second submission would race
+    ahead of the first if the lock were absent. With the Attempt locked
+    attempt-then-question (the same order used elsewhere in this module and
+    in ``review_repo``, so no new deadlock), the two passes serialize and
+    both questions' marks land in the final total."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker,
+        student,
+        [
+            _question("1", matched=[], maximum=2, confidence_score=0.2, needs_review=True),
+            _question("2", matched=[], maximum=3, confidence_score=0.2, needs_review=True),
+        ],
+    )
+    qr1 = _qr_id(pg_sessionmaker, attempt_id, "1")
+    qr2 = _qr_id(pg_sessionmaker, attempt_id, "2")
+
+    import lemely.db.self_review_repo as repo_module
+
+    real_recompute = repo_module.recompute_attempt_totals
+
+    def _slow_recompute(*args: object, **kwargs: object) -> None:
+        time.sleep(0.2)
+        real_recompute(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(repo_module, "recompute_attempt_totals", _slow_recompute)
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def _submit(qr_id: uuid.UUID, point_ids: list[str]) -> None:
+        try:
+            barrier.wait(timeout=5)
+            _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(point_ids))
+        except BaseException as exc:
+            errors.append(exc)
+
+    t1 = threading.Thread(target=_submit, args=(qr1, ["p1", "p2"]))
+    t2 = threading.Thread(target=_submit, args=(qr2, ["p1", "p2", "p3"]))
+    t1.start()
+    t2.start()
+    t1.join(timeout=10)
+    t2.join(timeout=10)
+
+    assert not errors, errors
+    after = _attempt_row(pg_sessionmaker, attempt_id)
+    assert after.awarded_marks == 5  # both questions' 2 and 3 marks, neither lost
+    assert after.percentage == 100.0
+    assert after.weakness_records == []
+    assert _load_qr(pg_sessionmaker, qr1).student_selfmark_marks == 2
+    assert _load_qr(pg_sessionmaker, qr2).student_selfmark_marks == 3
