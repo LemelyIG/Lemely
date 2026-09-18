@@ -470,9 +470,13 @@ def _settle_groups(passes: list[_PointPass]) -> int:
     ``mark_changed``; every other granted member is ``absorbed_by_group`` —
     recorded, never silent (module docstring).
     """
-    by_group: dict[str, list[_PointPass]] = {}
+    # A synthetic key for an independent point must never collide with a real
+    # ``group_key`` — a scheme whose key were literally ``"point:0"`` would
+    # otherwise silently merge two unrelated groups. A tuple key is disjoint
+    # from every ``str`` group_key by type, not by convention.
+    by_group: dict[str | tuple[str, int], list[_PointPass]] = {}
     for index, item in enumerate(passes):
-        by_group.setdefault(item.point.group_key or f"point:{index}", []).append(item)
+        by_group.setdefault(item.point.group_key or ("point", index), []).append(item)
 
     delta = 0
     for members in by_group.values():

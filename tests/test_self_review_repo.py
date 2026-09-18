@@ -910,14 +910,13 @@ def _seed_alt_attempt(
     )
 
 
-def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_credit(
+def test_group_settlement_reconstructs_awarded_marks_without_stripping_an_undisputed_mark(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
-    """The delta rule vs. a re-sum, made to disagree on purpose. p1 (2 marks)
-    and p2 (1 mark) are alternatives worth 2 marks combined (the group's best
-    member, ``group_max_marks == 2``); the marker matched both and capped the
-    award at 2 (``QuestionResultPoint.awarded`` is True on *both* rows,
-    ``awarded_marks == 2``).
+    """p1 (2 marks) and p2 (1 mark) are alternatives worth 2 marks combined
+    (the group's best member, ``group_max_marks == 2``); the marker matched
+    both and capped the award at 2 (``QuestionResultPoint.awarded`` is True
+    on *both* rows, ``awarded_marks == 2``).
 
     Finding 4: the original version of this test was all-AGREE (student
     ticks both points, same as the marker), so ``changed`` was ``False`` and
@@ -939,11 +938,17 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     ``min(2, tariff(p2)=1) == 1``: p2's own award still supports 1 of the
     group's 2 marks on its own, so ungranting p1 does not zero the group, it
     reduces it to what p2 alone earns. Group delta ``1 - 2 == -1``; question
-    delta ``awarded_marks(2) + (-1) == 1``. A plain re-sum of ticked tariffs
-    (``sum(tariff for verdict.earned)`` == 1, same fixture) happens to land on
-    the same number here — this fixture's job now is Task 6's original one
-    (Finding 4) is covered elsewhere; what it still catches is a regression
-    to the pre-6b independent-point rule, which would give ``0``, not ``1``."""
+    delta ``awarded_marks(2) + (-1) == 1``.
+
+    This fixture's job is now the group-settlement regression guard: catching
+    a reversion to the pre-6b independent-point rule, which would give ``0``,
+    not ``1``, because it would subtract p1's whole tariff without noticing
+    p2 still supports 1 mark on its own. At this fixture's corrected value a
+    plain re-sum of ticked tariffs (``sum(tariff for verdict.earned)`` == 1,
+    same fixture) happens to land on the same number, so it can no longer
+    separate the delta rule from a re-sum — that guard now lives in
+    ``test_a_re_sum_of_ticked_tariffs_would_double_count_a_rejected_claim``,
+    below."""
     student = _seed_user(pg_sessionmaker)
     attempt_id = _seed_alt_attempt(pg_sessionmaker, student, low_confidence=True)
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
@@ -965,6 +970,69 @@ def test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_cre
     qr = _load_qr(pg_sessionmaker, qr_id)
     assert qr.awarded_marks == 2  # the AI's mark is never mutated
     assert qr.student_selfmark_marks == 1
+
+
+class _PerPointJudge:
+    """Rejects the one point whose text matches; accepts every other point."""
+
+    def __init__(self, reject_point_text: str) -> None:
+        self._reject = reject_point_text
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        accepted = request.point_text != self._reject
+        return JudgeVerdict(accepted=accepted, reason="ok" if accepted else "not shown")
+
+
+def test_a_re_sum_of_ticked_tariffs_would_double_count_a_rejected_claim(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """S2 task 6b review, Finding 1: the delta rule vs. a re-sum of ticked
+    tariffs, made to disagree on purpose — no scheme group needed, because a
+    re-sum counts the student's *tick* and a judge rejection means the tick
+    was never granted.
+
+    Question "2" (3 marks, p1/p2/p3, no group_key — each point is its own
+    group) at high confidence: the marker awarded p1 only
+    (``awarded_marks == 1``). The student agrees p1 was earned (no evidence
+    needed) and submits evidence on p2 and p3; a per-point stub judge
+    rejects p2 and accepts p3.
+
+    Delta: p1 unchanged (agreement, contributes 0) + p2 rejected (not
+    granted, contributes 0) + p3 granted (+1) == ``awarded_marks(1) + 1 ==
+    2``. A re-sum of ticked tariffs would instead sum every point the
+    student ticked ``earned=True`` — p1, p2 *and* p3 — giving 3, double
+    crediting the rejected p2 claim on top of its own correct rejection."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(
+        pg_sessionmaker, student, [_high(), _question("2", matched=["p1"], maximum=3)]
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    judge = _PerPointJudge(reject_point_text="Correct substitution")
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", True),
+            PointVerdict("p2", True, evidence="I substituted the values."),
+            PointVerdict("p3", True, evidence="I rounded to 2 sf."),
+        ],
+    )
+
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    p3 = next(p for p in view.points if p.mark_point_id == "p3")
+    assert p1.mark_changed is False  # agreement
+    assert p2.evidence_verdict == "rejected"
+    assert p2.mark_changed is False  # rejected: never granted, contributes 0
+    assert p3.evidence_verdict == "accepted"
+    assert p3.mark_changed is True
+    assert view.student_marks == 2  # delta: 1 (awarded) + 0 (rejected) + 1 (granted)
+    assert view.effective_marks == 2
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 1  # the AI's mark is never mutated
+    assert qr.student_selfmark_marks == 2
 
 
 # ── concurrent submissions on one attempt ───────────────────────────────────
