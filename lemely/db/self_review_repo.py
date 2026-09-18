@@ -121,7 +121,11 @@ class PointVerdict:
 
 @dataclass(frozen=True, slots=True)
 class PendingPoint:
-    """A mark point before the reveal. Deliberately has no ``awarded``."""
+    """A mark point before the reveal.
+
+    Deliberately has no ``awarded``; ``group_key`` / ``group_max_marks`` are
+    scheme-derived and verdict-free.
+    """
 
     mark_point_id: str
     ordinal: int
@@ -130,6 +134,8 @@ class PendingPoint:
     point_text: str
     is_alternative: bool
     is_optional: bool
+    group_key: str | None
+    group_max_marks: int | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +149,8 @@ class RevealedPoint:
     point_text: str
     is_alternative: bool
     is_optional: bool
+    group_key: str | None
+    group_max_marks: int | None
     awarded: bool
     student_selfmark: bool
     student_evidence: str | None
@@ -466,6 +474,8 @@ def _to_view(session: Session, qr: QuestionResult) -> PendingSelfReview | Reveal
                     point_text=p.point_text,
                     is_alternative=p.is_alternative,
                     is_optional=p.is_optional,
+                    group_key=p.group_key,
+                    group_max_marks=p.group_max_marks,
                 )
                 for p in qr.points
             ],
@@ -506,6 +516,8 @@ def _revealed_view(
                 point_text=p.point_text,
                 is_alternative=p.is_alternative,
                 is_optional=p.is_optional,
+                group_key=p.group_key,
+                group_max_marks=p.group_max_marks,
                 awarded=p.awarded,
                 student_selfmark=bool(p.student_selfmark),
                 student_evidence=p.student_evidence,

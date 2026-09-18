@@ -8,7 +8,7 @@ for.
 
 from __future__ import annotations
 
-from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+from lemely.core.loose_schemas import AnswerPoint, MarkScheme, MathMarkType
 from lemely.core.schemas import ConfidenceBand, CorrectedQuestion
 from lemely.db.question_points import derive_point_rows
 from tests.conftest import _scheme
@@ -50,6 +50,8 @@ def test_carries_tariff_mark_type_and_text_from_the_scheme() -> None:
         "is_alternative": False,
         "is_optional": False,
         "rationale": None,
+        "group_key": None,
+        "group_max_marks": None,
     }
 
 
@@ -164,3 +166,158 @@ def test_alternative_and_optional_flags_are_carried_from_the_scheme() -> None:
     assert rows[1]["is_optional"] is False
     assert rows[2]["is_alternative"] is False
     assert rows[2]["is_optional"] is True
+
+
+# ── group_key / group_max_marks: the scheme's either/or and any-N structure ──
+#
+# Recorded at derivation time because `is_alternative` only means "an
+# alternative to the previous point": the group exists in scheme order and
+# nowhere else. `_check_coherence` (lemely/io/correction_ai.py) refuses to
+# rebuild it at read time; this is the one place the Question is in hand.
+
+
+def _points(*specs: tuple[str, int, str]) -> list[AnswerPoint]:
+    """``(id, marks, flags)`` where flags is "" / "alt" / "opt"."""
+    return [
+        AnswerPoint(
+            id=pid,
+            point=f"Point {pid}",
+            marks=marks,
+            is_alternative=flags == "alt",
+            is_optional=flags == "opt",
+        )
+        for pid, marks, flags in specs
+    ]
+
+
+def _scheme_with(
+    points: list[AnswerPoint], *, marks: int, select_count: int | None = None
+) -> MarkScheme:
+    """``_scheme()`` with question "1a"'s points, total and select_count replaced."""
+    scheme = _scheme()
+    question = scheme.questions[0]
+    question.answer_points = points
+    question.marks = marks
+    question.select_count = select_count
+    return scheme
+
+
+def _groups(rows: list[dict[str, object]]) -> list[tuple[object, object]]:
+    return [(row["group_key"], row["group_max_marks"]) for row in rows]
+
+
+def test_independent_points_have_no_group() -> None:
+    rows = derive_point_rows(_corrected(), _scheme())
+    assert _groups(rows) == [(None, None), (None, None), (None, None)]
+
+
+def test_an_alternative_joins_the_point_before_it_into_an_either_or_group() -> None:
+    """p1 (M) / p2 (A, alternative) is one group worth 1; p3 stays independent."""
+    scheme = _scheme()
+    scheme.questions[0].answer_points[1].is_alternative = True
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), (None, None)]
+
+
+def test_both_members_flagged_alternative_is_the_same_group() -> None:
+    """Parsers flag either/or pairs both ways round; both encodings must group
+    identically (this is the encoding tests/test_self_review_repo.py's
+    `_alt_group_scheme` uses)."""
+    scheme = _scheme_with(_points(("p1", 1, "alt"), ("p2", 1, "alt"), ("p3", 1, "")), marks=2)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), (None, None)]
+
+
+def test_either_or_cap_is_the_best_member_not_the_sum() -> None:
+    """Full method (2) OR partial (1): the group is worth 2, not 3."""
+    scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "alt"), ("p3", 1, "")), marks=3)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 2), ("alt:1", 2), (None, None)]
+
+
+def test_a_lone_flag_is_not_a_group() -> None:
+    """A first point flagged alternative with nothing to attach to, and a pool
+    of one, are independent points: NULL/NULL, not a one-member group."""
+    scheme = _scheme_with(_points(("p1", 1, "alt"), ("p2", 1, ""), ("p3", 1, "opt")), marks=3)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), (None, None), (None, None)]
+
+
+def test_pool_with_select_count_is_capped_at_the_n_largest_tariffs() -> None:
+    """'Any 2 from' four one-mark points: the pool is worth 2, not 4."""
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
+        marks=2,
+        select_count=2,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 4
+
+
+def test_pool_cap_never_exceeds_the_question_total() -> None:
+    """select_count=3 on a 2-mark question: the question total wins."""
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
+        marks=2,
+        select_count=3,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 4
+
+
+def test_pool_without_select_count_gets_the_marks_the_question_has_left() -> None:
+    """One independent point (1) plus a pool of three on a 3-mark question:
+    the pool can be worth at most 3 - 1 = 2. Distinguishes the leftover rule
+    from 'sum of members' (3) and from 'best member' (1)."""
+    scheme = _scheme_with(
+        _points(("p1", 1, ""), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), ("pool:1", 2), ("pool:1", 2), ("pool:1", 2)]
+
+
+def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "alt")), marks=3, select_count=2
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 3
+
+
+def test_two_groups_get_distinct_keys_and_the_leftover_subtracts_the_either_or_cap() -> None:
+    """p1|p2 (either/or, worth 1) then a pool p3,p4 with no select_count on a
+    3-mark question: the pool's leftover is 3 - 0 (no independents) - 1 (the
+    either/or cap) = 2."""
+    scheme = _scheme_with(
+        _points(("p1", 1, ""), ("p2", 1, "alt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), ("pool:1", 2), ("pool:1", 2)]
+
+
+def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:
+    """`Question.marks == 0` is the scheme's "container" convention; the cap
+    then bounds against the marker's `maximum_marks` (3 here) instead of 0."""
+    scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "alt")), marks=0)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 2), ("alt:1", 2)]

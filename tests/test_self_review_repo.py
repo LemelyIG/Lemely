@@ -302,6 +302,8 @@ def test_get_before_submission_is_pending_and_carries_no_verdict(
         "point_text",
         "is_alternative",
         "is_optional",
+        "group_key",
+        "group_max_marks",
     }
     assert {f.name for f in dataclasses.fields(PendingSelfReview)} == {
         "state",
@@ -1016,3 +1018,29 @@ def test_concurrent_submissions_on_different_questions_of_one_attempt_do_not_los
     assert after.weakness_records == []
     assert _load_qr(pg_sessionmaker, qr1).student_selfmark_marks == 2
     assert _load_qr(pg_sessionmaker, qr2).student_selfmark_marks == 3
+
+
+# ── group_key / group_max_marks reach the ledger, the snapshot and the view ──
+
+
+def test_pending_view_carries_the_scheme_group_and_so_do_the_ledger_and_the_ai_revision(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Scheme-derived, verdict-free, and needed before the reveal: the panel
+    must show p1/p2 as one either/or unit worth 1, or it invites the double
+    tick Task 6b exists to stop."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_alt_attempt(pg_sessionmaker, student)
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
+
+    view = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+
+    assert isinstance(view, PendingSelfReview)
+    assert [(p.group_key, p.group_max_marks) for p in view.points] == [("alt:1", 1), ("alt:1", 1)]
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert [(p.group_key, p.group_max_marks) for p in qr.points] == [("alt:1", 1), ("alt:1", 1)]
+    assert [(e["group_key"], e["group_max_marks"]) for e in qr.revisions[0].points_snapshot] == [
+        ("alt:1", 1),
+        ("alt:1", 1),
+    ]

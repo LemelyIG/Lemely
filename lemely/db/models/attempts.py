@@ -377,6 +377,20 @@ class QuestionResultPoint(TimestampMixin, Base):
     without checking these flags will show a breakdown that disagrees with the
     student's own mark.
     """
+    group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """The scheme group this point belongs to, recorded at derivation time
+
+    (:func:`lemely.db.question_points.derive_point_rows`): ``alt:n`` for an
+    either/or run, ``pool:n`` for an "any N from" pool, ``NULL`` for an
+    independent point. ``group_max_marks`` is the most the whole group can
+    contribute. ``is_alternative`` alone cannot say where a group starts or
+    ends (it means "alternative to the previous point"), which is why the
+    group is stored rather than re-derived — the self-review write path caps
+    granted marks at ``group_max_marks`` (self-review spec, D6), and the panel
+    renders the group as one unit. Rows written before migration
+    ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
+    """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
     student_selfmark_at: Mapped[datetime | None] = mapped_column(
