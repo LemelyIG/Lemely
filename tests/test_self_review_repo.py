@@ -1352,9 +1352,38 @@ def _challenge_p2(evidence: str | None = "I wrote 'N' as the unit.") -> list[Poi
 def test_judge_accept_grants_the_point_and_keeps_the_reason(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """S2 task 7 review, Finding 2: the precedence chain feeding the judge is
+    ``point.rationale or qr.rationale or qr.feedback``. The fixture used to
+    leave ``rationale`` unset everywhere, so all three branches collapsed
+    onto ``feedback`` and the old assertion
+    (``request.marker_rationale == "Method not shown."``) could not
+    distinguish "reads feedback" from "reads the winning branch of the
+    chain" — a regression that swapped the precedence, or dropped the first
+    two terms entirely, would still pass it.
+
+    ``point.rationale`` has no writer in production (a previous spec decided
+    per-point reasons are never invented; the column stays NULL until a
+    marker emits ``point_notes``, a separate, unlanded change) — so this test
+    sets it directly on the row after seeding, the way a future
+    ``point_notes`` writer eventually would, rather than adding one here.
+    ``qr.rationale`` DOES have a production writer (``CorrectedQuestion.rationale``
+    copied straight through ``AttemptRepository.persist_correction``), so it
+    is set through the normal fixture path. All three values are distinct,
+    so the assertion below can only pass if ``point.rationale`` actually wins."""
     student = _seed_user(pg_sessionmaker)
-    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    question = _high(matched=["p1"]).model_copy(
+        update={"rationale": "Marker's question-level reason: partial method shown."}
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [question, _low()])
     qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    with pg_sessionmaker() as session, session.begin():
+        qr = session.get(QuestionResult, qr_id)
+        assert qr is not None
+        assert qr.rationale == "Marker's question-level reason: partial method shown."
+        assert qr.feedback == "Method not shown."
+        next(
+            p for p in qr.points if p.mark_point_id == "p2"
+        ).rationale = "Marker's per-point reason: no unit in the transcript."
     judge = ScriptedJudge("accept", reason="The unit is present in the answer.")
 
     view = _service(pg_sessionmaker, judge).submit(student, attempt_id, qr_id, _challenge_p2())
@@ -1370,12 +1399,12 @@ def test_judge_accept_grants_the_point_and_keeps_the_reason(
     assert next(p for p in again.points if p.mark_point_id == "p2").judge_reason == (
         "The unit is present in the answer."
     )
-    # What the judge was given.
+    # What the judge was given: point.rationale beats both qr.rationale and feedback.
     assert len(judge.calls) == 1
     request = judge.calls[0]
     assert request.point_text == "Gives the unit"
     assert request.student_answer == "answer-1"
-    assert request.marker_rationale == "Method not shown."
+    assert request.marker_rationale == "Marker's per-point reason: no unit in the transcript."
     assert request.student_claims_earned is True
     assert request.student_evidence == "I wrote 'N' as the unit."
     assert request.subject_code == "9999"
@@ -1397,6 +1426,68 @@ def test_judge_reject_keeps_the_mark_and_shows_the_reason(
     assert p2.evidence_verdict == "rejected" and p2.mark_changed is False
     assert p2.judge_reason == "The recorded answer has no unit at all."
     assert _queue_rows(pg_sessionmaker, qr_id) == []
+
+
+def test_high_confidence_downward_challenge_through_the_judge_is_honoured(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D6 through the judge seam: a student may challenge *downward* on a
+    high-confidence question, on the same terms as upward — evidence, then a
+    lenient judge. No other test in this file reaches ``_judge_safely`` with
+    ``student_claims_earned=False``; ``_challenge_p2`` always ticks both
+    points ``True``, and every ``earned=False`` elsewhere is either a
+    low-confidence grant (``decide_point`` bypasses the judge outright) or an
+    agreement. The marker awarded both points of question "1" (2 marks); the
+    student agrees on p1 but disputes p2, arguing they never wrote it. The
+    judge accepts the student's claim.
+
+    Group settlement, both points independent (no ``group_key``, so each is
+    its own group capped at its own tariff of 1): p1 is an AGREE, so it is
+    never handed to ``_settle_groups`` as granted and contributes 0. p2 is
+    granted downward — before = ``min(1, tariff(p2)=1)`` (the marker's own
+    award), after = ``min(1, 0)`` (the student's claimed, judge-accepted
+    verdict), delta ``-1``. Total delta ``-1``; ``ai_marks(2) + (-1) == 1``.
+
+    A regression to ``granted = outcome.accepted and verdict.earned`` (S2
+    task 7 review, Finding 1) would compute ``granted = True and False ==
+    False`` for this very case, so ``_settle_groups`` would treat p2 as
+    ungranted and fall back to the marker's own ``awarded=True`` for its
+    "after" term — group delta 0, question delta 0. That implementation
+    would leave ``mark_changed`` False on p2, ``changed`` False overall (so
+    ``student_selfmark_marks`` is never written at all — ``student_marks``
+    would read back ``None``, not ``1``), and ``effective_marks`` still 2,
+    silently keeping a mark the student themselves disclaimed and the judge
+    agreed they hadn't earned."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1", "p2"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = ScriptedJudge("accept", reason="The transcript has no working for this step.")
+
+    view = _service(pg_sessionmaker, judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", True),
+            PointVerdict("p2", False, evidence="I never wrote it."),
+        ],
+    )
+
+    assert view.state == "settled"
+    assert view.ai_marks == 2
+    assert view.student_marks == 1
+    assert view.effective_marks == 1
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p1.mark_changed is False  # agreement
+    assert p2.evidence_verdict == "accepted" and p2.mark_changed is True
+    assert p2.absorbed_by_group is False
+    assert len(judge.calls) == 1
+    assert judge.calls[0].student_claims_earned is False
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 2  # the AI's mark is never mutated
+    assert qr.student_selfmark_marks == 1
 
 
 def test_judge_failure_opens_a_queue_row_and_moves_nothing(
@@ -1480,7 +1571,9 @@ def test_mixed_points_apply_independently(pg_sessionmaker: sessionmaker[Session]
 
     assert view.student_marks == 1 and view.state == "revealed"
     assert [p.mark_changed for p in view.points] == [True, False]
-    assert len(_queue_rows(pg_sessionmaker, qr_id)) == 1
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert len(rows) == 1
+    assert rows[0].reason is ReviewReason.student_evidence_unjudged
 
 
 # ── The authority matrix ───────────────────────────────────────────────────
