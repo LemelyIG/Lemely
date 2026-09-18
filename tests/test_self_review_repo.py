@@ -1325,3 +1325,213 @@ def test_pool_grants_stop_at_select_count(
     assert [p.mark_changed for p in view.points] == [False, False, True, True, True]
     assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 2
+
+
+# ── submit, with a judge ───────────────────────────────────────────────────
+
+
+class ScriptedJudge:
+    """An ``EvidenceJudge`` that answers from a script and records every call."""
+
+    def __init__(self, outcome: str, reason: str = "Plausible and not contradicted.") -> None:
+        self.outcome = outcome  # "accept" | "reject" | "fail"
+        self.reason = reason
+        self.calls: list[JudgeRequest] = []
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.calls.append(request)
+        if self.outcome == "fail":
+            raise RuntimeError("gemini timeout")
+        return JudgeVerdict(accepted=self.outcome == "accept", reason=self.reason)
+
+
+def _challenge_p2(evidence: str | None = "I wrote 'N' as the unit.") -> list[PointVerdict]:
+    return [PointVerdict("p1", True), PointVerdict("p2", True, evidence=evidence)]
+
+
+def test_judge_accept_grants_the_point_and_keeps_the_reason(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = ScriptedJudge("accept", reason="The unit is present in the answer.")
+
+    view = _service(pg_sessionmaker, judge).submit(student, attempt_id, qr_id, _challenge_p2())
+
+    assert view.state == "settled"
+    assert view.student_marks == 2 and view.effective_marks == 2
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "accepted" and p2.mark_changed is True
+    assert p2.judge_reason == "The unit is present in the answer."
+    # The reason survives a fresh GET (it lives in the revision snapshot).
+    again = _service(pg_sessionmaker, judge).get(student, attempt_id, qr_id)
+    assert isinstance(again, RevealedSelfReview)
+    assert next(p for p in again.points if p.mark_point_id == "p2").judge_reason == (
+        "The unit is present in the answer."
+    )
+    # What the judge was given.
+    assert len(judge.calls) == 1
+    request = judge.calls[0]
+    assert request.point_text == "Gives the unit"
+    assert request.student_answer == "answer-1"
+    assert request.marker_rationale == "Method not shown."
+    assert request.student_claims_earned is True
+    assert request.student_evidence == "I wrote 'N' as the unit."
+    assert request.subject_code == "9999"
+
+
+def test_judge_reject_keeps_the_mark_and_shows_the_reason(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = ScriptedJudge("reject", reason="The recorded answer has no unit at all.")
+
+    view = _service(pg_sessionmaker, judge).submit(student, attempt_id, qr_id, _challenge_p2())
+
+    assert view.state == "settled"
+    assert view.student_marks is None and view.effective_marks == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict == "rejected" and p2.mark_changed is False
+    assert p2.judge_reason == "The recorded answer has no unit at all."
+    assert _queue_rows(pg_sessionmaker, qr_id) == []
+
+
+def test_judge_failure_opens_a_queue_row_and_moves_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker, ScriptedJudge("fail")).submit(
+        student, attempt_id, qr_id, _challenge_p2()
+    )
+
+    assert view.state == "revealed" and view.pending_teacher is True
+    assert view.effective_marks == 1
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.evidence_verdict is None and p2.judge_reason is None
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.student_evidence_unjudged]
+
+
+def test_judge_is_never_consulted_on_a_low_confidence_question(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    judge = ScriptedJudge("reject")
+
+    view = _service(pg_sessionmaker, judge).submit(
+        student, attempt_id, qr_id, _all_earned(["p1", "p2", "p3"], evidence="because")
+    )
+
+    assert judge.calls == []
+    assert view.student_marks == 3
+
+
+def test_a_judge_reason_with_a_nul_byte_does_not_abort_the_pass(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """JSONB rejects NUL escapes; an LLM string must be bounded before it
+    reaches the revision snapshot, or the whole pass — marks included — is
+    lost to the judge's formatting."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = ScriptedJudge("accept", reason="ok\x00" + "x" * 900)
+
+    view = _service(pg_sessionmaker, judge).submit(student, attempt_id, qr_id, _challenge_p2())
+
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.mark_changed is True
+    assert p2.judge_reason is not None
+    assert "\x00" not in p2.judge_reason and len(p2.judge_reason) == 500
+
+
+def test_mixed_points_apply_independently(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """Two challenged points on one high-confidence question: one accepted,
+    one that fails to be judged. The accepted one moves; the failure opens
+    exactly one queue row for the question."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=[]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    class OneThenFail:
+        def __init__(self) -> None:
+            self.n = 0
+
+        def judge(self, request: JudgeRequest) -> JudgeVerdict:
+            self.n += 1
+            if self.n == 1:
+                return JudgeVerdict(accepted=True, reason="first")
+            raise RuntimeError("second call fails")
+
+    view = _service(pg_sessionmaker, OneThenFail()).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True, evidence="a"), PointVerdict("p2", True, evidence="b")],
+    )
+
+    assert view.student_marks == 1 and view.state == "revealed"
+    assert [p.mark_changed for p in view.points] == [True, False]
+    assert len(_queue_rows(pg_sessionmaker, qr_id)) == 1
+
+
+# ── The authority matrix ───────────────────────────────────────────────────
+#
+# flag state x evidence present x judge outcome, for a student who claims a
+# missed point. Every cell names what moves, what verdict is stored, whether
+# the judge is called, and whether a teacher gets a queue row.
+
+_FLAG = {
+    "low": lambda: _question(
+        "1", matched=["p1"], maximum=2, confidence_score=0.2, needs_review=True
+    ),
+    "high": lambda: _question("1", matched=["p1"], maximum=2),
+    "integrity_only": lambda: _question(
+        "1", matched=["p1"], maximum=2, needs_review=True, plagiarism_flagged=True
+    ),
+}
+
+
+@pytest.mark.parametrize("flag", ["low", "high", "integrity_only"])
+@pytest.mark.parametrize("evidence", ["present", "absent"])
+@pytest.mark.parametrize("judge_outcome", ["accept", "reject", "fail"])
+def test_authority_matrix(
+    pg_sessionmaker: sessionmaker[Session], flag: str, evidence: str, judge_outcome: str
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_FLAG[flag](), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = ScriptedJudge(judge_outcome)
+
+    view = _service(pg_sessionmaker, judge).submit(
+        student, attempt_id, qr_id, _challenge_p2("because" if evidence == "present" else None)
+    )
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    unjudged_rows = [
+        r
+        for r in _queue_rows(pg_sessionmaker, qr_id)
+        if r.reason is ReviewReason.student_evidence_unjudged
+    ]
+
+    if flag == "low":
+        expected = (True, "not_required", 0, 0)
+    elif evidence == "absent":
+        expected = (False, None, 0, 0)
+    elif judge_outcome == "accept":
+        expected = (True, "accepted", 1, 0)
+    elif judge_outcome == "reject":
+        expected = (False, "rejected", 1, 0)
+    else:
+        expected = (False, None, 1, 1)
+
+    assert (p2.mark_changed, p2.evidence_verdict, len(judge.calls), len(unjudged_rows)) == expected
+    assert view.effective_marks == (2 if expected[0] else 1)
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
