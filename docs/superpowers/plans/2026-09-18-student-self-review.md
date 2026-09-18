@@ -16,7 +16,7 @@ This spec crosses four subsystems. Each part below is independently shippable an
 
 | Part | Tasks | Ships | Depends on |
 | --- | --- | --- | --- |
-| 1. Backend core | 1–9 | Precedence, authority, service, routes, `questionResultId` on the complete frame. Feature works end-to-end over the API with `judge=None` (every high-confidence challenge lands in the teacher queue as `student_evidence_unjudged`). | — |
+| 1. Backend core | 1–9, including 6a and 6b | Precedence, authority, service, routes, `questionResultId` on the complete frame; the scheme's either/or and any-N groups stored on the ledger (6a) and the grant cap that uses them (6b). Feature works end-to-end over the API with `judge=None` (every high-confidence challenge lands in the teacher queue as `student_evidence_unjudged`). | — |
 | 2. Lenient judge | 10–11 | The Gemini judge, its prompt, its config knob, and the accept-rate log line; wired into the service. | Part 1 |
 | 3. Frontend | 12–15 | Types, state machine, hooks, `SelfReviewPanel`, `PaperResult` wiring from the live (post-correction) result. | Part 1 |
 | 4. Reachability after refresh + E2E | 16–19 | `attemptId` on the history result, `GET /attempts/{id}/questions`, the history branch of `PaperResult` renders real rows, seed + Playwright. | Parts 1, 3 |
@@ -31,7 +31,7 @@ This spec crosses four subsystems. Each part below is independently shippable an
 - **Every `pytest` command ends with `--no-cov`.** The repo enforces a 70% global coverage gate that any single-file run fails on total coverage regardless of whether its tests passed.
 - **Never run the full suite locally; CI does** (~5077 tests × Python 3.12/3.13/3.14, ~20 min). Run only the files a task touches.
 - DB tests use the `pg_sessionmaker` fixture — a `sessionmaker[Session]`, **not** a `Session`. It creates and drops a throwaway database per test from `Base.metadata.create_all` (never Alembic) and skips when Postgres at `127.0.0.1:54322` is unreachable. It is defined per test module (`tests/test_student_correct.py`, `tests/test_attempt_repo.py`, `tests/test_review_repo.py` each carry their own copy); new DB test files copy the fixture verbatim as those files do. `_seed_user(pg_sessionmaker)` in `tests/test_student_correct.py` returns a user-id **string**; the one in `tests/test_review_repo.py` returns a `uuid.UUID`.
-- **No migration.** `question_result_points.student_selfmark / student_selfmark_at / student_evidence / evidence_verdict`, `question_results.student_selfmark_marks / student_selfmarked_at`, `EvidenceVerdict`, `RevisionSource.student_selfmark` and `ReviewReason.student_evidence_unjudged` all exist (migration `0037_question_result_pts`, current Alembic head). No task adds a table, column or enum value; `tests/test_db_schema.py::EXPECTED_TABLES` is untouched.
+- **One migration, in Task 6a only.** `question_result_points.student_selfmark / student_selfmark_at / student_evidence / evidence_verdict`, `question_results.student_selfmark_marks / student_selfmarked_at`, `EvidenceVerdict`, `RevisionSource.student_selfmark` and `ReviewReason.student_evidence_unjudged` all exist (migration `0037_question_result_pts`, merged — never edit it). Task 6a adds `0038_point_group_key` (two nullable columns on `question_result_points`, no table, no enum value, no backfill). No other task touches the schema; `tests/test_db_schema.py::EXPECTED_TABLES` is untouched throughout.
 - `_scheme()` lives in `tests/conftest.py`: one question `"1a"` (3 marks) with points `p1` (M, 1), `p2` (A, 1), `p3` (B, 1). Import it (`from tests.conftest import _scheme`); never write another.
 - Symbol names, all verified: enum members on the core/loose side are UPPERCASE (`ConfidenceBand.HIGH`, `LooseSessionMonth.MAY_JUNE`, `SchemeFormat.POINT_BASED`, `QuestionType.RECALL`); DB enums are lowercase (`DBConfidenceBand.high`, `ReviewReason.low_confidence`, `ReviewStatus.open`, `RevisionSource.student_selfmark`, `EvidenceVerdict.accepted`). `Question` takes `type=`, not `question_type=`. `MarkSchemeMetadata` requires `subject` and `maximum_mark`. `AccuracyReport`'s field is `grade_prediction`. `ExamMetadata.session_month` is a `Literal["May/June", ...]` string.
 - `tests/test_student_correct.py` has a `client` fixture yielding `(TestClient, student_id, upload_repo)` over a throwaway DB with Gemini mocked. Endpoint tests reuse it by importing the fixtures into the new module (`from tests.test_student_correct import client, corpus_repo, gemini_client, pg_sessionmaker, settings  # noqa: F401`) and add the one extra override they need on `api.app.dependency_overrides`. Do not build another harness.
@@ -40,7 +40,7 @@ This spec crosses four subsystems. Each part below is independently shippable an
 - Totals go through `recompute_attempt_totals` / `recompute_weakness_records` in `lemely/db/review_repo.py` (Task 3 extracts them from `ReviewService`); there is never a second implementation.
 - The pre-submission GET payload contains no key whose name contains `awarded`, at any depth. Task 7 pins this with a recursive assertion.
 - Frontend: `web/node_modules` is present in this worktree. Every frontend task runs `cd web && npm run typecheck && npm run lint` before committing; vitest runs a single file with `npx vitest run tests/unit/<file>.test.ts` (vitest is node-only — no jsdom, no component rendering; component behaviour is covered by Playwright).
-- Migrations, if one were ever needed, are verified on a throwaway database via `LEMELY_DATABASE__URL`, never the developer's live Supabase container. This plan needs none.
+- Migrations are verified on a throwaway database via `LEMELY_DATABASE__URL`, never the developer's live Supabase container (the default URL points at it, `127.0.0.1:54322`). Task 6a Step 10 is the recipe: create `lemely_mig_0038`, `upgrade head` / `downgrade -1` / `upgrade head` / `heads` / `check` against it, drop it, `unset` the variable.
 
 ---
 
@@ -48,11 +48,13 @@ This spec crosses four subsystems. Each part below is independently shippable an
 
 | File | Part | Responsibility |
 | --- | --- | --- |
-| `lemely/db/models/attempts.py` | 1 | Modify. `effective_marks` gains the student tier; new `is_self_marked` property. |
+| `lemely/db/models/attempts.py` | 1 | Modify. `effective_marks` gains the student tier; new `is_self_marked` property; (6a) `QuestionResultPoint.group_key` / `group_max_marks`. |
 | `lemely/db/attempt_repo.py` | 1 | Modify. Extract `is_marking_low_confidence(qr)` from `_persist` (the one definition of "low confidence"); add `question_result_ids(attempt_id)`. |
+| `lemely/db/question_points.py` | 1 (6a) | Modify. `derive_point_rows` records `group_key` / `group_max_marks` from the scheme's either/or and any-N structure; new `_group_points`. |
+| `lemely/db/migrations/versions/0038_point_group_key.py` | 1 (6a) | Create. Two nullable columns on `question_result_points`. Reversible. |
 | `lemely/db/review_repo.py` | 1 | Modify. Extract `recompute_attempt_totals`, `recompute_weakness_records`, `boundaries_for` to module level; `ReviewService` delegates. |
 | `lemely/core/self_review.py` | 1 | Create. Pure: `PointDecision`, `decide_point(...)`, `JudgeRequest`, `JudgeVerdict`, `EvidenceJudge` protocol. No I/O, no ORM. |
-| `lemely/db/self_review_repo.py` | 1 | Create. `SelfReviewService` (get / submit), its errors and view dataclasses. Owns the transaction. |
+| `lemely/db/self_review_repo.py` | 1 | Create. `SelfReviewService` (get / submit), its errors and view dataclasses. Owns the transaction. (6b) `submit` settles the delta per scheme group; `_settle_groups`. |
 | `lemely/web/schemas_student_self_review.py` | 1 | Create. Pending / revealed DTOs, submission DTO with input sanitisation. |
 | `lemely/web/routers/student_self_review.py` | 1, 4 | Create. `GET`/`POST …/self-review`; Part 4 adds `GET /attempts/{id}/questions`. |
 | `lemely/web/deps.py` | 1, 2 | Modify. `get_self_review_service`. |
@@ -74,7 +76,7 @@ This spec crosses four subsystems. Each part below is independently shippable an
 | `scripts/seed_e2e.py`, `web/e2e/seed.ts`, `web/e2e/seed-contract.spec.ts` | 4 | Modify. A point-based, low-confidence attempt for the `correctedPaper` student. |
 | `web/e2e/self-review.spec.ts` | 4 | Create. End-to-end flow. |
 | `lemely/db/study_plan_repo.py`, `lemely/web/schemas_study_plan.py`, `lemely/web/routers/study_plan.py`, `web/src/lib/studyPlanTypes.ts`, `web/src/portals/student/screens/studyplan/StudyPlanWeek.tsx` | 5 | Modify. Misconception counts by topic. |
-| Tests | all | `tests/test_effective_marks.py`, `tests/test_core_self_review.py`, `tests/test_self_review_repo.py`, `tests/test_student_self_review_web.py`, `tests/test_evidence_judge.py`, `tests/test_attempt_repo.py`, `tests/test_review_repo.py`, `tests/test_student_correct.py`, `tests/test_authz_matrix.py`, `tests/test_authz_matrix_complete.py`, `tests/test_config_new_tasks.py`, `tests/test_history_repo_parity.py`, `tests/test_web_student.py`, `tests/test_study_plan_repo.py`, `web/tests/unit/selfReview.test.ts`, `web/tests/unit/studyPlan.test.ts`. |
+| Tests | all | `tests/test_effective_marks.py`, `tests/test_core_self_review.py`, `tests/test_question_points.py`, `tests/test_self_review_repo.py`, `tests/test_student_self_review_web.py`, `tests/test_evidence_judge.py`, `tests/test_attempt_repo.py`, `tests/test_review_repo.py`, `tests/test_student_correct.py`, `tests/test_authz_matrix.py`, `tests/test_authz_matrix_complete.py`, `tests/test_config_new_tasks.py`, `tests/test_history_repo_parity.py`, `tests/test_web_student.py`, `tests/test_study_plan_repo.py`, `web/tests/unit/selfReview.test.ts`, `web/tests/unit/studyPlan.test.ts`. |
 
 The authority rule is a pure function in `lemely.core` rather than inline in the service because it is the feature; it deserves a table test that needs no database. The service is its own module rather than a growth of `attempt_repo.py` (658 lines) or `review_repo.py` (1086 lines): it is the only writer of the self-mark columns and the only reader that withholds `awarded`.
 
@@ -88,6 +90,8 @@ The authority rule is a pure function in `lemely.core` rather than inline in the
 6. **Teacher override present at submission** (`qr.is_overridden`): self-marks and evidence are recorded, no judge call is made, no marks move, `teacher_settled=True` in the response. Precedence makes the outcome identical either way; skipping the judge saves a call whose answer cannot matter.
 7. **Judge failure includes "no judge configured"** (`judge=None`, e.g. no Gemini key): every high-confidence challenge with evidence opens a `student_evidence_unjudged` row. That is what makes Part 1 shippable before Part 2.
 8. **Misconception query** (Part 5): points where `student_selfmark = true`, `awarded = false`, and `evidence_verdict` is `NULL` or `rejected`. `not_required` and `accepted` both mean a change was granted.
+9. **The scheme's either/or and any-N groups are stored on the ledger at derivation time** (Task 6a: `group_key`, `group_max_marks`), not reconstructed from ordinal runs at read time. `is_alternative` means only "alternative to the previous point", so the group exists in scheme order and nowhere else; deriving it at read time is the mistake `teacher_breakdown`'s docstring warns about, and Part 3 would have to derive it a second time in TypeScript to render a group as one unit. The grouping rule and the cap arithmetic are fixed in Task 6a.
+10. **A granted verdict the group cap absorbs is recorded as a no-change with a reason** (Task 6b: `mark_changed=false`, `absorbed_by_group=true` in the snapshot and on the revealed point), never silently dropped and never routed to a teacher. Nothing is uncertain — the claim was accepted, the scheme caps the group — so a queue row would ask a teacher to redo arithmetic the server already did, need a new `ReviewReason` (and so a migration), and flood the queue on exactly the exploit pattern. Silence would tell the student "your mark was applied" against an unmoved total.
 
 ---
 
@@ -2285,6 +2289,1111 @@ git commit -S -m "feat(db): SelfReviewService.submit — one-pass self-mark with
 
 ---
 
+### Task 6a: Store the mark-scheme group on the ledger
+
+**Why this task exists.** Task 6's implementer found, and the lead confirmed, a hole in the delta rule: marks move by `delta += tariff` per granted point, clamped only to the question's `maximum_marks`. On an either/or group (`p2` *or* `p3`, one mark, not both) inside a two-mark question, a marker who awarded `p2` leaves a low-confidence student free to self-mark `p3` as earned too, take `GRANT`, and gain +1 — two marks from a group the scheme caps at one, on any low-confidence question that has alternatives. That is precisely the grade inflation D6 exists to prevent. The obstacle is that the ledger does not know the group: `AnswerPoint.is_alternative` means only "an alternative to the *previous* point", so a group exists in scheme order and nowhere else, and `_check_coherence` (`lemely/io/correction_ai.py:384`) refuses, rightly, to rebuild it at read time. This task records the group **as data, once, at derivation time** — the one moment the `Question` is in hand — rather than reconstructing it from ordinal runs at read time (the mistake `teacher_breakdown`'s docstring warns about). Part 3's panel needs the same key to render an either/or group as one unit; without it the student sees points that look independently earnable, which is what provokes the double tick, and the run-reconstruction gets written a second time in TypeScript.
+
+**Files:**
+- Create: `lemely/db/migrations/versions/0038_point_group_key.py`
+- Modify: `lemely/db/models/attempts.py` (two nullable columns on `QuestionResultPoint`)
+- Modify: `lemely/db/question_points.py` (`derive_point_rows` fills `group_key` / `group_max_marks`; new `_group_points`)
+- Modify: `lemely/db/self_review_repo.py` (`PendingPoint` / `RevealedPoint` gain the two fields; `_to_view` / `_revealed_view` copy them)
+- Test: `tests/test_question_points.py` (one exact-dict assertion updated; ten new tests)
+- Test: `tests/test_self_review_repo.py` (the `PendingPoint` allowlist updated — it asserts **exact field-set equality**, so adding fields without touching it fails the file; one new test)
+- **Not touched, deliberately:** `tests/test_db_schema.py`. `EXPECTED_TABLES` lists tables; this task adds two nullable columns to an existing table and no table, so the set is unchanged and the file is not opened. `test_migrations_have_a_single_head` in that file is what proves the new revision chains onto `0037_question_result_pts` instead of forking it — it runs unchanged and must stay green.
+
+**Interfaces:**
+- Consumes: `Question.answer_points[*].is_alternative` / `.is_optional`, `Question.select_count` (`lemely/core/loose_schemas.py:680` — "how many options the candidate must select / how many can be credited"), `Question.marks`.
+- Produces: `question_result_points.group_key: text NULL`, `question_result_points.group_max_marks: integer NULL`; `derive_point_rows` rows carry both keys, so `QuestionResultRevision.points_snapshot` for revision 1 carries them too with no further change (`AttemptRepository._persist` writes the row dicts straight into the snapshot, `lemely/db/attempt_repo.py:364`); `PendingPoint.group_key`, `PendingPoint.group_max_marks`, `RevealedPoint.group_key`, `RevealedPoint.group_max_marks`. Task 6b consumes the two columns; Task 8's DTOs and Task 12's TS types carry them to the panel.
+- Old rows keep `NULL`. No backfill, consistent with spec 1's D7 and correctly so: those attempts have no point rows and therefore no self-review surface (Task 5's 404).
+
+**The grouping rule — fixed here so the implementer does not choose one.** Groups are runs in scheme order, because that is all the flags can express:
+
+1. A point with `is_alternative=True` joins whatever group the point *immediately before it* belongs to. If that point is in no group, an either/or group is created around the two of them. If there is no previous point (the first point is flagged), a group is started on it alone.
+2. A point with `is_optional=True` joins the pool the previous point is in, if the previous point is in a pool; otherwise it starts a new pool.
+3. Any other point is independent.
+4. A group with one member is not a group: both fields stay `NULL` on it and it counts as independent in the arithmetic below. (Parsers do flag either/or pairs both ways round — `p1` and `p2` both `is_alternative`, as `_alt_group_scheme` in `tests/test_self_review_repo.py` does — and rule 1 groups both encodings identically.)
+5. Keys are numbered per kind in scheme order after rule 4: `alt:1`, `alt:2`, …, `pool:1`, …. Gapless and stable for a given scheme.
+
+`group_max_marks` — the most the group can contribute — with `total = question.marks`, falling back to `cq.maximum_marks` when the scheme says `0` (the "container question" convention on `Question.marks`):
+
+- either/or group: `min(total, max(tariff of members))` — alternatives are not additive; the group is worth its best member.
+- pool with `select_count = N`: `min(total, sum of the N largest member tariffs)` — "any N from".
+- pool without `select_count`: `max(0, total − sum(tariffs of independent points) − sum(caps of either/or groups))` — the marks the question has left after everything that is not this pool; the tightest cap the scheme supports when N is unstated. Two pools in one question without `select_count` share the same leftover, which over-permits rather than under-permits; that is the honest reading of an under-specified scheme.
+
+The failure direction is conservative by construction: a mis-flagged point can only produce a cap that is *too low* on additions (Task 6b never lets a cap contradict the marker's own total), never a double credit.
+
+- [ ] **Step 1: Write the failing derivation tests**
+
+In `tests/test_question_points.py`, add `MarkScheme` to the `lemely.core.loose_schemas` import line:
+
+```python
+from lemely.core.loose_schemas import AnswerPoint, MarkScheme, MathMarkType
+```
+
+Update the exact-dict assertion in `test_carries_tariff_mark_type_and_text_from_the_scheme` — an independent point has neither field:
+
+```python
+    assert rows[1] == {
+        "mark_point_id": "p2",
+        "ordinal": 1,
+        "mark_type": "A",
+        "tariff": 1,
+        "tariff_defaulted": False,
+        "point_text": "Answer to 3sf",
+        "awarded": False,
+        "is_alternative": False,
+        "is_optional": False,
+        "rationale": None,
+        "group_key": None,
+        "group_max_marks": None,
+    }
+```
+
+Then append to the end of the file:
+
+```python
+# ── group_key / group_max_marks: the scheme's either/or and any-N structure ──
+#
+# Recorded at derivation time because `is_alternative` only means "an
+# alternative to the previous point": the group exists in scheme order and
+# nowhere else. `_check_coherence` (lemely/io/correction_ai.py) refuses to
+# rebuild it at read time; this is the one place the Question is in hand.
+
+
+def _points(*specs: tuple[str, int, str]) -> list[AnswerPoint]:
+    """``(id, marks, flags)`` where flags is "" / "alt" / "opt"."""
+    return [
+        AnswerPoint(
+            id=pid,
+            point=f"Point {pid}",
+            marks=marks,
+            is_alternative=flags == "alt",
+            is_optional=flags == "opt",
+        )
+        for pid, marks, flags in specs
+    ]
+
+
+def _scheme_with(
+    points: list[AnswerPoint], *, marks: int, select_count: int | None = None
+) -> MarkScheme:
+    """``_scheme()`` with question "1a"'s points, total and select_count replaced."""
+    scheme = _scheme()
+    question = scheme.questions[0]
+    question.answer_points = points
+    question.marks = marks
+    question.select_count = select_count
+    return scheme
+
+
+def _groups(rows: list[dict[str, object]]) -> list[tuple[object, object]]:
+    return [(row["group_key"], row["group_max_marks"]) for row in rows]
+
+
+def test_independent_points_have_no_group() -> None:
+    rows = derive_point_rows(_corrected(), _scheme())
+    assert _groups(rows) == [(None, None), (None, None), (None, None)]
+
+
+def test_an_alternative_joins_the_point_before_it_into_an_either_or_group() -> None:
+    """p1 (M) / p2 (A, alternative) is one group worth 1; p3 stays independent."""
+    scheme = _scheme()
+    scheme.questions[0].answer_points[1].is_alternative = True
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), (None, None)]
+
+
+def test_both_members_flagged_alternative_is_the_same_group() -> None:
+    """Parsers flag either/or pairs both ways round; both encodings must group
+    identically (this is the encoding tests/test_self_review_repo.py's
+    `_alt_group_scheme` uses)."""
+    scheme = _scheme_with(_points(("p1", 1, "alt"), ("p2", 1, "alt"), ("p3", 1, "")), marks=2)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), (None, None)]
+
+
+def test_either_or_cap_is_the_best_member_not_the_sum() -> None:
+    """Full method (2) OR partial (1): the group is worth 2, not 3."""
+    scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "alt"), ("p3", 1, "")), marks=3)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 2), ("alt:1", 2), (None, None)]
+
+
+def test_a_lone_flag_is_not_a_group() -> None:
+    """A first point flagged alternative with nothing to attach to, and a pool
+    of one, are independent points: NULL/NULL, not a one-member group."""
+    scheme = _scheme_with(_points(("p1", 1, "alt"), ("p2", 1, ""), ("p3", 1, "opt")), marks=3)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), (None, None), (None, None)]
+
+
+def test_pool_with_select_count_is_capped_at_the_n_largest_tariffs() -> None:
+    """'Any 2 from' four one-mark points: the pool is worth 2, not 4."""
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
+        marks=2,
+        select_count=2,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 4
+
+
+def test_pool_cap_never_exceeds_the_question_total() -> None:
+    """select_count=3 on a 2-mark question: the question total wins."""
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")),
+        marks=2,
+        select_count=3,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 4
+
+
+def test_pool_without_select_count_gets_the_marks_the_question_has_left() -> None:
+    """One independent point (1) plus a pool of three on a 3-mark question:
+    the pool can be worth at most 3 - 1 = 2. Distinguishes the leftover rule
+    from 'sum of members' (3) and from 'best member' (1)."""
+    scheme = _scheme_with(
+        _points(("p1", 1, ""), ("p2", 1, "opt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [(None, None), ("pool:1", 2), ("pool:1", 2), ("pool:1", 2)]
+
+
+def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
+    scheme = _scheme_with(
+        _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "alt")), marks=3, select_count=2
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("pool:1", 2)] * 3
+
+
+def test_two_groups_get_distinct_keys_and_the_leftover_subtracts_the_either_or_cap() -> None:
+    """p1|p2 (either/or, worth 1) then a pool p3,p4 with no select_count on a
+    3-mark question: the pool's leftover is 3 - 0 (no independents) - 1 (the
+    either/or cap) = 2."""
+    scheme = _scheme_with(
+        _points(("p1", 1, ""), ("p2", 1, "alt"), ("p3", 1, "opt"), ("p4", 1, "opt")), marks=3
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 1), ("alt:1", 1), ("pool:1", 2), ("pool:1", 2)]
+
+
+def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:
+    """`Question.marks == 0` is the scheme's "container" convention; the cap
+    then bounds against the marker's `maximum_marks` (3 here) instead of 0."""
+    scheme = _scheme_with(_points(("p1", 2, ""), ("p2", 1, "alt")), marks=0)
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [("alt:1", 2), ("alt:1", 2)]
+```
+
+- [ ] **Step 2: Run the file to confirm they fail**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
+```
+
+Expected: the ten new tests fail with `KeyError: 'group_key'`; `test_carries_tariff_mark_type_and_text_from_the_scheme` fails on the two missing keys; the other eleven pass.
+
+- [ ] **Step 3: Implement the derivation**
+
+Replace `lemely/db/question_points.py` in full:
+
+```python
+"""Derive a per-mark-point ledger from a marked question and its mark scheme.
+
+Pure: no session, no I/O. Returns plain dicts, which
+:mod:`lemely.db.attempt_repo` turns into ``QuestionResultPoint`` rows — keeping
+this module free of the model layer and its tests free of a database.
+
+The rule that matters: one row per point **in the mark scheme**, not per id in
+``matched_point_ids``. A ledger of only the matched points has nothing to say
+about the marks a student did not get, which is the entire reason to have one
+(spec 2026-09-17, "Write path").
+
+Nothing here is invented. ``tariff``, ``point_text`` and ``mark_type`` are
+copied from the scheme; ``rationale`` is copied from the marker's
+``point_notes`` when present and left ``None`` otherwise (D2). An id the marker
+claimed but the scheme does not define produces no row at all — never a row
+with a null tariff pretending to be a mark point.
+
+``group_key`` / ``group_max_marks`` record the scheme's non-additive structure
+— either/or alternatives and "any N from" pools — as data, at the one moment
+the ``Question`` is in hand. ``AnswerPoint.is_alternative`` means only "an
+alternative to the *previous* point", so a group exists in scheme order and
+nowhere else; :func:`lemely.io.correction_ai._check_coherence` refuses,
+rightly, to rebuild it at read time. Recording it here is what lets the
+self-review write path (:mod:`lemely.db.self_review_repo`) cap a student's
+granted marks at what the group is worth, and lets the panel render an
+either/or group as one unit (self-review spec, D6).
+"""
+
+from __future__ import annotations
+
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from collections.abc import Sequence
+
+    from lemely.core.loose_schemas import AnswerPoint, MarkScheme
+    from lemely.core.schemas import CorrectedQuestion
+
+
+def derive_point_rows(
+    cq: CorrectedQuestion,
+    mark_scheme: MarkScheme | None,
+) -> list[dict[str, object]]:
+    """One dict per mark point in ``cq``'s question, in scheme order.
+
+    Args:
+        cq: The marked question. ``matched_point_ids`` decides ``awarded``;
+            ``point_notes`` supplies ``rationale`` where the marker wrote one.
+        mark_scheme: The parsed scheme this question was marked against, or
+            ``None`` when the caller has none (a quiz).
+
+    Returns:
+        A list of dicts carrying ``mark_point_id``, ``ordinal``, ``mark_type``,
+        ``tariff``, ``tariff_defaulted``, ``point_text``, ``awarded``,
+        ``is_alternative``, ``is_optional``, ``rationale``, ``group_key`` and
+        ``group_max_marks``. Empty when there is no scheme, no matching
+        question, or the question has no answer points.
+    """
+    if mark_scheme is None:
+        return []
+
+    question = mark_scheme.get_question_by_id(cq.question_id)
+    if question is None or not question.answer_points:
+        return []
+
+    matched = set(cq.matched_point_ids)
+    notes = cq.point_notes or {}
+
+    kept: list[AnswerPoint] = []
+    seen_ids: set[str] = set()
+    for point in question.answer_points:
+        # A malformed scheme carrying two points with the same id must still
+        # degrade to a partial-but-writable ledger, never to a lost paper: the
+        # unique constraint on (question_result_id, mark_point_id) would abort
+        # the whole attempt at commit otherwise. First occurrence wins — it is
+        # the one the scheme's own reading order and this row's ``ordinal``
+        # refer to.
+        if point.id in seen_ids:
+            continue
+        seen_ids.add(point.id)
+        kept.append(point)
+
+    groups = _group_points(
+        kept,
+        # ``Question.marks == 0`` is the scheme's "container" convention; the
+        # marker's maximum is the next-best statement of the question's worth.
+        total=question.marks or cq.maximum_marks,
+        select_count=question.select_count,
+    )
+    return [
+        {
+            "mark_point_id": point.id,
+            "ordinal": ordinal,
+            "mark_type": point.math_mark_type.value if point.math_mark_type else None,
+            "tariff": point.marks,
+            "tariff_defaulted": point.marks_defaulted,
+            "point_text": point.point,
+            "awarded": point.id in matched,
+            "is_alternative": point.is_alternative,
+            "is_optional": point.is_optional,
+            "rationale": notes.get(point.id),
+            "group_key": group_key,
+            "group_max_marks": group_max_marks,
+        }
+        for ordinal, (point, (group_key, group_max_marks)) in enumerate(
+            zip(kept, groups, strict=True)
+        )
+    ]
+
+
+def _group_points(
+    points: Sequence[AnswerPoint], *, total: int, select_count: int | None
+) -> list[tuple[str | None, int | None]]:
+    """``(group_key, group_max_marks)`` per point, from the scheme's flags.
+
+    Grouping is by run in scheme order — all the flags can express:
+
+    * an ``is_alternative`` point joins the group of the point before it,
+      forming a new either/or group with that point when it had none, or
+      standing alone when there is no previous point;
+    * an ``is_optional`` point joins the pool the previous point is in, else
+      starts a new pool;
+    * anything else is independent.
+
+    A one-member group is not a group (``(None, None)``). Keys are ``alt:n``
+    / ``pool:n``, numbered per kind in scheme order after that pruning, so
+    they are gapless and stable for a given scheme.
+
+    ``group_max_marks`` is the most the group can contribute, never above
+    ``total``: an either/or group is worth its best member; a pool with a
+    ``select_count`` is worth its N largest tariffs; a pool without one is
+    worth whatever ``total`` has left after every independent point and every
+    either/or group — the tightest cap the scheme supports when N is unstated.
+    """
+    groups: list[tuple[str, list[int]]] = []
+    member_of: dict[int, int] = {}
+
+    def start(kind: str, *indexes: int) -> None:
+        groups.append((kind, list(indexes)))
+        for index in indexes:
+            member_of[index] = len(groups) - 1
+
+    def join(group: int, index: int) -> None:
+        groups[group][1].append(index)
+        member_of[index] = group
+
+    for index, point in enumerate(points):
+        previous = index - 1
+        if point.is_alternative:
+            if previous in member_of:
+                join(member_of[previous], index)
+            elif previous >= 0:
+                start("alt", previous, index)
+            else:
+                start("alt", index)
+        elif point.is_optional:
+            if previous in member_of and groups[member_of[previous]][0] == "pool":
+                join(member_of[previous], index)
+            else:
+                start("pool", index)
+
+    real = [(kind, members) for kind, members in groups if len(members) > 1]
+    grouped = {index for _kind, members in real for index in members}
+
+    def alt_cap(members: list[int]) -> int:
+        return min(total, max(points[index].marks for index in members))
+
+    independent_total = sum(p.marks for index, p in enumerate(points) if index not in grouped)
+    alt_cap_total = sum(alt_cap(members) for kind, members in real if kind == "alt")
+    leftover = max(0, total - independent_total - alt_cap_total)
+
+    result: list[tuple[str | None, int | None]] = [(None, None)] * len(points)
+    counters = {"alt": 0, "pool": 0}
+    for kind, members in real:
+        counters[kind] += 1
+        if kind == "alt":
+            group_max = alt_cap(members)
+        elif select_count is not None:
+            tariffs = sorted((points[index].marks for index in members), reverse=True)
+            group_max = min(total, sum(tariffs[:select_count]))
+        else:
+            group_max = leftover
+        key = f"{kind}:{counters[kind]}"
+        for index in members:
+            result[index] = (key, group_max)
+    return result
+```
+
+- [ ] **Step 4: Run the file to confirm they pass**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_question_points.py -v --no-cov
+```
+
+Expected: 22 passed (12 existing, 10 new).
+
+- [ ] **Step 5: Add the columns to the model and write the migration**
+
+In `lemely/db/models/attempts.py`, on `QuestionResultPoint`, insert after the `is_optional` column and its docstring (the docstring that ends `...disagrees with the student's own mark.`) and before `rationale`:
+
+```python
+    group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """The scheme group this point belongs to, recorded at derivation time
+
+    (:func:`lemely.db.question_points.derive_point_rows`): ``alt:n`` for an
+    either/or run, ``pool:n`` for an "any N from" pool, ``NULL`` for an
+    independent point. ``group_max_marks`` is the most the whole group can
+    contribute. ``is_alternative`` alone cannot say where a group starts or
+    ends (it means "alternative to the previous point"), which is why the
+    group is stored rather than re-derived — the self-review write path caps
+    granted marks at ``group_max_marks`` (self-review spec, D6), and the panel
+    renders the group as one unit. Rows written before migration
+    ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
+    """
+```
+
+Create `lemely/db/migrations/versions/0038_point_group_key.py`:
+
+```python
+"""question_result_points: group_key + group_max_marks (self-review spec, D6)
+
+Revision ID: 0038_point_group_key
+Revises: 0037_question_result_pts
+Create Date: 2026-09-18 00:00:00.000000
+
+Two additive nullable columns, **no data migration**. ``group_key`` names the
+mark-scheme group a point belongs to (``alt:n`` either/or run, ``pool:n``
+"any N from" pool, NULL when independent) and ``group_max_marks`` is the most
+that group can contribute. Both are derived from the parsed scheme at
+correction time (``lemely/db/question_points.py``); rows written before this
+revision keep NULL — the attempts behind them have no self-review surface
+(spec 1 D7), so there is nothing to protect and nothing honest to backfill
+from.
+
+Reversible: ``downgrade`` drops the two columns.
+"""
+
+from collections.abc import Sequence
+
+import sqlalchemy as sa
+from alembic import op
+
+# revision identifiers, used by Alembic.
+# Kept to <=32 chars: alembic_version.version_num is varchar(32).
+revision: str = "0038_point_group_key"
+down_revision: str | Sequence[str] | None = "0037_question_result_pts"
+branch_labels: str | Sequence[str] | None = None
+depends_on: str | Sequence[str] | None = None
+
+
+def upgrade() -> None:
+    """Upgrade schema."""
+    op.add_column("question_result_points", sa.Column("group_key", sa.Text(), nullable=True))
+    op.add_column(
+        "question_result_points", sa.Column("group_max_marks", sa.Integer(), nullable=True)
+    )
+
+
+def downgrade() -> None:
+    """Downgrade schema."""
+    op.drop_column("question_result_points", "group_max_marks")
+    op.drop_column("question_result_points", "group_key")
+```
+
+Do not edit `0037_question_result_pts.py`; it is merged.
+
+- [ ] **Step 6: Write the failing service tests**
+
+In `tests/test_self_review_repo.py`, update the `PendingPoint` allowlist inside `test_get_before_submission_is_pending_and_carries_no_verdict`:
+
+```python
+    assert {f.name for f in dataclasses.fields(PendingPoint)} == {
+        "mark_point_id",
+        "ordinal",
+        "mark_type",
+        "tariff",
+        "point_text",
+        "is_alternative",
+        "is_optional",
+        "group_key",
+        "group_max_marks",
+    }
+```
+
+Append to the end of the file (it uses `_alt_group_scheme` / `_seed_alt_attempt`, which Task 6 defined in this file — if Task 6's review renamed them, use the renamed helpers, they are the same fixture):
+
+```python
+# ── group_key / group_max_marks reach the ledger, the snapshot and the view ──
+
+
+def test_pending_view_carries_the_scheme_group_and_so_do_the_ledger_and_the_ai_revision(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Scheme-derived, verdict-free, and needed before the reveal: the panel
+    must show p1/p2 as one either/or unit worth 1, or it invites the double
+    tick Task 6b exists to stop."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_alt_attempt(pg_sessionmaker, student)
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "3")
+
+    view = _service(pg_sessionmaker).get(student, attempt_id, qr_id)
+
+    assert isinstance(view, PendingSelfReview)
+    assert [(p.group_key, p.group_max_marks) for p in view.points] == [("alt:1", 1), ("alt:1", 1)]
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert [(p.group_key, p.group_max_marks) for p in qr.points] == [("alt:1", 1), ("alt:1", 1)]
+    assert [(e["group_key"], e["group_max_marks"]) for e in qr.revisions[0].points_snapshot] == [
+        ("alt:1", 1),
+        ("alt:1", 1),
+    ]
+```
+
+- [ ] **Step 7: Run the file to confirm they fail**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_self_review_repo.py -v --no-cov
+```
+
+Expected: `test_get_before_submission_is_pending_and_carries_no_verdict` fails on the allowlist (two names missing from the dataclass); the new test fails with `AttributeError: 'PendingPoint' object has no attribute 'group_key'`. Every other test passes. (If the file skips, Postgres at `127.0.0.1:54322` is down — start it; nothing in this task can be verified without it.)
+
+- [ ] **Step 8: Expose the fields on the views**
+
+In `lemely/db/self_review_repo.py`, add to both dataclasses, after `is_optional: bool`:
+
+```python
+    is_optional: bool
+    group_key: str | None
+    group_max_marks: int | None
+```
+
+(`PendingPoint` — update its docstring to `"""A mark point before the reveal. Deliberately has no ``awarded``; ``group_key`` / ``group_max_marks`` are scheme-derived and verdict-free."""` — and `RevealedPoint`.) Then in `_to_view`'s `PendingPoint(...)` constructor and `_revealed_view`'s `RevealedPoint(...)` constructor, after `is_optional=p.is_optional,` add:
+
+```python
+                    group_key=p.group_key,
+                    group_max_marks=p.group_max_marks,
+```
+
+- [ ] **Step 9: Run the file to confirm they pass**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_self_review_repo.py tests/test_question_points.py tests/test_attempt_repo.py tests/test_db_schema.py -v --no-cov
+```
+
+Expected: all pass — in `tests/test_self_review_repo.py` the one new test plus every test already there; `tests/test_attempt_repo.py` unchanged (its snapshot assertions read named keys, never the whole dict); `tests/test_db_schema.py::test_migrations_have_a_single_head` passes with the new revision as the only head.
+
+- [ ] **Step 10: Verify the migration on a throwaway database**
+
+Never against the developer's live Supabase container. `LEMELY_DATABASE__URL` overrides the URL, which otherwise points at `127.0.0.1:54322/postgres`; Alembic's `env.py` reads it through `load_settings()` exactly as the app does.
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" python - <<'EOF'
+import sqlalchemy as sa
+admin = sa.create_engine("postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres", isolation_level="AUTOCOMMIT")
+with admin.connect() as conn:
+    conn.execute(sa.text('DROP DATABASE IF EXISTS lemely_mig_0038 WITH (FORCE)'))
+    conn.execute(sa.text('CREATE DATABASE lemely_mig_0038'))
+EOF
+export LEMELY_DATABASE__URL="postgresql+psycopg://postgres:postgres@127.0.0.1:54322/lemely_mig_0038"
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic upgrade head
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic downgrade -1
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic upgrade head
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic heads
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" alembic check
+unset LEMELY_DATABASE__URL
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" python - <<'EOF'
+import sqlalchemy as sa
+admin = sa.create_engine("postgresql+psycopg://postgres:postgres@127.0.0.1:54322/postgres", isolation_level="AUTOCOMMIT")
+with admin.connect() as conn:
+    conn.execute(sa.text('DROP DATABASE IF EXISTS lemely_mig_0038 WITH (FORCE)'))
+EOF
+```
+
+Expected: three clean Alembic runs; `alembic heads` prints exactly `0038_point_group_key (head)`; `alembic check` prints `No new upgrade operations detected.` If `alembic check` reports drift on a table this task did not touch, report it to the lead verbatim and do not fix it here. The `unset` matters: with the variable still exported, the next `pytest` would create its throwaway test databases from a server URL that names the dropped database.
+
+- [ ] **Step 11: Run pre-commit and commit**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
+git add lemely/db/migrations/versions/0038_point_group_key.py lemely/db/models/attempts.py lemely/db/question_points.py lemely/db/self_review_repo.py tests/test_question_points.py tests/test_self_review_repo.py
+git commit -S -m "feat(db): record mark-scheme either/or and any-N groups on question_result_points (group_key, group_max_marks)"
+```
+
+---
+
+### Task 6b: Cap the delta by group
+
+**Files:**
+- Modify: `lemely/db/self_review_repo.py` (`submit` becomes two-pass; new `_PointPass`, `_settle_groups`; `_revealed_view` reads the snapshot; `RevealedPoint.absorbed_by_group`)
+- Test: `tests/test_self_review_repo.py` (append)
+
+**Interfaces:**
+- Consumes: `QuestionResultPoint.group_key` / `.group_max_marks` (Task 6a); everything Task 6 built.
+- Produces: `submit` where a granted point can never take its group above `group_max_marks`; `RevealedPoint.absorbed_by_group: bool`; snapshot entries gain `"absorbed_by_group"`. Task 8's revealed DTO and Task 12's TS type carry `absorbedByGroup`; Task 12's `outcomeDetail` explains it. Task 7's `mark_changed` assertions are on independent points and are unaffected.
+
+**The arithmetic.** Marks still move by delta from `awarded_marks`, but the delta is settled **per group**, not per point. A point with no `group_key` is its own group with cap `tariff`. For every group:
+
+```
+credit(flags) = min(group_max_marks, Σ tariff over members whose flag is True)
+before        = credit(marker's `awarded`)
+after         = credit(marker's `awarded` with every GRANTED verdict applied)
+group delta   = after − before
+question delta = Σ group deltas        (then the existing clamp to [0, maximum_marks])
+```
+
+For an independent point this is exactly Task 6's rule (`+tariff` for a granted upward verdict, `−tariff` for a granted downward one). For a group, `after − before` is bounded by the naive delta in both directions: an upward grant can add at most the room left under the cap (`cap − before`), and a downward grant on a member another earned member still covers removes nothing (`after ≥ before − tariff`). Since the delta is taken from `awarded_marks`, the cap can never contradict the marker's own total — the marker's mark is the floor of the upward direction and the ceiling of the downward one, exactly as before.
+
+**A grant the cap absorbs is recorded as a no-change with a reason — not silently dropped, not routed to a teacher.** Decision, for the implementer:
+
+- *Not a teacher route.* Queue rows exist for uncertainty (`low_confidence`, `student_evidence_unjudged`). Nothing here is uncertain: the student's claim about the point was accepted; the scheme says the group is worth one mark. A teacher would re-derive the same arithmetic the server already did, it would need a new `ReviewReason` (an enum change, hence a migration), and it would flood the queue on precisely the exploit pattern this task closes.
+- *Not silent.* `evidence_verdict` stays `not_required` / `accepted` because that is the truth about the *claim*; if `mark_changed` were then reported `True` (as the column-derived `_mark_changed` would do), the student would read "your mark was applied" against an unmoved total. Those are two different facts, and the group cap is the one place they diverge — so the pass records both: `mark_changed=False` and `absorbed_by_group=True` on the point's snapshot entry, surfaced on `RevealedPoint` (and later `absorbedByGroup` on the wire) so Part 3 can say *"Accepted — this point shares its mark with another you already have, so nothing changed."*
+- Consequences that follow without special cases: a wholly-absorbed pass has `changed=False`, so `student_selfmark_marks` stays `NULL`, the revision reads `"Student self-mark: no change"`, and the `low_confidence` queue row stays open (decision 3: no change resolves nothing). Part 5's misconception query (decision 8) does not count an absorbed point — its `evidence_verdict` is `not_required` — which is right: the student was correct about the point.
+- Per-point attribution inside a moved group is a presentation convention, stated here: every granted point whose direction matches the group's delta is `mark_changed=True`; every other granted point is `absorbed_by_group=True`. The authoritative figures are `student_marks` / `effective_marks`; the panel renders the group as one unit.
+
+**Why the fixtures below are shaped as they are.** The 1-mark either/or in `_alt_group_scheme` cannot tell a capped delta from an uncapped one: `1 + 1 = 2` clamps to `maximum_marks = 1` either way (Task 6's own `self_review_delta_clamped` warning says as much). Every test here uses a question with room *above* the group's cap, so a forgotten cap changes the total instead of hiding behind the question clamp. The arithmetic is written into each docstring; do not substitute numbers.
+
+- [ ] **Step 1: Write the failing tests**
+
+Append to `tests/test_self_review_repo.py`:
+
+```python
+# ── group caps (Task 6b): a grant can never take a group above its worth ────
+
+
+def _group_scheme() -> MarkScheme:
+    """Question "4" (2 marks): p1 independent; p2 OR p3 (either/or, worth 1 → alt:1).
+    Question "5" (3 marks): p0 independent; p1..p4 "any 2 from" (pool:1, worth 2).
+    Both questions have room above their group's cap, so a forgotten cap shows
+    in the total instead of being hidden by the question-level clamp."""
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=5,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="4",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the law", marks=1),
+                    AnswerPoint(id="p2", point="Either form", marks=1),
+                    AnswerPoint(id="p3", point="Or this form", marks=1, is_alternative=True),
+                ],
+            ),
+            SchemeQuestion(
+                id="5",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                select_count=2,
+                answer_points=[
+                    AnswerPoint(id="p0", point="Names the process", marks=1),
+                    AnswerPoint(id="p1", point="Any: reason one", marks=1, is_optional=True),
+                    AnswerPoint(id="p2", point="Any: reason two", marks=1, is_optional=True),
+                    AnswerPoint(id="p3", point="Any: reason three", marks=1, is_optional=True),
+                    AnswerPoint(id="p4", point="Any: reason four", marks=1, is_optional=True),
+                ],
+            ),
+        ],
+    )
+
+
+def _seed_group_attempt(
+    sm: sessionmaker[Session],
+    student: uuid.UUID,
+    *,
+    question_id: str,
+    matched: list[str],
+    awarded: int,
+    maximum: int,
+) -> uuid.UUID:
+    """One low-confidence question from `_group_scheme`. The marker's total is
+    given explicitly: a marker that matched both alternatives still awards
+    the group once, so `awarded` is deliberately not `len(matched)`."""
+    question = CorrectedQuestion(
+        question_id=question_id,
+        awarded_marks=awarded,
+        maximum_marks=maximum,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.2,
+        needs_teacher_review=True,
+        student_answer=f"answer-{question_id}",
+        expected_answer=f"expected-{question_id}",
+        topic="Waves",
+        marker_source="ai",
+        feedback="Unsure.",
+        matched_point_ids=matched,
+    )
+    return AttemptRepository(sm).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_group_scheme()
+    )
+
+
+def _verdicts(**earned: bool) -> list[PointVerdict]:
+    return [PointVerdict(mark_point_id=pid, earned=flag) for pid, flag in earned.items()]
+
+
+def test_a_grant_cannot_lift_an_either_or_group_above_its_worth(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The exploit, closed. Q4 (2 marks): marker awarded p2 (1 mark). Student
+    ticks p2 AND p3 on a low-confidence question, so p3 is GRANTED. Uncapped:
+    1 + 1 = 2, which fits under maximum_marks = 2 — the question clamp does
+    NOT catch it. Capped: alt:1 before = min(1, 1) = 1, after = min(1, 2) = 1,
+    delta 0. The grant is recorded as absorbed, nothing moves, and GET reads
+    the same answer back from the snapshot."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2"], awarded=1, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=True, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, None, 1)
+    p3 = view.points[2]
+    assert p3.evidence_verdict == "not_required"  # the claim was accepted…
+    assert p3.mark_changed is False  # …and no mark followed…
+    assert p3.absorbed_by_group is True  # …for a stated reason.
+    assert [p.absorbed_by_group for p in view.points] == [False, False, True]
+    assert view.state == "settled" and view.pending_teacher is False
+
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.awarded_marks == 1
+    assert qr.student_selfmark_marks is None
+    assert qr.revisions[1].reason == "Student self-mark: no change"
+    entry = next(e for e in qr.revisions[1].points_snapshot if e["mark_point_id"] == "p3")
+    assert (entry["mark_changed"], entry["absorbed_by_group"]) == (False, True)
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [(r.reason, r.status) for r in rows] == [(ReviewReason.low_confidence, ReviewStatus.open)]
+    assert _service(pg_sessionmaker).get(student, attempt_id, qr_id) == view
+
+
+def test_a_grant_inside_a_group_with_room_moves_exactly_the_room(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q4: marker awarded nothing. Student ticks p2 AND p3, both GRANTED.
+    Uncapped: 0 + 1 + 1 = 2. Capped: alt:1 before = 0, after = min(1, 2) = 1,
+    delta +1 → 1. Both granted points share the group's upward move."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=[], awarded=0, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=True, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (0, 1, 1)
+    assert [p.mark_changed for p in view.points] == [False, True, True]
+    assert [p.absorbed_by_group for p in view.points] == [False, False, False]
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 0
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+    assert _queue_rows(pg_sessionmaker, qr_id)[0].status is ReviewStatus.resolved
+
+
+def test_a_downward_grant_the_other_member_still_covers_removes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q4: marker matched p2 AND p3 but awarded 1 (its own coherence cap).
+    Student says p2 not earned, p3 earned — p2 is GRANTED downward. Naive
+    delta: 1 − 1 = 0 marks. Capped: alt:1 before = min(1, 2) = 1, after =
+    min(1, 1) = 1, delta 0 — the student's own claim still supports the
+    group's one mark, so it stays."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2", "p3"], awarded=1, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p1=False, p2=False, p3=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, None, 1)
+    p2 = view.points[1]
+    assert p2.evidence_verdict == "not_required"
+    assert (p2.mark_changed, p2.absorbed_by_group) == (False, True)
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+
+
+def test_pool_grants_stop_at_select_count(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Q5 (3 marks): "any 2 from" p1..p4; marker awarded p1 (1 mark). Student
+    ticks all four; p2, p3, p4 GRANTED. Uncapped: 1 + 3 = 4 → clamped to
+    maximum_marks 3. Capped: pool:1 before = min(2, 1) = 1, after =
+    min(2, 4) = 2, delta +1 → 2. Three versus two."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="5", matched=["p1"], awarded=1, maximum=3
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "5")
+
+    view = _service(pg_sessionmaker).submit(
+        student, attempt_id, qr_id, _verdicts(p0=False, p1=True, p2=True, p3=True, p4=True)
+    )
+
+    assert (view.ai_marks, view.student_marks, view.effective_marks) == (1, 2, 2)
+    assert [p.mark_changed for p in view.points] == [False, False, True, True, True]
+    assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 2
+```
+
+Independent points need no new test: every existing `submit` test in the file has `group_key IS NULL` on every row and pins the per-point rule, which the group rule must reproduce exactly. If any of them fails after Step 3, the singleton branch of `_settle_groups` is wrong.
+
+- [ ] **Step 2: Run the file to confirm they fail**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_self_review_repo.py -v --no-cov
+```
+
+Expected: the four new tests fail — the first on `(1, None, 1)` vs `(1, 2, 2)` (the exploit succeeding), the third on `(1, None, 1)` vs `(1, 0, 0)`, the fourth on `(1, 2, 2)` vs `(1, 3, 3)`, and all of them with `AttributeError: 'RevealedPoint' object has no attribute 'absorbed_by_group'` wherever they reach it. Every existing test passes.
+
+- [ ] **Step 3: Settle the delta per group**
+
+In `lemely/db/self_review_repo.py`:
+
+**(a)** Replace the module docstring's final paragraph (the one beginning `**Marks move by delta**`) with:
+
+```python
+**Marks move by delta, settled per scheme group**, not by re-summing ticked
+tariffs: for each group (an independent point is its own group with cap
+``tariff``), the credit is ``min(group_max_marks, sum of tariffs counted as
+earned)`` before and after the granted verdicts are applied, and the question
+moves by the sum of those differences from ``awarded_marks``, clamped to
+``[0, maximum_marks]``. So a grant can never lift an either/or or "any N
+from" group above what the scheme says it is worth (D6's grade-inflation
+guard), a downward grant that another member still covers removes nothing,
+and the marker's own total is never contradicted. ``awarded_marks`` itself is
+never written — ``lemely/eval`` reads it.
+
+**A grant the cap absorbs is recorded, not hidden and not escalated.** The
+claim was accepted (``evidence_verdict`` says so); the mark did not follow
+(``mark_changed`` is false, ``absorbed_by_group`` is true, both in the
+revision's snapshot and on :class:`RevealedPoint`). Nothing is uncertain, so
+no teacher row is opened.
+"""
+```
+
+**(b)** Add `absorbed_by_group: bool` to `RevealedPoint`, immediately after `mark_changed: bool`:
+
+```python
+    mark_changed: bool
+    absorbed_by_group: bool
+    judge_reason: str | None
+```
+
+**(c)** In `submit`, replace everything from `delta = 0` down to (and including) the `snapshot.append({...})` call that closes the `for point in qr.points:` loop with:
+
+```python
+            unjudged = False
+            passes: list[_PointPass] = []
+
+            for point in qr.points:
+                verdict = by_point[point.mark_point_id]
+                evidence = _clean_text(verdict.evidence, MAX_EVIDENCE_CHARS)
+                point.student_selfmark = verdict.earned
+                point.student_selfmark_at = now
+                point.student_evidence = evidence
+                point.evidence_verdict = None
+                judge_reason: str | None = None
+                granted = False
+
+                decision = decide_point(
+                    ai_awarded=point.awarded,
+                    student_earned=verdict.earned,
+                    low_confidence=low_confidence,
+                    has_evidence=evidence is not None,
+                )
+                if teacher_settled and decision is not PointDecision.AGREE:
+                    # Precedence already settles this question; the self-mark
+                    # is recorded for its learning signal and nothing moves,
+                    # so a judge call could not change any outcome.
+                    decision = PointDecision.NO_CHANGE
+
+                if decision is PointDecision.GRANT:
+                    point.evidence_verdict = EvidenceVerdict.not_required
+                    granted = True
+                elif decision is PointDecision.JUDGE:
+                    outcome = self._judge_safely(
+                        JudgeRequest(
+                            subject_code=attempt.subject_code or "",
+                            question_id=qr.question_id,
+                            point_text=point.point_text,
+                            mark_type=point.mark_type,
+                            tariff=point.tariff,
+                            student_answer=qr.student_answer,
+                            marker_rationale=point.rationale or qr.rationale or qr.feedback,
+                            student_claims_earned=verdict.earned,
+                            student_evidence=evidence or "",
+                        ),
+                        qr,
+                    )
+                    if outcome is None:
+                        unjudged = True
+                    else:
+                        point.evidence_verdict = (
+                            EvidenceVerdict.accepted
+                            if outcome.accepted
+                            else EvidenceVerdict.rejected
+                        )
+                        judge_reason = outcome.reason
+                        granted = outcome.accepted
+
+                passes.append(
+                    _PointPass(
+                        point=point, earned=verdict.earned, granted=granted, judge_reason=judge_reason
+                    )
+                )
+
+            delta = _settle_groups(passes)
+            changed = any(item.mark_changed for item in passes)
+            snapshot: list[dict[str, object]] = [
+                {
+                    "mark_point_id": item.point.mark_point_id,
+                    "ai_awarded": item.point.awarded,
+                    "student_selfmark": item.earned,
+                    "evidence_verdict": (
+                        item.point.evidence_verdict.value if item.point.evidence_verdict else None
+                    ),
+                    "mark_changed": item.mark_changed,
+                    "absorbed_by_group": item.absorbed_by_group,
+                    "judge_reason": item.judge_reason,
+                }
+                for item in passes
+            ]
+```
+
+Everything after that point in `submit` — `qr.student_selfmarked_at = now`, the `if changed:` clamp (with Task 6's `self_review_delta_clamped` warning), `_append_revision`, the recompute, the queue resolve, the `unjudged` row, the log line, the return — stays exactly as it is.
+
+**(d)** Add, in the `# ── Internals ──` section directly above `_as_uuid`:
+
+```python
+@dataclass(slots=True)
+class _PointPass:
+    """One point's passage through ``submit``: the student's verdict, whether
+    authority granted it, and — once :func:`_settle_groups` has run — whether
+    it moved a mark or was absorbed by its group."""
+
+    point: QuestionResultPoint
+    earned: bool
+    granted: bool
+    judge_reason: str | None
+    mark_changed: bool = False
+    absorbed_by_group: bool = False
+
+
+def _settle_groups(passes: list[_PointPass]) -> int:
+    """Turn granted verdicts into a marks delta, one scheme group at a time.
+
+    A point without ``group_key`` is its own group with cap ``tariff``, for
+    which this is exactly the per-point rule: +tariff for a granted upward
+    verdict, -tariff for a granted downward one. For an either/or or any-N
+    group the credit is ``min(group_max_marks, sum of tariffs of the members
+    that count as earned)`` — before, the marker's ``awarded`` flags; after,
+    the same flags with every *granted* verdict applied — and the group moves
+    by the difference. A grant therefore never lifts a group above what the
+    scheme says it is worth, and a downward grant on a member another earned
+    member still covers removes nothing; in both directions the result is
+    never further from the marker's total than the per-point rule was.
+
+    Per point: the granted members whose direction is the group's are
+    ``mark_changed``; every other granted member is ``absorbed_by_group`` —
+    recorded, never silent (module docstring).
+    """
+    by_group: dict[str, list[_PointPass]] = {}
+    for index, item in enumerate(passes):
+        by_group.setdefault(item.point.group_key or f"point:{index}", []).append(item)
+
+    delta = 0
+    for members in by_group.values():
+        cap = members[0].point.group_max_marks
+        if cap is None:
+            cap = sum(m.point.tariff for m in members)
+        before = min(cap, sum(m.point.tariff for m in members if m.point.awarded))
+        after = min(
+            cap,
+            sum(m.point.tariff for m in members if (m.earned if m.granted else m.point.awarded)),
+        )
+        group_delta = after - before
+        delta += group_delta
+        for m in members:
+            if not m.granted:
+                continue
+            m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
+            m.absorbed_by_group = not m.mark_changed
+    return delta
+```
+
+**(e)** In `_revealed_view`, replace `reasons = _judge_reasons(session, qr)` with `entries = _selfmark_snapshot(session, qr)`, and replace the three lines `mark_changed=_mark_changed(p),` … `judge_reason=reasons.get(p.mark_point_id),` in the `RevealedPoint(...)` constructor with:
+
+```python
+                mark_changed=_snapshot_bool(entries, p, "mark_changed", default=_mark_changed(p)),
+                absorbed_by_group=_snapshot_bool(entries, p, "absorbed_by_group", default=False),
+                judge_reason=_snapshot_str(entries, p, "judge_reason"),
+```
+
+**(f)** Replace `_judge_reasons` with:
+
+```python
+def _selfmark_snapshot(session: Session, qr: QuestionResult) -> dict[str, dict[str, object]]:
+    """``mark_point_id -> entry`` from the latest ``student_selfmark`` revision's snapshot.
+
+    The snapshot is where ``submit`` records what the columns cannot: the
+    judge's reason, and whether a granted verdict actually moved a mark or was
+    absorbed by its group — ``evidence_verdict`` says the claim was accepted;
+    only the snapshot says whether marks followed.
+    """
+    revision = session.scalars(
+        select(QuestionResultRevision)
+        .where(
+            QuestionResultRevision.question_result_id == qr.id,
+            QuestionResultRevision.source == RevisionSource.student_selfmark,
+        )
+        .order_by(QuestionResultRevision.revision.desc())
+    ).first()
+    if revision is None:
+        return {}
+    return {
+        entry["mark_point_id"]: entry
+        for entry in revision.points_snapshot
+        if isinstance(entry, dict) and isinstance(entry.get("mark_point_id"), str)
+    }
+
+
+def _snapshot_bool(
+    entries: dict[str, dict[str, object]], point: QuestionResultPoint, key: str, *, default: bool
+) -> bool:
+    value = entries.get(point.mark_point_id, {}).get(key)
+    return value if isinstance(value, bool) else default
+
+
+def _snapshot_str(
+    entries: dict[str, dict[str, object]], point: QuestionResultPoint, key: str
+) -> str | None:
+    value = entries.get(point.mark_point_id, {}).get(key)
+    return value if isinstance(value, str) else None
+```
+
+Keep `_mark_changed` as it is: it is now only the fallback for a snapshot entry without the key (a revision written on a developer database by Task 6 before this task), and its docstring should say so — replace its docstring with `"""Column-derived fallback when the snapshot has no ``mark_changed``: a disagreement that was granted."""`.
+
+- [ ] **Step 4: Run the file to confirm they pass**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pytest tests/test_self_review_repo.py -v --no-cov
+```
+
+Expected: all pass — the four new tests and every existing one, including `test_agreement_on_a_capped_alternative_group_is_not_resummed_into_double_credit` (Task 6), whose group now has `group_key = "alt:1"`, `before = after = min(1, 2) = 1`.
+
+- [ ] **Step 5: Run pre-commit and commit**
+
+```bash
+PATH="/home/sico/Code/Lemely/.venv/bin:$PATH" pre-commit run --all-files
+git add lemely/db/self_review_repo.py tests/test_self_review_repo.py
+git commit -S -m "fix(db): settle self-review grants per scheme group so a grant never exceeds the group's worth; record absorbed verdicts"
+```
+
+---
+
 ### Task 7: The judge in the loop, and the authority matrix
 
 **Files:**
@@ -2544,7 +3653,7 @@ git commit -S -m "test(db): self-review judge path and the full authority matrix
   - `GET /api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review` → `SelfReviewPendingDTO | SelfReviewRevealedDTO`.
   - `POST` same path, body `SelfReviewSubmissionDTO` → `SelfReviewRevealedDTO`. 404 / 409 / 422 as the service errors map.
   - `get_self_review_service() -> SelfReviewService` in `lemely/web/deps.py` (judge `None` until Task 11).
-  - Wire shapes (camelCase, mirrored in TS by Task 12): `SelfReviewPendingPointDTO{markPointId, ordinal, markType, tariff, pointText}`; `SelfReviewRevealedPointDTO` = that + `{awarded, studentSelfmark, studentEvidence, evidenceVerdict, markChanged, judgeReason}`; `SelfReviewPendingDTO{state:"not_started", attemptId, questionResultId, questionId, maxMarks, evidenceRequired, points}`; `SelfReviewRevealedDTO{state:"revealed"|"settled", attemptId, questionResultId, questionId, maxMarks, evidenceRequired, aiMarks, effectiveMarks, studentMarks, teacherSettled, pendingTeacher, submittedAt, points}`; `SelfReviewSubmissionDTO{points: [{markPointId, earned, evidence?}]}`.
+  - Wire shapes (camelCase, mirrored in TS by Task 12): `SelfReviewPendingPointDTO{markPointId, ordinal, markType, tariff, pointText, isAlternative, isOptional, groupKey, groupMaxMarks}` (the last four are scheme-derived, verdict-free — Task 5's review and Task 6a); `SelfReviewRevealedPointDTO` = that + `{awarded, studentSelfmark, studentEvidence, evidenceVerdict, markChanged, absorbedByGroup, judgeReason}` (`absorbedByGroup`: Task 6b); `SelfReviewPendingDTO{state:"not_started", attemptId, questionResultId, questionId, maxMarks, evidenceRequired, points}`; `SelfReviewRevealedDTO{state:"revealed"|"settled", attemptId, questionResultId, questionId, maxMarks, evidenceRequired, aiMarks, effectiveMarks, studentMarks, teacherSettled, pendingTeacher, submittedAt, points}`; `SelfReviewSubmissionDTO{points: [{markPointId, earned, evidence?}]}`.
 
 - [ ] **Step 1: Write the failing endpoint tests**
 
@@ -2850,13 +3959,22 @@ EvidenceVerdictWire = Literal["accepted", "rejected", "not_required"]
 
 
 class SelfReviewPendingPointDTO(ApiModel):
-    """A mark point before the reveal. No ``awarded`` — by construction."""
+    """A mark point before the reveal. No ``awarded`` — by construction.
+
+    ``isAlternative`` / ``isOptional`` / ``groupKey`` / ``groupMaxMarks`` are
+    scheme-derived and verdict-free: the panel renders an either/or or
+    any-N group as one unit worth ``groupMaxMarks`` (Task 6a).
+    """
 
     markPointId: str
     ordinal: int
     markType: str | None
     tariff: int
     pointText: str
+    isAlternative: bool
+    isOptional: bool
+    groupKey: str | None
+    groupMaxMarks: int | None
 
 
 class SelfReviewRevealedPointDTO(SelfReviewPendingPointDTO):
@@ -2867,6 +3985,7 @@ class SelfReviewRevealedPointDTO(SelfReviewPendingPointDTO):
     studentEvidence: str | None
     evidenceVerdict: EvidenceVerdictWire | None
     markChanged: bool
+    absorbedByGroup: bool
     judgeReason: str | None
 
 
@@ -3005,6 +4124,10 @@ def _pending_dto(view: PendingSelfReview) -> SelfReviewPendingDTO:
                 markType=p.mark_type,
                 tariff=p.tariff,
                 pointText=p.point_text,
+                isAlternative=p.is_alternative,
+                isOptional=p.is_optional,
+                groupKey=p.group_key,
+                groupMaxMarks=p.group_max_marks,
             )
             for p in view.points
         ],
@@ -3032,11 +4155,16 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
                 markType=p.mark_type,
                 tariff=p.tariff,
                 pointText=p.point_text,
+                isAlternative=p.is_alternative,
+                isOptional=p.is_optional,
+                groupKey=p.group_key,
+                groupMaxMarks=p.group_max_marks,
                 awarded=p.awarded,
                 studentSelfmark=p.student_selfmark,
                 studentEvidence=p.student_evidence,
                 evidenceVerdict=p.evidence_verdict,  # type: ignore[arg-type]
                 markChanged=p.mark_changed,
+                absorbedByGroup=p.absorbed_by_group,
                 judgeReason=p.judge_reason,
             )
             for p in view.points
@@ -3851,6 +4979,7 @@ import type {
   SelfReviewRevealedPoint,
 } from "@/lib/selfReviewTypes"
 import {
+  ABSORBED_COPY,
   EMPTY_DRAFT,
   OUTCOME_LABEL,
   UNAVAILABLE_COPY,
@@ -3872,9 +5001,10 @@ import {
  * cannot pass.
  */
 
+const group = { isAlternative: false, isOptional: false, groupKey: null, groupMaxMarks: null }
 const points = [
-  { markPointId: "p1", ordinal: 0, markType: "M", tariff: 1, pointText: "Correct method" },
-  { markPointId: "p2", ordinal: 1, markType: "A", tariff: 1, pointText: "Answer to 3sf" },
+  { markPointId: "p1", ordinal: 0, markType: "M", tariff: 1, pointText: "Correct method", ...group },
+  { markPointId: "p2", ordinal: 1, markType: "A", tariff: 1, pointText: "Answer to 3sf", ...group },
 ]
 
 function pending(overrides: Partial<SelfReviewPending> = {}): SelfReviewPending {
@@ -3898,6 +5028,7 @@ function revealedPoint(overrides: Partial<SelfReviewRevealedPoint> = {}): SelfRe
     studentEvidence: null,
     evidenceVerdict: null,
     markChanged: false,
+    absorbedByGroup: false,
     judgeReason: null,
     ...overrides,
   }
@@ -4031,6 +5162,13 @@ describe("outcome copy", () => {
     expect(outcomeDetail(revealedPoint({ awarded: true }), "agreed", true)).toBeNull()
   })
 
+  it("explains a granted verdict its group absorbed, in either confidence band", () => {
+    const absorbed = revealedPoint({ evidenceVerdict: "not_required", absorbedByGroup: true })
+    expect(pointOutcome(absorbed, revealed())).toBe("kept")
+    expect(outcomeDetail(absorbed, "kept", false)).toBe(ABSORBED_COPY)
+    expect(outcomeDetail(absorbed, "kept", true)).toBe(ABSORBED_COPY)
+  })
+
   it("summarises outcomes and the marks movement", () => {
     const view = revealed({
       aiMarks: 0,
@@ -4096,6 +5234,16 @@ export interface SelfReviewPendingPoint {
   markType: string | null
   tariff: number
   pointText: string
+  isAlternative: boolean
+  isOptional: boolean
+  /**
+   * Scheme group, derived server-side at correction time (Task 6a): `alt:n`
+   * for an either/or run, `pool:n` for an "any N from" pool, null when the
+   * point stands alone. Points sharing a key are one unit worth at most
+   * `groupMaxMarks` — never render them as independently earnable.
+   */
+  groupKey: string | null
+  groupMaxMarks: number | null
 }
 
 export interface SelfReviewRevealedPoint extends SelfReviewPendingPoint {
@@ -4104,6 +5252,8 @@ export interface SelfReviewRevealedPoint extends SelfReviewPendingPoint {
   studentEvidence: string | null
   evidenceVerdict: EvidenceVerdict | null
   markChanged: boolean
+  /** The verdict was accepted but its group was already at its worth, so no mark moved (Task 6b). */
+  absorbedByGroup: boolean
   judgeReason: string | null
 }
 
@@ -4262,6 +5412,10 @@ export const OUTCOME_LABEL: Record<PointOutcome, string> = {
   pending: "A teacher will look at this",
 }
 
+/** A granted verdict the scheme group could not pay out (Task 6b's `absorbedByGroup`). */
+export const ABSORBED_COPY =
+  "Accepted — but this point shares its mark with another you already have, so nothing changed."
+
 /** One short line under a point, or null when the label says it all. */
 export function outcomeDetail(
   point: SelfReviewRevealedPoint,
@@ -4275,6 +5429,7 @@ export function outcomeDetail(
       if (point.evidenceVerdict === "accepted") return point.judgeReason ?? "Your reason was accepted."
       return "The marker was not sure about this question, so your verdict counts."
     case "kept":
+      if (point.absorbedByGroup) return ABSORBED_COPY
       if (point.evidenceVerdict === "rejected") return point.judgeReason ?? "Your reason was not accepted."
       return evidenceRequired ? "To challenge a confident mark you need to give a reason." : null
     case "pending":
@@ -5970,6 +7125,7 @@ git commit -S -m "feat(study-plan): misconception counts by topic from student s
 | --- | --- |
 | D1 self-mark then reveal; reveal server-enforced; pre-submission GET omits `awarded` at any depth | 5 (dataclass has no field), 8 (recursive key assertion), 12 (TS pending type has no `awarded`) |
 | D2 low-confidence: student wins, evidence optional; D6 downward honoured | 4 (`decide_point`), 6 (grant up/down tests), 7 (matrix) |
+| D6 grade-inflation guard on non-additive groups: a grant never lifts an either/or or any-N group above its worth | 6a (`group_key` / `group_max_marks` stored at derivation), 6b (`_settle_groups`; four tests whose capped and uncapped totals differ), 8 + 12 (`groupKey` / `absorbedByGroup` on the wire, `ABSORBED_COPY`) |
 | D3 elsewhere evidence unlocks a lenient judge; "accept unless contradicted" | 4, 7, 10 (prompt text asserted) |
 | D4 queue row auto-resolves via `resolved_by` / `resolved_at` / `resolution_note`; provenance in revision `source` | 6 |
 | D5 single accessor, teacher > student > AI; self-marks reach every surface | 1, 3 (recompute reads `effective_marks`), 17 (`awardedMarks = effective_marks`) |
