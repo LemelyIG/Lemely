@@ -55,6 +55,7 @@ no teacher row is opened.
 
 from __future__ import annotations
 
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -230,6 +231,22 @@ class AttemptQuestion:
     topic: str | None
     matched_point_ids: list[str]
     self_reviewable: bool
+
+
+def question_sort_key(question_id: str) -> tuple[tuple[int, int, str], ...]:
+    """Sort key putting question ids in paper order: 1, 1a, 1b, 2, 9, 10.
+
+    Digit runs compare numerically so ``"10"`` follows ``"9"`` instead of
+    preceding ``"2"``; every other run compares as lowercased text, after the
+    numbers at that position rather than raising on a mixed comparison.
+    """
+    parts: list[tuple[int, int, str]] = []
+    for run in re.findall(r"\d+|\D+", question_id):
+        if run.isdigit():
+            parts.append((0, int(run), ""))
+        else:
+            parts.append((1, 0, run.lower()))
+    return tuple(parts)
 
 
 class SelfReviewService:
@@ -433,7 +450,16 @@ class SelfReviewService:
     def list_questions(
         self, student_id: uuid.UUID | str, attempt_id: uuid.UUID | str
     ) -> list[AttemptQuestion]:
-        """Every question of one of the caller's attempts, in persist order.
+        """Every question of one of the caller's attempts, in paper order.
+
+        Paper order is reconstructed from the question id (see
+        :func:`question_sort_key`) rather than read off the row. ``ORDER BY
+        created_at, id`` looks like persist order and is not: ``now()`` in
+        Postgres is the *transaction* timestamp, so every ``question_results``
+        row of one attempt shares it, and the sort falls through to a random
+        uuid. Measured on an eight-question attempt: ``5, 1, 4, ...``. There is
+        no ordinal column to order by, and a student reading a scrambled paper
+        would have no way to tell it from a marking fault.
 
         Raises:
             SelfReviewNotFoundError: not the caller's attempt, or no such attempt (404).
@@ -444,11 +470,22 @@ class SelfReviewService:
             attempt = session.get(Attempt, attempt_uuid)
             if attempt is None or attempt.user_id != student_uuid:
                 raise SelfReviewNotFoundError(f"No attempt {attempt_uuid}")
-            results = session.scalars(
-                select(QuestionResult)
-                .where(QuestionResult.attempt_id == attempt.id)
-                .order_by(QuestionResult.created_at, QuestionResult.id)
-            ).all()
+            results = sorted(
+                session.scalars(
+                    select(QuestionResult).where(QuestionResult.attempt_id == attempt.id)
+                ).all(),
+                key=lambda qr: question_sort_key(qr.question_id),
+            )
+            # One query for the whole attempt rather than lazy-loading every
+            # question's points to compute a boolean: a 40-question paper was
+            # 42 round trips, each materialising point rows nothing else reads.
+            with_points = set(
+                session.scalars(
+                    select(QuestionResultPoint.question_result_id)
+                    .where(QuestionResultPoint.question_result_id.in_([qr.id for qr in results]))
+                    .distinct()
+                ).all()
+            )
             return [
                 AttemptQuestion(
                     question_result_id=qr.id,
@@ -461,7 +498,7 @@ class SelfReviewService:
                     review_reason=qr.review_reason,
                     topic=qr.topic,
                     matched_point_ids=list(qr.matched_point_ids),
-                    self_reviewable=bool(qr.points),
+                    self_reviewable=qr.id in with_points,
                 )
                 for qr in results
             ]

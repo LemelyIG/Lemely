@@ -29,7 +29,7 @@ from lemely.db.self_review_repo import (
     SelfReviewValidationError,
 )
 from lemely.web.deps import AuthContext, get_self_review_service, require_role
-from lemely.web.schemas import QuestionResultDTO
+from lemely.web.schemas import QuestionResultDTO, student_safe_review_reason
 from lemely.web.schemas_student_self_review import (
     SelfReviewPendingDTO,
     SelfReviewPendingPointDTO,
@@ -118,7 +118,14 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
 
 
 def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
-    """The result screen's row shape. Integrity flags are never sent to a student."""
+    """The result screen's row shape. Nothing integrity-related reaches a student.
+
+    That means the two booleans *and* ``review_reason``: the reason is free
+    text that ``lemely/io/integrity.py`` appends ``"plagiarism (score 0.94)"``
+    to, and ``PaperResult`` renders it verbatim. Suppressing the flags while
+    forwarding the sentence would tell the student anyway, with a score on it
+    (QUALITY-BAR.md: integrity flags are teacher-only).
+    """
     return QuestionResultDTO(
         questionId=row.question_id,
         awardedMarks=row.effective_marks,
@@ -127,7 +134,7 @@ def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
         confidence=row.confidence_score,
         feedback=row.feedback,
         matchedPointIds=row.matched_point_ids or None,
-        reviewReason=row.review_reason,
+        reviewReason=student_safe_review_reason(row.review_reason),
         plagiarismFlagged=False,
         aiDetectionFlagged=False,
         topic=row.topic,
@@ -146,6 +153,12 @@ def list_attempt_questions(
     ``awardedMarks`` is ``effective_marks`` (a self-mark or teacher override
     shows here). ``questionResultId`` is set only where the question has
     point rows, which is exactly where the self-review panel may render.
+
+    A 404 here carries the same fixed ``"No such question"`` body the
+    sibling routes use, even though the only cause on this route is the
+    attempt. That is deliberate, not a copy-paste: one body for every
+    not-yours/not-found case leaves no oracle to enumerate other students'
+    attempts with. Do not make it more specific.
     """
     try:
         rows = service.list_questions(auth.user_id, attempt_id)

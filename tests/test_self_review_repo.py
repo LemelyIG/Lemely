@@ -60,6 +60,7 @@ from lemely.db.self_review_repo import (
     SelfReviewNotFoundError,
     SelfReviewService,
     SelfReviewValidationError,
+    question_sort_key,
 )
 from lemely.runtime.config import DatabaseSettings
 
@@ -1673,3 +1674,93 @@ def test_list_questions_is_owner_scoped(pg_sessionmaker: sessionmaker[Session]) 
         _service(pg_sessionmaker).list_questions(other, attempt_id)
     with pytest.raises(SelfReviewNotFoundError):
         _service(pg_sessionmaker).list_questions(owner, uuid.uuid4())
+
+
+def test_list_questions_returns_paper_order_not_row_order(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Eight questions come back 1..10, not in whatever order the rows load.
+
+    ``ORDER BY created_at, id`` reads like persist order and is not: ``now()``
+    is the transaction timestamp, so every row of one attempt shares it and the
+    sort fell through to a random uuid. Measured before the fix on exactly this
+    fixture: ``5, 1, 4, ...``. A student cannot tell a scrambled paper from a
+    marking fault, so order is part of the contract.
+    """
+    student = _seed_user(pg_sessionmaker)
+    paper_order = ["1", "1a", "1b", "2", "3", "4", "9", "10"]
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(q) for q in paper_order])
+
+    rows = _service(pg_sessionmaker).list_questions(student, attempt_id)
+
+    assert [r.question_id for r in rows] == paper_order
+
+
+def test_question_sort_key_orders_a_paper_the_way_a_paper_is_numbered() -> None:
+    """10 after 9, letters after the bare number, mixed runs never raise."""
+    assert sorted(["10", "2", "1b", "1", "1a", "9"], key=question_sort_key) == [
+        "1",
+        "1a",
+        "1b",
+        "2",
+        "9",
+        "10",
+    ]
+    # A non-numeric id sorts after the numbers rather than raising on a mixed
+    # comparison.
+    assert sorted(["2", "extra"], key=question_sort_key) == ["2", "extra"]
+
+
+def test_list_questions_pairs_self_reviewable_with_the_right_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """One attempt, one question with point rows and one without.
+
+    The flag is now read from a single set-valued query instead of per-row lazy
+    loads, so "every row true" and "the right rows true" are no longer the same
+    assertion. ``"3"`` is absent from ``_scheme()``, so it persists with no
+    points -- the quiz/legacy case the gate exists for.
+    """
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high("1"), _high("3")])
+
+    by_id = {
+        r.question_id: r for r in _service(pg_sessionmaker).list_questions(student, attempt_id)
+    }
+
+    assert by_id["1"].self_reviewable is True
+    assert by_id["3"].self_reviewable is False
+
+
+def test_list_questions_cost_does_not_grow_with_the_number_of_questions(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A 40-question paper must not be 42 round trips.
+
+    ``self_reviewable`` used to read ``qr.points`` on a lazily-loaded
+    relationship: one SELECT per question, each materialising every point row
+    to compute a boolean.
+    """
+    student = _seed_user(pg_sessionmaker)
+    two = _seed_attempt(pg_sessionmaker, student, [_high(str(n)) for n in range(1, 3)])
+    twelve = _seed_attempt(pg_sessionmaker, student, [_high(str(n)) for n in range(1, 13)])
+    service = _service(pg_sessionmaker)
+
+    counts: list[int] = []
+    for attempt_id in (two, twelve):
+        statements = 0
+
+        def count(*_args: object, **_kwargs: object) -> None:
+            nonlocal statements
+            statements += 1
+
+        engine = pg_sessionmaker.kw["bind"]
+        sa.event.listen(engine, "before_cursor_execute", count)
+        try:
+            service.list_questions(student, attempt_id)
+        finally:
+            sa.event.remove(engine, "before_cursor_execute", count)
+        counts.append(statements)
+
+    assert counts[0] == counts[1], f"query count grew with question count: {counts}"
+    assert counts[1] <= 5, f"{counts[1]} queries for 12 questions"

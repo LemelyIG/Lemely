@@ -1180,6 +1180,11 @@ def student_correct(
                                 if q.question_id in result_ids
                                 else None
                             ),
+                            # Student-facing frame: integrity findings are
+                            # teacher-only (QUALITY-BAR.md), and they travel in
+                            # review_reason's free text as well as in the two
+                            # booleans.
+                            for_student=True,
                         ).model_dump(by_alias=True)
                         for q in report.correction.questions
                     ],

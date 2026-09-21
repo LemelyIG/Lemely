@@ -10,6 +10,8 @@ none, by design (spec 1: no answer points, no ledger).
 
 from __future__ import annotations
 
+import json
+import uuid
 from typing import TYPE_CHECKING, cast
 
 from fastapi import FastAPI
@@ -65,6 +67,11 @@ def _low_confidence_report() -> AccuracyReport:
         marker_source="ai",
         feedback="Answer not given to 3 s.f.",
         matched_point_ids=["p1"],
+        # Seeded so the route's pass-through of these two is provable: with
+        # both null, an assertion on them holds under any implementation that
+        # drops the field.
+        review_reason="low confidence",
+        topic="Forces",
     )
     correction = CorrectionResult(
         metadata=ExamMetadata(
@@ -89,9 +96,13 @@ def _low_confidence_report() -> AccuracyReport:
     )
 
 
-def _seed_attempt(sm: sessionmaker[Session], student_id: str) -> tuple[str, str]:
+def _seed_attempt(
+    sm: sessionmaker[Session], student_id: str, *, with_scheme: bool = True
+) -> tuple[str, str]:
     attempt_id = AttemptRepository(sm).persist_correction(
-        user_id=student_id, report=_low_confidence_report(), mark_scheme=_scheme()
+        user_id=student_id,
+        report=_low_confidence_report(),
+        mark_scheme=_scheme() if with_scheme else None,
     )
     with sm() as session:
         qr_id = session.scalars(
@@ -358,6 +369,15 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
     client: tuple[TestClient, str, StudentUploadRepository],
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
+    """Every field of the row, against the seeded values it is built from.
+
+    The four free-text-ish fields were asserted by nothing: replacing
+    ``feedback``/``matchedPointIds``/``reviewReason``/``topic`` with literals
+    in the route left all 12 tests green, which is how the integrity leak in
+    ``reviewReason`` reached the screen in the first place. The two integrity
+    booleans are exercised against a *flagged* row in the sibling test below;
+    here they only witness the default.
+    """
     api, student_id = _wire(client, pg_sessionmaker)
     attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
 
@@ -370,11 +390,68 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
     assert row["awardedMarks"] == 1 and row["maxMarks"] == 3
     assert row["markerSource"] == "ai"
     assert row["confidence"] == 0.55
+    assert row["feedback"] == "Answer not given to 3 s.f."
+    assert row["matchedPointIds"] == ["p1"]
+    assert row["reviewReason"] == "low confidence"
+    assert row["topic"] == "Forces"
     assert row["plagiarismFlagged"] is False and row["aiDetectionFlagged"] is False
 
     # After a self-mark the list shows the effective mark.
     assert api.post(_path(attempt_id, qr_id), json=_full_pass()).status_code == 200
     assert api.get(f"/api/student/attempts/{attempt_id}/questions").json()[0]["awardedMarks"] == 3
+
+
+def test_attempt_questions_route_never_shows_a_student_an_integrity_finding(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``review_reason`` carries the plagiarism/AI verdict as free text.
+
+    ``lemely/io/integrity.py`` appends "plagiarism (score 0.94)" to the same
+    ``" | "``-joined reason that holds ordinary marking reasons, and
+    ``PaperResult`` renders it verbatim as "Needs review: ...". Forcing the two
+    booleans to ``False`` while forwarding the sentence tells the student
+    anyway, with a score on it -- QUALITY-BAR.md makes integrity flags
+    teacher-only. The ordinary reason must still come through.
+    """
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(QuestionResult, uuid.UUID(qr_id))
+        assert row is not None
+        row.review_reason = "plagiarism (score 0.94) | low confidence | ai_detection (score 0.88)"
+        row.plagiarism_flagged = True
+        row.ai_detection_flagged = True
+
+    [wire_row] = api.get(f"/api/student/attempts/{attempt_id}/questions").json()
+
+    assert wire_row["reviewReason"] == "low confidence"
+    assert wire_row["plagiarismFlagged"] is False and wire_row["aiDetectionFlagged"] is False
+    # Values only -- the field *names* are plagiarismFlagged/aiDetectionFlagged,
+    # so a whole-payload substring check would pass on the key alone.
+    values = json.dumps([v for v in wire_row.values() if isinstance(v, str)])
+    assert "plagiarism" not in values
+    assert "ai_detection" not in values
+
+
+def test_attempt_questions_route_sends_no_question_result_id_without_point_rows(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A question with no point rows is not self-reviewable, on the wire.
+
+    ``questionResultId`` is what the frontend gates the panel on. Sending it
+    for a quiz or a paper marked before spec 1 shipped offers a student a
+    panel whose ``GET .../self-review`` then 404s. The sibling test above only
+    ever sees the point-bearing case, where an unconditional id passes.
+    """
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, _ = _seed_attempt(pg_sessionmaker, student_id, with_scheme=False)
+
+    [row] = api.get(f"/api/student/attempts/{attempt_id}/questions").json()
+
+    assert row["questionId"] == "1a"
+    assert row["questionResultId"] is None
 
 
 def test_attempt_questions_route_is_404_for_another_student(

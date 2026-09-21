@@ -27,7 +27,17 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExamMetadata, ExtractedAnswer, ExtractedAnswers
+from lemely.core.schemas import (
+    AccuracyReport,
+    ConfidenceBand,
+    CorrectedQuestion,
+    CorrectionResult,
+    ExamMetadata,
+    ExtractedAnswer,
+    ExtractedAnswers,
+    GradePrediction,
+    WeaknessReport,
+)
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
@@ -486,6 +496,77 @@ def test_correct_complete_frame_includes_full_questions(
     # q2: extracted answer is blank, so no marks are awarded.
     assert by_id["2"]["awardedMarks"] == 0
     assert "reviewReason" in by_id["2"]
+
+
+def test_correct_complete_frame_never_shows_a_student_an_integrity_finding(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live student frame carries no integrity trace, in either form.
+
+    ``lemely/io/integrity.py`` writes "plagiarism (score 0.94)" into the same
+    ``" | "``-joined ``review_reason`` as ordinary marking reasons, and
+    ``PaperResult`` renders it verbatim as "Needs review: ...". Both the
+    booleans and that sentence are teacher-only (QUALITY-BAR.md). Since
+    ``3690ccfe`` this screen also renders history rows, so the same guard is
+    asserted on both surfaces.
+    """
+    flagged = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.99,
+        needs_teacher_review=True,
+        marker_source="deterministic",
+        review_reason="plagiarism (score 0.94) | low confidence | ai_detection (score 0.88)",
+        plagiarism_flagged=True,
+        ai_detection_flagged=True,
+    )
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[flagged],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=1,
+            percentage=100.0,
+            grade="A",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+    monkeypatch.setattr(student, "grade_paper", lambda *a, **k: report)
+
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    [question] = complete_frame["questions"]
+    assert question["reviewReason"] == "low confidence"
+    assert question["plagiarismFlagged"] is False
+    assert question["aiDetectionFlagged"] is False
+    # Values only -- the field *names* carry "plagiarism"/"aiDetection", so a
+    # whole-frame substring check would pass on the keys alone.
+    values = json.dumps([v for v in question.values() if isinstance(v, str)])
+    assert "plagiarism" not in values
+    assert "ai_detection" not in values
 
 
 def test_correct_complete_frame_includes_result_header_fields(
