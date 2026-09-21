@@ -397,19 +397,18 @@ def _equivalence_fallback_verdict(
     extraction commonly splits a question's final requested value into
     ``answer`` while an intermediate checkpoint value lands in ``working``.
     An ``EQUAL_PROVEN`` match on either side is returned immediately, since
-    nothing stronger exists; otherwise the more informative of the two
-    verdicts is kept, ranked ``EQUAL_SAMPLED`` > ``NOT_EQUAL`` >
-    ``UNPARSEABLE``: ``UNPARSEABLE`` is the only kind that carries no
-    finding at all (an indeterminate "could not read it"), so it must not
-    hide a genuine finding -- of either remaining kind -- on the other
-    side. Between ``EQUAL_SAMPLED`` and ``NOT_EQUAL``, ``EQUAL_SAMPLED``
-    wins: a wrong final answer with a working expression that samples
-    equal to the checkpoint value is exactly the case this mechanism
-    exists to surface for a human reviewer, since that is where method
-    marks live. ``EQUAL_SAMPLED`` is still never promoted to
-    ``auto_awardable`` -- it is evidence, not proof (see
-    ``Verdict.auto_awardable``) -- this only decides which finding a
-    reviewer gets to see.
+    nothing stronger exists; otherwise surfaces a genuine equality finding
+    if either side has one, preferring proof over sampling. Verdicts are
+    ranked ``EQUAL_SAMPLED`` > ``NOT_EQUAL`` > ``UNPARSEABLE``: a
+    ``NOT_EQUAL`` or ``UNPARSEABLE`` verdict on either side is never itself
+    reported, since it repeats what the already-triggered literal-match
+    rejection already says. ``EQUAL_SAMPLED`` wins between the two sides:
+    a wrong final answer with a working expression that samples equal to
+    the checkpoint value is exactly the case this mechanism exists to
+    surface for a human reviewer, since that is where method marks live.
+    ``EQUAL_SAMPLED`` is still never promoted to ``auto_awardable`` -- it
+    is evidence, not proof (see ``Verdict.auto_awardable``) -- this only
+    decides which finding a reviewer gets to see.
     """
     target = str(calc.value)
     answer_verdict = equivalent(
