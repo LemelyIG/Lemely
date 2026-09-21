@@ -27,7 +27,7 @@ from lemely.core.schemas import (
     WeaknessReport,
 )
 from lemely.db.attempt_repo import AttemptRepository
-from lemely.db.models.attempts import QuestionResult
+from lemely.db.models.attempts import QuestionResult, QuestionResultPoint
 from lemely.db.self_review_repo import SelfReviewService
 from lemely.web.deps import get_self_review_service
 from lemely.web.schemas_student_self_review import SelfReviewPendingDTO, SelfReviewPendingPointDTO
@@ -371,12 +371,18 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
 ) -> None:
     """Every field of the row, against the seeded values it is built from.
 
-    The four free-text-ish fields were asserted by nothing: replacing
-    ``feedback``/``matchedPointIds``/``reviewReason``/``topic`` with literals
-    in the route left all 12 tests green, which is how the integrity leak in
-    ``reviewReason`` reached the screen in the first place. The two integrity
-    booleans are exercised against a *flagged* row in the sibling test below;
-    here they only witness the default.
+    The free-text-ish fields were asserted by nothing: replacing
+    ``feedback``/``reviewReason``/``topic`` with literals in the route left all
+    12 tests green, which is how the integrity leak in ``reviewReason`` reached
+    the screen in the first place. The two integrity booleans are exercised
+    against a *flagged* row in the sibling test below; here they only witness
+    the default.
+
+    ``matchedPointIds`` is pinned ``None`` on purpose: the seeded question
+    matched ``p1``, so the pre-fix value here was ``["p1"]`` — the marker's
+    per-point verdict, on the same screen as the panel that asks the student to
+    commit against it. See
+    ``test_no_student_payload_but_the_panels_own_names_a_mark_point``.
     """
     api, student_id = _wire(client, pg_sessionmaker)
     attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
@@ -391,7 +397,7 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
     assert row["markerSource"] == "ai"
     assert row["confidence"] == 0.55
     assert row["feedback"] == "Answer not given to 3 s.f."
-    assert row["matchedPointIds"] == ["p1"]
+    assert row["matchedPointIds"] is None
     assert row["reviewReason"] == "low confidence"
     assert row["topic"] == "Forces"
     assert row["plagiarismFlagged"] is False and row["aiDetectionFlagged"] is False
@@ -462,3 +468,82 @@ def test_attempt_questions_route_is_404_for_another_student(
     attempt_id, _ = _seed_attempt(pg_sessionmaker, _seed_user(pg_sessionmaker))
     assert api.get(f"/api/student/attempts/{attempt_id}/questions").status_code == 404
     assert api.get("/api/student/attempts/nope/questions").status_code == 404
+
+
+def _string_values(payload: object) -> set[str]:
+    """Every string *value* at any depth; keys excluded.
+
+    Keys are excluded deliberately: a point id can only leak as a value, and
+    folding keys in would fire on any field whose *name* happened to collide.
+    Exact values, not substrings — ``"p1"`` is two characters, and a substring
+    sweep over a JSON body matches too much to mean anything.
+    """
+    if isinstance(payload, dict):
+        return {found for value in payload.values() for found in _string_values(value)}
+    if isinstance(payload, list):
+        return {found for value in payload for found in _string_values(value)}
+    return {payload} if isinstance(payload, str) else set()
+
+
+def test_no_student_payload_but_the_panels_own_names_a_mark_point(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The cross-payload reveal gate. Withholding the verdict from one payload is not enough.
+
+    ``QuestionResultPoint.awarded`` is ``point.id in matched_point_ids``
+    (``lemely/db/question_points.py``), so ``matchedPointIds`` on the *sibling*
+    row payload **is** the per-point verdict, spelled as a subset of the ids the
+    panel is about to ask the student to commit against. Both payloads render on
+    the same screen, so a student mid-review could read the answer out of the
+    Network tab while every reveal test stayed green — each of those checks the
+    panel's own payload, and none looked next door.
+
+    The panel's own pending payload is the one place point ids legitimately
+    appear: it lists *every* point of the question, awarded or not, which is
+    precisely what makes it verdict-free. Any other student-reachable payload
+    naming a subset of them is a reveal, so this asserts the complement —
+    nowhere else on the attempt, at any depth.
+    """
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
+
+    with pg_sessionmaker() as session:
+        point_ids = set(
+            session.scalars(
+                select(QuestionResultPoint.mark_point_id).where(
+                    QuestionResultPoint.question_result_id == uuid.UUID(qr_id)
+                )
+            )
+        )
+    # The seeded question matches p1 only, so an unfiltered ``matchedPointIds``
+    # names exactly the awarded point and nothing else — the leak, verbatim.
+    assert point_ids == {"p1", "p2", "p3"}
+
+    pending = api.get(_path(attempt_id, qr_id))
+    assert pending.status_code == 200, pending.text
+    assert pending.json()["state"] == "not_started"
+    # The panel's own payload is allowed the ids and must carry *all* of them;
+    # a subset here would be the same leak wearing the other payload's name.
+    assert point_ids <= _string_values(pending.json())
+
+    elsewhere = {
+        "attempt questions": api.get(f"/api/student/attempts/{attempt_id}/questions"),
+        "overview": api.get("/api/student/overview"),
+        "subject": api.get("/api/student/subject/0580"),
+        "result": api.get("/api/student/result/0"),
+    }
+    # Statuses are pinned rather than tolerated: a route that quietly starts
+    # 404ing would turn its sweep below into a vacuous pass. ``subject``/
+    # ``result`` read the history store, which this fixture seeds attempts
+    # around rather than through, so their 404 is this fixture's shape — but
+    # it has to be *stated* to count as a reason.
+    assert {name: resp.status_code for name, resp in elsewhere.items()} == {
+        "attempt questions": 200,
+        "overview": 200,
+        "subject": 404,
+        "result": 404,
+    }
+    for name, resp in elsewhere.items():
+        leaked = sorted(point_ids & _string_values(resp.json()))
+        assert not leaked, f"{name} names mark points {leaked} before the reveal"
