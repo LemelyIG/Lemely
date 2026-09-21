@@ -47,7 +47,10 @@ function selfReviewPath(attemptId: string, questionResultId: string): string {
 /**
  * `GET` `/student/attempts/{a}/questions/{q}/self-review`. A 404 is a real,
  * final answer ("no point rows: not self-reviewable"), so it is not
- * retried; `SelfReviewPanel` renders `UNAVAILABLE_COPY` for it.
+ * retried; `SelfReviewPanel` renders `UNAVAILABLE_COPY` for it. Any other
+ * client error (401/403/422, ...) is just as final here — the route answers
+ * cross-student access with 404 rather than 403, so a genuine 4xx below 429
+ * is not a transient condition a retry can fix (Task 13/14 review, NIT-5).
  */
 export function useSelfReview(
   attemptId: string,
@@ -58,7 +61,8 @@ export function useSelfReview(
     queryFn: () => request<SelfReview>(selfReviewPath(attemptId, questionResultId)),
     enabled: !!attemptId && !!questionResultId,
     retry: (failureCount, error) =>
-      !(error instanceof ApiError && error.status === 404) && failureCount < 2,
+      !(error instanceof ApiError && error.status < 500 && error.status !== 429) &&
+      failureCount < 2,
   })
 }
 
@@ -91,6 +95,21 @@ export function useSubmitSelfReview(): UseMutationResult<
       queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
       queryClient.invalidateQueries({ queryKey: ["student", "subject"] })
       queryClient.invalidateQueries({ queryKey: ["student", "result"] })
+    },
+    // A 409 means the server already holds a pass for this question — the
+    // cached `not_started` view is now a lie, and re-offering the form can
+    // only 409 again. A non-`ApiError` failure (a lost response, a dropped
+    // connection) is worse: the client genuinely does not know whether the
+    // POST landed, and a refetch is the only cheap way to find out. Either
+    // way, invalidate so the panel converges on the server's own truth
+    // instead of leaving the student staring at a form for a pass already
+    // recorded (Task 13/14 review, IMP-1).
+    onError: (error, { attemptId, questionResultId }) => {
+      if (!(error instanceof ApiError) || error.status === 409) {
+        queryClient.invalidateQueries({
+          queryKey: selfReviewKey(attemptId, questionResultId),
+        })
+      }
     },
   })
 }

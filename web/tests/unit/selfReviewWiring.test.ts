@@ -83,20 +83,49 @@ describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
     expect(source).toContain("setQueryData(selfReviewKey(attemptId, questionResultId), data)")
   })
 
-  it("never writes an optimistic verdict: no onMutate anywhere in the file", () => {
-    // The absence IS the reveal guarantee. The server deliberately withholds
-    // the verdict until the POST resolves (pending GET payload carries no
-    // `awarded` at all — see selfReviewTypes.ts); an onMutate optimistic
-    // write would have to invent that verdict client-side before the server
-    // has actually judged anything, which is exactly the leak the spec
-    // forbids. So this hook file must never define one.
+  it("writes the cache only from onSuccess, never before the POST resolves", () => {
+    // The absence of `onMutate` is not, by itself, the reveal guarantee: a
+    // `setQueryData` call slipped into `mutationFn` (before `request()`
+    // resolves) fabricates the same client-invented verdict `onMutate` would,
+    // under a different name. `onMutate` was checked for; a comma-expression
+    // write hidden in `mutationFn`'s body proved that a lone keyword-absence
+    // assertion is not (Task 13/14 review, SF-1, evasion E5). So this pins
+    // both: no `onMutate` anywhere, exactly one `setQueryData(` call in the
+    // whole file, and that one call lives inside `onSuccess:`, after `data`
+    // (the server's own response) is what gets written — never before.
     expect(source).not.toContain("onMutate")
+    const writes = source.match(/setQueryData\(/g) ?? []
+    expect(writes).toHaveLength(1)
+    const onSuccessStart = source.indexOf("onSuccess:")
+    expect(onSuccessStart).toBeGreaterThan(-1)
+    const onSuccessBody = source.slice(onSuccessStart)
+    expect(onSuccessBody).toContain(
+      "setQueryData(selfReviewKey(attemptId, questionResultId), data)",
+    )
+    // And the mutation's own function body — everything before `onSuccess:`
+    // — must not itself contain a write, which is the placement E5 exploited.
+    expect(source.slice(0, onSuccessStart)).not.toContain("setQueryData(")
   })
 
-  it("does not retry a 404 on the GET — a real, final not-self-reviewable answer", () => {
+  it("does not retry a 404 (or any other final 4xx) on the GET", () => {
     expect(source).toContain(
-      "!(error instanceof ApiError && error.status === 404) && failureCount < 2",
+      "!(error instanceof ApiError && error.status < 500 && error.status !== 429) &&",
     )
+  })
+
+  it("re-syncs the self-review query on a 409 or a network failure (Task 13/14 review, IMP-1)", () => {
+    // A 409 means the server already holds a pass; a non-ApiError failure
+    // means the client cannot tell whether the POST landed. Either way the
+    // cached `not_started` view may now be a lie, and the only fix that does
+    // not leave the student staring at a form for a pass already recorded is
+    // to invalidate the exact slot the pending GET reads.
+    const onErrorStart = source.indexOf("onError:")
+    expect(onErrorStart).toBeGreaterThan(-1)
+    const onErrorBody = source.slice(onErrorStart)
+    expect(onErrorBody).toMatch(
+      /invalidateQueries\(\{\s*queryKey: selfReviewKey\(attemptId, questionResultId\),\s*\}\)/,
+    )
+    expect(onErrorBody).toMatch(/!\(error instanceof ApiError\)\s*\|\|\s*error\.status === 409/)
   })
 
   it("invalidates every total-bearing student surface on submit", () => {

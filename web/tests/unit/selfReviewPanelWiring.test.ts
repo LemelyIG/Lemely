@@ -35,8 +35,48 @@ describe("SelfReviewPanel.tsx", () => {
     expect(source).toContain('data-testid="self-review-unavailable"')
   })
 
-  it("gates the form strictly on state === \"not_started\", never rendering both branches", () => {
-    expect(source).toContain('view.state === "not_started"')
+  it("renders only PendingForm in the not_started branch, never both branches (Task 13/14 review, IMP-2)", () => {
+    // A substring check on 'view.state === "not_started"' cannot tell a
+    // clean gate from a `<><RevealedOutcome/><PendingForm .../></>` fragment
+    // that leaves the guard string untouched — proven green by the review's
+    // E2 evasion. This asserts over the branch's own body instead: it must
+    // render PendingForm and must not also render RevealedOutcome or open a
+    // fragment that could smuggle a sibling in.
+    const guardStart = source.indexOf('if (view.state === "not_started") {')
+    expect(guardStart).toBeGreaterThan(-1)
+    // The branch ends where the component's final `return <RevealedOutcome`
+    // begins — everything up to there is the `not_started` block itself.
+    const revealedReturn = source.indexOf("return <RevealedOutcome", guardStart)
+    expect(revealedReturn).toBeGreaterThan(guardStart)
+    const branch = source.slice(guardStart, revealedReturn)
+    expect(branch).toContain("<PendingForm")
+    expect(branch).not.toContain("<RevealedOutcome")
+    expect(branch).not.toContain("<>")
+  })
+
+  it("SelfReviewPanel's own body never reads a revealed-only field (Task 13/14 review, IMP-3)", () => {
+    // `PendingForm`'s body was covered; `SelfReviewPanel` itself — which owns
+    // `query.data` and sits above `function PendingForm` — was not, and is
+    // the natural place a leak would actually be written. Proven green by
+    // the review's E1 evasion: a verdict read inserted into the exported
+    // component's own `not_started` branch, via the exact
+    // `as unknown as SelfReviewRevealed` cast this gate now forbids.
+    const panelStart = source.indexOf("export function SelfReviewPanel")
+    const panelEnd = source.indexOf("function PendingForm")
+    expect(panelStart).toBeGreaterThan(-1)
+    expect(panelEnd).toBeGreaterThan(panelStart)
+    const panelBody = source.slice(panelStart, panelEnd)
+    for (const field of [
+      ".awarded",
+      "studentSelfmark",
+      "evidenceVerdict",
+      "aiMarks",
+      "effectiveMarks",
+      "markChanged",
+    ]) {
+      expect(panelBody).not.toContain(field)
+    }
+    expect(panelBody).not.toContain("as unknown as SelfReviewRevealed")
   })
 
   it("never reads point.awarded (or any revealed-only field) inside PendingForm", () => {
@@ -58,10 +98,23 @@ describe("SelfReviewPanel.tsx", () => {
     expect(outcomeBody).toContain("view: SelfReviewRevealed")
   })
 
-  it("never names an integrity flag in copy or code (QUALITY-BAR.md: teacher-only)", () => {
-    expect(source.toLowerCase()).not.toContain("plagiar")
-    expect(source.toLowerCase()).not.toContain("ai_detection")
-    expect(source.toLowerCase()).not.toContain("ai detection")
+  it("never names an integrity flag in copy or code, panel or copy module (QUALITY-BAR.md: teacher-only, Task 13/14 review IMP-4)", () => {
+    // Proven green (E6): the panel's own source is almost entirely markup —
+    // the actual user-visible strings (`UNAVAILABLE_COPY`, `OUTCOME_LABEL`,
+    // `ABSORBED_COPY`, `evidenceHint()`, `summaryLine()`, `outcomeDetail()`)
+    // live in `src/lib/selfReview.ts`, which no integrity-flag gate anywhere
+    // in the repo read. Scanning only `source` let `UNAVAILABLE_COPY` name
+    // "flagged for plagiarism" straight into a student's EmptyState heading
+    // while this test stayed green. This concatenates the copy module in so
+    // the same gate covers where the copy actually is. The repo-wide,
+    // CI-enforced home for this rule is `scripts/check_copy.mjs`
+    // (out of scope here — see the review's IMP-4 preferred fix).
+    const copySource = readSource("src/lib/selfReview.ts")
+    const combined = `${source}\n${copySource}`.toLowerCase()
+    expect(combined).not.toContain("plagiar")
+    expect(combined).not.toContain("ai_detection")
+    expect(combined).not.toContain("ai detection")
+    expect(combined).not.toContain("cheat")
   })
 
   it("carries no em dash and no exclamation mark in UI copy (REDESIGN-MISSION §3.2 item 10)", () => {
