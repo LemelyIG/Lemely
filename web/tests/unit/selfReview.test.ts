@@ -14,6 +14,7 @@ import {
   groupPoints,
   isComplete,
   markWord,
+  missingEvidence,
   outcomeDetail,
   outcomeSummary,
   pointOutcome,
@@ -109,6 +110,42 @@ describe("draft editing", () => {
       verdicts: { p1: "true" as unknown as boolean, p2: false },
     }
     expect(isComplete(bothPresent, points)).toBe(false)
+  })
+})
+
+describe("missingEvidence (final review I-3)", () => {
+  it("flags a point claimed earned with no evidence, on an evidence-required question", () => {
+    const draft = setVerdict(EMPTY_DRAFT, "p1", true)
+    expect(missingEvidence(draft, points, true)).toEqual(["p1"])
+  })
+
+  it("does not flag a point once evidence is typed", () => {
+    const draft = setEvidence(setVerdict(EMPTY_DRAFT, "p1", true), "p1", "I showed working")
+    expect(missingEvidence(draft, points, true)).toEqual([])
+  })
+
+  it("does not flag whitespace-only evidence", () => {
+    const draft = setEvidence(setVerdict(EMPTY_DRAFT, "p1", true), "p1", "   ")
+    expect(missingEvidence(draft, points, true)).toEqual(["p1"])
+  })
+
+  it("never flags a downward claim, evidence or not — it costs nothing and leaks nothing about the marker's verdict", () => {
+    const draft = setVerdict(EMPTY_DRAFT, "p1", false)
+    expect(missingEvidence(draft, points, true)).toEqual([])
+  })
+
+  it("flags nothing when evidence is not required (low-confidence question)", () => {
+    const draft = setVerdict(EMPTY_DRAFT, "p1", true)
+    expect(missingEvidence(draft, points, false)).toEqual([])
+  })
+
+  it("flags every earned-but-unexplained point, not just the first", () => {
+    const draft = setVerdict(setVerdict(EMPTY_DRAFT, "p1", true), "p2", true)
+    expect(missingEvidence(draft, points, true)).toEqual(["p1", "p2"])
+  })
+
+  it("ignores a point with no verdict yet — isComplete gates that separately", () => {
+    expect(missingEvidence(EMPTY_DRAFT, points, true)).toEqual([])
   })
 })
 

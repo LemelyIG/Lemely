@@ -19,6 +19,7 @@ import {
   groupLabel,
   groupPoints,
   isComplete,
+  missingEvidence,
   outcomeDetail,
   outcomeSummary,
   pointOutcome,
@@ -262,7 +263,10 @@ function PendingForm({
   submitting: boolean
   onSubmit: () => void
 }) {
+  const [attemptedSubmit, setAttemptedSubmit] = useState(false)
   const complete = isComplete(draft, view.points)
+  const missing = missingEvidence(draft, view.points, view.evidenceRequired)
+  const canSubmit = complete && missing.length === 0
   const groups = groupPoints<SelfReviewPendingPoint>(view.points)
   return (
     <form
@@ -270,7 +274,11 @@ function PendingForm({
       data-testid="self-review-form"
       onSubmit={(event) => {
         event.preventDefault()
-        if (complete && !submitting) onSubmit()
+        if (canSubmit && !submitting) {
+          onSubmit()
+          return
+        }
+        setAttemptedSubmit(true)
       }}
     >
       <div className="flex flex-col gap-1">
@@ -310,6 +318,11 @@ function PendingForm({
                   view.evidenceRequired ? "Why? (needed to challenge the marker)" : "Why? (optional)"
                 }
                 hint="Up to 2000 characters"
+                error={
+                  attemptedSubmit && missing.includes(point.markPointId)
+                    ? "Say what in your answer earns this, or the marker's mark stands."
+                    : undefined
+                }
                 rows={2}
                 maxLength={2000}
                 value={draft.evidence[point.markPointId] ?? ""}

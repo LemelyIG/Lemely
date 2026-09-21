@@ -83,6 +83,24 @@ describe("PaperResult.tsx — the history branch renders real rows", () => {
     const body = source.slice(fnStart, nextFn)
     expect(body).toContain("attemptId={result.attemptId}")
   })
+
+  it("wires the panel's attemptId into the live branch's own QuestionList (final review part23, mutation M1)", () => {
+    // Proven by mutation: deleting `attemptId={live.attemptId}` from the
+    // live branch's own QuestionList call leaves every other gate in this
+    // suite green (3353/3353), because nothing else pins this one line —
+    // the panel simply never renders anywhere in the product, live or
+    // history, the moment a paper is freshly marked. Anchored on the `if
+    // (live) {` block's own body rather than the whole file, per the same
+    // R-3 lesson the HistoryQuestions gate above already applies: a
+    // whole-file `toContain("attemptId={live.attemptId}")` would pass
+    // today regardless of which branch actually wires it.
+    const liveStart = source.indexOf("if (live) {")
+    expect(liveStart).toBeGreaterThan(-1)
+    const liveEnd = source.indexOf("if (query.isError", liveStart)
+    expect(liveEnd).toBeGreaterThan(liveStart)
+    const body = source.slice(liveStart, liveEnd)
+    expect(body).toContain("attemptId={live.attemptId}")
+  })
 })
 
 /*

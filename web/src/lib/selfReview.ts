@@ -44,6 +44,32 @@ export function isComplete(
   )
 }
 
+/**
+ * Mark points claimed "I earned this" on an `evidenceRequired` question
+ * with no reason typed in (final review I-3). `PointDecision.NO_CHANGE`
+ * (`core/self_review.py`) is what an evidence-required upward claim with no
+ * evidence becomes server-side: recorded, mark unmoved, permanently — the
+ * pass is one-shot, so a student who leaves the box blank because the label
+ * read as optional loses that point for good with no way back.
+ *
+ * Deliberately one-directional: this only ever looks at the student's own
+ * claimed verdicts, never the marker's, so it leaks nothing about which
+ * points disagree pre-reveal. A downward self-mark ("I did not earn this")
+ * costs nothing and is never required to carry a reason — only a claim that
+ * could move a mark up needs one.
+ */
+export function missingEvidence(
+  draft: SelfReviewDraft,
+  points: readonly { markPointId: string }[],
+  evidenceRequired: boolean,
+): string[] {
+  if (!evidenceRequired) return []
+  return points
+    .filter((p) => draft.verdicts[p.markPointId] === true)
+    .filter((p) => !(draft.evidence[p.markPointId] ?? "").trim())
+    .map((p) => p.markPointId)
+}
+
 export function toSubmission(
   draft: SelfReviewDraft,
   points: readonly { markPointId: string }[],

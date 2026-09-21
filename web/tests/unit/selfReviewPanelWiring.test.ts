@@ -133,4 +133,27 @@ describe("SelfReviewPanel.tsx", () => {
     expect(source).not.toContain("useQuery(")
     expect((source.match(/useSelfReview\(/g) ?? []).length).toBe(1)
   })
+
+  it("blocks submit on missing evidence for a claimed point, not just on isComplete (final review I-3)", () => {
+    // `isComplete` only checks that every point HAS a verdict — a student
+    // can tick "I earned this" on an evidence-required question, leave the
+    // reason blank, and `isComplete` is still true. Server-side that is
+    // `PointDecision.NO_CHANGE`: recorded, mark unmoved, and the pass is
+    // one-shot, so nothing brings that mark back. `canSubmit` must fold in
+    // `missingEvidence`, and the form's own onSubmit guard must gate on it,
+    // not on `complete` alone. Anchored on PendingForm's own body.
+    const fnStart = source.indexOf("function PendingForm(")
+    expect(fnStart).toBeGreaterThan(-1)
+    const fnEnd = source.indexOf("function RevealedOutcome", fnStart)
+    expect(fnEnd).toBeGreaterThan(fnStart)
+    const body = source.slice(fnStart, fnEnd)
+    expect(body).toContain("missingEvidence(draft, view.points, view.evidenceRequired)")
+    expect(body).toContain("const canSubmit = complete && missing.length === 0")
+    expect(body).toMatch(/if \(canSubmit && !submitting\)/)
+    // A whole-file `toContain("missing.includes")` would be satisfied by
+    // the Textarea's error prop alone even if onSubmit never checked
+    // `canSubmit` — assert the guard AND the visible error live in the same
+    // slice.
+    expect(body).toContain("missing.includes(point.markPointId)")
+  })
 })
