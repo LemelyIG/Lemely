@@ -555,6 +555,22 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
     record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
 
+    # US-035: an unreadable gemini_spend.json already logged a warning
+    # (`CostLedger._read`'s `cost_ledger_corrupt` event) but had zero code
+    # consumers, so the $14 USD ceiling read $0.00 forever after one corrupt
+    # write with nothing able to act on it — logged, but not consumed. The
+    # absent/corrupt separation and the warning both already existed; this
+    # check gives a caller (here, `doctor`) an observable it can act on.
+    # Advisory, never fatal — the ledger is
+    # dev-only and fail-closed here was explicitly rejected (it could wedge
+    # a funded sweep on a transient disk error with no production blast
+    # radius to justify that). Same path GeminiClient's default ledger uses
+    # (`lemely/io/gemini.py`'s `_DefaultLedger`).
+    from lemely.io.cost_ledger import ledger_status
+
+    ledger_ok, ledger_detail = ledger_status(settings.paths.output_dir / "gemini_spend.json")
+    record("gemini_cost_ledger", ledger_ok, detail=ledger_detail)
+
     record(
         "sources_dir_readable",
         settings.paths.sources_dir.exists() and os.access(settings.paths.sources_dir, os.R_OK),
@@ -648,6 +664,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "no_removed_config_keys",
         "gemini_promo_pricing_window",
         "gemini_fallback_pricing",
+        "gemini_cost_ledger",
     }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)

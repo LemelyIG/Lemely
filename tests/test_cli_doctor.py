@@ -265,6 +265,75 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
         check = next(c for c in payload["checks"] if c["name"] == "gemini_promo_pricing_window")
         self.assertTrue(check["ok"], msg=check)
 
+    def test_doctor_warns_on_an_unparseable_cost_ledger_without_failing(self) -> None:
+        """US-035: a present-but-corrupt gemini_spend.json is advisory, never
+        fatal (fail-open, per ruling) — but `doctor` must name it."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            (outputs / "gemini_spend.json").write_text("{ not valid json", encoding="utf-8")
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("gemini_spend.json", check["detail"])
+
+    def test_doctor_does_not_warn_on_an_absent_cost_ledger(self) -> None:
+        """Absent is the legitimate first-run state, not corruption."""
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertTrue(check["ok"], msg=check)
+
+    def test_doctor_does_not_warn_on_a_healthy_cost_ledger(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            outputs = Path(tmp) / "outputs"
+            outputs.mkdir()
+            from lemely.io.cost_ledger import CostLedger
+
+            CostLedger(outputs / "gemini_spend.json").add(1.0, thresholds=[])
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(outputs),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.stdout)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_cost_ledger")
+        self.assertTrue(check["ok"], msg=check)
+
     def test_doctor_warns_on_a_pricing_override_that_bypasses_the_promo_gate(self) -> None:
         """Review finding 3: a `lemely.toml` `[gemini.pricing]` override pinned
         on a promo model bypasses `FLASH_3X_PROMO_END_DATE` entirely — that is

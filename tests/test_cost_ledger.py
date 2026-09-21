@@ -8,7 +8,7 @@ from pathlib import Path
 
 import structlog
 
-from lemely.io.cost_ledger import CostLedger
+from lemely.io.cost_ledger import CostLedger, ledger_status
 from tests.conftest import RepoLedgerWriteAttempted
 
 
@@ -94,6 +94,62 @@ class CostLedgerTests(unittest.TestCase):
         ledger = CostLedger(self.path)
         total, _ = ledger.add(2.0, thresholds=[])
         self.assertAlmostEqual(total, 2.0)
+
+    # US-035: `total()` collapses "genuinely zero" and "unreadable" into the
+    # same 0.0, so nothing downstream of it (the doctor check, the ceiling
+    # check) can tell them apart. `is_corrupt()` is the observable signal a
+    # caller can act on — asserted on directly, never on the log line that
+    # `_read` already emits (that warning already existed before this story).
+
+    def test_is_corrupt_false_for_absent_ledger(self) -> None:
+        """Absent is the legitimate first-run state, not corruption — the
+        regression most likely to be introduced by this story."""
+        self.assertFalse(CostLedger(self.path).is_corrupt())
+
+    def test_is_corrupt_false_for_a_healthy_ledger(self) -> None:
+        ledger = CostLedger(self.path)
+        ledger.add(1.0, thresholds=[])
+        self.assertFalse(ledger.is_corrupt())
+
+    def test_is_corrupt_true_for_unparseable_json(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("{ this is not valid json", encoding="utf-8")
+        self.assertTrue(CostLedger(self.path).is_corrupt())
+
+    def test_is_corrupt_true_for_valid_json_missing_cumulative_usd(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text('{"schema_version": 1}', encoding="utf-8")
+        self.assertTrue(CostLedger(self.path).is_corrupt())
+
+    def test_is_corrupt_true_for_non_numeric_cumulative_usd(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text('{"cumulative_usd": "not-a-number"}', encoding="utf-8")
+        self.assertTrue(CostLedger(self.path).is_corrupt())
+
+    def test_total_still_fails_open_to_zero_when_corrupt(self) -> None:
+        """Per the ruling: fail OPEN. `is_corrupt()` is a new, separate
+        observable — it must not change `total()`'s existing behaviour."""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("garbage", encoding="utf-8")
+        ledger = CostLedger(self.path)
+        self.assertTrue(ledger.is_corrupt())
+        self.assertEqual(ledger.total(), 0.0)
+
+    def test_ledger_status_ok_for_absent_ledger(self) -> None:
+        ok, _detail = ledger_status(self.path)
+        self.assertTrue(ok)
+
+    def test_ledger_status_ok_for_a_healthy_ledger(self) -> None:
+        CostLedger(self.path).add(1.0, thresholds=[])
+        ok, _detail = ledger_status(self.path)
+        self.assertTrue(ok)
+
+    def test_ledger_status_not_ok_for_a_corrupt_ledger(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.path.write_text("garbage", encoding="utf-8")
+        ok, detail = ledger_status(self.path)
+        self.assertFalse(ok)
+        self.assertIn(str(self.path), detail)
 
 
 class RepoLedgerWriteGuardTests(unittest.TestCase):

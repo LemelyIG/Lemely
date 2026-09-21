@@ -80,15 +80,20 @@ class CostLedger:
         self._path = path
         self._log = structlog.get_logger().bind(component="cost_ledger")
 
-    def _read(self) -> tuple[float, list[float]]:
-        """Read ``(cumulative_usd, warnings_sent)`` from disk.
+    def _read(self) -> tuple[float, list[float], bool]:
+        """Read ``(cumulative_usd, warnings_sent, corrupt)`` from disk.
 
-        Returns ``(0.0, [])`` when the file is absent. A corrupt or unreadable
-        file is treated as ``(0.0, [])`` but logs a warning first — a corrupt
-        ledger is never silently zeroed.
+        Returns ``(0.0, [], False)`` when the file is absent — the legitimate
+        first-run state, not corruption. A present-but-unparseable file is
+        treated as ``(0.0, [], True)`` but logs a warning first — a corrupt
+        ledger is never silently zeroed. The ``corrupt`` flag is what lets
+        callers (:meth:`is_corrupt`, :func:`ledger_status`) tell "genuinely
+        zero spend" apart from "unreadable"; :meth:`total` and :meth:`add`
+        still fail open by discarding it (US-035: fail-open is the ruling,
+        not an oversight).
         """
         if not self._path.exists():
-            return 0.0, []
+            return 0.0, [], False
         try:
             data = json.loads(self._path.read_text(encoding="utf-8"))
             cumulative = float(data["cumulative_usd"])
@@ -100,8 +105,8 @@ class CostLedger:
                 error=str(exc),
                 action="treating cumulative spend as 0.0",
             )
-            return 0.0, []
-        return cumulative, warnings_sent
+            return 0.0, [], True
+        return cumulative, warnings_sent, False
 
     def _write(self, cumulative_usd: float, warnings_sent: list[float]) -> None:
         """Atomically persist the ledger state (write-to-temp then replace)."""
@@ -126,10 +131,27 @@ class CostLedger:
         """Return the current cumulative USD spend.
 
         Returns ``0.0`` if the file is absent or corrupt (a warning is logged
-        for corruption via :meth:`_read`).
+        for corruption via :meth:`_read`). Unchanged by US-035: this is the
+        ruled fail-open behaviour, not the gap that story closes — see
+        :meth:`is_corrupt` for the new observable.
         """
-        cumulative, _ = self._read()
+        cumulative, _, _ = self._read()
         return cumulative
+
+    def is_corrupt(self) -> bool:
+        """True iff the ledger file exists but could not be parsed.
+
+        False for the legitimate first-run state (file absent) and for a
+        ledger that parses cleanly. This is the caller-observable signal
+        US-035 adds: before this method existed, :meth:`total` collapsed
+        "genuinely zero spend" and "unreadable" into the same ``0.0``, so
+        nothing downstream (``lemely doctor``, the ceiling check) could tell
+        them apart — the warning :meth:`_read` logs on the corrupt path had
+        exactly one consumer (the log stream) and zero code consumers. Does
+        not change :meth:`total`'s fail-open return value.
+        """
+        _, _, corrupt = self._read()
+        return corrupt
 
     def add(self, usd: float, *, thresholds: list[float]) -> tuple[float, list[float]]:
         """Add ``usd`` to the cumulative total and persist atomically.
@@ -149,7 +171,7 @@ class CostLedger:
         Returns:
             A tuple ``(new_total, newly_crossed_thresholds)``.
         """
-        cumulative, warnings_sent = self._read()
+        cumulative, warnings_sent, _ = self._read()
         new_total = cumulative + usd
 
         already = set(warnings_sent)
@@ -159,3 +181,30 @@ class CostLedger:
 
         self._write(new_total, warnings_sent)
         return new_total, newly_crossed
+
+
+def ledger_status(path: Path) -> tuple[bool, str]:
+    """Advisory status for `lemely doctor`.
+
+    See `advisory_checks` in `lemely.app.cli.doctor_cmd`, alongside
+    `promo_pricing_status` in `lemely.io.gemini`.
+
+    Reports a present-but-unparseable ledger file so a developer notices the
+    USD ceiling is running blind, without ever failing `doctor`: the ledger
+    is dev-only (it informs a human operator's spend decisions; it does not
+    gate production billing), so fail-closed here was explicitly rejected —
+    it could wedge a funded sweep on a transient disk error with no
+    production blast radius to justify that. Absent (first run) and a
+    healthy ledger both report ``ok=True`` with no detail; this function
+    does not distinguish them because `doctor` only needs to flag the one
+    unhealthy case.
+    """
+    if CostLedger(path).is_corrupt():
+        return (
+            False,
+            f"cost ledger at {path} exists but could not be parsed; the $USD "
+            "cost ceiling is treating cumulative spend as $0.00 for every "
+            "run until this is fixed (fail-open, by design — see "
+            "CostLedger.is_corrupt). Inspect or delete the file.",
+        )
+    return True, ""

@@ -666,6 +666,17 @@ class GeminiClient:
                     f"Token ceiling ({g.per_run_token_ceiling}) exceeded; accumulated {total}."
                 )
         if g.total_usd_ceiling is not None and self._ledger is not None:
+            # US-035: not adding a second surfacing here on top of `doctor`'s
+            # `gemini_cost_ledger` check (lemely/app/cli.py). `total()` ->
+            # `_read()` already logs `cost_ledger_corrupt` on every call that
+            # hits a corrupt file, including this one, so a corrupt ledger is
+            # not silent at runtime either. Duplicating that as a second
+            # runtime log/metric here would just be a second producer for a
+            # condition `doctor` already reports on demand, for a dev-only
+            # ledger that does not gate production billing (see
+            # cost_ledger.py's ruling). If this ever needs to raise instead
+            # of merely logging, that is the fail-closed option the product
+            # owner explicitly rejected for this story.
             ledger_total = self._ledger.total()
             if ledger_total >= g.total_usd_ceiling:
                 raise CostCeilingError(
