@@ -208,6 +208,44 @@ def test_persist_correction_maps_question_results(
         assert second.matched_point_ids == []
 
 
+def test_persist_correction_round_trips_dropped_marker_source(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """US-038: ``marker_source="dropped"`` must survive persistence unchanged.
+
+    Before this migration, ``MarkerSource`` (the native Postgres enum) had
+    only ``deterministic``/``ai``/``missing``, so ``_to_question_result``
+    mapped ``"dropped"`` onto ``MarkerSource.missing`` -- an answer the model
+    returned and extraction discarded as malformed became indistinguishable,
+    on read-back, from one never attempted. That mapping is now gone: the
+    fourth enum member round-trips like the other three.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    dropped = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer="A",
+        topic="Waves",
+        review_reason="answer discarded as malformed",
+        marker_source="dropped",
+        matched_point_ids=[],
+    )
+    report = _report()
+    report.correction.questions.append(dropped)
+    AttemptRepository(pg_sessionmaker).persist_correction(user_id=user_id, report=report)
+
+    with pg_sessionmaker() as session:
+        result = session.scalars(
+            select(QuestionResult).where(QuestionResult.question_id == "3")
+        ).one()
+        assert result.marker_source == MarkerSource.dropped
+
+
 def test_persist_correction_writes_weakness_records(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

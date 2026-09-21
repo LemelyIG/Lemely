@@ -85,6 +85,23 @@ const NO_QUESTION_DETAIL = {
   body: "Per-question detail is only available right after correcting a paper.",
 }
 
+/**
+ * Display label for `QuestionResult.markerSource`.
+ *
+ * US-038: migration `0038_marker_source_dropped` lets a student-attempt
+ * question now round-trip as `"dropped"` where it previously always arrived
+ * as `"missing"` — the model returned an answer for this question, but
+ * extraction discarded it as malformed before marking ever saw it. The raw
+ * token reads as an internal/technical word a student would not recognise
+ * (worse than "deterministic"/"ai"/"missing", which at least name a marking
+ * *method*), so it is mapped to student-facing copy here rather than shipped
+ * verbatim. The other three values are left as the existing raw pass-through
+ * — pre-existing copy this story does not touch.
+ */
+function markerSourceLabel(source: QuestionResult["markerSource"]): string {
+  return source === "dropped" ? "not marked" : source
+}
+
 function IntegrityMark({ row }: { row: IntegrityRow }) {
   const Icon = row.mark === "check" ? Check : row.mark === "bang" ? Warning : Minus
   return (
@@ -384,7 +401,7 @@ function QuestionList({
           >
             <div className="flex flex-col gap-2.5">
               <Chip tone="neutral" className="w-fit">
-                {q.markerSource}
+                {markerSourceLabel(q.markerSource)}
               </Chip>
               {q.feedback ? (
                 <div className="rounded-md bg-paper-sunk px-3.5 py-3 text-pretty text-body-md text-ink-muted">

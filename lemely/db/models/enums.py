@@ -99,11 +99,24 @@ class ConfidenceBand(enum.Enum):
 
 
 class MarkerSource(enum.Enum):
-    """Which engine produced a question mark."""
+    """Which engine produced a question mark.
+
+    ``dropped`` (US-038, migration ``0038_marker_source_dropped``): the model
+    DID return an answer for this question, but extraction discarded it as
+    malformed (unrecoverable ``question_id``/``answer`` shape) -- see
+    ``lemely.core.schemas.CorrectedQuestion.marker_source``. Distinct from
+    ``missing``, which covers "nothing was ever attempted". Before this
+    migration the native Postgres enum had no fourth member, so
+    ``AttemptRepository`` mapped ``"dropped"`` onto ``missing`` on write and
+    the two review-detail readers (``review_repo.py``) disagreed on what a
+    teacher saw for the identical situation -- this member removes that
+    mapping and the disagreement it caused.
+    """
 
     deterministic = "deterministic"
     ai = "ai"
     missing = "missing"
+    dropped = "dropped"
 
 
 class BoundarySource(enum.Enum):

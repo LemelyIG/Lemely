@@ -22,6 +22,7 @@ when no local Postgres is reachable (mirrors ``test_class_repo.py``):
 from __future__ import annotations
 
 import uuid
+from datetime import timedelta
 from typing import TYPE_CHECKING
 
 import pytest
@@ -55,6 +56,7 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
+from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
@@ -132,6 +134,7 @@ def _question(
     review_reason: str | None = None,
     plagiarism_flagged: bool = False,
     topic: str = "Waves",
+    marker_source: str = "ai",
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=question_id,
@@ -143,7 +146,7 @@ def _question(
         student_answer=f"answer-{question_id}",
         expected_answer=f"expected-{question_id}",
         topic=topic,
-        marker_source="ai",
+        marker_source=marker_source,
         review_reason=review_reason,
         plagiarism_flagged=plagiarism_flagged,
         matched_point_ids=["p1"] if awarded else [],
@@ -209,6 +212,29 @@ def _review_items_for_attempt(
                 .order_by(ReviewQueueItem.created_at)
             ).all()
         )
+
+
+def _seed_console_paper(
+    pg_sessionmaker: sessionmaker[Session],
+    *,
+    uploader: uuid.UUID,
+    questions: list[CorrectedQuestion],
+) -> uuid.UUID:
+    """Grade a paper through the console repository, as a finished run would."""
+    repo = TeacherPaperRepository(pg_sessionmaker, stale_after=timedelta(minutes=10))
+    paper_id = uuid.uuid4()
+    repo.create(
+        paper_id=paper_id,
+        uploaded_by=uploader,
+        storage_path=f"teacher/{uploader}/{paper_id.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="scan.pdf",
+        content_type="application/pdf",
+        byte_size=15,
+    )
+    repo.claim_run(paper_id)
+    repo.finish(paper_id, _report(questions))
+    return paper_id
 
 
 @pytest.fixture
@@ -470,6 +496,52 @@ def test_get_item_happy_path(
     assert detail.expected_answer == "expected-2"
     assert detail.is_overridden is False
     assert detail.teacher_awarded_marks is None
+
+
+def test_get_item_marker_source_agrees_between_attempt_and_console_paths(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """US-038: the divergence this story exists to remove.
+
+    Before migration ``0038_marker_source_dropped``, a dropped question
+    reached ``ReviewItemDetail.marker_source`` via two siblings that
+    disagreed: the student-attempt path (``review_repo.py:440``) read the
+    DB's ``MarkerSource`` enum, which had no ``"dropped"`` member and so
+    could only ever report ``"missing"``; the console path
+    (``_console_item_detail``, ``review_repo.py:1042``) read the
+    in-memory ``CorrectedQuestion`` straight out of ``report_json``, which
+    was never narrowed and so reported ``"dropped"`` faithfully. A teacher
+    working ONE review queue could see two different labels for the
+    identical situation. With the enum member added and the write-side
+    mapping in ``attempt_repo.py`` removed, both readers must now agree.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    dropped_question = _question(
+        "1",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason="answer discarded as malformed",
+        marker_source="dropped",
+    )
+
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [dropped_question])
+    attempt_item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+    attempt_detail = review_service.get_item(teacher, Role.teacher, attempt_item.id)
+
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[dropped_question])
+    with pg_sessionmaker() as session:
+        console_item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).one()
+    console_detail = review_service.get_item(teacher, Role.teacher, console_item.id)
+
+    assert attempt_detail.marker_source == "dropped"
+    assert console_detail.marker_source == "dropped"
+    assert attempt_detail.marker_source == console_detail.marker_source
 
 
 def test_get_item_unknown_id_is_not_found(

@@ -53,7 +53,7 @@ def render_correction(result: CorrectionResult) -> Table:
     t.add_column("Confidence")
     t.add_column("Marker")
     t.add_column("Review?")
-    marker_glyph = {"deterministic": "✓", "ai": "AI", "missing": "—"}
+    marker_glyph = {"deterministic": "✓", "ai": "AI", "missing": "—", "dropped": "✗"}
     for q in result.questions:
         marks = f"{q.awarded_marks}/{q.maximum_marks}"
         style = "green" if q.awarded_marks == q.maximum_marks else "red"

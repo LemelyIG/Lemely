@@ -6,8 +6,12 @@
 
 export type PortalId = "teacher" | "student"
 
-/** How a question was marked — the mock's 🔢 / 🤖 / ❓ legend. */
-export type MarkerSource = "deterministic" | "ai" | "missing"
+/** How a question was marked — the mock's 🔢 / 🤖 / ❓ legend.
+ *
+ * "dropped" (US-038, migration `0038_marker_source_dropped`): the model
+ * returned an answer for this question, but extraction discarded it as
+ * malformed. Distinct from "missing" — nothing was ever attempted. */
+export type MarkerSource = "deterministic" | "ai" | "missing" | "dropped"
 
 /*
  * The vocabulary is data now, served per subject and tier by

@@ -359,22 +359,14 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         confidence_band=DBConfidenceBand(cq.confidence.value),
         confidence_score=cq.confidence_score,
         needs_teacher_review=cq.needs_teacher_review,
-        # US-031 review MUST-FIX 7: core's MarkerSource-shaped literal gained
-        # a fourth value, "dropped" (an answer the model returned but
-        # extraction discarded as malformed), that the DB's own MarkerSource
-        # enum does not carry -- adding it would need a migration
-        # (ALTER TYPE ... ADD VALUE on the native `markersource` SQL enum,
-        # `db/migrations/versions/0002_core_schema.py`), which is out of
-        # scope for this fix. Map it onto `missing` for storage: from the
-        # DB's perspective both mean "no real marking happened", and the
-        # finer distinction is not lost -- `review_reason` (a plain string
-        # column, no enum constraint) still carries the
-        # dropped-as-malformed message through untouched.
-        marker_source=(
-            MarkerSource.missing
-            if cq.marker_source == "dropped"
-            else MarkerSource(cq.marker_source)
-        ),
+        # US-038: `MarkerSource` (migration 0038_marker_source_dropped) now
+        # carries `dropped` alongside `deterministic`/`ai`/`missing`, so
+        # core's marker_source literal round-trips unmapped -- see the
+        # semantics decision recorded on `MarkerSource` itself in
+        # `lemely/db/models/enums.py` for why a dropped answer still counts
+        # as "not marked" for confidence/review purposes even though it now
+        # has its own label.
+        marker_source=MarkerSource(cq.marker_source),
         topic=cq.topic,
         student_answer=cq.student_answer,
         expected_answer=cq.expected_answer,
