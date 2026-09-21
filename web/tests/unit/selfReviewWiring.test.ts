@@ -65,3 +65,43 @@ describe("PaperResult.tsx — the history branch renders real rows", () => {
     expect(source).toContain("<ErrorState")
   })
 })
+
+/*
+ * Task 13 · source-text gates for `useSelfReview`/`useSubmitSelfReview`.
+ * Neither hook has a mountable consumer yet (Task 14/15 build the panel), so
+ * this pins the reveal-safety contract as text, same reasoning as the block
+ * above and `capabilityWiring.test.ts`/`routeErrorWiring.test.ts`.
+ */
+describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
+  const source = readSource("src/lib/hooks/useSelfReviewApi.ts")
+
+  it("caches the POST's revealed payload under the SAME key the pending GET reads", () => {
+    // Both calls must build the key through the one selfReviewKey() factory —
+    // a literal or a second key would let the revealed payload sit in a slot
+    // the pending query, and therefore the panel, never reads.
+    expect(source).toContain("queryKey: selfReviewKey(attemptId, questionResultId)")
+    expect(source).toContain("setQueryData(selfReviewKey(attemptId, questionResultId), data)")
+  })
+
+  it("never writes an optimistic verdict: no onMutate anywhere in the file", () => {
+    // The absence IS the reveal guarantee. The server deliberately withholds
+    // the verdict until the POST resolves (pending GET payload carries no
+    // `awarded` at all — see selfReviewTypes.ts); an onMutate optimistic
+    // write would have to invent that verdict client-side before the server
+    // has actually judged anything, which is exactly the leak the spec
+    // forbids. So this hook file must never define one.
+    expect(source).not.toContain("onMutate")
+  })
+
+  it("does not retry a 404 on the GET — a real, final not-self-reviewable answer", () => {
+    expect(source).toContain(
+      "!(error instanceof ApiError && error.status === 404) && failureCount < 2",
+    )
+  })
+
+  it("invalidates every total-bearing student surface on submit", () => {
+    expect(source).toContain('invalidateQueries({ queryKey: ["student", "overview"] })')
+    expect(source).toContain('invalidateQueries({ queryKey: ["student", "subject"] })')
+    expect(source).toContain('invalidateQueries({ queryKey: ["student", "result"] })')
+  })
+})
