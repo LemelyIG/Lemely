@@ -78,6 +78,7 @@ export const REASON_LABEL: Record<string, string> = {
   plagiarism_flag: "Possible mark-scheme copying",
   ai_detection_flag: "Possible AI-written answer",
   manual: "Manually flagged",
+  student_evidence_unjudged: "Student challenged a mark",
 }
 
 export function reasonLabel(reason: string): string {
@@ -170,6 +171,7 @@ const REASON_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "low_confidence", label: "Low confidence" },
   { value: "plagiarism_flag", label: "Possible mark-scheme copying" },
   { value: "ai_detection_flag", label: "Possible AI-written answer" },
+  { value: "student_evidence_unjudged", label: "Student challenged a mark" },
 ]
 
 const AGE_FILTER_OPTIONS: { value: string; label: string }[] = [

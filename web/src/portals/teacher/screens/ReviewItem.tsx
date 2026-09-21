@@ -17,7 +17,7 @@ import {
   useReviewItem,
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
-import type { ReviewBreakdown, ReviewItemDetail } from "@/lib/teacherTypes"
+import type { ReviewBreakdown, ReviewItemDetail, ReviewItemPoint } from "@/lib/teacherTypes"
 import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
@@ -110,6 +110,70 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * `ResolveControls` (it owns the note text the accept action sends) without
  * lifting that form's whole state up.
  */
+
+const EVIDENCE_VERDICT_LABEL: Record<string, string> = {
+  accepted: "The automatic judge accepted this reason",
+  rejected: "The automatic judge rejected this reason",
+  not_required: "No reason was required for this point",
+}
+
+/**
+ * The student's self-review of one mark point, for a teacher deciding a
+ * `student_evidence_unjudged` item (S2 part2+3 final review, I-2). Without
+ * this the row said "a teacher will look at this" and gave the teacher
+ * nothing to look at — no way to see what the student claimed or wrote.
+ *
+ * Only points the student actually self-marked render here
+ * (`studentSelfmark !== null`); a question can carry points the student
+ * never touched (they only had to explain the ones they claimed upward —
+ * `selfReview.ts`'s `missingEvidence`), and those have nothing to show.
+ *
+ * `studentEvidence` is student-authored text landing on a teacher's screen.
+ * This is the teacher console: QUALITY-BAR's integrity sanitising is a
+ * per-surface rule for student-facing views and does not apply here, so
+ * nothing is withheld. It is still rendered as plain JSX text content, the
+ * same as every other student-authored field on this screen
+ * (`studentAnswer` above) — never interpreted as markup.
+ */
+function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
+  const reviewed = points.filter((p) => p.studentSelfmark !== null)
+  if (reviewed.length === 0) return null
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="text-display-sm">Student's self-review</div>
+      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+        {reviewed.map((point, index) => (
+          <div
+            key={point.markPointId}
+            className={
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+            }
+          >
+            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              <Chip tone="neutral">Marker: {point.awarded ? "awarded" : "not awarded"}</Chip>
+              <Chip tone="neutral">
+                Student claims: {point.studentSelfmark ? "earned" : "not earned"}
+              </Chip>
+              {point.evidenceVerdict ? (
+                <Chip tone={point.evidenceVerdict === "accepted" ? "ok" : "warn"}>
+                  {EVIDENCE_VERDICT_LABEL[point.evidenceVerdict] ?? point.evidenceVerdict}
+                </Chip>
+              ) : (
+                <Chip tone="warn">Not yet judged</Chip>
+              )}
+            </div>
+            {point.studentEvidence ? (
+              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+                "{point.studentEvidence}"
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
 
 function AwardedMarks({ detail }: { detail: ReviewItemDetail }) {
   return (
@@ -641,6 +705,8 @@ export function ReviewItem() {
                   ) : null}
                 </div>
               </section>
+
+              <SelfReviewPoints points={detail.points} />
 
               {/* Integrity flag: distinct, non-inflammatory, dismiss-only on this item */}
               {integrity ? (
