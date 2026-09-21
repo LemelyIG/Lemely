@@ -61,6 +61,12 @@ def _strip_marker(value: str) -> str:
     Each pass strictly shortens the string while a marker remains, so the loop
     terminates. Stripping the marker rather than the two assembled delimiters
     kills the opening and closing forms, and every token variant, in one rule.
+
+    Quadratic in the worst case (deeply nested markers), which is safe only
+    because every value this is called on is bounded — ``student_evidence`` at
+    ``MAX_EVIDENCE_CHARS`` (``lemely/db/self_review_repo.py``), the rest at
+    ordinary mark-scheme field lengths. Raising ``MAX_EVIDENCE_CHARS``
+    materially requires revisiting this loop.
     """
     cleaned = value
     while _MARKER in cleaned:
@@ -110,15 +116,15 @@ def build_judge_user_prompt(request: JudgeRequest) -> str:
         if request.student_claims_earned
         else "The student claims they did NOT earn this point although the marker awarded it."
     )
-    mark_type = f" (mark type {request.mark_type})" if request.mark_type else ""
+    mark_type = f" (mark type {_strip_marker(request.mark_type)})" if request.mark_type else ""
     answer = request.student_answer or "(no answer was transcribed)"
     rationale = request.marker_rationale or "(the marker gave no reason)"
     token = _block_token((answer, rationale, request.student_evidence))
     return (
         f"Block token for this message: {token}\n\n"
-        f"Subject: {request.subject_code}\n"
-        f"Question: {request.question_id}\n"
-        f"Mark point{mark_type}, worth {request.tariff}: {request.point_text}\n\n"
+        f"Subject: {_strip_marker(request.subject_code)}\n"
+        f"Question: {_strip_marker(request.question_id)}\n"
+        f"Mark point{mark_type}, worth {request.tariff}: {_strip_marker(request.point_text)}\n\n"
         f"{direction}\n\n"
         f"Student's transcribed answer:\n{_fenced(answer, token)}\n\n"
         f"Marker's reason:\n{_fenced(rationale, token)}\n\n"
@@ -128,4 +134,28 @@ def build_judge_user_prompt(request: JudgeRequest) -> str:
     )
 
 
-__all__ = ["JUDGE_SYSTEM_PROMPT", "VERSION", "build_judge_user_prompt"]
+def evidence_was_tampered(request: JudgeRequest) -> bool:
+    """True if stripping the marker changed any of the three fenced values.
+
+    Silently sanitising a forged fence is correct regardless of who sent it
+    (see :func:`_strip_marker`), but discarding *whether* it fired throws away
+    the one signal directly tied to an attempted forgery, as opposed to a shift
+    in an aggregate accept-rate nobody queries. ``student_answer`` and
+    ``marker_rationale`` come from the marker's own transcription and
+    rationale, not from the student, but they are fenced (and therefore
+    checked here) because the challenge-review UI lets a marker paste
+    arbitrary text into ``feedback``/``rationale`` too.
+    """
+    answer = request.student_answer or "(no answer was transcribed)"
+    rationale = request.marker_rationale or "(the marker gave no reason)"
+    return any(
+        _strip_marker(value) != value for value in (answer, rationale, request.student_evidence)
+    )
+
+
+__all__ = [
+    "JUDGE_SYSTEM_PROMPT",
+    "VERSION",
+    "build_judge_user_prompt",
+    "evidence_was_tampered",
+]

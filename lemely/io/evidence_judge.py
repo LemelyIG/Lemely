@@ -11,7 +11,12 @@ default verdict would be the silent decision the spec forbids.
 **The metric.** Every verdict logs ``self_review_judge_verdict`` with the
 subject code and the outcome. A judge that accepts everything is
 indistinguishable from no guard at all; the accept rate per subject is what
-tells the two apart, and it is emitted from the first call.
+tells the two apart, and it is emitted from the first call. That aggregate is
+lagging and cannot say which verdict was manipulated, so the same log line
+also carries ``evidence_sanitised``: whether the fence marker had to be
+stripped from any of the three student/marker-supplied fields. Unlike a shift
+in an accept rate nobody queries, that is a per-submission, near-zero-false-
+positive signal that someone tried to forge a fence boundary.
 """
 
 from __future__ import annotations
@@ -26,6 +31,7 @@ from lemely.io.prompts.self_review_judge import (
     JUDGE_SYSTEM_PROMPT,
     VERSION,
     build_judge_user_prompt,
+    evidence_was_tampered,
 )
 
 if TYPE_CHECKING:
@@ -70,6 +76,7 @@ class GeminiEvidenceJudge:
             question_id=request.question_id,
             accepted=outcome.accepted,
             claims_earned=request.student_claims_earned,
+            evidence_sanitised=evidence_was_tampered(request),
         )
         return JudgeVerdict(accepted=outcome.accepted, reason=outcome.reason)
 
