@@ -9,6 +9,7 @@ from collections.abc import Mapping
 import structlog
 
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
+from lemely.core.equivalence import Verdict, VerdictKind, equivalent
 from lemely.core.loose_schemas import CalculatedAnswer, MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
@@ -383,12 +384,47 @@ def _calculated_value_present(calc: CalculatedAnswer, candidates: list[float]) -
     return False
 
 
+def _equivalence_fallback_verdict(
+    calc: CalculatedAnswer, student_answer: str, student_working: str | None
+) -> Verdict:
+    """Consult ``lemely.core.equivalence`` for a rejected point (I8, US-005b).
+
+    A fallback for a point ``_calculated_value_present`` already rejected —
+    see the module docstring's point 3.
+
+    Tries ``student_answer`` first, then ``student_working`` -- mirroring
+    ``_verify_calculated_answers``' own literal-candidate handling, since
+    extraction commonly splits a question's final requested value into
+    ``answer`` while an intermediate checkpoint value lands in ``working``.
+    An ``EQUAL_PROVEN`` match on either side is returned immediately, since
+    nothing stronger exists; otherwise the more informative of the two
+    verdicts (anything but ``UNPARSEABLE``) is kept, since an indeterminate
+    result on one side must not hide a genuine finding on the other.
+    """
+    target = str(calc.value)
+    answer_verdict = equivalent(
+        student_answer, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
+    )
+    if answer_verdict.kind is VerdictKind.EQUAL_PROVEN or not student_working:
+        return answer_verdict
+    working_verdict = equivalent(
+        student_working, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
+    )
+    if working_verdict.kind is VerdictKind.EQUAL_PROVEN:
+        return working_verdict
+    if answer_verdict.kind is VerdictKind.UNPARSEABLE:
+        return working_verdict
+    return answer_verdict
+
+
 def _verify_calculated_answers(
     question: Question,
     student_answer: str,
     student_working: str | None,
     matched_point_ids: list[str],
     starting_awarded: int,
+    *,
+    equivalence_gate: bool = False,
 ) -> tuple[int, list[str], list[str]]:
     """Deterministic backstop for the AI marker (D2.3).
 
@@ -413,6 +449,16 @@ def _verify_calculated_answers(
     ("3/8") are only evaluated from ``student_answer`` — see
     ``_extract_fraction_values`` for why working is excluded from that part.
 
+    ``equivalence_gate`` (US-005b, defaults False): when a point would
+    otherwise be rejected here, also consult
+    ``lemely.core.equivalence.equivalent`` (:func:`_equivalence_fallback_verdict`)
+    as a fallback. An ``equal`` verdict (of either kind — ``EQUAL_PROVEN`` or
+    ``EQUAL_SAMPLED``) never changes ``awarded``: even a proven match is only
+    "could justify" (D12's ``auto_awardable``), not "does" — this function
+    stops short of acting on it and only adds the conflict to the point's
+    rejection reason, for a human reviewer to weigh. With the flag off, or
+    on a ``NOT_EQUAL``/``UNPARSEABLE`` verdict, behaviour is unchanged.
+
     Returns (adjusted_awarded_marks, adjusted_matched_point_ids, rejection_reasons).
     """
     points_by_id = {p.id: p for p in question.answer_points}
@@ -432,11 +478,21 @@ def _verify_calculated_answers(
             and point.calculated_answer.value is not None
             and not _calculated_value_present(point.calculated_answer, candidates)
         ):
-            awarded = max(0, awarded - point.marks)
-            rejections.append(
+            reason = (
                 f"{point_id}: expected value {point.calculated_answer.value!r} not found "
                 "in student answer/working"
             )
+            if equivalence_gate:
+                verdict = _equivalence_fallback_verdict(
+                    point.calculated_answer, student_answer, student_working
+                )
+                if verdict.equal_by_any_method:
+                    reason += (
+                        f"; lemely.core.equivalence found this {verdict.kind.value} to the "
+                        "scheme value -- routed to review, not auto-awarded"
+                    )
+            awarded = max(0, awarded - point.marks)
+            rejections.append(reason)
             continue
         matched.append(point_id)
     return awarded, matched, rejections
@@ -551,8 +607,15 @@ def _build_ai_corrected(
     mark: AIMarkResponse,
     student_working: str | None = None,
     extraction_confidence: float | None = None,
+    *,
+    equivalence_gate: bool = False,
 ) -> CorrectedQuestion:
     """Convert AIMarkResponse + question metadata into a CorrectedQuestion.
+
+    ``equivalence_gate`` (US-005b, defaults False): forwarded to
+    ``_verify_calculated_answers`` -- see its docstring. Never changes
+    ``awarded_marks`` on its own in this story; a conflict only enriches the
+    review reason for reason 3 below.
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
@@ -580,7 +643,12 @@ def _build_ai_corrected(
     coherence_mismatch = coherence_reason is not None
 
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
-        question, student_answer, student_working, list(mark.matched_point_ids), clamped
+        question,
+        student_answer,
+        student_working,
+        list(mark.matched_point_ids),
+        clamped,
+        equivalence_gate=equivalence_gate,
     )
     value_mismatch = bool(rejections)
     low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD
@@ -717,6 +785,7 @@ def correct_paper(
     *,
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
+    equivalence_gate: bool = False,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -725,6 +794,10 @@ def correct_paper(
         extracted_answers: per-question student responses.
         gemini_client: required when paper contains non-MCQ questions and mcq_only is False.
         mcq_only: if True, skip AI; non-MCQ questions get marker_source="missing".
+        equivalence_gate: forwarded to ``_build_ai_corrected`` (US-005b,
+            defaults False -- see ``GradingSettings.equivalence_gate`` and
+            ``_verify_calculated_answers``). Never auto-awards a mark in
+            this story regardless of value.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
@@ -868,7 +941,12 @@ def correct_paper(
             )
             continue
         cq = _build_ai_corrected(
-            q, student_answer or "", mark, student_working, extraction_confidence
+            q,
+            student_answer or "",
+            mark,
+            student_working,
+            extraction_confidence,
+            equivalence_gate=equivalence_gate,
         )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks

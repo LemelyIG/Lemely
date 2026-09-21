@@ -994,6 +994,148 @@ class CalculatedAnswerVerificationTests(unittest.TestCase):
         self.assertIn("p_unknown", cq.review_reason or "")
 
 
+class EquivalenceGateTests(unittest.TestCase):
+    """US-005b: wires ``lemely.core.equivalence`` into
+    ``_verify_calculated_answers`` as a fallback for a point the literal
+    check already rejected, behind ``equivalence_gate`` (default OFF).
+
+    D12/the module's own contract: an ``equal`` verdict — of *either* kind
+    — is a review signal, never an auto-award. ``awarded_marks`` must be
+    identical to the flag-off value in every case here; only the review
+    reason may gain detail. ``EQUAL_PROVEN`` and ``EQUAL_SAMPLED`` are
+    asserted separately so a caller collapsing them back into one boolean
+    (the exact defect the module's docstring warns about) would be caught.
+    """
+
+    def _make_question(self, calc_kwargs: dict | None = None):
+        from lemely.core.loose_schemas import AnswerPoint, CalculatedAnswer, Question, QuestionType
+
+        calc = CalculatedAnswer(**(calc_kwargs or {"value": 300000000.0}))
+        return Question.model_construct(
+            id="2",
+            marks=1,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="final answer", marks=1, calculated_answer=calc)
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _make_mark(self, awarded_marks: int = 1, matched: list[str] | None = None):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=awarded_marks,
+            confidence=1.0,
+            matched_point_ids=matched or ["p1"],
+            feedback="test",
+        )
+
+    def test_flag_defaults_off_in_config(self):
+        """Asserted against the config default directly, not a fixture."""
+        from lemely.runtime.config import GradingSettings
+
+        self.assertFalse(GradingSettings().equivalence_gate)
+
+    def test_flag_off_is_byte_identical_to_omitting_it(self):
+        """The golden marking path never passes ``equivalence_gate`` at
+        all. Its outcome (with a student answer the equivalence module
+        WOULD find equal, if consulted) must be identical to explicitly
+        passing ``equivalence_gate=False`` — proving the gate is inert by
+        default rather than merely asserting a branch wasn't entered."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        # "3.0 x 10^8" (module docstring's own worked example) is
+        # numerically 300000000 but never appears as that literal, so the
+        # deterministic backstop rejects it -- a case where flag ON would
+        # find EQUAL_PROVEN if consulted, making this a meaningful check
+        # that omitting the kwarg really means OFF.
+        golden = _build_ai_corrected(question, "3 * 10^8", mark)
+        explicit_off = _build_ai_corrected(question, "3 * 10^8", mark, equivalence_gate=False)
+
+        self.assertEqual(golden, explicit_off)
+        self.assertEqual(golden.awarded_marks, 0)
+        self.assertTrue(golden.needs_teacher_review)
+        self.assertIn("unverified accuracy mark", golden.review_reason or "")
+        self.assertNotIn("equivalence", golden.review_reason or "")
+
+    def test_flag_on_equal_proven_does_not_auto_award(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        cq = _build_ai_corrected(question, "3 * 10^8", mark, equivalence_gate=True)
+
+        # Not auto-awarded: identical awarded_marks/review gate to flag OFF.
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("equal_proven", cq.review_reason or "")
+
+    def test_flag_on_equal_sampled_routes_to_review_not_award(self):
+        """Asserted separately from EQUAL_PROVEN: a test that lumped the two
+        together would pass against the collapse-into-one-boolean defect."""
+        from unittest.mock import patch
+
+        from lemely.core.equivalence import EquivalenceMethod, Verdict, VerdictKind
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        sampled = Verdict(VerdictKind.EQUAL_SAMPLED, method=EquivalenceMethod.NUMERIC)
+        with patch("lemely.io.correction_ai.equivalent", return_value=sampled):
+            cq = _build_ai_corrected(question, "some expression", mark, equivalence_gate=True)
+
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("equal_sampled", cq.review_reason or "")
+        self.assertFalse(sampled.auto_awardable)  # the property this story must respect
+
+    def test_flag_on_not_equal_behaves_as_specified(self):
+        from unittest.mock import patch
+
+        from lemely.core.equivalence import Verdict, VerdictKind
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        not_equal = Verdict(VerdictKind.NOT_EQUAL)
+        with patch("lemely.io.correction_ai.equivalent", return_value=not_equal):
+            cq = _build_ai_corrected(
+                question, "something else entirely", mark, equivalence_gate=True
+            )
+
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertNotIn("equal", (cq.review_reason or "").replace("equivalence", ""))
+
+    def test_flag_on_unparseable_never_marks_wrong_beyond_the_literal_check(self):
+        """A timeout or unreadable expression must not degrade the mark any
+        further than the literal check already did -- an indeterminate
+        result is "could not read it", never a disproof."""
+        from unittest.mock import patch
+
+        from lemely.core.equivalence import Verdict, VerdictKind
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        unparseable = Verdict(VerdictKind.UNPARSEABLE, detail="both methods timed out")
+        with patch("lemely.io.correction_ai.equivalent", return_value=unparseable):
+            cq = _build_ai_corrected(question, "illegible scrawl", mark, equivalence_gate=True)
+
+        # Same outcome as flag OFF for this same input: the literal check
+        # already rejected it, and UNPARSEABLE adds no further information.
+        off = _build_ai_corrected(question, "illegible scrawl", mark, equivalence_gate=False)
+        self.assertEqual(cq, off)
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertTrue(cq.needs_teacher_review)
+
+
 class CoherenceGateTests(unittest.TestCase):
     """M1.5 (#40): awarded_marks must reconcile with matched_point_ids,
     and every matched_point_id must resolve in the mark scheme — a fourth

@@ -530,6 +530,16 @@ class GradingSettings(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
     stale_run_after_seconds: int = Field(default=900, ge=60)
+    # US-005b (I8 wiring): when a matched point's `calculated_answer.value`
+    # is not literally present in the student's answer/working,
+    # `_verify_calculated_answers` may consult `lemely.core.equivalence` as
+    # a fallback before rejecting it. Defaults False -- with it off, the
+    # golden marking path is byte-identical to before this flag existed.
+    # Even with it on, this story never acts on an `equal` verdict to raise
+    # a mark (D12: `auto_awardable` means "could justify", not "does");
+    # a conflict only earns extra detail in the review reason. Acting on
+    # the signal is a separate, later story.
+    equivalence_gate: bool = False
 
 
 class StorageSettings(BaseModel):
