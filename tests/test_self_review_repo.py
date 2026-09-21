@@ -1959,3 +1959,169 @@ def test_points_are_settleable_only_when_grouped_points_carry_their_group() -> N
     # The same hole from the other side: a named group with no cap makes
     # _settle_groups fall back to the sum of its members' tariffs.
     assert not points_are_settleable([independent, capless_group])
+
+
+# ── Task 11a: the judge runs outside the locked transaction ─────────────────
+
+
+class _LockProbeJudge:
+    """Judge that, mid-call, tries a NOWAIT lock on the same QuestionResult
+    row from a second session — recording whether it succeeded.
+
+    Before Task 11a, ``submit`` called the judge from inside the transaction
+    that already held ``SELECT ... FOR UPDATE`` on this row, so this probe hit
+    ``OperationalError``. After it, the judge runs with no session or lock of
+    its own held at all, so the probe's lock succeeds.
+    """
+
+    def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID) -> None:
+        self._sm = sm
+        self._qr_id = qr_id
+        self.lock_succeeded: bool | None = None
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        try:
+            with self._sm() as session:
+                qr = session.get(QuestionResult, self._qr_id, with_for_update={"nowait": True})
+                assert qr is not None
+            self.lock_succeeded = True
+        except OperationalError:
+            self.lock_succeeded = False
+        return JudgeVerdict(accepted=True, reason="ok")
+
+
+def test_judge_runs_with_the_row_unlocked(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """Task 11a, the defect this task exists to close: the judge must not
+    hold ``QuestionResult``'s row lock while it makes its (unbounded, LLM)
+    round trip. Proven by a second session taking a ``NOWAIT`` lock on the
+    same row from inside the judge call itself."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _LockProbeJudge(pg_sessionmaker, qr_id)
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert judge.lock_succeeded is True
+    assert view.state == "settled"
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.mark_changed is True
+
+
+class _CompetingSubmitJudge:
+    """Judge that, mid-call, runs a full second ``submit`` for the *same*
+    question on its own session/service — simulating a second request
+    arriving while the first is still off judging."""
+
+    def __init__(
+        self,
+        sm: sessionmaker[Session],
+        student: uuid.UUID,
+        attempt_id: uuid.UUID,
+        qr_id: uuid.UUID,
+    ) -> None:
+        self._sm = sm
+        self._student = student
+        self._attempt_id = attempt_id
+        self._qr_id = qr_id
+        self.competing_view: RevealedSelfReview | None = None
+        self.competing_error: BaseException | None = None
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        try:
+            # Full agreement with the marker: no evidence needed, so this
+            # competing pass needs no judge of its own and can complete
+            # entirely inside the window this call is holding open.
+            self.competing_view = _service(self._sm).submit(
+                self._student,
+                self._attempt_id,
+                self._qr_id,
+                [PointVerdict("p1", True), PointVerdict("p2", False)],
+            )
+        except BaseException as exc:
+            self.competing_error = exc
+        return JudgeVerdict(accepted=True, reason="ok")
+
+
+def test_one_pass_survives_the_judging_window(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """Task 11a, finding 2: releasing the lock for Phase B must not let two
+    submissions both go through. The competing pass here runs to completion
+    *inside* the outer pass's judge call; the outer pass's own locked apply
+    (Phase C) must then find the row already self-marked and raise, and the
+    question's marks must have moved exactly once."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _CompetingSubmitJudge(pg_sessionmaker, student, attempt_id, qr_id)
+
+    with pytest.raises(SelfReviewAlreadySubmittedError):
+        _service(pg_sessionmaker, judge=judge).submit(
+            student,
+            attempt_id,
+            qr_id,
+            [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+        )
+
+    assert judge.competing_error is None
+    assert judge.competing_view is not None
+    assert judge.competing_view.state == "settled"
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked
+    # The AI revision plus exactly one self-mark revision -- the outer pass's
+    # Phase C never wrote, so it never appended a second one.
+    assert [r.source for r in qr.revisions] == [RevisionSource.ai, RevisionSource.student_selfmark]
+    assert qr.student_selfmark_marks is None  # the competing pass fully agreed: nothing moved
+
+
+class _TeacherOverrideDuringJudgeJudge:
+    """Judge that lands a teacher override on a second session mid-call,
+    before returning an accept -- simulating the state drifting inside the
+    unlocked judging window."""
+
+    def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID, *, override_marks: int) -> None:
+        self._sm = sm
+        self._qr_id = qr_id
+        self._override_marks = override_marks
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        with self._sm.begin() as session:
+            qr = session.get(QuestionResult, self._qr_id)
+            assert qr is not None
+            qr.teacher_awarded_marks = self._override_marks
+        return JudgeVerdict(accepted=True, reason="looks fine")
+
+
+def test_state_drift_inside_the_window_is_not_a_silent_verdict(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Task 11a, finding 3: Phase C must recompute from what it actually
+    locks, not from Phase A's stale plan. A teacher override lands mid-judge,
+    turning what Phase A planned as a JUDGE point into NO_CHANGE by the time
+    Phase C re-decides it. The judge's accept must never surface as a moved
+    mark once precedence has settled the question -- the self-mark is still
+    recorded, but nothing moves, and the AI's own award is never touched."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _TeacherOverrideDuringJudgeJudge(pg_sessionmaker, qr_id, override_marks=2)
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert view.teacher_settled is True
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p2.mark_changed is False
+    assert p2.evidence_verdict is None  # the judge's accept never reached this point
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.is_self_marked
+    assert qr.awarded_marks == 1  # the AI's own mark is never mutated
+    assert qr.student_selfmark_marks is None  # nothing moved
