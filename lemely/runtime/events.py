@@ -47,6 +47,13 @@ class EventType(StrEnum):
     # and a dropped answer's loss was not actually visible anywhere, despite
     # an in-code comment claiming it was.
     ANSWER_DROPPED = "answer_dropped"
+    # NIT-B: two `ExtractedAnswer`s sharing one `question_id` survive
+    # validation (each is individually well-formed), so nothing upstream of
+    # `_flatten_answers` catches this -- the plain dict comprehension it used
+    # to be silently kept only the last one. Published the same way
+    # ANSWER_DROPPED is, so the loss is observable instead of an artifact of
+    # dict construction.
+    DUPLICATE_QUESTION_ID = "duplicate_question_id"
     REREAD_FAILED = "reread_failed"
     REREAD_CAP_REACHED = "reread_cap_reached"
     MARKING_PROGRESS = "marking_progress"

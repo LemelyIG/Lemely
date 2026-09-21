@@ -18,7 +18,7 @@ from lemely.core.schemas import (
     ExtractedAnswer,
     ExtractedAnswers,
 )
-from lemely.io.correction_ai import _build_mcq_corrected, correct_paper
+from lemely.io.correction_ai import _build_mcq_corrected, _flatten_answers, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ConfigError, CostCeilingError, ExternalServiceError
@@ -1972,3 +1972,84 @@ class CostCeilingAbortTests(unittest.TestCase):
         self.assertIn("AI marking failed", degraded.review_reason or "")
         # The paper was finished: leaves "3" and "4" were still attempted.
         self.assertEqual(len(attempts), 4)
+
+
+class DuplicateQuestionIdFlattenTests(unittest.TestCase):
+    """NIT-B: two ``ExtractedAnswer``s sharing one ``question_id`` must not
+    vanish into a dict comprehension unnoticed -- the loss has to be
+    observable, matching the ``ANSWER_DROPPED`` pattern this file already
+    established for dropped answers (US-031 review MUST-FIX 7).
+    """
+
+    def test_duplicate_question_id_publishes_event_and_last_one_wins(self) -> None:
+        frames: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            frames.append(payload)
+
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="first", confidence=0.5),
+                ExtractedAnswer(question_id="2", answer="only", confidence=0.9),
+                ExtractedAnswer(question_id="1", answer="second", confidence=0.8),
+            ],
+        )
+
+        bus.subscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+        try:
+            flattened = _flatten_answers(extracted)
+        finally:
+            bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+
+        # Policy: last-wins. Pinned here, not incidental to dict construction.
+        self.assertEqual(flattened["1"], ("second", None, 0.8))
+        self.assertEqual(flattened["2"], ("only", None, 0.9))
+
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0]["duplicate_counts"], {"1": 1})
+        self.assertEqual(frames[0]["total_answers"], 3)
+
+    def test_no_duplicate_event_when_all_ids_distinct(self) -> None:
+        frames: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            frames.append(payload)
+
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.5),
+                ExtractedAnswer(question_id="2", answer="B", confidence=0.9),
+            ],
+        )
+
+        bus.subscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+        try:
+            flattened = _flatten_answers(extracted)
+        finally:
+            bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+
+        self.assertEqual(frames, [])
+        self.assertEqual(flattened["1"], ("A", None, 0.5))
+        self.assertEqual(flattened["2"], ("B", None, 0.9))
+
+    def test_mapping_fallback_branch_never_publishes(self) -> None:
+        """A plain ``Mapping[str, str]`` cannot contain duplicate keys -- it
+        never went through extraction, so there is nothing to detect."""
+        frames: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            frames.append(payload)
+
+        bus.subscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+        try:
+            flattened = _flatten_answers({"1": "A", "2": "B"})
+        finally:
+            bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+
+        self.assertEqual(frames, [])
+        self.assertEqual(flattened["1"], ("A", None, 1.0))
+        self.assertEqual(flattened["2"], ("B", None, 1.0))

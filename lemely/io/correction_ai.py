@@ -38,10 +38,37 @@ def _is_leaf_marked(q: Question) -> bool:
 def _flatten_answers(
     extracted: ExtractedAnswers | Mapping[str, str],
 ) -> dict[str, tuple[str, str | None, float]]:
-    """Return {question_id: (answer, working_out, confidence)} for every extracted answer."""
+    """Return {question_id: (answer, working_out, confidence)} for every extracted answer.
+
+    NIT-B: two ``ExtractedAnswer``s can share one ``question_id`` -- each is
+    individually well-formed, so nothing upstream (extraction validation,
+    ``_dropped_question_ids``) catches it. A plain dict comprehension keyed
+    on ``question_id`` would silently keep only the last one with no trace
+    of the discarded answer anywhere. Policy: **last-wins**, matching the
+    dict-comprehension behaviour this function had before duplicates were
+    detected, and consistent with ``answers`` ordering elsewhere being
+    treated as "most recent take wins" (e.g. a later entry plausibly being
+    the model correcting itself within one response). The point of this
+    change is not to pick a different survivor -- it's to publish the loss
+    instead of leaving it an artifact of dict construction.
+    """
     if isinstance(extracted, ExtractedAnswers):
-        return {a.question_id: (a.answer, a.working_out, a.confidence) for a in extracted.answers}
-    # Plain mapping fallback (Mapping[str, str]): no working_out or confidence available.
+        flattened: dict[str, tuple[str, str | None, float]] = {}
+        duplicate_counts: dict[str, int] = {}
+        for a in extracted.answers:
+            if a.question_id in flattened:
+                duplicate_counts[a.question_id] = duplicate_counts.get(a.question_id, 0) + 1
+            flattened[a.question_id] = (a.answer, a.working_out, a.confidence)
+        if duplicate_counts:
+            bus.publish(
+                EventType.DUPLICATE_QUESTION_ID,
+                duplicate_counts=duplicate_counts,
+                total_answers=len(extracted.answers),
+            )
+        return flattened
+    # Plain mapping fallback (Mapping[str, str]): no working_out or confidence
+    # available. A plain mapping cannot contain duplicate keys, so there is
+    # nothing to detect in this branch.
     return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
 
 
