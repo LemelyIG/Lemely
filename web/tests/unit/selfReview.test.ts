@@ -11,6 +11,8 @@ import {
   OUTCOME_LABEL,
   UNAVAILABLE_COPY,
   evidenceHint,
+  groupLabel,
+  groupPoints,
   isComplete,
   outcomeDetail,
   outcomeSummary,
@@ -20,6 +22,7 @@ import {
   setVerdict,
   summaryLine,
   toSubmission,
+  type Groupable,
 } from "@/lib/selfReview"
 
 /*
@@ -314,5 +317,87 @@ describe("outcome copy", () => {
     expect(allCopy).not.toMatch(/plagiar|AI-generated|cheat/i)
     // REDESIGN-MISSION §3.2 item 10: no em dashes, no exclamation marks in copy.
     expect(allCopy).not.toMatch(/[—!]/)
+  })
+})
+
+/*
+ * groupPoints / groupLabel (Task 13/14 review, IMP-6). A scheme group must
+ * present as ONE unit worth `groupMaxMarks` (`selfReviewTypes.ts:29-33`,
+ * `schemas_student_self_review.py:36-40`), never as its members' tariffs
+ * added up — an "any 2 from 4" pool is worth 2 marks, not 4, and a panel
+ * that shows four independently-earnable 1-mark radios claims otherwise.
+ * These assert over real point arrays, not source text, because this is
+ * exactly the arithmetic a text gate cannot check.
+ */
+function groupablePoint(overrides: Partial<Groupable> = {}): Groupable {
+  return { markPointId: "p", groupKey: null, groupMaxMarks: null, tariff: 1, ...overrides }
+}
+
+describe("groupPoints / groupLabel", () => {
+  it("collapses an either/or pair into one group worth its shared groupMaxMarks", () => {
+    const pair = [
+      groupablePoint({ markPointId: "p1", groupKey: "alt:1", groupMaxMarks: 1 }),
+      groupablePoint({ markPointId: "p2", groupKey: "alt:1", groupMaxMarks: 1 }),
+    ]
+    const groups = groupPoints(pair)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.kind).toBe("alternative")
+    expect(groups[0]!.maxMarks).toBe(1)
+    expect(groups[0]!.points).toHaveLength(2)
+    expect(groupLabel(groups[0]!)).toBe("Either of these, 1 mark")
+  })
+
+  it("collapses an any-N-from pool into one group worth groupMaxMarks, not the sum of tariffs", () => {
+    const pool = [
+      groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: 2 }),
+      groupablePoint({ markPointId: "p2", groupKey: "pool:1", groupMaxMarks: 2 }),
+      groupablePoint({ markPointId: "p3", groupKey: "pool:1", groupMaxMarks: 2 }),
+      groupablePoint({ markPointId: "p4", groupKey: "pool:1", groupMaxMarks: 2 }),
+    ]
+    const groups = groupPoints(pool)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.kind).toBe("pool")
+    expect(groups[0]!.points).toHaveLength(4)
+    expect(groups[0]!.maxMarks).toBe(2)
+    // The whole point of IMP-6: four 1-mark points sum to 4, but the group is
+    // only ever worth 2. A regression back to per-point tariffs would pass
+    // the sum, not the group cap.
+    expect(groups[0]!.maxMarks).not.toBe(pool.reduce((sum, p) => sum + p.tariff, 0))
+    expect(groupLabel(groups[0]!)).toBe("Any 2 of these, 2 marks")
+  })
+
+  it("keeps grouped and independent points on the same question as separate groups", () => {
+    const mixed = [
+      groupablePoint({ markPointId: "p1", groupKey: "alt:1", groupMaxMarks: 1 }),
+      groupablePoint({ markPointId: "p2", groupKey: "alt:1", groupMaxMarks: 1 }),
+      groupablePoint({ markPointId: "p3", groupKey: null, groupMaxMarks: null, tariff: 2 }),
+    ]
+    const groups = groupPoints(mixed)
+    expect(groups).toHaveLength(2)
+    expect(groups[0]!.kind).toBe("alternative")
+    expect(groups[0]!.points.map((p) => p.markPointId)).toEqual(["p1", "p2"])
+    expect(groups[1]!.kind).toBe("single")
+    expect(groups[1]!.points.map((p) => p.markPointId)).toEqual(["p3"])
+    expect(groups[1]!.maxMarks).toBe(2)
+    expect(groupLabel(groups[1]!)).toBe("2 marks")
+  })
+
+  it("a group of one still renders as a group, worth groupMaxMarks, not its lone tariff", () => {
+    const lone = [groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: 3, tariff: 1 })]
+    const groups = groupPoints(lone)
+    expect(groups).toHaveLength(1)
+    expect(groups[0]!.kind).toBe("pool")
+    expect(groups[0]!.maxMarks).toBe(3)
+    expect(groupLabel(groups[0]!)).toBe("Any 3 of these, 3 marks")
+  })
+
+  it("falls back to the point's own tariff when a grouped point carries a null groupMaxMarks", () => {
+    // The server should never send a groupKey with a null groupMaxMarks, but
+    // a point that does must not silently claim the group is worth 0.
+    const defective = [
+      groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: null, tariff: 2 }),
+    ]
+    const groups = groupPoints(defective)
+    expect(groups[0]!.maxMarks).toBe(2)
   })
 })

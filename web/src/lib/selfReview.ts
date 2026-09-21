@@ -72,6 +72,89 @@ export function phaseOf(view: SelfReview | undefined, draft: SelfReviewDraft): S
   return Object.keys(draft.verdicts).length > 0 ? "self_marking" : "not_started"
 }
 
+/*
+ * Scheme groups (Task 13/14 review, IMP-6). `groupKey`/`groupMaxMarks` mark
+ * points that share one scheme pool — an either/or pair (`alt:n`) or an
+ * "any N from" pool (`pool:n`) — worth `groupMaxMarks` TOGETHER, never
+ * individually: both wire contracts say so (`selfReviewTypes.ts:29-33`,
+ * `lemely/web/schemas_student_self_review.py:36-40`). The panel's first
+ * shipped version rendered one full-tariff `RadioGroup` per point regardless
+ * of `groupKey`, which showed a 4-point "any 2 from 4" pool as four separate
+ * 1-mark questions, implying 4 marks on offer where only 2 could ever be
+ * paid. `groupPoints` collapses points sharing a key into one group with the
+ * group's own worth stated once (`groupLabel`); the per-point radios still
+ * render inside it, so the POST still carries a verdict for every point.
+ *
+ * Pure and here, not in the component, for the same reason every other
+ * helper in this file is: this is the arithmetic that decides what a
+ * student is told a group is worth, and it needs real assertions over real
+ * inputs (`selfReview.test.ts`), not a source-text gate over JSX.
+ */
+
+export type PointGroupKind = "single" | "alternative" | "pool"
+
+export interface PointGroup<P> {
+  key: string | null
+  points: readonly P[]
+  maxMarks: number
+  kind: PointGroupKind
+}
+
+/** Points a point must at least carry to be grouped. */
+export interface Groupable {
+  markPointId: string
+  groupKey: string | null
+  groupMaxMarks: number | null
+  tariff: number
+}
+
+/**
+ * Collapses points sharing a `groupKey` into one group, in the order they
+ * first appear (server order is already ordinal-ordered — spec "Open
+ * items", `attempts.py:262`). A point with no `groupKey` is its own
+ * single-point group, so both shapes render through one code path. A
+ * grouped point with a `null groupMaxMarks` (a defect the server should
+ * never produce, but not one this helper should silently zero out) falls
+ * back to its own tariff rather than claiming the group is worth nothing.
+ */
+export function groupPoints<P extends Groupable>(points: readonly P[]): PointGroup<P>[] {
+  const groups: PointGroup<P>[] = []
+  const byKey = new Map<string, PointGroup<P>>()
+  for (const point of points) {
+    if (!point.groupKey) {
+      groups.push({ key: null, points: [point], maxMarks: point.tariff, kind: "single" })
+      continue
+    }
+    const existing = byKey.get(point.groupKey)
+    if (existing) {
+      ;(existing.points as P[]).push(point)
+      continue
+    }
+    const created: PointGroup<P> = {
+      key: point.groupKey,
+      points: [point],
+      maxMarks: point.groupMaxMarks ?? point.tariff,
+      kind: point.groupKey.startsWith("alt:") ? "alternative" : "pool",
+    }
+    byKey.set(point.groupKey, created)
+    groups.push(created)
+  }
+  return groups
+}
+
+function markWord(marks: number): string {
+  return marks === 1 ? "mark" : "marks"
+}
+
+/** "3 marks" for a standalone point; "Either of these, 1 mark" / "Any 2 of
+ * these, 2 marks" for a scheme group — what the student is told the group
+ * (or lone point) is worth, stated once rather than per point. */
+export function groupLabel(group: Pick<PointGroup<unknown>, "kind" | "maxMarks">): string {
+  if (group.kind === "single") return `${group.maxMarks} ${markWord(group.maxMarks)}`
+  const verb = group.kind === "alternative" ? "Either of these" : `Any ${group.maxMarks} of these`
+  return `${verb}, ${group.maxMarks} ${markWord(group.maxMarks)}`
+}
+
 export type PointOutcome = "agreed" | "changed" | "kept" | "pending"
 
 /**

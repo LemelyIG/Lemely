@@ -14,6 +14,8 @@ import {
   OUTCOME_LABEL,
   UNAVAILABLE_COPY,
   evidenceHint,
+  groupLabel,
+  groupPoints,
   isComplete,
   outcomeDetail,
   outcomeSummary,
@@ -58,10 +60,12 @@ import type {
  * shipped version of this panel rendered one full-tariff `RadioGroup` per
  * point regardless of `groupKey`, which showed a 4-point "any 2 from 4" pool
  * as four separate 1-mark questions, implying 4 marks were on offer where
- * only 2 could ever be paid. `groupPoints` below collapses points sharing a
- * key into one card with the group's own worth stated once; the per-point
- * radios still render inside it, so the POST still carries a verdict for
- * every point (`SelfReviewSubmissionDTO` is unchanged).
+ * only 2 could ever be paid. `groupPoints`/`groupLabel` (from
+ * `@/lib/selfReview`, unit-tested there over real point arrays rather than
+ * pinned as source text here) collapse points sharing a key into one card
+ * with the group's own worth stated once; the per-point radios still render
+ * inside it, so the POST still carries a verdict for every point
+ * (`SelfReviewSubmissionDTO` is unchanged).
  *
  * The draft (Task 13/14 review, SF-3) is persisted to `sessionStorage`, not
  * just component state: `QuestionRow`'s expanded slot only renders `children`
@@ -88,56 +92,6 @@ function verdictValue(earned: boolean | undefined): string | undefined {
 
 function markWord(marks: number): string {
   return marks === 1 ? "mark" : "marks"
-}
-
-/** One scheme-group's worth, shown once for the group rather than repeated
- * (and overstated) per point — see the module header, IMP-6. */
-interface PointGroup<P> {
-  key: string | null
-  points: readonly P[]
-  maxMarks: number
-  kind: "single" | "alternative" | "pool"
-}
-
-/**
- * Collapses points sharing a `groupKey` into one group, in the order they
- * first appear (server order is already ordinal-ordered — spec "Open items",
- * `attempts.py:262`). A point with no `groupKey` is its own single-point
- * group so the two shapes render through one code path.
- */
-export function groupPoints<
-  P extends { markPointId: string; groupKey: string | null; groupMaxMarks: number | null; tariff: number },
->(points: readonly P[]): PointGroup<P>[] {
-  const groups: PointGroup<P>[] = []
-  const byKey = new Map<string, PointGroup<P>>()
-  for (const point of points) {
-    if (!point.groupKey) {
-      groups.push({ key: null, points: [point], maxMarks: point.tariff, kind: "single" })
-      continue
-    }
-    const existing = byKey.get(point.groupKey)
-    if (existing) {
-      ;(existing.points as P[]).push(point)
-      continue
-    }
-    const created: PointGroup<P> = {
-      key: point.groupKey,
-      points: [point],
-      maxMarks: point.groupMaxMarks ?? point.tariff,
-      kind: point.groupKey.startsWith("alt:") ? "alternative" : "pool",
-    }
-    byKey.set(point.groupKey, created)
-    groups.push(created)
-  }
-  return groups
-}
-
-/** "3 marks" for a standalone point; "Either of these, 1 mark" / "Any 2 of
- * these, 2 marks" for a scheme group. */
-function groupLabel(group: PointGroup<{ tariff: number }>): string {
-  if (group.kind === "single") return `${group.maxMarks} ${markWord(group.maxMarks)}`
-  const verb = group.kind === "alternative" ? "Either of these" : `Any ${group.maxMarks} of these`
-  return `${verb}, ${group.maxMarks} ${markWord(group.maxMarks)}`
 }
 
 const DRAFT_STORAGE_PREFIX = "lemely:self-review-draft:"
