@@ -282,6 +282,21 @@ def _mock_marker_response(awarded: int, confidence: float, feedback: str = "ok")
 
 
 def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
+    client, _mock_genai = _gemini_client_and_mock(tmp_path, responses)
+    return client
+
+
+def _gemini_client_and_mock(
+    tmp_path: Path, responses: list[MagicMock]
+) -> tuple[GeminiClient, MagicMock]:
+    """Like :func:`_gemini_client`, but also hands back the raw SDK mock.
+
+    F1 (Gemini 3.x migration): the default correction model reads
+    ``escalation_confidence_threshold``/``thinking_level_for`` and can issue
+    more than one call per question (the Step-1 thinking retry, reachable
+    since F1's MUST-FIX 2), so a test asserting on exactly how many calls
+    were made — and in what order — needs the mock, not just the client.
+    """
     mock_genai = MagicMock()
     mock_genai.models.generate_content.side_effect = responses
     mock_genai.files.upload.return_value = MagicMock()
@@ -291,7 +306,7 @@ def _gemini_client(tmp_path: Path, responses: list[MagicMock]) -> GeminiClient:
             "paths": PathsSettings(cache_dir=tmp_path / ".cache", output_dir=tmp_path / "outputs")
         }
     )
-    return GeminiClient(settings, _genai_client=mock_genai)
+    return GeminiClient(settings, _genai_client=mock_genai), mock_genai
 
 
 def _never_called_gemini_client(tmp_path: Path) -> GeminiClient:
@@ -712,9 +727,38 @@ def test_mark_submission_low_confidence_non_mcq_queues_review(
         taking_service, student, assignment_id, answer_text="A partial answer"
     )
 
-    gemini = _gemini_client(tmp_path, [_mock_marker_response(awarded=1, confidence=0.5)])
+    # F1 (Gemini 3.x migration, MUST-FIX 2): with the shipped defaults, a
+    # first-call confidence of 0.5 is below escalation_confidence_threshold
+    # (0.80), so AICorrector.mark_question's Step-1 thinking retry fires — a
+    # SECOND call, on the same model at a higher thinking_level. A stub with
+    # only one response starves that second call, `correct_paper` swallows
+    # the resulting error as `ai_marking_failed`, and this test would
+    # silently become vacuous (falling back to `_build_missing_corrected`,
+    # awarded_marks=0) exactly as its own comment below warns about — this
+    # was caught failing loudly instead, which is what that comment is for.
+    # The second response's confidence (0.85) sits ABOVE the escalation
+    # threshold (0.80) but still below REVIEW_CONFIDENCE_THRESHOLD (0.90), so
+    # Step 2 (Pro/stronger-model escalation) does NOT fire — exactly two
+    # calls, and the mark still needs teacher review.
+    gemini, mock_genai = _gemini_client_and_mock(
+        tmp_path,
+        [
+            _mock_marker_response(awarded=1, confidence=0.5),
+            _mock_marker_response(awarded=1, confidence=0.85),
+        ],
+    )
     service = QuizMarkingService(pg_sessionmaker, attempt_repo, gemini)
     result = service.mark_submission(submission_id)
+
+    # Pin the call sequence explicitly (not just the count) so the next
+    # change to the escalation gates fails here, visibly, rather than
+    # silently under- or over-supplying stub responses in some other test.
+    calls = mock_genai.models.generate_content.call_args_list
+    assert len(calls) == 2, (
+        f"expected exactly 2 calls (correction + the Step-1 thinking retry), got {len(calls)}"
+    )
+    assert calls[0].kwargs["model"] == "gemini-3.8-flash"
+    assert calls[1].kwargs["model"] == "gemini-3.8-flash"
 
     assert result.status == QuizSubmissionStatus.marked
     assert result.attempt_id is not None

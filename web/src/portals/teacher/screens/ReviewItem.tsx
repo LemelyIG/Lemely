@@ -65,7 +65,7 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  *    reconstructed into scheme-sounding prose (UI-spec §1.4: never invent
  *    precision the data doesn't support).
  *
- * **Integrity items (`plagiarism_flag`/`ai_detection_flag`) get dismiss
+ * **Integrity items (`plagiarism_flag`) get dismiss
  * only on this screen; accept/adjust-marks controls render for every other
  * reason instead, never both on the same item.** The backend's `resolve`
  * endpoint has no reason restriction, so a teacher *could* also

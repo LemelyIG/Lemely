@@ -27,21 +27,19 @@ duration of that round trip, which is exactly the cost ``docs/quiz-model.md``
 discipline applies one layer down, inside this service.
 
 **Integrity checks — applied, deliberately** (the brief calls this out as a
-decision to make explicitly). ``apply_integrity_checks`` (plagiarism +
-AI-detection) runs here exactly as it does for a past paper in
-``lemely.web.services.grading.grade_paper``. Reasoning: a quiz answer is a
-*typed* text-box response — if anything, more trivially copy-pasteable than a
-scanned/OCR'd handwritten past-paper answer, so AI-detection is at least as
-relevant here, not less. Plagiarism checking compares against
-``expected_answer``, which (as for past papers) only :func:`_build_mcq_corrected`
-ever sets, so in practice it is a no-op for the open-ended questions a quiz
-mostly carries — the same pre-existing shape as the past-paper path, not a
-quiz-specific gap this chunk introduces. Applying the checks is also free by
-default: plagiarism is pure ``difflib`` (no Gemini call) and AI-detection is
-opt-in, off by default (``IntegritySettings.ai_detection_enabled=False``), so
-enabling it costs nothing unless a deployment has already chosen to spend on
-it for past papers too. This decision only changes which flags *can* arrive
-set on a question result — the review-queue fan-out itself
+decision to make explicitly). ``apply_integrity_checks`` runs here exactly as
+it does for a past paper in ``lemely.web.services.grading.grade_paper``. F4
+removed the Gemini-backed AI-generated-answer detector this docstring used to
+describe running here too — no measured false-positive rate, and JCQ
+guidance says such a detector must never be sole evidence — so the only
+check left is plagiarism: comparing ``student_answer`` against
+``expected_answer``, which (as for past papers) only
+:func:`_build_mcq_corrected` ever sets, so in practice it is a no-op for the
+open-ended questions a quiz mostly carries — the same pre-existing shape as
+the past-paper path, not a quiz-specific gap this chunk introduces. Applying
+the check is also free: plagiarism is pure ``difflib``, no Gemini call. This
+decision only changes which flags *can* arrive set on a question result —
+the review-queue fan-out itself
 (:meth:`~lemely.db.attempt_repo.AttemptRepository._persist`) is unchanged
 either way (``docs/quiz-model.md`` §4.5).
 

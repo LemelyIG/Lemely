@@ -102,6 +102,17 @@ class ReviewQueueItem(TimestampMixin, Base):
     )
     resolution_note: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     resolved_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    #: Migration ``0037`` (F4/N2): True when this row exists for random-audit
+    #: sampling (``ReviewReason.random_audit``) rather than a marking or
+    #: integrity signal. Added alongside F4's enum rebuild so N2 does not
+    #: need a second Alembic head; N2 itself (the sampler that sets it) is
+    #: not implemented here. Defaults False on every existing row.
+    #: ``default=False`` alongside ``server_default`` so an unflushed,
+    #: freshly-constructed :class:`ReviewQueueItem` also reads ``False``
+    #: rather than ``None`` before it ever reaches the database.
+    is_audit: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, default=False, server_default=sa.false()
+    )
 
     question_result: Mapped[object] = relationship(
         "QuestionResult", back_populates="review_queue_items"

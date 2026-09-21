@@ -9,7 +9,7 @@ from pydantic import ValidationError
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import BatchParseItem, BatchParseResult, SourceLibraryEntry
 from lemely.io.metadata import parse_caie_filename_metadata
-from lemely.runtime.errors import ExternalServiceError, ParseError
+from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 
 ParserCallback = Callable[[Path], dict[str, object] | MarkScheme]
 
@@ -93,6 +93,17 @@ def process_mark_scheme_batch(
                 mark_scheme.model_dump_json(indent=2),
                 encoding="utf-8",
             )
+        except CostCeilingError:
+            # US-030: `CostCeilingError` subclasses `ExternalServiceError`, so the
+            # handler below used to file a per-run budget breach as one paper's
+            # "transient_failed" and keep parsing — issuing further paid calls
+            # into a ceiling the run had already blown, and finishing with a
+            # BatchParseResult that reads like an ordinary partly-transient
+            # batch. A ceiling breach is a stop signal for the whole run and is
+            # never retryable, so it propagates. Must stay the FIRST clause:
+            # placing the broader `ExternalServiceError` above it silently
+            # reinstates the bug.
+            raise
         except ExternalServiceError as exc:
             # Recoverable Gemini outage (503 / rate limit) — record it as a distinct,
             # retryable status and keep processing the rest of the batch instead of

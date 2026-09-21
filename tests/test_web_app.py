@@ -304,9 +304,8 @@ def test_correction_to_dto_round_trip() -> None:
     assert q.confidence == 0.95
     assert q.feedback == "Good working shown."
     assert q.matchedPointIds == ["mp1", "mp2"]
-    # Advisory integrity signals default to unflagged.
+    # Advisory integrity signal defaults to unflagged.
     assert q.plagiarismFlagged is False
-    assert q.aiDetectionFlagged is False
 
     # camelCase keys survive JSON serialisation for the frontend contract.
     dumped = dto.model_dump()
@@ -315,7 +314,7 @@ def test_correction_to_dto_round_trip() -> None:
 
 
 def test_question_to_dto_surfaces_integrity_flags() -> None:
-    """Plagiarism/AI-detection advisory flags round-trip into the DTO's camelCase fields."""
+    """The plagiarism advisory flag round-trips into the DTO's camelCase field."""
     question = CorrectedQuestion(
         question_id="2",
         awarded_marks=1,
@@ -324,19 +323,16 @@ def test_question_to_dto_surfaces_integrity_flags() -> None:
         confidence_score=0.99,
         needs_teacher_review=True,
         marker_source="deterministic",
-        review_reason="plagiarism (score 0.95) | ai_detection (score 0.90)",
+        review_reason="plagiarism (score 0.95)",
         plagiarism_flagged=True,
-        ai_detection_flagged=True,
     )
 
     dto = question_to_dto(question)
 
     assert dto.plagiarismFlagged is True
-    assert dto.aiDetectionFlagged is True
-    assert dto.reviewReason == "plagiarism (score 0.95) | ai_detection (score 0.90)"
+    assert dto.reviewReason == "plagiarism (score 0.95)"
     dumped = dto.model_dump()
     assert dumped["plagiarismFlagged"] is True
-    assert dumped["aiDetectionFlagged"] is True
 
 
 def test_question_to_dto_surfaces_topic() -> None:

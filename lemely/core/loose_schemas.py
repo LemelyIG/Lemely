@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import re
 from enum import StrEnum
-from typing import Annotated, Any
+from typing import Any
 
 from pydantic import (
     BaseModel,
@@ -10,6 +11,26 @@ from pydantic import (
     field_validator,
     model_validator,
 )
+
+# F1 (Gemini 3.x migration): 3.x models reject the JSON-Schema `pattern`
+# keyword outright, so the subject_code shape check moves to a plain Pydantic
+# validator (see MarkSchemeMetadata.validate_subject_code below).
+#
+# F1 review FIX 7 (2026-09-17): defined HERE, not in lemely.core.schemas, and
+# re-exported from there — this module is the LOWER one in the import-linter
+# layering (it imports nothing from lemely), while lemely.labelling (which is
+# contract-forbidden from depending on schemas.py, the correction pipeline)
+# already imports this module directly. Defining it in schemas.py and
+# importing it here (the shape this shipped with originally) made this
+# module transitively depend on schemas.py and broke that contract.
+#
+# FIX 6 (2026-09-17): no `$`/`^` anchors — paired with `.fullmatch()` at each
+# call site, not `.match()`. Python's `re.match` only anchors the START; `$`
+# matches immediately before a trailing "\n" as well as at the true end of
+# string, so `.match()` against `"^\d{4}$"` let "1234\n" through even though
+# Pydantic's Rust-backed `Field(pattern=...)` (this replaced) rejected it.
+# `.fullmatch()` has no such trailing-newline exception.
+_SUBJECT_CODE_RE = re.compile(r"\d{4}")
 
 # ---------------------------------------------------------------------------
 # Shared enumerations
@@ -498,7 +519,7 @@ class MarkSchemeMetadata(BaseModel):
         description="Full subject name as printed on the mark scheme, "
         "e.g. 'Physics', 'First Language English'.",
     )
-    subject_code: Annotated[str, Field(pattern=r"^\d{4}$")] = Field(
+    subject_code: str = Field(
         ...,
         description="Four-digit CAIE syllabus code, e.g. '0625', '0580', '0500'.",
     )
@@ -589,6 +610,16 @@ class MarkSchemeMetadata(BaseModel):
         None,
         description="Filename or URL of the source PDF, if known.",
     )
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        # F1: moved off `Field(pattern=...)` — see lemely.core.schemas._SUBJECT_CODE_RE.
+        # 3.x models reject the JSON-Schema `pattern` keyword outright, so the
+        # shape check now lives here instead of in `model_json_schema()`.
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
     @model_validator(mode="after")
     def specimen_year_is_null(self) -> MarkSchemeMetadata:

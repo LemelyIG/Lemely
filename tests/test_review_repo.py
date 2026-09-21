@@ -131,7 +131,6 @@ def _question(
     needs_review: bool = False,
     review_reason: str | None = None,
     plagiarism_flagged: bool = False,
-    ai_detection_flagged: bool = False,
     topic: str = "Waves",
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
@@ -147,7 +146,6 @@ def _question(
         marker_source="ai",
         review_reason=review_reason,
         plagiarism_flagged=plagiarism_flagged,
-        ai_detection_flagged=ai_detection_flagged,
         matched_point_ids=["p1"] if awarded else [],
     )
 

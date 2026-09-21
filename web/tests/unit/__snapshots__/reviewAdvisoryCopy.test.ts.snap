@@ -1,0 +1,3 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`Review queue advisory copy (F4) > matches the current wording (provisional, pending product sign-off — see the constant's own doc comment) 1`] = `"Lemely marks every paper automatically. The flags below — including mark-scheme wording matches — are advisory signals for your judgement, not a verdict about the student. Any correction you make here becomes the mark a student's result reflects, immediately and everywhere it appears."`;

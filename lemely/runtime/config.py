@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
-from typing import Annotated, Literal
+from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
 from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
@@ -89,17 +89,44 @@ class LoggingSettings(BaseModel):
     format: Literal["auto", "json", "console"] = "auto"
 
 
+# F1 review FIX 3 (2026-09-17): a bare ``str`` accepted a typo like "hgih"
+# silently — Pydantic's plain-string validator has no coercion error to
+# raise, ``types.ThinkingLevel`` is a case-insensitive str-enum so the SDK
+# call itself wouldn't reject it either, and the ordered gate in
+# ``lemely.io.gemini.thinking_rank`` ranks any unrecognised string as 0 (same
+# as "minimal") — so a typo would silently degrade every correction call to
+# the weakest thinking level with no error anywhere. A ``Literal`` here makes
+# config load reject it instead.
+ThinkingLevel = Literal["minimal", "low", "medium", "high"]
+
+# Typed separately from the inline dict literal below: a bare `dict[str, str]`
+# literal loses the `Literal` member type on assignment, so mypy strict
+# rejects `default_factory=lambda: {...}` inline — this annotation is what
+# lets the literal below actually type-check as `dict[str, ThinkingLevel]`.
+_THINKING_LEVEL_FOR_DEFAULTS: dict[str, ThinkingLevel] = {
+    "correction": "low",
+    "correction_borderline": "high",
+    "escalation": "high",
+    "extraction": "minimal",
+    "generation": "low",
+}
+
+
 class GeminiSettings(BaseModel):
     model_config = ConfigDict(extra="forbid")
     model: str = "gemini-2.5-flash"
     # Per-task model overrides — each falls back to `model` when unset.
-    mark_scheme_model: str | None = None
-    extraction_model: str | None = None
-    correction_model: str | None = None
-    generation_model: str | None = None
+    # F1 (Gemini 3.x migration): correction/escalation move to 3.8-flash;
+    # extraction/generation/scan_metadata move to 3.5-flash-lite (thinking_level
+    # replaces thinking_budget on these tags, see thinking_level_for below);
+    # mark_scheme_model stays on 2.5-flash (thinking_budget, D20) — its chunked
+    # parser tuning predates the 3.x migration and is out of scope here.
+    mark_scheme_model: str | None = "gemini-2.5-flash"
+    extraction_model: str | None = "gemini-3.5-flash-lite"
+    correction_model: str | None = "gemini-3.8-flash"
+    generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
-    integrity_model: str | None = None
-    scan_metadata_model: str | None = None
+    scan_metadata_model: str | None = "gemini-3.5-flash-lite"
     # Escalation: re-mark with a stronger model when marker confidence is low.
     # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
     # try to improve this mark before it is final". It is NOT the human-review
@@ -108,13 +135,26 @@ class GeminiSettings(BaseModel):
     # operator-tunable. The two were coincidentally equal (0.80) before D2.2 and
     # are now free to move independently: raising this one costs Gemini dollars,
     # raising that one costs teacher time.
-    escalation_model: str | None = None
+    escalation_model: str | None = "gemini-3.8-flash"
     escalation_confidence_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
     # Thinking budget: map of task_tag → token budget (0 = disabled / default).
     # Mark-scheme parsing is enabled by default: the extra reasoning headroom helps
     # the model tag "any N from" pools correctly (is_optional/is_alternative), which
     # avoids spurious mark-point-sum validation failures during structured extraction.
+    # 2.5-only knob (F1): 3.x models read thinking_level_for instead.
     thinking_budget_for: dict[str, int] = Field(default_factory=lambda: {"mark_scheme": 8000})
+    # F1 (Gemini 3.x migration): 3.x models replace the numeric thinking_budget
+    # with a named thinking_level ("minimal"/"low"/"medium"/"high" — ordered
+    # weakest to strongest). Only consulted for a model `_is_3x()` reports true
+    # for (lemely.io.gemini); a 2.5 model ignores this dict entirely. Defaults:
+    # "correction" runs cheap (low); "correction_borderline" and "escalation"
+    # spend more thinking on a mark the first pass was unsure about;
+    # "generation" stays low; "extraction" defaults to "minimal", which is only
+    # honoured on 3.6-flash/3.5-flash-lite (B7) — gemini.py falls back to "low"
+    # on any other 3.x model.
+    thinking_level_for: dict[str, ThinkingLevel] = Field(
+        default_factory=lambda: dict(_THINKING_LEVEL_FOR_DEFAULTS)
+    )
     # Determinism substrate (M0.2 / #26): generation parameters that affect output
     # reproducibility and therefore must be part of the cache-key fingerprint (see
     # GeminiClient._cache_key / _resolved_gen_params). Global defaults below, with
@@ -134,8 +174,9 @@ class GeminiSettings(BaseModel):
     backoff_seconds: float = Field(default=2.0, gt=0)
     # Persistent, file-backed cumulative-USD hard cap (see lemely.io.cost_ledger).
     # Enforced across process restarts against the ledger, not a per-process global.
-    # Default is ACTIVE at $8 — this is the intended hard ceiling for unattended runs.
-    total_usd_ceiling: float | None = Field(default=8.0, ge=0)
+    # Default is ACTIVE at $14 (raised from $8 by the user 2026-09-17, F1/D4) —
+    # this is the intended hard ceiling for unattended runs.
+    total_usd_ceiling: float | None = Field(default=14.0, ge=0)
     # Cumulative-USD thresholds that emit a BUDGET_WARNING event (ntfy) exactly once.
     usd_warning_thresholds: list[float] = Field(default_factory=lambda: [4.0, 6.0])
     # Checked against the module-level process counters in lemely.io.gemini (M0.2 /
@@ -151,14 +192,23 @@ class GeminiSettings(BaseModel):
     per_run_token_ceiling: int | None = None
 
     def model_for(self, task_tag: str) -> str:
-        """Resolve the Gemini model name for a task, falling back to the global default."""
+        """Resolve the Gemini model name for a task, falling back to the global default.
+
+        F1: ``correction_borderline`` (the Step-1 thinking retry) and
+        ``escalation`` (the Step-2 Pro/stronger-model retry) both resolve to
+        their own tags rather than falling through to ``correction`` — before
+        this fix the borderline retry silently fell through to the global
+        ``model`` (2.5-flash) instead of staying on the configured correction
+        model (``correction_ai.py`` Step 1/Step 2 gates, plan F1 fix (1)).
+        """
         mapping: dict[str, str | None] = {
             "mark_scheme": self.mark_scheme_model,
             "extraction": self.extraction_model,
             "correction": self.correction_model,
+            "correction_borderline": self.correction_model,
+            "escalation": self.escalation_model,
             "generation": self.generation_model,
             "study_plan": self.study_plan_model,
-            "integrity": self.integrity_model,
             "scan_metadata": self.scan_metadata_model,
         }
         return mapping.get(task_tag) or self.model
@@ -453,11 +503,20 @@ class AuthSettings(BaseModel):
 
 
 class IntegritySettings(BaseModel):
+    """Advisory integrity-check tuning.
+
+    F4 removed the AI-generated-answer detector and the two knobs that used
+    to gate it here: it was a zero-shot classifier with no measured
+    false-positive rate, and JCQ guidance is that such a detector must never
+    be sole evidence. Only the plagiarism check (stdlib ``difflib`` against
+    the mark scheme's model answer, no Gemini call) remains. ``lemely
+    doctor`` warns — via :func:`find_removed_config_keys` — if a
+    ``lemely.toml`` still sets either removed key.
+    """
+
     model_config = ConfigDict(extra="forbid")
     plagiarism_enabled: bool = True
-    ai_detection_enabled: bool = False  # opt-in; Gemini call per question
     plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
-    ai_detection_threshold: float = Field(default=0.80, ge=0.0, le=1.0)
 
 
 class GradingSettings(BaseModel):
@@ -725,6 +784,137 @@ def _discover_toml(cwd: Path) -> Path | None:
     return None
 
 
+# F4-removed keys, by the TOML section they used to live under. Every
+# settings model in this file uses ``extra="forbid"``, so — without the carve
+# out below — a stale ``lemely.toml`` OR environment variable that still sets
+# one of these would fail ``Settings(...)`` with a bare Pydantic
+# ValidationError that does not say *why*, for every single caller of
+# ``load_settings`` (the CLI, the web app, every test that loads real
+# config), not just ``lemely doctor``. ``load_settings`` drops these specific
+# keys silently before validating — from the TOML dict
+# (:func:`_drop_removed_config_keys`) AND from the environment
+# (:func:`_pop_removed_env_vars`) — so a still-shipped config with one of them
+# keeps working exactly as it did before F4 removed the feature, however it
+# was supplied. ``lemely doctor`` is what surfaces the fact via
+# :func:`find_removed_config_keys`, reading the raw TOML and the raw
+# environment before either drop happens, so a developer actually learns
+# their config is stale instead of the key silently doing nothing forever.
+# Both supply paths get the same outcome deliberately: a user who moved a
+# setting from ``lemely.toml`` into ``LEMELY_INTEGRITY__AI_DETECTION_ENABLED``
+# after upgrading deserves the same warning as one who left it in the file,
+# not a crash one way and a silent no-op the other.
+_REMOVED_CONFIG_KEYS: dict[str, tuple[str, ...]] = {
+    "gemini": ("integrity_model",),
+    "integrity": ("ai_detection_enabled", "ai_detection_threshold"),
+}
+
+
+def _removed_env_var_name(section: str, key: str) -> str:
+    """The ``LEMELY_<SECTION>__<KEY>`` env var name for a removed TOML key.
+
+    Matches ``Settings.model_config``'s ``env_prefix="LEMELY_"`` and
+    ``env_nested_delimiter="__"`` — the same nesting scheme every other
+    section (e.g. ``LEMELY_GEMINI__CORRECTION_MODEL``) already uses.
+    """
+    return f"LEMELY_{section.upper()}__{key.upper()}"
+
+
+def _removed_env_var_lookup() -> dict[str, tuple[str, str]]:
+    """Map every removed key's uppercased env var name to its ``(section, key)``."""
+    return {
+        _removed_env_var_name(section, key): (section, key)
+        for section, keys in _REMOVED_CONFIG_KEYS.items()
+        for key in keys
+    }
+
+
+def _load_toml(toml_path: Path | None, cwd: Path | None) -> dict[str, Any] | None:
+    cwd = cwd or Path.cwd()
+    toml = toml_path if toml_path is not None else _discover_toml(cwd)
+    if toml is None:
+        return None
+    try:
+        import tomllib  # Python 3.11+
+    except ModuleNotFoundError:  # pragma: no cover
+        import tomli as tomllib  # type: ignore[no-redef]
+    with toml.open("rb") as fh:
+        return dict(tomllib.load(fh))
+
+
+def _drop_removed_config_keys(toml_data: dict[str, Any]) -> dict[str, Any]:
+    """Return a copy of ``toml_data`` with every F4-removed key deleted.
+
+    Only the affected sections are copied (shallow); everything else is
+    shared with the input, which is fine because nothing here mutates it.
+    """
+    result = dict(toml_data)
+    for section, keys in _REMOVED_CONFIG_KEYS.items():
+        section_data = result.get(section)
+        if isinstance(section_data, dict):
+            section_copy = dict(section_data)
+            for key in keys:
+                section_copy.pop(key, None)
+            result[section] = section_copy
+    return result
+
+
+def find_removed_config_keys(
+    *, toml_path: Path | None = None, cwd: Path | None = None
+) -> list[str]:
+    """Return dotted ``section.key`` names for F4-removed keys set via TOML or env var.
+
+    Reads the TOML file and ``os.environ`` directly, without constructing a
+    :class:`Settings`. Returns an empty list when no removed key is set
+    either way. A key set in both places is reported once.
+    """
+    found: list[str] = []
+    toml_data = _load_toml(toml_path, cwd)
+    if toml_data is not None:
+        for section, keys in _REMOVED_CONFIG_KEYS.items():
+            section_data = toml_data.get(section)
+            if not isinstance(section_data, dict):
+                continue
+            found.extend(f"{section}.{key}" for key in keys if key in section_data)
+
+    env_upper = {name.upper() for name in os.environ}
+    for env_name, (section, key) in _removed_env_var_lookup().items():
+        dotted = f"{section}.{key}"
+        if env_name in env_upper and dotted not in found:
+            found.append(dotted)
+    return found
+
+
+def _pop_removed_env_vars() -> dict[str, str]:
+    """Remove every F4-removed key's env var from ``os.environ`` and return what was popped.
+
+    Case-insensitive, matching pydantic-settings' own default env-var
+    matching (``Settings`` does not set ``case_sensitive``, so it defaults to
+    ``False``) — a lowercase or mixed-case spelling would otherwise still
+    reach ``Settings(...)`` unfiltered. Callers must restore the returned
+    mapping once the ``Settings(...)`` call this exists to protect is done;
+    see :func:`load_settings`.
+
+    This mutates the process-global ``os.environ``, which is a real, if
+    narrow, latent hazard: two concurrent ``load_settings()`` calls racing on
+    the same removed key could have the second see an already-empty
+    ``os.environ`` (nothing left to pop, so it restores nothing) while a
+    third thread constructing ``Settings()`` directly inside that window
+    would miss the var entirely. Deliberately accepted rather than engineered
+    around, because in practice this is startup-only: ``lemely.web.deps
+    .get_settings`` — the sole production caller — is ``@lru_cache(maxsize=1)``,
+    so ``load_settings()`` itself runs at most once per process; the CLI's
+    call sites are single-threaded. The blast radius if the race were ever
+    hit is also bounded to exactly the keys this mechanism exists to
+    discard — nothing else can be affected.
+    """
+    lookup = _removed_env_var_lookup()
+    popped: dict[str, str] = {}
+    for name in list(os.environ):
+        if name.upper() in lookup:
+            popped[name] = os.environ.pop(name)
+    return popped
+
+
 def load_settings(*, toml_path: Path | None = None, cwd: Path | None = None) -> Settings:
     """Load Settings with precedence: env > .env > TOML > defaults.
 
@@ -732,14 +922,11 @@ def load_settings(*, toml_path: Path | None = None, cwd: Path | None = None) -> 
         toml_path: explicit TOML path (from --config). If None, discover.
         cwd: working directory for TOML discovery (defaults to Path.cwd()).
     """
-    cwd = cwd or Path.cwd()
-    toml = toml_path if toml_path is not None else _discover_toml(cwd)
-    if toml is None:
-        return Settings()
+    toml_data = _load_toml(toml_path, cwd)
+    popped_env = _pop_removed_env_vars()
     try:
-        import tomllib  # Python 3.11+
-    except ModuleNotFoundError:  # pragma: no cover
-        import tomli as tomllib  # type: ignore[no-redef]
-    with toml.open("rb") as fh:
-        toml_data = tomllib.load(fh)
-    return Settings(**toml_data)
+        if toml_data is None:
+            return Settings()
+        return Settings(**_drop_removed_config_keys(toml_data))
+    finally:
+        os.environ.update(popped_env)

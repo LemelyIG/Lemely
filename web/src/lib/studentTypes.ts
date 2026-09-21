@@ -239,12 +239,11 @@ export interface CorrectRequest {
  * Per-question grading result carried in the `questions` key of the
  * `POST /student/correct` SSE completion frame (mirrors `QuestionResultDTO`
  * in `lemely/web/schemas.py`) — a flatter shape than `TheoryQuestion` above.
- * `types.ts` already declares a `QuestionResult` missing the two flag
- * fields the DTO carries, so this extends it rather than duplicating it.
+ * `types.ts` already declares a `QuestionResult` missing the flag field the
+ * DTO carries, so this extends it rather than duplicating it.
  */
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
-  aiDetectionFlagged: boolean
 }
 
 // ── Standings ─────────────────────────────────────────────────────────────

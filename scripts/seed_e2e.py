@@ -88,13 +88,12 @@ mark, 2 at-risk).
 
 **Zero Gemini calls, by construction.** Every seeded question is MCQ, so
 :func:`~lemely.core.correction.correct_paper` never builds an ``AICorrector``
-call, and the default :class:`~lemely.runtime.config.IntegritySettings`
-(``ai_detection_enabled=False``) means ``apply_integrity_checks`` never
-constructs an ``AIContentDetector`` either — the Gemini client's lazy
-``_client`` property is never touched, so no API key is required and no
-request reaches the network. Verified against the live stack's real cost
-ledger before/after a seed run, not merely asserted (see the P3.10 chunk e1
-report).
+call, and ``apply_integrity_checks``'s only remaining check (plagiarism,
+since F4 removed the Gemini-backed AI-generated-answer detector) runs pure
+``difflib`` — the Gemini client's lazy ``_client`` property is never touched,
+so no API key is required and no request reaches the network. Verified
+against the live stack's real cost ledger before/after a seed run, not
+merely asserted (see the P3.10 chunk e1 report).
 
 Idempotent-friendly: every email (including both parents') is namespaced under
 a per-run ``runTag`` (default: 12 random hex chars), so repeated runs never

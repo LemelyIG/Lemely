@@ -551,10 +551,12 @@ class ReviewService:
     ) -> ReviewQueueRow:
         """Dismiss an integrity flag. Leaves no student-visible record (see module docstring).
 
-        Restricted to ``plagiarism_flag`` / ``ai_detection_flag`` items —
-        UI-spec T-08 ties "dismiss without a record reaching the student"
-        specifically to integrity flags; a ``low_confidence``/``manual`` item
-        is resolved (accept-as-is), never dismissed.
+        Restricted to ``plagiarism_flag`` items — UI-spec T-08 ties "dismiss
+        without a record reaching the student" specifically to integrity
+        flags; a ``low_confidence``/``manual``/``random_audit`` item is
+        resolved (accept-as-is), never dismissed. (F4 removed the other
+        integrity reason this restriction used to also name, the
+        AI-generated-answer detector's flag.)
 
         Raises:
             ReviewNotFoundError: No item exists with ``item_id`` (404).
@@ -568,7 +570,7 @@ class ReviewService:
             item, attempt, qr, paper = self._find_any_item(
                 session, item_id, visible, caller_id=caller_id, caller_role=caller_role
             )
-            if item.reason not in (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag):
+            if item.reason is not ReviewReason.plagiarism_flag:
                 raise ReviewValidationError(
                     f"Only integrity flags may be dismissed; item {item.id} has "
                     f"reason {item.reason.value}"

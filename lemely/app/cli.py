@@ -480,7 +480,7 @@ def version_cmd(ctx: click.Context) -> None:
 @click.option("--no-network", is_flag=True, help="Skip the live Gemini ping.")
 @click.pass_context
 def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
-    from lemely.runtime.config import load_settings
+    from lemely.runtime.config import find_removed_config_keys, load_settings
     from lemely.runtime.errors import ConfigError
 
     checks: list[dict[str, object]] = []
@@ -488,10 +488,29 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     def record(name: str, ok: bool, detail: str = "") -> None:
         checks.append({"name": name, "ok": ok, "detail": detail})
 
-    try:
-        settings = load_settings(
-            toml_path=Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+    config_path = Path(ctx.obj["config_path"]) if ctx.obj.get("config_path") else None
+
+    # F4 removed two now-orphaned config knobs along with the
+    # AI-generated-answer detector they gated (see
+    # lemely.runtime.config._REMOVED_CONFIG_KEYS for the exact names).
+    # `load_settings` below silently drops either one if still set — via
+    # lemely.toml OR an env var, the same outcome either way — so a stale
+    # config keeps working. This check is what actually tells a developer
+    # their config still names a removed key, since nothing else would.
+    removed_keys = find_removed_config_keys(toml_path=config_path)
+    if removed_keys:
+        record(
+            "no_removed_config_keys",
+            False,
+            "lemely.toml or the environment sets removed key(s): "
+            + ", ".join(removed_keys)
+            + " — the AI-generated-answer detector was removed (F4); delete these",
         )
+    else:
+        record("no_removed_config_keys", True)
+
+    try:
+        settings = load_settings(toml_path=config_path)
         record("config_loads", True)
     except Exception as exc:
         record("config_loads", False, str(exc))
@@ -501,6 +520,32 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # Accept GEMINI_API_KEY (standard) or LEMELY_GEMINI_API_KEY (prefixed).
     has_key = bool((settings.gemini_api_key is not None) or os.environ.get("GEMINI_API_KEY"))
     record("gemini_api_key", has_key)
+
+    # F1 (Gemini 3.x migration): surface what model_for() actually resolves to
+    # per task tag, so a config mistake (e.g. escalation falling back to the
+    # global 2.5 model) is visible without reading lemely.toml by hand.
+    model_table_tags = (
+        "correction",
+        "correction_borderline",
+        "escalation",
+        "extraction",
+        "generation",
+        "mark_scheme",
+        "scan_metadata",
+        "study_plan",
+    )
+    model_table = ", ".join(f"{tag}={settings.gemini.model_for(tag)}" for tag in model_table_tags)
+    record("gemini_model_table", True, detail=model_table)
+
+    # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
+    # it's ledgered against — warn (advisory, never fatal) once the 3.8/3.7/
+    # 3.6-flash promotional rate is close to lapsing to the real, doubled
+    # rate, so a developer notices before the ceiling starts guarding a stale
+    # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.
+    from lemely.io.gemini import promo_pricing_status
+
+    promo_ok, promo_detail = promo_pricing_status(settings)
+    record("gemini_promo_pricing_window", promo_ok, detail=promo_detail)
 
     record(
         "sources_dir_readable",
@@ -588,7 +633,13 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # the web app's avatar/upload routes, and web push only needs keys once a
     # deployment wants real pushes. All three are reported honestly and none
     # decides the exit code.
-    advisory_checks = {"gradio_extra_installed", "storage_backend", "push_transport"}
+    advisory_checks = {
+        "gradio_extra_installed",
+        "storage_backend",
+        "push_transport",
+        "no_removed_config_keys",
+        "gemini_promo_pricing_window",
+    }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)
 

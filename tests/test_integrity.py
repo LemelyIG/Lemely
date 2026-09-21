@@ -1,20 +1,23 @@
-"""Tests for Phase 6: PlagiarismChecker and AIContentDetector.
+"""Tests for Phase 6's ``PlagiarismChecker`` and ``apply_integrity_checks``.
 
-Also covers P2.4's ``apply_integrity_checks`` pipeline wiring — the function
-that runs both checks over a :class:`CorrectionResult` and turns findings into
-advisory ``needs_teacher_review``/``review_reason`` signals without ever
-touching marks.
+F4 removed ``AIContentDetector`` (the Gemini-backed AI-generated-answer
+detector formerly tested here as ``TestAIContentDetector``) along with
+``IntegritySettings.ai_detection_enabled``/``ai_detection_threshold``: it had
+no measured false-positive rate, and JCQ guidance is that such a detector
+must never be sole evidence. ``apply_integrity_checks`` now only runs the
+plagiarism check; the tests below cover that pipeline wiring — the function
+that turns a plagiarism finding into advisory ``needs_teacher_review``/
+``review_reason`` signals without ever touching marks.
 """
 
 from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from lemely.core.integrity_schemas import IntegrityFinding
 from lemely.core.loose_schemas import MarkScheme
 from lemely.core.plagiarism import PlagiarismChecker
 from lemely.core.schemas import ConfidenceBand, CorrectedQuestion, CorrectionResult, ExamMetadata
-from lemely.io.integrity import AIContentDetector, apply_integrity_checks
+from lemely.io.integrity import apply_integrity_checks
 from lemely.runtime.config import IntegritySettings
 
 
@@ -59,44 +62,6 @@ class TestPlagiarismChecker:
         checker = PlagiarismChecker()
         result = checker.check("q1", "text", "text")
         assert result.rationale
-
-
-class TestAIContentDetector:
-    def test_returns_integrity_finding(self) -> None:
-        finding = IntegrityFinding(
-            question_id="q1",
-            kind="ai_generated",
-            flagged=True,
-            score=0.92,
-            rationale="Unnaturally fluent prose.",
-        )
-        mock_client = MagicMock()
-        mock_client.generate_structured.return_value = finding
-
-        detector = AIContentDetector(mock_client)
-        result = detector.detect(
-            "q1",
-            "What is refraction?",
-            "Refraction is the bending of light.",
-            ["Award 1 mark for bending of light"],
-        )
-
-        assert result.kind == "ai_generated"
-        assert isinstance(result.score, float)
-        assert result.rationale
-
-    def test_uses_integrity_task_tag(self) -> None:
-        mock_client = MagicMock()
-        mock_client.generate_structured.return_value = IntegrityFinding(
-            question_id="q1",
-            kind="ai_generated",
-            flagged=False,
-            score=0.3,
-            rationale="OK",
-        )
-        AIContentDetector(mock_client).detect("q1", "Q", "A", [])
-        call_kwargs = mock_client.generate_structured.call_args.kwargs
-        assert call_kwargs["task_tag"] == "integrity"
 
 
 def _metadata() -> ExamMetadata:
@@ -208,7 +173,6 @@ class TestApplyIntegrityChecks:
         )
         q = result.questions[0]
         assert q.plagiarism_flagged is True
-        assert q.ai_detection_flagged is False
         assert q.needs_teacher_review is True
         assert q.review_reason is not None
         assert "plagiarism" in q.review_reason
@@ -232,11 +196,13 @@ class TestApplyIntegrityChecks:
         )
         q = result.questions[0]
         assert q.plagiarism_flagged is False
-        assert q.ai_detection_flagged is False
         assert q.needs_teacher_review is False
         assert q.review_reason is None
 
-    def test_ai_detection_disabled_never_calls_gemini(self) -> None:
+    def test_gemini_client_is_never_called(self) -> None:
+        """F4: no check left in this pipeline calls Gemini — a passed-in client
+        (kept only for call-site compatibility, see ``apply_integrity_checks``'s
+        docstring) must never be touched."""
         mock_client = MagicMock()
         question = _question(
             student_answer=(
@@ -250,59 +216,21 @@ class TestApplyIntegrityChecks:
             correction,
             _mark_scheme(),
             gemini_client=mock_client,
-            settings=IntegritySettings(ai_detection_enabled=False),
+            settings=IntegritySettings(),
         )
         mock_client.generate_structured.assert_not_called()
 
-    def test_ai_detection_enabled_appends_alongside_plagiarism_flag(self) -> None:
-        mock_client = MagicMock()
-        mock_client.generate_structured.return_value = IntegrityFinding(
-            question_id="1",
-            kind="ai_generated",
-            flagged=True,
-            score=0.91,
-            rationale="Unnaturally fluent prose.",
-        )
-        # Identical student/expected answers -> plagiarism also flags.
-        correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
-        result = apply_integrity_checks(
-            correction,
-            _mark_scheme(),
-            gemini_client=mock_client,
-            settings=IntegritySettings(ai_detection_enabled=True),
-        )
-        q = result.questions[0]
-        assert q.plagiarism_flagged is True
-        assert q.ai_detection_flagged is True
-        assert q.needs_teacher_review is True
-        assert q.review_reason is not None
-        assert "plagiarism" in q.review_reason
-        assert "ai_detection" in q.review_reason
-        assert q.review_reason.count(" | ") == 1
-        mock_client.generate_structured.assert_called_once()
-        call_kwargs = mock_client.generate_structured.call_args.kwargs
-        assert call_kwargs["task_tag"] == "integrity"
-
-    def test_marks_are_unchanged_when_both_flags_fire(self) -> None:
-        mock_client = MagicMock()
-        mock_client.generate_structured.return_value = IntegrityFinding(
-            question_id="1",
-            kind="ai_generated",
-            flagged=True,
-            score=0.88,
-            rationale="Unnaturally fluent prose.",
-        )
+    def test_marks_are_unchanged_when_flagged(self) -> None:
         before = _question()
         correction = CorrectionResult(metadata=_metadata(), questions=[before])
         result = apply_integrity_checks(
             correction,
             _mark_scheme(),
-            gemini_client=mock_client,
-            settings=IntegritySettings(ai_detection_enabled=True),
+            gemini_client=None,
+            settings=IntegritySettings(),
         )
         after = result.questions[0]
         assert after.plagiarism_flagged is True
-        assert after.ai_detection_flagged is True
         assert after.awarded_marks == before.awarded_marks == 2
         assert after.maximum_marks == before.maximum_marks == 2
         assert result.awarded_marks == correction.awarded_marks == 2
@@ -379,20 +307,6 @@ class TestIntegrityChecksSkipMcqQuestions:
         )
         assert [q.plagiarism_flagged for q in result.questions] == [False, False]
         assert result.needs_teacher_review is False
-
-    def test_mcq_never_costs_an_ai_detection_call(self) -> None:
-        # Budget as well as correctness: AI-authorship of one letter is
-        # meaningless, and a 40-question paper would be 40 Gemini calls.
-        mock_client = MagicMock()
-        correction = CorrectionResult(metadata=_metadata(), questions=[_mcq_question()])
-        result = apply_integrity_checks(
-            correction,
-            _mcq_mark_scheme(),
-            gemini_client=mock_client,
-            settings=IntegritySettings(ai_detection_enabled=True),
-        )
-        mock_client.generate_structured.assert_not_called()
-        assert result.questions[0].ai_detection_flagged is False
 
     def test_short_free_text_answer_is_still_checked(self) -> None:
         # The guard is on question type, not answer length — a one-character

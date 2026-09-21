@@ -39,15 +39,19 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  * item" action walks the same filtered batch the teacher opened, and "back
  * to queue" restores the filters instead of silently resetting them.
  *
- * **`manual` is deliberately excluded from the reason filter.** Nothing in
- * the current pipeline (`AttemptRepository.persist_correction`, the only
- * place `ReviewQueueItem` rows are created) ever writes a `manual`-reason
- * row — every row is `low_confidence`, `plagiarism_flag`, or
- * `ai_detection_flag`. Offering a filter option that can never match a real
- * row today would imply data this build doesn't have — the same reasoning
- * that used to keep `below_target` out of `AtRiskList.tsx`'s reason filter
- * before P4.3/D4.5 wired up a real target grade there; `manual` has no such
- * wiring in this codebase, so it stays excluded.
+ * **`manual`/`random_audit` are deliberately excluded from the reason
+ * filter.** Nothing in the live marking pipeline
+ * (`AttemptRepository.persist_correction`, the only place `ReviewQueueItem`
+ * rows are created) ever writes either reason — every row it creates is
+ * `low_confidence` or `plagiarism_flag`. (Migration `0037` did write
+ * `manual` once, as the one-way rewrite target for the now-removed
+ * AI-generated-answer detector's flag — but that is historical data from a
+ * schema migration, not something the live pipeline produces, so it stays
+ * out of the filter for the same reason `random_audit`, N2's still-unbuilt
+ * sampler, does.) Offering a filter option that can never match a row the
+ * live pipeline creates would imply data this build doesn't have — the same
+ * reasoning that used to keep `below_target` out of `AtRiskList.tsx`'s
+ * reason filter before P4.3/D4.5 wired up a real target grade there.
  * **Separately, the spec's fourth T-07 reason category — "student disputed
  * the transcription" — has no backing `ReviewReason` value or creation path
  * anywhere in this codebase.** `manual` is the closest enum member but is a
@@ -75,16 +79,19 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
 
 export const REASON_LABEL: Record<string, string> = {
   low_confidence: "Low confidence",
-  plagiarism_flag: "Possible mark-scheme copying",
-  ai_detection_flag: "Possible AI-written answer",
+  // F4: renamed from "Possible mark-scheme copying" — the check is a
+  // similarity match against the mark scheme's own model answer, and this
+  // label says exactly that rather than implying a judgement about intent.
+  plagiarism_flag: "Matches mark-scheme wording",
   manual: "Manually flagged",
+  random_audit: "Random audit",
 }
 
 export function reasonLabel(reason: string): string {
   return REASON_LABEL[reason] ?? reason
 }
 
-const INTEGRITY_REASONS = new Set(["plagiarism_flag", "ai_detection_flag"])
+const INTEGRITY_REASONS = new Set(["plagiarism_flag"])
 
 export function isIntegrityReason(reason: string): boolean {
   return INTEGRITY_REASONS.has(reason)
@@ -168,8 +175,7 @@ export function confidenceTone(score: number | null): "ok" | "warn" {
 const REASON_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "low_confidence", label: "Low confidence" },
-  { value: "plagiarism_flag", label: "Possible mark-scheme copying" },
-  { value: "ai_detection_flag", label: "Possible AI-written answer" },
+  { value: "plagiarism_flag", label: "Matches mark-scheme wording" },
 ]
 
 const AGE_FILTER_OPTIONS: { value: string; label: string }[] = [
@@ -179,6 +185,44 @@ const AGE_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "72", label: "3+ days" },
   { value: "168", label: "7+ days" },
 ]
+
+/**
+ * F4: the standing advisory notice for this screen (JCQ guidance; Ofqual's
+ * 14 Jan 2026 principles and 16 Jul 2026 approach to AI marking tools;
+ * Cambridge's digital-mocks human-verification requirement).
+ *
+ * **Deliberately states only what the product actually enforces.** An
+ * earlier draft said "Lemely marks every paper in parallel with you, never
+ * in place of you" — nothing in the system guarantees a teacher marks
+ * alongside Lemely on every paper, so on a compliance-facing screen that
+ * sentence was itself an indefensible claim, the exact failure mode F4
+ * exists to remove. What IS true and enforced, and is what this copy says
+ * instead: every row below is a signal for the teacher's judgement, not a
+ * verdict about the student (`apply_integrity_checks` never touches marks);
+ * and once a teacher corrects a flagged question here, that correction is
+ * what every subsequent read of the result reflects
+ * (`QuestionResult.effective_marks` — "the teacher's mark wins on every
+ * read" — is the single accessor every screen and DTO goes through, so this
+ * is not an aspiration, it is the one code path that exists).
+ *
+ * Exported as a string constant, not inlined into JSX, so it has one
+ * canonical wording and can be asserted on directly in a test rather than
+ * scraped out of rendered markup.
+ *
+ * **PROVISIONAL WORDING, pending product sign-off.** This is engineering's
+ * best-effort narrowing to only-what's-enforced, not approved compliance
+ * copy — the team lead is escalating the final wording to the user, because
+ * deciding what a regulator-facing statement says is not an engineering
+ * call to make unilaterally. Whoever picks this back up: replace the string
+ * below with the signed-off wording, and delete this notice: don't let a
+ * "provisional" caveat quietly become permanent by never being revisited.
+ */
+export const REVIEW_ADVISORY_COPY =
+  "Lemely marks every paper automatically. The flags below — including " +
+  "mark-scheme wording matches — are advisory signals for your judgement, " +
+  "not a verdict about the student. Any correction you make here becomes " +
+  "the mark a student's result reflects, immediately and everywhere it " +
+  "appears."
 
 const SKIP_REASON_LABEL: Record<string, string> = {
   not_found: "no longer exists",
@@ -351,6 +395,10 @@ export function Review() {
                 rung="display-md"
                 level={1}
               />
+
+              <p className="text-body-sm text-ink-muted max-w-[65ch] text-pretty">
+                {REVIEW_ADVISORY_COPY}
+              </p>
 
               <div className="flex items-end gap-4 flex-wrap">
                 <Select

@@ -173,12 +173,21 @@ class ReviewStatus(enum.Enum):
 
 
 class ReviewReason(enum.Enum):
-    """Why a question result was flagged for teacher review."""
+    """Why a question result was flagged for teacher review.
+
+    F4 removed the AI-generated-answer detector's review reason (migration
+    ``0037``): the detector it named had no measured false-positive rate and
+    JCQ guidance is that such a detector must never be sole evidence.
+    Existing rows carrying that reason were rewritten to ``manual`` (one-way;
+    see the migration's docstring). ``random_audit`` (N2) is a new member
+    added in the same migration, so the two changes share one Alembic head
+    instead of racing for it.
+    """
 
     low_confidence = "low_confidence"
     plagiarism_flag = "plagiarism_flag"
-    ai_detection_flag = "ai_detection_flag"
     manual = "manual"
+    random_audit = "random_audit"
 
 
 class NotificationType(enum.Enum):

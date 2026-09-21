@@ -29,6 +29,15 @@ dependencies = [
   "pypdfium2>=4,<6",
   "numpy>=2,<3",
   "fonttools>=4.63,<5",
+  # lemely/core/equivalence.py: symbolic equality for A-mark verification
+  # and question-generation solving (I8, D12). Pinned floor at the release
+  # this module's parser (parse_expr with the implicit_multiplication_
+  # application/convert_xor transformations) was developed against. The
+  # spec's light-LaTeX arm (SymPy's Lark backend) is deferred, not
+  # implemented — every mark scheme/answer observed so far is plain
+  # text/unicode notation, which this module's own text normalisation
+  # handles; do not read this pin as evidence a Lark parser exists here.
+  "sympy>=1.14,<2",
 ]
 
 [project.optional-dependencies]
@@ -165,6 +174,11 @@ ignore = ["D100", "D101", "D102", "D103", "D104", "D107"]
 "lemely/io/det/question_papers.py" = ["ANN401", "RUF001", "RUF003"]
 "lemely/io/validation.py" = ["RUF001"]
 "lemely/io/correction_ai.py" = ["BLE001", "ANN401", "TCH"]
+# CAIE notation is the entire subject matter (×, −, unit superscripts); the
+# numeric fallback's sample points need reproducibility, not cryptographic
+# randomness (S311).
+"lemely/core/equivalence.py" = ["RUF001", "RUF002", "RUF003", "S311"]
+"tests/test_equivalence.py" = ["RUF001", "T201", "S603"]
 "lemely/io/subject.py" = ["TCH"]
 "lemely/io/answer_extraction.py" = ["ANN401", "TCH"]
 # Injectable-SDK-client precedent (lemely/io/gemini.py's `_genai_client`): the
@@ -258,6 +272,13 @@ module = [
   "google.cloud.*",
   "google.auth.*",
   "google.api_core.*",
+  # sympy ships no py.typed marker either (same class of gap as above);
+  # used by lemely/core/equivalence.py (I8).
+  "sympy.*",
+  # pypdfium2 ships no py.typed marker either (same class of gap as above);
+  # used by lemely/io/rasterise.py (I1), following
+  # scripts/rasterise_handwritten_fixtures.py's existing use of the library.
+  "pypdfium2.*",
 ]
 ignore_missing_imports = true
 
@@ -291,6 +312,8 @@ module = [
   # above).
   "lemely.io.storage_gcs",
   "lemely.io.answer_extraction",
+  "lemely.io.scan_hygiene",
+  "lemely.io.reread",
   "lemely.io.correction_ai",
   "lemely.io.subject",
   "lemely.io.ciegt",

@@ -20,8 +20,10 @@ from lemely.eval.analyses import exclusion_funnel
 from lemely.eval.manifest import RunManifest, Split
 from lemely.eval.records import Arm, EvalRecord
 from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_join
+from lemely.io.answer_extraction import EXTRACTION_MEDIA_RESOLUTION
 from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
+from lemely.runtime.errors import CostCeilingError
 
 log = structlog.get_logger()
 
@@ -110,6 +112,48 @@ class GoldenCase:
     #: has no scan at all. Populated from ``scan.<name>.pdf`` siblings by
     #: :func:`load_golden_cases`.
     renders: dict[str, Path] = field(default_factory=dict)
+
+    def __post_init__(self) -> None:
+        """Enforce the ``scan_path``/``renders`` invariant documented above.
+
+        US-029 review SF-1: `_corpus_digest` folds ``renders``, but
+        `measure_accuracy` sends ``scan_path`` to extraction — two
+        independent dataclass fields with no prior enforcement that they
+        agree. A case constructed with a real ``scan_path`` and an empty (or
+        disagreeing) ``renders`` would silently exclude its own scan bytes
+        from the digest: exactly the pre-US-029 defect, one field away.
+
+        Raises rather than silently populating ``renders`` from
+        ``scan_path``: this dataclass is constructed directly at ~20 sites
+        across the test suite (not only via `load_golden_cases`), and an
+        auto-populate would hide the same class of mistake it exists to
+        catch. `load_golden_cases` already satisfies this invariant
+        (`renders[DEFAULT_RENDER] = scan_path` iff the scan exists), so
+        enforcing it here does not move any digest that loader produces.
+
+        The comparison is exact ``Path`` **equality, not same-file
+        identity** — deliberately. A differently-spelled path to the same
+        file (symlink-resolved vs. not, a ``..`` detour, absolute vs.
+        relative) is rejected on purpose: most cases carry nonexistent scan
+        paths (e.g. arm-override tests), so no same-file check
+        (``os.path.samefile``) is even available — it requires both paths
+        to exist. Resolving one or both sides first (``Path.resolve()``)
+        would make this invariant depend on filesystem state and add a
+        syscall to every construction, for a case this codebase does not
+        exercise. Two fields meant to denote the same file should also
+        simply *read* identically. This costs nothing in practice:
+        ``pathlib`` already normalises ``.``, repeated separators, and
+        trailing slashes at parse time, so the common ``Path(str(p))``
+        round-trip compares equal.
+        """
+        if self.scan_path is not None and self.renders.get(DEFAULT_RENDER) != self.scan_path:
+            raise ValueError(
+                "GoldenCase invariant violated: renders[DEFAULT_RENDER] must "
+                f"equal scan_path when scan_path is set (scan_path={self.scan_path!r}, "
+                f"renders.get(DEFAULT_RENDER)={self.renders.get(DEFAULT_RENDER)!r}) "
+                "(compared by exact path spelling, not same-file identity — "
+                "pass the same Path to both fields)"
+            )
 
     @property
     def render_names(self) -> list[str]:
@@ -460,8 +504,20 @@ def question_result_to_eval_record(
 
     `extraction_conf` is read from `result.extraction_confidence`
     (spec §4 M1.1): extraction-side confidence, threaded from
-    `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`,
-    is `None` only when no answer was extracted for this question.
+    `ExtractedAnswer.confidence` through `CorrectedQuestion.extraction_confidence`.
+    US-031 review SHOULD-FIX C: `None` here has TWO distinct causes, not
+    one -- either the model genuinely returned no answer for this question,
+    or it returned one that extraction discarded as malformed before it
+    could reach `ExtractedAnswers.answers` (see
+    `lemely.io.answer_extraction`'s per-answer salvage-or-drop step and
+    `ExtractedAnswers.dropped_question_ids`). The two are NOT separable from
+    `extraction_conf` alone; `result.review_reason` (threaded from
+    `CorrectedQuestion.review_reason`, set by
+    `lemely.io.correction_ai._build_dropped_corrected` to a fixed,
+    distinguishing string for the dropped case) is the signal that tells
+    them apart, when that distinction matters to a caller of this adapter.
+    `QuestionResult` carries no dedicated boolean for this today -- reading
+    `review_reason` is the only way to recover it.
     `maximum_marks` (spec §4 M1.1) is read from `result.maximum_marks` --
     the question's tariff, threaded from `CorrectedQuestion.maximum_marks`,
     used by `paper_grade_confidence` to weight by marks available rather
@@ -602,19 +658,82 @@ def _current_git_sha() -> str:
 def _corpus_digest(cases: list[GoldenCase]) -> str:
     """Digest of the exact golden corpus fed into this run.
 
-    Derived from what was actually loaded — each case's ``paper_id``,
-    ``fixture_variant``, and its ground-truth leaves — not a placeholder: two
-    runs over the same corpus reproduce the same digest, and a corpus change
-    (a fixture added/edited/removed) changes it.
+    Folds in, per case (sorted by ``(paper_id, fixture_variant)`` for
+    deterministic ordering):
+
+    - ``paper_id`` and ``fixture_variant``
+    - the mark scheme *content* (``mark_scheme.model_dump_json()``) — a
+      superset of the mark-scheme JSON actually sent to the model (the
+      per-question payload built at
+      ``lemely/io/prompts/correction_ai.py``'s ``question.model_dump_json``
+      is a further subset of this), so folding the whole model is the safe
+      direction: it can only over-detect a change, never miss one. Two
+      runs against different mark schemes must not produce the same digest
+      (US-029; previously it did not, so two sweeps against different mark
+      schemes could produce the same digest and look like a like-for-like
+      A/B when they were not)
+    - each ground-truth leaf's ``awarded_marks`` and ``student_answer``,
+      sorted by question id
+    - every declared render's *name*, and its scan *bytes* when the file
+      exists on disk (streamed in chunks, sorted by render name) — bytes
+      are the other input actually sent to the model, so a re-rendered scan
+      must also move the digest. Folding the name before checking existence
+      means a render that is declared but missing on disk still moves the
+      digest relative to one that was never declared — the two are not the
+      same corpus. A render whose file does not exist on disk (e.g. a case
+      built directly in a test, without a real fixture) contributes no
+      *bytes*, since such a case never had scan bytes to send in the first
+      place.
+
+    Deliberately excluded: paths and mtimes. An absolute path would make the
+    digest machine-dependent, and ``mtime`` is not a change detector in this
+    repo (pre-commit restores it on every run).
+
+    Two runs over an unchanged corpus reproduce the same digest; a corpus
+    change (a fixture's mark scheme, ground truth, or scan bytes
+    added/edited/removed) changes it. Two known, deliberate
+    over-approximations — both safe (they can only cause an unrelated digest
+    move, never a missed one):
+
+    - Adding a field to :class:`~lemely.core.loose_schemas.MarkScheme` (or
+      ``MarkSchemeMetadata``) changes ``model_dump_json()`` for *every*
+      case, moving every corpus's digest even though no fixture changed.
+    - ``MarkSchemeMetadata.assessment_objectives_weighting``'s dict *key
+      order* moves the digest for a semantically identical mark scheme,
+      because ``model_dump_json()`` serialises dicts in their own key
+      order, not sorted.
+
+    Two things that do *not* move it, which is what makes the digest track
+    *parsed* content rather than file text: the mark scheme JSON's top-level
+    key order (Pydantic serialises fields in model-definition order), and
+    unknown extra keys in the source JSON (``model_config`` defaults
+    ``extra`` to ignore, so an unrecognised key is dropped before it ever
+    reaches ``model_dump_json()``).
     """
     h = hashlib.sha256()
     for case in sorted(cases, key=lambda c: (c.paper_id, c.fixture_variant or "")):
         h.update(case.paper_id.encode())
         h.update(b"|")
         h.update((case.fixture_variant or "").encode())
+        h.update(b"|")
+        h.update(case.mark_scheme.model_dump_json().encode())
         for qid in sorted(case.ground_truth):
             gt = case.ground_truth[qid]
             h.update(f"|{qid}:{gt.awarded_marks}:{gt.student_answer}".encode())
+        for render_name in sorted(case.renders):
+            render_path = case.renders[render_name]
+            # SF-2: fold the render's NAME before checking existence, so a
+            # declared-but-missing render is distinguishable from one that
+            # was never declared at all. Folding only after the check made
+            # {default: real, handwritten: missing} and {default: real,
+            # photo: missing} and {default: real} collide on one digest —
+            # three different corpora reading as identical.
+            h.update(f"|render:{render_name}:".encode())
+            if not render_path.exists():
+                continue
+            with render_path.open("rb") as f:
+                for chunk in iter(lambda: f.read(1 << 20), b""):
+                    h.update(chunk)
     return h.hexdigest()[:16]
 
 
@@ -656,6 +775,27 @@ def _build_run_manifest(
             "mark_scheme": gemini.model_for("mark_scheme"),
             "extraction": gemini.model_for("extraction"),
             "correction": gemini.model_for("correction"),
+            # F1 review MUST-FIX 1: correction_borderline and escalation are
+            # independently resolvable tags (config.py model_for()) — a run
+            # can differ on escalation without differing on "correction"
+            # itself (e.g. escalation_model == correction_model but a
+            # different thinking_level_for["escalation"]). Both must be
+            # named here for the same reason "correction" is: two runs that
+            # actually issued different calls must not archive the same
+            # fingerprint.
+            "correction_borderline": gemini.model_for("correction_borderline"),
+            "escalation": gemini.model_for("escalation"),
+            # US-028: scan_metadata_model is a resolvable tag of the pipeline
+            # config this run is an instance of, recorded for the same
+            # reason "mark_scheme" is above — not because this harness path
+            # issues a scan-metadata call itself (it doesn't: scan_metadata
+            # is only ever resolved on the ingestion path, lemely/io/
+            # scan_metadata.py, same as mark_scheme's golden schemas are
+            # loaded pre-parsed off disk rather than generated by a call
+            # made here). Recording the whole resolved pipeline config,
+            # including tags this run's own calls never touch, is the
+            # existing "mark_scheme" bar and this is consistent with it.
+            "scan_metadata": gemini.model_for("scan_metadata"),
         }
         # The models MUST be in the hash. Without them two runs on different
         # models record the same params_fingerprint, and M0.3's A/B reads that
@@ -678,11 +818,55 @@ def _build_run_manifest(
         # (``arm is not None``) so a run with no override keeps hashing
         # exactly as it did before this knob existed — "no override" is not
         # itself a fourth, distinguishable value.
+        #
+        # F1 review MUST-FIX 1 (2026-09-17): ``thinking_level_for`` is folded
+        # in too — after the Gemini 3.x migration it is the dominant knob on
+        # the correction/escalation models (2.5's ``thinking_budget_for`` is
+        # kept for the mark_scheme tag and 2.5-and-earlier models). Without
+        # this, two sweeps differing only in
+        # ``thinking_level_for["correction"]`` archived the same
+        # params_fingerprint despite issuing genuinely different API calls —
+        # exactly the failure this hash exists to prevent.
         fingerprint_raw = (
             f"{sorted(models_by_task.items())}"
             f"|{gemini.temperature}|{gemini.top_p}|{gemini.seed}"
+            # US-028: temperature_for/top_p_for/seed_for are live only for a
+            # 2.5-and-earlier tag — GeminiClient._resolved_gen_params (F1)
+            # returns temperature=top_p=seed=None unconditionally for any 3.x
+            # model and never reads these dicts at all (gemini.py), so on
+            # today's config only "mark_scheme" (still 2.5-flash, D20) can
+            # actually differ by them; correction/correction_borderline/
+            # escalation/extraction/scan_metadata are all 3.x and inert here.
+            # A sweep may still repoint any tag at a 2.5 model, so the dicts
+            # are hashed unconditionally rather than only for tags currently
+            # on 2.5 — a deliberate over-approximation, not a precise
+            # per-call claim: it can move this fingerprint for a change that
+            # is inert on an all-3.x run (errs toward "different", the safe
+            # direction for two runs to be told apart), but it will never
+            # miss the case where the dicts genuinely do change a 2.5-tag
+            # call.
+            f"|{sorted(gemini.temperature_for.items())}"
+            f"|{sorted(gemini.top_p_for.items())}"
+            f"|{sorted(gemini.seed_for.items())}"
             f"|{sorted(gemini.thinking_budget_for.items())}"
+            f"|{sorted(gemini.thinking_level_for.items())}"
             f"|{_MAX_OUTPUT_TOKENS}"
+            # US-028: escalation_confidence_threshold decides WHICH calls a
+            # run issues (whether a low-confidence mark escalates to the
+            # stronger escalation_model at all), not just what a given call
+            # looks like — a legitimate knob for a measurement sweep to vary
+            # (spec §3.3's "changes what the run does" bar), so two sweeps
+            # differing only here must not collide either.
+            f"|{gemini.escalation_confidence_threshold}"
+            # I1: media_resolution is a per-call knob on the extraction task
+            # (GeminiClient._params_fingerprint takes it directly, not via a
+            # settings.gemini field), and nothing set it before this story.
+            # Folding the constant in here means a run made after I1 landed
+            # (every extraction call now carries media_resolution) never
+            # archives the same params_fingerprint as a pre-I1 run that set
+            # none at all — the exact false-zero-delta failure every other
+            # line in this hash already guards against.
+            f"|extraction_media_resolution={EXTRACTION_MEDIA_RESOLUTION}"
         )
         if arm is not None:
             fingerprint_raw += f"|arm={arm}"
@@ -701,6 +885,35 @@ def _build_run_manifest(
         split=split,
         corpus_digest=_corpus_digest(cases),
         arm=arm,
+    )
+
+
+def _ceiling_aborted_sweep(
+    exc: CostCeilingError,
+    paper_id: str,
+    stage: Literal["extraction", "marking"],
+    position: int,
+    cases: list[GoldenCase],
+) -> CostCeilingError:
+    """Re-label a ceiling breach as the sweep abort it is (US-030).
+
+    A :class:`~lemely.runtime.errors.CostCeilingError` reaching the per-case
+    body means the run blew its budget partway through. ``measure_accuracy``
+    must not return an :class:`AccuracyResult` for it: no ``RunManifest`` is
+    built, so nothing downstream (``save_result``, ``format_report``, the
+    review-rate gate) can archive a partial run as a completed measurement.
+
+    The breach carries no position of its own, so this folds in the paper and
+    the stage it stopped at — a partial run's reach is evidence about how much
+    of the corpus was actually paid for, and "aborted after 3 of 40 cases" is
+    the difference between a usable partial and a run to discard. The relabelled
+    exception is returned rather than raised so the caller can chain it with
+    ``raise ... from exc``, keeping the original breach as ``__cause__``.
+    """
+    return CostCeilingError(
+        f"{exc} Sweep ABORTED during {stage} of paper {paper_id} "
+        f"(case {position} of {len(cases)}); no accuracy report and no RunManifest "
+        f"were archived for this partial run."
     )
 
 
@@ -786,7 +999,7 @@ def measure_accuracy(
     total_extraction_questions = 0
     funnel = FunnelCounts()
 
-    for case in cases:
+    for case_position, case in enumerate(cases, start=1):
         # Terminology (spec §1): real vision extraction is "extract+mark"; the
         # correction-only bypass injects ground-truth text and marks only,
         # i.e. "oracle+mark". Default per-case selection is by scan_path
@@ -812,11 +1025,16 @@ def measure_accuracy(
                     "scan_path; the pre-loop validation should have caught this"
                 )
             ran_extraction = True
-            extracted = extract_answers(
-                scan_path,
-                case.mark_scheme,
-                gemini_client=gemini_client,  # type: ignore[arg-type]
-            )
+            try:
+                extracted = extract_answers(
+                    scan_path,
+                    case.mark_scheme,
+                    gemini_client=gemini_client,  # type: ignore[arg-type]
+                )
+            except CostCeilingError as exc:
+                raise _ceiling_aborted_sweep(
+                    exc, case.paper_id, "extraction", case_position, cases
+                ) from exc
             extracted_ids = {a.question_id for a in extracted.answers}
             total_extraction_questions += len(case.ground_truth)
             matched_extraction_ids += sum(1 for qid in case.ground_truth if qid in extracted_ids)
@@ -835,11 +1053,16 @@ def measure_accuracy(
             )
             extracted_ids = set(case.ground_truth)
 
-        correction = correct_paper(
-            case.mark_scheme,
-            extracted,
-            gemini_client=gemini_client,  # type: ignore[arg-type]
-        )
+        try:
+            correction = correct_paper(
+                case.mark_scheme,
+                extracted,
+                gemini_client=gemini_client,  # type: ignore[arg-type]
+            )
+        except CostCeilingError as exc:
+            raise _ceiling_aborted_sweep(
+                exc, case.paper_id, "marking", case_position, cases
+            ) from exc
         cq_by_id = {cq.question_id: cq for cq in correction.questions}
 
         # Iterate the ground-truth leaves, not correction.questions (D18,

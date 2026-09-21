@@ -2,14 +2,28 @@
 
 from __future__ import annotations
 
+import os
+from pathlib import Path
+
 import pytest
 
-from lemely.runtime.config import GeminiSettings, IntegritySettings, Settings
+from lemely.runtime.config import (
+    GeminiSettings,
+    IntegritySettings,
+    Settings,
+    find_removed_config_keys,
+    load_settings,
+)
 
 
 class TestModelForNewTags:
-    def test_generation_falls_back_to_global(self) -> None:
-        s = GeminiSettings(model="gemini-2.5-flash")
+    def test_generation_default_is_f1_3x(self) -> None:
+        """F1: generation_model has its own explicit 3.x default, not a fallback."""
+        s = GeminiSettings()
+        assert s.model_for("generation") == "gemini-3.5-flash-lite"
+
+    def test_generation_falls_back_to_global_when_unset(self) -> None:
+        s = GeminiSettings(model="gemini-2.5-flash", generation_model=None)
         assert s.model_for("generation") == "gemini-2.5-flash"
 
     def test_generation_override(self) -> None:
@@ -24,16 +38,13 @@ class TestModelForNewTags:
         s = GeminiSettings(study_plan_model="gemini-2.5-pro")
         assert s.model_for("study_plan") == "gemini-2.5-pro"
 
-    def test_integrity_falls_back_to_global(self) -> None:
-        s = GeminiSettings(model="gemini-2.5-flash")
-        assert s.model_for("integrity") == "gemini-2.5-flash"
+    def test_scan_metadata_default_is_f1_3x(self) -> None:
+        """F1: scan_metadata_model has its own explicit 3.x default, not a fallback."""
+        s = GeminiSettings()
+        assert s.model_for("scan_metadata") == "gemini-3.5-flash-lite"
 
-    def test_integrity_override(self) -> None:
-        s = GeminiSettings(integrity_model="gemini-2.5-pro")
-        assert s.model_for("integrity") == "gemini-2.5-pro"
-
-    def test_scan_metadata_falls_back_to_global(self) -> None:
-        s = GeminiSettings(model="gemini-2.5-flash")
+    def test_scan_metadata_falls_back_to_global_when_unset(self) -> None:
+        s = GeminiSettings(model="gemini-2.5-flash", scan_metadata_model=None)
         assert s.model_for("scan_metadata") == "gemini-2.5-flash"
 
     def test_scan_metadata_override(self) -> None:
@@ -49,33 +60,76 @@ class TestModelForNewTags:
         assert s.model_for("correction") == "gemini-2.5-pro"
         assert s.model_for("mark_scheme") == "gemini-2.5-flash"
 
+    def test_f1_defaults(self) -> None:
+        """F1 acceptance (1): model_for() resolves every tag to the migration defaults."""
+        s = GeminiSettings()
+        assert s.model_for("correction") == "gemini-3.8-flash"
+        assert s.model_for("correction_borderline") == "gemini-3.8-flash"
+        assert s.model_for("escalation") == "gemini-3.8-flash"
+        assert s.model_for("extraction") == "gemini-3.5-flash-lite"
+        assert s.model_for("generation") == "gemini-3.5-flash-lite"
+        assert s.model_for("scan_metadata") == "gemini-3.5-flash-lite"
+        assert s.model_for("mark_scheme") == "gemini-2.5-flash"
+
+    def test_f1_total_usd_ceiling_default(self) -> None:
+        assert GeminiSettings().total_usd_ceiling == 14.0
+
+    def test_f1_correction_borderline_resolves_to_correction_model(self) -> None:
+        """Before F1's fix, the borderline retry fell through to the global model."""
+        s = GeminiSettings(correction_model="gemini-3.8-flash")
+        assert s.model_for("correction_borderline") == s.model_for("correction")
+
+    def test_f1_escalation_resolves_to_escalation_model_not_correction(self) -> None:
+        s = GeminiSettings(correction_model="gemini-3.8-flash", escalation_model="gemini-2.5-pro")
+        assert s.model_for("escalation") == "gemini-2.5-pro"
+
+    def test_f1_thinking_level_for_rejects_a_typo(self) -> None:
+        """FIX 3 (review): a bare `dict[str, str]` accepted "hgih" silently —
+        it reached types.ThinkingConfig unchanged (a case-insensitive str-enum,
+        no coercion error) and every correction call would have failed at the
+        API while the ordered gate ranked it as "minimal" (0). Literal makes
+        config load reject it instead."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            GeminiSettings(thinking_level_for={"correction": "hgih"})
+
+    def test_f1_thinking_level_for_accepts_every_valid_level(self) -> None:
+        for level in ("minimal", "low", "medium", "high"):
+            s = GeminiSettings(thinking_level_for={"correction": level})
+            assert s.thinking_level_for["correction"] == level
+
 
 class TestIntegritySettings:
     def test_defaults(self) -> None:
         s = IntegritySettings()
         assert s.plagiarism_enabled is True
-        assert s.ai_detection_enabled is False
         assert s.plagiarism_threshold == pytest.approx(0.85)
-        assert s.ai_detection_threshold == pytest.approx(0.80)
 
-    def test_override_thresholds(self) -> None:
-        s = IntegritySettings(plagiarism_threshold=0.90, ai_detection_threshold=0.70)
+    def test_override_threshold(self) -> None:
+        s = IntegritySettings(plagiarism_threshold=0.90)
         assert s.plagiarism_threshold == pytest.approx(0.90)
-        assert s.ai_detection_threshold == pytest.approx(0.70)
 
     def test_disable_plagiarism(self) -> None:
         s = IntegritySettings(plagiarism_enabled=False)
         assert s.plagiarism_enabled is False
-
-    def test_enable_ai_detection(self) -> None:
-        s = IntegritySettings(ai_detection_enabled=True)
-        assert s.ai_detection_enabled is True
 
     def test_extra_fields_forbidden(self) -> None:
         from pydantic import ValidationError
 
         with pytest.raises(ValidationError):
             IntegritySettings(unknown_field=True)  # type: ignore[call-arg]
+
+    def test_f4_removed_ai_detection_fields(self) -> None:
+        """F4: the AI-generated-answer detector's knobs no longer exist at all —
+        not just disabled by default. A stale config setting either one hits
+        extra='forbid', not a silently-ignored field."""
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            IntegritySettings(ai_detection_enabled=True)  # type: ignore[call-arg]
+        with pytest.raises(ValidationError):
+            IntegritySettings(ai_detection_threshold=0.5)  # type: ignore[call-arg]
 
 
 class TestSettingsIntegrityWired:
@@ -84,6 +138,105 @@ class TestSettingsIntegrityWired:
         assert isinstance(s.integrity, IntegritySettings)
         assert s.integrity.plagiarism_threshold == pytest.approx(0.85)
 
-    def test_integrity_field_accessible(self) -> None:
-        s = Settings()
-        assert s.integrity.ai_detection_enabled is False
+
+class TestFindRemovedConfigKeys:
+    """F4 acceptance (5): ``lemely doctor`` warns if ``lemely.toml`` still sets
+    a removed key, by reading the raw TOML — before ``Settings(**toml_data)``
+    would fail on it with a bare ``extra='forbid'`` ``ValidationError``."""
+
+    def test_no_toml_file_returns_empty(self, tmp_path: Path) -> None:
+        assert find_removed_config_keys(cwd=tmp_path) == []
+
+    def test_clean_toml_returns_empty(self, tmp_path: Path) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text("[integrity]\nplagiarism_enabled = true\n")
+        assert find_removed_config_keys(toml_path=toml) == []
+
+    def test_finds_removed_integrity_key(self, tmp_path: Path) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text("[integrity]\nai_detection_enabled = true\n")
+        assert find_removed_config_keys(toml_path=toml) == ["integrity.ai_detection_enabled"]
+
+    def test_finds_removed_gemini_key(self, tmp_path: Path) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text('[gemini]\nintegrity_model = "gemini-2.5-pro"\n')
+        assert find_removed_config_keys(toml_path=toml) == ["gemini.integrity_model"]
+
+    def test_finds_multiple_removed_keys(self, tmp_path: Path) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text(
+            '[gemini]\nintegrity_model = "gemini-2.5-pro"\n\n'
+            "[integrity]\n"
+            "ai_detection_enabled = true\n"
+            "ai_detection_threshold = 0.5\n"
+        )
+        found = find_removed_config_keys(toml_path=toml)
+        assert set(found) == {
+            "gemini.integrity_model",
+            "integrity.ai_detection_enabled",
+            "integrity.ai_detection_threshold",
+        }
+
+    def test_finds_removed_key_set_as_an_env_var(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Review finding F-6: a removed key deserves the same warning
+        whether it arrives via lemely.toml or an env var — not a crash one
+        way and silence the other."""
+        monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLED", "true")
+        assert find_removed_config_keys(cwd=tmp_path) == ["integrity.ai_detection_enabled"]
+
+    def test_env_var_match_is_case_insensitive(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("lemely_gemini__integrity_model", "gemini-2.5-pro")
+        assert find_removed_config_keys(cwd=tmp_path) == ["gemini.integrity_model"]
+
+    def test_key_set_both_ways_is_reported_once(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text("[integrity]\nai_detection_enabled = true\n")
+        monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLED", "true")
+        found = find_removed_config_keys(toml_path=toml)
+        assert found == ["integrity.ai_detection_enabled"]
+
+
+class TestLoadSettingsDropsRemovedKeys:
+    """F-6: ``load_settings`` must not crash on a removed key however it is
+    supplied — TOML and env var get the same (silent-drop) outcome."""
+
+    def test_toml_removed_key_does_not_crash(self, tmp_path: Path) -> None:
+        toml = tmp_path / "lemely.toml"
+        toml.write_text("[integrity]\nai_detection_enabled = true\n")
+        settings = load_settings(toml_path=toml)
+        assert settings.integrity.plagiarism_enabled is True
+
+    def test_env_var_removed_key_does_not_crash(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLED", "true")
+        settings = load_settings(cwd=tmp_path)
+        assert settings.integrity.plagiarism_enabled is True
+
+    def test_env_var_removed_key_is_restored_after_loading(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The pop-and-restore in ``load_settings`` must not leak: the env
+        var a caller set is still there afterwards, for the next caller
+        (including ``find_removed_config_keys``, which needs to still see
+        it) to observe."""
+        monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLED", "true")
+        load_settings(cwd=tmp_path)
+        assert os.environ.get("LEMELY_INTEGRITY__AI_DETECTION_ENABLED") == "true"
+
+    def test_a_typo_env_var_still_crashes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The removed-key drop must not mask an unrelated typo — only the
+        exact removed names are dropped."""
+        from pydantic import ValidationError
+
+        monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLD", "true")
+        with pytest.raises(ValidationError):
+            load_settings(cwd=tmp_path)

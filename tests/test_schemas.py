@@ -227,5 +227,62 @@ class SubjectResultTests(unittest.TestCase):
             )
 
 
+class SubjectCodeValidatorTests(unittest.TestCase):
+    """F1 acceptance (3): subject_code moved off `Field(pattern=...)` to a
+    Pydantic validator on every site that carries it (3.x models reject the
+    `pattern` JSON-Schema keyword) — the shape check itself must still hold."""
+
+    def test_exam_metadata_rejects_non_four_digit_code(self) -> None:
+        with self.assertRaises(ValidationError):
+            ExamMetadata(
+                subject_code="12a",
+                paper_number=1,
+                paper_variant=2,
+                session_month="Oct/Nov",
+                session_year=2022,
+            )
+
+    def test_exam_metadata_rejects_trailing_newline(self) -> None:
+        """F1 review FIX 6: ``re.match(r"^\\d{4}$")`` lets "1234\\n" through —
+        Python's ``$`` matches just before a trailing newline as well as at
+        true end-of-string, a leniency ``.match()`` doesn't cancel out but
+        Pydantic's Rust-backed ``Field(pattern=...)`` (this replaced) did not
+        share. ``.fullmatch()`` has no such exception."""
+        with self.assertRaises(ValidationError):
+            ExamMetadata(
+                subject_code="1234\n",
+                paper_number=1,
+                paper_variant=2,
+                session_month="Oct/Nov",
+                session_year=2022,
+            )
+
+    def test_exam_metadata_schema_has_no_pattern_keyword(self) -> None:
+        import json
+
+        self.assertNotIn("pattern", json.dumps(ExamMetadata.model_json_schema()))
+
+    def test_subject_result_rejects_non_four_digit_code(self) -> None:
+        with self.assertRaises(ValidationError):
+            SubjectResult(
+                subject_code="99",
+                session_month="May/June",
+                session_year=2020,
+                paper_results=[
+                    CorrectionResult(
+                        metadata=ExamMetadata(
+                            subject_code="99",
+                            paper_number=1,
+                            paper_variant=1,
+                            session_month="May/June",
+                            session_year=2020,
+                        ),
+                        questions=[],
+                    )
+                ],
+                weaknesses=WeaknessReport(weak_areas=[]),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

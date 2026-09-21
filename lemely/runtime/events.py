@@ -36,6 +36,19 @@ class EventType(StrEnum):
     GEMINI_RETRY = "gemini_retry"
     GEMINI_ESCALATE = "gemini_escalate"
     EXTRACTION_PROGRESS = "extraction_progress"
+    SCAN_QUALITY_WARNING = "scan_quality_warning"
+    SOURCE_BOX_DROPPED = "source_box_dropped"
+    # US-031 review MUST-FIX 7: a whole answer dropped (unrecoverable
+    # question_id/answer/list-element shape), a confidence value repaired
+    # (missing/non-finite/out-of-range/malformed), or a cosmetic field
+    # repaired (NIT A: non-string source_region/working_out), published the
+    # same way SOURCE_BOX_DROPPED already is -- without this, ExtractedAnswers's
+    # answer_drops/confidence_repairs/field_repairs fields had no consumer
+    # and a dropped answer's loss was not actually visible anywhere, despite
+    # an in-code comment claiming it was.
+    ANSWER_DROPPED = "answer_dropped"
+    REREAD_FAILED = "reread_failed"
+    REREAD_CAP_REACHED = "reread_cap_reached"
     MARKING_PROGRESS = "marking_progress"
     MARK_SCHEME_PROGRESS = "mark_scheme_progress"
     BUDGET_WARNING = "budget_warning"

@@ -10,7 +10,7 @@ import unittest
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
@@ -21,7 +21,7 @@ from lemely.core.schemas import (
 from lemely.io.correction_ai import _build_mcq_corrected, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
-from lemely.runtime.errors import ConfigError
+from lemely.runtime.errors import ConfigError, CostCeilingError, ExternalServiceError
 from lemely.runtime.events import EventType, bus
 
 
@@ -273,6 +273,128 @@ class HybridCorrectPaperTests(unittest.TestCase):
         self.assertEqual(q1.awarded_marks, q1.maximum_marks)  # still correct
         self.assertTrue(q1.needs_teacher_review)
         self.assertNotEqual(q1.confidence, ConfidenceBand.HIGH)
+
+
+class DroppedAnswerReviewFlagTests(unittest.TestCase):
+    """US-031 review MUST-FIX 7, stronger fix: an answer the model RETURNED
+    but extraction discarded as malformed must be distinguishable from a
+    genuine student blank, unconditionally flagged for review, and must
+    never reach the paid AI marker (marking an empty string extraction
+    already knew was unusable is waste on top of an already-wrong mark).
+
+    Before this fix, ``ExtractedAnswers.dropped_question_ids`` did not
+    exist and ``correct_paper`` had no way to tell "the model answered this
+    and it was dropped" from "the model never answered this" -- both looked
+    identical (``student_answer=None``). For an MCQ leaf that happened to be
+    safe (the existing "missing answer" branch already flags for review);
+    for a non-MCQ leaf it was not: ``ai.mark_question`` was called with
+    ``student_answer or ""`` and could return a confident judgement that
+    tripped none of ``_build_ai_corrected``'s four review gates -- a student
+    marked wrong with no human ever told.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _hybrid_paper_mark_scheme()  # "1" = MCQ, "2" = non-MCQ
+
+    def test_dropped_non_mcq_answer_is_flagged_without_a_paid_call(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+            dropped_question_ids=["2"],
+        )
+        # Empty side_effect: if mark_question were ever called for q2 despite
+        # the short-circuit, this raises StopIteration instead of silently
+        # succeeding -- proving the paid call is actually skipped, not just
+        # that its result happens to look right.
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertTrue(q2.needs_teacher_review)
+        self.assertEqual(q2.marker_source, "dropped")
+        self.assertEqual(q2.awarded_marks, 0)
+        self.assertIn("dropped", q2.review_reason or "")
+        self.assertIn("malformed", q2.review_reason or "")
+        self.assertNotIn("AI marking failed", q2.review_reason or "")
+        client._client.models.generate_content.assert_not_called()
+
+    def test_dropped_mcq_answer_is_flagged_with_a_distinguishing_reason(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.9)],
+            dropped_question_ids=["1"],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertEqual(q1.marker_source, "dropped")
+        # Distinct from _build_mcq_corrected's own "missing answer" message
+        # (a genuine student blank) -- both flag for review, but only one is
+        # actually true here, and the review queue should say which.
+        self.assertNotEqual(q1.review_reason, "missing answer")
+        self.assertIn("malformed", q1.review_reason or "")
+
+    def test_a_genuinely_missing_answer_still_uses_the_original_message(self) -> None:
+        """Control: a question with no answer at all, and NOT listed in
+        dropped_question_ids, must still read as a genuine blank -- the two
+        must not be conflated in either direction."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.9)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertEqual(q1.marker_source, "deterministic")
+        self.assertEqual(q1.review_reason, "missing answer")
+
+    def test_dropped_answer_does_not_affect_other_questions_on_the_same_paper(self) -> None:
+        client = _client_with_seq(self.tmp, [])
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+            dropped_question_ids=["2"],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.marker_source, "deterministic")
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertFalse(q1.needs_teacher_review)
+        # US-031 review SHOULD-FIX F2: assert on q2 as well, or this test is
+        # vacuous for its own stated purpose. With the short-circuit broken, q2
+        # falls through to the AI path, `_client_with_seq(self.tmp, [])` raises
+        # `StopIteration`, and `correct_paper`'s own `except Exception` turns it
+        # into `_build_missing_corrected` -- so every assertion above still
+        # passes while the behaviour under test is gone. The empty `side_effect`
+        # is NOT a live control; only these assertions are.
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "dropped")
+        self.assertTrue(q2.needs_teacher_review)
+        self.assertIn("dropped", q2.review_reason or "")
 
 
 class MCQAbstainHardeningTests(unittest.TestCase):
@@ -1146,6 +1268,216 @@ class ThinkingRetryTests(unittest.TestCase):
         self.assertIn("ThinkingConfig", second_call_repr)
 
 
+def _level(v: object) -> str | None:
+    """Normalise a ``types.ThinkingLevel`` (or a plain string) to lowercase.
+
+    Duplicated from ``tests/test_gemini_client.py`` (small and pure — the SDK
+    coerces the ``thinking_level`` kwarg into a ``types.ThinkingLevel`` enum
+    member, so a bare string comparison against the lowercase config value
+    always fails even though the level round-tripped correctly).
+    """
+    if v is None:
+        return None
+    value = getattr(v, "value", v)
+    return str(value).lower()
+
+
+class F1EscalationReachabilityTests(unittest.TestCase):
+    """F1 acceptance (4b): the Step-2 escalation gate must stay reachable when
+    correction_model == escalation_model (the shipped F1 default, both
+    "gemini-3.8-flash"), where a bare model-name comparison would make it
+    permanently dead.
+    """
+
+    def test_borderline_mark_produces_three_calls_all_on_3x_correction_model(self):
+        from lemely.io.correction_ai import correct_paper
+
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "explanation",
+                        "answer_points": [
+                            {"id": "p1", "point": "gravity", "marks": 1},
+                            {"id": "p2", "point": "speed", "marks": 1},
+                        ],
+                    }
+                ],
+            }
+        )
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
+        )
+
+        def _resp(confidence: float, feedback: str) -> MagicMock:
+            body = json.dumps(
+                {
+                    "awarded_marks": 1,
+                    "confidence": confidence,
+                    "matched_point_ids": [],
+                    "feedback": feedback,
+                }
+            )
+            return MagicMock(
+                text=body,
+                candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+                usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with _IsolatedEnv():
+                # F1 defaults, untouched: correction_model == escalation_model
+                # == "gemini-3.8-flash"; thinking_level_for as shipped.
+                s = load_settings(toml_path=None, cwd=Path(tmp))
+            s = s.model_copy(
+                update={
+                    "paths": PathsSettings(
+                        cache_dir=Path(tmp) / ".cache",
+                        output_dir=Path(tmp) / "outputs",
+                    )
+                }
+            )
+            self.assertEqual(s.gemini.model_for("correction"), "gemini-3.8-flash")
+            self.assertEqual(s.gemini.model_for("escalation"), "gemini-3.8-flash")
+
+            mock_genai = MagicMock()
+            # Call 1 (correction, low): confidence 0.5, below the 0.80 threshold.
+            # Call 2 (correction_borderline, high): still 0.6, below threshold.
+            # Call 3 (escalation, high): 0.95, resolves.
+            mock_genai.models.generate_content.side_effect = [
+                _resp(0.5, "low"),
+                _resp(0.6, "high"),
+                _resp(0.95, "high-escalation"),
+            ]
+            mock_genai.files.upload.return_value = MagicMock()
+            client = GeminiClient(s, _genai_client=mock_genai)
+
+            with _capturing(EventType.GEMINI_CALL_START) as captured:
+                correct_paper(scheme, extracted, gemini_client=client)
+
+            calls = mock_genai.models.generate_content.call_args_list
+            self.assertEqual(len(calls), 3, f"expected 3 calls, got {len(calls)}")
+
+            starts = captured[EventType.GEMINI_CALL_START]
+            self.assertEqual(len(starts), 3)
+            self.assertEqual(
+                [e["task"] for e in starts], ["correction", "correction_borderline", "escalation"]
+            )
+            self.assertTrue(all(e["model"] == "gemini-3.8-flash" for e in starts))
+            self.assertNotIn("gemini-2.5-flash", [e["model"] for e in starts])
+
+            # F1 review FIX 4: assert the actual thinking_level sent on each
+            # call, not just tags/models — an implementation that ignored
+            # thinking_level_for entirely and always sent "low" would still
+            # pass every assertion above.
+            levels = [_level(c.kwargs["config"].thinking_config.thinking_level) for c in calls]
+            self.assertEqual(levels, ["low", "high", "high"])
+
+    def test_no_escalation_when_all_three_tags_resolve_to_the_same_thinking(self):
+        """F1 review FIX 4 (negative case): with correction ==
+        correction_borderline == escalation == "high" on the same 3.x model,
+        neither gate has anything to gain by firing — exactly ONE call is
+        made, confirming the gates compare actual resolved thinking rather
+        than just "is a retry configured at all"."""
+        from lemely.io.correction_ai import correct_paper
+
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "explanation",
+                        "answer_points": [
+                            {"id": "p1", "point": "gravity", "marks": 1},
+                            {"id": "p2", "point": "speed", "marks": 1},
+                        ],
+                    }
+                ],
+            }
+        )
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="s.pdf",
+            answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
+        )
+
+        def _resp(confidence: float) -> MagicMock:
+            body = json.dumps(
+                {
+                    "awarded_marks": 1,
+                    "confidence": confidence,
+                    "matched_point_ids": [],
+                    "feedback": "low",
+                }
+            )
+            return MagicMock(
+                text=body,
+                candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+                usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            with _IsolatedEnv():
+                s = load_settings(toml_path=None, cwd=Path(tmp))
+            s = s.model_copy(
+                update={
+                    "paths": PathsSettings(
+                        cache_dir=Path(tmp) / ".cache",
+                        output_dir=Path(tmp) / "outputs",
+                    ),
+                    "gemini": s.gemini.model_copy(
+                        update={
+                            "thinking_level_for": {
+                                "correction": "high",
+                                "correction_borderline": "high",
+                                "escalation": "high",
+                            }
+                        }
+                    ),
+                }
+            )
+            self.assertEqual(s.gemini.model_for("correction"), "gemini-3.8-flash")
+            self.assertEqual(s.gemini.model_for("escalation"), "gemini-3.8-flash")
+
+            mock_genai = MagicMock()
+            # Confidence stays low forever -- if either gate fired anyway,
+            # there would be more than one call.
+            mock_genai.models.generate_content.side_effect = [_resp(0.1)] * 3
+            mock_genai.files.upload.return_value = MagicMock()
+            client = GeminiClient(s, _genai_client=mock_genai)
+
+            correct_paper(scheme, extracted, gemini_client=client)
+
+            self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+
 @contextlib.contextmanager
 def _capturing(*event_types: EventType) -> Iterator[dict[EventType, list[dict[str, Any]]]]:
     """Record every payload published on ``event_types`` for the duration of the block.
@@ -1363,3 +1695,141 @@ class MarkingProgressCounterTests(unittest.TestCase):
             [f["marker_source"] for f in frames],
             ["deterministic", "missing", "missing", "missing", "missing"],
         )
+
+
+class CostCeilingAbortTests(unittest.TestCase):
+    """US-030: a per-run spend ceiling breach stops the run mid-paper.
+
+    ``_check_cost_ceiling`` raises :class:`CostCeilingError` — a stop signal
+    for the whole run, not a per-question failure. Before this fix the broad
+    ``except Exception`` around ``ai.mark_question`` absorbed it exactly like
+    a model failure: every remaining leaf was still attempted (each one
+    breaching again), each got ``awarded=0`` with ``review_reason="AI marking
+    failed: USD ceiling (...)"``, and ``correct_paper`` returned NORMALLY. A
+    caller could not tell those fabricated zeros from real model failures,
+    and the spend guard was advisory rather than binding.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _five_leaf_mark_scheme()
+
+    def _extracted(self) -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2(a)", answer="states and applies it", confidence=0.9),
+                ExtractedAnswer(question_id="2(b)", answer="uses the 20 from (a)", confidence=0.9),
+                ExtractedAnswer(question_id="3", answer="because gravity", confidence=0.9),
+                ExtractedAnswer(question_id="4", answer="energy is conserved", confidence=0.9),
+            ],
+        )
+
+    def test_a_ceiling_breach_stops_the_paper_instead_of_awarding_zeros(self) -> None:
+        """The regression. Leaf "2(a)" marks cleanly, then the ceiling binds.
+
+        What must NOT happen: leaves "2(b)", "3" and "4" each get attempted,
+        each re-breach, and each land in the result as ``awarded=0`` with an
+        "AI marking failed" reason — a plausible-looking paper of fabricated
+        zeros. The breach must leave ``correct_paper`` by raising.
+        """
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1"]) for _ in range(4)])
+
+        real_check = GeminiClient._check_cost_ceiling
+        attempts: list[int] = []
+
+        def _ceiling_binds_on_the_second_call(client_self: GeminiClient) -> None:
+            attempts.append(1)
+            if len(attempts) >= 2:
+                raise CostCeilingError(
+                    "USD ceiling ($14.0000) exceeded; persistent cumulative spend "
+                    "is $14.0100 (across all runs)."
+                )
+            real_check(client_self)
+
+        with (
+            patch.object(GeminiClient, "_check_cost_ceiling", _ceiling_binds_on_the_second_call),
+            _capturing(EventType.MARKING_PROGRESS, EventType.ERROR) as captured,
+            self.assertRaises(CostCeilingError) as ctx,
+        ):
+            correct_paper(self.ms, self._extracted(), gemini_client=client)
+
+        self.assertIn("USD ceiling", str(ctx.exception))
+
+        # Exactly two paid attempts: "2(a)" succeeded, "2(b)" breached, and
+        # then the run stopped. Three or four means the breach was absorbed
+        # and the marker kept spending into a ceiling it had already hit.
+        self.assertEqual(len(attempts), 2)
+
+        # Only the MCQ leaf and "2(a)" ever reported progress. A frame for
+        # "2(b)"/"3"/"4" would mean a zero was recorded for them.
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["question_id"] for f in frames], ["1", "2(a)"])
+
+        # And the breach is not dressed up as a per-question marking error.
+        self.assertEqual(
+            [e for e in captured[EventType.ERROR] if "AI marking failed" in str(e["message"])],
+            [],
+        )
+
+    def test_an_ordinary_model_failure_still_degrades_to_a_flagged_zero(self) -> None:
+        """The blast-radius guard: only the ceiling breach changes behaviour.
+
+        A plain ``RuntimeError`` from the marker must still produce a
+        ``marker_source="missing"`` question with an "AI marking failed"
+        reason, and the rest of the paper must still be marked.
+        """
+        client = _client_with_seq(
+            self.tmp,
+            [
+                _mock_marker_response(2, ["p1"]),
+                RuntimeError("marker stub refuses this question"),
+                _mock_marker_response(2, ["p1"]),
+                _mock_marker_response(2, ["p1"]),
+            ],
+        )
+
+        result = correct_paper(self.ms, self._extracted(), gemini_client=client)
+
+        self.assertEqual(len(result.questions), 5)
+        failed = next(q for q in result.questions if q.question_id == "2(b)")
+        self.assertEqual(failed.marker_source, "missing")
+        self.assertEqual(failed.awarded_marks, 0)
+        self.assertIn("AI marking failed", failed.review_reason or "")
+
+    def test_a_transport_external_service_error_still_degrades(self) -> None:
+        """A plain ``ExternalServiceError`` — the ceiling error's own parent
+        class — must keep degrading. Narrowing on the parent instead of on
+        ``CostCeilingError`` would take this ordinary transport failure down
+        with the whole run.
+        """
+        client = _client_with_seq(
+            self.tmp,
+            [
+                _mock_marker_response(2, ["p1"]),
+                _mock_marker_response(2, ["p1"]),
+                _mock_marker_response(2, ["p1"]),
+                _mock_marker_response(2, ["p1"]),
+            ],
+        )
+
+        real_check = GeminiClient._check_cost_ceiling
+        attempts: list[int] = []
+
+        def _transport_fails_on_the_second_call(client_self: GeminiClient) -> None:
+            attempts.append(1)
+            if len(attempts) == 2:
+                raise ExternalServiceError("upstream refused the request")
+            real_check(client_self)
+
+        with patch.object(GeminiClient, "_check_cost_ceiling", _transport_fails_on_the_second_call):
+            result = correct_paper(self.ms, self._extracted(), gemini_client=client)
+
+        self.assertEqual(len(result.questions), 5)
+        degraded = next(q for q in result.questions if q.question_id == "2(b)")
+        self.assertEqual(degraded.marker_source, "missing")
+        self.assertIn("AI marking failed", degraded.review_reason or "")
+        # The paper was finished: leaves "3" and "4" were still attempted.
+        self.assertEqual(len(attempts), 4)

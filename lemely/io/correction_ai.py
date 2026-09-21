@@ -19,14 +19,14 @@ from lemely.core.schemas import (
     ExtractedAnswers,
     confidence_band_for_score,
 )
-from lemely.io.gemini import GeminiClient
+from lemely.io.gemini import GeminiClient, thinking_rank
 from lemely.io.prompts.correction_ai import (
     MARKER_SYSTEM_PROMPT,
     VERSION,
     build_marker_user_prompt,
 )
 from lemely.io.validation import validate_mark_scheme
-from lemely.runtime.errors import ConfigError
+from lemely.runtime.errors import ConfigError, CostCeilingError
 from lemely.runtime.events import EventType, bus
 
 
@@ -43,6 +43,19 @@ def _flatten_answers(
         return {a.question_id: (a.answer, a.working_out, a.confidence) for a in extracted.answers}
     # Plain mapping fallback (Mapping[str, str]): no working_out or confidence available.
     return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
+
+
+def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
+    """Question ids whose answer was extracted but discarded as malformed.
+
+    US-031 review MUST-FIX 7 (stronger fix): ``ExtractedAnswers`` is the only
+    shape that can carry this -- a plain ``Mapping[str, str]`` (the
+    correction-only/oracle-answer bypass) never went through extraction at
+    all, so there is nothing to have dropped.
+    """
+    if isinstance(extracted, ExtractedAnswers):
+        return frozenset(extracted.dropped_question_ids)
+    return frozenset()
 
 
 class AICorrector:
@@ -81,13 +94,34 @@ class AICorrector:
         )
 
         # Step 1: thinking retry for borderline confidence (cheaper than Pro escalation).
-        borderline_budget = g.thinking_budget_for.get("correction_borderline", 0)
-        if result.confidence < g.escalation_confidence_threshold and borderline_budget > 0:
+        # F1 review MUST-FIX 2 (2026-09-17): the gate now reads
+        # GeminiClient.resolved_thinking() — the single source of truth also
+        # used to build the actual API call — instead of re-deriving the
+        # thinking_level_for/thinking_budget_for defaults here. The two used
+        # to disagree: a partial TOML override
+        # (``thinking_level_for = {"correction": "low"}``, which REPLACES the
+        # whole dict rather than merging into it) left this file defaulting
+        # the missing "correction_borderline" tag to "high" while gemini.py
+        # defaulted it to "low" — the gate fired believing it would retry at
+        # HIGH, but the actual call ran at LOW. The gate fires whenever the
+        # borderline call would think strictly harder than the original
+        # correction call did, on whichever substrate (level or budget) the
+        # resolved model actually reads — this also generalises the old 2.5
+        # "budget > 0" rule (a correction tag with no configured budget
+        # defaults to 0, so "borderline > correction" reduces to the same
+        # "budget > 0" check in the common case).
+        correction_model = g.model_for("correction")
+        correction_thinking = self._client.resolved_thinking("correction", correction_model)
+        borderline_thinking = self._client.resolved_thinking(
+            "correction_borderline", correction_model
+        )
+        borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
+        if result.confidence < g.escalation_confidence_threshold and borderline_gate:
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
                 confidence=result.confidence,
-                escalation_model=f"{g.model_for('correction')} (thinking)",
+                escalation_model=f"{correction_model} (thinking)",
             )
             result = self._client.generate_structured(
                 system_prompt=MARKER_SYSTEM_PROMPT,
@@ -101,16 +135,30 @@ class AICorrector:
             )
 
         # Step 2: Pro escalation if confidence still below threshold.
+        # F1 fix (4): under F1 defaults correction_model == escalation_model
+        # (both "gemini-3.8-flash"), so a bare model-name comparison would make
+        # this branch permanently unreachable — the whole point of the
+        # escalation step. The guard now compares the (model, thinking) tuple
+        # the escalation call would actually run with against the tuple the
+        # ORIGINAL (non-retried) correction call ran with: same model but a
+        # higher thinking_level_for["escalation"] still counts as a genuinely
+        # different, worth-trying call. Both tuples are read via
+        # ``resolved_thinking`` (F1 review MUST-FIX 2) rather than re-derived,
+        # so an unresolved value (e.g. a stray "minimal" on a model that
+        # demotes it to "low") can never make this comparison disagree with
+        # what the call underneath actually runs at.
+        escalation_model = g.escalation_model
         if (
-            g.escalation_model
-            and g.escalation_model != g.model_for("correction")
+            escalation_model
+            and (escalation_model, self._client.resolved_thinking("escalation", escalation_model))
+            != (correction_model, correction_thinking)
             and result.confidence < g.escalation_confidence_threshold
         ):
             bus.publish(
                 EventType.GEMINI_ESCALATE,
                 question_id=question.id,
                 confidence=result.confidence,
-                escalation_model=g.escalation_model,
+                escalation_model=escalation_model,
             )
             result = self._client.generate_structured(
                 system_prompt=MARKER_SYSTEM_PROMPT,
@@ -121,8 +169,8 @@ class AICorrector:
                 response_schema=AIMarkResponse,
                 prompt_version=VERSION,
                 extra_cache_key=f"q={question.id}:escalated",
-                task_tag="correction",
-                model=g.escalation_model,
+                task_tag="escalation",
+                model=escalation_model,
             )
 
         return result
@@ -559,6 +607,59 @@ def _build_missing_corrected(
     )
 
 
+#: US-031 review MUST-FIX 7 (stronger fix): distinct from
+#: "AI marking failed: ..." (a live model/transport failure caught in
+#: ``correct_paper``'s ``except Exception`` branch) and from "non-MCQ
+#: question not marked (--mcq-only or no AI client)"
+#: (:func:`_build_missing_corrected`, nothing was ever attempted). A dropped
+#: answer means the model DID respond for this question and the response
+#: was discarded before marking was ever attempted, because extraction
+#: could not make sense of it -- conflating any of the three into one
+#: message would make the review queue less informative about what
+#: actually happened, which is the same defect class the review flagged in
+#: the "AI marking failed" string this must not reuse.
+_DROPPED_ANSWER_REVIEW_REASON = (
+    "extraction dropped this answer as malformed (see ExtractedAnswers.answer_drops)"
+)
+
+
+def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
+    """Short-circuit for an answer extracted but DROPPED as malformed.
+
+    US-031 review MUST-FIX 7, stronger fix. No marking call is made --
+    ``correct_paper`` never reaches ``ai.mark_question`` for this question
+    at all. Before this function existed, a dropped answer looked to
+    ``correct_paper`` identically to "no answer for this question"
+    (``student_answer=None``): for an MCQ leaf
+    that already flagged for review (``_build_mcq_corrected``'s "missing
+    answer" branch, safe by accident); for a non-MCQ leaf, the AI marker was
+    asked to mark ``student_answer or ""`` -- a real, paid API call to mark
+    an empty string the extractor itself had already discarded -- and could
+    return a confident judgement (e.g. "blank, 0 marks", high confidence)
+    that tripped none of ``_build_ai_corrected``'s four review gates. A
+    student would then be marked wrong because the model's JSON was
+    malformed, with no human ever told. This function removes that path
+    entirely: the mark is 0, it is unconditionally flagged for review with a
+    reason distinct from both a genuine student blank and a real marking
+    failure, and no spend is wasted marking text extraction already knew was
+    unusable.
+    """
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=0,
+        maximum_marks=question.marks,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        review_reason=_DROPPED_ANSWER_REVIEW_REASON,
+        marker_source="dropped",
+        extraction_confidence=None,
+    )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -579,6 +680,7 @@ def correct_paper(
     """
     scheme = _load_mark_scheme(mark_scheme)
     answers = _flatten_answers(extracted_answers)
+    dropped_ids = _dropped_question_ids(extracted_answers)
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
@@ -613,6 +715,31 @@ def correct_paper(
         student_answer = answer_tuple[0] if answer_tuple else None
         student_working = answer_tuple[1] if answer_tuple else None
         extraction_confidence = answer_tuple[2] if answer_tuple else None
+
+        # US-031 review MUST-FIX 7 (stronger fix): a dropped answer must be
+        # distinguishable from a genuine student blank BEFORE dispatching to
+        # either the deterministic MCQ path or the AI marker -- both would
+        # otherwise see the exact same `student_answer=None` a real blank
+        # produces. Checked first, ahead of MCQ/AI/missing, so it applies
+        # uniformly regardless of question type and never reaches
+        # ai.mark_question with text extraction already discarded as
+        # unusable (a paid call to mark an empty string, on top of a mark
+        # that would already be wrong).
+        if q.id in dropped_ids:
+            cq = _build_dropped_corrected(q)
+            corrected.append(cq)
+            prior_results_accumulated[q.id] = 0
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                marker_source="dropped",
+                confidence=0.0,
+                awarded=0,
+                max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
+            )
+            continue
 
         if q.type == QuestionType.MCQ:
             cq = _build_mcq_corrected(q, student_answer, extraction_confidence)
@@ -662,6 +789,20 @@ def correct_paper(
                 # it was discarded here.
                 principles=scheme.metadata.generic_marking_principles or None,
             )
+        except CostCeilingError:
+            # US-030: a per-run token/USD ceiling breach is a stop signal for
+            # the whole run, not a per-question marking failure. The broad
+            # `except Exception` below used to absorb it exactly like a model
+            # failure: every remaining leaf was still attempted (re-breaching
+            # each time), each landed in the result as `awarded=0` with
+            # review_reason "AI marking failed: USD ceiling (...)", and
+            # `correct_paper` returned NORMALLY — so a sweep ran to completion
+            # and archived an accuracy report of fabricated zeros that no
+            # caller could tell from real model failures. Must stay the FIRST
+            # clause: `CostCeilingError` is a `LemelyError` and an
+            # `ExternalServiceError`, so any broader handler placed above it
+            # silently reinstates the bug.
+            raise
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer, extraction_confidence)

@@ -61,11 +61,14 @@ These are not stylistic preferences. They constrain the interface.
    ("we're not certain about this one — your teacher will check") and routed to
    a teacher review queue. Never present an uncertain mark as a confident one.
    This is the product's integrity and its main defence against being wrong.
-2. **Flags are signals, not verdicts.** The plagiarism ("this matches the
-   marking scheme text") and AI-detection checks produce advisory flags for a
-   teacher to look at. The UI must never accuse a student, never show a scary
-   red "CHEATING DETECTED" banner, never auto-penalize a mark. Students should
-   not see these flags at all; teachers see them phrased as "worth a look."
+2. **Flags are signals, not verdicts.** The plagiarism check ("this matches
+   the marking scheme text") produces an advisory flag for a teacher to look
+   at. (F4 removed the AI-detection check that used to run alongside it — no
+   measured false-positive rate, and JCQ guidance is that such a detector
+   must never be sole evidence.) The UI must never accuse a student, never
+   show a scary red "CHEATING DETECTED" banner, never auto-penalize a mark.
+   Students should not see these flags at all; teachers see them phrased as
+   "worth a look."
 3. **Grades are private; effort is public.** Leaderboards rank XP only — never
    grades, never percentages, never predicted grades. A student's marks are
    visible to that student, their linked parents, and their teachers. Nobody
@@ -887,9 +890,11 @@ and a route into the student. Dismiss/acknowledge a flag with a note.
 **Purpose.** Where low-confidence marks and integrity flags land. The teacher's
 core recurring task.
 **Contains.** A prioritised list: student, paper identity, question, why it's
-here (low confidence / possible mark-scheme copying / possible AI-written answer
-/ student disputed the transcription), and how long it's been waiting. Filters by
-class, reason, and age. Bulk-approve for the trivially fine ones.
+here (low confidence / possible mark-scheme copying / student disputed the
+transcription), and how long it's been waiting. Filters by class, reason, and
+age. Bulk-approve for the trivially fine ones. (F4 removed "possible
+AI-written answer" as a reason category along with the detector that used to
+produce it.)
 **States.** Empty (celebrate it briefly and get out of the way).
 **Exits.** T-08.
 

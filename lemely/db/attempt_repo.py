@@ -14,10 +14,10 @@ attempt is never observable.
 and :meth:`persist_quiz_correction` (a marked quiz, P3.5 chunk F1 — no
 prediction, a quiz has no grade boundaries) are both thin wrappers around the
 private :meth:`_persist`, which is where the row assembly and the review-queue
-fan-out (low_confidence / plagiarism_flag / ai_detection_flag) actually live.
-Copying that fan-out into a second method — rather than sharing it — is exactly
-how one of the three reasons for flagging would quietly stop firing for
-quizzes; see ``docs/quiz-model.md`` §4.4.
+fan-out (low_confidence / plagiarism_flag) actually live. Copying that fan-out
+into a second method — rather than sharing it — is exactly how one of the two
+reasons for flagging would quietly stop firing for quizzes; see
+``docs/quiz-model.md`` §4.4.
 
 Core→DB enum mapping is by ``.value`` (the core :class:`StrEnum`s and the DB
 :class:`enum.Enum`s share their string members), reusing
@@ -305,11 +305,9 @@ class AttemptRepository:
                 # actual low confidence score, or the D2.4 structural
                 # out-of-range/value-mismatch signal) is why review is needed, so
                 # a high-confidence, in-range question that is *purely*
-                # plagiarism/AI-detection-flagged doesn't also get a duplicate,
-                # mislabeled low_confidence row.
-                marking_flagged = qr.needs_teacher_review and not (
-                    cq.plagiarism_flagged or cq.ai_detection_flagged
-                )
+                # plagiarism-flagged doesn't also get a duplicate, mislabeled
+                # low_confidence row.
+                marking_flagged = qr.needs_teacher_review and not cq.plagiarism_flagged
                 if marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
                     session.add(
                         ReviewQueueItem(
@@ -324,14 +322,6 @@ class AttemptRepository:
                             attempt_id=attempt_id,
                             question_result_id=qr.id,
                             reason=ReviewReason.plagiarism_flag,
-                        )
-                    )
-                if cq.ai_detection_flagged:
-                    session.add(
-                        ReviewQueueItem(
-                            attempt_id=attempt_id,
-                            question_result_id=qr.id,
-                            reason=ReviewReason.ai_detection_flag,
                         )
                     )
         return attempt_id
@@ -369,7 +359,22 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         confidence_band=DBConfidenceBand(cq.confidence.value),
         confidence_score=cq.confidence_score,
         needs_teacher_review=cq.needs_teacher_review,
-        marker_source=MarkerSource(cq.marker_source),
+        # US-031 review MUST-FIX 7: core's MarkerSource-shaped literal gained
+        # a fourth value, "dropped" (an answer the model returned but
+        # extraction discarded as malformed), that the DB's own MarkerSource
+        # enum does not carry -- adding it would need a migration
+        # (ALTER TYPE ... ADD VALUE on the native `markersource` SQL enum,
+        # `db/migrations/versions/0002_core_schema.py`), which is out of
+        # scope for this fix. Map it onto `missing` for storage: from the
+        # DB's perspective both mean "no real marking happened", and the
+        # finer distinction is not lost -- `review_reason` (a plain string
+        # column, no enum constraint) still carries the
+        # dropped-as-malformed message through untouched.
+        marker_source=(
+            MarkerSource.missing
+            if cq.marker_source == "dropped"
+            else MarkerSource(cq.marker_source)
+        ),
         topic=cq.topic,
         student_answer=cq.student_answer,
         expected_answer=cq.expected_answer,

@@ -30,9 +30,9 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 
-from lemely.core.schemas import StrictModel
+from lemely.core.schemas import _SUBJECT_CODE_RE, StrictModel
 
 FigureKind = Literal["image", "vector_drawing", "unmapped_symbol", "diagram_only_option"]
 
@@ -104,7 +104,7 @@ class QuestionPaperQuestion(StrictModel):
 class QuestionPaperMetadata(StrictModel):
     """Header metadata for a question paper — filename-derived, authoritative."""
 
-    subject_code: str = Field(..., pattern=r"^\d{4}$")
+    subject_code: str = Field(...)
     paper_number: int = Field(..., ge=1, le=9)
     paper_variant: int = Field(..., ge=1, le=9)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
@@ -117,6 +117,14 @@ class QuestionPaperMetadata(StrictModel):
         "knob to hide a mismatch (BUILD/BLOCKERS.md B2).",
     )
     source_document: str | None = None
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        # F1: moved off `Field(pattern=...)` — see lemely.core.schemas._SUBJECT_CODE_RE.
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
 
 class QuestionPaper(StrictModel):

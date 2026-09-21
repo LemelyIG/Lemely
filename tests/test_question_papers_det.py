@@ -13,8 +13,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+from pydantic import ValidationError
 
-from lemely.core.question_papers import QuestionPaper
+from lemely.core.question_papers import QuestionPaper, QuestionPaperMetadata
 from lemely.io.det.question_papers import DeterministicQuestionPaperExtractor
 from lemely.runtime.errors import ParseError
 
@@ -418,3 +419,47 @@ def test_mid_paper_blank_page_does_not_truncate_extraction() -> None:
 
     assert [q.ref for q in qp.questions] == ["1", "2"]
     assert "UCLES" not in _all_text(qp)
+
+
+# ---------------------------------------------------------------------------
+# F1 acceptance (3): subject_code moved off `Field(pattern=...)` to a
+# Pydantic validator (3.x models reject the `pattern` JSON-Schema keyword) —
+# the shape check itself must still hold.
+# ---------------------------------------------------------------------------
+
+
+def _question_paper_metadata_kwargs(**overrides: object) -> dict[str, object]:
+    kwargs: dict[str, object] = {
+        "subject_code": "0625",
+        "paper_number": 4,
+        "paper_variant": 2,
+        "session_month": "May/June",
+        "session_year": 2020,
+        "is_mcq": False,
+    }
+    kwargs.update(overrides)
+    return kwargs
+
+
+def test_question_paper_metadata_valid_subject_code_is_accepted() -> None:
+    metadata = QuestionPaperMetadata.model_validate(_question_paper_metadata_kwargs())
+    assert metadata.subject_code == "0625"
+
+
+def test_question_paper_metadata_invalid_subject_code_still_raises() -> None:
+    with pytest.raises(ValidationError):
+        QuestionPaperMetadata.model_validate(_question_paper_metadata_kwargs(subject_code="12a"))
+
+
+def test_question_paper_metadata_rejects_trailing_newline() -> None:
+    """F1 review FIX 6: `.match(r"^\\d{4}$")` lets "1234\n" through — `$`
+    matches just before a trailing newline too. `.fullmatch()` does not."""
+    with pytest.raises(ValidationError):
+        QuestionPaperMetadata.model_validate(_question_paper_metadata_kwargs(subject_code="1234\n"))
+
+
+def test_question_paper_metadata_schema_has_no_pattern_keyword() -> None:
+    import json
+
+    schema_json = json.dumps(QuestionPaperMetadata.model_json_schema())
+    assert "pattern" not in schema_json

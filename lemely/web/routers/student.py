@@ -558,8 +558,8 @@ def student_result(
     boundary rail (rail position from percentage; ``railFoot`` from the resolved
     A-boundary). **Structurally empty:** ``theory`` and ``integrity`` — history
     records persist totals, weak-areas and metadata only, not the per-question
-    answers/mark-scheme points that theory marking and plagiarism/AI-content
-    checks require. Those lists are populated by the ``/correct`` SSE flow which
+    answers/mark-scheme points that theory marking and the plagiarism check
+    require. Those lists are populated by the ``/correct`` SSE flow which
     holds a live :class:`CorrectionResult`; they are empty here by construction.
     """
     history = history_store.load(auth.user_id)
@@ -599,10 +599,10 @@ def student_result(
 def _integrity_summary(record: PaperRecord) -> list[IntegrityRowDTO]:
     """Integrity rows derivable from a history record (data-backed subset).
 
-    A history record has no per-question answers, so plagiarism / AI-content
-    detection cannot run here — those run in the live ``/correct`` flow. The one
-    row we *can* assert from the record is grade-boundary provenance, so the
-    student sees a real, non-fabricated integrity line rather than mock copy.
+    A history record has no per-question answers, so the plagiarism check
+    cannot run here — it runs in the live ``/correct`` flow. The one row we
+    *can* assert from the record is grade-boundary provenance, so the student
+    sees a real, non-fabricated integrity line rather than mock copy.
     """
     _, source = GradeBoundaryStore().resolve(record.metadata)
     detail = {

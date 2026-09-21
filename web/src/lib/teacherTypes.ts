@@ -142,13 +142,12 @@ export interface PaperList {
 /**
  * Per-question grading result carried in `PaperDetailDTO.questions` (mirrors
  * `QuestionResultDTO` in `lemely/web/schemas.py`). `types.ts` already
- * declares a `QuestionResult` missing the two flag fields the DTO carries, so
+ * declares a `QuestionResult` missing the flag field the DTO carries, so
  * this extends it rather than duplicating it — same approach `studentTypes.ts`
  * uses for `StudentCorrectFrame`'s `questions` field.
  */
 export interface QuestionResult extends BaseQuestionResult {
   plagiarismFlagged: boolean
-  aiDetectionFlagged: boolean
 }
 
 /**
@@ -626,8 +625,8 @@ export interface AcknowledgeAtRiskRequest {
 
 /**
  * One T-07 queue row (mirrors `ReviewQueueItemDTO`). `reason` is a
- * `ReviewReason` value (`low_confidence` / `plagiarism_flag` /
- * `ai_detection_flag` / `manual`) and `status` a `ReviewStatus` value
+ * `ReviewReason` value (`low_confidence` / `plagiarism_flag` / `manual` /
+ * `random_audit`) and `status` a `ReviewStatus` value
  * (`open` / `resolved` / `dismissed`) — both plain strings on the wire, not
  * union-typed here, matching every other enum-backed string field elsewhere
  * in this file (e.g. `AtRiskFlag.reason`). `questionResultId`/`questionId`
@@ -766,8 +765,8 @@ export interface ResolveReviewRequest {
  * `DismissReviewRequestDTO`). Dismisses an integrity flag; `note` is an
  * internal record only. Never touches the underlying `QuestionResult` — no
  * student-visible record survives a dismissal (see `ReviewService.dismiss`'s
- * docstring). Restricted server-side to `plagiarism_flag`/`ai_detection_flag`
- * items — a 422 otherwise. */
+ * docstring). Restricted server-side to `plagiarism_flag` items — a 422
+ * otherwise. */
 export interface DismissReviewRequest {
   note?: string | null
 }

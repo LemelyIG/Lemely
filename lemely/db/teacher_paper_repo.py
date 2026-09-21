@@ -133,9 +133,9 @@ def _review_items_for(paper_id: uuid.UUID, report: AccuracyReport) -> Iterator[R
       because ``apply_integrity_checks`` forces ``needs_teacher_review`` True
       and that would mint a duplicate, mislabelled row alongside the specific
       one below.
-    * ``plagiarism_flag`` / ``ai_detection_flag`` per integrity flag actually
-      raised. ``lemely.web.services.grading.grade_paper`` runs
-      ``apply_integrity_checks`` on the console path too, so these are as real
+    * ``plagiarism_flag`` per integrity flag actually raised.
+      ``lemely.web.services.grading.grade_paper`` runs
+      ``apply_integrity_checks`` on the console path too, so this is as real
       here as on a student submission.
 
     ``question_result_id`` stays NULL — a console paper has no
@@ -143,9 +143,7 @@ def _review_items_for(paper_id: uuid.UUID, report: AccuracyReport) -> Iterator[R
     own id instead (migration ``0034``).
     """
     for question in report.correction.questions:
-        marking_flagged = question.needs_teacher_review and not (
-            question.plagiarism_flagged or question.ai_detection_flagged
-        )
+        marking_flagged = question.needs_teacher_review and not question.plagiarism_flagged
         if marking_flagged or question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
             yield ReviewQueueItem(
                 teacher_paper_id=paper_id,
@@ -157,12 +155,6 @@ def _review_items_for(paper_id: uuid.UUID, report: AccuracyReport) -> Iterator[R
                 teacher_paper_id=paper_id,
                 question_id=question.question_id,
                 reason=ReviewReason.plagiarism_flag,
-            )
-        if question.ai_detection_flagged:
-            yield ReviewQueueItem(
-                teacher_paper_id=paper_id,
-                question_id=question.question_id,
-                reason=ReviewReason.ai_detection_flag,
             )
 
 

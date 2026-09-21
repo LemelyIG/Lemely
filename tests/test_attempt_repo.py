@@ -244,14 +244,15 @@ def test_review_queue_only_for_flagged_questions(
 
 
 def _report_with_integrity_flags() -> AccuracyReport:
-    """One HIGH-confidence question flagged for BOTH plagiarism and AI-detection.
+    """One HIGH-confidence question flagged for plagiarism.
 
     ``needs_teacher_review`` is True purely because ``apply_integrity_checks``
     set it (confidence_score is 1.0, well above the review threshold, and
     there is no marking-side out-of-range/value-mismatch signal either) — so
     ``persist_correction`` must NOT also queue a ``low_confidence`` row for
     this question; that would misleadingly label a fully-confident mark as
-    low-confidence. Only the two integrity-specific rows should appear.
+    low-confidence. Only the integrity-specific row should appear. (F4
+    removed the AI-generated-answer flag this fixture used to also set.)
     """
     metadata = ExamMetadata(
         subject_code="0625",
@@ -270,11 +271,10 @@ def _report_with_integrity_flags() -> AccuracyReport:
         student_answer="A",
         expected_answer="A",
         topic="Waves",
-        review_reason="plagiarism (score 0.95) | ai_detection (score 0.90)",
+        review_reason="plagiarism (score 0.95)",
         marker_source="deterministic",
         matched_point_ids=["p1"],
         plagiarism_flagged=True,
-        ai_detection_flagged=True,
     )
     correction = CorrectionResult(metadata=metadata, questions=[flagged])
     prediction = GradePrediction(
@@ -306,11 +306,8 @@ def test_review_queue_includes_integrity_flag_rows(
         reasons = {item.reason for item in items}
         # NOT low_confidence: confidence_score is 1.0 and there is no marking-side
         # out-of-range/value-mismatch signal, so needs_teacher_review is True purely
-        # from the two integrity flags, which already have their own rows below.
-        assert reasons == {
-            ReviewReason.plagiarism_flag,
-            ReviewReason.ai_detection_flag,
-        }
+        # from the integrity flag, which already has its own row below.
+        assert reasons == {ReviewReason.plagiarism_flag}
         assert all(item.attempt_id == attempt_id for item in items)
         question_result_ids = {item.question_result_id for item in items}
         assert len(question_result_ids) == 1

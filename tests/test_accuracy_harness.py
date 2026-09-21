@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -416,13 +417,20 @@ class MeasureAccuracyTests(unittest.TestCase):
         extraction and use ground-truth text even when the case carries a
         scan_path — the arm parameter, not scan_path presence, decides.
         """
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
 
+        scan_path = Path("/nonexistent/scan.pdf")
         case = GoldenCase(
             paper_id="p-oracle-override",
             mark_scheme=self._mark_scheme(["1"]),
             ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
-            scan_path=Path("/nonexistent/scan.pdf"),
+            scan_path=scan_path,
+            renders={DEFAULT_RENDER: scan_path},
         )
 
         with patch("lemely.web.services.grading.extract_answers") as mock_extract:
@@ -456,10 +464,16 @@ class MeasureAccuracyTests(unittest.TestCase):
         concatenated records into ablation_2x2() must yield a non-degenerate
         (not-all-zero) cross-tabulation.
         """
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
         from lemely.eval.analyses import ablation_2x2
 
+        scan_path = Path("/nonexistent/scan.pdf")
         case = GoldenCase(
             paper_id="p-ablation",
             mark_scheme=self._mark_scheme(["1", "2"]),
@@ -467,7 +481,8 @@ class MeasureAccuracyTests(unittest.TestCase):
                 "1": GoldenAnswer(student_answer="A", awarded_marks=1),
                 "2": GoldenAnswer(student_answer="A", awarded_marks=1),
             },
-            scan_path=Path("/nonexistent/scan.pdf"),
+            scan_path=scan_path,
+            renders={DEFAULT_RENDER: scan_path},
         )
 
         oracle_result = measure_accuracy(
@@ -497,12 +512,18 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertFalse(all(v == 0 for v in table.values()))
 
     def test_scan_path_case_uses_extracted_answers_not_ground_truth(self):
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
         # Ground truth text is deliberately NOT a valid MCQ letter — if the
         # harness fed this into correct_paper instead of the extracted text,
         # both questions would be marked wrong.
+        scan_path = Path("/nonexistent/scan.pdf")
         case = GoldenCase(
             paper_id="p2",
             mark_scheme=self._mark_scheme(["1", "2"]),
@@ -510,7 +531,8 @@ class MeasureAccuracyTests(unittest.TestCase):
                 "1": GoldenAnswer(student_answer="ignored", awarded_marks=1),
                 "2": GoldenAnswer(student_answer="ignored", awarded_marks=1),
             },
-            scan_path=Path("/nonexistent/scan.pdf"),
+            scan_path=scan_path,
+            renders={DEFAULT_RENDER: scan_path},
         )
         fake_extracted = ExtractedAnswers(
             paper_id="p2",
@@ -532,9 +554,15 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertTrue(all(r.is_correct for r in result.question_results))
 
     def test_scan_path_case_missing_id_reflected_in_id_match_rate(self):
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
+        scan_path = Path("/nonexistent/scan2.pdf")
         case = GoldenCase(
             paper_id="p3",
             mark_scheme=self._mark_scheme(["1", "2", "3"]),
@@ -543,7 +571,8 @@ class MeasureAccuracyTests(unittest.TestCase):
                 "2": GoldenAnswer(student_answer="A", awarded_marks=1),
                 "3": GoldenAnswer(student_answer="A", awarded_marks=1),
             },
-            scan_path=Path("/nonexistent/scan2.pdf"),
+            scan_path=scan_path,
+            renders={DEFAULT_RENDER: scan_path},
         )
         # Extraction misses question "3" entirely.
         fake_extracted = ExtractedAnswers(
@@ -583,10 +612,16 @@ class MeasureAccuracyTests(unittest.TestCase):
         denominator shrinks to just the one id it got right, scoring 1.0 —
         strictly higher than run A's 2/3, even though B did no better work.
         """
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
         def make_case() -> GoldenCase:
+            scan_path = Path("/nonexistent/scanD18.pdf")
             return GoldenCase(
                 paper_id="pD18",
                 mark_scheme=self._mark_scheme(["1", "2", "3"]),
@@ -595,7 +630,8 @@ class MeasureAccuracyTests(unittest.TestCase):
                     "2": GoldenAnswer(student_answer="A", awarded_marks=1),
                     "3": GoldenAnswer(student_answer="A", awarded_marks=1),
                 },
-                scan_path=Path("/nonexistent/scanD18.pdf"),
+                scan_path=scan_path,
+                renders={DEFAULT_RENDER: scan_path},
             )
 
         extracted_full = ExtractedAnswers(
@@ -627,9 +663,15 @@ class MeasureAccuracyTests(unittest.TestCase):
         EvalRecord (outcome='unmatched', id_match='unmatched',
         predicted_marks=None) and must stay in the mark_accuracy denominator
         — never silently dropped (D18, spec §3.3 outcome table)."""
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
+        scan_path = Path("/nonexistent/scanUnmatched.pdf")
         case = GoldenCase(
             paper_id="pUnmatched",
             mark_scheme=self._mark_scheme(["1", "2", "3"]),
@@ -638,7 +680,8 @@ class MeasureAccuracyTests(unittest.TestCase):
                 "2": GoldenAnswer(student_answer="A", awarded_marks=1),
                 "3": GoldenAnswer(student_answer="A", awarded_marks=1),
             },
-            scan_path=Path("/nonexistent/scanUnmatched.pdf"),
+            scan_path=scan_path,
+            renders={DEFAULT_RENDER: scan_path},
         )
         fake_extracted = ExtractedAnswers(
             paper_id="pUnmatched",
@@ -787,14 +830,21 @@ class MeasureAccuracyTests(unittest.TestCase):
         self.assertIn("extracted=", report)
 
     def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
-        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, measure_accuracy
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            measure_accuracy,
+        )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
+        _case_scan_path = Path("/nonexistent/scan3.pdf")
         case_scan = GoldenCase(
             paper_id="p4",
             mark_scheme=self._mark_scheme(["1"]),
             ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
-            scan_path=Path("/nonexistent/scan3.pdf"),
+            scan_path=_case_scan_path,
+            renders={DEFAULT_RENDER: _case_scan_path},
         )
         case_bypass = GoldenCase(
             paper_id="p5",
@@ -972,6 +1022,7 @@ class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
         what _compute_metrics(question_results) would have computed for the
         same question_results, proving no behavioural drift end-to-end."""
         from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
             GoldenAnswer,
             GoldenCase,
             _compute_metrics,
@@ -979,6 +1030,7 @@ class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
         )
         from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 
+        _case_scan_path = Path("/nonexistent/scan.pdf")
         case_scan = GoldenCase(
             paper_id="p1",
             mark_scheme=self._mark_scheme(["1", "2"]),
@@ -986,7 +1038,8 @@ class EvalRecordDerivationBitIdenticalTests(unittest.TestCase):
                 "1": GoldenAnswer(student_answer="A", awarded_marks=1),
                 "2": GoldenAnswer(student_answer="A", awarded_marks=1),
             },
-            scan_path=Path("/nonexistent/scan.pdf"),
+            scan_path=_case_scan_path,
+            renders={DEFAULT_RENDER: _case_scan_path},
         )
         case_bypass = GoldenCase(
             paper_id="p2",
@@ -1100,17 +1153,57 @@ class RunManifestTests(unittest.TestCase):
             self.assertIsInstance(record, EvalRecord)
         self.assertEqual(len(result.eval_records), len(result.question_results))
 
-    def _settings_with_models(self, **models):
-        """Minimal stand-in for Settings.gemini with controllable per-task models."""
+    def _settings_with_models(
+        self,
+        thinking_level_for=None,
+        temperature_for=None,
+        top_p_for=None,
+        seed_for=None,
+        escalation_confidence_threshold=0.80,
+        **models,
+    ):
+        """Minimal stand-in for Settings.gemini with controllable per-task models.
+
+        F1 review MUST-FIX 1: ``correction_borderline``/``escalation`` are
+        real, independently-resolvable ``model_for()`` tags now (default to
+        the same stand-in model as "correction" unless a caller overrides
+        them), and ``thinking_level_for`` is a real attribute the harness
+        reads — both must exist here or the harness's F1 fingerprint code
+        raises on this stand-in.
+
+        US-028: ``scan_metadata`` is now a resolvable tag too, and
+        ``temperature_for``/``top_p_for``/``seed_for``/
+        ``escalation_confidence_threshold`` are real attributes the harness
+        now reads — all must exist here for the same reason.
+        """
         from types import SimpleNamespace
 
-        defaults = {"mark_scheme": "m-a", "extraction": "m-a", "correction": "m-a"}
+        defaults = {
+            "mark_scheme": "m-a",
+            "extraction": "m-a",
+            "correction": "m-a",
+            "correction_borderline": "m-a",
+            "escalation": "m-a",
+            "scan_metadata": "m-a",
+        }
         defaults.update(models)
         gemini = SimpleNamespace(
             temperature=0.0,
             top_p=1.0,
             seed=7,
             thinking_budget_for={"extraction": 100},
+            thinking_level_for=thinking_level_for or {},
+            # Each default dict below carries one distinct, non-empty entry
+            # (rather than all three rendering identically as ``{}`` ->
+            # ``[]``) so the pinned no-arm-override fingerprint below is
+            # sensitive to *which* of the three dicts a future edit drops,
+            # not just to whether one was dropped at all.
+            temperature_for=(
+                temperature_for if temperature_for is not None else {"mark_scheme": 0.11}
+            ),
+            top_p_for=top_p_for if top_p_for is not None else {"mark_scheme": 0.22},
+            seed_for=seed_for if seed_for is not None else {"mark_scheme": 33},
+            escalation_confidence_threshold=escalation_confidence_threshold,
             model_for=lambda task: defaults[task],
         )
         return SimpleNamespace(gemini=gemini)
@@ -1210,6 +1303,32 @@ class RunManifestTests(unittest.TestCase):
         otherwise-identical inputs. Pinned as a literal (not re-derived by
         calling ``_build_run_manifest`` again) so a future change to the hash
         inputs is caught by this test rather than silently accepted.
+
+        Re-pinned for the F1 review MUST-FIX 1 fix (2026-09-17): the hash now
+        also folds in ``correction_borderline``/``escalation`` models and
+        ``thinking_level_for``, which is a deliberate widening of what
+        invalidates a manifest, not an accidental drift — see
+        ``_build_run_manifest``.
+
+        Re-pinned again for US-028 (2026-09-18): the hash now also folds in
+        ``scan_metadata`` (models_by_task), the per-task ``temperature_for``/
+        ``top_p_for``/``seed_for`` dicts, and
+        ``escalation_confidence_threshold`` — closing the pre-existing gaps
+        the F1 adversarial review found, per the same deliberate-widening
+        rationale as the F1 re-pin above.
+
+        Re-pinned again for I1 (2026-09-18): the hash now also folds in the
+        constant ``EXTRACTION_MEDIA_RESOLUTION`` -- see
+        ``_build_run_manifest``'s I1 comment: nothing set a media resolution
+        before this story, and a per-page-image extraction run must not
+        archive the same fingerprint as a pre-I1 run that set none at all.
+
+        Re-pinned a third time, still under US-028 (2026-09-18 review fix):
+        no further fingerprint input changed here — ``_settings_with_models``
+        itself changed, giving ``temperature_for``/``top_p_for``/``seed_for``
+        each a distinct default entry instead of all three defaulting to
+        ``{}`` (review NIT: makes this pin sensitive to *which* dict a future
+        edit drops, not just to whether one was dropped at all).
         """
         from lemely.accuracy.harness import _build_run_manifest
 
@@ -1220,7 +1339,199 @@ class RunManifestTests(unittest.TestCase):
             settings,
             {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
         )
-        self.assertEqual(manifest.params_fingerprint, "e81756064e0f")
+        self.assertEqual(manifest.params_fingerprint, "af7fa9cd0e2a")
+
+    def test_params_fingerprint_distinguishes_thinking_level_for(self):
+        """F1 review MUST-FIX 1: after the Gemini 3.x migration,
+        ``thinking_level_for`` is the dominant knob on the correction model
+        (2.5's ``thinking_budget_for`` no longer covers it). Two sweeps
+        differing ONLY in ``thinking_level_for["correction"]`` issue
+        genuinely different API calls and must NOT archive the same
+        ``params_fingerprint`` — that would be the exact false-zero-delta
+        failure ``test_params_fingerprint_distinguishes_different_models``
+        already guards for models.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings_low = self._settings_with_models(thinking_level_for={"correction": "low"})
+        settings_high = self._settings_with_models(thinking_level_for={"correction": "high"})
+
+        low = _build_run_manifest(
+            "run-low",
+            [self._case()],
+            settings_low,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        high = _build_run_manifest(
+            "run-high",
+            [self._case()],
+            settings_high,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            low.params_fingerprint,
+            high.params_fingerprint,
+            "a different thinking_level_for['correction'] must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_distinguishes_temperature_for(self):
+        """US-028: ``temperature_for`` per-task overrides were never hashed —
+        only the global ``temperature`` scalar was. The dict is live only for
+        a 2.5-and-earlier tag (``GeminiClient._resolved_gen_params`` returns
+        ``temperature=None`` unconditionally for any 3.x model and never
+        reads it) — today that means "mark_scheme" (still 2.5-flash, D20);
+        any other tag can move onto 2.5 in a future sweep. It is hashed
+        unconditionally regardless of which tag it is keyed on, a deliberate
+        over-approximation that errs toward telling two runs apart rather
+        than risk missing a case where it genuinely changes a call. Two
+        sweeps differing ONLY in ``temperature_for["correction"]`` must NOT
+        archive the same ``params_fingerprint``.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings_low = self._settings_with_models(temperature_for={"correction": 0.0})
+        settings_high = self._settings_with_models(temperature_for={"correction": 1.0})
+
+        low = _build_run_manifest(
+            "run-temp-low",
+            [self._case()],
+            settings_low,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        high = _build_run_manifest(
+            "run-temp-high",
+            [self._case()],
+            settings_high,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            low.params_fingerprint,
+            high.params_fingerprint,
+            "a different temperature_for['correction'] must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_distinguishes_top_p_for(self):
+        """US-028: ``top_p_for`` per-task overrides were never hashed — only
+        the global ``top_p`` scalar was. Same "live only for a 2.5-and-
+        earlier tag, hashed unconditionally as a deliberate over-
+        approximation" rationale as ``temperature_for`` above.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings_low = self._settings_with_models(top_p_for={"correction": 0.5})
+        settings_high = self._settings_with_models(top_p_for={"correction": 0.9})
+
+        low = _build_run_manifest(
+            "run-topp-low",
+            [self._case()],
+            settings_low,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        high = _build_run_manifest(
+            "run-topp-high",
+            [self._case()],
+            settings_high,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            low.params_fingerprint,
+            high.params_fingerprint,
+            "a different top_p_for['correction'] must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_distinguishes_seed_for(self):
+        """US-028: ``seed_for`` per-task overrides were never hashed — only
+        the global ``seed`` scalar was. Same "live only for a 2.5-and-earlier
+        tag, hashed unconditionally as a deliberate over-approximation"
+        rationale as ``temperature_for``/``top_p_for`` above.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings_a = self._settings_with_models(seed_for={"correction": 1})
+        settings_b = self._settings_with_models(seed_for={"correction": 2})
+
+        a = _build_run_manifest(
+            "run-seed-a",
+            [self._case()],
+            settings_a,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        b = _build_run_manifest(
+            "run-seed-b",
+            [self._case()],
+            settings_b,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            a.params_fingerprint,
+            b.params_fingerprint,
+            "a different seed_for['correction'] must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_distinguishes_escalation_confidence_threshold(self):
+        """US-028: ``escalation_confidence_threshold`` decides WHICH calls a
+        run issues (whether a low-confidence mark escalates to the stronger
+        escalation model at all) and is a knob a measurement sweep may
+        legitimately vary — it was entirely absent from the hash, so two
+        such sweeps collided on the same ``params_fingerprint`` despite
+        issuing a different set of calls.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings_low = self._settings_with_models(escalation_confidence_threshold=0.5)
+        settings_high = self._settings_with_models(escalation_confidence_threshold=0.9)
+
+        low = _build_run_manifest(
+            "run-esc-low",
+            [self._case()],
+            settings_low,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        high = _build_run_manifest(
+            "run-esc-high",
+            [self._case()],
+            settings_high,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            low.params_fingerprint,
+            high.params_fingerprint,
+            "a different escalation_confidence_threshold must change the run's params_fingerprint",
+        )
+
+    def test_params_fingerprint_distinguishes_scan_metadata_model(self):
+        """US-028: ``scan_metadata_model`` resolves through its own
+        ``model_for("scan_metadata")`` tag but was never named in
+        ``models_by_task``, so two sweeps differing only in the scan-metadata
+        model collided on the same ``params_fingerprint``. This harness path
+        never issues a scan-metadata call itself (that tag is only ever
+        resolved on the ingestion path, ``lemely/io/scan_metadata.py``) —
+        recording it here is on the same "record the resolved pipeline
+        config this run is an instance of" basis as "mark_scheme" already is
+        above, not a claim that this run's own calls exercise it.
+        """
+        from lemely.accuracy.harness import _build_run_manifest
+
+        settings = self._settings_with_models()
+        different = self._settings_with_models(scan_metadata="m-DIFFERENT")
+
+        base = _build_run_manifest(
+            "run-scanmeta-base",
+            [self._case()],
+            settings,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        changed = _build_run_manifest(
+            "run-scanmeta-changed",
+            [self._case()],
+            different,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+        self.assertNotEqual(
+            base.params_fingerprint,
+            changed.params_fingerprint,
+            "a different scan_metadata model must change the run's params_fingerprint",
+        )
 
     def test_manifest_is_a_run_manifest_instance(self):
         from lemely.accuracy.harness import measure_accuracy
@@ -1489,3 +1800,448 @@ class CoherenceTriggerWiringTests(unittest.TestCase):
         )
         self.assertNotIn("coherence_mismatch", record.triggers)
         self.assertIn("needs_teacher_review", record.triggers)
+
+
+class CostCeilingAbortsTheSweepTests(unittest.TestCase):
+    """US-030: a run that breached its spend ceiling is never archived.
+
+    ``_check_cost_ceiling`` raises :class:`~lemely.runtime.errors.CostCeilingError`
+    -- a stop signal for the whole run. Before this fix ``correct_paper``'s broad
+    ``except Exception`` absorbed it into a ``marker_source="missing"`` question
+    with ``awarded=0`` and ``review_reason="AI marking failed: USD ceiling
+    (...)"``, so the sweep ran to completion over every remaining case and the
+    CLI archived a full accuracy report whose zeros were indistinguishable from
+    real model failures. The breach must abort the sweep with nothing archived.
+    """
+
+    @staticmethod
+    def _theory_mark_scheme(question_ids: list[str]) -> object:
+        from lemely.core.loose_schemas import MarkScheme
+
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 4,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2 * len(question_ids),
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": qid,
+                        "marks": 2,
+                        "type": "explanation",
+                        "question_command": "explain why",
+                        "answer_points": [
+                            {"id": "p1", "point": "the reason", "marks": 2},
+                        ],
+                    }
+                    for qid in question_ids
+                ],
+            }
+        )
+
+    @staticmethod
+    def _mark_response() -> object:
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=2, confidence=0.9, matched_point_ids=["p1"], feedback="good"
+        )
+
+    def _cases(self) -> list[object]:
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase
+
+        return [
+            GoldenCase(
+                paper_id=paper_id,
+                mark_scheme=self._theory_mark_scheme(["1", "2"]),
+                ground_truth={
+                    "1": GoldenAnswer(student_answer="the reason", awarded_marks=2),
+                    "2": GoldenAnswer(student_answer="the reason", awarded_marks=2),
+                },
+                scan_path=None,
+            )
+            for paper_id in ("p-first", "p-second")
+        ]
+
+    def _marker_that_breaches_after(self, n_successes: int):
+        """A ``mark_question`` stub: ``n_successes`` clean marks, then the
+        ceiling binds and keeps binding (as the real client's check does)."""
+        from lemely.runtime.errors import CostCeilingError
+
+        calls: list[str] = []
+
+        def _mark_question(_self, question, *args, **kwargs):
+            calls.append(question.id)
+            if len(calls) > n_successes:
+                raise CostCeilingError(
+                    "USD ceiling ($14.0000) exceeded; persistent cumulative spend "
+                    "is $14.0100 (across all runs)."
+                )
+            return self._mark_response()
+
+        return _mark_question, calls
+
+    def test_measure_accuracy_aborts_the_sweep_and_returns_no_result(self) -> None:
+        """Three clean marks, then the ceiling binds on the fourth (the second
+        paper's last leaf). ``measure_accuracy`` must raise rather than return
+        an ``AccuracyResult`` -- no ``RunManifest``, no metrics, no records."""
+        from unittest.mock import MagicMock
+
+        from lemely.accuracy.harness import measure_accuracy
+        from lemely.io.correction_ai import AICorrector
+        from lemely.runtime.errors import CostCeilingError
+
+        stub, calls = self._marker_that_breaches_after(3)
+
+        with (
+            patch.object(AICorrector, "mark_question", stub),
+            self.assertRaises(CostCeilingError) as ctx,
+        ):
+            measure_accuracy(
+                self._cases(),
+                # ``default_cache_mode`` is the one attribute
+                # ``_build_run_manifest`` reads off the client; a bare
+                # MagicMock would fail RunManifest validation and mask
+                # the behaviour under test.
+                gemini_client=MagicMock(default_cache_mode="bypass"),
+                settings=None,
+                arm="oracle+mark",
+            )
+
+        self.assertIn("USD ceiling", str(ctx.exception))
+        # Exactly four attempts: the run stopped at the breach instead of
+        # re-breaching on every remaining leaf.
+        self.assertEqual(len(calls), 4)
+
+    def test_a_breach_mid_sweep_archives_no_report_and_exits_ten(self) -> None:
+        """AC4, end to end through the CLI.
+
+        Asserts on the ABSENCE of the archived artifact -- ``--results-dir``
+        stays empty, so no ``<date>-<sha>.json`` carrying a ``RunManifest``
+        and a metric table was written -- and on the exit classification:
+        ``CostCeilingError.exit_code`` is 10, not 1 (an unhandled programming
+        error) and not 0 (a run reported as complete).
+        """
+        import json as _json
+        from unittest.mock import MagicMock
+
+        from lemely.app.cli import main
+        from lemely.io.correction_ai import AICorrector
+
+        stub, calls = self._marker_that_breaches_after(3)
+
+        with tempfile.TemporaryDirectory() as tmp:
+            golden_dir = Path(tmp) / "golden"
+            results_dir = Path(tmp) / "results"
+            results_dir.mkdir(parents=True)
+            for case in self._cases():
+                case_dir = golden_dir / case.paper_id
+                case_dir.mkdir(parents=True)
+                (case_dir / "mark_scheme.json").write_text(
+                    case.mark_scheme.model_dump_json(), encoding="utf-8"
+                )
+                (case_dir / "answers.json").write_text(
+                    _json.dumps(
+                        {
+                            qid: {"student_answer": gt.student_answer, "awarded_marks": 2}
+                            for qid, gt in case.ground_truth.items()
+                        }
+                    ),
+                    encoding="utf-8",
+                )
+
+            with (
+                patch.object(AICorrector, "mark_question", stub),
+                patch(
+                    "lemely.io.gemini.GeminiClient",
+                    # ``default_cache_mode`` is read back off the client into
+                    # ``RunManifest.cache_mode``; a bare MagicMock would fail
+                    # that validation and exit 1 for an unrelated reason.
+                    return_value=MagicMock(default_cache_mode="bypass"),
+                ),
+            ):
+                exit_code = main(
+                    [
+                        "measure-accuracy",
+                        "--golden",
+                        str(golden_dir),
+                        "--results-dir",
+                        str(results_dir),
+                        "--arm",
+                        "oracle+mark",
+                    ]
+                )
+
+            archived = sorted(p.name for p in results_dir.iterdir())
+
+        self.assertEqual(len(calls), 4)
+        # Nothing archived: no result JSON, so no manifest and no metric table
+        # claiming this partial run as a completed measurement.
+        self.assertEqual(archived, [])
+        # Classified as a budget-ceiling stop (exit 10), not 1 / not 0.
+        self.assertEqual(exit_code, 10)
+
+
+class CorpusDigestTests(unittest.TestCase):
+    """US-029: `_corpus_digest` must fold in the two inputs actually sent to
+    the model (the mark scheme content and the scan bytes) so that two runs
+    over corpora that differ only in those respects do not collide on the
+    same digest, while staying stable when nothing changed at all.
+    """
+
+    def _build_corpus(
+        self,
+        root: Path,
+        *,
+        case_name: str = "0625_m20_qp_12",
+        maximum_mark: int = 1,
+        scan_bytes: bytes = b"%PDF-1.4 fake scan bytes, version A\n",
+    ) -> Path:
+        case_dir = root / case_name
+        case_dir.mkdir(parents=True, exist_ok=True)
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": maximum_mark,
+                "scheme_format": "mcq",
+            },
+            "questions": [
+                {"id": "1", "marks": maximum_mark, "type": "mcq", "mcq_answer": "A"},
+            ],
+        }
+        (case_dir / "mark_scheme.json").write_text(json.dumps(ms), encoding="utf-8")
+        answers = {"1": {"student_answer": "A", "awarded_marks": 1}}
+        (case_dir / "answers.json").write_text(json.dumps(answers), encoding="utf-8")
+        (case_dir / "scan.pdf").write_bytes(scan_bytes)
+        return case_dir
+
+    def _digest_of(self, golden_dir: Path) -> str:
+        from lemely.accuracy.harness import _corpus_digest, load_golden_cases
+
+        cases = load_golden_cases(golden_dir)
+        self.assertEqual(len(cases), 1, "test corpus must load exactly one case")
+        return _corpus_digest(cases)
+
+    def test_digest_stable_across_repeated_runs(self):
+        """Same corpus, loaded and digested twice, must produce the same
+        digest — a digest that moves on every invocation for no reason is
+        as useless as one that never moves at all (AC 4).
+        """
+        with tempfile.TemporaryDirectory() as tmp:
+            golden_dir = Path(tmp)
+            self._build_corpus(golden_dir)
+
+            first = self._digest_of(golden_dir)
+            second = self._digest_of(golden_dir)
+
+        self.assertEqual(first, second)
+
+    def test_digest_moves_when_mark_scheme_edited(self):
+        """Editing a golden ``mark_scheme.json`` must move the digest (AC 2):
+        before this story, `_corpus_digest` folded in only `paper_id`,
+        `fixture_variant`, and the ground-truth leaves — never the mark
+        scheme content — so this edit was invisible to it and two sweeps
+        against different mark schemes could collide on one digest.
+        """
+        with (
+            tempfile.TemporaryDirectory() as original_root,
+            tempfile.TemporaryDirectory() as edited_root,
+        ):
+            original_case_dir = self._build_corpus(Path(original_root))
+            original_digest = self._digest_of(Path(original_root))
+
+            # Copy to a second throwaway temp dir, then mutate ONLY the copy
+            # — never the original golden fixture in place.
+            edited_golden_dir = Path(edited_root)
+            edited_case_dir = edited_golden_dir / "0625_m20_qp_12"
+            shutil.copytree(original_case_dir, edited_case_dir)
+            ms_path = edited_case_dir / "mark_scheme.json"
+            ms = json.loads(ms_path.read_text(encoding="utf-8"))
+            ms["metadata"]["maximum_mark"] = 2
+            ms["questions"][0]["marks"] = 2
+            ms_path.write_text(json.dumps(ms), encoding="utf-8")
+
+            edited_digest = self._digest_of(edited_golden_dir)
+
+        self.assertNotEqual(original_digest, edited_digest)
+
+    def test_digest_moves_when_scan_rerendered(self):
+        """Re-rendering a golden ``scan.pdf`` (same paper, same answers,
+        different bytes) must move the digest (AC 2): before this story,
+        `_corpus_digest` never read scan bytes at all, so a re-render was
+        invisible to run identity.
+        """
+        with (
+            tempfile.TemporaryDirectory() as original_root,
+            tempfile.TemporaryDirectory() as edited_root,
+        ):
+            original_case_dir = self._build_corpus(Path(original_root))
+            original_digest = self._digest_of(Path(original_root))
+
+            edited_golden_dir = Path(edited_root)
+            edited_case_dir = edited_golden_dir / "0625_m20_qp_12"
+            shutil.copytree(original_case_dir, edited_case_dir)
+            (edited_case_dir / "scan.pdf").write_bytes(b"%PDF-1.4 fake scan bytes, RE-RENDERED\n")
+
+            edited_digest = self._digest_of(edited_golden_dir)
+
+        self.assertNotEqual(original_digest, edited_digest)
+
+    def test_digest_ignores_missing_render_file_without_raising(self):
+        """A case constructed with a render path that does not exist on disk
+        (as several existing `measure_accuracy` tests do, e.g. with
+        ``scan_path=Path("/nonexistent/scan.pdf")``) must not crash the
+        digest — it simply contributes no scan bytes for that render.
+        """
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            MarkScheme,
+            _corpus_digest,
+        )
+
+        mark_scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 1,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "mcq",
+                    "maximum_mark": 1,
+                    "scheme_format": "mcq",
+                },
+                "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+            }
+        )
+        missing_scan_path = Path("/nonexistent/scan.pdf")
+        case = GoldenCase(
+            paper_id="p-missing-render",
+            mark_scheme=mark_scheme,
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=missing_scan_path,
+            renders={DEFAULT_RENDER: missing_scan_path},
+        )
+
+        digest = _corpus_digest([case])
+
+        self.assertIsInstance(digest, str)
+        self.assertEqual(len(digest), 16)
+
+    def test_scan_path_without_matching_render_raises(self):
+        """SF-1 (review): `GoldenCase.__post_init__` must refuse a case whose
+        ``scan_path`` disagrees with ``renders[DEFAULT_RENDER]`` — including
+        the empty-``renders`` shape — because `_corpus_digest` folds
+        ``renders``, not ``scan_path``, and a case built this way would
+        silently exclude its own scan bytes from the digest: exactly the
+        pre-US-029 defect, one field away. `load_golden_cases` always keeps
+        the two fields in agreement, so this can only happen via direct
+        construction (as ~20 test sites in this file used to do before this
+        fix), which is exactly why it must raise rather than pass silently.
+        """
+        from lemely.accuracy.harness import GoldenAnswer, GoldenCase, MarkScheme
+
+        mark_scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 1,
+                    "paper_variant": 2,
+                    "session_month": "May/June",
+                    "session_year": 2020,
+                    "paper_type": "mcq",
+                    "maximum_mark": 1,
+                    "scheme_format": "mcq",
+                },
+                "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+            }
+        )
+
+        with self.assertRaises(ValueError) as ctx:
+            GoldenCase(
+                paper_id="p-bad-invariant",
+                mark_scheme=mark_scheme,
+                ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+                scan_path=Path("/some/real/looking/scan.pdf"),
+                # renders left empty — disagrees with scan_path.
+            )
+
+        self.assertIn("invariant", str(ctx.exception).lower())
+
+    def test_digest_distinguishes_declared_missing_render_from_undeclared(self):
+        """SF-2 (review): a render that is DECLARED but missing on disk must
+        not digest identically to a corpus where that render was never
+        declared at all — before this fix, folding the render's byte
+        content only (and skipping the name on a missing file) made
+        ``{default: real, handwritten: missing}`` and ``{default: real}``
+        collide, silently treating two different corpora as the same one.
+        """
+        from lemely.accuracy.harness import (
+            DEFAULT_RENDER,
+            GoldenAnswer,
+            GoldenCase,
+            MarkScheme,
+            _corpus_digest,
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            real_scan = Path(tmp) / "scan.pdf"
+            real_scan.write_bytes(b"%PDF-1.4 real bytes\n")
+
+            mark_scheme = MarkScheme.model_validate(
+                {
+                    "metadata": {
+                        "subject": "Physics",
+                        "subject_code": "0625",
+                        "paper_number": 1,
+                        "paper_variant": 2,
+                        "session_month": "May/June",
+                        "session_year": 2020,
+                        "paper_type": "mcq",
+                        "maximum_mark": 1,
+                        "scheme_format": "mcq",
+                    },
+                    "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+                }
+            )
+            ground_truth = {"1": GoldenAnswer(student_answer="A", awarded_marks=1)}
+
+            case_with_declared_missing_render = GoldenCase(
+                paper_id="p-declared-missing",
+                mark_scheme=mark_scheme,
+                ground_truth=ground_truth,
+                scan_path=real_scan,
+                renders={
+                    DEFAULT_RENDER: real_scan,
+                    "handwritten": Path("/nonexistent/handwritten.pdf"),
+                },
+            )
+            case_without_that_render = GoldenCase(
+                paper_id="p-declared-missing",
+                mark_scheme=mark_scheme,
+                ground_truth=ground_truth,
+                scan_path=real_scan,
+                renders={DEFAULT_RENDER: real_scan},
+            )
+
+            digest_with_declared_missing = _corpus_digest([case_with_declared_missing_render])
+            digest_without = _corpus_digest([case_without_that_render])
+
+        self.assertNotEqual(digest_with_declared_missing, digest_without)

@@ -4,7 +4,28 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
+
+# F1 (Gemini 3.x migration): 3.x models reject the JSON-Schema `pattern`
+# keyword outright (brief #15/B7), so the subject_code shape check that used
+# to live in `Field(pattern=...)` — and therefore in the schema Gemini's
+# structured-output call sends — moves to a plain Pydantic validator, which
+# enforces the same shape without emitting a `pattern` keyword anywhere in
+# `model_json_schema()`. See lemely.core.loose_schemas.MarkSchemeMetadata and
+# lemely.core.question_papers.QuestionPaperMetadata for the other two sites.
+#
+# F1 review FIX 7 (2026-09-17): the regex itself is defined in
+# lemely.core.loose_schemas, not here, and re-exported by this import.
+# loose_schemas is the LOWER module in the import-linter layering — it
+# imports nothing from lemely — while lemely.labelling (which is
+# contract-forbidden from depending on this module, the correction
+# pipeline's schemas) already imports loose_schemas directly. Defining the
+# constant here and importing it into loose_schemas (the shape this module
+# shipped with originally) made loose_schemas transitively depend on
+# schemas.py and broke that contract; importing it the other way round does
+# not, since question_papers.py already imports StrictModel from here with
+# no cycle either way.
+from lemely.core.loose_schemas import _SUBJECT_CODE_RE as _SUBJECT_CODE_RE
 
 
 class StrictModel(BaseModel):
@@ -48,12 +69,19 @@ REVIEW_CONFIDENCE_THRESHOLD = 0.90
 
 
 class ExamMetadata(StrictModel):
-    subject_code: str = Field(..., pattern=r"^\d{4}$")
+    subject_code: str = Field(...)
     paper_number: int = Field(..., ge=1, le=9)
     paper_variant: int = Field(..., ge=1, le=9)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
     session_year: int | None = Field(None, ge=2000, le=2100)
     source_document: str | None = None
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
 
 class SourceLibraryEntry(StrictModel):
@@ -125,16 +153,55 @@ class CorrectedQuestion(StrictModel):
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
-    marker_source: Literal["deterministic", "ai", "missing"] = "deterministic"
+    marker_source: Literal["deterministic", "ai", "missing", "dropped"] = "deterministic"
+    """``"dropped"`` (US-031 review MUST-FIX 7): the model DID return an
+    answer for this question, but extraction discarded it as malformed
+    (unrecoverable ``question_id``/``answer`` shape) -- see
+    ``ExtractedAnswers.dropped_question_ids``. Distinct from ``"missing"``,
+    which covers ``--mcq-only``/no AI client (nothing was ever attempted),
+    so the review queue does not conflate "we chose not to mark this" with
+    "the model's response for this question could not be used at all".
+
+    COVERAGE LIMIT (review MUST-FIX F1) -- this protection is PARTIAL. It
+    reaches only the two drop reasons that leave a usable ``question_id``:
+    ``missing_answer`` and ``malformed_answer``. Three do not, because there
+    is no id to attribute the flag to, and each still yields a confident
+    UNFLAGGED zero that also pays for a marking call:
+
+    * ``missing_question_id``
+    * ``malformed_question_id`` -- where MF5 routes a fractional-float id.
+      Correct in itself (a silent zero beats mis-attributing an answer to a
+      different question) but still a silent zero.
+    * ``malformed_answer_shape`` -- the MF6 case, one bad element in the
+      ``answers`` list. The paper survives where it previously did not, but
+      that one question is exactly the defect MF7 exists to remove.
+
+    DB ROUND-TRIP (review SHOULD-FIX F3) -- ``"dropped"`` does NOT survive
+    persistence. ``lemely.db.models.enums.MarkerSource`` is a native Postgres
+    enum with only ``deterministic``/``ai``/``missing``, so
+    ``attempt_repo.py`` maps ``"dropped"`` onto ``missing`` on write; the
+    distinguishing text survives only in ``review_reason``. The split shows
+    in the review screen, where ``review_repo.py:440`` reads the DB enum and
+    yields ``"missing"`` while ``review_repo.py:1042`` reads ``report_json``
+    and yields ``"dropped"`` -- two labels for one situation in one queue.
+    US-038 carries the enum migration."""
     feedback: str | None = None
     matched_point_ids: list[str] = Field(default_factory=list)
     plagiarism_flagged: bool = False
-    ai_detection_flagged: bool = False
     extraction_confidence: float | None = None
     """Extraction-side confidence (``ExtractedAnswer.confidence``) for the answer
     this question was built from, distinct from ``confidence_score`` which is the
-    marking-stage confidence. ``None`` when no answer was extracted for this
-    question (spec §4 M1.1)."""
+    marking-stage confidence. ``None`` when no *surviving* answer was extracted
+    for this question -- which, since US-031, has two distinct causes that this
+    field alone cannot separate: the model genuinely returned nothing for this
+    question, OR it returned something that was discarded as malformed before
+    reaching ``ExtractedAnswers.answers`` (review SHOULD-FIX C). Check
+    ``marker_source == "dropped"`` to tell the two apart -- but ONLY on an
+    in-memory ``CorrectedQuestion``. Anything read back from the
+    ``QuestionResult`` table has already been narrowed to ``"missing"`` by the
+    Postgres enum (see ``marker_source`` above, review SHOULD-FIX F3), so
+    there the two causes are indistinguishable by this route and only
+    ``review_reason``'s text separates them."""
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:
@@ -201,22 +268,140 @@ class AccuracyReport(StrictModel):
     grade_prediction: GradePrediction
 
 
+class SourceBox(StrictModel):
+    """A bounding box on one rasterised page, 0-1000 scale (I1).
+
+    ``page`` is the 0-based index of the image part sent to Gemini (see
+    ``lemely.io.rasterise.RasterisedPage.index``); ``box`` is
+    ``[ymin, xmin, ymax, xmax]`` normalised to 0-1000 regardless of the
+    page's actual pixel dimensions, matching Gemini's documented bounding-box
+    convention for image inputs. Kept beside the prose ``source_region`` on
+    :class:`ExtractedAnswer` rather than replacing it -- the box is what the
+    crop-and-re-read step needs; the prose is what a human reviewer reads.
+    """
+
+    page: int = Field(..., ge=0)
+    box: list[int] = Field(..., min_length=4, max_length=4)
+
+    @field_validator("box")
+    @classmethod
+    def validate_box_coords(cls, v: list[int]) -> list[int]:
+        for coord in v:
+            if not 0 <= coord <= 1000:
+                raise ValueError(f"box coordinates must be in [0, 1000], got {v!r}")
+        ymin, xmin, ymax, xmax = v
+        if ymax <= ymin or xmax <= xmin:
+            raise ValueError(
+                f"box must have positive area (ymax > ymin and xmax > xmin), got {v!r}"
+            )
+        return v
+
+
 class ExtractedAnswer(StrictModel):
     question_id: str
     answer: str
     confidence: float = Field(..., ge=0.0, le=1.0)
     source_region: str | None = None
+    source_box: SourceBox | None = None
     working_out: str | None = None
     """Working steps, intermediate values, and annotations the student wrote in
     allowed areas (e.g. rough-work boxes, show-your-working space). Populated for
     calculation, equation, levels-based, and indicative-content questions; null for
     MCQ and simple-recall questions where no working is expected."""
+    answer_reread: str | None = None
+    """Set by the crop-and-re-read step (I1) when triggered by low confidence
+    or (once I3 lands) low cross-read agreement: a single-answer re-extraction
+    from an upscaled crop of ``source_box``, at ``media_resolution="high"``.
+    ``None`` when no re-read was triggered."""
+    reread_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
+    """Similarity between ``answer`` and ``answer_reread`` (0-1). ``None``
+    when no re-read was triggered."""
 
 
 class ExtractedAnswers(StrictModel):
     paper_id: str
     source_scan: str
     answers: list[ExtractedAnswer]
+    source_box_drops: dict[str, int] = Field(default_factory=dict)
+    """Count of ``source_box`` values dropped during extraction, by reason
+    (``"out_of_range_page"`` / ``"malformed_coordinates"``). Persisted here
+    (I1 review round 2, should-fix 4) rather than only published as a
+    transient bus event, so a later box-hit-rate metric's denominator shape
+    is reconstructible from the record itself: without this, a
+    ``source_box=None`` answer is indistinguishable from "the model gave no
+    box at all" and "the model's box was dropped as unusable", and an
+    extractor that hallucinates page indices would score better than one
+    returning wrong-but-in-range boxes. Empty when nothing was dropped."""
+    answer_drops: dict[str, int] = Field(default_factory=dict)
+    """Count of whole ANSWERS dropped during extraction (US-031), by reason
+    (``"missing_question_id"`` / ``"malformed_question_id"`` /
+    ``"missing_answer"`` / ``"malformed_answer"`` / ``"malformed_answer_shape"``
+    -- the last one when the list ELEMENT itself, not a field on it, could
+    not be shaped into an answer at all). Unlike ``source_box``,
+    ``question_id``/``answer`` have no safe fallback -- an answer that
+    cannot be identified or has no text at all is dropped in full, never the
+    rest of the paper with it. Empty when nothing was dropped."""
+    confidence_repairs: dict[str, int] = Field(default_factory=dict)
+    """Count of ``confidence`` values repaired during extraction (US-031),
+    by reason (``"missing"`` / ``"non_finite"`` / ``"out_of_range"`` /
+    ``"malformed"``). ``confidence`` is required on ``ExtractedAnswer`` and
+    so cannot be dropped to ``None`` like ``source_box`` -- an unusable
+    value -- including an out-of-range one, which is replaced rather than
+    clamped toward the bound it overshot -- is replaced with a low
+    fallback, counted here so a value the model never actually gave is
+    distinguishable from a genuine one. Empty when nothing was repaired."""
+    field_repairs: dict[str, int] = Field(default_factory=dict)
+    """Count of optional cosmetic fields (US-031 review NIT A) silently
+    coerced to ``None`` during extraction, by reason
+    (``"malformed_source_region"`` / ``"malformed_working_out"``) -- a
+    non-string ``source_region``/``working_out`` used to be discarded with
+    no entry in any count dict anywhere, breaking the
+    ``(value, drop_reason)`` idiom every other field in this module follows.
+    The direction is safe (only a calibration bonus is forfeited), but the
+    silence was not. Empty when nothing was repaired."""
+    dropped_question_ids: list[str] = Field(default_factory=list)
+    """Question ids (US-031 review MUST-FIX 7, stronger fix) whose answer
+    was RETURNED by the model but DROPPED as malformed -- only populated
+    when a question_id was itself salvageable (an ``"missing_answer"`` /
+    ``"malformed_answer"`` drop reason in :data:`answer_drops`); an answer
+    dropped because the question_id itself was unrecoverable
+    (``"missing_question_id"`` / ``"malformed_question_id"`` /
+    ``"malformed_answer_shape"``) cannot be attributed to any question and
+    never appears here. ``correct_paper`` (:mod:`lemely.io.correction_ai`)
+    reads this to distinguish "this question's answer was extracted and
+    discarded as malformed" from "no answer was extracted for this question
+    at all" -- both otherwise collapse to the SAME observable state
+    (``student_answer=None``, ``extraction_confidence=None``) once the
+    dropped answer never reaches :attr:`answers`, and correcting a paper
+    with this ambiguity meant a malformed-JSON drop and a genuine student
+    blank were indistinguishable to every downstream consumer. Remapped to
+    real manifest ids by :func:`normalize_extracted_answers`, the same as
+    ``answers``' own ids. Empty when nothing was dropped with a known id."""
+    rereads_eligible: int = 0
+    """How many answers were low-confidence enough (below
+    ``reread_threshold``) to be eligible for a crop-and-re-read, before the
+    per-paper cap was applied. Together with ``reread_attempts`` this makes
+    the cap's effect reconstructible from the record: without it,
+    ``reread_attempts`` alone cannot distinguish "only N answers were
+    low-confidence" from "the cap truncated far more than N down to it" (I1
+    review round 4, SHOULD-FIX E)."""
+    reread_attempts: int = 0
+    """How many crop-and-re-read calls this extraction *attempted*, after
+    the per-paper cap. Renamed from ``rereads_run`` (I1 review round 4,
+    SHOULD-FIX E): the old name and docstring claimed this counted calls
+    actually *issued* to Gemini, but it is the size of the capped re-read
+    set computed before the loop runs -- on a fully cache-hit re-run it
+    reports N attempts for zero calls actually issued, and a re-read that
+    raised and was absorbed (see the ``LemelyError`` handler in
+    ``GeminiAnswerExtractor.__call__``) still counts here as one attempt.
+    Useful for sizing the loop and the cap's effect, not as a paid-call
+    count -- ``lemely.io.gemini``'s ``GEMINI_CALL_START``/
+    ``GEMINI_CACHE_HIT`` bus events are the source of truth for actual API
+    calls issued."""
+    reread_threshold: float | None = None
+    """The confidence threshold that gated which answers were eligible for
+    a re-read on this run. ``None`` only when this ``ExtractedAnswers`` was
+    not produced by the crop-and-re-read-aware extraction path at all."""
 
 
 class AIMarkResponse(StrictModel):
@@ -227,7 +412,7 @@ class AIMarkResponse(StrictModel):
 
 
 class SubjectResult(StrictModel):
-    subject_code: str = Field(..., pattern=r"^\d{4}$")
+    subject_code: str = Field(...)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
     session_year: int | None = Field(None, ge=2000, le=2100)
     paper_results: list[CorrectionResult] = Field(..., min_length=1)
@@ -237,6 +422,13 @@ class SubjectResult(StrictModel):
     grade: str = "U"
     weaknesses: WeaknessReport
     needs_teacher_review: bool = False
+
+    @field_validator("subject_code")
+    @classmethod
+    def validate_subject_code(cls, v: str) -> str:
+        if not _SUBJECT_CODE_RE.fullmatch(v):
+            raise ValueError(f"subject_code must be a four-digit CAIE syllabus code, got {v!r}.")
+        return v
 
     @model_validator(mode="after")
     def validate_and_compute(self) -> SubjectResult:

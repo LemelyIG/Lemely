@@ -20,7 +20,14 @@ from lemely.core.schemas import (
     WeakArea as CoreWeakArea,
 )
 
-MarkerSource = Literal["deterministic", "ai", "missing"]
+# US-031 review MUST-FIX 7: "dropped" (an answer the model returned but
+# extraction discarded as malformed, distinct from "missing" -- nothing was
+# ever attempted -- and from a live "ai" marking failure) is a fourth real
+# value of CorrectedQuestion.marker_source (lemely/core/schemas.py). Without
+# it here, question_to_dto's markerSource=question.marker_source raised a
+# pydantic ValidationError for the exact class of answer this fix exists to
+# surface, turning a wrong-but-flagged mark into an unhandled 500 instead.
+MarkerSource = Literal["deterministic", "ai", "missing", "dropped"]
 
 
 class ApiModel(BaseModel):
@@ -41,7 +48,6 @@ class QuestionResultDTO(ApiModel):
     matchedPointIds: list[str] | None = None
     reviewReason: str | None = None
     plagiarismFlagged: bool = False
-    aiDetectionFlagged: bool = False
     topic: str | None = None
 
 
@@ -103,7 +109,6 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         matchedPointIds=list(question.matched_point_ids) or None,
         reviewReason=question.review_reason,
         plagiarismFlagged=question.plagiarism_flagged,
-        aiDetectionFlagged=question.ai_detection_flagged,
         topic=question.topic,
     )
 

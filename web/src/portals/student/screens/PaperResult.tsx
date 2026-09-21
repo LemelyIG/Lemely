@@ -293,12 +293,13 @@ const FILTER_EMPTY_COPY: Record<
  * app has no separate question-detail route, so the expand affordance is
  * where that content actually lives.
  *
- * Deliberately drops the old per-question "Plagiarism flagged" / "AI-detection
- * flagged" pills that used to render here: QUALITY-BAR.md is explicit that
- * integrity flags are teacher-only and must never read as an accusation on a
- * student-facing screen. `plagiarismFlagged`/`aiDetectionFlagged` stay on the
- * DTO (no data-flow change) but are no longer rendered to the student. Noted
- * in the P2.5.3 report as a deliberate deviation.
+ * Deliberately drops the old per-question "Plagiarism flagged" pill that used
+ * to render here: QUALITY-BAR.md is explicit that integrity flags are
+ * teacher-only and must never read as an accusation on a student-facing
+ * screen. `plagiarismFlagged` stays on the DTO (no data-flow change) but is
+ * no longer rendered to the student. Noted in the P2.5.3 report as a
+ * deliberate deviation. (F4 removed the sibling AI-generated-answer flag
+ * this comment used to also name.)
  *
  * C3a adds the All / Lost / Flagged tabs above the row list, reading
  * `filterQuestions` — the tabs themselves only render when there is a real

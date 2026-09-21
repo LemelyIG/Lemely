@@ -81,8 +81,9 @@ def grade_paper(
         student_id: When set, the paper is recorded under this id.
         history_store: Store used to persist the record; required for recording.
         boundary_store: Grade-boundary source; a default store is used if omitted.
-        integrity_settings: Plagiarism/AI-detection advisory-flag settings; the
-            defensive defaults (plagiarism on, AI-detection off) apply if omitted.
+        integrity_settings: Plagiarism advisory-flag settings (F4 removed the
+            AI-detection half); the defensive default (plagiarism on) applies
+            if omitted.
 
     Returns:
         The assembled accuracy report.
