@@ -357,14 +357,17 @@ class SelfReviewService:
                         student_evidence=evidence or "",
                     )
 
-            # Phase B — judge, holding nothing: no session, no transaction, no
-            # row lock, no pooled connection. `qr` is detached here, but every
-            # attribute `_judge_safely` reads off it (`qr.id`, for logging)
-            # was already loaded while the session above was open.
-            judge_results: dict[str, JudgeVerdict | None] = {
-                mark_point_id: self._judge_safely(request, qr)
-                for mark_point_id, request in judge_requests.items()
-            }
+        # Phase B — judge, holding nothing: no session, no transaction, no
+        # row lock, no pooled connection. Phase A's `with` block above has
+        # already exited by the time this runs, so its session is closed and
+        # its connection returned to the pool before the first judge call —
+        # not merely unlocked, but off the pool entirely. `qr` is detached
+        # here, but every attribute `_judge_safely` reads off it (`qr.id`,
+        # for logging) was already loaded while the session above was open.
+        judge_results: dict[str, JudgeVerdict | None] = {
+            mark_point_id: self._judge_safely(request, qr)
+            for mark_point_id, request in judge_requests.items()
+        }
 
         # Phase C — apply, locked.
         with self._sessionmaker() as session, session.begin():

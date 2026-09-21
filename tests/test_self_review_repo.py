@@ -34,6 +34,7 @@ from lemely.core.loose_schemas import Question as SchemeQuestion
 from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
 from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import (
+    REVIEW_CONFIDENCE_THRESHOLD,
     AccuracyReport,
     ConfidenceBand,
     CorrectedQuestion,
@@ -2013,10 +2014,24 @@ def test_judge_runs_with_the_row_unlocked(pg_sessionmaker: sessionmaker[Session]
     assert p2.mark_changed is True
 
 
+#: Bound on the second-session actions below (S2 task 11a review, M5): if a
+#: row lock is ever reintroduced around the judge call, these used to hang
+#: forever instead of failing. Joining a background thread with a timeout
+#: turns that back into a named, bounded pytest failure without adding a
+#: dependency or touching production code.
+_COMPETING_ACTION_TIMEOUT = 10.0
+
+
 class _CompetingSubmitJudge:
     """Judge that, mid-call, runs a full second ``submit`` for the *same*
     question on its own session/service — simulating a second request
-    arriving while the first is still off judging."""
+    arriving while the first is still off judging.
+
+    Run on a background thread and joined with a bound (M5): a reintroduced
+    row lock would make the competing submit's own ``for_update=True`` read
+    block forever, and a plain synchronous call here would hang the whole
+    test run instead of failing it.
+    """
 
     def __init__(
         self,
@@ -2033,18 +2048,29 @@ class _CompetingSubmitJudge:
         self.competing_error: BaseException | None = None
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
-        try:
-            # Full agreement with the marker: no evidence needed, so this
-            # competing pass needs no judge of its own and can complete
-            # entirely inside the window this call is holding open.
-            self.competing_view = _service(self._sm).submit(
-                self._student,
-                self._attempt_id,
-                self._qr_id,
-                [PointVerdict("p1", True), PointVerdict("p2", False)],
+        def _run() -> None:
+            try:
+                # Full agreement with the marker: no evidence needed, so this
+                # competing pass needs no judge of its own and can complete
+                # entirely inside the window this call is holding open.
+                self.competing_view = _service(self._sm).submit(
+                    self._student,
+                    self._attempt_id,
+                    self._qr_id,
+                    [PointVerdict("p1", True), PointVerdict("p2", False)],
+                )
+            except BaseException as exc:
+                self.competing_error = exc
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        thread.join(timeout=_COMPETING_ACTION_TIMEOUT)
+        if thread.is_alive():
+            raise AssertionError(
+                "competing submit did not complete within "
+                f"{_COMPETING_ACTION_TIMEOUT}s -- the QuestionResult row is still locked "
+                "during the judge call (Task 11a lock regression)"
             )
-        except BaseException as exc:
-            self.competing_error = exc
         return JudgeVerdict(accepted=True, reason="ok")
 
 
@@ -2081,7 +2107,12 @@ def test_one_pass_survives_the_judging_window(pg_sessionmaker: sessionmaker[Sess
 class _TeacherOverrideDuringJudgeJudge:
     """Judge that lands a teacher override on a second session mid-call,
     before returning an accept -- simulating the state drifting inside the
-    unlocked judging window."""
+    unlocked judging window.
+
+    The write is run on a background thread and joined with a bound (M5): if
+    the row is still locked (a reintroduced Task 11a regression), the second
+    session's ``UPDATE`` would otherwise block forever behind it.
+    """
 
     def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID, *, override_marks: int) -> None:
         self._sm = sm
@@ -2089,10 +2120,28 @@ class _TeacherOverrideDuringJudgeJudge:
         self._override_marks = override_marks
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
-        with self._sm.begin() as session:
-            qr = session.get(QuestionResult, self._qr_id)
-            assert qr is not None
-            qr.teacher_awarded_marks = self._override_marks
+        error: list[BaseException] = []
+
+        def _run() -> None:
+            try:
+                with self._sm.begin() as session:
+                    qr = session.get(QuestionResult, self._qr_id)
+                    assert qr is not None
+                    qr.teacher_awarded_marks = self._override_marks
+            except BaseException as exc:
+                error.append(exc)
+
+        thread = threading.Thread(target=_run, daemon=True)
+        thread.start()
+        thread.join(timeout=_COMPETING_ACTION_TIMEOUT)
+        if thread.is_alive():
+            raise AssertionError(
+                "teacher override write did not complete within "
+                f"{_COMPETING_ACTION_TIMEOUT}s -- the QuestionResult row is still locked "
+                "during the judge call (Task 11a lock regression)"
+            )
+        if error:
+            raise error[0]
         return JudgeVerdict(accepted=True, reason="looks fine")
 
 
@@ -2125,3 +2174,174 @@ def test_state_drift_inside_the_window_is_not_a_silent_verdict(
     assert qr.is_self_marked
     assert qr.awarded_marks == 1  # the AI's own mark is never mutated
     assert qr.student_selfmark_marks is None  # nothing moved
+
+
+class _PoolProbeJudge:
+    """Judge that records ``pool.checkedout()`` mid-call.
+
+    Distinct from ``_LockProbeJudge`` (S2 task 11a review, Critical 1): an
+    unlocked ``SELECT`` proves the row isn't locked, but a pooled connection
+    can still be held open for the whole judge call regardless of any row
+    lock -- an "idle in transaction" backend that starves the pool without
+    ever touching this row again. This pins the connection itself.
+    """
+
+    def __init__(self, engine: sa.engine.Engine) -> None:
+        self._engine = engine
+        self.checked_out_during_judge: int | None = None
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        self.checked_out_during_judge = self._engine.pool.checkedout()  # type: ignore[attr-defined]
+        return JudgeVerdict(accepted=True, reason="ok")
+
+
+def test_judge_runs_with_no_pooled_connection_checked_out(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """S2 task 11a review, Critical 1: Phase B's judge comprehension used to
+    sit *inside* Phase A's ``with self._sessionmaker() as session:`` block,
+    so every judge call held a pooled connection whose backend sat "idle in
+    transaction" for the round trip -- the connection half of the GATE this
+    task exists to close, undetected by the row-lock probe above (an
+    unlocked read still checks out a connection for as long as its session
+    stays open). Phase A's session must be closed -- its connection returned
+    to the pool -- before the first judge call, not merely unlocked."""
+    engine = pg_sessionmaker.kw["bind"]
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _PoolProbeJudge(engine)
+
+    _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    assert judge.checked_out_during_judge == 0
+
+
+class _DriftPointIntoJudgeJudge:
+    """Judge that, mid-call (while judging a *different*, correctly-planned
+    point), flips another point's ``awarded`` flag on a second session -- so
+    that other point disagrees for the first time and Phase C decides
+    ``JUDGE`` for it, even though Phase A never planned a request for it."""
+
+    def __init__(self, sm: sessionmaker[Session], drift_point_id: uuid.UUID) -> None:
+        self._sm = sm
+        self._drift_point_id = drift_point_id
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        with self._sm.begin() as session:
+            point = session.get(QuestionResultPoint, self._drift_point_id)
+            assert point is not None
+            point.awarded = True
+        return JudgeVerdict(accepted=True, reason="p1 evidence checks out")
+
+
+def test_a_point_that_drifts_into_judge_with_no_planned_request_is_unjudged_not_a_silent_accept(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """S2 task 11a review, Important 2: ``judge_results.get(mark_point_id)``
+    with no default must mean unjudged for a point Phase C decides ``JUDGE``
+    for but Phase A never planned a request for -- never a silent accept,
+    which would be automatic grade inflation nothing in this suite noticed
+    (the review turned this into a passing mutant with a one-line default).
+
+    p1 disagrees with evidence in Phase A: planned, judged, accepted. While
+    p1's judge call is in flight, a second session flips p2's ``awarded``
+    flag -- p2 agreed with the marker in Phase A (so no request was planned
+    for it) and now disagrees by the time Phase C re-decides it. p2 must
+    land on the honest unjudged path (a ``student_evidence_unjudged`` queue
+    row), never on p1's judge verdict and never on an invented accept."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    with pg_sessionmaker() as session:
+        p2_id = session.scalars(
+            select(QuestionResultPoint.id).where(
+                QuestionResultPoint.question_result_id == qr_id,
+                QuestionResultPoint.mark_point_id == "p2",
+            )
+        ).one()
+    judge = _DriftPointIntoJudgeJudge(pg_sessionmaker, p2_id)
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict("p1", earned=False, evidence="I made an error"),
+            PointVerdict("p2", earned=False, evidence="also mine"),
+        ],
+    )
+
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    assert p1.evidence_verdict == "accepted"
+    assert p1.mark_changed is True
+    assert p2.evidence_verdict is None  # unjudged: not p1's verdict, not an invented accept
+    assert p2.mark_changed is False
+    assert view.pending_teacher is True
+    rows = _queue_rows(pg_sessionmaker, qr_id)
+    assert [r.reason for r in rows] == [ReviewReason.student_evidence_unjudged]
+
+
+class _LowerConfidenceDuringJudgeJudge:
+    """Judge that drops ``confidence_score`` below the review threshold on a
+    second session mid-call, before returning a *reject* -- flipping the
+    question from high- to low-confidence inside the unlocked judging
+    window. A deliberate reject (not an accept) so a correct GRANT recompute
+    in Phase C is distinguishable from a stale JUDGE recompute that
+    consumed this verdict."""
+
+    def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID) -> None:
+        self._sm = sm
+        self._qr_id = qr_id
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        with self._sm.begin() as session:
+            qr = session.get(QuestionResult, self._qr_id)
+            assert qr is not None
+            qr.confidence_score = REVIEW_CONFIDENCE_THRESHOLD - 0.1
+        return JudgeVerdict(accepted=False, reason="not shown -- GRANT should win, not this")
+
+
+def test_low_confidence_recomputed_in_phase_c_overrides_a_stale_phase_a_judge_plan(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """S2 task 11a review, Important 4: Phase C must recompute
+    ``low_confidence`` from the row it actually locks, not reuse Phase A's
+    value -- the same defect class as I3 (``teacher_settled``, already
+    covered by ``test_state_drift_inside_the_window_is_not_a_silent_verdict``)
+    on the very next line of the function, and just as silently green if
+    deleted (the review confirmed the whole suite passes with that line cut).
+
+    The question starts high-confidence, so Phase A plans p2 as ``JUDGE``.
+    While that judge call is in flight, a second session drops
+    ``confidence_score`` below the threshold -- low-confidence by the time
+    Phase C re-decides. The point must be GRANTed on the student's own
+    verdict, never on the judge's (deliberately rejecting) verdict: a leaked
+    stale ``low_confidence=False`` would keep the decision at ``JUDGE`` and
+    apply the reject instead, moving nothing."""
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(matched=["p1"]), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+    judge = _LowerConfidenceDuringJudgeJudge(pg_sessionmaker, qr_id)
+
+    view = _service(pg_sessionmaker, judge=judge).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict("p1", True), PointVerdict("p2", True, evidence="I wrote the unit, N.")],
+    )
+
+    p2 = next(p for p in view.points if p.mark_point_id == "p2")
+    # not_required/mark_changed True == the GRANT path won on the student's
+    # own verdict; a leaked-stale JUDGE would instead show "rejected" and
+    # mark_changed False.
+    assert p2.evidence_verdict == "not_required"
+    assert p2.mark_changed is True
+    qr = _load_qr(pg_sessionmaker, qr_id)
+    assert qr.student_selfmark_marks == 2
