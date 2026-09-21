@@ -1922,10 +1922,21 @@ def test_a_question_whose_points_predate_the_group_columns_is_not_self_reviewabl
 
 def test_points_are_settleable_only_when_grouped_points_carry_their_group() -> None:
     """The predicate itself, away from the database."""
-    independent = _PointFlags(is_alternative=False, is_optional=False, group_key=None)
-    grouped = _PointFlags(is_alternative=True, is_optional=False, group_key="alt:1")
-    ungrouped_alt = _PointFlags(is_alternative=True, is_optional=False, group_key=None)
-    ungrouped_optional = _PointFlags(is_alternative=False, is_optional=True, group_key=None)
+    independent = _PointFlags(
+        is_alternative=False, is_optional=False, group_key=None, group_max_marks=None
+    )
+    grouped = _PointFlags(
+        is_alternative=True, is_optional=False, group_key="alt:1", group_max_marks=2
+    )
+    ungrouped_alt = _PointFlags(
+        is_alternative=True, is_optional=False, group_key=None, group_max_marks=None
+    )
+    ungrouped_optional = _PointFlags(
+        is_alternative=False, is_optional=True, group_key=None, group_max_marks=None
+    )
+    capless_group = _PointFlags(
+        is_alternative=True, is_optional=False, group_key="alt:1", group_max_marks=None
+    )
 
     assert points_are_settleable([independent, independent])
     assert points_are_settleable([independent, grouped, grouped])
@@ -1934,3 +1945,6 @@ def test_points_are_settleable_only_when_grouped_points_carry_their_group() -> N
     # Conservative: one ungrouped member is enough to withhold the question,
     # even beside properly grouped ones.
     assert not points_are_settleable([grouped, grouped, ungrouped_alt])
+    # The same hole from the other side: a named group with no cap makes
+    # _settle_groups fall back to the sum of its members' tariffs.
+    assert not points_are_settleable([independent, capless_group])

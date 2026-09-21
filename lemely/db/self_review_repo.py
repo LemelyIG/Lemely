@@ -491,14 +491,16 @@ class SelfReviewService:
                     QuestionResultPoint.is_alternative,
                     QuestionResultPoint.is_optional,
                     QuestionResultPoint.group_key,
+                    QuestionResultPoint.group_max_marks,
                 ).where(QuestionResultPoint.question_result_id.in_([qr.id for qr in results]))
             ).all()
-            for qr_id, is_alternative, is_optional, group_key in flag_rows:
+            for qr_id, is_alternative, is_optional, group_key, group_max_marks in flag_rows:
                 group_flags.setdefault(qr_id, []).append(
                     _PointFlags(
                         is_alternative=is_alternative,
                         is_optional=is_optional,
                         group_key=group_key,
+                        group_max_marks=group_max_marks,
                     )
                 )
             return [
@@ -624,15 +626,18 @@ class _HasGroupFlags(Protocol):
     def is_optional(self) -> bool: ...
     @property
     def group_key(self) -> str | None: ...
+    @property
+    def group_max_marks(self) -> int | None: ...
 
 
 @dataclass(frozen=True, slots=True)
 class _PointFlags:
-    """The three group columns, read without loading whole point rows."""
+    """The four group columns, read without loading whole point rows."""
 
     is_alternative: bool
     is_optional: bool
     group_key: str | None
+    group_max_marks: int | None
 
 
 def points_are_settleable(points: Iterable[_HasGroupFlags]) -> bool:
@@ -660,7 +665,12 @@ def points_are_settleable(points: Iterable[_HasGroupFlags]) -> bool:
     direction hands out marks the scheme never had.
     """
     return not any(
-        (point.is_alternative or point.is_optional) and point.group_key is None for point in points
+        ((point.is_alternative or point.is_optional) and point.group_key is None)
+        # A named group with no cap is the same hole from the other side:
+        # _settle_groups falls back to the sum of the members' tariffs, which
+        # is exactly the uncapped arithmetic the group data exists to prevent.
+        or (point.group_key is not None and point.group_max_marks is None)
+        for point in points
     )
 
 
