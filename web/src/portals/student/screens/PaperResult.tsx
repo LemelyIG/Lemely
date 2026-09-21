@@ -21,6 +21,7 @@ import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
@@ -31,9 +32,11 @@ import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
  *     `/student/correct` run completes - carries a real `questions` array, so
  *     the flat per-question list renders.
  *   - history: `GET /student/result/{paperId}` (useResult) when there's no
- *     live state (browsing from `Subject`'s paper-history table) - no
- *     per-question detail is stored for history records, so an honest note
- *     replaces the list instead of an empty or fabricated one.
+ *     live state (browsing from `Subject`'s paper-history table), for the
+ *     header - plus `GET /student/attempts/{attemptId}/questions`
+ *     (useAttemptQuestions) for the per-question rows, when the record
+ *     carries an attempt id. A file-store record has none, so an honest
+ *     note replaces the list instead of an empty or fabricated one.
  * The shared header (marks/percentage/grade, boundary bar, integrity +
  * provenance sidebar) renders from whichever source is active.
  *
@@ -410,6 +413,49 @@ function filterFromParams(searchParams: URLSearchParams): QuestionFilter {
   return raw === "lost" || raw === "flagged" ? raw : "all"
 }
 
+/**
+ * The history-sourced question list. A separate component so the hook is
+ * called unconditionally inside `QueryState`'s render prop. `result.attemptId`
+ * is `null` for a file-store record, which leaves the query disabled and the
+ * list empty — the same honest state this screen always had for those.
+ */
+function HistoryQuestions({
+  result,
+  filter,
+  onFilterChange,
+  onShare,
+}: {
+  result: Result
+  filter: QuestionFilter
+  onFilterChange: (filter: QuestionFilter) => void
+  onShare?: () => void
+}) {
+  const questions = useAttemptQuestions(result.attemptId)
+  if (result.attemptId && questions.isPending) {
+    return <ListSkeleton rows={5} />
+  }
+  const rows = questions.data ?? []
+  const summary = confidenceSummaryOf(rows)
+  return (
+    <>
+      {rows.length > 0 ? (
+        <ConfidenceIndicatorSummary
+          confident={summary.confident}
+          uncertain={summary.uncertain}
+          needsReview={summary.needsReview}
+        />
+      ) : null}
+      <QuestionList
+        questions={rows}
+        subjectCode={result.code.split("/")[0]}
+        onShare={onShare}
+        filter={filter}
+        onFilterChange={onFilterChange}
+      />
+    </>
+  )
+}
+
 export function PaperResult() {
   const { paperId } = useParams<{ paperId: string }>()
   const location = useLocation()
@@ -552,34 +598,25 @@ export function PaperResult() {
           <>
             <ResultHeader res={data} paperId={paperId} />
             {/*
-             * PR 4 investigation (deferred audit item): checked whether
-             * `ResultDTO` — `data` here — actually carries per-question rows
-             * before touching this. It does not, and not by omission: every
-             * `GET /student/result/{paper_id}` response builds `theory=[]`
-             * unconditionally (`routers/student.py::student_result`, whose
-             * own docstring calls it "structurally empty" — history rows
-             * persist totals, weak-areas and metadata only, never the
-             * per-question answers/mark-scheme points theory marking used).
-             * `theory` is also the wrong shape for this list regardless:
-             * `TheoryQuestionDTO` (`conf`/`confColor`/`points`/`markOk`, all
-             * pre-bucketed presentation fields) is not `QuestionResult`
-             * (`confidence`/`awardedMarks`/`reviewReason`, the raw fields
-             * `QuestionList`/`confidenceTierFor` read) — passing it through
-             * would need a second, speculative mapping for data that never
-             * arrives today. `questions={[]}` is therefore the honest
-             * literal, not a stand-in for `data.theory`: it renders
-             * `QuestionList`'s own "No per-question detail for this paper"
-             * empty state, which is the true state of every history-sourced
-             * result right now. Revisit this once the backend actually
-             * populates per-question history detail — the live path just
-             * above already proves `QuestionList` can render it real.
+             * `data.theory` is never the source for this list: it's the
+             * wrong shape (`TheoryQuestionDTO`'s pre-bucketed
+             * `conf`/`confColor`/`points`/`markOk`, not `QuestionResult`'s
+             * raw `confidence`/`awardedMarks`/`reviewReason`) and every
+             * `GET /student/result/{paper_id}` response still builds it as
+             * `[]` unconditionally (`routers/student.py::student_result`).
+             * The real rows come from a second endpoint keyed on the
+             * attempt instead: `GET /student/attempts/{attemptId}/questions`
+             * (`useAttemptQuestions`, `HistoryQuestions` below). A
+             * file-store record has no `attemptId`, which disables that
+             * query and leaves `QuestionList`'s own honest "No per-question
+             * detail for this paper" empty state — the true state of that
+             * one record, not a stand-in for data that could exist.
              */}
-            <QuestionList
-              questions={[]}
-              subjectCode={data.code.split("/")[0]}
-              onShare={paperId ? shareHandler(data, paperId) : undefined}
+            <HistoryQuestions
+              result={data}
               filter={filter}
               onFilterChange={setFilter}
+              onShare={paperId ? shareHandler(data, paperId) : undefined}
             />
           </>
         )}

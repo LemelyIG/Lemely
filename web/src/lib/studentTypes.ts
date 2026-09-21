@@ -194,6 +194,13 @@ export interface Result {
   theory: TheoryQuestion[]
   integrity: IntegrityRow[]
   provenance: string
+  /**
+   * `attempts.id` for a relationally-stored result; `null` for a file-store
+   * record (mirrors `ResultDTO.attemptId`). Addresses
+   * `GET /student/attempts/{attemptId}/questions` for the history branch's
+   * per-question rows, and the self-review routes.
+   */
+  attemptId?: string | null
 }
 
 // ── Upload + correct (self-mark) ─────────────────────────────────────────
