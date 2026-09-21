@@ -29,15 +29,21 @@ from lemely.db.models.attempts import QuestionResult
 from lemely.db.self_review_repo import SelfReviewService
 from lemely.web.deps import get_self_review_service
 from lemely.web.schemas_student_self_review import SelfReviewPendingDTO, SelfReviewPendingPointDTO
+from tests import test_student_correct as _student_correct
 from tests.conftest import _scheme
-from tests.test_student_correct import (  # noqa: F401 — pytest fixtures, reused by import
-    _seed_user,
-    client,
-    corpus_repo,
-    gemini_client,
-    pg_sessionmaker,
-    settings,
-)
+from tests.test_student_correct import _seed_user
+
+# Fixtures are re-exported by attribute, not imported by name: a plain ``from
+# ... import client`` makes every test parameter named ``client`` an F811
+# redefinition, and the only way to silence that per file is to switch F811 off
+# for the whole module — which is also what catches two tests sharing a name,
+# one of which then never runs. Assignment binds the same fixture objects and
+# keeps the rule live.
+client = _student_correct.client
+corpus_repo = _student_correct.corpus_repo
+gemini_client = _student_correct.gemini_client
+pg_sessionmaker = _student_correct.pg_sessionmaker
+settings = _student_correct.settings
 
 if TYPE_CHECKING:
     from fastapi.testclient import TestClient
