@@ -548,6 +548,7 @@ class GeminiClient:
         response_schema: type[BaseModel] | None = None,
         *,
         media_resolution: str | None = None,
+        tool: str | None = None,
     ) -> str:
         """Hash every input that can change the model's output.
 
@@ -572,6 +573,18 @@ class GeminiClient:
         a per-page-image extraction call (``media_resolution="medium"``)
         would collide in the on-disk cache with a pre-I1 call that set no
         media resolution at all, silently serving a stale cached reply.
+
+        N3: ``tool`` folds in too — ``"code_execution"`` for
+        :meth:`generate_with_code_execution`, ``None`` for every plain
+        :meth:`generate_structured` call. Per
+        docs/plans/ai-improvements-plan.md:615 ("cache key includes tool
+        flag"), a code-execution call and a plain call sharing the same
+        prompt and model must never share a cache entry: the two ask Gemini
+        to do different things (verify an answer by running code vs. just
+        answer), so a cache hit across them would silently serve one call's
+        reply for the other's request — in the dangerous direction, a
+        verification that never actually ran being satisfied by a cached
+        plain reply.
         """
         params = self._resolved_gen_params(task_tag, model)
         schema_hash = ""
@@ -582,7 +595,7 @@ class GeminiClient:
         raw = (
             f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
             f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
-            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}"
+            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}|{tool or 'none'}"
         )
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
@@ -830,6 +843,94 @@ class GeminiClient:
             cache_path.write_text(raw_text, encoding="utf-8")
         return result
 
+    def generate_with_code_execution(
+        self,
+        *,
+        prompt: str,
+        prompt_version: str,
+        model: str | None = None,
+        extra_cache_key: str = "",
+        task_tag: str | None = None,
+        cache_mode: Literal["read_write", "bypass", "refresh"] | None = None,
+    ) -> str:
+        """N3 step 3: ask Gemini's own ``code_execution`` tool to run code.
+
+        This is Gemini's built-in tool (``docs/plans/ai-improvements-plan.md``
+        :615) — NOT a locally-built sandbox. No subprocess, no local process
+        isolation; the code runs on Google's side and this method only reads
+        back the ``code_execution_result`` part of the response.
+
+        Unlike :meth:`generate_structured`, this is a plain-text call (no
+        ``response_schema`` — the ``code_execution`` tool and structured JSON
+        output are not combined here) and returns the raw text of whatever
+        the executed code printed, for the caller
+        (:mod:`lemely.io.question_gates`) to compare against a stated answer
+        itself.
+
+        The cache key folds in ``tool="code_execution"``
+        (:meth:`_params_fingerprint`) so this can never share a cache entry
+        with a plain :meth:`generate_structured` call over the same prompt
+        and model — see that method's docstring for why a collision there
+        would be dangerous, not merely wasteful.
+        """
+        if cache_mode is None:
+            cache_mode = self.default_cache_mode
+        if cache_mode not in ("read_write", "bypass", "refresh"):
+            raise ValueError(
+                f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
+            )
+        g = self._settings.gemini
+        if model is not None:
+            active_model = model
+        elif task_tag is not None:
+            active_model = g.model_for(task_tag)
+        else:
+            active_model = g.model
+
+        log = structlog.get_logger().bind(
+            component="gemini_client",
+            model=active_model,
+            task=task_tag or "untagged",
+            tool="code_execution",
+        )
+
+        params_fingerprint = self._params_fingerprint(
+            active_model, task_tag, None, tool="code_execution"
+        )
+        cache_key = self._cache_key(
+            active_model,
+            prompt,
+            "",
+            prompt_version,
+            None,
+            extra_cache_key,
+            params_fingerprint,
+        )
+        cache_path = self._cache_path(cache_key)
+
+        if cache_mode == "read_write" and cache_path.exists():
+            log.info("gemini_cache_hit", cache_key=cache_key)
+            bus.publish(
+                EventType.GEMINI_CACHE_HIT,
+                task=task_tag or "untagged",
+                model=active_model,
+                cache_key=cache_key,
+            )
+            return cache_path.read_text(encoding="utf-8")
+
+        self._check_cost_ceiling()
+
+        bus.publish(
+            EventType.GEMINI_CALL_START,
+            task=task_tag or "untagged",
+            model=active_model,
+        )
+        raw_text = self._call_code_execution_once(active_model, prompt, log, task_tag)
+
+        if cache_mode in ("read_write", "refresh"):
+            cache_path.write_text(raw_text, encoding="utf-8")
+        return raw_text
+
     def _call_with_retry(
         self,
         model: str,
@@ -1056,3 +1157,81 @@ class GeminiClient:
         if finish == "MAX_TOKENS":
             raise _TransientError(f"Gemini hit max_output_tokens ({model})")
         return raw
+
+    def _call_code_execution_once(
+        self, model: str, prompt: str, log: Any, task_tag: str | None
+    ) -> str:
+        """Send ``prompt`` with Gemini's ``code_execution`` tool enabled.
+
+        Returns the ``output`` of the response's ``code_execution_result``
+        part. No retry loop here (unlike :meth:`_call_with_retry`) — a
+        code-execution call is only ever made from
+        :mod:`lemely.io.question_gates`' fallback path, where a transient
+        failure is just one more reason the gate could not verify this
+        question, not a case that needs its own retry policy layered on top
+        of the caller's own regenerate-on-reject loop.
+
+        Raises:
+            ParseError: the response has no ``code_execution_result`` part
+                (the model answered in prose instead of running code, or the
+                execution itself errored) — never returned as an empty
+                string, so a caller cannot mistake "nothing to compare" for
+                "the sandbox found no output".
+        """
+        from google.genai import types
+
+        tool = types.Tool(code_execution=types.ToolCodeExecution())
+        t0 = time.monotonic()
+        try:
+            response = self._client.models.generate_content(
+                model=model,
+                config=types.GenerateContentConfig(tools=[tool]),
+                contents=[prompt],
+            )
+        except Exception as exc:
+            raise ExternalServiceError(str(exc)) from exc
+        latency_ms = int((time.monotonic() - t0) * 1000)
+
+        global _process_input_tokens, _process_output_tokens, _process_accumulated_usd
+        in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
+        candidates_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
+        thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
+        out_tok = candidates_tok + thoughts_tok
+        _process_input_tokens += in_tok
+        _process_output_tokens += out_tok
+        in_price, out_price = _resolve_pricing(model, self._settings)
+        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
+        _process_accumulated_usd += usd
+        if self._ledger is not None:
+            self._ledger.add(usd, thresholds=self._settings.gemini.usd_warning_thresholds)
+
+        log.info(
+            "gemini_call",
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            thoughts_tokens=thoughts_tok,
+            usd_cost=round(usd, 6),
+            cache_hit=False,
+            latency_ms=latency_ms,
+            tool="code_execution",
+        )
+        bus.publish(
+            EventType.GEMINI_CALL_END,
+            task=task_tag or "untagged",
+            model=model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            usd_cost=round(usd, 6),
+            latency_ms=latency_ms,
+        )
+
+        candidates = response.candidates or []
+        parts = candidates[0].content.parts if candidates and candidates[0].content else []
+        for part in parts or []:
+            result = getattr(part, "code_execution_result", None)
+            output = getattr(result, "output", None) if result is not None else None
+            if output:
+                return str(output)
+        raise ParseError(
+            f"Gemini code_execution call ({model}) returned no code_execution_result part."
+        )

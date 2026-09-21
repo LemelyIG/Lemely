@@ -135,6 +135,46 @@ def _mock_response_without_thoughts_attr(
     return resp
 
 
+def _mock_code_execution_response(
+    output: str, in_tok: int = 10, out_tok: int = 20, thoughts_tok: int = 0
+) -> MagicMock:
+    """A stubbed Gemini response carrying a ``code_execution_result`` part,
+    shaped like the real ``google-genai`` SDK response to a call with the
+    ``code_execution`` tool enabled: ``candidates[0].content.parts`` holds
+    one part whose ``code_execution_result.output`` is the executed code's
+    printed output."""
+    resp = MagicMock()
+    part = MagicMock()
+    part.code_execution_result.output = output
+    content = MagicMock()
+    content.parts = [part]
+    cand = MagicMock()
+    cand.content = content
+    resp.candidates = [cand]
+    resp.usage_metadata = MagicMock(
+        prompt_token_count=in_tok,
+        candidates_token_count=out_tok,
+        thoughts_token_count=thoughts_tok,
+    )
+    return resp
+
+
+def _mock_response_without_code_execution_result(in_tok: int = 10, out_tok: int = 20) -> MagicMock:
+    """A response whose parts carry no ``code_execution_result`` at all —
+    the model answered in prose instead of running code."""
+    resp = MagicMock()
+    part = MagicMock(spec=[])
+    content = MagicMock()
+    content.parts = [part]
+    cand = MagicMock()
+    cand.content = content
+    resp.candidates = [cand]
+    resp.usage_metadata = MagicMock(
+        prompt_token_count=in_tok, candidates_token_count=out_tok, thoughts_token_count=0
+    )
+    return resp
+
+
 class _IsolatedEnv:
     def __enter__(self) -> _IsolatedEnv:
         self._snap = dict(os.environ)
@@ -1304,6 +1344,113 @@ class I1MediaResolutionTests(unittest.TestCase):
             extra_cache_key="manifestkey:reread:1:0:[1, 2, 3, 4]",
         )
         self.assertEqual((r1.value, r2.value), ("primary", "reread"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+
+class CodeExecutionTests(unittest.TestCase):
+    """N3 (US-012): `generate_with_code_execution` and its cache-key
+    separation from plain `generate_structured` calls
+    (docs/plans/ai-improvements-plan.md:615, "cache key includes tool
+    flag"). This is Gemini's own `code_execution` tool, not a locally-built
+    sandbox — every test here mocks the `google-genai` client, so none of
+    it spends real API budget."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_returns_the_code_execution_result_output(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response("42")
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        result = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+        self.assertEqual(result, "42")
+
+    def test_no_code_execution_result_part_raises_parse_error(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = (
+            _mock_response_without_code_execution_result()
+        )
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        with self.assertRaises(ParseError):
+            client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+    def test_repeated_call_hits_its_own_cache(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response("42")
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+        r2 = client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+
+        self.assertEqual((r1, r2), ("42", "42"))
+        self.assertEqual(mock_genai.models.generate_content.call_count, 1)
+
+    def test_params_fingerprint_tool_flag_changes_the_fingerprint(self) -> None:
+        """The load-bearing pin: `tool` alone, with everything else held
+        fixed (including `response_schema=None`, which a real code-execution
+        call always has), must change `_params_fingerprint`'s output — this
+        is the exact mechanism `_cache_key` relies on to keep a
+        code-execution call out of a plain call's cache entry."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+
+        fp_plain = client._params_fingerprint("gemini-2.5-flash", "question_validity", None)
+        fp_tool = client._params_fingerprint(
+            "gemini-2.5-flash", "question_validity", None, tool="code_execution"
+        )
+
+        self.assertNotEqual(fp_plain, fp_tool)
+
+    def test_code_execution_call_does_not_hit_a_plain_calls_cache_entry(self) -> None:
+        """The observable-behaviour version of the pin above: a plain
+        `generate_structured` call and a `generate_with_code_execution`
+        call built from the SAME text (so their `prompt_hash` component is
+        identical — `system_prompt=""` + `user_prompt=X` on one side,
+        `prompt=X` + `""` on the other) must still issue two separate API
+        calls, never a cache hit across them. If this ever collapsed to one
+        API call, a verification that never ran would be silently satisfied
+        by a cached plain reply — the failure mode the plan's cache-key
+        note exists to prevent."""
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_response('{"value": "plain"}'),
+            _mock_code_execution_response("42"),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        plain = client.generate_structured(
+            system_prompt="",
+            user_prompt="same prompt text",
+            response_schema=_SimpleSchema,
+            prompt_version="1",
+        )
+        code_exec = client.generate_with_code_execution(
+            prompt="same prompt text", prompt_version="1"
+        )
+
+        self.assertEqual(plain.value, "plain")
+        self.assertEqual(code_exec, "42")
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_cache_mode_bypass_never_reads_or_writes(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.side_effect = [
+            _mock_code_execution_response("1"),
+            _mock_code_execution_response("2"),
+        ]
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+
+        r1 = client.generate_with_code_execution(
+            prompt="p", prompt_version="1", cache_mode="bypass"
+        )
+        r2 = client.generate_with_code_execution(
+            prompt="p", prompt_version="1", cache_mode="bypass"
+        )
+
+        self.assertEqual((r1, r2), ("1", "2"))
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
 
 
