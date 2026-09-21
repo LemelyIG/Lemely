@@ -1,9 +1,9 @@
 """Crop-and-re-read: single-answer re-extraction from an upscaled crop of ``source_box`` (I1).
 
-Triggered by low extraction confidence (and, once I3's ``SecondReader`` lands
-and populates a cross-read agreement score on ``ExtractedAnswer``, by low
-agreement too — that trigger is not wired here because the attribute does not
-exist yet). Crops ``source_box`` plus 8% padding out of the page it names,
+Triggered by low extraction confidence and by low cross-read agreement (via
+``extraction_agreement`` on ``ExtractedAnswer``, wired in ``GeminiAnswerExtractor``
+in ``lemely.io.answer_extraction.py``; both triggers are capped by
+DEFAULT_MAX_REREADS_PER_PAPER). Crops ``source_box`` plus 8% padding out of the page it names,
 upscales it 2x, and resends it alone at ``media_resolution="high"`` with a
 single-answer prompt — the point being to give the model a second, zoomed-in
 look at exactly the pixels its own box says the answer lives in, rather than
