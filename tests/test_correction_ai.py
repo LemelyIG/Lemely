@@ -1977,8 +1977,10 @@ class CostCeilingAbortTests(unittest.TestCase):
 class DuplicateQuestionIdFlattenTests(unittest.TestCase):
     """NIT-B: two ``ExtractedAnswer``s sharing one ``question_id`` must not
     vanish into a dict comprehension unnoticed -- the loss has to be
-    observable, matching the ``ANSWER_DROPPED`` pattern this file already
-    established for dropped answers (US-031 review MUST-FIX 7).
+    observable, mirroring the same-file ``MARKING_PROGRESS`` precedent of
+    surfacing internal state as a bus event (``ANSWER_DROPPED`` is a
+    different event, published only from ``answer_extraction.py``, not from
+    this file; see US-031 review MUST-FIX 7 for the dropped-answers case).
     """
 
     def test_duplicate_question_id_publishes_event_and_last_one_wins(self) -> None:
@@ -2035,6 +2037,39 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
         self.assertEqual(frames, [])
         self.assertEqual(flattened["1"], ("A", None, 0.5))
         self.assertEqual(flattened["2"], ("B", None, 0.9))
+
+    def test_duplicate_count_is_extra_occurrences_not_total(self) -> None:
+        """Pin the payload semantics at 3+ occurrences, where "extra
+        occurrences beyond the first" and "total occurrences" diverge (at
+        exactly 2 occurrences both readings give 1, so that case alone
+        cannot distinguish them).
+        """
+        frames: list[dict] = []
+
+        def _spy(**payload: object) -> None:
+            frames.append(payload)
+
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="first", confidence=0.5),
+                ExtractedAnswer(question_id="1", answer="second", confidence=0.6),
+                ExtractedAnswer(question_id="1", answer="third", confidence=0.7),
+            ],
+        )
+
+        bus.subscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+        try:
+            flattened = _flatten_answers(extracted)
+        finally:
+            bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
+
+        # 3 occurrences -> 2 *extra* beyond the first, not 3 total.
+        self.assertEqual(flattened["1"], ("third", None, 0.7))
+        self.assertEqual(len(frames), 1)
+        self.assertEqual(frames[0]["duplicate_counts"], {"1": 2})
+        self.assertEqual(frames[0]["total_answers"], 3)
 
     def test_mapping_fallback_branch_never_publishes(self) -> None:
         """A plain ``Mapping[str, str]`` cannot contain duplicate keys -- it

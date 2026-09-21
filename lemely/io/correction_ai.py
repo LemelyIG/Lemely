@@ -50,7 +50,14 @@ def _flatten_answers(
     treated as "most recent take wins" (e.g. a later entry plausibly being
     the model correcting itself within one response). The point of this
     change is not to pick a different survivor -- it's to publish the loss
-    instead of leaving it an artifact of dict construction.
+    instead of leaving it an artifact of dict construction. This mirrors the
+    same-file ``MARKING_PROGRESS`` precedent of surfacing internal state as a
+    bus event rather than the ``ANSWER_DROPPED`` event, which is published
+    from ``lemely/io/answer_extraction.py`` and never from this file.
+
+    The published ``duplicate_counts`` payload counts *extra* occurrences
+    beyond the first for each question_id, not the total occurrence count --
+    e.g. a question_id seen 3 times contributes 2 to its count, not 3.
     """
     if isinstance(extracted, ExtractedAnswers):
         flattened: dict[str, tuple[str, str | None, float]] = {}
