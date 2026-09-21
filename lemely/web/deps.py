@@ -456,7 +456,7 @@ def build_self_review_judge(
     instead would surface the same gap as a judge failure per call — noisier,
     and no more honest.
     """
-    if settings.gemini_api_key is None:
+    if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
         return None
     return GeminiEvidenceJudge(gemini_client)
 
