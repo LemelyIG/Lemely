@@ -134,10 +134,21 @@ export function useSubmitSelfReview(): UseMutationResult<
     // fail (offline), and `isLoadingError` (not `isError`) is what keeps a
     // completed, filled-in form on screen through that failure rather than
     // replacing it with a load-error screen.
-    onError: (_error, { attemptId, questionResultId }) => {
+    onError: (error, { attemptId, questionResultId }) => {
       queryClient.invalidateQueries({
         queryKey: selfReviewKey(attemptId, questionResultId),
       })
+      // A 409 means the server already holds a pass for this question —
+      // the refetch above resolves to `revealed`/`settled`, not back to
+      // `not_started`, so this draft's one chance to be read is gone. Left
+      // uncleared it would sit in `sessionStorage` for the life of the tab
+      // (final review, nit n-1). Every other failure (a lost response, a
+      // dropped connection, a gateway timeout) genuinely might not have
+      // landed, so the draft stays — the student may still get to resubmit
+      // it once the refetch confirms `not_started`.
+      if (error instanceof ApiError && error.status === 409) {
+        clearDraft(attemptId, questionResultId)
+      }
     },
   })
 }

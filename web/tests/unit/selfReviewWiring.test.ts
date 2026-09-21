@@ -218,4 +218,17 @@ describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
       "invalidateQueries({ queryKey: attemptQuestionsKey(attemptId) })",
     )
   })
+
+  it("clears the draft on a 409, since that refetch never returns to not_started (final review nit n-1)", () => {
+    // A 409 means the server already holds a pass; the invalidation above
+    // resolves to revealed/settled, not back to a form the draft could
+    // ever be read into again. Anchored to onError's own body so a clear
+    // added anywhere else (e.g. accidentally unconditional, in onSuccess)
+    // does not satisfy this.
+    const onErrorStart = source.indexOf("onError:")
+    expect(onErrorStart).toBeGreaterThan(-1)
+    const onErrorBody = source.slice(onErrorStart)
+    expect(onErrorBody).toContain("error instanceof ApiError && error.status === 409")
+    expect(onErrorBody).toContain("clearDraft(attemptId, questionResultId)")
+  })
 })
