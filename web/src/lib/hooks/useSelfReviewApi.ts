@@ -108,6 +108,13 @@ export function useSubmitSelfReview(): UseMutationResult<
       queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
       queryClient.invalidateQueries({ queryKey: ["student", "subject"] })
       queryClient.invalidateQueries({ queryKey: ["student", "result"] })
+      // Final review I-1: a granted self-mark moves `effective_marks`, which
+      // is exactly what `useAttemptQuestions` renders as `awardedMarks` on
+      // the very row this panel sits inside (PaperResult.tsx). Without this,
+      // the row header, the confidence summary and the Lost/Flagged filters
+      // keep showing the pre-mark state on the same screen the panel just
+      // updated, until the student navigates away and back.
+      queryClient.invalidateQueries({ queryKey: attemptQuestionsKey(attemptId) })
     },
     // Invalidate the self-review query on ANY submit failure, unconditionally
     // (Task 13/14 re-review, R-9 — widened from the first fix's 409-or-

@@ -493,6 +493,7 @@ function HistoryQuestions({
         onShare={onShare}
         filter={filter}
         onFilterChange={onFilterChange}
+        attemptId={result.attemptId}
       />
     </>
   )

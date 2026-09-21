@@ -64,6 +64,25 @@ describe("PaperResult.tsx — the history branch renders real rows", () => {
     )
     expect(source).toContain("<ErrorState")
   })
+
+  it("wires the panel's attemptId into the history branch's own QuestionList (final review C-2)", () => {
+    // A whole-file `toContain("attemptId={")` is satisfied by the live
+    // branch's own `attemptId={live.attemptId}` even when HistoryQuestions
+    // passes none at all — that is exactly how this shipped: Task 18 wired
+    // QuestionList's rows before Task 15 added the attemptId prop, and Task
+    // 15 then wired only the live branch. Proven by mutation: deleting
+    // `attemptId={result.attemptId}` from HistoryQuestions' own QuestionList
+    // call leaves every other gate in this file green, and the panel never
+    // renders on the persisted /student/result/:paperId route for any
+    // question. Anchor on HistoryQuestions' own body instead of the whole
+    // file, per the R-3 lesson.
+    const fnStart = source.indexOf("function HistoryQuestions(")
+    expect(fnStart).toBeGreaterThan(-1)
+    const nextFn = source.indexOf("\nexport function PaperResult", fnStart)
+    expect(nextFn).toBeGreaterThan(fnStart)
+    const body = source.slice(fnStart, nextFn)
+    expect(body).toContain("attemptId={result.attemptId}")
+  })
 })
 
 /*
@@ -164,5 +183,21 @@ describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
     expect(source).toContain('invalidateQueries({ queryKey: ["student", "overview"] })')
     expect(source).toContain('invalidateQueries({ queryKey: ["student", "subject"] })')
     expect(source).toContain('invalidateQueries({ queryKey: ["student", "result"] })')
+  })
+
+  it("also invalidates the attempt-questions rows the panel's own screen renders (final review I-1)", () => {
+    // Without this, a self-mark that moves a mark leaves the row header, the
+    // confidence summary and the Lost/Flagged filters showing the pre-mark
+    // state on the same screen the panel just updated, until the student
+    // navigates away. Anchored to onSuccess, between onSuccess: and
+    // onError:, the same slice the clearDraft gate above uses.
+    const onSuccessStart = source.indexOf("onSuccess:")
+    const onErrorStart = source.indexOf("onError:")
+    expect(onSuccessStart).toBeGreaterThan(-1)
+    expect(onErrorStart).toBeGreaterThan(onSuccessStart)
+    const onSuccessBody = source.slice(onSuccessStart, onErrorStart)
+    expect(onSuccessBody).toContain(
+      "invalidateQueries({ queryKey: attemptQuestionsKey(attemptId) })",
+    )
   })
 })
