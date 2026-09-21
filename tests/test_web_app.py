@@ -7,6 +7,7 @@ publisher — no live Gemini), and one core→DTO conversion round-trip.
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import threading
 import time
@@ -22,14 +23,15 @@ from sqlalchemy.exc import OperationalError
 from lemely.core.schemas import (
     ConfidenceBand,
     CorrectedQuestion,
-    CorrectionResult,
-    ExamMetadata,
 )
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
 from lemely.web.routers import meta
-from lemely.web.schemas import correction_to_dto, question_to_dto
+from lemely.web.schemas import (
+    question_to_dto,
+    student_safe_review_reason,
+)
 from lemely.web.sse import bus_event_stream
 
 
@@ -264,56 +266,6 @@ def test_two_concurrent_streams_are_isolated() -> None:
     assert "run_id" not in slow
 
 
-def test_correction_to_dto_round_trip() -> None:
-    """A core CorrectionResult converts to the camelCase GradeResult DTO."""
-    correction = CorrectionResult(
-        metadata=ExamMetadata(
-            subject_code="0625",
-            paper_number=1,
-            paper_variant=2,
-            session_month="May/June",
-            session_year=2020,
-        ),
-        questions=[
-            CorrectedQuestion(
-                question_id="1a",
-                awarded_marks=2,
-                maximum_marks=3,
-                confidence=ConfidenceBand.HIGH,
-                confidence_score=0.95,
-                needs_teacher_review=False,
-                marker_source="ai",
-                feedback="Good working shown.",
-                matched_point_ids=["mp1", "mp2"],
-            ),
-        ],
-    )
-
-    dto = correction_to_dto(correction)
-
-    assert dto.awardedMarks == 2
-    assert dto.maxMarks == 3
-    assert dto.needsTeacherReview is False
-    assert len(dto.questions) == 1
-
-    q = dto.questions[0]
-    assert q.questionId == "1a"
-    assert q.awardedMarks == 2
-    assert q.maxMarks == 3
-    assert q.markerSource == "ai"
-    assert q.confidence == 0.95
-    assert q.feedback == "Good working shown."
-    assert q.matchedPointIds == ["mp1", "mp2"]
-    # Advisory integrity signals default to unflagged.
-    assert q.plagiarismFlagged is False
-    assert q.aiDetectionFlagged is False
-
-    # camelCase keys survive JSON serialisation for the frontend contract.
-    dumped = dto.model_dump()
-    assert "awardedMarks" in dumped
-    assert "needsTeacherReview" in dumped
-
-
 def test_question_to_dto_surfaces_integrity_flags() -> None:
     """Plagiarism/AI-detection advisory flags round-trip into the DTO's camelCase fields."""
     question = CorrectedQuestion(
@@ -337,6 +289,59 @@ def test_question_to_dto_surfaces_integrity_flags() -> None:
     dumped = dto.model_dump()
     assert dumped["plagiarismFlagged"] is True
     assert dumped["aiDetectionFlagged"] is True
+
+
+def test_question_to_dto_for_a_student_drops_every_integrity_signal() -> None:
+    """The same question, bound for a student, carries no integrity trace at all.
+
+    Not just the two booleans -- ``review_reason`` is where ``lemely/io/integrity.py``
+    writes "plagiarism (score 0.95)", and ``PaperResult`` renders that string
+    verbatim as "Needs review: ...". QUALITY-BAR.md: integrity flags are
+    teacher-only, so a student surface must carry neither form.
+    """
+    question = CorrectedQuestion(
+        question_id="2",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.99,
+        needs_teacher_review=True,
+        marker_source="deterministic",
+        review_reason="plagiarism (score 0.95) | low confidence | ai_detection (score 0.90)",
+        plagiarism_flagged=True,
+        ai_detection_flagged=True,
+    )
+
+    dto = question_to_dto(question, for_student=True)
+
+    assert dto.plagiarismFlagged is False
+    assert dto.aiDetectionFlagged is False
+    # The ordinary marking reason survives; only the integrity segments go.
+    assert dto.reviewReason == "low confidence"
+    # Values only: the field *names* are plagiarismFlagged/aiDetectionFlagged,
+    # so a whole-payload substring check would pass on the key alone.
+    serialised_values = json.dumps(
+        [value for value in dto.model_dump(by_alias=True).values() if isinstance(value, str)]
+    )
+    assert "plagiarism" not in serialised_values
+    assert "ai_detection" not in serialised_values
+
+
+def test_student_safe_review_reason_table() -> None:
+    """Every shape the joined reason takes, including all-integrity and empty."""
+    assert student_safe_review_reason(None) is None
+    assert student_safe_review_reason("") is None
+    assert student_safe_review_reason("plagiarism (score 0.95)") is None
+    assert student_safe_review_reason("ai_detection (score 0.90)") is None
+    assert student_safe_review_reason("plagiarism (score 0.95) | ai_detection (score 0.90)") is None
+    assert student_safe_review_reason("low confidence") == "low confidence"
+    assert (
+        student_safe_review_reason("low confidence | plagiarism (score 0.95)") == "low confidence"
+    )
+    assert (
+        student_safe_review_reason("plagiarism (score 0.95) | low confidence | missing answer")
+        == "low confidence | missing answer"
+    )
 
 
 def test_question_to_dto_surfaces_topic() -> None:

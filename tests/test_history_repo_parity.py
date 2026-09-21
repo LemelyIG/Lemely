@@ -26,6 +26,7 @@ from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore, migrate_json_history
 from lemely.db.models import User
+from lemely.db.models.attempts import Attempt
 from lemely.db.models.enums import Role
 from lemely.io.history_store import HistoryStore
 from lemely.runtime.config import DatabaseSettings
@@ -129,7 +130,12 @@ def test_append_load_parity_with_json_store(
     json_history = json_store.load(user_id)
 
     assert isinstance(db_history, StudentHistory)
-    assert db_history.model_dump() == json_history.model_dump()
+    assert db_history.model_dump(exclude={"records": {"__all__": {"attempt_id"}}}) == (
+        json_history.model_dump(exclude={"records": {"__all__": {"attempt_id"}}})
+    )
+    # The JSON store has no attempts table to point at; the DB store always does.
+    assert all(r.attempt_id is None for r in json_history.records)
+    assert all(r.attempt_id is not None for r in db_history.records)
 
 
 def test_load_unknown_user_is_empty(pg_sessionmaker: sessionmaker[Session]) -> None:
@@ -137,6 +143,20 @@ def test_load_unknown_user_is_empty(pg_sessionmaker: sessionmaker[Session]) -> N
     history = DbHistoryStore(pg_sessionmaker).load(user_id)
     assert history.records == []
     assert history.student_id == user_id
+
+
+def test_db_records_carry_their_attempt_id(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """The self-review surface is addressed by attempt id (spec 2026-09-17);
+    a history record loaded from Postgres must say which attempt it is."""
+    user_id = _seed_user(pg_sessionmaker)
+    db_store = DbHistoryStore(pg_sessionmaker)
+    db_store.append(user_id, _record(user_id, day=1, grade="C", topics=["Waves"]))
+
+    [record] = db_store.load(user_id).records
+
+    assert record.attempt_id is not None
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, uuid.UUID(record.attempt_id)) is not None
 
 
 def test_records_returned_in_recorded_at_order(
@@ -240,3 +260,32 @@ def test_store_loads_every_origin_not_just_grade_bearing_ones(
 
     loaded = store.load(user_id)
     assert [r.origin for r in loaded.records] == ["past_paper", "quiz", "custom_paper"]
+
+
+def test_attempt_to_record_leaves_attempt_id_null_for_an_unflushed_attempt() -> None:
+    """A transient Attempt has no id yet, and ``str(None)`` would put the
+    literal "None" on the wire as an id pointing at no attempt. The function is
+    public, so it guards its own contract rather than trusting call sites."""
+    from lemely.db.history_repo import attempt_to_record
+    from lemely.db.models.enums import AttemptOrigin, SessionMonth
+
+    transient = Attempt(
+        user_id=uuid.uuid4(),
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month=SessionMonth.may_june,
+        session_year=2020,
+        awarded_marks=65,
+        maximum_marks=80,
+        percentage=81.25,
+        grade="C",
+        origin=AttemptOrigin.past_paper,
+        recorded_at=datetime(2020, 6, 1, tzinfo=UTC),
+    )
+    transient.weakness_records = []
+    assert transient.id is None, "fixture must stay unflushed for this to mean anything"
+
+    record = attempt_to_record(str(transient.user_id), transient)
+
+    assert record.attempt_id is None

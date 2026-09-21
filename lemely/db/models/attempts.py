@@ -272,17 +272,36 @@ class QuestionResult(TimestampMixin, Base):
     def effective_marks(self) -> int:
         """The mark that must reach every student-facing surface.
 
-        The teacher's override when one has been recorded, else the AI's
-        ``awarded_marks`` unchanged. **The single accessor** — anything
-        (a route, a DTO converter, a future report) that needs "this
-        question's mark" reads this, never ``awarded_marks`` directly, so a
-        teacher correction can never be shown on one screen and silently
-        missing on another (P3.4; the same anti-drift discipline D3.3 applied
-        to "at risk").
+        Precedence: the teacher's override, else the student's self-mark, else
+        the AI's ``awarded_marks`` unchanged. **The single accessor** — anything
+        (a route, a DTO converter, a report) that needs "this question's mark"
+        reads this, never ``awarded_marks`` directly, so a correction can never
+        be shown on one screen and silently missing on another (P3.4).
+
+        The student tier (spec 2026-09-17 self-review, D5) is an accepted
+        trade-off, not an oversight: self-reported marks reach teacher class
+        analytics (``quiz_results_repo``), placement (``placement_repo``) and
+        the student's own grade. The alternative — a second accessor for
+        teacher-facing surfaces — was rejected as two numbers for one question.
+        ``student_selfmark_marks`` is only ever set where the marker was
+        low-confidence or a lenient judge accepted the student's evidence;
+        a self-mark that moved marks *down* (D6) is honoured on the same terms.
         """
         if self.teacher_awarded_marks is not None:
             return self.teacher_awarded_marks
+        if self.student_selfmark_marks is not None:
+            return self.student_selfmark_marks
         return self.awarded_marks
+
+    @property
+    def is_self_marked(self) -> bool:
+        """Whether the student has completed their one self-review pass.
+
+        Reads the timestamp, not the marks: a pass that agreed with the marker
+        on every point sets ``student_selfmarked_at`` and leaves
+        ``student_selfmark_marks`` NULL, and it still counts as the pass.
+        """
+        return self.student_selfmarked_at is not None
 
     @property
     def is_overridden(self) -> bool:
@@ -357,6 +376,24 @@ class QuestionResultPoint(TimestampMixin, Base):
     cap, not the sum of its members. A consumer that sums ticked tariffs
     without checking these flags will show a breakdown that disagrees with the
     student's own mark.
+    """
+
+    group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """The scheme group this point belongs to; see ``group_max_marks`` below,
+    which documents the pair."""
+    group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """``group_key``/``group_max_marks``: the scheme group this point belongs
+
+    to, recorded at derivation time
+    (:func:`lemely.db.question_points.derive_point_rows`): ``alt:n`` for an
+    either/or run, ``pool:n`` for an "any N from" pool, ``NULL`` for an
+    independent point. ``group_max_marks`` is the most the whole group can
+    contribute. ``is_alternative`` alone cannot say where a group starts or
+    ends (it means "alternative to the previous point"), which is why the
+    group is stored rather than re-derived — the self-review write path caps
+    granted marks at ``group_max_marks`` (self-review spec, D6), and the panel
+    renders the group as one unit. Rows written before migration
+    ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
     """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)

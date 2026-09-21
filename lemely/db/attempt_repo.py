@@ -58,6 +58,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import structlog
+from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
@@ -222,6 +223,29 @@ class AttemptRepository:
             recorded_at=recorded_at,
         )
 
+    def question_result_ids(self, attempt_id: uuid.UUID) -> dict[str, uuid.UUID]:
+        """``question_id -> question_results.id`` for one attempt.
+
+        The student self-review routes (spec 2026-09-17) address a question
+        by its ``question_results`` row id, so the ``/student/correct``
+        complete frame carries one per question. A paper that repeats a
+        question id gets one row of the several, picked by
+        ``(created_at, id)``: rows of one attempt are written in a single
+        flush and so usually share ``created_at``, which leaves the row id as
+        the tie-break — stable for a given attempt, but not "the first one
+        marked". Empty for an unknown attempt.
+        """
+        ids: dict[str, uuid.UUID] = {}
+        with self._sm() as session:
+            rows = session.execute(
+                select(QuestionResult.question_id, QuestionResult.id)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResult.created_at, QuestionResult.id)
+            ).all()
+        for question_id, row_id in rows:
+            ids.setdefault(question_id, row_id)
+        return ids
+
     def _persist(
         self,
         *,
@@ -371,10 +395,7 @@ class AttemptRepository:
                         error=str(exc),
                     )
 
-                marking_flagged = qr.needs_teacher_review and not (
-                    cq.plagiarism_flagged or cq.ai_detection_flagged
-                )
-                if marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
+                if is_marking_low_confidence(qr):
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,
@@ -422,6 +443,32 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
         (DBConfidenceBand(cq.confidence.value) for cq in questions),
         key=lambda band: _CONFIDENCE_BAND_WEAKNESS_ORDER[band],
     )
+
+
+def is_marking_low_confidence(qr: QuestionResult) -> bool:
+    """Whether a question was flagged for a *marking* reason — the one definition.
+
+    True when the marker's own score is below ``REVIEW_CONFIDENCE_THRESHOLD``
+    or when review was forced by a marking-side structural signal (the D2.4
+    out-of-range / value-mismatch flag) rather than *only* by an integrity
+    check. This is exactly the condition under which :meth:`AttemptRepository._persist`
+    opens a ``low_confidence`` review-queue row, and it is also the condition
+    under which a student's self-mark carries authority (self-review spec,
+    "Authority"). Both read this function so the two can never draw the line
+    differently: a question flagged purely ``plagiarism_flag`` /
+    ``ai_detection_flag`` is *not* low-confidence — integrity flags grant no
+    authority and are never shown to a student.
+
+    Reads the persisted ``QuestionResult`` columns, which
+    :func:`_to_question_result` fills from the same ``CorrectedQuestion``
+    fields ``_persist`` used to read directly — so calling this on a freshly
+    built row inside ``_persist`` and on a loaded row months later gives the
+    same answer.
+    """
+    marking_flagged = qr.needs_teacher_review and not (
+        qr.plagiarism_flagged or qr.ai_detection_flagged
+    )
+    return marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
 
 
 def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
@@ -654,4 +701,9 @@ def _classification_text(question: Question) -> str:
     return "\n".join(p for p in parts if p)
 
 
-__all__ = ["REVIEW_CONFIDENCE_THRESHOLD", "AttemptRepository", "fill_correction_topics"]
+__all__ = [
+    "REVIEW_CONFIDENCE_THRESHOLD",
+    "AttemptRepository",
+    "fill_correction_topics",
+    "is_marking_low_confidence",
+]

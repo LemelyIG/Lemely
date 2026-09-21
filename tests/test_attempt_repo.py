@@ -41,7 +41,11 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
-from lemely.db.attempt_repo import AttemptRepository, fill_correction_topics
+from lemely.db.attempt_repo import (
+    AttemptRepository,
+    fill_correction_topics,
+    is_marking_low_confidence,
+)
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
@@ -1082,3 +1086,115 @@ def test_persist_savepoint_isolates_a_ledger_row_postgres_rejects(
     # there is nothing bad to roll back and a revision is still written.
     assert _points_for(pg_sessionmaker, attempt_id) == []
     assert _revisions_for(pg_sessionmaker, attempt_id) == []
+
+
+# ── The one definition of "low confidence" (self-review spec, Authority) ──────
+
+
+def _qr_for_authority(
+    *,
+    confidence_score: float,
+    needs_review: bool,
+    plagiarism: bool = False,
+    ai_detection: bool = False,
+) -> QuestionResult:
+    return QuestionResult(
+        question_id="1a",
+        awarded_marks=1,
+        maximum_marks=3,
+        confidence_band=DBConfidenceBand.low if needs_review else DBConfidenceBand.high,
+        confidence_score=confidence_score,
+        needs_teacher_review=needs_review,
+        marker_source=MarkerSource.ai,
+        plagiarism_flagged=plagiarism,
+        ai_detection_flagged=ai_detection,
+    )
+
+
+def test_low_confidence_score_is_low_confidence() -> None:
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.55, needs_review=True))
+
+
+def test_structural_review_flag_without_integrity_flags_is_low_confidence() -> None:
+    # The D2.4 out-of-range / value-mismatch signal: high score, review forced.
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.99, needs_review=True))
+
+
+def test_integrity_only_flag_is_not_low_confidence() -> None:
+    # Purely plagiarism/AI-flagged: review is needed, but not for a marking reason.
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.99, needs_review=True, plagiarism=True)
+    )
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.99, needs_review=True, ai_detection=True)
+    )
+
+
+def test_low_score_with_integrity_flag_is_still_low_confidence() -> None:
+    # The score is a marking-side signal in its own right; an integrity flag
+    # on top does not launder it away.
+    assert is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.55, needs_review=True, plagiarism=True)
+    )
+
+
+def test_confident_unflagged_question_is_not_low_confidence() -> None:
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.95, needs_review=False)
+    )
+
+
+def test_question_result_ids_maps_question_id_to_row_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    assert set(ids) == {"1a"}
+    assert ids["1a"] == _only_result(pg_sessionmaker, attempt_id).id
+    assert repo.question_result_ids(uuid.uuid4()) == {}
+
+
+def _report_with_two_questions() -> AccuracyReport:
+    """The same report as :func:`_report_with_one_question`, plus a second question.
+
+    Two questions are the minimum that can tell a per-question mapping from a
+    positional one: with a single question every wrong pairing is also the
+    right one.
+    """
+    base = _report_with_one_question()
+    first = base.correction.questions[0]
+    second = first.model_copy(update={"question_id": "1b", "awarded_marks": 2})
+    correction = base.correction.model_copy(update={"questions": [first, second]})
+    return base.model_copy(update={"correction": correction})
+
+
+def test_question_result_ids_pairs_each_question_with_its_own_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Each question id maps to *its* row, not to whichever row came back first."""
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_two_questions(),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionResult.question_id, QuestionResult.id).where(
+                QuestionResult.attempt_id == attempt_id
+            )
+        ).all()
+    expected = {question_id: row_id for question_id, row_id in rows}
+    assert set(expected) == {"1a", "1b"}, "fixture must persist two distinct questions"
+    assert ids == expected
+    assert ids["1a"] != ids["1b"]

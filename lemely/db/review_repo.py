@@ -484,8 +484,16 @@ class ReviewService:
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
+            # Locked: this is the one path that writes marks and recomputes the
+            # attempt's totals, and a student self-mark on another question of
+            # the same attempt does the same thing concurrently.
             item, attempt, qr, paper = self._find_any_item(
-                session, item_id, visible, caller_id=caller_id, caller_role=caller_role
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
             )
             if item.status != ReviewStatus.open:
                 raise ReviewAlreadyClosedError(
@@ -667,6 +675,7 @@ class ReviewService:
         *,
         caller_id: uuid.UUID | str | None = None,
         caller_role: Role | str | None = None,
+        for_update: bool = False,
     ) -> tuple[ReviewQueueItem, Attempt | None, QuestionResult | None, TeacherPaper | None]:
         """Load one item of **either** source, enforcing that source's tenancy.
 
@@ -703,11 +712,18 @@ class ReviewService:
             if paper is None:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
             return item, None, None, paper
-        attempt = session.get(Attempt, item.attempt_id)
+        # ``for_update`` takes the same attempt-then-question lock, in the same
+        # order, that ``SelfReviewService._owned_question`` takes. Mutual
+        # exclusion needs both sides: a student self-marking question 2 while a
+        # teacher overrides question 1 of the same attempt otherwise recomputes
+        # ``attempts.awarded_marks`` from two independent reads, and the second
+        # write drops the first. The paper total then disagrees with the sum of
+        # its own questions permanently, since nothing recomputes again.
+        attempt = session.get(Attempt, item.attempt_id, with_for_update=for_update)
         if attempt is None or attempt.user_id not in visible:
             raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
         qr = (
-            session.get(QuestionResult, item.question_result_id)
+            session.get(QuestionResult, item.question_result_id, with_for_update=for_update)
             if item.question_result_id
             else None
         )
@@ -716,132 +732,145 @@ class ReviewService:
     def _recompute_attempt_totals(
         self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
     ) -> None:
-        """Recompute the attempt's stored total after an override.
-
-        Sums every question's ``effective_marks`` (AI mark, or the teacher's
-        override when one is recorded) and re-grades it with the same
-        deterministic boundary lookup the original grade used — see module
-        docstring. ``results`` is every :class:`QuestionResult` on this
-        attempt, passed in (not re-queried) so the caller can share one fetch
-        with :meth:`_recompute_weakness_records`.
-
-        **The quiz guard (``docs/quiz-model.md`` §4.5, mandatory).** For
-        ``attempt.origin == AttemptOrigin.quiz``, ``grade``/``predicted_grade``/
-        ``boundary_source`` are left exactly as the marking path wrote them
-        (NULL — a quiz has no grade boundaries, ``AttemptRepository._persist``
-        never sets them) and :meth:`_boundaries_for` is never even called.
-        Without this guard, the *first* teacher override on any quiz would
-        invent a grade the marking path deliberately never wrote — precisely
-        the "never invent precision" violation this design spent a column
-        avoiding, arriving through the review-override side door.
-        ``awarded_marks``/``percentage`` are still recomputed from
-        ``effective_marks`` regardless of origin: a quiz mark correction must
-        still show up in the student's/teacher's percentage view.
-        """
-        awarded = sum(qr.effective_marks for qr in results)
-        maximum = attempt.maximum_marks
-        percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
-        attempt.awarded_marks = awarded
-        attempt.percentage = percentage
-        if attempt.origin != AttemptOrigin.quiz:
-            boundaries, boundary_source = self._boundaries_for(attempt)
-            grade = grade_for_percentage(percentage, boundaries)
-            attempt.grade = grade
-            attempt.predicted_grade = grade
-            attempt.boundary_source = boundary_source
-        session.flush()
+        """Delegates to :func:`recompute_attempt_totals` (see it for the contract)."""
+        recompute_attempt_totals(session, attempt, results, boundary_store=self._boundaries)
 
     def _recompute_weakness_records(
         self, session: Session, attempt: Attempt, results: Sequence[QuestionResult]
     ) -> None:
-        """Recompute this attempt's :class:`WeaknessRecord` rows after an override.
-
-        Re-groups every question's ``effective_marks`` with
-        :func:`~lemely.core.analytics.group_weak_areas` — the identical
-        topic-bucketing algorithm ``summarize_weaknesses`` used when this
-        attempt was first persisted — and diffs the fresh set against what is
-        currently stored, keyed by topic (``AttemptRepository.persist_correction``
-        never creates two rows for the same topic on one attempt, so a
-        topic-keyed diff cannot collide): an existing topic's numbers are
-        updated in place, a newly-created loss gets a fresh row, and a topic
-        whose lost marks dropped to zero is deleted outright — a restored
-        question must not leave behind a stale, zero-loss weakness row (see
-        module docstring).
-        """
-        items = [
-            WeakAreaInput(
-                question_id=qr.question_id,
-                topic=qr.topic,
-                awarded_marks=qr.effective_marks,
-                maximum_marks=qr.maximum_marks,
-            )
-            for qr in results
-        ]
-        fresh_by_topic = {area.topic: area for area in group_weak_areas(items)}
-
-        existing = session.scalars(
-            select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt.id)
-        ).all()
-        existing_by_topic = {record.topic: record for record in existing}
-
-        for topic, area in fresh_by_topic.items():
-            record = existing_by_topic.pop(topic, None)
-            if record is None:
-                session.add(
-                    WeaknessRecord(
-                        user_id=attempt.user_id,
-                        attempt_id=attempt.id,
-                        topic=area.topic,
-                        lost_marks=area.lost_marks,
-                        maximum_marks=area.maximum_marks,
-                        accuracy=area.accuracy,
-                        question_ids=list(area.question_ids),
-                    )
-                )
-            else:
-                record.lost_marks = area.lost_marks
-                record.maximum_marks = area.maximum_marks
-                record.accuracy = area.accuracy
-                record.question_ids = list(area.question_ids)
-
-        # Any topic no longer net-losing marks (e.g. the override restored it
-        # to full marks) is not a weakness at all — same rule
-        # summarize_weaknesses/aggregate_weaknesses_from_history apply.
-        for stale in existing_by_topic.values():
-            session.delete(stale)
-        session.flush()
+        """Delegates to :func:`recompute_weakness_records`."""
+        recompute_weakness_records(session, attempt, results)
 
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:
-        """Re-derive the exact boundary map the original grade used.
+        """Delegates to :func:`boundaries_for`."""
+        return boundaries_for(attempt, self._boundaries)
 
-        Pure function of the exam metadata already on ``attempt`` (subject,
-        session, paper) — deterministic, so this returns the identical
-        boundaries the marking pipeline resolved at persist time, never a
-        second, possibly-different set. Falls back to the global default
-        (logged, never raised) if the attempt's metadata cannot round-trip
-        through :class:`~lemely.core.schemas.ExamMetadata` — e.g. a
-        totals-only attempt written before full metadata was required.
-        """
-        try:
-            metadata = ExamMetadata(
-                subject_code=attempt.subject_code or "",
-                paper_number=attempt.paper_number or 1,
-                paper_variant=attempt.paper_variant or 1,
-                session_month=SESSION_MONTH_LABELS.get(attempt.session_month, "Specimen")
-                if attempt.session_month is not None
-                else "Specimen",
-                session_year=attempt.session_year,
+
+def recompute_attempt_totals(
+    session: Session,
+    attempt: Attempt,
+    results: Sequence[QuestionResult],
+    *,
+    boundary_store: GradeBoundaryStore,
+) -> None:
+    """Recompute the attempt's stored total after a mark changed.
+
+    Sums every question's ``effective_marks`` (teacher override, else student
+    self-mark, else the AI mark) and re-grades it with the same deterministic
+    boundary lookup the original grade used — see the module docstring.
+    ``results`` is every :class:`QuestionResult` on this attempt, passed in
+    (not re-queried) so the caller can share one fetch with
+    :func:`recompute_weakness_records`.
+
+    Module-level, not a method, because it has two callers with different
+    tenancy — :meth:`ReviewService.resolve` (a teacher) and
+    :meth:`lemely.db.self_review_repo.SelfReviewService.submit` (a student) —
+    and the self-review spec's totals invariant is exactly that the two cannot
+    round differently for the same marks. One implementation, not two.
+
+    **The quiz guard (``docs/quiz-model.md`` §4.5, mandatory).** For
+    ``attempt.origin == AttemptOrigin.quiz``, ``grade``/``predicted_grade``/
+    ``boundary_source`` are left exactly as the marking path wrote them
+    (NULL) and :func:`boundaries_for` is never even called.
+    ``awarded_marks``/``percentage`` are still recomputed regardless of origin.
+    """
+    awarded = sum(qr.effective_marks for qr in results)
+    maximum = attempt.maximum_marks
+    percentage = round((awarded / maximum) * 100.0, 2) if maximum else 0.0
+    attempt.awarded_marks = awarded
+    attempt.percentage = percentage
+    if attempt.origin != AttemptOrigin.quiz:
+        boundaries, boundary_source = boundaries_for(attempt, boundary_store)
+        grade = grade_for_percentage(percentage, boundaries)
+        attempt.grade = grade
+        attempt.predicted_grade = grade
+        attempt.boundary_source = boundary_source
+    session.flush()
+
+
+def recompute_weakness_records(
+    session: Session, attempt: Attempt, results: Sequence[QuestionResult]
+) -> None:
+    """Recompute this attempt's :class:`WeaknessRecord` rows after a mark changed.
+
+    Re-groups every question's ``effective_marks`` with
+    :func:`~lemely.core.analytics.group_weak_areas` — the identical
+    topic-bucketing algorithm ``summarize_weaknesses`` used when this attempt
+    was first persisted — and diffs the fresh set against what is currently
+    stored, keyed by topic: an existing topic's numbers are updated in place,
+    a newly-created loss gets a fresh row, and a topic whose lost marks
+    dropped to zero is deleted outright (see module docstring).
+    """
+    items = [
+        WeakAreaInput(
+            question_id=qr.question_id,
+            topic=qr.topic,
+            awarded_marks=qr.effective_marks,
+            maximum_marks=qr.maximum_marks,
+        )
+        for qr in results
+    ]
+    fresh_by_topic = {area.topic: area for area in group_weak_areas(items)}
+
+    existing = session.scalars(
+        select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt.id)
+    ).all()
+    existing_by_topic = {record.topic: record for record in existing}
+
+    for topic, area in fresh_by_topic.items():
+        record = existing_by_topic.pop(topic, None)
+        if record is None:
+            session.add(
+                WeaknessRecord(
+                    user_id=attempt.user_id,
+                    attempt_id=attempt.id,
+                    topic=area.topic,
+                    lost_marks=area.lost_marks,
+                    maximum_marks=area.maximum_marks,
+                    accuracy=area.accuracy,
+                    question_ids=list(area.question_ids),
+                )
             )
-            boundaries, source = self._boundaries.resolve(metadata)
-            return boundaries, BoundarySource(source)
-        except (ValidationError, ValueError) as exc:
-            log.warning(
-                "review_boundary_resolution_failed", attempt_id=str(attempt.id), error=str(exc)
-            )
-            return (
-                DEFAULT_GRADE_BOUNDARIES,
-                attempt.boundary_source or BoundarySource.global_default,
-            )
+        else:
+            record.lost_marks = area.lost_marks
+            record.maximum_marks = area.maximum_marks
+            record.accuracy = area.accuracy
+            record.question_ids = list(area.question_ids)
+
+    for stale in existing_by_topic.values():
+        session.delete(stale)
+    session.flush()
+
+
+def boundaries_for(
+    attempt: Attempt, boundary_store: GradeBoundaryStore
+) -> tuple[dict[str, float], BoundarySource]:
+    """Re-derive the exact boundary map the original grade used.
+
+    Pure function of the exam metadata already on ``attempt`` — deterministic,
+    so this returns the identical boundaries the marking pipeline resolved at
+    persist time. Falls back to the global default (logged, never raised) if
+    the attempt's metadata cannot round-trip through
+    :class:`~lemely.core.schemas.ExamMetadata`.
+    """
+    try:
+        metadata = ExamMetadata(
+            subject_code=attempt.subject_code or "",
+            paper_number=attempt.paper_number or 1,
+            paper_variant=attempt.paper_variant or 1,
+            session_month=SESSION_MONTH_LABELS.get(attempt.session_month, "Specimen")
+            if attempt.session_month is not None
+            else "Specimen",
+            session_year=attempt.session_year,
+        )
+        boundaries, source = boundary_store.resolve(metadata)
+        return boundaries, BoundarySource(source)
+    except (ValidationError, ValueError) as exc:
+        log.warning("review_boundary_resolution_failed", attempt_id=str(attempt.id), error=str(exc))
+        return (
+            DEFAULT_GRADE_BOUNDARIES,
+            attempt.boundary_source or BoundarySource.global_default,
+        )
 
 
 def _to_row(
@@ -1082,4 +1111,7 @@ __all__ = [
     "ReviewQueueRow",
     "ReviewService",
     "ReviewValidationError",
+    "boundaries_for",
+    "recompute_attempt_totals",
+    "recompute_weakness_records",
 ]

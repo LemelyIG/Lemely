@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 
 from lemely.core.schemas import (
     CorrectedQuestion,
-    CorrectionResult,
 )
 from lemely.core.schemas import (
     WeakArea as CoreWeakArea,
@@ -43,6 +42,10 @@ class QuestionResultDTO(ApiModel):
     plagiarismFlagged: bool = False
     aiDetectionFlagged: bool = False
     topic: str | None = None
+    questionResultId: str | None = None
+    """``question_results.id`` once the attempt is persisted; the address the
+    self-review routes take. ``None`` on a frame built before persistence
+    (a teacher-console grade, which has no ``question_results`` row)."""
 
 
 class WeakAreaDTO(ApiModel):
@@ -51,15 +54,6 @@ class WeakAreaDTO(ApiModel):
     topic: str
     marksLost: int
     marksAvailable: int
-
-
-class GradeResultDTO(ApiModel):
-    """Full grading payload returned once a grade job completes."""
-
-    awardedMarks: int
-    maxMarks: int
-    needsTeacherReview: bool
-    questions: list[QuestionResultDTO]
 
 
 class StorageHealthDTO(ApiModel):
@@ -91,8 +85,52 @@ class HealthDTO(ApiModel):
     gradeBoundariesLoaded: bool
 
 
-def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
-    """Convert a core :class:`CorrectedQuestion` into a :class:`QuestionResultDTO`."""
+#: Prefixes of the ``review_reason`` segments ``lemely/io/integrity.py`` writes
+#: for a plagiarism or AI-content finding, e.g. ``"plagiarism (score 0.94)"``.
+#: The reason is a ``" | "``-joined list, so an integrity finding travels in the
+#: same free-text field as ordinary marking reasons.
+_INTEGRITY_REASON_PREFIXES = ("plagiarism", "ai_detection")
+
+
+def student_safe_review_reason(reason: str | None) -> str | None:
+    """Drop integrity findings from a ``review_reason`` bound for a student.
+
+    QUALITY-BAR.md: "No screen accuses a student of cheating; integrity flags
+    are teacher-only." The two booleans are easy to remember and were already
+    forced off on student surfaces — but ``review_reason`` is free text that
+    ``lemely/io/integrity.py`` appends ``"plagiarism (score 0.94)"`` to, and
+    ``PaperResult`` renders it verbatim as "Needs review: ...". Suppressing the
+    flags while forwarding the sentence tells the student anyway, with a score
+    attached.
+
+    Other marking reasons survive: a student is told *that* a question needs a
+    look, just never that the reason was an integrity finding. A reason made up
+    only of integrity segments becomes ``None``, not an empty string.
+    """
+    if not reason:
+        return None
+    kept = [
+        segment
+        for segment in (part.strip() for part in reason.split(" | "))
+        if segment and not segment.startswith(_INTEGRITY_REASON_PREFIXES)
+    ]
+    return " | ".join(kept) or None
+
+
+def question_to_dto(
+    question: CorrectedQuestion,
+    *,
+    question_result_id: str | None = None,
+    for_student: bool = False,
+) -> QuestionResultDTO:
+    """Convert a core :class:`CorrectedQuestion` into a :class:`QuestionResultDTO`.
+
+    ``for_student`` suppresses everything integrity-related: both flags and any
+    integrity segment of ``review_reason``. It defaults to ``False`` because the
+    teacher console (``routers/teacher.py``) reads this same DTO and integrity
+    findings are exactly what a teacher is there to see — so the sanitising is
+    per call site, never global.
+    """
     return QuestionResultDTO(
         questionId=question.question_id,
         awardedMarks=question.awarded_marks,
@@ -101,20 +139,15 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         confidence=question.confidence_score,
         feedback=question.feedback,
         matchedPointIds=list(question.matched_point_ids) or None,
-        reviewReason=question.review_reason,
-        plagiarismFlagged=question.plagiarism_flagged,
-        aiDetectionFlagged=question.ai_detection_flagged,
+        reviewReason=(
+            student_safe_review_reason(question.review_reason)
+            if for_student
+            else question.review_reason
+        ),
+        plagiarismFlagged=False if for_student else question.plagiarism_flagged,
+        aiDetectionFlagged=False if for_student else question.ai_detection_flagged,
         topic=question.topic,
-    )
-
-
-def correction_to_dto(correction: CorrectionResult) -> GradeResultDTO:
-    """Convert a core :class:`CorrectionResult` into a :class:`GradeResultDTO`."""
-    return GradeResultDTO(
-        awardedMarks=correction.awarded_marks,
-        maxMarks=correction.maximum_marks,
-        needsTeacherReview=correction.needs_teacher_review,
-        questions=[question_to_dto(q) for q in correction.questions],
+        questionResultId=question_result_id,
     )
 
 

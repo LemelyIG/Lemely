@@ -33,7 +33,10 @@ or session dependency resolves, so this file needs no database.
 
 from __future__ import annotations
 
+import re
 import uuid
+from collections import Counter
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -48,7 +51,6 @@ from lemely.web.deps import AuthContext, get_auth_context, get_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
-    from pathlib import Path
 
     from fastapi import FastAPI
     from fastapi.dependencies.models import Dependant
@@ -162,7 +164,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # disclosure precisely because this route carries no bearer token at all
     # (see its own docstring for the "no id, no roster, no count" rule).
     ("GET", "/api/invites/{code}"): PUBLIC,
-    # ── AUTH_ANY (18) ────────────────────
+    # ── AUTH_ANY (19) ────────────────────
     ("GET", "/api/me/devices"): AUTH_ANY,
     ("DELETE", "/api/me/devices/{device_id}"): AUTH_ANY,
     ("GET", "/api/me/notification-preferences"): AUTH_ANY,
@@ -253,7 +255,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (54) ────────────────────
+    # ── STUDENT (60) ────────────────────
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -281,6 +283,16 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("DELETE", "/api/student/friends/{friendship_id}"): STUDENT,
     ("POST", "/api/student/friends/{friendship_id}/accept"): STUDENT,
     ("GET", "/api/student/leaderboard"): STUDENT,
+    # Student self-review (spec 2026-09-17): both verbs on the one path.
+    (
+        "GET",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    (
+        "POST",
+        "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
+    ): STUDENT,
+    ("GET", "/api/student/attempts/{attempt_id}/questions"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
@@ -519,3 +531,28 @@ def test_the_sweeps_actually_cover_the_surface() -> None:
     assert len(_ROLE_GATED) > 300
     assert len(_REPRESENTATIVE) == 6
     assert len(_REAL_TOKEN_CASES) >= 20
+
+
+def test_the_section_counts_in_this_file_match_what_it_registers() -> None:
+    """The "── STUDENT (60) ──" headings are checked, not decorative.
+
+    They were wrong: STUDENT read 57 against 60 entries and AUTH_ANY 18
+    against 19, because nothing compared them. A count nobody verifies drifts
+    silently, and this file is the registry a reviewer reads to answer "is the
+    new route covered?". Parsing the headings out of the source keeps the
+    numbers honest without duplicating them as literals in an assertion.
+    """
+    source = Path(__file__).read_text(encoding="utf-8")
+    headings = re.findall(r"#\s*\u2500+\s*([A-Z_]+)\s*\((\d+)\)", source)
+    assert headings, "section headings are the thing under test; none were found"
+
+    names = globals()
+    actual = Counter(
+        str(sorted(role)) if isinstance(role, frozenset) else role for role in EXPECTED.values()
+    )
+    for name, written in headings:
+        role = names[name]
+        key = str(sorted(role)) if isinstance(role, frozenset) else role
+        assert actual[key] == int(written), (
+            f"section {name} says {written}, EXPECTED holds {actual[key]}"
+        )

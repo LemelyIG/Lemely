@@ -58,7 +58,9 @@ from lemely.db.review_repo import (
 from lemely.runtime.config import DatabaseSettings
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Iterator, Sequence
+
+    from lemely.io.grade_boundaries import GradeBoundaryStore
 
 
 def _server_reachable(url: str) -> bool:
@@ -964,3 +966,93 @@ def test_non_uuid_caller_id_rejected(
 ) -> None:
     with pytest.raises(ValueError, match="must be a UUID"):
         review_service.list_queue("not-a-uuid", Role.teacher)
+
+
+def test_module_level_recompute_is_what_the_service_uses(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The self-review path calls the module-level ``recompute_attempt_totals``
+    / ``recompute_weakness_records`` directly; ``ReviewService.resolve``'s
+    override path must run through the *same* functions, not a private copy
+    of the same arithmetic — that single-implementation guarantee is the
+    entire point of lifting them to module level.
+
+    Proves this by spying on both module-level names (so a call is recorded)
+    while driving the real override path (``ReviewService.resolve``), not by
+    calling the module-level functions directly — a test that only did the
+    latter would prove the functions are correct, never that the service
+    delegates to them. If ``ReviewService`` ever reverts to an inline copy of
+    the same arithmetic, the call-count assertions below go red even though
+    the resulting totals would still look right.
+    """
+    import lemely.db.review_repo as review_repo
+
+    totals_calls: list[tuple[Attempt, Sequence[QuestionResult]]] = []
+    weakness_calls: list[tuple[Attempt, Sequence[QuestionResult]]] = []
+    original_totals = review_repo.recompute_attempt_totals
+    original_weakness = review_repo.recompute_weakness_records
+
+    def spy_totals(
+        session: Session,
+        attempt: Attempt,
+        results: Sequence[QuestionResult],
+        *,
+        boundary_store: GradeBoundaryStore,
+    ) -> None:
+        totals_calls.append((attempt, results))
+        original_totals(session, attempt, results, boundary_store=boundary_store)
+
+    def spy_weakness(session: Session, attempt: Attempt, results: Sequence[QuestionResult]) -> None:
+        weakness_calls.append((attempt, results))
+        original_weakness(session, attempt, results)
+
+    monkeypatch.setattr(review_repo, "recompute_attempt_totals", spy_totals)
+    monkeypatch.setattr(review_repo, "recompute_weakness_records", spy_weakness)
+
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    attempt_id = _seed_attempt_with_review_items(
+        pg_sessionmaker,
+        student,
+        [
+            _question("1", awarded=2, maximum=2),
+            _question("2", awarded=0, maximum=3, confidence_score=0.2, needs_review=True),
+        ],
+    )
+    item = next(
+        i
+        for i in _review_items_for_attempt(pg_sessionmaker, attempt_id)
+        if i.question_result_id is not None
+    )
+
+    review_service.resolve(teacher, Role.teacher, item.id, override_marks=3)
+
+    # Delegation proof: the service's override path ran exactly the
+    # module-level functions this test replaced, once each, over this
+    # attempt's own question results — not a private copy of the arithmetic.
+    assert len(totals_calls) == 1
+    assert len(weakness_calls) == 1
+    totals_attempt, totals_results = totals_calls[0]
+    weakness_attempt, weakness_results = weakness_calls[0]
+    assert totals_attempt.id == attempt_id
+    assert weakness_attempt.id == attempt_id
+    assert {r.question_id for r in totals_results} == {"1", "2"}
+    assert {r.question_id for r in weakness_results} == {"1", "2"}
+
+    # Correctness proof, independent of the spy: the totals the module-level
+    # functions actually produced once run for real (2 + 3 = 5/5 = 100% = A,
+    # and the fully-restored "Waves" topic leaves no weakness record).
+    with pg_sessionmaker() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        assert attempt.awarded_marks == 5
+        assert attempt.percentage == 100.0
+        assert attempt.grade == "A"
+        assert (
+            session.scalars(
+                select(WeaknessRecord).where(WeaknessRecord.attempt_id == attempt_id)
+            ).all()
+            == []
+        )
