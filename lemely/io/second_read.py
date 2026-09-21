@@ -73,6 +73,15 @@ if TYPE_CHECKING:
 # the crop-and-re-read eligibility set -- see that module for whether/how
 # this is wired (kept out of lemely.io.reread deliberately; see its own
 # comment).
+#
+# 0.8 is the plan's threshold for a rapidfuzz normalised-Levenshtein score;
+# applied here unmodified to a difflib Ratcliff/Obershelp score instead --
+# not revalidated for this metric. The two algorithms score the same string
+# pair differently (Ratcliff/Obershelp weights the longest common contiguous
+# run more heavily; normalised Levenshtein counts raw edit operations), so
+# "0.8" is not known to mean the same thing under both. Re-derive when
+# rapidfuzz lands (US-013 needs it anyway for I6's coherence gate) rather
+# than assuming 0.8 still means the same thing.
 REREAD_AGREEMENT_THRESHOLD = 0.8
 
 # Matches EXTRACTION_MEDIA_RESOLUTION (lemely.io.answer_extraction) -- the
