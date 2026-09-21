@@ -67,6 +67,14 @@ These are not stylistic preferences. They constrain the interface.
    measured false-positive rate, and JCQ guidance is that such a detector
    must never be sole evidence.) The UI must never accuse a student, never
    show a scary red "CHEATING DETECTED" banner, never auto-penalize a mark.
+   The standing advisory notice that stated this in copy on T-07 was removed
+   on 2026-09-21; the rule is now carried by behaviour rather than by a
+   sentence — `apply_integrity_checks` never touches marks, and integrity
+   flags are excluded from bulk-approve. Do not read the absence of that
+   paragraph as the rule having lapsed.
+   And do not state, anywhere, that a flagged mark is checked before it
+   counts: it already counts (`QuestionResult.effective_marks`), and nothing
+   compels a teacher to open it.
    Students should not see these flags at all; teachers see them phrased as
    "worth a look."
 3. **Grades are private; effort is public.** Leaderboards rank XP only — never

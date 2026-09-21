@@ -14,7 +14,27 @@ import { cn } from "@/lib/utils"
  *     language explanation (a real disclosure, not a hover-only tooltip, so
  *     it works on the touch-first student surface).
  *   - ConfidenceIndicatorSummary: per-paper aggregate — "We're confident
- *     about 19 of 21 questions. Two are waiting for your teacher to check."
+ *     about 19 of 21 questions. 2 are flagged for your teacher."
+ *
+ * WHAT THIS COMPONENT MUST NOT SAY, and why (product owner's ruling,
+ * 2026-09-21). Every tier here previously promised that a low-confidence
+ * mark would be "checked by your teacher before it counts". That was false
+ * in both halves, and it was told to the STUDENT about their own grade:
+ *
+ *   - it has already counted. `QuestionResult.effective_marks`
+ *     (`lemely/db/models/attempts.py:232`) returns the AI's `awarded_marks`
+ *     whenever no teacher override exists, and `lemely/db/review_repo.py`
+ *     sums that into the paper total as soon as marking finishes.
+ *   - nothing requires a teacher to check it. `needs_teacher_review` is a
+ *     ROUTING boolean; it withholds nothing. The review queue's own
+ *     bulk-approve "accepts each selected mark exactly as Lemely awarded
+ *     it" (`portals/teacher/screens/Review.tsx`), unopened.
+ *
+ * So this component states CONFIDENCE and nothing about what happens next.
+ * A tier may carry no explanation at all — that is deliberate, not an
+ * oversight, and `explanation` is optional for exactly that reason. If you
+ * are about to add a sentence here about teacher review, check first
+ * whether the product actually performs it.
  */
 
 export type ConfidenceTier = "confident" | "uncertain" | "needs-review"
@@ -22,7 +42,8 @@ export type ConfidenceTier = "confident" | "uncertain" | "needs-review"
 interface TierMeta {
   label: string
   icon: Icon
-  explanation: string
+  /** Optional: a tier with nothing TRUE to add says nothing. See above. */
+  explanation?: string
 }
 
 const tierMeta: Record<ConfidenceTier, TierMeta> = {
@@ -40,8 +61,9 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
   "needs-review": {
     label: "Needs review",
     icon: Flag,
-    explanation:
-      "We're not certain about this one. Your teacher will check it before it counts.",
+    // No explanation, deliberately. The only thing this tier could add
+    // beyond its label is what happens next, and the product does not
+    // guarantee anything happens next. See the header.
   },
 }
 
@@ -62,6 +84,31 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
   const meta = tierMeta[tier]
   const Icon = meta.icon
   const loud = tier !== "confident"
+
+  // A tier with no explanation has nothing to disclose, so it renders as a
+  // plain labelled span rather than a button: an expand affordance that
+  // opens an empty tooltip is worse than no affordance. `aria-expanded` and
+  // the disclosure are both gated on the same condition, so the accessible
+  // name never promises a disclosure that isn't there.
+  if (!meta.explanation) {
+    return (
+      <span
+        className={cn("relative inline-flex", className)}
+        aria-label={`Confidence: ${meta.label}`}
+      >
+        <span
+          className={cn(
+            "inline-flex items-center gap-1 rounded-full border border-transparent",
+            loud ? "px-2 py-1" : "p-0.5",
+            tierClasses[tier],
+          )}
+        >
+          <Icon weight={loud ? "fill" : "regular"} className="w-4 h-4" aria-hidden />
+          {loud && <span className="text-label-sm">{meta.label}</span>}
+        </span>
+      </span>
+    )
+  }
 
   return (
     <span className={cn("relative inline-flex", className)}>
@@ -135,7 +182,7 @@ export function ConfidenceIndicatorSummary({
         <p className={cn("text-body-md m-0", allConfident ? "text-t1" : "text-confidence-low font-medium")}>
           We're confident about {confident} of {total} question{total === 1 ? "" : "s"}.
           {flagged > 0 &&
-            ` ${flagged} ${flagged === 1 ? "is" : "are"} waiting for your teacher to check.`}
+            ` ${flagged} ${flagged === 1 ? "is" : "are"} flagged for your teacher.`}
         </p>
         <button
           type="button"
@@ -150,7 +197,7 @@ export function ConfidenceIndicatorSummary({
       {open && (
         <p className="text-sm text-t2 mt-2.5 mb-0 ps-7">
           Confidence tells you how sure we are about each mark. Low-confidence marks are
-          checked by your teacher before they count toward your result.
+          flagged for your teacher.
         </p>
       )}
     </div>
