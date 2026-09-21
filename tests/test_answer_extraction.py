@@ -16,6 +16,7 @@ from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
 from lemely.io.answer_extraction import GeminiAnswerExtractor, _calibrate_confidence
 from lemely.io.gemini import GeminiClient
 from lemely.io.reread import DEFAULT_CONFIDENCE_THRESHOLD
+from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import CostCeilingError, ExternalServiceError, ParseError
 from lemely.runtime.events import EventType, bus
@@ -1907,10 +1908,17 @@ class SecondReadWiringTests(unittest.TestCase):
 
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
         agreement = result.answers[0].extraction_agreement
-        self.assertIsNotNone(agreement)
+        # A plain `assert ... is not None` (not `self.assertIsNotNone`) so
+        # static type-checkers narrow `float | None` to `float` before the
+        # bound comparisons below -- and, at runtime, so "the field was
+        # never populated" fails distinctly from "the value was out of
+        # range" instead of raising a bare TypeError out of assertEqual.
+        # Acceptance (1) is precisely that a value IS produced, so the two
+        # failure modes must not collapse into one.
+        assert agreement is not None
         self.assertGreaterEqual(agreement, 0.0)
         self.assertLessEqual(agreement, 1.0)
-        self.assertEqual(agreement, 1.0)
+        self.assertEqual(agreement, 1.0)  # identical reads: pin the exact value, not just the bound
 
     def test_structural_populates_extraction_agreement_for_disagreeing_reads(self) -> None:
         primary = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
@@ -1924,9 +1932,12 @@ class SecondReadWiringTests(unittest.TestCase):
 
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
         agreement = result.answers[0].extraction_agreement
-        self.assertIsNotNone(agreement)
+        assert agreement is not None
         self.assertGreaterEqual(agreement, 0.0)
-        self.assertLess(agreement, 0.5)
+        # Below the re-read trigger threshold, not just "somewhere in
+        # [0, 1]" -- a bound that loose is satisfied by any number and pins
+        # nothing about this being a genuine disagreement.
+        self.assertLess(agreement, REREAD_AGREEMENT_THRESHOLD)
 
 
 class AgreementTriggeredRereadTests(unittest.TestCase):

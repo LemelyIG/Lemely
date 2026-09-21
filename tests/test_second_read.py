@@ -130,7 +130,7 @@ class ComputeAgreementTests(unittest.TestCase):
         agreements = compute_agreement(primary, second_read)
         self.assertEqual(agreements["1"], 1.0)
         self.assertGreaterEqual(agreements["2"], 0.0)
-        self.assertLessEqual(agreements["2"], 1.0)
+        self.assertLess(agreements["2"], REREAD_AGREEMENT_THRESHOLD)
 
     def test_question_id_absent_from_second_read_is_left_out(self) -> None:
         primary = [ExtractedAnswer(question_id="1", answer="A", confidence=0.9)]
@@ -222,7 +222,10 @@ class SecondReadCacheTests(unittest.TestCase):
         )
         self.assertEqual(mock_genai.models.generate_content.call_count, 1)
 
-        reader = StructuralSecondReader(client, model=client._settings.gemini.extraction_model)
+        gemini_settings = client._settings.gemini
+        reader = StructuralSecondReader(
+            client, model=gemini_settings.extraction_model or gemini_settings.model
+        )
         result = reader.read(mark_scheme, image_parts, extra_cache_key="manifest123")
 
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
