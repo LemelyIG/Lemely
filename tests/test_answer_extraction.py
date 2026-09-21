@@ -146,6 +146,37 @@ def _client_with_response(tmp: str, body: dict) -> GeminiClient:
     return GeminiClient(settings, _genai_client=mock_genai)
 
 
+def _client_with_responses(
+    tmp: str, bodies: list[dict], *, second_reader: str = "none"
+) -> tuple[GeminiClient, MagicMock]:
+    """Like ``_client_with_response`` but returns the mock too and issues
+    ``bodies`` in order across successive ``generate_content`` calls (I3,
+    US-010: a second-read variant issues a SECOND call, distinct from the
+    primary extraction's first)."""
+    mock_genai = MagicMock()
+    mock_genai.models.generate_content.side_effect = [
+        MagicMock(
+            text=json.dumps(body),
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=5, candidates_token_count=30),
+        )
+        for body in bodies
+    ]
+    mock_genai.files.upload.return_value = MagicMock()
+    with _IsolatedEnv():
+        settings = load_settings(toml_path=None, cwd=Path(tmp))
+    settings = settings.model_copy(
+        update={
+            "paths": PathsSettings(
+                cache_dir=Path(tmp) / ".cache",
+                output_dir=Path(tmp) / "outputs",
+            ),
+            "gemini": settings.gemini.model_copy(update={"second_reader": second_reader}),
+        }
+    )
+    return GeminiClient(settings, _genai_client=mock_genai), mock_genai
+
+
 class AnswerExtractorTests(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.mkdtemp()
@@ -1841,3 +1872,151 @@ class ScanQualityWarningPublishTests(unittest.TestCase):
         _write_content_pdf(scan)
         frames = self._run_capturing(scan)
         self.assertEqual(frames, [])
+
+
+class SecondReadWiringTests(unittest.TestCase):
+    """I3 (US-010, label-free half): GeminiAnswerExtractor populates
+    ``ExtractedAnswer.extraction_agreement`` when a ``SecondReader`` is
+    configured, and issues no second call at all when it is not (the
+    default) -- config default stays "none" so this path is unchanged."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.scan = Path(self.tmp) / "scan.pdf"
+        _write_minimal_pdf(self.scan, pages=1)
+
+    def test_default_none_issues_no_second_call_and_leaves_agreement_unset(self) -> None:
+        body = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        client, mock_genai = _client_with_responses(self.tmp, [body], second_reader="none")
+        extractor = GeminiAnswerExtractor(client)
+
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        mock_genai.models.generate_content.assert_called_once()
+        self.assertIsNone(result.answers[0].extraction_agreement)
+
+    def test_cross_model_populates_extraction_agreement_for_identical_reads(self) -> None:
+        primary = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        second = {"answers": [{"question_id": "1", "answer": "A"}]}
+        client, mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="cross_model"
+        )
+        extractor = GeminiAnswerExtractor(client)
+
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+        agreement = result.answers[0].extraction_agreement
+        self.assertIsNotNone(agreement)
+        self.assertGreaterEqual(agreement, 0.0)
+        self.assertLessEqual(agreement, 1.0)
+        self.assertEqual(agreement, 1.0)
+
+    def test_structural_populates_extraction_agreement_for_disagreeing_reads(self) -> None:
+        primary = {"answers": [{"question_id": "1", "answer": "A", "confidence": 0.95}]}
+        second = {"answers": [{"question_id": "1", "answer": "completely different text"}]}
+        client, mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="structural"
+        )
+        extractor = GeminiAnswerExtractor(client)
+
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+        agreement = result.answers[0].extraction_agreement
+        self.assertIsNotNone(agreement)
+        self.assertGreaterEqual(agreement, 0.0)
+        self.assertLess(agreement, 0.5)
+
+
+class AgreementTriggeredRereadTests(unittest.TestCase):
+    """I3 (US-010): the plan says agreement < 0.8 fires a re-read. This is
+    wired entirely inside ``GeminiAnswerExtractor`` (this module), NOT by
+    modifying ``lemely.io.reread.should_reread`` -- ``reread.py`` is outside
+    this story's file ownership. The two conditions (confidence, agreement)
+    are OR'd together before the existing cap/sort logic, which stays
+    generic over why an answer became eligible."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.scan = Path(self.tmp) / "scan.pdf"
+        _write_minimal_pdf(self.scan, pages=1)
+
+    def _primary_body(self, question_ids: list[str]) -> dict:
+        return {
+            "answers": [
+                {
+                    "question_id": qid,
+                    # A clean single MCQ letter: _calibrate_confidence does
+                    # not cap this, so the raw high confidence below survives
+                    # -- should_reread alone would say False for all of
+                    # these; only the agreement trigger can make them
+                    # eligible.
+                    "answer": "A",
+                    "confidence": 0.99,
+                    "source_box": {"page": 0, "box": [10, 10, 20, 20]},
+                }
+                for qid in question_ids
+            ]
+        }
+
+    def test_low_agreement_triggers_a_reread_despite_high_confidence(self) -> None:
+        primary = self._primary_body(["1"])
+        second = {"answers": [{"question_id": "1", "answer": "B"}]}
+        client, _mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="cross_model"
+        )
+        extractor = GeminiAnswerExtractor(client)
+        extractor._rereader.reread = MagicMock(  # type: ignore[method-assign]
+            side_effect=lambda answer, pages, *, extra_cache_key: answer.model_copy(
+                update={"answer_reread": "reread text", "reread_agreement": 0.5}
+            )
+        )
+
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        extractor._rereader.reread.assert_called_once()
+        self.assertEqual(result.answers[0].answer_reread, "reread text")
+
+    def test_high_agreement_does_not_trigger_a_reread(self) -> None:
+        primary = self._primary_body(["1"])
+        second = {"answers": [{"question_id": "1", "answer": "A"}]}
+        client, _mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="cross_model"
+        )
+        extractor = GeminiAnswerExtractor(client)
+        extractor._rereader.reread = MagicMock()  # type: ignore[method-assign]
+
+        extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        extractor._rereader.reread.assert_not_called()
+
+    def test_agreement_trigger_still_respects_the_reread_cap(self) -> None:
+        primary = self._primary_body(["1", "2", "3"])
+        second = {"answers": [{"question_id": qid, "answer": "B"} for qid in ("1", "2", "3")]}
+        client, _mock_genai = _client_with_responses(
+            self.tmp, [primary, second], second_reader="cross_model"
+        )
+        extractor = GeminiAnswerExtractor(client, max_rereads_per_paper=1)
+        extractor._rereader.reread = MagicMock(  # type: ignore[method-assign]
+            side_effect=lambda answer, pages, *, extra_cache_key: answer
+        )
+
+        result = extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        self.assertEqual(extractor._rereader.reread.call_count, 1)
+        self.assertEqual(result.rereads_eligible, 3)
+        self.assertEqual(result.reread_attempts, 1)
+
+    def test_default_none_never_triggers_the_agreement_reread(self) -> None:
+        """Config default stays "none": with no second reader configured,
+        extraction_agreement is always None, so the agreement trigger can
+        never fire -- confidence is the only gate, unchanged from before I3."""
+        primary = self._primary_body(["1"])
+        client, _mock_genai = _client_with_responses(self.tmp, [primary], second_reader="none")
+        extractor = GeminiAnswerExtractor(client)
+        extractor._rereader.reread = MagicMock()  # type: ignore[method-assign]
+
+        extractor(scan_path=self.scan, mark_scheme=_minimal_mcq_mark_scheme())
+
+        extractor._rereader.reread.assert_not_called()

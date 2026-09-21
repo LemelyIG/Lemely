@@ -28,6 +28,7 @@ from lemely.io.reread import (
     should_reread,
 )
 from lemely.io.scan_hygiene import check_scan_hygiene
+from lemely.io.second_read import REREAD_AGREEMENT_THRESHOLD, build_second_reader, compute_agreement
 from lemely.runtime.errors import CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
@@ -928,6 +929,25 @@ class GeminiAnswerExtractor:
             calibrated.append(a)
         answers = calibrated
 
+        # I3 (US-010, label-free half): an independent second read of the
+        # whole paper, if configured (default "none" -- no second call, no
+        # behaviour change). Populates extraction_agreement per answer,
+        # matched by question_id; an answer the second read did not return
+        # keeps extraction_agreement=None (see compute_agreement).
+        g = self._client._settings.gemini
+        second_reader = build_second_reader(self._client, g)
+        if second_reader is not None:
+            second_read_texts = second_reader.read(
+                mark_scheme, [p.png_bytes for p in pages], extra_cache_key=manifest_key
+            )
+            agreements = compute_agreement(answers, second_read_texts)
+            answers = [
+                a.model_copy(update={"extraction_agreement": agreements[a.question_id]})
+                if a.question_id in agreements
+                else a
+                for a in answers
+            ]
+
         # Crop-and-re-read: a second, zoomed-in look at exactly the pixels
         # each low-confidence answer's own box says the answer lives in.
         #
@@ -938,7 +958,28 @@ class GeminiAnswerExtractor:
         # answers first since those are the ones re-reading helps most, and
         # record when the cap binds so the count is visible rather than the
         # re-read set silently truncating.
-        eligible_indices = [i for i, a in enumerate(answers) if should_reread(a, **reread_kwargs)]
+        #
+        # I3: low cross-read agreement (< REREAD_AGREEMENT_THRESHOLD) also
+        # makes an answer eligible, alongside should_reread's confidence-only
+        # check -- wired HERE rather than inside should_reread
+        # (lemely.io.reread) because reread.py is outside this story's file
+        # ownership; should_reread's own contract is unchanged. With the
+        # default second_reader="none", extraction_agreement is always None
+        # and this condition can never fire, so behaviour is unchanged on
+        # every existing path. The same cap/sort logic below stays generic
+        # over why an answer became eligible.
+        def _agreement_triggers_reread(a: ExtractedAnswer) -> bool:
+            return (
+                a.source_box is not None
+                and a.extraction_agreement is not None
+                and a.extraction_agreement < REREAD_AGREEMENT_THRESHOLD
+            )
+
+        eligible_indices = [
+            i
+            for i, a in enumerate(answers)
+            if should_reread(a, **reread_kwargs) or _agreement_triggers_reread(a)
+        ]
         to_reread = sorted(eligible_indices, key=lambda i: answers[i].confidence)[
             : self._max_rereads_per_paper
         ]

@@ -60,6 +60,31 @@ class TestModelForNewTags:
         assert s.model_for("correction") == "gemini-2.5-pro"
         assert s.model_for("mark_scheme") == "gemini-2.5-flash"
 
+
+class TestSecondReaderSettings:
+    """I3 (US-010, label-free half). Default must stay "none" so every
+    existing path is behaviour-unchanged until an AUROC selection (needs
+    Phase-A transcription labels, US-008) picks a variant."""
+
+    def test_default_is_none(self) -> None:
+        s = GeminiSettings()
+        assert s.second_reader == "none"
+
+    def test_default_second_read_model_is_3_8_flash(self) -> None:
+        """Plan: cross_model pairs primary 3.5-flash-lite with second 3.8-flash."""
+        s = GeminiSettings()
+        assert s.second_read_model == "gemini-3.8-flash"
+
+    def test_second_reader_rejects_unknown_variant(self) -> None:
+        import pydantic
+
+        with pytest.raises(pydantic.ValidationError):
+            GeminiSettings(second_reader="bogus")
+
+    def test_second_reader_accepts_cross_model_and_structural(self) -> None:
+        assert GeminiSettings(second_reader="cross_model").second_reader == "cross_model"
+        assert GeminiSettings(second_reader="structural").second_reader == "structural"
+
     def test_f1_defaults(self) -> None:
         """F1 acceptance (1): model_for() resolves every tag to the migration defaults."""
         s = GeminiSettings()

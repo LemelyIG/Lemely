@@ -116,6 +116,30 @@ class ExtractedAnswerTests(unittest.TestCase):
         with self.assertRaises(ValidationError):
             ExtractedAnswer(question_id="1", answer="A", confidence=1.5)
 
+    def test_extraction_agreement_defaults_to_none(self) -> None:
+        """extraction_agreement (I3, cross-read second opinion) is distinct
+        from reread_agreement (I1, crop-and-re-read) and unset by default."""
+        ea = ExtractedAnswer(question_id="1", answer="A", confidence=0.9)
+        self.assertIsNone(ea.extraction_agreement)
+        self.assertIsNone(ea.reread_agreement)
+
+    def test_extraction_agreement_and_reread_agreement_are_independent_fields(self) -> None:
+        """Setting one must never affect the other -- they are two different
+        measurements, not aliases of the same value."""
+        ea = ExtractedAnswer(
+            question_id="1",
+            answer="A",
+            confidence=0.9,
+            extraction_agreement=0.42,
+            reread_agreement=0.99,
+        )
+        self.assertEqual(ea.extraction_agreement, 0.42)
+        self.assertEqual(ea.reread_agreement, 0.99)
+
+    def test_extraction_agreement_out_of_range_raises(self) -> None:
+        with self.assertRaises(ValidationError):
+            ExtractedAnswer(question_id="1", answer="A", confidence=0.9, extraction_agreement=1.5)
+
     def test_extracted_answers_round_trip(self) -> None:
         ea = ExtractedAnswers(
             paper_id="0625_MayJune_2020_p12",

@@ -190,6 +190,23 @@ class GeminiSettings(BaseModel):
     # Left as None (no default ceiling) here: the operative value is set per-run in
     # lemely.toml by whoever is sizing that run.
     per_run_token_ceiling: int | None = None
+    # I3 (US-010, label-free half): which SecondReader variant, if any,
+    # produces ExtractedAnswer.extraction_agreement (lemely.io.second_read).
+    # "none" (default) issues no second call and leaves extraction_agreement
+    # unset on every answer -- behaviour is unchanged on every existing path.
+    # "cross_model"/"structural" are built and unit-tested but NOT YET
+    # SELECTED: the plan's AUROC selection rule (adopt whichever variant
+    # scores >= 0.70 predicting Phase-A transcription error, else keep
+    # "none") needs Phase-A transcription labels that do not exist yet
+    # (US-008, a human labelling gate). Do not flip this default without
+    # that measurement.
+    second_reader: Literal["none", "cross_model", "structural"] = "none"
+    # Model for the "cross_model" second-read variant only (plan: primary
+    # gemini-3.5-flash-lite, second gemini-3.8-flash). The "structural"
+    # variant deliberately reuses extraction_model instead -- running the
+    # SAME model as the primary, on a different prompt, is the whole point
+    # of that variant.
+    second_read_model: str | None = "gemini-3.8-flash"
 
     def model_for(self, task_tag: str) -> str:
         """Resolve the Gemini model name for a task, falling back to the global default.

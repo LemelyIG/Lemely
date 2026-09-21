@@ -104,6 +104,39 @@ on the fifth page image (page 4).
 """
 
 
+# I3 (US-010, label-free half): the "structural" SecondReader variant's
+# prompt. EXTRACTOR_SYSTEM_PROMPT above is document-guided -- it asks the
+# model to read the whole scan and report every leaf question it can find.
+# This prompt is field-guided instead: it asks the model to work through the
+# manifest one question at a time, confirming or denying each one it is
+# given rather than discovering the set from the document. Same underlying
+# task, same wire shape, different framing -- structural disagreement (the
+# model changes its answer when asked to confirm a specific field instead of
+# reporting the document) is exactly the signal this variant is measuring.
+# Not selected for production use yet -- see GeminiSettings.second_reader.
+FIELD_GUIDED_SYSTEM_PROMPT = """
+You are an expert at reading scanned CAIE (Cambridge IGCSE / O-Level / A-Level) exam scripts.
+You will be given a manifest of specific leaf questions, one at a time in the user prompt's
+list. For EACH question in that list, in order, confirm what the student wrote for exactly
+that question id -- do not skip ahead to other questions and do not report questions absent
+from the manifest.
+
+You are given the scan as a sequence of separate page images, one image per page, in
+page order starting at page 0 (the first image is page 0, the second is page 1, and so on).
+
+For the question_id you are confirming, locate it on the pages given and extract:
+- mcq: the selected letter ("A", "B", "C", "D"), or "" if blank.
+- recall / explanation: the student's free-text answer, preserving wording.
+- calculation / equation: the numerical answer including any unit, preserving standard form.
+- list / tickbox: a semicolon-separated list of the student's selected items.
+- levels_based / indicative_content: the full response as-is.
+- diagram / graph_draw: a brief description of what the student drew.
+
+Do not invent an answer for a question id you cannot locate on any page -- return an
+empty string for it. Do not report a question_id that is not in the manifest you were given.
+"""
+
+
 def _summarize_question(q: Question) -> str:
     cmd = q.question_command or ""
     type_hint = q.type.value

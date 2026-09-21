@@ -330,12 +330,26 @@ class ExtractedAnswer(StrictModel):
     MCQ and simple-recall questions where no working is expected."""
     answer_reread: str | None = None
     """Set by the crop-and-re-read step (I1) when triggered by low confidence
-    or (once I3 lands) low cross-read agreement: a single-answer re-extraction
-    from an upscaled crop of ``source_box``, at ``media_resolution="high"``.
-    ``None`` when no re-read was triggered."""
-    reread_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
-    """Similarity between ``answer`` and ``answer_reread`` (0-1). ``None``
+    or by low cross-read agreement (I3, once wired -- see
+    ``extraction_agreement`` below): a single-answer re-extraction from an
+    upscaled crop of ``source_box``, at ``media_resolution="high"``. ``None``
     when no re-read was triggered."""
+    reread_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
+    """I1's crop-and-re-read agreement: similarity between ``answer`` and
+    ``answer_reread`` (0-1), i.e. this ONE answer against its own zoomed-in
+    re-extraction. ``None`` when no re-read was triggered. This is NOT
+    ``extraction_agreement`` below -- that is I3's cross-read second-opinion
+    score, a different measurement with a different trigger. The two fields
+    are deliberately kept separate; do not rename, merge, or conflate them."""
+    extraction_agreement: float | None = Field(default=None, ge=0.0, le=1.0)
+    """I3's cross-read agreement score (0-1, ``lemely.io.second_read``):
+    similarity between this answer's ``answer`` text and an INDEPENDENT
+    second read of the whole paper, matched by ``question_id``. This is NOT
+    ``reread_agreement`` above -- that is I1's similarity between one answer
+    and its own crop-and-re-read, not a second independent read of the whole
+    paper. ``None`` when no second reader is configured
+    (``GeminiSettings.second_reader == "none"``, the default) or when the
+    second read did not return this ``question_id``."""
 
 
 class ExtractedAnswers(StrictModel):
@@ -422,6 +436,33 @@ class ExtractedAnswers(StrictModel):
     """The confidence threshold that gated which answers were eligible for
     a re-read on this run. ``None`` only when this ``ExtractedAnswers`` was
     not produced by the crop-and-re-read-aware extraction path at all."""
+
+
+class SecondReadAnswer(BaseModel):
+    """One answer as reported by I3's second read (``lemely.io.second_read``).
+
+    Text only -- no box/confidence/working_out. Agreement is a
+    text-similarity concern; the primary extraction already owns those other
+    fields, so the second read is not asked to reproduce them.
+    """
+
+    question_id: str
+    answer: str
+
+
+class SecondReadOutput(BaseModel):
+    """Wire schema (``response_schema``) for I3's second-read Gemini call.
+
+    Defined here, alongside ``ExtractedAnswer``/``ExtractedAnswers``, rather
+    than in ``lemely.io.second_read`` itself, because this module already
+    carries the project's ``disallow_any_explicit = false`` mypy override for
+    exactly this class of pydantic wire-schema definition (see
+    ``pyproject.toml``); adding a second override entry for a brand-new
+    module was outside this story's file ownership (``pyproject.toml``
+    belongs to other lanes running concurrently in this session).
+    """
+
+    answers: list[SecondReadAnswer]
 
 
 class AIMarkResponse(StrictModel):
