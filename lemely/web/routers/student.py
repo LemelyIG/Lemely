@@ -33,6 +33,7 @@ import anyio
 import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
 # FastAPI dependency injection and the response converters resolve their
@@ -1068,10 +1069,28 @@ def student_correct(
                     upload_id=owned.id,
                     mark_scheme=mark_scheme,
                 )
+                upload_repo.set_status(owned.id, UploadStatus.complete)
                 # The self-review routes address a question by its
                 # question_results row id, which only exists once persisted.
-                result_ids = attempt_repo.question_result_ids(attempt_id)
-                upload_repo.set_status(owned.id, UploadStatus.complete)
+                # Ordered *after* set_status and swallowed on failure for the
+                # same reason the XP call below is: the paper is marked and
+                # stored by this point, and a database blip on a
+                # presentation-only lookup must not fall into the handler at
+                # the bottom of this function, which would set the upload to
+                # `failed` and send an error frame for a correction that
+                # succeeded. Without the ids the frame simply carries
+                # questionResultId=None and the student sees their marks
+                # without the self-review affordance.
+                try:
+                    result_ids = attempt_repo.question_result_ids(attempt_id)
+                except SQLAlchemyError:
+                    log.warning(
+                        "question_result_ids_failed",
+                        attempt_id=str(attempt_id),
+                        paper_id=payload.paperId,
+                        exc_info=True,
+                    )
+                    result_ids = {}
                 # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
                 # never for how well it was corrected — no mark/score/grade
                 # is read here or passed to XpService.award. The attempt is

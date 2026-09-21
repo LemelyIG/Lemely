@@ -181,10 +181,19 @@ weak areas.
 
 **On a mark change**, in one transaction: `student_selfmark` and
 `student_selfmark_at` set on the point row, `student_selfmark_marks` set on
-`question_results`, a `student_selfmark` revision appended,
-`_recompute_attempt_totals` called, and the open `low_confidence` queue row
-resolved per D4 (`resolved_by` = the student's `users.id`, `resolved_at`
-stamped, `resolution_note` recording the self-mark).
+`question_results`, a `student_selfmark` revision appended, and
+`_recompute_attempt_totals` called.
+
+**The queue row resolves on any completed pass**, not only one that moved
+marks (`resolved_by` = the student's `users.id`, `resolved_at` stamped,
+`resolution_note` recording the self-mark). *Correction (2026-09-21, found in
+review):* this paragraph first said the resolve happens "on a mark change",
+which defeats D4 in its commonest case — a student who agrees with the marker
+leaves the row open forever, and cannot submit again (one pass, 409). Full
+agreement is the strongest evidence that a teacher need not look, not the
+weakest; a grant the group cap absorbs is settled for the same reason.
+Where a teacher genuinely is still needed the judge failed, and that opens its
+own `student_evidence_unjudged` row.
 
 ## API
 

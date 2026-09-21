@@ -14,7 +14,6 @@ from pydantic import BaseModel, ConfigDict
 
 from lemely.core.schemas import (
     CorrectedQuestion,
-    CorrectionResult,
 )
 from lemely.core.schemas import (
     WeakArea as CoreWeakArea,
@@ -55,15 +54,6 @@ class WeakAreaDTO(ApiModel):
     topic: str
     marksLost: int
     marksAvailable: int
-
-
-class GradeResultDTO(ApiModel):
-    """Full grading payload returned once a grade job completes."""
-
-    awardedMarks: int
-    maxMarks: int
-    needsTeacherReview: bool
-    questions: list[QuestionResultDTO]
 
 
 class StorageHealthDTO(ApiModel):
@@ -158,16 +148,6 @@ def question_to_dto(
         aiDetectionFlagged=False if for_student else question.ai_detection_flagged,
         topic=question.topic,
         questionResultId=question_result_id,
-    )
-
-
-def correction_to_dto(correction: CorrectionResult) -> GradeResultDTO:
-    """Convert a core :class:`CorrectionResult` into a :class:`GradeResultDTO`."""
-    return GradeResultDTO(
-        awardedMarks=correction.awarded_marks,
-        maxMarks=correction.maximum_marks,
-        needsTeacherReview=correction.needs_teacher_review,
-        questions=[question_to_dto(q) for q in correction.questions],
     )
 
 

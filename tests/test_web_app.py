@@ -23,15 +23,12 @@ from sqlalchemy.exc import OperationalError
 from lemely.core.schemas import (
     ConfidenceBand,
     CorrectedQuestion,
-    CorrectionResult,
-    ExamMetadata,
 )
 from lemely.runtime.errors import EmptyGradeBoundaryStoreError
 from lemely.runtime.events import EventType, bus
 from lemely.web import create_app
 from lemely.web.routers import meta
 from lemely.web.schemas import (
-    correction_to_dto,
     question_to_dto,
     student_safe_review_reason,
 )
@@ -267,56 +264,6 @@ def test_two_concurrent_streams_are_isolated() -> None:
     # is unchanged even though delivery is now scoped underneath it.
     assert "run_id" not in fast
     assert "run_id" not in slow
-
-
-def test_correction_to_dto_round_trip() -> None:
-    """A core CorrectionResult converts to the camelCase GradeResult DTO."""
-    correction = CorrectionResult(
-        metadata=ExamMetadata(
-            subject_code="0625",
-            paper_number=1,
-            paper_variant=2,
-            session_month="May/June",
-            session_year=2020,
-        ),
-        questions=[
-            CorrectedQuestion(
-                question_id="1a",
-                awarded_marks=2,
-                maximum_marks=3,
-                confidence=ConfidenceBand.HIGH,
-                confidence_score=0.95,
-                needs_teacher_review=False,
-                marker_source="ai",
-                feedback="Good working shown.",
-                matched_point_ids=["mp1", "mp2"],
-            ),
-        ],
-    )
-
-    dto = correction_to_dto(correction)
-
-    assert dto.awardedMarks == 2
-    assert dto.maxMarks == 3
-    assert dto.needsTeacherReview is False
-    assert len(dto.questions) == 1
-
-    q = dto.questions[0]
-    assert q.questionId == "1a"
-    assert q.awardedMarks == 2
-    assert q.maxMarks == 3
-    assert q.markerSource == "ai"
-    assert q.confidence == 0.95
-    assert q.feedback == "Good working shown."
-    assert q.matchedPointIds == ["mp1", "mp2"]
-    # Advisory integrity signals default to unflagged.
-    assert q.plagiarismFlagged is False
-    assert q.aiDetectionFlagged is False
-
-    # camelCase keys survive JSON serialisation for the frontend contract.
-    dumped = dto.model_dump()
-    assert "awardedMarks" in dumped
-    assert "needsTeacherReview" in dumped
 
 
 def test_question_to_dto_surfaces_integrity_flags() -> None:

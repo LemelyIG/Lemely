@@ -526,8 +526,16 @@ def test_agreement_changes_nothing_but_records_the_pass(
     assert [p.evidence_verdict for p in view.points] == [None, None, None]
     qr = _load_qr(pg_sessionmaker, qr_id)
     assert qr.is_self_marked
-    # Agreement does nothing beyond confirming it: the queue row stays open.
-    assert [r.status for r in _queue_rows(pg_sessionmaker, qr_id)] == [ReviewStatus.open]
+    # Agreement moves no marks, but it does close the teacher's row. D4
+    # auto-resolves because a teacher no longer has to look, and a student
+    # reaching the marker's own verdict independently is the strongest case of
+    # that. This assertion used to require `open`, which left the commonest
+    # outcome of the whole feature queued forever while the student could not
+    # submit again (409).
+    [row] = _queue_rows(pg_sessionmaker, qr_id)
+    assert row.status is ReviewStatus.resolved
+    assert row.resolved_by == student
+    assert row.resolution_note == SELFMARK_RESOLUTION_NOTE
     # ...but the pass itself is history.
     assert [r.source for r in qr.revisions] == [RevisionSource.ai, RevisionSource.student_selfmark]
     assert qr.revisions[1].awarded_marks == 1
@@ -1250,9 +1258,12 @@ def test_a_grant_cannot_lift_an_either_or_group_above_its_worth(
     entry = next(e for e in qr.revisions[1].points_snapshot if e["mark_point_id"] == "p3")
     assert (entry["mark_changed"], entry["absorbed_by_group"]) == (False, True)
     assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+    # The pass completed, so the row closes (D4) even though the cap absorbed
+    # the grant and no mark moved. Nothing about this question is still
+    # uncertain: the claim was accepted and the scheme says the group is full.
     rows = _queue_rows(pg_sessionmaker, qr_id)
     assert [(r.reason, r.status) for r in rows] == [
-        (ReviewReason.low_confidence, ReviewStatus.open)
+        (ReviewReason.low_confidence, ReviewStatus.resolved)
     ]
     assert _service(pg_sessionmaker).get(student, attempt_id, qr_id) == view
 

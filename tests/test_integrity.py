@@ -339,6 +339,51 @@ class TestApplyIntegrityChecks:
         assert q.needs_teacher_review is False
 
 
+class TestTheSanitiserStripsWhatTheseChecksProduce:
+    """Binds the student-facing sanitiser to the producer of the strings it strips.
+
+    ``lemely/web/schemas.py`` filters ``review_reason`` segments by prefix so a
+    student is never shown "plagiarism (score 0.94)". Those prefixes are a
+    second copy of the literals written here, and every other leak test
+    hardcodes the producer's string independently — so renaming either side
+    reopens the leak with the whole suite green. This test runs the real
+    pipeline and hands its output to the real sanitiser.
+    """
+
+    def test_a_reason_this_pipeline_writes_is_stripped_for_a_student(self) -> None:
+        from lemely.web.schemas import student_safe_review_reason
+
+        correction = CorrectionResult(metadata=_metadata(), questions=[_question()])
+        marked = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        reason = marked.questions[0].review_reason
+        assert reason is not None, "fixture must produce an integrity reason to strip"
+
+        assert student_safe_review_reason(reason) is None
+
+    def test_an_integrity_segment_beside_a_marking_reason_loses_only_itself(self) -> None:
+        from lemely.web.schemas import student_safe_review_reason
+
+        correction = CorrectionResult(
+            metadata=_metadata(),
+            questions=[_question(review_reason="low confidence")],
+        )
+        marked = apply_integrity_checks(
+            correction,
+            _mark_scheme(),
+            gemini_client=None,
+            settings=IntegritySettings(),
+        )
+        reason = marked.questions[0].review_reason
+        assert reason is not None and "plagiarism" in reason
+
+        assert student_safe_review_reason(reason) == "low confidence"
+
+
 class TestIntegrityChecksSkipMcqQuestions:
     """B3 — you cannot plagiarise a multiple-choice letter.
 

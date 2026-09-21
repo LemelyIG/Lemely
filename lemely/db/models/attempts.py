@@ -379,6 +379,8 @@ class QuestionResultPoint(TimestampMixin, Base):
     """
 
     group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """The scheme group this point belongs to; see ``group_max_marks`` below,
+    which documents the pair."""
     group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     """``group_key``/``group_max_marks``: the scheme group this point belongs
 

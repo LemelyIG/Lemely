@@ -426,7 +426,17 @@ class SelfReviewService:
                 ).all()
                 recompute_attempt_totals(session, attempt, results, boundary_store=self._boundaries)
                 recompute_weakness_records(session, attempt, results)
-                _resolve_low_confidence_rows(session, qr, resolver=student_uuid, now=now)
+            # Every completed pass closes the row, not only one that moved
+            # marks. D4's reason for auto-resolving is that a teacher no longer
+            # has to look, and full agreement — the student reaching the
+            # marker's own verdict independently — is the strongest evidence of
+            # that, not the weakest. Gating this on `changed` left the
+            # commonest outcome open forever, with the student unable to submit
+            # again (409). A grant the group cap absorbed was stranded the same
+            # way. Where a teacher *is* still needed, it is because the judge
+            # failed, and that opens its own `student_evidence_unjudged` row
+            # below.
+            _resolve_low_confidence_rows(session, qr, resolver=student_uuid, now=now)
             if unjudged:
                 session.add(
                     ReviewQueueItem(

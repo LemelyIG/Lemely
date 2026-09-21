@@ -84,9 +84,12 @@ def derive_point_rows(
         kept,
         # ``Question.marks == 0`` is the scheme's "container" convention; the
         # marker's maximum is the next-best statement of the question's worth.
-        # When both are 0 this still yields 0, collapsing every cap to 0 —
-        # harmless while group_max_marks is advisory-only, but load-bearing
-        # once a future task enforces it against a student's grant.
+        # When both are 0 this still yields 0, collapsing every cap to 0. That
+        # is no longer advisory: ``_settle_groups`` enforces these caps against
+        # a student's self-mark, so a 0/0 container silently makes every grant
+        # on that question worth nothing. Under-crediting rather than
+        # over-crediting, but it is a real answer a student sees, not a
+        # bookkeeping detail.
         total=question.marks or cq.maximum_marks,
         select_count=question.select_count,
     )
@@ -133,11 +136,12 @@ def _group_points(
     ``total``: an either/or group is worth its best member; a pool with a
     ``select_count`` is worth its N largest tariffs, further capped by
     whatever ``total`` has left after every independent point and every
-    either/or group (the same leftover a select_count-less pool is worth in
-    full) — a pool can never claim more room than the question actually has
-    once its siblings are paid for; a pool without a ``select_count`` is
-    worth exactly that leftover — the tightest cap the scheme supports when N
-    is unstated.
+    either/or group — a pool can never claim more room than the question
+    actually has once its siblings are paid for; a pool without a
+    ``select_count`` is worth that leftover, the tightest cap the scheme
+    supports when N is unstated. Several pools in one question **share** that
+    leftover, consuming it in scheme order: it is the room the question has
+    for all of them together, so a later pool can end capped at 0.
     """
     groups: list[tuple[str, list[int]]] = []
     member_of: dict[int, int] = {}
@@ -178,18 +182,28 @@ def _group_points(
 
     result: list[tuple[str | None, int | None]] = [(None, None)] * len(points)
     counters = {"alt": 0, "pool": 0}
+    # The leftover is the room *the question has* for all its pools together,
+    # so pools consume it in scheme order rather than each receiving the whole
+    # figure. Two "any N from" pools used to be capped at the full leftover
+    # each: measured on a 4-mark question (one independent point plus an
+    # "any 1 from" pool of three), a student claiming all three pool points
+    # gained 3 where the scheme allows 1, and the question-level clamp never
+    # fired because 3 sits under maximum_marks. A later pool can end capped at
+    # 0 when an earlier one takes the room; that under-credits rather than
+    # over-credits, which is the only safe direction for a cap whose whole
+    # purpose is to bound a grant.
+    pool_room = leftover
     for kind, members in real:
         counters[kind] += 1
         if kind == "alt":
             group_max = alt_cap(members)
         elif select_count is not None:
             tariffs = sorted((points[index].marks for index in members), reverse=True)
-            group_max = max(
-                0,
-                min(total - independent_total - alt_cap_total, sum(tariffs[:select_count])),
-            )
+            group_max = max(0, min(pool_room, sum(tariffs[:select_count])))
+            pool_room -= group_max
         else:
-            group_max = leftover
+            group_max = pool_room
+            pool_room -= group_max
         key = f"{kind}:{counters[kind]}"
         for index in members:
             result[index] = (key, group_max)

@@ -336,6 +336,43 @@ def test_pool_select_count_cap_still_subtracts_independent_and_alt_marks() -> No
     assert _groups(rows) == [(None, None), ("pool:1", 1), ("pool:1", 1), ("pool:1", 1)]
 
 
+def test_two_pools_in_one_question_share_the_leftover_rather_than_each_taking_it() -> None:
+    """The leftover is the room the *question* has for all its pools together.
+
+    Each pool used to receive the whole figure: on this fixture, two caps of 3
+    on a question holding 3 marks of pool room. That is not absorbed by the
+    question clamp in general -- measured on a 4-mark question (one
+    independent point plus an "any 1 from" pool of three), a student claiming
+    every pool point gained 3 where the scheme allows 1, with the clamp never
+    firing because 3 sits under ``maximum_marks``.
+
+    The second pool ends at 0 here: under-crediting, which is the only safe
+    direction for a cap that exists to bound a grant.
+    """
+    scheme = _scheme_with(
+        _points(
+            ("p1", 1, "opt"),
+            ("p2", 1, "opt"),
+            ("p3", 1, ""),
+            ("p4", 1, "opt"),
+            ("p5", 1, "opt"),
+        ),
+        marks=4,
+    )
+
+    rows = derive_point_rows(_corrected(), scheme)
+
+    assert _groups(rows) == [
+        ("pool:1", 3),
+        ("pool:1", 3),
+        (None, None),
+        ("pool:2", 0),
+        ("pool:2", 0),
+    ]
+    caps = {key: cap for key, cap in _groups(rows) if key is not None}
+    assert sum(caps.values()) <= 3, "the two pools may not promise more room than the question has"
+
+
 def test_an_alternative_after_a_pool_member_joins_the_pool() -> None:
     scheme = _scheme_with(
         _points(("p1", 1, "opt"), ("p2", 1, "opt"), ("p3", 1, "alt")), marks=3, select_count=2
