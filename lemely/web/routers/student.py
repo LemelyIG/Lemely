@@ -561,6 +561,11 @@ def student_result(
     answers/mark-scheme points that theory marking and plagiarism/AI-content
     checks require. Those lists are populated by the ``/correct`` SSE flow which
     holds a live :class:`CorrectionResult`; they are empty here by construction.
+
+    ``attemptId`` is data-backed but nullable by store: the Postgres-backed
+    store carries the attempt's id, and the JSON file store has no attempts
+    table to point at, so it is ``None`` there. A null is what tells the
+    frontend there is no per-question detail to fetch for this record.
     """
     history = history_store.load(auth.user_id)
     try:

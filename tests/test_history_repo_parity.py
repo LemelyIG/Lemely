@@ -260,3 +260,32 @@ def test_store_loads_every_origin_not_just_grade_bearing_ones(
 
     loaded = store.load(user_id)
     assert [r.origin for r in loaded.records] == ["past_paper", "quiz", "custom_paper"]
+
+
+def test_attempt_to_record_leaves_attempt_id_null_for_an_unflushed_attempt() -> None:
+    """A transient Attempt has no id yet, and ``str(None)`` would put the
+    literal "None" on the wire as an id pointing at no attempt. The function is
+    public, so it guards its own contract rather than trusting call sites."""
+    from lemely.db.history_repo import attempt_to_record
+    from lemely.db.models.enums import AttemptOrigin, SessionMonth
+
+    transient = Attempt(
+        user_id=uuid.uuid4(),
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month=SessionMonth.may_june,
+        session_year=2020,
+        awarded_marks=65,
+        maximum_marks=80,
+        percentage=81.25,
+        grade="C",
+        origin=AttemptOrigin.past_paper,
+        recorded_at=datetime(2020, 6, 1, tzinfo=UTC),
+    )
+    transient.weakness_records = []
+    assert transient.id is None, "fixture must stay unflushed for this to mean anything"
+
+    record = attempt_to_record(str(transient.user_id), transient)
+
+    assert record.attempt_id is None

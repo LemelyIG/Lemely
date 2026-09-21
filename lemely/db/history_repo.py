@@ -205,7 +205,13 @@ def attempt_to_record(student_id: str, attempt: Attempt) -> PaperRecord:
         # the consumer's `is_grade_bearing` check that decides what each one
         # may back (docs/quiz-model.md §5).
         origin=attempt.origin.value,
-        attempt_id=str(attempt.id),
+        # ``Attempt.id`` is a server default (gen_random_uuid()), so an
+        # unflushed row still has ``id is None`` -- and ``str(None)`` would put
+        # the literal "None" on the wire as a non-null id pointing at no
+        # attempt, the one outcome ``str | None`` exists to prevent. This
+        # function is public, so the guard lives here rather than in the two
+        # callers that happen to pass SELECTed rows.
+        attempt_id=str(attempt.id) if attempt.id is not None else None,
     )
 
 
