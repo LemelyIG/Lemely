@@ -1151,6 +1151,64 @@ class EquivalenceGateTests(unittest.TestCase):
         self.assertTrue(cq.needs_teacher_review)
         self.assertNotIn("equal", (cq.review_reason or "").replace("equivalence", ""))
 
+    def test_fallback_prefers_equal_sampled_working_over_not_equal_answer(self):
+        """SHOULD-FIX from independent review of f1f146fe: the docstring of
+        ``_equivalence_fallback_verdict`` claims the more informative of the
+        two verdicts is kept because "an indeterminate result on one side
+        must not hide a genuine finding on the other" -- but the
+        implementation only special-cased ``UNPARSEABLE`` vs. non-
+        ``UNPARSEABLE``. A genuine ``EQUAL_SAMPLED`` finding on the working
+        side was silently discarded whenever the answer side was
+        ``NOT_EQUAL`` (falling through to ``return answer_verdict``),
+        exactly the case this docstring says must not happen: a student's
+        clearly wrong final answer must not hide a numerically-equivalent
+        (by sampling) checkpoint value in their working."""
+        from lemely.core.equivalence import EquivalenceMethod, Verdict, VerdictKind
+        from lemely.io.correction_ai import _equivalence_fallback_verdict
+
+        calc = self._make_question().answer_points[0].calculated_answer
+        not_equal = Verdict(VerdictKind.NOT_EQUAL)
+        sampled = Verdict(VerdictKind.EQUAL_SAMPLED, method=EquivalenceMethod.NUMERIC)
+
+        def fake_equivalent(text, target, **kwargs):
+            return not_equal if text == "student_answer" else sampled
+
+        with patch("lemely.io.correction_ai.equivalent", side_effect=fake_equivalent):
+            verdict = _equivalence_fallback_verdict(calc, "student_answer", "student_working")
+
+        self.assertIs(verdict, sampled)
+
+    def test_flag_on_not_equal_answer_and_equal_sampled_working_routes_to_review(self):
+        """End-to-end companion to the fallback-priority test above: the
+        surfaced ``equal_sampled`` finding must actually reach the review
+        reason via ``_build_ai_corrected``, and must never raise
+        ``awarded_marks`` -- this story is marks-safe by construction."""
+        from unittest.mock import patch
+
+        from lemely.core.equivalence import EquivalenceMethod, Verdict, VerdictKind
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._make_question()
+        mark = self._make_mark()
+        not_equal = Verdict(VerdictKind.NOT_EQUAL)
+        sampled = Verdict(VerdictKind.EQUAL_SAMPLED, method=EquivalenceMethod.NUMERIC)
+
+        def fake_equivalent(text, target, **kwargs):
+            return not_equal if text == "clearly wrong final answer" else sampled
+
+        with patch("lemely.io.correction_ai.equivalent", side_effect=fake_equivalent):
+            cq = _build_ai_corrected(
+                question,
+                "clearly wrong final answer",
+                mark,
+                student_working="checkpoint expression",
+                equivalence_gate=True,
+            )
+
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn("equal_sampled", cq.review_reason or "")
+
     def test_flag_on_unparseable_never_marks_wrong_beyond_the_literal_check(self):
         """A timeout or unreadable expression must not degrade the mark any
         further than the literal check already did -- an indeterminate

@@ -398,8 +398,18 @@ def _equivalence_fallback_verdict(
     ``answer`` while an intermediate checkpoint value lands in ``working``.
     An ``EQUAL_PROVEN`` match on either side is returned immediately, since
     nothing stronger exists; otherwise the more informative of the two
-    verdicts (anything but ``UNPARSEABLE``) is kept, since an indeterminate
-    result on one side must not hide a genuine finding on the other.
+    verdicts is kept, ranked ``EQUAL_SAMPLED`` > ``NOT_EQUAL`` >
+    ``UNPARSEABLE``: ``UNPARSEABLE`` is the only kind that carries no
+    finding at all (an indeterminate "could not read it"), so it must not
+    hide a genuine finding -- of either remaining kind -- on the other
+    side. Between ``EQUAL_SAMPLED`` and ``NOT_EQUAL``, ``EQUAL_SAMPLED``
+    wins: a wrong final answer with a working expression that samples
+    equal to the checkpoint value is exactly the case this mechanism
+    exists to surface for a human reviewer, since that is where method
+    marks live. ``EQUAL_SAMPLED`` is still never promoted to
+    ``auto_awardable`` -- it is evidence, not proof (see
+    ``Verdict.auto_awardable``) -- this only decides which finding a
+    reviewer gets to see.
     """
     target = str(calc.value)
     answer_verdict = equivalent(
@@ -412,7 +422,12 @@ def _equivalence_fallback_verdict(
     )
     if working_verdict.kind is VerdictKind.EQUAL_PROVEN:
         return working_verdict
-    if answer_verdict.kind is VerdictKind.UNPARSEABLE:
+    rank = {
+        VerdictKind.EQUAL_SAMPLED: 2,
+        VerdictKind.NOT_EQUAL: 1,
+        VerdictKind.UNPARSEABLE: 0,
+    }
+    if rank[working_verdict.kind] > rank[answer_verdict.kind]:
         return working_verdict
     return answer_verdict
 
