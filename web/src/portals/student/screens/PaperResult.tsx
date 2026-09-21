@@ -16,6 +16,7 @@ import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Tabs, TabsList } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
+import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
@@ -314,6 +315,7 @@ function QuestionList({
   onShare,
   filter,
   onFilterChange,
+  attemptId,
 }: {
   questions: QuestionResult[]
   /** The paper's subject code (`res.code.split("/")[0]`), used to build
@@ -328,6 +330,13 @@ function QuestionList({
   onShare?: () => void
   filter: QuestionFilter
   onFilterChange: (filter: QuestionFilter) => void
+  /**
+   * Self-review (spec 2026-09-17): when the result knows its attempt and a
+   * row knows its `question_results` id, the row's expanded slot carries the
+   * self-mark panel. Both come from the backend, never guessed here, so a
+   * history record from before either existed simply renders no panel.
+   */
+  attemptId?: string | null
 }) {
   if (questions.length === 0) {
     // Inside a Card, like the populated list it stands in for. Bare, it
@@ -342,7 +351,12 @@ function QuestionList({
 
   const lostCount = filterQuestions(questions, "lost").length
   const flaggedCount = filterQuestions(questions, "flagged").length
-  const visible = filterQuestions(questions, filter)
+  // `filterQuestions` is typed against `./types`' base `QuestionResult`
+  // (shared with non-self-review call sites), which lacks `questionResultId`.
+  // It filters `questions` in place without rebuilding rows, so the objects
+  // coming back are still the full `QuestionResult`s passed in — the cast
+  // just restores what filtering already preserves at runtime.
+  const visible = filterQuestions(questions, filter) as QuestionResult[]
 
   return (
     <Card className="px-3">
@@ -397,6 +411,9 @@ function QuestionList({
                 <div className="text-body-md leading-snug text-warn">
                   Needs review: {q.reviewReason}
                 </div>
+              ) : null}
+              {attemptId && q.questionResultId ? (
+                <SelfReviewPanel attemptId={attemptId} questionResultId={q.questionResultId} />
               ) : null}
             </div>
           </QuestionRow>
@@ -547,6 +564,7 @@ export function PaperResult() {
           onShare={shareHandler(live)}
           filter={filter}
           onFilterChange={setFilter}
+          attemptId={live.attemptId}
         />
       </ResultScreen>
     )
