@@ -21,6 +21,16 @@ from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -34,9 +44,11 @@ from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.models import User
-from lemely.db.models.enums import Role
+from lemely.db.models.attempts import QuestionResult
+from lemely.db.models.enums import ReviewReason, Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import ReviewService
+from lemely.db.self_review_repo import PointVerdict, SelfReviewService
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -220,6 +232,36 @@ def _seed_teacher_with_flagged_item(
     return teacher, cls.class_id, item_id
 
 
+def _point_scheme() -> MarkScheme:
+    """A one-question, two-point scheme — just enough for a real self-review
+    pass (O-1 needs actual ``question_result_points`` rows, not the plain
+    ``report``-only fixtures the rest of this file uses)."""
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code="9999",
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2020,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the law", marks=1),
+                    AnswerPoint(id="p2", point="Gives the unit", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
 # ---------------------------------------------------------------------------
 # Payload shape (happy path).
 # ---------------------------------------------------------------------------
@@ -348,6 +390,75 @@ def test_get_review_item_happy_path_shape(
     assert body["isOverridden"] is False
     assert body["teacherAwardedMarks"] is None
     assert body["matchedPointIds"] == []
+
+
+def test_get_review_item_carries_the_students_self_review_points(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """O-1 (S2 part2+3 final review): ``ReviewItemDetail.points`` has no test
+    of its own — forcing ``get_item`` to return ``points=[]`` left every
+    other test in this suite green, and ``SelfReviewPoints`` renders ``null``
+    on an empty list, so the regression is invisible on the web side and
+    restores exactly the state I-2 was raised to fix (a
+    ``student_evidence_unjudged`` row the teacher cannot act on).
+
+    Seeds a real self-review pass — an evidenced challenge on a
+    high-confidence point, ``judge=None`` — so Phase C opens a
+    ``student_evidence_unjudged`` row, then asserts the teacher's GET
+    response carries the student's own evidence text and claim, not merely a
+    non-empty list (a length check would pass on empty strings)."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.95, needs_review=False)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_point_scheme()
+    )
+    with pg_sessionmaker() as session:
+        qr_id = session.scalars(
+            sa.select(QuestionResult.id).where(
+                QuestionResult.attempt_id == attempt_id, QuestionResult.question_id == "1"
+            )
+        ).one()
+
+    SelfReviewService(pg_sessionmaker, judge=None).submit(
+        student,
+        attempt_id,
+        qr_id,
+        [
+            PointVerdict(mark_point_id="p1", earned=True),
+            PointVerdict(mark_point_id="p2", earned=True, evidence="I gave the unit, m/s."),
+        ],
+    )
+
+    with pg_sessionmaker() as session:
+        item = session.scalars(
+            sa.select(ReviewQueueItem).where(
+                ReviewQueueItem.question_result_id == qr_id,
+                ReviewQueueItem.reason == ReviewReason.student_evidence_unjudged,
+            )
+        ).one()
+        item_id = item.id
+
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}")
+    assert resp.status_code == 200
+    points = resp.json()["points"]
+    assert len(points) == 2
+    p2 = next(p for p in points if p["markPointId"] == "p2")
+    assert p2["pointText"] == "Gives the unit"
+    assert p2["awarded"] is False  # the marker withheld it
+    assert p2["studentSelfmark"] is True  # the student's own claim
+    assert p2["studentEvidence"] == "I gave the unit, m/s."
+    assert p2["evidenceVerdict"] is None  # judge=None: never actually judged
 
 
 def test_resolve_accept_as_is_shape(
