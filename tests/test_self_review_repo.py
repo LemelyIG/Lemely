@@ -2014,12 +2014,16 @@ def test_judge_runs_with_the_row_unlocked(pg_sessionmaker: sessionmaker[Session]
     assert p2.mark_changed is True
 
 
-#: Bound on the second-session actions below (S2 task 11a review, M5): if a
-#: row lock is ever reintroduced around the judge call, these used to hang
-#: forever instead of failing. Joining a background thread with a timeout
-#: turns that back into a named, bounded pytest failure without adding a
-#: dependency or touching production code.
-_COMPETING_ACTION_TIMEOUT = 10.0
+#: Bound for the ``SET LOCAL``/pool-``checkout`` ``lock_timeout`` used by the
+#: two second-session judges below (S2 task 11a review, M5, second pass).
+#: A reintroduced row lock around the judge call now makes the competing
+#: session's own locking statement fail *deterministically* with
+#: ``OperationalError`` after this many milliseconds -- bounded by Postgres
+#: itself, not by which of two Python threads happens to run first. Short
+#: enough to keep the green-path tests fast (nothing here ever waits on a
+#: lock when the code is correct); long enough not to fire on ordinary
+#: scheduling jitter.
+_LOCK_TIMEOUT_MS = 2000
 
 
 class _CompetingSubmitJudge:
@@ -2027,10 +2031,15 @@ class _CompetingSubmitJudge:
     question on its own session/service — simulating a second request
     arriving while the first is still off judging.
 
-    Run on a background thread and joined with a bound (M5): a reintroduced
-    row lock would make the competing submit's own ``for_update=True`` read
-    block forever, and a plain synchronous call here would hang the whole
-    test run instead of failing it.
+    M5 (second pass): a pool ``checkout`` listener sets ``lock_timeout`` on
+    every connection the competing submit's own session might use. If the
+    row is still locked (a reintroduced Task 11a regression), the competing
+    submit's own ``_owned_question(..., for_update=True)`` read fails
+    deterministically with ``OperationalError`` after ``_LOCK_TIMEOUT_MS`` --
+    caught here, same as any other exception from a real second request --
+    instead of blocking indefinitely. This needs no seam in production code:
+    the timeout is set entirely from the test's own connection-pool events,
+    never touching ``SelfReviewService.submit``.
     """
 
     def __init__(
@@ -2048,29 +2057,32 @@ class _CompetingSubmitJudge:
         self.competing_error: BaseException | None = None
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
-        def _run() -> None:
-            try:
-                # Full agreement with the marker: no evidence needed, so this
-                # competing pass needs no judge of its own and can complete
-                # entirely inside the window this call is holding open.
-                self.competing_view = _service(self._sm).submit(
-                    self._student,
-                    self._attempt_id,
-                    self._qr_id,
-                    [PointVerdict("p1", True), PointVerdict("p2", False)],
-                )
-            except BaseException as exc:
-                self.competing_error = exc
+        engine = self._sm.kw["bind"]
 
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
-        thread.join(timeout=_COMPETING_ACTION_TIMEOUT)
-        if thread.is_alive():
-            raise AssertionError(
-                "competing submit did not complete within "
-                f"{_COMPETING_ACTION_TIMEOUT}s -- the QuestionResult row is still locked "
-                "during the judge call (Task 11a lock regression)"
+        def _set_lock_timeout(
+            dbapi_connection: object, connection_record: object, connection_proxy: object
+        ) -> None:
+            cursor = dbapi_connection.cursor()  # type: ignore[attr-defined]
+            try:
+                cursor.execute(f"SET lock_timeout = '{_LOCK_TIMEOUT_MS}ms'")
+            finally:
+                cursor.close()
+
+        sa.event.listen(engine, "checkout", _set_lock_timeout)
+        try:
+            # Full agreement with the marker: no evidence needed, so this
+            # competing pass needs no judge of its own and can complete
+            # entirely inside the window this call is holding open.
+            self.competing_view = _service(self._sm).submit(
+                self._student,
+                self._attempt_id,
+                self._qr_id,
+                [PointVerdict("p1", True), PointVerdict("p2", False)],
             )
+        except BaseException as exc:
+            self.competing_error = exc
+        finally:
+            sa.event.remove(engine, "checkout", _set_lock_timeout)
         return JudgeVerdict(accepted=True, reason="ok")
 
 
@@ -2109,9 +2121,14 @@ class _TeacherOverrideDuringJudgeJudge:
     before returning an accept -- simulating the state drifting inside the
     unlocked judging window.
 
-    The write is run on a background thread and joined with a bound (M5): if
-    the row is still locked (a reintroduced Task 11a regression), the second
-    session's ``UPDATE`` would otherwise block forever behind it.
+    M5 (second pass): ``SET LOCAL lock_timeout`` on this session's own
+    transaction. If the row is still locked (a reintroduced Task 11a
+    regression), the ``UPDATE`` this write triggers at commit fails
+    deterministically with ``OperationalError`` after ``_LOCK_TIMEOUT_MS`` --
+    left uncaught here so it reaches ``_judge_safely``'s own exception
+    handling exactly like a real judge failure would (``evidence_verdict``
+    stays NULL, a ``student_evidence_unjudged`` row opens), rather than
+    silently landing late once the reintroduced lock happens to release.
     """
 
     def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID, *, override_marks: int) -> None:
@@ -2120,28 +2137,11 @@ class _TeacherOverrideDuringJudgeJudge:
         self._override_marks = override_marks
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
-        error: list[BaseException] = []
-
-        def _run() -> None:
-            try:
-                with self._sm.begin() as session:
-                    qr = session.get(QuestionResult, self._qr_id)
-                    assert qr is not None
-                    qr.teacher_awarded_marks = self._override_marks
-            except BaseException as exc:
-                error.append(exc)
-
-        thread = threading.Thread(target=_run, daemon=True)
-        thread.start()
-        thread.join(timeout=_COMPETING_ACTION_TIMEOUT)
-        if thread.is_alive():
-            raise AssertionError(
-                "teacher override write did not complete within "
-                f"{_COMPETING_ACTION_TIMEOUT}s -- the QuestionResult row is still locked "
-                "during the judge call (Task 11a lock regression)"
-            )
-        if error:
-            raise error[0]
+        with self._sm.begin() as session:
+            session.execute(sa.text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT_MS}ms'"))
+            qr = session.get(QuestionResult, self._qr_id)
+            assert qr is not None
+            qr.teacher_awarded_marks = self._override_marks
         return JudgeVerdict(accepted=True, reason="looks fine")
 
 
