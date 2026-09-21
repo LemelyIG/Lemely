@@ -181,9 +181,7 @@ def _enum_members(engine: Engine, enum_name: str) -> set[str]:
 def _columns(engine: Engine, table_name: str) -> set[str]:
     with engine.connect() as conn:
         rows = conn.execute(
-            sa.text(
-                "SELECT column_name FROM information_schema.columns WHERE table_name = :name"
-            ),
+            sa.text("SELECT column_name FROM information_schema.columns WHERE table_name = :name"),
             {"name": table_name},
         ).all()
     return {r[0] for r in rows}
