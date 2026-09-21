@@ -29,6 +29,8 @@ export interface SeedStudent extends SeedAccount {
   expectedAtRiskReasons: string[]
   /** Only present on `students.correctedPaper`. */
   correctedPaperId?: string
+  /** Only present on `students.selfReview`: the point-based paper's `attempts.id`. */
+  selfReviewAttemptId?: string
 }
 
 export interface SeedContract {
@@ -63,6 +65,13 @@ export interface SeedContract {
     inactive: SeedStudent
     control: SeedStudent
     correctedPaper: SeedStudent
+    /**
+     * Self-review (spec 2026-09-17): a standalone student with ONE
+     * point-based paper (5 marks; question "2" is low-confidence at 1/3).
+     * Kept off every roster and every at-risk scenario so the flow can move
+     * this student's marks without disturbing another spec's assertions.
+     */
+    selfReview: SeedStudent & { selfReviewAttemptId: string }
     /**
      * At-risk rule 2 ("predicted >= 2 grades below target", D3.3), seedable
      * for the first time in Phase 4 — `student_subject_enrolments.target_grade`
