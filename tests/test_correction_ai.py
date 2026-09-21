@@ -304,10 +304,16 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
             answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
             dropped_question_ids=["2"],
         )
-        # Empty side_effect: if mark_question were ever called for q2 despite
-        # the short-circuit, this raises StopIteration instead of silently
-        # succeeding -- proving the paid call is actually skipped, not just
-        # that its result happens to look right.
+        # Empty side_effect: a call for q2 would raise StopIteration, but
+        # that is NOT what proves the skip. `correct_paper`'s own
+        # `except Exception` around `ai.mark_question` swallows it and
+        # converts the question to `_build_missing_corrected` with review_reason
+        # "AI marking failed: ", returning normally -- measured in review
+        # Item 4, and the same reason the sibling test below needed real
+        # assertions. What proves the paid call is skipped is
+        # `generate_content.assert_not_called()` on the last line of this
+        # test; the empty sequence only stops the stub fabricating a
+        # plausible mark if that assertion is ever removed.
         client = _client_with_seq(self.tmp, [])
         result = correct_paper(
             mark_scheme=self.ms,
@@ -345,6 +351,46 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         # actually true here, and the review queue should say which.
         self.assertNotEqual(q1.review_reason, "missing answer")
         self.assertIn("malformed", q1.review_reason or "")
+
+    def test_a_dropped_non_mcq_answer_stays_dropped_under_mcq_only(self) -> None:
+        """The short-circuit must sit ahead of the ``ai is None`` branch too.
+
+        Moving it below that branch is a plausible refactor, and every other
+        test in this class still passes: they all pass a client with
+        ``mcq_only=False``, so none reaches the configuration where it matters.
+        Under ``--mcq-only`` (or with no client) a dropped non-MCQ answer would
+        fall through to ``_build_missing_corrected`` and surface as
+        ``marker_source="missing"`` with "non-MCQ question not marked
+        (--mcq-only or no AI client)" -- telling the teacher we CHOSE not to
+        mark this question, when the model in fact returned an answer for it
+        that extraction discarded. That is the exact conflation MF7 exists to
+        remove, so it must not reappear in the one configuration the siblings
+        never exercise.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+            dropped_question_ids=["2"],  # "2" is the non-MCQ leaf
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertTrue(q2.needs_teacher_review)
+        self.assertEqual(q2.marker_source, "dropped")
+        self.assertEqual(q2.awarded_marks, 0)
+        # Distinct from BOTH blank messages a dropped answer can be mistaken
+        # for -- the MCQ path's "missing answer" and this path's own --mcq-only
+        # string. Asserting only `needs_teacher_review` would pass either way:
+        # both alternatives also flag, which is what makes the conflation quiet.
+        self.assertIn("dropped", q2.review_reason or "")
+        self.assertIn("malformed", q2.review_reason or "")
+        self.assertNotEqual(q2.review_reason, "missing answer")
+        self.assertNotIn("--mcq-only", q2.review_reason or "")
 
     def test_a_genuinely_missing_answer_still_uses_the_original_message(self) -> None:
         """Control: a question with no answer at all, and NOT listed in
@@ -395,6 +441,12 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         self.assertEqual(q2.marker_source, "dropped")
         self.assertTrue(q2.needs_teacher_review)
         self.assertIn("dropped", q2.review_reason or "")
+        # The three assertions above are still not enough on their own. Replace
+        # the short-circuit's `continue` with `pass` and q2 is appended TWICE --
+        # correctly as "dropped" first, then again off the AI path -- so `next()`
+        # finds the good one and all three pass while a paid call happened. Only
+        # this line catches that.
+        client._client.models.generate_content.assert_not_called()
 
 
 class MCQAbstainHardeningTests(unittest.TestCase):
@@ -1695,6 +1747,93 @@ class MarkingProgressCounterTests(unittest.TestCase):
             [f["marker_source"] for f in frames],
             ["deterministic", "missing", "missing", "missing", "missing"],
         )
+
+    def test_a_dropped_answer_publishes_a_frame_and_reaches_its_sibling(self) -> None:
+        """US-031 review F-item follow-up: the dropped short-circuit does three
+        things and only one of them was pinned anywhere.
+
+        ``DroppedAnswerReviewFlagTests`` asserts the ``CorrectedQuestion`` the
+        short-circuit builds. It cannot assert the other two:
+        ``_hybrid_paper_mark_scheme`` is two flat leaves with no ``parent_id``,
+        so ``sibling_prior`` is always ``{}`` there, and that class captures no
+        events. So both of these were unprotected:
+
+        1. ``prior_results_accumulated[q.id] = 0`` -- a dropped question must
+           still appear in its siblings' ECF context carrying 0, not vanish
+           from it. ``sibling_prior or None`` means an omitted entry reaches
+           the marker as ``None``, silently changing what it is told about the
+           student's earlier working. Observable only through a sibling pair,
+           which this scheme has.
+        2. The dropped branch publishes MARKING_PROGRESS at all, labelled
+           ``"dropped"``, against the same ``total`` every other frame carries.
+           Without the frame the denominator lies in exactly the way this class
+           exists to prevent: ``total=5`` with four frames arriving means
+           "Question 4 of 5" never completes on a paper with a dropped answer.
+
+        Neither line is broken today. Both were simply unasserted, and the
+        branch this class never visited is the one they live in.
+        """
+        import lemely.io.correction_ai as _corr_mod
+
+        # Realistic shape: a dropped answer never reaches `answers` at all, it
+        # survives only as an id. 2(a) is the FIRST of the sibling pair, so
+        # 2(b) is marked after it and can see it in prior_results.
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[a for a in self._extracted().answers if a.question_id != "2(a)"],
+            dropped_question_ids=["2(a)"],
+        )
+        # Three responses, not four: the MCQ leaf is deterministic and 2(a) is
+        # short-circuited before any marker is reached, so only 2(b), 3 and 4
+        # consume one each. A fourth would go unused; a second consumed by 2(a)
+        # would itself be the bug.
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1"]) for _ in range(3)])
+
+        prompt_calls: list[dict[str, Any]] = []
+        original_fn = _corr_mod.build_marker_user_prompt
+
+        def _spy(*args: Any, **kwargs: Any) -> Any:
+            prompt_calls.append({"args": args, "kwargs": kwargs})
+            return original_fn(*args, **kwargs)
+
+        with (
+            _capturing(EventType.MARKING_PROGRESS) as captured,
+            patch.object(_corr_mod, "build_marker_user_prompt", side_effect=_spy),
+        ):
+            result = correct_paper(self.ms, extracted, gemini_client=client)
+
+        # (2) The frame is emitted, labelled "dropped" rather than borrowing
+        # "missing", and leaves the denominator reachable.
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["question_id"] for f in frames], list(self.LEAF_IDS))
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3, 4, 5])
+        self.assertEqual({f["total"] for f in frames}, {5})
+        self.assertEqual(
+            [f["marker_source"] for f in frames],
+            ["deterministic", "dropped", "ai", "ai", "ai"],
+        )
+        dropped_frame = frames[1]
+        self.assertEqual(dropped_frame["awarded"], 0)
+        self.assertEqual(dropped_frame["confidence"], 0.0)
+        self.assertEqual(dropped_frame["max_marks"], 2)
+
+        # (1) 2(b) is the only leaf marked after 2(a) under the same parent, so
+        # its ECF context is where the 0 has to show up. The MCQ leaf "1" is
+        # correctly absent: `sibling_prior` filters on parent_id.
+        by_qid = {c["args"][0].id: c for c in prompt_calls}
+        self.assertIn("2(b)", by_qid, "build_marker_user_prompt was never called for 2(b)")
+        call_2b = by_qid["2(b)"]
+        prior = call_2b["kwargs"].get("prior_results") or (
+            call_2b["args"][3] if len(call_2b["args"]) > 3 else None
+        )
+        self.assertIsNotNone(prior, "prior_results not passed for sibling 2(b)")
+        self.assertEqual(prior, {"2(a)": 0})
+
+        # Every leaf is still in the result, which is what makes total=5 true.
+        self.assertEqual(len(result.questions), 5)
+        q2a = next(q for q in result.questions if q.question_id == "2(a)")
+        self.assertEqual(q2a.marker_source, "dropped")
 
 
 class CostCeilingAbortTests(unittest.TestCase):

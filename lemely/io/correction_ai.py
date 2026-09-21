@@ -638,11 +638,28 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
     return a confident judgement (e.g. "blank, 0 marks", high confidence)
     that tripped none of ``_build_ai_corrected``'s four review gates. A
     student would then be marked wrong because the model's JSON was
-    malformed, with no human ever told. This function removes that path
-    entirely: the mark is 0, it is unconditionally flagged for review with a
-    reason distinct from both a genuine student blank and a real marking
-    failure, and no spend is wasted marking text extraction already knew was
-    unusable.
+    malformed, with no human ever told. For every question that reaches this
+    function that path is gone: the mark is 0, it is unconditionally flagged
+    for review with a reason distinct from both a genuine student blank and a
+    real marking failure, and no spend is wasted marking text extraction
+    already knew was unusable.
+
+    COVERAGE LIMIT (review MUST-FIX F1) -- which questions reach it is the
+    limit. Only ids in ``ExtractedAnswers.dropped_question_ids`` do, and only
+    two of extraction's five drop reasons put an id there: ``missing_answer``
+    and ``malformed_answer``. ``missing_question_id``,
+    ``malformed_question_id`` and ``malformed_answer_shape`` (the MF6 case --
+    one unusable element in the ``answers`` list) leave no id to attribute the
+    flag to, so those three never arrive here and keep the pre-MF7 behaviour
+    of their leaf type: on a non-MCQ leaf with an AI marker configured, the
+    paid call is still made and ``_build_ai_corrected`` can still return a
+    confident, unflagged zero; on an MCQ leaf, or under ``--mcq-only``/no AI
+    client, the question is already flagged at 0.0 with no call, but only
+    because ``student_answer=None`` is indistinguishable from a blank -- so
+    ``review_reason`` carries that path's blank message ("missing answer", or
+    "non-MCQ question not marked (--mcq-only or no AI client)") rather than
+    what actually happened. See
+    ``CorrectedQuestion.marker_source``'s coverage-limit note.
     """
     return CorrectedQuestion(
         question_id=question.id,

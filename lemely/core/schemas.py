@@ -165,16 +165,34 @@ class CorrectedQuestion(StrictModel):
     COVERAGE LIMIT (review MUST-FIX F1) -- this protection is PARTIAL. It
     reaches only the two drop reasons that leave a usable ``question_id``:
     ``missing_answer`` and ``malformed_answer``. Three do not, because there
-    is no id to attribute the flag to, and each still yields a confident
-    UNFLAGGED zero that also pays for a marking call:
+    is no id to attribute the flag to:
 
     * ``missing_question_id``
     * ``malformed_question_id`` -- where MF5 routes a fractional-float id.
       Correct in itself (a silent zero beats mis-attributing an answer to a
       different question) but still a silent zero.
     * ``malformed_answer_shape`` -- the MF6 case, one bad element in the
-      ``answers`` list. The paper survives where it previously did not, but
-      that one question is exactly the defect MF7 exists to remove.
+      ``answers`` list. The paper survives where it previously did not.
+
+    What those three actually cost depends on the leaf, and an earlier version
+    of this note (transcribed from review prose carrying the same imprecision)
+    claimed a single outcome for all of them. It does not hold:
+
+    * non-MCQ leaf with an AI marker configured -- ``ai.mark_question`` IS
+      dispatched on ``student_answer or ""``, a paid call to mark text
+      extraction had already discarded, and ``_build_ai_corrected`` can return
+      a zero at HIGH confidence tripping none of its four review gates. This
+      is exactly the defect MF7 exists to remove, surviving.
+    * MCQ leaf, or non-MCQ under ``--mcq-only``/no AI client -- already LOW,
+      0.0, ``needs_teacher_review=True``, and no AI call at all, via
+      ``_build_mcq_corrected``'s ``answer is None`` branch or
+      ``_build_missing_corrected``. Safe by accident, not by design: the
+      absent id makes the question indistinguishable from a genuine blank, so
+      the mark is still a zero for a student whose answer the model DID
+      return, under whichever blank message that path owns ("missing answer"
+      on the MCQ path, "non-MCQ question not marked (--mcq-only or no AI
+      client)" on the other) -- so the queue tells the teacher the wrong
+      thing about why the question is in it.
 
     DB ROUND-TRIP (review SHOULD-FIX F3) -- ``"dropped"`` does NOT survive
     persistence. ``lemely.db.models.enums.MarkerSource`` is a native Postgres
@@ -184,7 +202,9 @@ class CorrectedQuestion(StrictModel):
     in the review screen, where ``review_repo.py:440`` reads the DB enum and
     yields ``"missing"`` while ``review_repo.py:1042`` reads ``report_json``
     and yields ``"dropped"`` -- two labels for one situation in one queue.
-    US-038 carries the enum migration."""
+    The ``ALTER TYPE ... ADD VALUE`` migration is deliberately deferred to a
+    story of its own, which does not exist yet -- do not cite a story number
+    for it until one is opened."""
     feedback: str | None = None
     matched_point_ids: list[str] = Field(default_factory=list)
     plagiarism_flagged: bool = False

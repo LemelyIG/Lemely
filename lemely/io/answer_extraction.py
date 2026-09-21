@@ -875,10 +875,20 @@ class GeminiAnswerExtractor:
         # that leave a usable question_id (`missing_answer`,
         # `malformed_answer`). The other three (`missing_question_id`,
         # `malformed_question_id`, `malformed_answer_shape`) have no id to
-        # attribute a flag to and DO still become confident unflagged marks;
-        # see `CorrectedQuestion.marker_source`'s coverage-limit note
-        # (review MUST-FIX F1). This event's counts are the only record that
-        # those three happened at all.
+        # attribute a flag to, and what that costs depends on the leaf. On a
+        # non-MCQ leaf with an AI marker configured the paid call is CERTAIN
+        # (`ai.mark_question` is reached unconditionally) and the confident
+        # unflagged mark is CONTINGENT -- it needs the model's response to
+        # clear all four of `_build_ai_corrected`'s review gates, which it
+        # CAN. An MCQ leaf (or `--mcq-only`/no client) is already flagged at
+        # 0.0 with no call, but only because the absent id looks exactly like a
+        # genuine blank, so review_reason carries that path's blank message
+        # instead of the truth. See `CorrectedQuestion.marker_source`'s
+        # coverage-limit note (review MUST-FIX F1) for the full split.
+        # These counts are also KEPT, not only published: `answer_drops` is a
+        # field on `ExtractedAnswers`, the same reasoning as `source_box_drops`
+        # above, so the per-reason totals travel with the record and this event
+        # is not the only trace of what was dropped.
         if answer_drops or confidence_repairs or field_repairs:
             bus.publish(
                 EventType.ANSWER_DROPPED,
