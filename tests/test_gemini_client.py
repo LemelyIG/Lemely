@@ -1305,3 +1305,72 @@ class I1MediaResolutionTests(unittest.TestCase):
         )
         self.assertEqual((r1.value, r2.value), ("primary", "reread"))
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+
+class US034MissingFlashRowTests(unittest.TestCase):
+    """US-034: `gemini-3.5-flash` had no row in `_DEFAULT_PRICING`, so it fell
+    through the length-descending substring match to the unrecognised-model
+    fallback and was silently billed at the `gemini-2.5-flash` rate
+    ($0.30/$2.50 per 1M) instead of its real rate ($1.50/$9.00 per 1M,
+    ai.google.dev/gemini-api/docs/pricing, retrieved 2026-09-21) — understating
+    the $14 total_usd_ceiling's ledger for any run configured to use it."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_default_pricing_has_gemini_3_5_flash_row(self) -> None:
+        from lemely.io.gemini import _DEFAULT_PRICING
+
+        self.assertEqual(_DEFAULT_PRICING["gemini-3.5-flash"], (0.001500, 0.009000))
+
+    def test_gemini_3_5_flash_resolves_to_its_own_row_not_the_2_5_flash_fallback(self) -> None:
+        """The regression that matters: the length-descending substring match
+        must resolve `gemini-3.5-flash` to its own row, not let
+        `gemini-2.5-flash` (or any other key) shadow it via the fallback."""
+        from lemely.io.gemini import _resolve_pricing
+
+        settings = _make_settings(self.tmp)
+        price = _resolve_pricing("gemini-3.5-flash", settings)
+        self.assertEqual(price, (0.001500, 0.009000))
+        self.assertNotEqual(price, (0.000300, 0.002500))
+
+
+class US034FallbackVisibilityTests(unittest.TestCase):
+    """US-034: `lemely doctor` must name any configured model resolving
+    through `_resolve_pricing`'s unrecognised-model fallback rather than an
+    exact or promo-dated row, so a future misconfiguration is visible instead
+    of silently under-billing the $14 ceiling."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def test_an_unrecognised_model_is_reported_as_resolving_via_fallback(self) -> None:
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp)
+        ok, detail = fallback_pricing_status(settings, {"extraction": "totally-fake-model-xyz"})
+        self.assertFalse(ok)
+        self.assertIn("totally-fake-model-xyz", detail)
+        self.assertIn("extraction", detail)
+
+    def test_the_three_really_configured_models_do_not_hit_the_fallback(self) -> None:
+        """No currently configured model hits the fallback today (US-034) —
+        this is a no-op guard until someone configures a model this table
+        does not recognise."""
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp)
+        configured = {
+            "extraction": settings.gemini.extraction_model,
+            "correction": settings.gemini.correction_model,
+            "mark_scheme": settings.gemini.mark_scheme_model,
+        }
+        ok, detail = fallback_pricing_status(settings, configured)
+        self.assertTrue(ok, msg=detail)
+
+    def test_a_pricing_override_is_not_reported_as_a_fallback_hit(self) -> None:
+        from lemely.io.gemini import fallback_pricing_status
+
+        settings = _make_settings(self.tmp, pricing={"totally-custom-model": [0.001, 0.002]})
+        ok, detail = fallback_pricing_status(settings, {"extraction": "totally-custom-model"})
+        self.assertTrue(ok, msg=detail)

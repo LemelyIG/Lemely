@@ -534,7 +534,8 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "scan_metadata",
         "study_plan",
     )
-    model_table = ", ".join(f"{tag}={settings.gemini.model_for(tag)}" for tag in model_table_tags)
+    configured_models = {tag: settings.gemini.model_for(tag) for tag in model_table_tags}
+    model_table = ", ".join(f"{tag}={model}" for tag, model in configured_models.items())
     record("gemini_model_table", True, detail=model_table)
 
     # US-026: the $14 total_usd_ceiling is only as honest as the pricing table
@@ -542,10 +543,17 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
     # 3.6-flash promotional rate is close to lapsing to the real, doubled
     # rate, so a developer notices before the ceiling starts guarding a stale
     # price. See FLASH_3X_PROMO_END_DATE / promo_pricing_status in gemini.py.
-    from lemely.io.gemini import promo_pricing_status
+    from lemely.io.gemini import fallback_pricing_status, promo_pricing_status
 
     promo_ok, promo_detail = promo_pricing_status(settings)
     record("gemini_promo_pricing_window", promo_ok, detail=promo_detail)
+
+    # US-034: names any configured model that would silently resolve through
+    # the unrecognised-model pricing fallback (billed at gemini-2.5-flash's
+    # rate) instead of an exact or promo-dated row. Advisory, never fatal —
+    # see fallback_pricing_status's docstring in gemini.py.
+    fallback_ok, fallback_detail = fallback_pricing_status(settings, configured_models)
+    record("gemini_fallback_pricing", fallback_ok, detail=fallback_detail)
 
     record(
         "sources_dir_readable",
@@ -639,6 +647,7 @@ def doctor_cmd(ctx: click.Context, no_network: bool) -> None:
         "push_transport",
         "no_removed_config_keys",
         "gemini_promo_pricing_window",
+        "gemini_fallback_pricing",
     }
     fatal_checks = [c for c in checks if c["name"] not in advisory_checks]
     all_passed = all(c["ok"] for c in fatal_checks)

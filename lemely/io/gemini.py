@@ -88,11 +88,29 @@ _FLASH_3X_PROMO_MODELS: tuple[str, ...] = (
 _FLASH_3X_PROMO_RATE: tuple[float, float] = (0.000750, 0.003750)
 _FLASH_3X_POST_PROMO_RATE: tuple[float, float] = (0.001500, 0.007500)
 
+# US-034: `gemini-3.5-flash` had no row here, so the length-descending
+# substring match below fell through to the unrecognised-model fallback
+# (`gemini-2.5-flash`'s rate) for it — the PRD's headline evidence for this
+# story cited a model, `gemini-3.9-pro`, that does not exist on Google's
+# published price list and must not be repeated as a real measurement; the
+# one genuinely missing row was `gemini-3.5-flash`. No currently configured
+# model resolved through the fallback (see `fallback_pricing_status` below),
+# so this is a pre-emptive fix, not a correction of an active overrun.
+# Source: https://ai.google.dev/gemini-api/docs/pricing, retrieved
+# 2026-09-21: $1.50 / $9.00 per 1M tokens. That page was also checked for a
+# 2027-01-01 scheduled increase on `gemini-3.5-flash` (the mechanism
+# `gemini-3.8/3.7/3.6-flash` use, see `FLASH_3X_PROMO_END_DATE` below) —
+# unlike those three, the page states no scheduled change for
+# `gemini-3.5-flash`, so this is a plain static row rather than a
+# date-gated one. Note `gemini-2.5-pro` below is priced <=200k context per
+# the same page; if the real rate differs above that context window, this
+# table does not yet account for it (out of scope for US-034).
 _DEFAULT_PRICING: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash-lite": (0.000100, 0.000400),
     "gemini-2.5-flash": (0.000300, 0.002500),
     "gemini-2.5-pro": (0.001250, 0.010000),
     "gemini-3.5-flash-lite": (0.000300, 0.002500),
+    "gemini-3.5-flash": (0.001500, 0.009000),
 }
 
 
@@ -288,19 +306,72 @@ def _resolve_pricing(
     if model in user:
         p = user[model]
         return (float(p[0]), float(p[1]))
-    resolved_today = (today or _today)()
-    promo_rate = (
-        _FLASH_3X_PROMO_RATE
-        if resolved_today <= FLASH_3X_PROMO_END_DATE
-        else _FLASH_3X_POST_PROMO_RATE
-    )
-    pricing_table = {**_DEFAULT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo_rate)}
+    pricing_table = _dated_pricing_table((today or _today)())
     # Substring match against built-in table (longest key wins to avoid flash matching flash-lite).
     for key in sorted(pricing_table, key=len, reverse=True):
         if key in model:
             return pricing_table[key]
     structlog.get_logger().warning("gemini_unknown_model_pricing", model=model)
     return _DEFAULT_PRICING["gemini-2.5-flash"]
+
+
+def _dated_pricing_table(today: date) -> dict[str, tuple[float, float]]:
+    """`_DEFAULT_PRICING` with the promo/post-promo rate merged in.
+
+    Merged in for `_FLASH_3X_PROMO_MODELS` as of `today` (US-026). Shared by
+    `_resolve_pricing` and `fallback_pricing_status` so the two can never
+    disagree about which models have a real row versus fall through to the
+    unrecognised-model fallback.
+    """
+    promo_rate = (
+        _FLASH_3X_PROMO_RATE if today <= FLASH_3X_PROMO_END_DATE else _FLASH_3X_POST_PROMO_RATE
+    )
+    return {**_DEFAULT_PRICING, **dict.fromkeys(_FLASH_3X_PROMO_MODELS, promo_rate)}
+
+
+def fallback_pricing_status(
+    settings: Settings,
+    configured_models: dict[str, str],
+    *,
+    today: Callable[[], date] | None = None,
+) -> tuple[bool, str]:
+    """Advisory status for `lemely doctor` (US-034).
+
+    Names any task tag whose configured model would resolve, via
+    `_resolve_pricing`, through the unrecognised-model fallback (silently
+    billed at the `gemini-2.5-flash` rate) rather than a user override, an
+    exact row, or a promo-dated row. Silent fallback is what let a stale or
+    unpriced model understate the `total_usd_ceiling` ledger unnoticed — this
+    makes that visible instead.
+
+    `configured_models` maps task tag -> resolved model name, exactly as
+    `lemely doctor`'s `gemini_model_table` check already builds it via
+    `settings.gemini.model_for(tag)` for each task tag; this function has no
+    opinion of its own about which task tags exist.
+
+    Currently a no-op guard: none of the three models this repo ships
+    configured today (`gemini-3.8-flash`, `gemini-3.5-flash-lite`,
+    `gemini-2.5-flash`) resolves through the fallback. It starts earning the
+    moment someone configures a model this table does not recognise —
+    exactly the scenario that made a wrong ledger possible in the first
+    place. Advisory, never fatal (see `advisory_checks` in
+    `lemely.app.cli.doctor_cmd`).
+    """
+    user_pricing = settings.gemini.pricing
+    pricing_table = _dated_pricing_table((today or _today)())
+    hits = sorted(
+        f"{tag}={model}"
+        for tag, model in configured_models.items()
+        if model not in user_pricing and not any(key in model for key in pricing_table)
+    )
+    if hits:
+        return (
+            False,
+            "these configured models resolve via the unrecognised-model pricing "
+            "fallback (silently billed at the gemini-2.5-flash rate rather than "
+            "their real rate): " + ", ".join(hits),
+        )
+    return (True, "all configured models resolve to an exact, overridden, or promo-dated row")
 
 
 def _resolve_refs(

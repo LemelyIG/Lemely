@@ -333,6 +333,62 @@ class DoctorRemovedConfigKeysTests(unittest.TestCase):
         self.assertIn("integrity.ai_detection_enabled", check["detail"])
 
 
+class US034FallbackPricingVisibilityTests(unittest.TestCase):
+    """US-034: `lemely doctor` must name any configured model resolving
+    through the unrecognised-model pricing fallback, and must NOT name any of
+    the three real configured models (none of which hits the fallback
+    today)."""
+
+    def setUp(self) -> None:
+        self.runner = CliRunner()
+
+    def test_doctor_names_a_nonexistent_configured_model_as_hitting_the_fallback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                    "LEMELY_GEMINI__EXTRACTION_MODEL": "totally-fake-model-does-not-exist",
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        # Advisory: reported unhealthy but does not flip all_passed.
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_fallback_pricing")
+        self.assertFalse(check["ok"], msg=check)
+        self.assertIn("totally-fake-model-does-not-exist", check["detail"])
+        self.assertIn("extraction", check["detail"])
+
+    def test_doctor_does_not_name_any_real_configured_model_as_hitting_the_fallback(self) -> None:
+        with TemporaryDirectory() as tmp:
+            (Path(tmp) / "Sources").mkdir()
+            (Path(tmp) / "outputs").mkdir()
+            result = self.runner.invoke(
+                cli,
+                ["--json", "doctor", "--no-network"],
+                env={
+                    "GEMINI_API_KEY": "test-key-not-validated-with-no-network",
+                    "LEMELY_PATHS__SOURCES_DIR": str(Path(tmp) / "Sources"),
+                    "LEMELY_PATHS__OUTPUT_DIR": str(Path(tmp) / "outputs"),
+                    "LEMELY_PATHS__CACHE_DIR": str(Path(tmp) / "cache"),
+                },
+            )
+        self.assertEqual(result.exit_code, 0, msg=result.output)
+        payload = json.loads(result.output)
+        self.assertTrue(payload["all_passed"], msg=result.output)
+        check = next(c for c in payload["checks"] if c["name"] == "gemini_fallback_pricing")
+        self.assertTrue(check["ok"], msg=check)
+        for real_model in ("gemini-3.8-flash", "gemini-3.5-flash-lite", "gemini-2.5-flash"):
+            self.assertNotIn(real_model, check["detail"])
+
+
 class DoctorTestsEnvLeakTests(unittest.TestCase):
     """Regression test for #121: DoctorTests.setUp must not leak env deletions."""
 
