@@ -1,18 +1,15 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V4 */
-import { useState } from "react";
-import { Button } from "@/components/ui/button";
-import { Chip } from "@/components/ui/chip";
-import { ListSkeleton } from "@/components/ui/loading-shapes";
-import { Radio, RadioGroup } from "@/components/ui/radio";
-import { EmptyState, ErrorState } from "@/components/ui/state-views";
-import { Textarea } from "@/components/ui/textarea";
-import { useToast } from "@/components/ui/toast";
-import { ApiError } from "@/lib/api";
-import {
-  useSelfReview,
-  useSubmitSelfReview,
-} from "@/lib/hooks/useSelfReviewApi";
-import { cn } from "@/lib/utils";
+import { useState } from "react"
+import { Button } from "@/components/ui/button"
+import { Chip } from "@/components/ui/chip"
+import { ListSkeleton } from "@/components/ui/loading-shapes"
+import { Radio, RadioGroup } from "@/components/ui/radio"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
+import { Textarea } from "@/components/ui/textarea"
+import { useToast } from "@/components/ui/toast"
+import { ApiError } from "@/lib/api"
+import { useSelfReview, useSubmitSelfReview } from "@/lib/hooks/useSelfReviewApi"
+import { cn } from "@/lib/utils"
 import {
   EMPTY_DRAFT,
   OUTCOME_LABEL,
@@ -31,13 +28,13 @@ import {
   toSubmission,
   type PointOutcome,
   type SelfReviewDraft,
-} from "@/lib/selfReview";
+} from "@/lib/selfReview"
 import type {
   SelfReviewPending,
   SelfReviewPendingPoint,
   SelfReviewRevealed,
   SelfReviewRevealedPoint,
-} from "@/lib/selfReviewTypes";
+} from "@/lib/selfReviewTypes"
 
 /*
  * Student self-review of one marked question (spec 2026-09-17), rendered in
@@ -107,7 +104,7 @@ const OUTCOME_TONE: Record<PointOutcome, "ok" | "warn" | "neutral" | "info"> = {
   changed: "ok",
   kept: "warn",
   pending: "info",
-};
+}
 
 /** Lower = more attention-worthy. Mirrors the reading order a student wants:
  * an unresolved teacher review first, then a mark that didn't move their way,
@@ -117,7 +114,7 @@ const OUTCOME_PRIORITY: Record<PointOutcome, number> = {
   kept: 1,
   changed: 2,
   agreed: 3,
-};
+}
 
 /** Worst-outcome-wins severity for a group card. `agreed` (every point
  * matched the marker) renders with no accent at all — nothing needs
@@ -126,24 +123,24 @@ function groupSeverity(
   points: readonly SelfReviewRevealedPoint[],
   view: Pick<SelfReviewRevealed, "pendingTeacher">,
 ): "ok" | "warn" | "info" | null {
-  let worst: PointOutcome = "agreed";
+  let worst: PointOutcome = "agreed"
   for (const point of points) {
-    const outcome = pointOutcome(point, view);
-    if (OUTCOME_PRIORITY[outcome] < OUTCOME_PRIORITY[worst]) worst = outcome;
+    const outcome = pointOutcome(point, view)
+    if (OUTCOME_PRIORITY[outcome] < OUTCOME_PRIORITY[worst]) worst = outcome
   }
-  if (worst === "agreed") return null;
-  return OUTCOME_TONE[worst] as "ok" | "warn" | "info";
+  if (worst === "agreed") return null
+  return OUTCOME_TONE[worst] as "ok" | "warn" | "info"
 }
 
 const GROUP_ACCENT: Record<"ok" | "warn" | "info", string> = {
   ok: "border-s-2 border-s-ok",
   warn: "border-s-2 border-s-warn",
   info: "border-s-2 border-s-info",
-};
+}
 
 function verdictValue(earned: boolean | undefined): string | undefined {
-  if (earned === undefined) return undefined;
-  return earned ? "earned" : "missed";
+  if (earned === undefined) return undefined
+  return earned ? "earned" : "missed"
 }
 
 /** Reads a saved draft back for the initial `useState` value. Wrapped: a
@@ -152,37 +149,22 @@ function verdictValue(earned: boolean | undefined): string | undefined {
  * side's counterpart) lives in `@/lib/selfReview`, called from the mutation
  * hook's option-level `onSuccess` rather than here — see that file for why
  * (Task 13/14 re-review, R-5). */
-function readSavedDraft(
-  attemptId: string,
-  questionResultId: string,
-): SelfReviewDraft {
+function readSavedDraft(attemptId: string, questionResultId: string): SelfReviewDraft {
   try {
-    const raw = sessionStorage.getItem(
-      draftStorageKey(attemptId, questionResultId),
-    );
-    if (!raw) return EMPTY_DRAFT;
-    const parsed = JSON.parse(raw) as SelfReviewDraft;
-    return parsed &&
-      typeof parsed === "object" &&
-      parsed.verdicts &&
-      parsed.evidence
+    const raw = sessionStorage.getItem(draftStorageKey(attemptId, questionResultId))
+    if (!raw) return EMPTY_DRAFT
+    const parsed = JSON.parse(raw) as SelfReviewDraft
+    return parsed && typeof parsed === "object" && parsed.verdicts && parsed.evidence
       ? parsed
-      : EMPTY_DRAFT;
+      : EMPTY_DRAFT
   } catch {
-    return EMPTY_DRAFT;
+    return EMPTY_DRAFT
   }
 }
 
-function saveDraft(
-  attemptId: string,
-  questionResultId: string,
-  draft: SelfReviewDraft,
-): void {
+function saveDraft(attemptId: string, questionResultId: string, draft: SelfReviewDraft): void {
   try {
-    sessionStorage.setItem(
-      draftStorageKey(attemptId, questionResultId),
-      JSON.stringify(draft),
-    );
+    sessionStorage.setItem(draftStorageKey(attemptId, questionResultId), JSON.stringify(draft))
   } catch {
     // Storage full or disabled: the draft simply does not survive a
     // collapse/reopen this time, same as before this fix existed.
@@ -193,22 +175,22 @@ export function SelfReviewPanel({
   attemptId,
   questionResultId,
 }: {
-  attemptId: string;
-  questionResultId: string;
+  attemptId: string
+  questionResultId: string
 }) {
-  const query = useSelfReview(attemptId, questionResultId);
-  const submit = useSubmitSelfReview();
-  const { toast } = useToast();
+  const query = useSelfReview(attemptId, questionResultId)
+  const submit = useSubmitSelfReview()
+  const { toast } = useToast()
   const [draft, setDraft] = useState<SelfReviewDraft>(() =>
     readSavedDraft(attemptId, questionResultId),
-  );
+  )
 
   const updateDraft = (next: SelfReviewDraft) => {
-    setDraft(next);
-    saveDraft(attemptId, questionResultId, next);
-  };
+    setDraft(next)
+    saveDraft(attemptId, questionResultId, next)
+  }
 
-  if (query.isPending) return <ListSkeleton rows={2} />;
+  if (query.isPending) return <ListSkeleton rows={2} />
   // `isLoadingError` (as opposed to `isError`) is true only when the query
   // has never held data: `isLoadingError = isError && !hasData`
   // (@tanstack/query-core's own `queryObserver.js`), so a background refetch
@@ -227,7 +209,7 @@ export function SelfReviewPanel({
         <div data-testid="self-review-unavailable">
           <EmptyState compact heading={UNAVAILABLE_COPY} />
         </div>
-      );
+      )
     }
     return (
       <ErrorState
@@ -236,10 +218,10 @@ export function SelfReviewPanel({
         action={{ label: "Try again", onClick: () => void query.refetch() }}
         data-testid="self-review-error"
       />
-    );
+    )
   }
 
-  const view = query.data;
+  const view = query.data
   if (view.state === "not_started") {
     return (
       <PendingForm
@@ -249,11 +231,7 @@ export function SelfReviewPanel({
         submitting={submit.isPending}
         onSubmit={() =>
           submit.mutate(
-            {
-              attemptId,
-              questionResultId,
-              submission: toSubmission(draft, view.points),
-            },
+            { attemptId, questionResultId, submission: toSubmission(draft, view.points) },
             {
               onError: (error) =>
                 toast({
@@ -266,9 +244,9 @@ export function SelfReviewPanel({
           )
         }
       />
-    );
+    )
   }
-  return <RevealedOutcome view={view} />;
+  return <RevealedOutcome view={view} />
 }
 
 function PendingForm({
@@ -278,28 +256,28 @@ function PendingForm({
   submitting,
   onSubmit,
 }: {
-  view: SelfReviewPending;
-  draft: SelfReviewDraft;
-  onDraft: (next: SelfReviewDraft) => void;
-  submitting: boolean;
-  onSubmit: () => void;
+  view: SelfReviewPending
+  draft: SelfReviewDraft
+  onDraft: (next: SelfReviewDraft) => void
+  submitting: boolean
+  onSubmit: () => void
 }) {
-  const complete = isComplete(draft, view.points);
-  const groups = groupPoints<SelfReviewPendingPoint>(view.points);
+  const complete = isComplete(draft, view.points)
+  const groups = groupPoints<SelfReviewPendingPoint>(view.points)
   return (
     <form
       className="flex flex-col gap-4"
       data-testid="self-review-form"
       onSubmit={(event) => {
-        event.preventDefault();
-        if (complete && !submitting) onSubmit();
+        event.preventDefault()
+        if (complete && !submitting) onSubmit()
       }}
     >
       <div className="flex flex-col gap-1">
         <h3 className="text-label text-ink">Mark your own answer first</h3>
         <p className="max-w-[56ch] text-pretty text-body-sm text-ink-muted">
-          {evidenceHint(view.evidenceRequired)} The marker's verdict is revealed
-          once you submit, and you can only do this once.
+          {evidenceHint(view.evidenceRequired)} The marker's verdict is revealed once you submit,
+          and you can only do this once.
         </p>
       </div>
       {groups.map((group) => (
@@ -320,9 +298,7 @@ function PendingForm({
                 }
                 value={verdictValue(draft.verdicts[point.markPointId])}
                 onValueChange={(value) =>
-                  onDraft(
-                    setVerdict(draft, point.markPointId, value === "earned"),
-                  )
+                  onDraft(setVerdict(draft, point.markPointId, value === "earned"))
                 }
                 orientation="horizontal"
               >
@@ -331,18 +307,14 @@ function PendingForm({
               </RadioGroup>
               <Textarea
                 label={
-                  view.evidenceRequired
-                    ? "Why? (needed to challenge the marker)"
-                    : "Why? (optional)"
+                  view.evidenceRequired ? "Why? (needed to challenge the marker)" : "Why? (optional)"
                 }
                 hint="Up to 2000 characters"
                 rows={2}
                 maxLength={2000}
                 value={draft.evidence[point.markPointId] ?? ""}
                 onChange={(event) =>
-                  onDraft(
-                    setEvidence(draft, point.markPointId, event.target.value),
-                  )
+                  onDraft(setEvidence(draft, point.markPointId, event.target.value))
                 }
               />
             </div>
@@ -359,20 +331,20 @@ function PendingForm({
         Submit and reveal the marker's verdict
       </Button>
     </form>
-  );
+  )
 }
 
 function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
-  const groups = groupPoints<SelfReviewRevealedPoint>(view.points);
+  const groups = groupPoints<SelfReviewRevealedPoint>(view.points)
   // Only used inside the `pendingTeacher` branch below, so only computed
   // when that branch will actually render (Task 13/14 review, NIT-4).
-  const pendingSummary = view.pendingTeacher ? outcomeSummary(view) : null;
+  const pendingSummary = view.pendingTeacher ? outcomeSummary(view) : null
   return (
     <div className="flex flex-col gap-3" data-testid="self-review-outcome">
       <p className="text-body-md text-ink">{summaryLine(view)}</p>
       <ul className="flex flex-col gap-2">
         {groups.map((group) => {
-          const severity = groupSeverity(group.points, view);
+          const severity = groupSeverity(group.points, view)
           return (
             <li
               key={group.key ?? group.points[0]!.markPointId}
@@ -386,47 +358,30 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
               ) : null}
               <div className="flex flex-col gap-1.5">
                 {group.points.map((point) => {
-                  const outcome = pointOutcome(point, view);
-                  const detail = outcomeDetail(
-                    point,
-                    outcome,
-                    view.evidenceRequired,
-                  );
+                  const outcome = pointOutcome(point, view)
+                  const detail = outcomeDetail(point, outcome, view.evidenceRequired)
                   return (
-                    <div
-                      key={point.markPointId}
-                      className="flex flex-col gap-1.5"
-                    >
+                    <div key={point.markPointId} className="flex flex-col gap-1.5">
                       <div className="flex flex-wrap items-center justify-between gap-2">
-                        <span className="text-body-md text-ink">
-                          {point.pointText}
-                        </span>
-                        <Chip tone={OUTCOME_TONE[outcome]}>
-                          {OUTCOME_LABEL[outcome]}
-                        </Chip>
+                        <span className="text-body-md text-ink">{point.pointText}</span>
+                        <Chip tone={OUTCOME_TONE[outcome]}>{OUTCOME_LABEL[outcome]}</Chip>
                       </div>
                       <div className="flex flex-wrap gap-3 text-body-sm text-ink-muted">
-                        <span>
-                          Marker: {point.awarded ? "awarded" : "not awarded"}
-                        </span>
-                        <span>
-                          You: {point.studentSelfmark ? "earned" : "not earned"}
-                        </span>
+                        <span>Marker: {point.awarded ? "awarded" : "not awarded"}</span>
+                        <span>You: {point.studentSelfmark ? "earned" : "not earned"}</span>
                       </div>
-                      {detail ? (
-                        <p className="text-body-sm text-ink-muted">{detail}</p>
-                      ) : null}
+                      {detail ? <p className="text-body-sm text-ink-muted">{detail}</p> : null}
                       {point.studentEvidence ? (
                         <p className="text-body-sm text-ink-faint">
                           Your reason: {point.studentEvidence}
                         </p>
                       ) : null}
                     </div>
-                  );
+                  )
                 })}
               </div>
             </li>
-          );
+          )
         })}
       </ul>
       {pendingSummary ? (
@@ -437,5 +392,5 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
         </p>
       ) : null}
     </div>
-  );
+  )
 }
