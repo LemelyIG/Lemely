@@ -285,18 +285,42 @@ class TestDowngradeCannotKeepDropped:
             assert needs_review is True
 
     def test_a_missing_row_is_unaffected_by_downgrade(self) -> None:
-        """The false-positive direction: a row that was genuinely ``"missing"``
-        (never ``"dropped"``) before downgrade must not be touched by the
-        rewrite's ``WHERE`` clause."""
+        """The false-positive direction: rows that were genuinely
+        ``"deterministic"``/``"ai"``/``"missing"`` (never ``"dropped"``)
+        before downgrade must not be touched by the rewrite's ``WHERE``
+        clause.
+
+        Seeding only a ``"missing"`` row here would be vacuous: the rewrite
+        sets the literal ``marker_source = 'missing'``, so a ``"missing"``
+        row reads back ``"missing"`` under EVERY possible ``WHERE`` clause,
+        including a broken one (e.g. ``<> 'deterministic'``, which would
+        silently overwrite every ``"ai"`` row too). ``"deterministic"`` and
+        ``"ai"`` are the values a broken ``WHERE`` would actually damage, so
+        those are what must be asserted unchanged.
+        """
         with _throwaway_db() as (cfg, engine):
             command.upgrade(cfg, _MIGRATION_REVISION)
-            qr_id = _seed_question_result(engine, marker_source="missing")
+            missing_id = _seed_question_result(engine, marker_source="missing")
+            deterministic_id = _seed_question_result(engine, marker_source="deterministic")
+            ai_id = _seed_question_result(engine, marker_source="ai")
 
             command.downgrade(cfg, _PRE_MIGRATION_REVISION)
 
             with engine.connect() as conn:
-                marker_source = conn.execute(
-                    sa.text("SELECT marker_source FROM question_results WHERE id = :id"),
-                    {"id": qr_id},
-                ).scalar_one()
-            assert marker_source == "missing"
+                rows = {
+                    row.id: row.marker_source
+                    for row in conn.execute(
+                        sa.text(
+                            "SELECT id, marker_source FROM question_results "
+                            "WHERE id IN (:missing_id, :deterministic_id, :ai_id)"
+                        ),
+                        {
+                            "missing_id": missing_id,
+                            "deterministic_id": deterministic_id,
+                            "ai_id": ai_id,
+                        },
+                    )
+                }
+            assert rows[missing_id] == "missing"
+            assert rows[deterministic_id] == "deterministic"
+            assert rows[ai_id] == "ai"

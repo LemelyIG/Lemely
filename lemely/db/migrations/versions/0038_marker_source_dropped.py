@@ -41,17 +41,27 @@ Postgres has no way to shrink an enum in place, so before the type is
 rebuilt without `"dropped"`, any `question_results` row currently holding it
 is rewritten to `"missing"` — the same lossy mapping `attempt_repo.py` used
 to perform on write, restoring the pre-migration status quo exactly rather
-than inventing a different fallback. This is a one-way rewrite (there is no
-way to tell, after downgrading, which `"missing"` rows were always
-`"missing"` and which used to be `"dropped"`), consistent with `0037`'s own
-downgrade being similarly lossy for its own enum rebuild. No audit-log table
-is added for this rewrite: unlike `0037`'s two rewrites (one of which
-touches student-visible free text), this one only ever fires on a downgrade
-of a migration that has not yet reached production, touches a single enum
-value with no free-text payload to lose, and the fallback value it produces
-is identical to the mapping this same migration's `upgrade()` removes from
-`attempt_repo.py` — there is nothing a historical audit row would tell an
-operator that the source diff does not already say.
+than inventing a different fallback. This is a one-way rewrite on the
+`marker_source` column itself (there is no way to tell, from that column
+alone after downgrading, which `"missing"` rows were always `"missing"`
+and which used to be `"dropped"`), consistent with `0037`'s own downgrade
+being similarly lossy for its own enum rebuild.
+
+**Correction (recorded per this branch's `1798d705` precedent, since this
+migration's own commit is too far back on this branch to amend):** an
+earlier version of this docstring justified adding no audit-log table by
+claiming the `"dropped"` distinction is unrecoverable once the rewrite
+runs. That claim is false — every dropped row's `report_json` snapshot
+(and, for an in-flight correction, `CorrectedQuestion.review_reason`) still
+carries `correction_ai.py`'s fixed `_DROPPED_ANSWER_REVIEW_REASON` literal
+(`lemely/io/correction_ai.py:723-724`, set at line 776), independent of
+`marker_source`, so
+the distinction survives outside this column even after the rewrite. The
+decision to skip an audit-log table stands regardless: no audit table is
+added because the information this rewrite would otherwise discard is
+already preserved elsewhere (`report_json`'s `review_reason`), not because
+it is trivially lost — unlike `0037`'s two rewrites, which had no such
+surviving record of the value they overwrote.
 
 **Lock behaviour**, same reasoning as `0037_remove_ai_detection`: the enum
 rebuild's `ALTER TABLE ... ALTER COLUMN ... TYPE` rewrites every row of
