@@ -2226,7 +2226,15 @@ class _DriftPointIntoJudgeJudge:
     """Judge that, mid-call (while judging a *different*, correctly-planned
     point), flips another point's ``awarded`` flag on a second session -- so
     that other point disagrees for the first time and Phase C decides
-    ``JUDGE`` for it, even though Phase A never planned a request for it."""
+    ``JUDGE`` for it, even though Phase A never planned a request for it.
+
+    F10 (S2 task-11a re-review): ``SET LOCAL lock_timeout`` on this session's
+    own transaction, mirroring ``_TeacherOverrideDuringJudgeJudge``. This
+    ``UPDATE`` touches a point row, not ``attempts``/``question_results``, so
+    it does not hang under the current locking -- but that is an accident of
+    which rows a reintroduced ``_owned_question(..., for_update=True)`` would
+    lock, not a property to rely on, and the bound costs nothing.
+    """
 
     def __init__(self, sm: sessionmaker[Session], drift_point_id: uuid.UUID) -> None:
         self._sm = sm
@@ -2234,6 +2242,7 @@ class _DriftPointIntoJudgeJudge:
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
         with self._sm.begin() as session:
+            session.execute(sa.text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT_MS}ms'"))
             point = session.get(QuestionResultPoint, self._drift_point_id)
             assert point is not None
             point.awarded = True
@@ -2294,7 +2303,14 @@ class _LowerConfidenceDuringJudgeJudge:
     question from high- to low-confidence inside the unlocked judging
     window. A deliberate reject (not an accept) so a correct GRANT recompute
     in Phase C is distinguishable from a stale JUDGE recompute that
-    consumed this verdict."""
+    consumed this verdict.
+
+    F10 (S2 task-11a re-review): ``SET LOCAL lock_timeout`` on this session's
+    own transaction, mirroring ``_TeacherOverrideDuringJudgeJudge``. Without
+    it, this ``UPDATE`` on ``question_results`` hangs for the full test
+    budget under a reintroduced ``_owned_question(..., for_update=True)``
+    instead of failing cleanly -- reopening the defect M5 exists to remove.
+    """
 
     def __init__(self, sm: sessionmaker[Session], qr_id: uuid.UUID) -> None:
         self._sm = sm
@@ -2302,6 +2318,7 @@ class _LowerConfidenceDuringJudgeJudge:
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
         with self._sm.begin() as session:
+            session.execute(sa.text(f"SET LOCAL lock_timeout = '{_LOCK_TIMEOUT_MS}ms'"))
             qr = session.get(QuestionResult, self._qr_id)
             assert qr is not None
             qr.confidence_score = REVIEW_CONFIDENCE_THRESHOLD - 0.1

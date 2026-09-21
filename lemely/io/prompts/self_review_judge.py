@@ -42,8 +42,14 @@ def _block_token(values: tuple[str, ...]) -> str:
     byte-identical prompts and keep sharing one ``GeminiClient`` cache entry.
     Unguessable all the same: to place a real delimiter inside their own text a
     student would have to write a value whose digest already appears within
-    that same value, and the digest also folds in the transcribed answer and
-    the marker's rationale, which they do not write.
+    that same value, and the digest also folds in the marker's transcription
+    and rationale, neither of which the student controls byte-for-byte —
+    though ``marker_rationale`` can fall back to the question's ``feedback``
+    (``SelfReviewService.submit``, ``lemely/db/self_review_repo.py``), which
+    is shown to the student verbatim on the same screen. The load-bearing
+    guarantee is :func:`_strip_marker`, which makes the delimiter unwritable
+    outright; this digest is defense in depth, not the reason the fence
+    holds.
     """
     digest = hashlib.sha256(_TOKEN_DOMAIN)
     for value in values:

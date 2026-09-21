@@ -219,11 +219,13 @@ def test_judge_returns_the_structured_verdict() -> None:
 
 def test_user_prompt_carries_every_input_and_the_direction() -> None:
     prompt = build_judge_user_prompt(_request())
+    # The mark type and tariff are pinned together with the point text, on
+    # one line, so the assertion is the layout — a bare "B" or "worth 1"
+    # needle is satisfied by the scaffold regardless of whether the field
+    # actually reached the prompt (S2 part2+3 final review, m-1).
+    assert "Mark point (mark type B), worth 1: Gives the unit" in prompt
     for needle in (
         "0625",
-        "Gives the unit",
-        "B",
-        "worth 1",
         "F = ma = 2 x 6 = 12 N",
         "No unit given.",
         "I wrote N after the 12.",

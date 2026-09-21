@@ -89,6 +89,7 @@ from lemely.db.review_repo import (
     recompute_weakness_records,
 )
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.prompts.self_review_judge import evidence_was_tampered
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -598,9 +599,24 @@ class SelfReviewService:
         A failure is never a decision — the caller opens a
         ``student_evidence_unjudged`` queue row. The verdict's reason is an
         LLM string bound for JSONB, so it is NUL-stripped and truncated here.
+
+        Whether the fence marker had to be stripped from ``request`` is
+        checked here, in both failure branches, not only inside
+        :class:`GeminiEvidenceJudge`: an attempted forgery is exactly the
+        thing worth recording, and on a deployment with no judge (or one
+        that just failed) it would otherwise go unlogged — the near-zero-
+        false-positive signal the module docstring on
+        :mod:`lemely.io.evidence_judge` describes would silently not apply in
+        the state most of this branch is actually developed and run in
+        (S2 part2+3 final review, m-3).
         """
+        sanitised = evidence_was_tampered(request)
         if self._judge is None:
-            log.warning("self_review_judge_unavailable", question_result_id=str(qr.id))
+            log.warning(
+                "self_review_judge_unavailable",
+                question_result_id=str(qr.id),
+                evidence_sanitised=sanitised,
+            )
             return None
         try:
             verdict = self._judge.judge(request)
@@ -613,7 +629,12 @@ class SelfReviewService:
             # .reason) is caught here too, not just a raised exception from
             # the judge call itself — junk from a judge must never abort the
             # student's whole self-mark (finding 1).
-            log.warning("self_review_judge_failed", question_result_id=str(qr.id), error=str(exc))
+            log.warning(
+                "self_review_judge_failed",
+                question_result_id=str(qr.id),
+                error=str(exc),
+                evidence_sanitised=sanitised,
+            )
             return None
 
 
@@ -678,9 +699,17 @@ def _settle_groups(passes: list[_PointPass]) -> int:
     member still covers removes nothing; in both directions the result is
     never further from the marker's total than the per-point rule was.
 
-    Per point: the granted members whose direction is the group's are
-    ``mark_changed``; every other granted member is ``absorbed_by_group`` —
-    recorded, never silent (module docstring).
+    Per point: when every granted member of a group agrees on direction, the
+    granted members are ``mark_changed`` and every other granted member is
+    ``absorbed_by_group`` — recorded, never silent (module docstring). When a
+    group has granted members in *both* directions, that same-sign rule
+    mis-describes what happened (S2 part2+3 final review, m-5): it can flag a
+    downward grant ``absorbed_by_group`` when it in fact removed a mark, and
+    flag an upward grant ``mark_changed`` twice for one net mark. In that
+    case each granted member's own flag instead follows whether *its own*
+    verdict actually moved the group's capped running total, walked in list
+    order — order-dependent only when the group is at capacity, which is an
+    inherent ambiguity of a shared cap, not a property this method invents.
     """
     # A synthetic key for an independent point must never collide with a real
     # ``group_key`` — a scheme whose key were literally ``"point:0"`` would
@@ -702,11 +731,37 @@ def _settle_groups(passes: list[_PointPass]) -> int:
         )
         group_delta = after - before
         delta += group_delta
-        for m in members:
-            if not m.granted:
-                continue
-            m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
-            m.absorbed_by_group = not m.mark_changed
+
+        granted = [m for m in members if m.granted]
+        directions = {m.earned for m in granted}
+        if len(directions) <= 1:
+            # Every granted member (if any) agrees on direction: the naive
+            # same-sign rule is unambiguous — a group that moved credits all
+            # of them, a group that didn't absorbs all of them.
+            for m in granted:
+                m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
+                m.absorbed_by_group = not m.mark_changed
+        else:
+            # Mixed-direction grants: walk the group in list order, tracking
+            # each member's own marginal contribution to the capped running
+            # total, before and after. A member's flag is `mark_changed`
+            # only if flipping *its own* verdict actually moved that running
+            # total; the rest are `absorbed_by_group`.
+            running_before = running_after = 0
+            capped_before_prev = capped_after_prev = 0
+            for m in members:
+                running_before += m.point.tariff if m.point.awarded else 0
+                capped_before = min(cap, running_before)
+                after_flag = m.earned if m.granted else m.point.awarded
+                running_after += m.point.tariff if after_flag else 0
+                capped_after = min(cap, running_after)
+                if m.granted:
+                    m.mark_changed = (capped_after - capped_after_prev) != (
+                        capped_before - capped_before_prev
+                    )
+                    m.absorbed_by_group = not m.mark_changed
+                capped_before_prev = capped_before
+                capped_after_prev = capped_after
     return delta
 
 

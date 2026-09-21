@@ -8,13 +8,15 @@ fail on first use and turn an infrastructure gap into a silent verdict.
 
 from __future__ import annotations
 
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
 
+import lemely.web.deps as deps
 from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.gemini import GeminiClient
-from lemely.runtime.config import Settings
+from lemely.runtime.config import Settings, load_settings
 from lemely.web.deps import build_self_review_judge, get_self_review_service, get_settings
 
 
@@ -54,14 +56,23 @@ def test_the_service_singleton_carries_the_judge(monkeypatch: pytest.MonkeyPatch
 
 
 def test_the_service_singleton_carries_no_judge_without_a_key(
-    monkeypatch: pytest.MonkeyPatch,
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
-    """Mirror of the above: no key configured means the singleton's judge is ``None``."""
+    """Mirror of the above: no key configured means the singleton's judge is ``None``.
+
+    ``Settings`` also reads ``lemely.toml``, which is gitignored and present
+    on developer machines — deleting only the env vars would fail this test
+    for reasons unrelated to the code on any dev box with a key in their
+    local config (S2 part2+3 final review, n-3). Point discovery at an empty
+    ``tmp_path`` on both the cwd and XDG legs so no ambient TOML can leak in.
+    """
     get_self_review_service.cache_clear()
     get_settings.cache_clear()
     monkeypatch.delenv("LEMELY_GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
     monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    monkeypatch.setenv("XDG_CONFIG_HOME", str(tmp_path))
+    monkeypatch.setattr(deps, "load_settings", lambda: load_settings(cwd=tmp_path))
     try:
         assert get_self_review_service()._judge is None
     finally:

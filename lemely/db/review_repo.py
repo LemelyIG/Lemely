@@ -219,6 +219,25 @@ class ReviewQueuePage:
 
 
 @dataclass(frozen=True, slots=True)
+class ReviewItemPoint:
+    """One mark point's self-review state.
+
+    For a teacher deciding a ``student_evidence_unjudged`` item (S2 part2+3
+    final review, I-2). Without this, a teacher opening such an item sees only
+    the aggregate fields ``ReviewItemDetail`` already carried (``feedback``,
+    ``matched_point_ids``) — never the student's own claim or evidence, the
+    exact sentence the queue row exists to have them adjudicate.
+    """
+
+    mark_point_id: str
+    point_text: str
+    awarded: bool  # the marker's own verdict; unrelated to the student's claim
+    student_selfmark: bool | None  # the student's claim, None if not self-marked
+    student_evidence: str | None
+    evidence_verdict: str | None  # EvidenceVerdict.value, or None if never judged
+
+
+@dataclass(frozen=True, slots=True)
 class ReviewItemDetail:
     """T-08's full detail: the row plus the question content and any override."""
 
@@ -239,6 +258,12 @@ class ReviewItemDetail:
     resolution_note: str | None
     resolved_by: uuid.UUID | None
     resolved_at: datetime | None
+    points: list[ReviewItemPoint]
+    """Empty for a console-sourced item: a console paper has no
+
+    ``question_result_points`` rows, the same reason its override fields are
+    always empty (see :func:`_console_item_detail`).
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -430,6 +455,26 @@ class ReviewService:
             attempt = _require_attempt(item, attempt)
             class_id_, class_name, display_name = visible[attempt.user_id]
             row = _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
+            # `qr.points` is a lazy relationship: it must be read here, while
+            # the session is still open, not below — `qr` is detached once
+            # the `with` block exits, and a not-yet-loaded relationship on a
+            # detached instance raises `DetachedInstanceError` (unlike the
+            # scalar columns below, already populated by the query above).
+            points = (
+                [
+                    ReviewItemPoint(
+                        mark_point_id=p.mark_point_id,
+                        point_text=p.point_text,
+                        awarded=p.awarded,
+                        student_selfmark=p.student_selfmark,
+                        student_evidence=p.student_evidence,
+                        evidence_verdict=p.evidence_verdict.value if p.evidence_verdict else None,
+                    )
+                    for p in qr.points
+                ]
+                if qr is not None
+                else []
+            )
         return ReviewItemDetail(
             row=row,
             student_answer=qr.student_answer if qr is not None else None,
@@ -448,6 +493,7 @@ class ReviewService:
             resolution_note=item.resolution_note,
             resolved_by=item.resolved_by,
             resolved_at=item.resolved_at,
+            points=points,
         )
 
     # -- Mutations --------------------------------------------------------------
@@ -1077,6 +1123,7 @@ def _console_item_detail(
         resolution_note=item.resolution_note,
         resolved_by=item.resolved_by,
         resolved_at=item.resolved_at,
+        points=[],  # no question_result_points row exists for a console item
     )
 
 
@@ -1105,6 +1152,7 @@ __all__ = [
     "ReviewAlreadyClosedError",
     "ReviewError",
     "ReviewItemDetail",
+    "ReviewItemPoint",
     "ReviewNotFoundError",
     "ReviewOwnershipError",
     "ReviewQueuePage",

@@ -28,6 +28,7 @@ from lemely.db.review_repo import (
     ReviewAlreadyClosedError,
     ReviewError,
     ReviewItemDetail,
+    ReviewItemPoint,
     ReviewNotFoundError,
     ReviewOwnershipError,
     ReviewQueueRow,
@@ -43,6 +44,7 @@ from lemely.web.schemas_review import (
     ResolveReviewRequestDTO,
     ReviewBreakdownDTO,
     ReviewItemDetailDTO,
+    ReviewItemPointDTO,
     ReviewQueueItemDTO,
     ReviewQueueListDTO,
 )
@@ -138,6 +140,17 @@ def _breakdown_to_dto(breakdown: dict[str, object] | None) -> ReviewBreakdownDTO
     return ReviewBreakdownDTO.model_validate(breakdown)
 
 
+def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
+    return ReviewItemPointDTO(
+        markPointId=point.mark_point_id,
+        pointText=point.point_text,
+        awarded=point.awarded,
+        studentSelfmark=point.student_selfmark,
+        studentEvidence=point.student_evidence,
+        evidenceVerdict=point.evidence_verdict,
+    )
+
+
 def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
     row = detail.row
     return ReviewItemDetailDTO(
@@ -179,6 +192,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
         resolutionNote=detail.resolution_note,
         resolvedBy=str(detail.resolved_by) if detail.resolved_by else None,
         resolvedAt=detail.resolved_at.isoformat() if detail.resolved_at else None,
+        points=[_point_to_dto(p) for p in detail.points],
     )
 
 
