@@ -47,6 +47,7 @@ def _hybrid_paper_mark_scheme() -> MarkScheme:
                     "marks": 2,
                     "type": "explanation",
                     "question_command": "explain why",
+                    "topic_hint": "forces",
                     "answer_points": [
                         {"id": "p1", "point": "gravity acts on it", "marks": 1},
                         {"id": "p2", "point": "no air resistance", "marks": 1},
@@ -353,19 +354,34 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         self.assertIn("malformed", q1.review_reason or "")
 
     def test_a_dropped_non_mcq_answer_stays_dropped_under_mcq_only(self) -> None:
-        """The short-circuit must sit ahead of the ``ai is None`` branch too.
+        """The short-circuit must sit ahead of the ``ai is None`` branch too,
+        for a NON-MCQ leaf specifically.
 
-        Moving it below that branch is a plausible refactor, and every other
-        test in this class still passes: they all pass a client with
-        ``mcq_only=False``, so none reaches the configuration where it matters.
-        Under ``--mcq-only`` (or with no client) a dropped non-MCQ answer would
-        fall through to ``_build_missing_corrected`` and surface as
-        ``marker_source="missing"`` with "non-MCQ question not marked
-        (--mcq-only or no AI client)" -- telling the teacher we CHOSE not to
-        mark this question, when the model in fact returned an answer for it
-        that extraction discarded. That is the exact conflation MF7 exists to
-        remove, so it must not reappear in the one configuration the siblings
-        never exercise.
+        CORRECTION (post-54ecedfc independent review): this docstring
+        previously claimed "every other test in this class ... pass a client
+        with ``mcq_only=False``, so none reaches the configuration where it
+        matters." That is false, and 54ecedfc's mutation table inherited the
+        same error for mutation C ("short-circuit below `if ai is None`" ...
+        "passed everything" pre-commit). The sibling
+        ``test_dropped_mcq_answer_is_flagged_with_a_distinguishing_reason``
+        (above) already passes ``gemini_client=None, mcq_only=True`` -- the
+        exact configuration this docstring said nothing reached -- and,
+        verified by mutation, already fails against both a moved
+        short-circuit and one gated on ``ai is not None``: for an MCQ leaf,
+        skipping the dropped check routes it into the unconditional
+        ``if q.type == QuestionType.MCQ`` branch regardless of ``ai``, so
+        ``marker_source`` stops being "dropped" there too.
+
+        What this test adds that the MCQ sibling structurally cannot: a
+        NON-MCQ leaf never reaches the MCQ branch, so a mutation that
+        disables the short-circuit only for non-MCQ leaves (leaving the MCQ
+        leaf, and hence the sibling test, untouched) falls through instead to
+        ``_build_missing_corrected`` and surfaces as ``marker_source=
+        "missing"`` with "non-MCQ question not marked (--mcq-only or no AI
+        client)" -- telling the teacher we CHOSE not to mark this question,
+        when the model in fact returned an answer for it that extraction
+        discarded. That is the exact conflation MF7 exists to remove, and
+        this is the only test in the class that can catch it reappearing.
         """
         extracted = ExtractedAnswers(
             paper_id="test",
@@ -447,6 +463,28 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         # finds the good one and all three pass while a paid call happened. Only
         # this line catches that.
         client._client.models.generate_content.assert_not_called()
+        # Independent-review follow-up (mutJ7 hunt): every assertion above
+        # about q2's marks reads the NUMERATOR (`awarded_marks`), and the
+        # `bus.publish` frame asserted in MarkingProgressCounterTests reads
+        # `max_marks=q.marks` and `confidence=0.0` -- literals taken straight
+        # from the `Question`/the publish call, not from the
+        # `CorrectedQuestion` `_build_dropped_corrected` actually returns.
+        # Neither pins `_build_dropped_corrected`'s own denominator or
+        # confidence fields, so zeroing `maximum_marks` there silently
+        # shrinks `CorrectionResult.maximum_marks` (a paper's percentage
+        # inflates, e.g. 33.3% -> 100.0% here) with every existing assertion
+        # still green. Assert the record itself, at both the question and
+        # the paper level, plus the confidence pair the same function sets.
+        self.assertEqual(q2.maximum_marks, 2)
+        self.assertEqual(result.maximum_marks, 3)
+        self.assertEqual(q2.confidence, ConfidenceBand.LOW)
+        self.assertEqual(q2.confidence_score, 0.0)
+        # Was an equivalent mutant (mutJ7 mutation P): `topic_hint` was unset
+        # on every leaf in this fixture, so mutating `topic=question.topic_hint`
+        # -> `None` produced byte-identical output and no test -- this one
+        # included -- could discriminate. Question "2" now carries a
+        # `topic_hint` so this assertion is a real regression guard.
+        self.assertEqual(q2.topic, "forces")
 
 
 class MCQAbstainHardeningTests(unittest.TestCase):
