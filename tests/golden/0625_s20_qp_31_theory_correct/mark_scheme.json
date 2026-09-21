@@ -177,7 +177,7 @@
         },
         {
           "id": "p3",
-          "point": "(p =) 8.9 (g/cm\n)",
+          "point": "(p =) 8.9 (g/cm^3)",
           "marks": 1,
           "math_mark_type": "A",
           "is_alternative": false,
@@ -192,7 +192,7 @@
           "is_correct": null,
           "calculated_answer": {
             "value": 8.9,
-            "unit": "g/cm\n",
+            "unit": "g/cm^3",
             "standard_form": null,
             "sig_figs": null,
             "dp": null,
