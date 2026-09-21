@@ -16,7 +16,6 @@ tells the two apart, and it is emitted from the first call.
 
 from __future__ import annotations
 
-import hashlib
 from typing import TYPE_CHECKING
 
 import structlog
@@ -54,25 +53,16 @@ class GeminiEvidenceJudge:
 
     def judge(self, request: JudgeRequest) -> JudgeVerdict:
         """Decide one challenged point. Raises on any Gemini failure."""
-        digest = hashlib.sha256(
-            "\x1f".join(
-                (
-                    request.subject_code,
-                    request.question_id,
-                    request.point_text,
-                    request.student_answer or "",
-                    request.student_evidence,
-                    "earned" if request.student_claims_earned else "not_earned",
-                )
-            ).encode()
-        ).hexdigest()[:24]
+        # No extra_cache_key: GeminiClient._cache_key already hashes system_prompt +
+        # user_prompt + prompt_version, and build_judge_user_prompt(request) is a
+        # strict superset of every JudgeRequest field, so a per-request digest here
+        # could never separate two calls the prompt hash would not already separate.
         outcome = self._client.generate_structured(
             system_prompt=JUDGE_SYSTEM_PROMPT,
             user_prompt=build_judge_user_prompt(request),
             response_schema=JudgeOutcome,
             prompt_version=VERSION,
             task_tag=TASK_TAG,
-            extra_cache_key=digest,
         )
         log.info(
             "self_review_judge_verdict",
