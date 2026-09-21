@@ -1,0 +1,87 @@
+"""The lenient evidence judge for student self-review, on Gemini.
+
+One bounded call per challenged point (:class:`JudgeRequest`), returning a
+:class:`JudgeVerdict`. Implements :class:`lemely.core.self_review.EvidenceJudge`.
+
+**Failure propagates.** ``generate_structured``'s ``ExternalServiceError`` /
+``ParseError`` are not caught here; the service turns any exception into a
+``student_evidence_unjudged`` review-queue row. Catching here and returning a
+default verdict would be the silent decision the spec forbids.
+
+**The metric.** Every verdict logs ``self_review_judge_verdict`` with the
+subject code and the outcome. A judge that accepts everything is
+indistinguishable from no guard at all; the accept rate per subject is what
+tells the two apart, and it is emitted from the first call.
+"""
+
+from __future__ import annotations
+
+import hashlib
+from typing import TYPE_CHECKING
+
+import structlog
+
+from lemely.core.schemas import StrictModel
+from lemely.core.self_review import JudgeVerdict
+from lemely.io.prompts.self_review_judge import (
+    JUDGE_SYSTEM_PROMPT,
+    VERSION,
+    build_judge_user_prompt,
+)
+
+if TYPE_CHECKING:
+    from lemely.core.self_review import JudgeRequest
+    from lemely.io.gemini import GeminiClient
+
+log = structlog.get_logger(__name__)
+
+#: ``GeminiSettings.model_for`` tag; ``self_review_judge_model`` overrides the model.
+TASK_TAG = "self_review_judge"
+
+
+class JudgeOutcome(StrictModel):
+    """The judge's structured answer."""
+
+    accepted: bool
+    reason: str
+
+
+class GeminiEvidenceJudge:
+    """Judge one challenged mark point with a single Gemini call."""
+
+    def __init__(self, gemini_client: GeminiClient) -> None:
+        self._client = gemini_client
+
+    def judge(self, request: JudgeRequest) -> JudgeVerdict:
+        """Decide one challenged point. Raises on any Gemini failure."""
+        digest = hashlib.sha256(
+            "\x1f".join(
+                (
+                    request.subject_code,
+                    request.question_id,
+                    request.point_text,
+                    request.student_answer or "",
+                    request.student_evidence,
+                    "earned" if request.student_claims_earned else "not_earned",
+                )
+            ).encode()
+        ).hexdigest()[:24]
+        outcome = self._client.generate_structured(
+            system_prompt=JUDGE_SYSTEM_PROMPT,
+            user_prompt=build_judge_user_prompt(request),
+            response_schema=JudgeOutcome,
+            prompt_version=VERSION,
+            task_tag=TASK_TAG,
+            extra_cache_key=digest,
+        )
+        log.info(
+            "self_review_judge_verdict",
+            subject_code=request.subject_code,
+            question_id=request.question_id,
+            accepted=outcome.accepted,
+            claims_earned=request.student_claims_earned,
+        )
+        return JudgeVerdict(accepted=outcome.accepted, reason=outcome.reason)
+
+
+__all__ = ["TASK_TAG", "GeminiEvidenceJudge", "JudgeOutcome"]
