@@ -54,18 +54,21 @@ describe("SelfReviewPanel.tsx", () => {
     expect(branch).not.toContain("<>")
   })
 
-  it("SelfReviewPanel's own body never reads a revealed-only field (Task 13/14 review, IMP-3)", () => {
-    // `PendingForm`'s body was covered; `SelfReviewPanel` itself — which owns
-    // `query.data` and sits above `function PendingForm` — was not, and is
-    // the natural place a leak would actually be written. Proven green by
-    // the review's E1 evasion: a verdict read inserted into the exported
-    // component's own `not_started` branch, via the exact
-    // `as unknown as SelfReviewRevealed` cast this gate now forbids.
-    const panelStart = source.indexOf("export function SelfReviewPanel")
-    const panelEnd = source.indexOf("function PendingForm")
-    expect(panelStart).toBeGreaterThan(-1)
-    expect(panelEnd).toBeGreaterThan(panelStart)
-    const panelBody = source.slice(panelStart, panelEnd)
+  it("no verdict field is read anywhere above RevealedOutcome (Task 13/14 re-review, R-4; subsumes IMP-3/E1/M11)", () => {
+    // The two gates this replaces sliced [SelfReviewPanel, PendingForm) and
+    // [PendingForm, RevealedOutcome) — leaving everything ABOVE
+    // `export function SelfReviewPanel` covered by nothing. That region is
+    // not hypothetical: this file holds `verdictValue`, `readSavedDraft` and
+    // `saveDraft` there. Proven green as evasion E9: a module-level
+    // `peekVerdict(view)` helper reading `.points?.[0]?.awarded`, inserted
+    // above the component, passed both of the old gates because neither's
+    // slice reached it. `RevealedOutcome` is the only legitimate reader of a
+    // verdict field and it is the last function in the file, so one gate
+    // over everything before it subsumes both old gates and closes E9, E1
+    // and M11 together.
+    const revealedStart = source.indexOf("function RevealedOutcome")
+    expect(revealedStart).toBeGreaterThan(-1)
+    const aboveRevealed = source.slice(0, revealedStart)
     for (const field of [
       ".awarded",
       "studentSelfmark",
@@ -73,21 +76,11 @@ describe("SelfReviewPanel.tsx", () => {
       "aiMarks",
       "effectiveMarks",
       "markChanged",
+      "judgeReason",
     ]) {
-      expect(panelBody).not.toContain(field)
+      expect(aboveRevealed).not.toContain(field)
     }
-    expect(panelBody).not.toContain("as unknown as SelfReviewRevealed")
-  })
-
-  it("never reads point.awarded (or any revealed-only field) inside PendingForm", () => {
-    const formStart = source.indexOf("function PendingForm")
-    const formEnd = source.indexOf("function RevealedOutcome")
-    expect(formStart).toBeGreaterThan(-1)
-    expect(formEnd).toBeGreaterThan(formStart)
-    const pendingFormBody = source.slice(formStart, formEnd)
-    expect(pendingFormBody).not.toContain(".awarded")
-    expect(pendingFormBody).not.toContain("studentSelfmark")
-    expect(pendingFormBody).not.toContain("evidenceVerdict")
+    expect(aboveRevealed).not.toContain("as unknown as SelfReviewRevealed")
   })
 
   it("only RevealedOutcome reads the verdict fields, and only from SelfReviewRevealed", () => {

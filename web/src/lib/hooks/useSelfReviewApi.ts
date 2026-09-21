@@ -6,6 +6,7 @@ import {
   type UseQueryResult,
 } from "@tanstack/react-query"
 import { ApiError, request } from "@/lib/api"
+import { clearDraft } from "@/lib/selfReview"
 import type { SelfReview, SelfReviewRevealed, SelfReviewSubmission } from "@/lib/selfReviewTypes"
 import type { QuestionResult } from "@/lib/studentTypes"
 
@@ -90,26 +91,46 @@ export function useSubmitSelfReview(): UseMutationResult<
         method: "POST",
         body: JSON.stringify(submission),
       }),
+    // `onSuccess` here is option-level (passed to `useMutation`, not to a
+    // particular `mutate()` call), which matters for `clearDraft`: a
+    // per-call callback does not fire once its caller has unmounted
+    // (verified against @tanstack/query-core 5.102.8's `MutationObserver`
+    // — a per-call `onSuccess` is a no-op after unmount, the option-level
+    // one still runs), and `QuestionRow` unmounts `SelfReviewPanel` the
+    // instant its row collapses (`question-row.tsx:186`). A student who
+    // submits and immediately collapses the row (or switches tabs, which
+    // also unmounts it) must still have their draft cleared — otherwise it
+    // sits in `sessionStorage` for the life of the tab after the one pass
+    // it belonged to (Task 13/14 re-review, R-5).
     onSuccess: (data, { attemptId, questionResultId }) => {
       queryClient.setQueryData(selfReviewKey(attemptId, questionResultId), data)
+      clearDraft(attemptId, questionResultId)
       queryClient.invalidateQueries({ queryKey: ["student", "overview"] })
       queryClient.invalidateQueries({ queryKey: ["student", "subject"] })
       queryClient.invalidateQueries({ queryKey: ["student", "result"] })
     },
-    // A 409 means the server already holds a pass for this question — the
-    // cached `not_started` view is now a lie, and re-offering the form can
-    // only 409 again. A non-`ApiError` failure (a lost response, a dropped
-    // connection) is worse: the client genuinely does not know whether the
-    // POST landed, and a refetch is the only cheap way to find out. Either
-    // way, invalidate so the panel converges on the server's own truth
-    // instead of leaving the student staring at a form for a pass already
-    // recorded (Task 13/14 review, IMP-1).
-    onError: (error, { attemptId, questionResultId }) => {
-      if (!(error instanceof ApiError) || error.status === 409) {
-        queryClient.invalidateQueries({
-          queryKey: selfReviewKey(attemptId, questionResultId),
-        })
-      }
+    // Invalidate the self-review query on ANY submit failure, unconditionally
+    // (Task 13/14 re-review, R-9 — widened from the first fix's 409-or-
+    // non-ApiError condition). A 409 means the server already holds a pass;
+    // a non-`ApiError` failure (a lost response, a dropped connection) means
+    // the client genuinely does not know whether the POST landed; and a
+    // gateway failure (502/504/408) is an `ApiError` that looks like a clean
+    // rejection but may equally have committed server-side before the
+    // gateway gave up — the same "don't know" condition as a network error.
+    // A refetch is cheap and always converges on the server's own truth, so
+    // there is no case where invalidating is wrong; the only case where it
+    // was previously skipped (a genuine app-level 500, an atomic rollback)
+    // just refetches back to the same `not_started` view it already had.
+    //
+    // This composes with the panel's `isLoadingError` check
+    // (`SelfReviewPanel.tsx`, R-2): the refetch this triggers can itself
+    // fail (offline), and `isLoadingError` (not `isError`) is what keeps a
+    // completed, filled-in form on screen through that failure rather than
+    // replacing it with a load-error screen.
+    onError: (_error, { attemptId, questionResultId }) => {
+      queryClient.invalidateQueries({
+        queryKey: selfReviewKey(attemptId, questionResultId),
+      })
     },
   })
 }

@@ -75,11 +75,23 @@ describe("PaperResult.tsx — the history branch renders real rows", () => {
 describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
   const source = readSource("src/lib/hooks/useSelfReviewApi.ts")
 
-  it("caches the POST's revealed payload under the SAME key the pending GET reads", () => {
-    // Both calls must build the key through the one selfReviewKey() factory —
-    // a literal or a second key would let the revealed payload sit in a slot
-    // the pending query, and therefore the panel, never reads.
-    expect(source).toContain("queryKey: selfReviewKey(attemptId, questionResultId)")
+  it("the GET's own queryKey is built through the SAME key factory the POST writes to (Task 13/14 re-review, R-3)", () => {
+    // A whole-file `toContain` on this exact substring can be satisfied by
+    // ANY occurrence anywhere in the file — proven by the IMP-1 fix itself:
+    // adding `invalidateQueries({ queryKey: selfReviewKey(attemptId,
+    // questionResultId) })` inside `onError` gave the gate a second, unrelated
+    // match, and mutation M2 (replacing the GET's own `queryKey:` with a
+    // hand-built array) went from RED to GREEN without anyone touching the
+    // GET. Anchored to the GET's own body instead: the substring must appear
+    // there, and the GET's `queryKey:` line must never be a raw array.
+    const queryStart = source.indexOf("export function useSelfReview(")
+    const queryEnd = source.indexOf("export interface SubmitSelfReviewInput")
+    expect(queryStart).toBeGreaterThan(-1)
+    expect(queryEnd).toBeGreaterThan(queryStart)
+    const getBody = source.slice(queryStart, queryEnd)
+    expect(getBody).toContain("queryKey: selfReviewKey(attemptId, questionResultId)")
+    expect(getBody).not.toMatch(/queryKey:\s*\[/)
+    // The POST's cache write still goes through the same factory.
     expect(source).toContain("setQueryData(selfReviewKey(attemptId, questionResultId), data)")
   })
 
@@ -105,6 +117,12 @@ describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
     // And the mutation's own function body — everything before `onSuccess:`
     // — must not itself contain a write, which is the placement E5 exploited.
     expect(source.slice(0, onSuccessStart)).not.toContain("setQueryData(")
+    // `setQueriesData` (plural: query-core's batch API, same write effect)
+    // is a different call the `setQueryData(` count above does not match —
+    // proven green as evasion E8 in the Task 13/14 re-review. Ban it outright
+    // rather than trying to also count it: nothing in this file has a
+    // legitimate reason to touch more than one query's cache at once.
+    expect(source).not.toContain("setQueriesData(")
   })
 
   it("does not retry a 404 (or any other final 4xx) on the GET", () => {
@@ -113,19 +131,33 @@ describe("useSelfReviewApi.ts — useSelfReview / useSubmitSelfReview", () => {
     )
   })
 
-  it("re-syncs the self-review query on a 409 or a network failure (Task 13/14 review, IMP-1)", () => {
-    // A 409 means the server already holds a pass; a non-ApiError failure
-    // means the client cannot tell whether the POST landed. Either way the
-    // cached `not_started` view may now be a lie, and the only fix that does
-    // not leave the student staring at a form for a pass already recorded is
-    // to invalidate the exact slot the pending GET reads.
+  it("re-syncs the self-review query on ANY submit failure (Task 13/14 review IMP-1, re-review R-9)", () => {
+    // The first fix invalidated only on a 409 or a non-ApiError failure. The
+    // re-review found a third dead end that condition missed: a gateway
+    // failure (502/504/408) is an ApiError that may equally have committed
+    // server-side before the gateway gave up — the same "don't know whether
+    // it landed" condition a network error has. Invalidating unconditionally
+    // is what a cheap, always-converges-on-the-server refetch buys: there is
+    // no submit failure where re-syncing the cached view is wrong.
     const onErrorStart = source.indexOf("onError:")
     expect(onErrorStart).toBeGreaterThan(-1)
     const onErrorBody = source.slice(onErrorStart)
     expect(onErrorBody).toMatch(
       /invalidateQueries\(\{\s*queryKey: selfReviewKey\(attemptId, questionResultId\),\s*\}\)/,
     )
-    expect(onErrorBody).toMatch(/!\(error instanceof ApiError\)\s*\|\|\s*error\.status === 409/)
+  })
+
+  it("clears the draft from the option-level onSuccess, so it still runs after an unmount (Task 13/14 re-review, R-5)", () => {
+    // A per-`mutate()`-call onSuccess does not fire once its caller has
+    // unmounted; the option-level one passed to useMutation does. Collapsing
+    // the QuestionRow right after submitting unmounts SelfReviewPanel, so
+    // clearDraft has to live here, not in a callback passed from the panel.
+    const onSuccessStart = source.indexOf("onSuccess:")
+    const onErrorStart = source.indexOf("onError:")
+    expect(onSuccessStart).toBeGreaterThan(-1)
+    expect(onErrorStart).toBeGreaterThan(onSuccessStart)
+    const onSuccessBody = source.slice(onSuccessStart, onErrorStart)
+    expect(onSuccessBody).toContain("clearDraft(attemptId, questionResultId)")
   })
 
   it("invalidates every total-bearing student surface on submit", () => {

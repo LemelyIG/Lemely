@@ -1,6 +1,5 @@
 import { describe, expect, it } from "vitest"
 import type {
-  SelfReviewPending,
   SelfReviewPendingPoint,
   SelfReviewRevealed,
   SelfReviewRevealedPoint,
@@ -14,9 +13,9 @@ import {
   groupLabel,
   groupPoints,
   isComplete,
+  markWord,
   outcomeDetail,
   outcomeSummary,
-  phaseOf,
   pointOutcome,
   setEvidence,
   setVerdict,
@@ -49,19 +48,6 @@ const points = [
   { markPointId: "p1", ordinal: 0, markType: "M", tariff: 1, pointText: "Correct method", ...group },
   { markPointId: "p2", ordinal: 1, markType: "A", tariff: 1, pointText: "Answer to 3sf", ...group },
 ]
-
-function pending(overrides: Partial<SelfReviewPending> = {}): SelfReviewPending {
-  return {
-    state: "not_started",
-    attemptId: "a1",
-    questionResultId: "q1",
-    questionId: "1a",
-    maxMarks: 2,
-    evidenceRequired: false,
-    points,
-    ...overrides,
-  }
-}
 
 function revealedPoint(overrides: Partial<SelfReviewRevealedPoint> = {}): SelfReviewRevealedPoint {
   return {
@@ -142,24 +128,6 @@ describe("toSubmission", () => {
     expect(() => toSubmission(setVerdict(EMPTY_DRAFT, "p1", true), points)).toThrow(
       /every point/i,
     )
-  })
-})
-
-describe("phaseOf", () => {
-  it("is not_started with no view or an untouched draft", () => {
-    expect(phaseOf(undefined, EMPTY_DRAFT)).toBe("not_started")
-    expect(phaseOf(pending(), EMPTY_DRAFT)).toBe("not_started")
-  })
-
-  it("is self_marking once any verdict is chosen", () => {
-    expect(phaseOf(pending(), setVerdict(EMPTY_DRAFT, "p1", false))).toBe("self_marking")
-  })
-
-  it("mirrors the server state after submission regardless of the draft", () => {
-    expect(phaseOf(revealed({ state: "revealed" }), setVerdict(EMPTY_DRAFT, "p1", true))).toBe(
-      "revealed",
-    )
-    expect(phaseOf(revealed({ state: "settled" }), EMPTY_DRAFT)).toBe("settled")
   })
 })
 
@@ -321,13 +289,23 @@ describe("outcome copy", () => {
 })
 
 /*
- * groupPoints / groupLabel (Task 13/14 review, IMP-6). A scheme group must
- * present as ONE unit worth `groupMaxMarks` (`selfReviewTypes.ts:29-33`,
- * `schemas_student_self_review.py:36-40`), never as its members' tariffs
- * added up — an "any 2 from 4" pool is worth 2 marks, not 4, and a panel
- * that shows four independently-earnable 1-mark radios claims otherwise.
- * These assert over real point arrays, not source text, because this is
- * exactly the arithmetic a text gate cannot check.
+ * groupPoints / groupLabel (Task 13/14 review, IMP-6; re-review R-1/R-6). A
+ * scheme group must present as ONE unit worth `groupMaxMarks`
+ * (`selfReviewTypes.ts:29-33`, `schemas_student_self_review.py:36-40`),
+ * never as its members' tariffs added up — an "any 2 from 4" pool of 1-mark
+ * points is worth 2 marks, not 4. These assert over real point arrays, not
+ * source text, because this is exactly the arithmetic a text gate cannot
+ * check.
+ *
+ * R-1: the first pass of this block used `tariff: 1` in every case, where
+ * marks and a select-count coincide by accident — the exact shape the bug it
+ * was meant to catch is invisible in. `groupLabel` states only the group's
+ * total worth now, never a count the wire cannot supply (`groupMaxMarks` is
+ * documented server-side as "the most the group can contribute", not "how
+ * many members you may claim" — `question_points.py:131-145`), so every case
+ * below is checked with tariffs that are NOT all 1, plus a 3-member
+ * alternative and a `maxMarks: 0` pool (a pool a preceding pool already
+ * exhausted — `_group_points`' own docstring says this happens).
  */
 function groupablePoint(overrides: Partial<Groupable> = {}): Groupable {
   return { markPointId: "p", groupKey: null, groupMaxMarks: null, tariff: 1, ...overrides }
@@ -344,7 +322,7 @@ describe("groupPoints / groupLabel", () => {
     expect(groups[0]!.kind).toBe("alternative")
     expect(groups[0]!.maxMarks).toBe(1)
     expect(groups[0]!.points).toHaveLength(2)
-    expect(groupLabel(groups[0]!)).toBe("Either of these, 1 mark")
+    expect(groupLabel(groups[0]!)).toBe("One of these, worth 1 mark in total")
   })
 
   it("collapses an any-N-from pool into one group worth groupMaxMarks, not the sum of tariffs", () => {
@@ -363,7 +341,7 @@ describe("groupPoints / groupLabel", () => {
     // only ever worth 2. A regression back to per-point tariffs would pass
     // the sum, not the group cap.
     expect(groups[0]!.maxMarks).not.toBe(pool.reduce((sum, p) => sum + p.tariff, 0))
-    expect(groupLabel(groups[0]!)).toBe("Any 2 of these, 2 marks")
+    expect(groupLabel(groups[0]!)).toBe("These together, worth 2 marks in total")
   })
 
   it("keeps grouped and independent points on the same question as separate groups", () => {
@@ -382,22 +360,92 @@ describe("groupPoints / groupLabel", () => {
     expect(groupLabel(groups[1]!)).toBe("2 marks")
   })
 
-  it("a group of one still renders as a group, worth groupMaxMarks, not its lone tariff", () => {
+  it("states the group's total worth, not a select-count, when member tariffs are NOT all 1 (Task 13/14 re-review, R-1)", () => {
+    // Executed against the pre-fix helper, this exact case ("any 2 from 3,
+    // 2-mark points, group cap 4") produced "Any 4 of these, 4 marks" —
+    // reading `groupMaxMarks` (a mark total the scheme allows) as a count of
+    // points to select. There is no select-count on the wire at all
+    // (`SelfReviewPendingPointDTO` has no such field), so the only honest
+    // claim is the group's worth.
+    const threeTwoMarkers = [
+      groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: 4, tariff: 2 }),
+      groupablePoint({ markPointId: "p2", groupKey: "pool:1", groupMaxMarks: 4, tariff: 2 }),
+      groupablePoint({ markPointId: "p3", groupKey: "pool:1", groupMaxMarks: 4, tariff: 2 }),
+    ]
+    const groups = groupPoints(threeTwoMarkers)
+    expect(groups[0]!.points).toHaveLength(3)
+    expect(groups[0]!.maxMarks).toBe(4)
+    const label = groupLabel(groups[0]!)
+    expect(label).toBe("These together, worth 4 marks in total")
+    expect(label).not.toMatch(/any \d+ of these/i)
+  })
+
+  it("a 3-way alternative is worth its best single member, not 'either' (Task 13/14 re-review, R-1)", () => {
+    // `_group_points` joins a run of consecutive is_alternative points into
+    // one group, so alt groups of 3+ exist — "Either of these" (one of TWO)
+    // is wrong for one of three. "One of these" holds for any group size.
+    const threeWayAlt = [
+      groupablePoint({ markPointId: "p1", groupKey: "alt:1", groupMaxMarks: 2, tariff: 2 }),
+      groupablePoint({ markPointId: "p2", groupKey: "alt:1", groupMaxMarks: 2, tariff: 1 }),
+      groupablePoint({ markPointId: "p3", groupKey: "alt:1", groupMaxMarks: 2, tariff: 2 }),
+    ]
+    const groups = groupPoints(threeWayAlt)
+    expect(groups[0]!.points).toHaveLength(3)
+    expect(groupLabel(groups[0]!)).toBe("One of these, worth 2 marks in total")
+  })
+
+  it("a pool a preceding pool already exhausted (maxMarks: 0) says so, not 'any 0 of these' (Task 13/14 re-review, R-1)", () => {
+    // `_group_points`' own docstring: several pools in one question share the
+    // question's leftover, consuming it in scheme order, so a later pool can
+    // end capped at 0. The student still owes a verdict for every point
+    // (the POST contract is unchanged), so the copy must not read as if
+    // there is nothing there to mark — only that no further marks are on
+    // offer for it.
+    const exhausted = [
+      groupablePoint({ markPointId: "p1", groupKey: "pool:2", groupMaxMarks: 0, tariff: 1 }),
+      groupablePoint({ markPointId: "p2", groupKey: "pool:2", groupMaxMarks: 0, tariff: 1 }),
+    ]
+    const groups = groupPoints(exhausted)
+    expect(groups[0]!.maxMarks).toBe(0)
+    const label = groupLabel(groups[0]!)
+    expect(label).not.toMatch(/any 0 of these/i)
+    expect(label).toMatch(/no further marks/i)
+  })
+
+  /*
+   * The next two cases are defence-in-depth, not specified behaviour: the
+   * backend prunes a one-member group entirely (`_group_points` /
+   * `question_points.py:173` only keeps groups with `len(members) > 1`, so
+   * a lone-member group is written as `(None, None)` — a non-null `groupKey`
+   * always has >= 2 members) and 404s the whole question rather than send a
+   * `groupKey` with a null `groupMaxMarks` (`points_are_settleable`,
+   * `self_review_repo.py:762-768`), which `SelfReviewPanel` renders as
+   * `UNAVAILABLE_COPY` before `groupPoints` ever runs. Neither shape should
+   * reach the panel in production, so neither case asserts a user-facing
+   * `groupLabel` string as if it were the designed copy (Task 13/14
+   * re-review, R-6) — only the structural properties `groupPoints` itself
+   * is responsible for.
+   */
+  it("(defensive) a group of one still groups by key rather than falling back to a single-point shape", () => {
     const lone = [groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: 3, tariff: 1 })]
     const groups = groupPoints(lone)
     expect(groups).toHaveLength(1)
     expect(groups[0]!.kind).toBe("pool")
+    expect(groups[0]!.points).toHaveLength(1)
     expect(groups[0]!.maxMarks).toBe(3)
-    expect(groupLabel(groups[0]!)).toBe("Any 3 of these, 3 marks")
   })
 
-  it("falls back to the point's own tariff when a grouped point carries a null groupMaxMarks", () => {
-    // The server should never send a groupKey with a null groupMaxMarks, but
-    // a point that does must not silently claim the group is worth 0.
+  it("(defensive) falls back to the point's own tariff when a grouped point carries a null groupMaxMarks", () => {
     const defective = [
       groupablePoint({ markPointId: "p1", groupKey: "pool:1", groupMaxMarks: null, tariff: 2 }),
     ]
     const groups = groupPoints(defective)
     expect(groups[0]!.maxMarks).toBe(2)
+  })
+
+  it("markWord pluralises correctly at 1 and elsewhere", () => {
+    expect(markWord(1)).toBe("mark")
+    expect(markWord(0)).toBe("marks")
+    expect(markWord(2)).toBe("marks")
   })
 })

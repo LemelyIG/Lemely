@@ -1,5 +1,4 @@
 import type {
-  SelfReview,
   SelfReviewRevealed,
   SelfReviewRevealedPoint,
   SelfReviewSubmission,
@@ -10,12 +9,7 @@ import type {
  * component so it is testable without jsdom (`web/vitest.config.ts` is
  * Node-only). The panel in `portals/student/components/SelfReviewPanel.tsx`
  * renders exactly what these return.
- *
- * Phases: `not_started` -> `self_marking` (client-only: the student has begun
- * choosing verdicts) -> `revealed` / `settled` (the server's own states).
  */
-
-export type SelfReviewPhase = "not_started" | "self_marking" | "revealed" | "settled"
 
 export interface SelfReviewDraft {
   readonly verdicts: Readonly<Record<string, boolean>>
@@ -64,12 +58,6 @@ export function toSubmission(
       return evidence ? { markPointId: p.markPointId, earned, evidence } : { markPointId: p.markPointId, earned }
     }),
   }
-}
-
-export function phaseOf(view: SelfReview | undefined, draft: SelfReviewDraft): SelfReviewPhase {
-  if (!view) return "not_started"
-  if (view.state !== "not_started") return view.state
-  return Object.keys(draft.verdicts).length > 0 ? "self_marking" : "not_started"
 }
 
 /*
@@ -142,17 +130,38 @@ export function groupPoints<P extends Groupable>(points: readonly P[]): PointGro
   return groups
 }
 
-function markWord(marks: number): string {
+export function markWord(marks: number): string {
   return marks === 1 ? "mark" : "marks"
 }
 
-/** "3 marks" for a standalone point; "Either of these, 1 mark" / "Any 2 of
- * these, 2 marks" for a scheme group — what the student is told the group
- * (or lone point) is worth, stated once rather than per point. */
+/**
+ * What the student is told the group (or lone point) is worth, stated once
+ * rather than per point: "3 marks" for a standalone point, "One of these,
+ * worth 1 mark in total" / "These together, worth 2 marks in total" for a
+ * scheme group.
+ *
+ * Task 13/14 re-review, R-1: the wire carries `groupMaxMarks` (a mark
+ * total) and no select-count at all (`SelfReviewPendingPointDTO` has no
+ * field for "pick N") — `_group_points` (`question_points.py:131-145`)
+ * documents `groupMaxMarks` as "the most the group can contribute", not how
+ * many of its members may be claimed. An earlier version of this function
+ * read `groupMaxMarks` as a count ("Any N of these, N marks"), which is only
+ * correct by coincidence when every member's tariff is 1 (the case every
+ * test in the first pass used). Executed against backend-shaped inputs it
+ * produced "Any 4 of these, 4 marks" for a 3-member pool of 2-mark points,
+ * "Any 0 of these, 0 marks" for a pool a preceding pool had already
+ * exhausted (`_group_points`' own docstring: pools sharing a question's
+ * leftover can end capped at 0), and "Either of these" for a 3-way
+ * alternative (`_group_points` joins a run of consecutive `is_alternative`
+ * points into one group, so alt groups of 3+ exist — "either" means one of
+ * two). This version states only what the data actually supports: the
+ * group's total worth, never a count the client cannot know.
+ */
 export function groupLabel(group: Pick<PointGroup<unknown>, "kind" | "maxMarks">): string {
   if (group.kind === "single") return `${group.maxMarks} ${markWord(group.maxMarks)}`
-  const verb = group.kind === "alternative" ? "Either of these" : `Any ${group.maxMarks} of these`
-  return `${verb}, ${group.maxMarks} ${markWord(group.maxMarks)}`
+  if (group.maxMarks === 0) return "These points are worth no further marks on this question."
+  const lead = group.kind === "alternative" ? "One of these" : "These together"
+  return `${lead}, worth ${group.maxMarks} ${markWord(group.maxMarks)} in total`
 }
 
 export type PointOutcome = "agreed" | "changed" | "kept" | "pending"
@@ -250,3 +259,32 @@ export function summaryLine(view: SelfReviewRevealed): string {
  */
 export const UNAVAILABLE_COPY =
   "Self-review is not available for this paper. It is offered on papers marked after the per-point breakdown was introduced."
+
+/*
+ * Draft persistence (Task 13/14 review, SF-3/R-5). `QuestionRow`'s expanded
+ * slot only renders `children` while `open` is true
+ * (`question-row.tsx:186`), so collapsing the row unmounts
+ * `SelfReviewPanel` and a plain `useState` draft would be silently
+ * destroyed. `sessionStorage`, keyed per question, survives that unmount
+ * for the life of the tab. The key format lives here, not in the panel, so
+ * both the write side (the panel, on every edit) and the clear side (the
+ * mutation hook's `onSuccess`, which is guaranteed to run even if the panel
+ * has already unmounted — a per-`mutate()`-call callback is not) agree on
+ * one spelling instead of duplicating it.
+ */
+
+const DRAFT_STORAGE_PREFIX = "lemely:self-review-draft:"
+
+export function draftStorageKey(attemptId: string, questionResultId: string): string {
+  return `${DRAFT_STORAGE_PREFIX}${attemptId}:${questionResultId}`
+}
+
+/** Wrapped: a private window, cleared site data, or storage genuinely
+ * disabled must degrade quietly, never throw. */
+export function clearDraft(attemptId: string, questionResultId: string): void {
+  try {
+    sessionStorage.removeItem(draftStorageKey(attemptId, questionResultId))
+  } catch {
+    // Nothing to clean up if storage was never writable.
+  }
+}

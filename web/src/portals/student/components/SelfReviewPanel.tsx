@@ -1,4 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S4 R4 V3 */
 import { useState } from "react"
 import { Button } from "@/components/ui/button"
 import { Chip } from "@/components/ui/chip"
@@ -13,6 +13,7 @@ import {
   EMPTY_DRAFT,
   OUTCOME_LABEL,
   UNAVAILABLE_COPY,
+  draftStorageKey,
   evidenceHint,
   groupLabel,
   groupPoints,
@@ -53,19 +54,20 @@ import type {
  * (amber, per PRODUCT.md's "avoid red-heavy error states") for a genuine load
  * failure, both `compact` for a slot this size.
  *
- * Scheme groups (Task 13/14 review, IMP-6): `groupKey`/`groupMaxMarks` mark
- * points that share one scheme pool (an either/or pair, an "any N from")
- * worth `groupMaxMarks` together, never individually — both wire contracts
- * say so (`selfReviewTypes.ts`, `schemas_student_self_review.py`). The first
- * shipped version of this panel rendered one full-tariff `RadioGroup` per
- * point regardless of `groupKey`, which showed a 4-point "any 2 from 4" pool
- * as four separate 1-mark questions, implying 4 marks were on offer where
- * only 2 could ever be paid. `groupPoints`/`groupLabel` (from
- * `@/lib/selfReview`, unit-tested there over real point arrays rather than
- * pinned as source text here) collapse points sharing a key into one card
- * with the group's own worth stated once; the per-point radios still render
- * inside it, so the POST still carries a verdict for every point
- * (`SelfReviewSubmissionDTO` is unchanged).
+ * Scheme groups (Task 13/14 review, IMP-6, R-1): `groupKey`/`groupMaxMarks`
+ * mark points that share one scheme pool (an either/or run, an "any N from"
+ * pool) worth `groupMaxMarks` together, never individually — both wire
+ * contracts say so (`selfReviewTypes.ts`, `schemas_student_self_review.py`).
+ * `groupPoints`/`groupLabel` (from `@/lib/selfReview`, unit-tested there over
+ * real point arrays rather than pinned as source text here) collapse points
+ * sharing a key into one card; the per-point radios still render inside it,
+ * so the POST still carries a verdict for every point
+ * (`SelfReviewSubmissionDTO` is unchanged). `groupLabel` states only the
+ * group's total worth ("These together, worth 2 marks in total"), never a
+ * pick-count — the wire carries no select-count field, so a count is not
+ * knowable client-side; see `selfReview.ts` for why an earlier version's
+ * "Any N of these" reading of `groupMaxMarks` was wrong for any group whose
+ * member tariffs are not all 1.
  *
  * The draft (Task 13/14 review, SF-3) is persisted to `sessionStorage`, not
  * just component state: `QuestionRow`'s expanded slot only renders `children`
@@ -75,7 +77,9 @@ import type {
  * evidence per point with it. `sessionStorage` survives that unmount for the
  * life of the tab without needing `PaperResult` to lift and thread the state
  * through `QuestionList`/`QuestionRow` for a screen that does not otherwise
- * need to know about drafts.
+ * need to know about drafts. The clear side lives in the mutation hook's
+ * option-level `onSuccess` (R-5), not here, so it still runs if this panel
+ * unmounts before the POST settles.
  */
 
 const OUTCOME_TONE: Record<PointOutcome, "ok" | "warn" | "neutral" | "info"> = {
@@ -90,19 +94,12 @@ function verdictValue(earned: boolean | undefined): string | undefined {
   return earned ? "earned" : "missed"
 }
 
-function markWord(marks: number): string {
-  return marks === 1 ? "mark" : "marks"
-}
-
-const DRAFT_STORAGE_PREFIX = "lemely:self-review-draft:"
-
-function draftStorageKey(attemptId: string, questionResultId: string): string {
-  return `${DRAFT_STORAGE_PREFIX}${attemptId}:${questionResultId}`
-}
-
 /** Reads a saved draft back for the initial `useState` value. Wrapped: a
  * private window, cleared site data, or storage genuinely disabled must
- * still render the ordinary empty form, not throw. */
+ * still render the ordinary empty form, not throw. `clearDraft` (the write
+ * side's counterpart) lives in `@/lib/selfReview`, called from the mutation
+ * hook's option-level `onSuccess` rather than here — see that file for why
+ * (Task 13/14 re-review, R-5). */
 function readSavedDraft(attemptId: string, questionResultId: string): SelfReviewDraft {
   try {
     const raw = sessionStorage.getItem(draftStorageKey(attemptId, questionResultId))
@@ -122,14 +119,6 @@ function saveDraft(attemptId: string, questionResultId: string, draft: SelfRevie
   } catch {
     // Storage full or disabled: the draft simply does not survive a
     // collapse/reopen this time, same as before this fix existed.
-  }
-}
-
-function clearDraft(attemptId: string, questionResultId: string): void {
-  try {
-    sessionStorage.removeItem(draftStorageKey(attemptId, questionResultId))
-  } catch {
-    // Nothing to clean up if storage was never writable.
   }
 }
 
@@ -153,7 +142,19 @@ export function SelfReviewPanel({
   }
 
   if (query.isPending) return <ListSkeleton rows={2} />
-  if (query.isError) {
+  // `isLoadingError` (as opposed to `isError`) is true only when the query
+  // has never held data: `isLoadingError = isError && !hasData`
+  // (@tanstack/query-core's own `queryObserver.js`), so a background refetch
+  // that fails — the query still holds the last good payload — falls
+  // through to render that payload instead. A plain `isError` check here
+  // replaced a completed, filled-in form with this error screen the moment
+  // the new IMP-1 `onError` invalidation's own refetch failed offline (Task
+  // 13/14 re-review, R-2): the student's work vanished behind "We couldn't
+  // load the self-review" with a Try-again button that could only refetch,
+  // never resubmit. `isLoadingError` keeps the stale-but-real cached view on
+  // screen instead, which is exactly what a student mid-form needs while
+  // offline.
+  if (query.isLoadingError) {
     if (query.error instanceof ApiError && query.error.status === 404) {
       return (
         <div data-testid="self-review-unavailable">
@@ -183,7 +184,6 @@ export function SelfReviewPanel({
           submit.mutate(
             { attemptId, questionResultId, submission: toSubmission(draft, view.points) },
             {
-              onSuccess: () => clearDraft(attemptId, questionResultId),
               onError: (error) =>
                 toast({
                   title:
@@ -237,14 +237,14 @@ function PendingForm({
           className="flex flex-col gap-3 rounded-md bg-paper-sunk px-3.5 py-3"
         >
           {group.kind !== "single" ? (
-            <p className="text-label text-ink-muted">{groupLabel(group)}</p>
+            <p className="text-label text-ink">{groupLabel(group)}</p>
           ) : null}
           {group.points.map((point) => (
             <div key={point.markPointId} className="flex flex-col gap-2">
               <RadioGroup
                 label={
                   group.kind === "single"
-                    ? `${point.pointText} (${point.tariff} ${markWord(point.tariff)})`
+                    ? `${point.pointText} (${groupLabel(group)})`
                     : point.pointText
                 }
                 value={verdictValue(draft.verdicts[point.markPointId])}
@@ -260,7 +260,7 @@ function PendingForm({
                 label={
                   view.evidenceRequired ? "Why? (needed to challenge the marker)" : "Why? (optional)"
                 }
-                hint={view.evidenceRequired ? undefined : "Up to 2000 characters"}
+                hint="Up to 2000 characters"
                 rows={2}
                 maxLength={2000}
                 value={draft.evidence[point.markPointId] ?? ""}
@@ -300,7 +300,7 @@ function RevealedOutcome({ view }: { view: SelfReviewRevealed }) {
             className="flex flex-col gap-2 rounded-md bg-paper-sunk px-3.5 py-3"
           >
             {group.kind !== "single" ? (
-              <p className="text-label text-ink-muted">{groupLabel(group)}</p>
+              <p className="text-label text-ink">{groupLabel(group)}</p>
             ) : null}
             <div className="flex flex-col gap-1.5">
               {group.points.map((point) => {
