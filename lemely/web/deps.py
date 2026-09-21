@@ -66,6 +66,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import UserZoneReader, XpService
+from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
 
     from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
+    from lemely.core.self_review import EvidenceJudge
     from lemely.io.storage import StorageBackend
 
 
@@ -443,16 +445,35 @@ def get_review_service() -> ReviewService:
     return ReviewService(get_sessionmaker(get_settings()), get_class_service())
 
 
+def build_self_review_judge(
+    settings: Settings, gemini_client: GeminiClient
+) -> EvidenceJudge | None:
+    """The lenient judge, or ``None`` when no Gemini key is configured.
+
+    ``None`` is a first-class state for :class:`SelfReviewService`: every
+    evidence-backed challenge becomes a ``student_evidence_unjudged`` queue
+    row for a teacher. Constructing a client that would fail on first use
+    instead would surface the same gap as a judge failure per call — noisier,
+    and no more honest.
+    """
+    if settings.gemini_api_key is None:
+        return None
+    return GeminiEvidenceJudge(gemini_client)
+
+
 @lru_cache(maxsize=1)
 def get_self_review_service() -> SelfReviewService:
     """Return the process-wide :class:`SelfReviewService` singleton.
 
-    ``judge=None`` here: until the lenient judge is wired (Part 2 of the
-    self-review plan) every high-confidence challenge that carries evidence
-    is a judge *failure* and lands in the teacher queue as
-    ``student_evidence_unjudged`` — never a silent accept or reject.
+    The judge is :func:`build_self_review_judge` over the shared
+    :func:`get_gemini_client` (``ledger=None``, DS3 — one call per challenged
+    point is the only budget; the cloud billing budget is the guard).
     """
-    return SelfReviewService(get_sessionmaker(get_settings()), judge=None)
+    settings = get_settings()
+    return SelfReviewService(
+        get_sessionmaker(settings),
+        judge=build_self_review_judge(settings, get_gemini_client()),
+    )
 
 
 @lru_cache(maxsize=1)
