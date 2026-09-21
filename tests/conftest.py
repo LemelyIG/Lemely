@@ -16,6 +16,7 @@ shell's exported vars (if any) still apply, exactly as in CI.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -28,6 +29,52 @@ if TYPE_CHECKING:
     from collections.abc import Iterator
 
     from sqlalchemy.orm import Session, sessionmaker
+
+
+# US-036: `sys.flags.optimize != 0` (CPython `-O`/`-OO`, or `PYTHONOPTIMIZE`
+# set in the environment) strips every bare `assert` statement in the
+# process running this hook. A pytest test file built on bare `assert`s (the
+# convention this whole suite uses; pytest's own assertion-rewriting import
+# hook is what lets `assert x == y` still produce a readable failure -- but
+# rewriting only applies to files pytest itself imports as test modules, not
+# to arbitrary `assert`s a fixture or the code under test executes) then
+# "passes" having asserted nothing. This is not hypothetical on this branch:
+# `impl-us038`'s very first run of this suite reported a clean PASSED with
+# zero real assertions, because this session exports `PYTHONOPTIMIZE=2` on
+# shell entry -- an ambient setting outside the repo (not in
+# ~/.claude/settings.json, not in pyproject.toml, not in any shell profile
+# under version control here) that no per-agent warning can reliably survive.
+#
+# `env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...` is the correct
+# invocation and is documented everywhere in this repo that runs tests, but
+# a human or agent forgetting the flag must not get a silent, meaningless
+# PASSED -- they must get a loud, immediate refusal instead. Hence this hook,
+# not a fixture: `pytest_configure` runs before collection, so the whole
+# session is refused before a single (possibly vacuous) test executes,
+# rather than after some tests have already reported false confidence.
+#
+# No escape hatch: nothing in this suite legitimately needs the *pytest
+# process itself* to run under `-O`/`-OO`. The one place this branch
+# deliberately exercises `-OO` behaviour
+# (`tests/test_answer_extraction.py::WireSchemaSurvivesPythonOptimizeTests`)
+# does so by spawning `sys.executable -OO -c ...` as a SEPARATE subprocess --
+# that subprocess's optimize level is independent of this (the parent pytest
+# process's) `sys.flags.optimize`, so this guard and that test do not
+# conflict at any optimize level the parent process might be run under.
+def pytest_configure(config: pytest.Config) -> None:
+    if sys.flags.optimize != 0:
+        raise pytest.UsageError(
+            f"Refusing to run: sys.flags.optimize == {sys.flags.optimize} "
+            "(PYTHONOPTIMIZE is set, or python was launched with -O/-OO). "
+            "CPython strips every bare `assert` statement under -O/-OO, and "
+            "this suite's tests are ordinary `assert`-based pytest tests -- "
+            "so a run under this flag can report PASSED having checked "
+            "nothing, which already happened once on this branch. Re-run as: "
+            "  env -u PYTHONOPTIMIZE .venv/bin/python -m pytest ...\n"
+            "Do not add PYTHONDONTWRITEBYTECODE alongside it -- combined "
+            "with -O that forces a sympy recompile per subprocess and has "
+            "already broken a timeout-bounded test on this branch."
+        )
 
 
 @pytest.fixture(scope="session", autouse=True)
