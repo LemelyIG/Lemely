@@ -209,6 +209,29 @@ class RevealedSelfReview:
     points: list[RevealedPoint]
 
 
+@dataclass(frozen=True, slots=True)
+class AttemptQuestion:
+    """One question of the caller's attempt, as the result screen lists it.
+
+    ``effective_marks`` (teacher > student > AI), never ``awarded_marks``.
+    ``self_reviewable`` is derived from the presence of point rows — the same
+    fact :meth:`SelfReviewService.get` 404s on — so the screen and the route
+    can never disagree about which rows offer the panel.
+    """
+
+    question_result_id: uuid.UUID
+    question_id: str
+    effective_marks: int
+    maximum_marks: int
+    marker_source: str
+    confidence_score: float
+    feedback: str | None
+    review_reason: str | None
+    topic: str | None
+    matched_point_ids: list[str]
+    self_reviewable: bool
+
+
 class SelfReviewService:
     """Get and submit a student's self-review of one marked question."""
 
@@ -406,6 +429,42 @@ class SelfReviewService:
                 teacher_settled=teacher_settled,
             )
             return _revealed_view(session, qr, evidence_required=not low_confidence)
+
+    def list_questions(
+        self, student_id: uuid.UUID | str, attempt_id: uuid.UUID | str
+    ) -> list[AttemptQuestion]:
+        """Every question of one of the caller's attempts, in persist order.
+
+        Raises:
+            SelfReviewNotFoundError: not the caller's attempt, or no such attempt (404).
+        """
+        student_uuid = _as_uuid(student_id)
+        attempt_uuid = _as_uuid(attempt_id)
+        with self._sessionmaker() as session:
+            attempt = session.get(Attempt, attempt_uuid)
+            if attempt is None or attempt.user_id != student_uuid:
+                raise SelfReviewNotFoundError(f"No attempt {attempt_uuid}")
+            results = session.scalars(
+                select(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt.id)
+                .order_by(QuestionResult.created_at, QuestionResult.id)
+            ).all()
+            return [
+                AttemptQuestion(
+                    question_result_id=qr.id,
+                    question_id=qr.question_id,
+                    effective_marks=qr.effective_marks,
+                    maximum_marks=qr.maximum_marks,
+                    marker_source=qr.marker_source.value,
+                    confidence_score=qr.confidence_score,
+                    feedback=qr.feedback,
+                    review_reason=qr.review_reason,
+                    topic=qr.topic,
+                    matched_point_ids=list(qr.matched_point_ids),
+                    self_reviewable=bool(qr.points),
+                )
+                for qr in results
+            ]
 
     def _judge_safely(self, request: JudgeRequest, qr: QuestionResult) -> JudgeVerdict | None:
         """Ask the judge; ``None`` on any failure (no judge, exception, junk).
@@ -769,6 +828,7 @@ __all__ = [
     "MAX_EVIDENCE_CHARS",
     "MAX_JUDGE_REASON_CHARS",
     "SELFMARK_RESOLUTION_NOTE",
+    "AttemptQuestion",
     "PendingPoint",
     "PendingSelfReview",
     "PointVerdict",

@@ -55,6 +55,7 @@ STUDENT_GET_ROUTES = [
     # are listed. Ownership is enforced inside SelfReviewService (a 404, see
     # tests/test_student_self_review_web.py), not here.
     "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions/00000000-0000-0000-0000-000000000003/self-review",
+    "/api/student/attempts/00000000-0000-0000-0000-000000000002/questions",
 ]
 STUDENT_POST_ROUTES = [
     # /student/correct takes no body (the SSE self-mark stream); an empty POST

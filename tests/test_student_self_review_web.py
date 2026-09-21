@@ -352,3 +352,36 @@ def test_evidence_input_is_bounded_at_the_edge(
     assert api.post(_path(attempt_id, qr_id), json={}).status_code == 422
     # None of those touched the row.
     assert api.get(_path(attempt_id, qr_id)).json()["state"] == "not_started"
+
+
+def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
+
+    resp = api.get(f"/api/student/attempts/{attempt_id}/questions")
+
+    assert resp.status_code == 200, resp.text
+    [row] = resp.json()
+    assert row["questionId"] == "1a"
+    assert row["questionResultId"] == qr_id
+    assert row["awardedMarks"] == 1 and row["maxMarks"] == 3
+    assert row["markerSource"] == "ai"
+    assert row["confidence"] == 0.55
+    assert row["plagiarismFlagged"] is False and row["aiDetectionFlagged"] is False
+
+    # After a self-mark the list shows the effective mark.
+    assert api.post(_path(attempt_id, qr_id), json=_full_pass()).status_code == 200
+    assert api.get(f"/api/student/attempts/{attempt_id}/questions").json()[0]["awardedMarks"] == 3
+
+
+def test_attempt_questions_route_is_404_for_another_student(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    api, _ = _wire(client, pg_sessionmaker)
+    attempt_id, _ = _seed_attempt(pg_sessionmaker, _seed_user(pg_sessionmaker))
+    assert api.get(f"/api/student/attempts/{attempt_id}/questions").status_code == 404
+    assert api.get("/api/student/attempts/nope/questions").status_code == 404

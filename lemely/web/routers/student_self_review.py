@@ -18,6 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException
 
 from lemely.db.models.enums import Role
 from lemely.db.self_review_repo import (
+    AttemptQuestion,
     PendingSelfReview,
     PointVerdict,
     RevealedSelfReview,
@@ -28,6 +29,7 @@ from lemely.db.self_review_repo import (
     SelfReviewValidationError,
 )
 from lemely.web.deps import AuthContext, get_self_review_service, require_role
+from lemely.web.schemas import QuestionResultDTO
 from lemely.web.schemas_student_self_review import (
     SelfReviewPendingDTO,
     SelfReviewPendingPointDTO,
@@ -113,6 +115,43 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
             for p in view.points
         ],
     )
+
+
+def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
+    """The result screen's row shape. Integrity flags are never sent to a student."""
+    return QuestionResultDTO(
+        questionId=row.question_id,
+        awardedMarks=row.effective_marks,
+        maxMarks=row.maximum_marks,
+        markerSource=row.marker_source,
+        confidence=row.confidence_score,
+        feedback=row.feedback,
+        matchedPointIds=row.matched_point_ids or None,
+        reviewReason=row.review_reason,
+        plagiarismFlagged=False,
+        aiDetectionFlagged=False,
+        topic=row.topic,
+        questionResultId=str(row.question_result_id) if row.self_reviewable else None,
+    )
+
+
+@router.get("/{attempt_id}/questions", response_model=list[QuestionResultDTO])
+def list_attempt_questions(
+    attempt_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.student))],
+    service: Annotated[SelfReviewService, Depends(get_self_review_service)],
+) -> list[QuestionResultDTO]:
+    """The per-question rows of one of the caller's attempts, for the result screen.
+
+    ``awardedMarks`` is ``effective_marks`` (a self-mark or teacher override
+    shows here). ``questionResultId`` is set only where the question has
+    point rows, which is exactly where the self-review panel may render.
+    """
+    try:
+        rows = service.list_questions(auth.user_id, attempt_id)
+    except SelfReviewError as exc:
+        _raise_for(exc)
+    return [_question_dto(row) for row in rows]
 
 
 @router.get(_SELF_REVIEW_PATH, response_model=SelfReviewPendingDTO | SelfReviewRevealedDTO)

@@ -1628,3 +1628,48 @@ def test_authority_matrix(
     assert (p2.mark_changed, p2.evidence_verdict, len(judge.calls), len(unjudged_rows)) == expected
     assert view.effective_marks == (2 if expected[0] else 1)
     assert _load_qr(pg_sessionmaker, qr_id).awarded_marks == 1
+
+
+# ── list_questions ─────────────────────────────────────────────────────────
+
+
+def test_list_questions_returns_the_owners_rows_with_effective_marks(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    service = _service(pg_sessionmaker)
+    service.submit(
+        student,
+        attempt_id,
+        _qr_id(pg_sessionmaker, attempt_id, "2"),
+        _all_earned(["p1", "p2", "p3"]),
+    )
+
+    rows = service.list_questions(student, attempt_id)
+
+    by_id = {r.question_id: r for r in rows}
+    assert set(by_id) == {"1", "2"}
+    assert by_id["2"].effective_marks == 3  # the self-mark, not the AI's 0
+    assert by_id["1"].effective_marks == 1
+    assert all(r.self_reviewable for r in rows)
+    assert by_id["2"].question_result_id == _qr_id(pg_sessionmaker, attempt_id, "2")
+
+
+def test_list_questions_marks_rows_without_points_as_not_self_reviewable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()], with_scheme=False)
+    rows = _service(pg_sessionmaker).list_questions(student, attempt_id)
+    assert len(rows) == 2 and not any(r.self_reviewable for r in rows)
+
+
+def test_list_questions_is_owner_scoped(pg_sessionmaker: sessionmaker[Session]) -> None:
+    owner = _seed_user(pg_sessionmaker)
+    other = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, owner, [_high(), _low()])
+    with pytest.raises(SelfReviewNotFoundError):
+        _service(pg_sessionmaker).list_questions(other, attempt_id)
+    with pytest.raises(SelfReviewNotFoundError):
+        _service(pg_sessionmaker).list_questions(owner, uuid.uuid4())
