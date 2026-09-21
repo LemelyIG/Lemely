@@ -11,7 +11,7 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
 import { QuestionRow } from "@/components/ui/question-row"
-import { EmptyState } from "@/components/ui/state-views"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Tabs, TabsList } from "@/components/ui/tabs"
@@ -417,7 +417,10 @@ function filterFromParams(searchParams: URLSearchParams): QuestionFilter {
  * The history-sourced question list. A separate component so the hook is
  * called unconditionally inside `QueryState`'s render prop. `result.attemptId`
  * is `null` for a file-store record, which leaves the query disabled and the
- * list empty — the same honest state this screen always had for those.
+ * list empty — the same honest state this screen always had for those. A
+ * fetched 404 reads the same way (see the comment on that branch below); any
+ * other failure renders its own `ErrorState` rather than the honest-empty
+ * list, so a broken request is never mistaken for a paper with no detail.
  */
 function HistoryQuestions({
   result,
@@ -433,6 +436,28 @@ function HistoryQuestions({
   const questions = useAttemptQuestions(result.attemptId)
   if (result.attemptId && questions.isPending) {
     return <ListSkeleton rows={5} />
+  }
+  /*
+   * A 404 here is an expected answer, not a failure: the new server-side
+   * gate (`routers/student.py`) withholds a paper whose stored mark points
+   * predate the group columns, deliberately, rather than serving detail it
+   * cannot stand behind. That is the same "there is no per-question detail
+   * for this paper" state `QuestionList`'s own empty branch already renders
+   * for a file-store record with no `attemptId` at all — so a gated 404
+   * falls through to `rows = []` below rather than into the error branch.
+   * Anything else (a 500, a dropped connection) is a real failure the
+   * honest-empty state must not be confused with, so it gets its own
+   * `ErrorState` instead of silently reading as "this paper has none."
+   */
+  if (questions.isError && !(questions.error instanceof ApiError && questions.error.status === 404)) {
+    return (
+      <ErrorState
+        compact
+        heading="We couldn't load your questions"
+        body={studentLoadFailureMessage(questions.error)}
+        action={{ label: "Try again", onClick: () => void questions.refetch() }}
+      />
+    )
   }
   const rows = questions.data ?? []
   const summary = confidenceSummaryOf(rows)

@@ -35,7 +35,7 @@ describe("useSelfReviewApi.ts — useAttemptQuestions", () => {
     expect(source).toContain("enabled: !!attemptId")
   })
 
-  it("passes no fallback to request(), so a backend failure surfaces as an error", () => {
+  it("requests no fallback value, so a rejected request() reaches useQuery as isError", () => {
     expect(source).not.toContain("fallback")
   })
 })
@@ -55,5 +55,13 @@ describe("PaperResult.tsx — the history branch renders real rows", () => {
   it("renders the rows the query returned, never data.theory", () => {
     expect(source).toContain("questions={rows}")
     expect(source).not.toContain("questions={data.theory}")
+  })
+
+  it("renders an error state on a non-404 failure, distinct from the honest-empty list", () => {
+    expect(source).toContain("questions.isError")
+    expect(source).toContain(
+      'questions.error instanceof ApiError && questions.error.status === 404',
+    )
+    expect(source).toContain("<ErrorState")
   })
 })
