@@ -737,6 +737,71 @@ class RawExtractedAnswerWireSchemaTests(unittest.TestCase):
         self.assertEqual(actual, expected)
 
 
+class WireSchemaSurvivesPythonOptimizeTests(unittest.TestCase):
+    """US-036: CPython's ``-O``/``-OO`` strips class docstrings, and pydantic
+    derives a schema's ``description`` from ``__doc__`` when nothing
+    overrides it. ``RawExtractedAnswerWireSchemaTests`` above compares the
+    sent schema against a schema computed live IN THE SAME PROCESS, so under
+    ``-OO`` both sides lose their descriptions together and the comparison
+    is vacuously equal -- it cannot catch this regression, by its own
+    docstring's admission. This class hard-codes the expected description
+    text instead, and actually runs under ``-OO`` (via a subprocess, since
+    the optimize level is fixed for the whole interpreter and cannot be
+    toggled mid-run) to prove the wire schema's ``description`` keys do not
+    depend on ``__doc__`` at all.
+
+    Run as a subprocess with the ``-OO`` flag directly (not via the
+    ``PYTHONOPTIMIZE`` env var) so the assertion holds regardless of what the
+    ambient environment happens to have set. Deliberately does NOT also set
+    ``PYTHONDONTWRITEBYTECODE`` -- that combination forces a sympy recompile
+    per subprocess and has already broken a timeout-bounded test on this
+    branch (test_equivalence.py).
+    """
+
+    _SCRIPT = (
+        "import json, sys\n"
+        "assert sys.flags.optimize == 2, sys.flags.optimize\n"
+        "from lemely.io.answer_extraction import _ExtractorOutput\n"
+        "from lemely.io.gemini import _strip_schema\n"
+        "sent = _strip_schema(_ExtractorOutput.model_json_schema(), is_3x=True)\n"
+        "item = sent['properties']['answers']['items']\n"
+        "box_opts = item['properties']['source_box']['anyOf']\n"
+        "(box,) = (o for o in box_opts if o.get('type') == 'object')\n"
+        "print(json.dumps({\n"
+        "    'top': sent.get('description'),\n"
+        "    'item': item.get('description'),\n"
+        "    'box': box.get('description'),\n"
+        "}))\n"
+    )
+
+    def test_description_keys_survive_dash_oo(self) -> None:
+        import subprocess
+        import sys
+
+        # this module's own hard-coded _SCRIPT), no shell, no untrusted
+        # input -- same pattern as test_equivalence.py's subprocess calls.
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-OO", "-c", self._SCRIPT],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(
+            payload["top"],
+            "Inner schema we ask Gemini to return — just the answers list.",
+        )
+        self.assertEqual(
+            payload["item"],
+            "One extracted answer, as returned by the primary extraction call.",
+        )
+        self.assertEqual(
+            payload["box"],
+            "A bounding box on one page image, before validation.",
+        )
+
+
 class MalformedSourceBoxCoordinateTests(unittest.TestCase):
     """I1 review MUST-FIX 3, coordinate case specifically: the only existing
     bad-box test (``test_out_of_range_page_is_dropped_not_trusted``) feeds a

@@ -103,6 +103,17 @@ class _RawSourceBox(BaseModel):
             "box": {"type": "array", "items": {"type": "integer"}},
         }
         json_schema["required"] = ["page", "box"]
+        # US-036: hard-code this class's docstring text here rather than
+        # trust pydantic to pick it up from `__doc__` via `handler()` above.
+        # CPython's `-O`/`-OO` strips docstrings, so `handler(core_schema)`
+        # silently omits `description` entirely under those flags -- not a
+        # validation risk (the strict types above are untouched either way),
+        # but real model-facing instruction text lost from the schema Gemini
+        # is sent. Keep this string identical to the class docstring; a
+        # divergence here is only caught by
+        # WireSchemaSurvivesPythonOptimizeTests in
+        # tests/test_answer_extraction.py, which pins this literal.
+        json_schema["description"] = "A bounding box on one page image, before validation."
         return json_schema
 
 
@@ -171,6 +182,12 @@ class _RawExtractedAnswer(BaseModel):
             "working_out": {"anyOf": [{"type": "string"}, {"type": "null"}]},
         }
         json_schema["required"] = ["question_id", "answer", "confidence"]
+        # US-036: same rationale as _RawSourceBox.__get_pydantic_json_schema__
+        # above -- hard-code this class's docstring text so it survives
+        # `-O`/`-OO` stripping `__doc__` instead of relying on `handler()`.
+        json_schema["description"] = (
+            "One extracted answer, as returned by the primary extraction call."
+        )
         return json_schema
 
 
@@ -213,6 +230,11 @@ class _ExtractorOutput(BaseModel):
         # schema).
         json_schema = handler(core_schema)
         json_schema["properties"]["answers"]["items"] = _RawExtractedAnswer.model_json_schema()
+        # US-036: same rationale as _RawSourceBox/_RawExtractedAnswer above
+        # -- hard-code this class's own top-level docstring text too, so it
+        # survives `-O`/`-OO` stripping `__doc__` instead of relying on
+        # `handler()`.
+        json_schema["description"] = "Inner schema we ask Gemini to return — just the answers list."
         return json_schema
 
 
