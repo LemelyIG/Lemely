@@ -224,6 +224,15 @@ class AttemptQuestion:
     ``self_reviewable`` is derived from the presence of point rows — the same
     fact :meth:`SelfReviewService.get` 404s on — so the screen and the route
     can never disagree about which rows offer the panel.
+
+    ``pending_teacher`` is the truthful, current answer to "is a teacher
+    still going to look at this question": whether an open
+    :class:`ReviewQueueItem` exists for it right now, of any reason. Unlike
+    ``review_reason`` — the marker's own record of *why* the question was
+    flagged, fixed at marking time and never ours to rewrite — this reflects
+    the queue as it stands, so it drops to ``False`` the moment a self-mark
+    (or anything else) resolves the row, even though ``review_reason`` still
+    reads exactly as it did.
     """
 
     question_result_id: uuid.UUID
@@ -237,6 +246,7 @@ class AttemptQuestion:
     topic: str | None
     matched_point_ids: list[str]
     self_reviewable: bool
+    pending_teacher: bool
 
 
 def question_sort_key(question_id: str) -> tuple[tuple[int, int, str], ...]:
@@ -575,6 +585,19 @@ class SelfReviewService:
                         group_max_marks=group_max_marks,
                     )
                 )
+            # Same one-query-for-the-whole-attempt shape as `group_flags`
+            # above, and for the same reason: a per-question `EXISTS` here
+            # would be another 40-question paper turned into 40 round trips.
+            open_review_ids: set[uuid.UUID] = {
+                qr_id
+                for qr_id in session.scalars(
+                    select(ReviewQueueItem.question_result_id).where(
+                        ReviewQueueItem.question_result_id.in_([qr.id for qr in results]),
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                ).all()
+                if qr_id is not None
+            }
             return [
                 AttemptQuestion(
                     question_result_id=qr.id,
@@ -589,6 +612,7 @@ class SelfReviewService:
                     matched_point_ids=list(qr.matched_point_ids),
                     self_reviewable=bool(group_flags.get(qr.id))
                     and points_are_settleable(group_flags[qr.id]),
+                    pending_teacher=qr.id in open_review_ids,
                 )
                 for qr in results
             ]

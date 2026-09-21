@@ -401,10 +401,36 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
     assert row["reviewReason"] == "low confidence"
     assert row["topic"] == "Forces"
     assert row["plagiarismFlagged"] is False and row["aiDetectionFlagged"] is False
+    # Low-confidence at persist opens a `low_confidence` queue row, and no
+    # self-mark has happened yet to close it.
+    assert row["pendingTeacher"] is True
 
     # After a self-mark the list shows the effective mark.
     assert api.post(_path(attempt_id, qr_id), json=_full_pass()).status_code == 200
     assert api.get(f"/api/student/attempts/{attempt_id}/questions").json()[0]["awardedMarks"] == 3
+
+
+def test_attempt_questions_route_pending_teacher_settles_but_review_reason_stays(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The stale-flag defect (S2 review), on the wire.
+
+    A settled self-mark closes the `low_confidence` queue row (D4), and this
+    route's `pendingTeacher` must say so -- otherwise the result screen keeps
+    a "Needs review" chip and a "waiting for your teacher" banner on a
+    question the panel right above them just reported as marked and closed.
+    `reviewReason` is asserted unchanged alongside it: this is a second,
+    current-truth signal, not a rewrite of the marker's own record.
+    """
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
+
+    assert api.post(_path(attempt_id, qr_id), json=_full_pass()).status_code == 200
+
+    [row] = api.get(f"/api/student/attempts/{attempt_id}/questions").json()
+    assert row["pendingTeacher"] is False
+    assert row["reviewReason"] == "low confidence"
 
 
 def test_attempt_questions_route_never_shows_a_student_an_integrity_finding(

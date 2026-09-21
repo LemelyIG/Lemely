@@ -1903,6 +1903,50 @@ def test_list_questions_pairs_self_reviewable_with_the_right_row(
     assert by_id["3"].self_reviewable is False
 
 
+def test_list_questions_pending_teacher_drops_to_false_once_the_self_mark_settles_the_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The stale-flag defect, pinned red first.
+
+    A student self-reviews a low-confidence question and agrees with the AI:
+    marks do not move, but D4 still closes the ``low_confidence`` queue row —
+    "a teacher no longer has to look" is the reason it auto-resolves on every
+    completed pass, not only one that moved marks. Before this fix,
+    ``AttemptQuestion`` had no way to say that: the screen derived "needs
+    review" from ``review_reason`` alone, which is the marker's frozen record
+    and is never rewritten (by design -- it is not this code's to touch) --
+    so a settled question kept reading "needs review" forever, contradicting
+    both the self-review panel it sits next to and D4's whole stated reason
+    for auto-resolving the row.
+
+    ``review_reason`` staying exactly as it was is asserted here too: the fix
+    is a new, current-truth signal alongside it, not a rewrite of the old one.
+    """
+    student = _seed_user(pg_sessionmaker)
+    flagged = _low("2").model_copy(update={"review_reason": "low confidence (score: 0.20)"})
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), flagged])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "2")
+    service = _service(pg_sessionmaker)
+
+    before = {r.question_id: r for r in service.list_questions(student, attempt_id)}["2"]
+    assert before.pending_teacher is True
+    assert before.review_reason == "low confidence (score: 0.20)"
+
+    # Agreement: the student earns nothing, same as the AI's zero matched
+    # points -- marks do not move, but the row still closes (module docstring).
+    service.submit(
+        student,
+        attempt_id,
+        qr_id,
+        [PointVerdict(mark_point_id=pid, earned=False) for pid in ("p1", "p2", "p3")],
+    )
+
+    after = {r.question_id: r for r in service.list_questions(student, attempt_id)}["2"]
+    assert after.pending_teacher is False
+    assert after.review_reason == "low confidence (score: 0.20)"  # unchanged -- not ours to rewrite
+    assert all(row.status == ReviewStatus.resolved for row in _queue_rows(pg_sessionmaker, qr_id))
+
+
 def test_list_questions_cost_does_not_grow_with_the_number_of_questions(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:

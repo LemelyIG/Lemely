@@ -40,12 +40,31 @@ export interface ConfidenceInput {
   reviewReason?: string
   /** 0–1. Absent on question types that carry no confidence score. */
   confidence?: number
+  /**
+   * Whether a teacher review is open for this question *right now*
+   * (`QuestionResultDTO.pendingTeacher`) — as opposed to `reviewReason`,
+   * which is the marker's record of why it was once flagged and is never
+   * rewritten. `undefined` where nothing computed this (a teacher-console
+   * grade, a live `/student/correct` frame): those sources have no queue to
+   * ask, so this function falls back to `reviewReason` exactly as before.
+   * `false` is a positive, current claim that nothing is pending, and wins
+   * over a stale `reviewReason` outright — a self-mark that settled the
+   * queue row does not leave a "needs review" chip on a "3/3" question.
+   */
+  pendingTeacher?: boolean
 }
 
 /**
- * `reviewReason` always wins: it is a decision the backend already made, and a
- * question can be flagged for review at any confidence (integrity checks set it
- * without touching the score at all).
+ * `pendingTeacher === false` wins outright: it is the current truth about
+ * whether a teacher is going to look, and a `reviewReason` frozen from
+ * marking time cannot outrank it (see the module docstring's P4.2 note and
+ * the self-review defect it was extended to close — a resolved question
+ * still reading "needs review" because `reviewReason` is immutable by
+ * design).
+ *
+ * Short of that, `reviewReason` wins: it is a decision the backend already
+ * made, and a question can be flagged for review at any confidence
+ * (integrity checks set it without touching the score at all).
  *
  * A missing or non-finite `confidence` is treated as confident rather than
  * uncertain. That is deliberate and it is the arguable call in this function:
@@ -56,6 +75,7 @@ export interface ConfidenceInput {
  * genuinely in doubt.
  */
 export function confidenceTierFor(q: ConfidenceInput): ConfidenceTier {
+  if (q.pendingTeacher === false) return "confident"
   if (q.reviewReason) return "needs-review"
   if (typeof q.confidence !== "number" || !Number.isFinite(q.confidence)) {
     return "confident"

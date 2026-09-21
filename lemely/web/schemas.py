@@ -46,6 +46,12 @@ class QuestionResultDTO(ApiModel):
     """``question_results.id`` once the attempt is persisted; the address the
     self-review routes take. ``None`` on a frame built before persistence
     (a teacher-console grade, which has no ``question_results`` row)."""
+    pendingTeacher: bool | None = None
+    """Whether a teacher still has an open review queued for this question,
+    right now — not ``reviewReason``'s frozen record of why it was once
+    flagged. ``None`` on every call site except the student self-review list
+    (``routers/student_self_review.py``), which is the only one with a queue
+    to ask; a client must not read absence as "settled"."""
 
 
 class WeakAreaDTO(ApiModel):

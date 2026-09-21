@@ -149,6 +149,7 @@ def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
         aiDetectionFlagged=False,
         topic=row.topic,
         questionResultId=str(row.question_result_id) if row.self_reviewable else None,
+        pendingTeacher=row.pending_teacher,
     )
 
 
