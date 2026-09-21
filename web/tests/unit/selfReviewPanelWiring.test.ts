@@ -68,6 +68,15 @@ describe("SelfReviewPanel.tsx", () => {
     // and M11 together.
     const revealedStart = source.indexOf("function RevealedOutcome")
     expect(revealedStart).toBeGreaterThan(-1)
+    // The gate's whole value rests on "RevealedOutcome is last" — an
+    // assumption, not a fact the slice itself checks. Proven green as
+    // evasion E10 (second re-review): a `peekBelow` helper appended to the
+    // END of the file, reading a verdict field, passed clean because the
+    // slice never reached it. Pin the assumption instead of hoping it holds:
+    // no further top-level `function`/`export function` declaration may
+    // start after `RevealedOutcome`.
+    expect(source.indexOf("\nfunction ", revealedStart + 1)).toBe(-1)
+    expect(source.indexOf("\nexport function ", revealedStart + 1)).toBe(-1)
     const aboveRevealed = source.slice(0, revealedStart)
     for (const field of [
       ".awarded",

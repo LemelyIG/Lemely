@@ -137,8 +137,8 @@ export function markWord(marks: number): string {
 /**
  * What the student is told the group (or lone point) is worth, stated once
  * rather than per point: "3 marks" for a standalone point, "One of these,
- * worth 1 mark in total" / "These together, worth 2 marks in total" for a
- * scheme group.
+ * worth up to 1 mark in total" / "These together, worth up to 2 marks in
+ * total" for a scheme group.
  *
  * Task 13/14 re-review, R-1: the wire carries `groupMaxMarks` (a mark
  * total) and no select-count at all (`SelfReviewPendingPointDTO` has no
@@ -156,12 +156,24 @@ export function markWord(marks: number): string {
  * points into one group, so alt groups of 3+ exist — "either" means one of
  * two). This version states only what the data actually supports: the
  * group's total worth, never a count the client cannot know.
+ *
+ * Re-review, R-15: "worth N marks in total" (no "up to") stated a CEILING
+ * as a definite value. True by convention for a same-tariff pool ("any 2
+ * from 4" is worth exactly 2 if you claim 2), but wrong for a
+ * mixed-tariff alternative — `_group_points` joins a run of consecutive
+ * `is_alternative` points regardless of their individual tariffs and scores
+ * the group at its best member, so an alternative of a 2-mark branch and a
+ * 1-mark branch is capped at 2 but pays only 1 if the weaker branch is the
+ * one earned. The panel shows no per-point tariff inside a group (that is
+ * the whole point of IMP-6), so the student has no way to tell the branches
+ * apart. "up to" makes the sentence true in that case and stays accurate,
+ * if slightly more cautious, for the same-tariff case it already covered.
  */
 export function groupLabel(group: Pick<PointGroup<unknown>, "kind" | "maxMarks">): string {
   if (group.kind === "single") return `${group.maxMarks} ${markWord(group.maxMarks)}`
   if (group.maxMarks === 0) return "These points are worth no further marks on this question."
   const lead = group.kind === "alternative" ? "One of these" : "These together"
-  return `${lead}, worth ${group.maxMarks} ${markWord(group.maxMarks)} in total`
+  return `${lead}, worth up to ${group.maxMarks} ${markWord(group.maxMarks)} in total`
 }
 
 export type PointOutcome = "agreed" | "changed" | "kept" | "pending"

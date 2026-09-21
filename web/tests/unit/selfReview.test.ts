@@ -322,7 +322,7 @@ describe("groupPoints / groupLabel", () => {
     expect(groups[0]!.kind).toBe("alternative")
     expect(groups[0]!.maxMarks).toBe(1)
     expect(groups[0]!.points).toHaveLength(2)
-    expect(groupLabel(groups[0]!)).toBe("One of these, worth 1 mark in total")
+    expect(groupLabel(groups[0]!)).toBe("One of these, worth up to 1 mark in total")
   })
 
   it("collapses an any-N-from pool into one group worth groupMaxMarks, not the sum of tariffs", () => {
@@ -341,7 +341,7 @@ describe("groupPoints / groupLabel", () => {
     // only ever worth 2. A regression back to per-point tariffs would pass
     // the sum, not the group cap.
     expect(groups[0]!.maxMarks).not.toBe(pool.reduce((sum, p) => sum + p.tariff, 0))
-    expect(groupLabel(groups[0]!)).toBe("These together, worth 2 marks in total")
+    expect(groupLabel(groups[0]!)).toBe("These together, worth up to 2 marks in total")
   })
 
   it("keeps grouped and independent points on the same question as separate groups", () => {
@@ -376,7 +376,7 @@ describe("groupPoints / groupLabel", () => {
     expect(groups[0]!.points).toHaveLength(3)
     expect(groups[0]!.maxMarks).toBe(4)
     const label = groupLabel(groups[0]!)
-    expect(label).toBe("These together, worth 4 marks in total")
+    expect(label).toBe("These together, worth up to 4 marks in total")
     expect(label).not.toMatch(/any \d+ of these/i)
   })
 
@@ -391,7 +391,26 @@ describe("groupPoints / groupLabel", () => {
     ]
     const groups = groupPoints(threeWayAlt)
     expect(groups[0]!.points).toHaveLength(3)
-    expect(groupLabel(groups[0]!)).toBe("One of these, worth 2 marks in total")
+    expect(groupLabel(groups[0]!)).toBe("One of these, worth up to 2 marks in total")
+  })
+
+  it("says 'worth up to N', not a guarantee, for a mixed-tariff alternative (Task 13/14 re-review, R-15)", () => {
+    // The exact case R-15 named: an alternative of a 2-mark branch and a
+    // 1-mark branch is capped at 2 (`_group_points` scores the group at its
+    // best member), but only ONE branch is ever earned, and the panel shows
+    // no per-point tariff inside a group (the whole point of IMP-6), so the
+    // student cannot tell which branch is worth what. "worth 2 marks in
+    // total" (no "up to") would read as a promise the weaker branch cannot
+    // keep. "up to" is honest regardless of which branch gets earned.
+    const twoVsOneAlt = [
+      groupablePoint({ markPointId: "strong", groupKey: "alt:1", groupMaxMarks: 2, tariff: 2 }),
+      groupablePoint({ markPointId: "weak", groupKey: "alt:1", groupMaxMarks: 2, tariff: 1 }),
+    ]
+    const groups = groupPoints(twoVsOneAlt)
+    expect(groups[0]!.maxMarks).toBe(2)
+    const label = groupLabel(groups[0]!)
+    expect(label).toBe("One of these, worth up to 2 marks in total")
+    expect(label).toMatch(/up to/i)
   })
 
   it("a pool a preceding pool already exhausted (maxMarks: 0) says so, not 'any 0 of these' (Task 13/14 re-review, R-1)", () => {

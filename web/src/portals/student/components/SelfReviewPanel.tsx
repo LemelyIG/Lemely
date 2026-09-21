@@ -63,7 +63,7 @@ import type {
  * sharing a key into one card; the per-point radios still render inside it,
  * so the POST still carries a verdict for every point
  * (`SelfReviewSubmissionDTO` is unchanged). `groupLabel` states only the
- * group's total worth ("These together, worth 2 marks in total"), never a
+ * group's total worth ("These together, worth up to 2 marks in total"), never a
  * pick-count — the wire carries no select-count field, so a count is not
  * knowable client-side; see `selfReview.ts` for why an earlier version's
  * "Any N of these" reading of `groupMaxMarks` was wrong for any group whose
