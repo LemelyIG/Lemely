@@ -1210,6 +1210,24 @@ def measure_accuracy_cmd(
     if not cases:
         raise click.ClickException(f"No golden cases found in {golden_path}")
 
+    # US-037: `load_golden_cases` used to only LOG a dropped case
+    # (`golden_case_load_error`/`golden_case_marker_load_error`) with no
+    # consumer anywhere — this command would print "Loaded N golden
+    # case(s)." and publish an accuracy figure over N as though N were the
+    # whole corpus. This command is specifically the one that turns a
+    # corpus into a published figure, so it refuses outright rather than
+    # recording-and-continuing (the choice a library caller of
+    # `measure_accuracy` still has via its `n_unparseable` argument): an
+    # operator must fix or remove the offending fixture before this figure
+    # means what it claims to mean.
+    if cases.unparseable:
+        bad = ", ".join(str(p) for p in cases.unparseable)
+        raise click.ClickException(
+            f"{len(cases.unparseable)} golden case(s) could not be parsed and were "
+            f"dropped, which would understate the corpus this run measures against: "
+            f"{bad}. Fix or remove them before running measure-accuracy."
+        )
+
     click.echo(f"Loaded {len(cases)} golden case(s). Running accuracy measurement…")
 
     client = GeminiClient(
@@ -1221,6 +1239,7 @@ def measure_accuracy_cmd(
         client,
         settings,
         arm=cast("Literal['extract+mark', 'oracle+mark'] | None", arm),
+        n_unparseable=len(cases.unparseable),
     )
     click.echo(format_report(result, settings.accuracy_eval))
 

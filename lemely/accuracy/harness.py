@@ -171,7 +171,43 @@ class GoldenCase:
         return self.renders.get(name)
 
 
-def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
+class GoldenCaseLoadResult(list[GoldenCase]):
+    """``load_golden_cases``'s return value (US-037).
+
+    A ``list[GoldenCase]`` plus the case directories it had to drop.
+    ``golden_case_load_error``/``golden_case_marker_load_error`` (below) had
+    exactly one producer and zero consumers before this fix: a structlog
+    warning on a stream a batch sweep's operator is not reading, changing
+    neither the case count, nor any metric, nor the exit code. A corpus of
+    40 papers where one fails to parse printed "Loaded 39 golden case(s)."
+    and proceeded as though 39 were the whole corpus. This subclass is the
+    consumer: it makes the drop an attribute a caller can act on.
+
+    Subclassing ``list`` rather than returning a tuple or a dataclass is
+    deliberate (spec: "do not force a breaking signature change on callers
+    that do not need it if an additive one works") — every existing call
+    site (``len(cases)``, ``for case in cases``, ``cases[0]``, list
+    comprehensions, passing it straight into ``measure_accuracy``) keeps
+    working completely unmodified; only a caller that wants the new signal
+    reads ``.unparseable``.
+    """
+
+    def __init__(self, cases: list[GoldenCase], unparseable: list[Path]) -> None:
+        super().__init__(cases)
+        #: Case directories dropped because they could not be turned into a
+        #: usable ``GoldenCase`` — a broken ``mark_scheme.json``/
+        #: ``answers.json``, or a ``case.json`` excerpt marker that could not
+        #: be trusted. Deliberately does NOT include a directory that is
+        #: legitimately not a case at all (not a directory, or missing
+        #: ``mark_scheme.json``/``answers.json``) — that distinction already
+        #: exists at the point of decision in `load_golden_cases`: those
+        #: skips log nothing, while a genuine parse failure logs
+        #: `golden_case_load_error`/`golden_case_marker_load_error` naming
+        #: the directory and the reason.
+        self.unparseable: list[Path] = unparseable
+
+
+def load_golden_cases(golden_dir: Path) -> GoldenCaseLoadResult:
     """Load all golden cases from direct subdirectories of *golden_dir*.
 
     Each subdirectory must contain:
@@ -192,7 +228,12 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     that file round-trips through ``MarkScheme.model_validate_json``, whose
     ``MarkSchemeMetadata`` is the production Gemini-parser schema and would
     silently drop an unrecognised key. A missing sidecar (or a missing
-    ``is_excerpt`` key within it) defaults to ``False``.
+    ``is_excerpt`` key within it) defaults to ``False``. A sidecar that
+    EXISTS but cannot be trusted (invalid JSON, or a non-bool ``is_excerpt``)
+    is a different case from a missing one: defaulting it to ``False`` would
+    silently promote what may actually be an EXCERPT case into a FULL-PAPER
+    case, so the case is rejected instead (US-037) — see ``.unparseable`` on
+    the returned :class:`GoldenCaseLoadResult`.
 
     **Extra renders never add cases.** ``scan.<render>.pdf`` siblings are
     collected onto the one ``GoldenCase`` for that directory (see
@@ -202,8 +243,18 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
     leaves keyed ``(paper_id, question_id)`` (DA6), so a render that produced
     its own case would inflate ``n`` with a duplicate of a leaf that already
     exists.
+
+    **A directory that fails to parse is not the same as a directory that is
+    not a case** (US-037): a missing ``mark_scheme.json``/``answers.json`` is
+    a normal, silent skip — plenty of ``golden_dir`` entries are not cases at
+    all. A directory that HAS both files but fails to parse them, or whose
+    ``case.json`` marker cannot be trusted, is reported in
+    :attr:`GoldenCaseLoadResult.unparseable` rather than only logged, because
+    a caller iterating a batch sweep never reads stdout/stderr closely enough
+    to notice its denominator shrank by one.
     """
     cases: list[GoldenCase] = []
+    unparseable: list[Path] = []
     for case_dir in sorted(golden_dir.iterdir()):
         if not case_dir.is_dir():
             continue
@@ -218,6 +269,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
             ground_truth = {qid: GoldenAnswer.model_validate(v) for qid, v in raw.items()}
         except Exception as exc:
             log.warning("golden_case_load_error", case_dir=str(case_dir), error=str(exc))
+            unparseable.append(case_dir)
             continue
         scan_path = case_dir / "scan.pdf"
         # Renders are siblings of scan.pdf, named scan.<render>.pdf (#137).
@@ -244,7 +296,17 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                     )
                 is_excerpt = raw_flag
             except Exception as exc:
+                # US-037 (second instance): this used to log and fall through
+                # with is_excerpt left at its False default — silently
+                # promoting a case whose EXCERPT status could not actually be
+                # read into a FULL-PAPER case. That changes what the
+                # denominator MEANS, not just its size, so the case is
+                # rejected instead of guessed at: it is reported via
+                # `.unparseable` exactly like a broken mark_scheme/answers
+                # pair, not appended to `cases`.
                 log.warning("golden_case_marker_load_error", case_dir=str(case_dir), error=str(exc))
+                unparseable.append(case_dir)
+                continue
         cases.append(
             GoldenCase(
                 paper_id=paper_id,
@@ -256,7 +318,7 @@ def load_golden_cases(golden_dir: Path) -> list[GoldenCase]:
                 renders=renders,
             )
         )
-    return cases
+    return GoldenCaseLoadResult(cases, unparseable)
 
 
 # ---------------------------------------------------------------------------
@@ -745,6 +807,7 @@ def _build_run_manifest(
     gemini_client: object = None,
     split: Split = "dev",
     arm: Arm | None = None,
+    n_unparseable: int = 0,
 ) -> RunManifest:
     """Construct the :class:`RunManifest` this run's `EvalRecord`s join to (spec §3.3).
 
@@ -768,6 +831,17 @@ def _build_run_manifest(
     the very access it guards (spec §4 M0.7a). ``measure_accuracy`` authorises
     up front instead, and this function trusts the already-authorised value —
     which also keeps the ledger at exactly one entry per run rather than two.
+
+    ``n_cases`` (US-037) is always ``len(cases)`` -- the count of cases this
+    run actually measured, recorded honestly regardless of whether the
+    corpus that produced ``cases`` was complete. It is the complement to
+    ``corpus_digest``: the digest is a real hash of the loaded corpus, but it
+    hashes the SAME already-shrunken corpus, so two sweeps over 40 and 39
+    papers are not distinguishable from ``corpus_digest`` alone.
+    ``n_unparseable`` is threaded through from the caller (``measure_accuracy``
+    does not itself call ``load_golden_cases``, so it cannot discover this on
+    its own) and defaults to ``0`` -- "no caller told me otherwise", not "the
+    corpus was verified clean".
     """
     gemini = getattr(settings, "gemini", None)
     if gemini is not None:
@@ -885,6 +959,8 @@ def _build_run_manifest(
         split=split,
         corpus_digest=_corpus_digest(cases),
         arm=arm,
+        n_cases=len(cases),
+        n_unparseable=n_unparseable,
     )
 
 
@@ -927,8 +1003,20 @@ def measure_accuracy(
     test_split_token: str | None = None,
     ledger_path: Path = DEFAULT_LEDGER_PATH,
     arm: Literal["extract+mark", "oracle+mark"] | None = None,
+    n_unparseable: int = 0,
 ) -> AccuracyResult:
     """Run correction over all golden cases; compute metrics.
+
+    ``n_unparseable`` (US-037): the count of golden-case directories the
+    caller's `load_golden_cases` call could not parse and dropped before
+    building *cases* — this function does not call `load_golden_cases`
+    itself, so it has no way to discover this on its own. Recorded onto
+    `RunManifest.n_unparseable` (alongside `RunManifest.n_cases`) purely so
+    the run's own archived record states honestly whether it measured a
+    complete corpus, regardless of what a caller upstream chose to do about
+    an incomplete one. Defaults to ``0`` for the many existing call sites
+    (this file's own tests included) that construct *cases* directly and
+    have no unparseable count to report.
 
     Cases with ``scan_path`` set run the real end-to-end pipeline: Gemini vision
     extraction (:func:`lemely.web.services.grading.extract_answers`) followed by
@@ -1190,6 +1278,7 @@ def measure_accuracy(
             gemini_client=gemini_client,
             split=split,
             arm=arm,
+            n_unparseable=n_unparseable,
         ),
         eval_records=eval_records,
         funnel=funnel,

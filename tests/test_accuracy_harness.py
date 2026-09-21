@@ -254,17 +254,99 @@ class LoadGoldenCasesTests(unittest.TestCase):
     def test_is_excerpt_string_false_does_not_coerce_to_true(self):
         """#32/#69: ``bool("false")`` is ``True`` in Python, so a JSON string
         value for ``is_excerpt`` must not be coerced with ``bool()`` -- that
-        would silently flip a falsy-looking string into a truthy flag. A
-        non-bool marker value falls into the existing fail-open handler
-        (logged and defaulted to False), the same as any other malformed
-        case.json, rather than being miscoerced."""
+        would silently flip a falsy-looking string into a truthy flag.
+
+        US-037 (second instance): a non-bool marker value used to fall into
+        a fail-open handler that logged and kept the case with
+        ``is_excerpt`` defaulted to ``False`` -- silently promoting what may
+        actually be an EXCERPT case into a FULL-PAPER case, since the marker
+        that would have said otherwise couldn't be read. That is worse than
+        dropping the case, so it is now rejected outright: not returned by
+        ``load_golden_cases`` at all, and counted in ``.unparseable`` instead
+        of silently defaulting.
+        """
         from lemely.accuracy.harness import load_golden_cases
 
         with tempfile.TemporaryDirectory() as tmp:
             case_dir = self._make_case_dir(Path(tmp))
             (case_dir / "case.json").write_text(json.dumps({"is_excerpt": "false"}))
             cases = load_golden_cases(Path(tmp))
-        self.assertFalse(cases[0].is_excerpt)
+        self.assertEqual(len(cases), 0, "a case whose is_excerpt could not be verified is rejected")
+        self.assertEqual(cases.unparseable, [case_dir])
+
+    # -- US-037: unparseable cases must shrink the denominator LOUDLY -----
+
+    def test_unparseable_mark_scheme_is_reported_not_silently_dropped(self):
+        """A corpus with one unparseable ``mark_scheme.json`` among N good
+        ones must not silently yield N-1 cases with no observable trace:
+        the dropped directory must be named in ``.unparseable``."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_case_dir(root, name="good_paper")
+            bad_dir = self._make_case_dir(root, name="bad_paper")
+            (bad_dir / "mark_scheme.json").write_text("{ not valid json }")
+            cases = load_golden_cases(root)
+
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases[0].paper_id, "good_paper")
+        self.assertEqual(cases.unparseable, [bad_dir])
+
+    def test_unparseable_answers_json_is_reported(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            case_dir = self._make_case_dir(Path(tmp))
+            (case_dir / "answers.json").write_text("{ not valid json }")
+            cases = load_golden_cases(Path(tmp))
+        self.assertEqual(len(cases), 0)
+        self.assertEqual(cases.unparseable, [case_dir])
+
+    def test_legitimate_non_case_dir_is_not_counted_as_unparseable(self):
+        """The false-positive direction: a directory that is legitimately
+        not a case (missing mark_scheme.json/answers.json) is a normal skip,
+        not a parse failure -- it must not inflate ``.unparseable``. This is
+        the distinction ``golden_case_load_error`` already draws by only
+        firing once parsing is actually attempted (PRD framing withdrawn:
+        the swallow itself was never silent, only unconsumed)."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "not_a_case").mkdir()
+            (root / "also_not_a_case.txt").write_text("stray file")
+            self._make_case_dir(root, name="good_paper")
+            cases = load_golden_cases(root)
+
+        self.assertEqual(len(cases), 1)
+        self.assertEqual(cases.unparseable, [])
+
+    def test_clean_corpus_reports_zero_unparseable(self):
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_case_dir(root, name="paper_a")
+            self._make_case_dir(root, name="paper_b")
+            cases = load_golden_cases(root)
+
+        self.assertEqual(len(cases), 2)
+        self.assertEqual(cases.unparseable, [])
+
+    def test_load_result_is_still_a_plain_list_for_existing_callers(self):
+        """The return type must stay additive: every existing call site
+        (``len(cases)``, ``for case in cases``, ``cases[0]``, list
+        comprehensions) keeps working unmodified. Only a caller that wants
+        the new signal reads ``.unparseable``."""
+        from lemely.accuracy.harness import load_golden_cases
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self._make_case_dir(Path(tmp))
+            cases = load_golden_cases(Path(tmp))
+
+        self.assertIsInstance(cases, list)
+        self.assertEqual([c.paper_id for c in cases], ["0625_m20_qp_12"])
 
 
 class MetricComputationTests(unittest.TestCase):
@@ -1127,6 +1209,36 @@ class RunManifestTests(unittest.TestCase):
         r1 = measure_accuracy([self._case()], gemini_client=None, settings=None)
         r2 = measure_accuracy([self._case()], gemini_client=None, settings=None)
         self.assertNotEqual(r1.manifest.run_id, r2.manifest.run_id)
+
+    def test_manifest_records_n_cases(self):
+        """US-037: the manifest must state how many cases the run actually
+        measured -- the complement to ``corpus_digest``, which hashes the
+        same already-loaded corpus and so cannot by itself reveal that the
+        corpus was shrunk before it got there."""
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy([self._case(), self._case()], gemini_client=None, settings=None)
+        self.assertEqual(result.manifest.n_cases, 2)
+
+    def test_manifest_n_unparseable_defaults_to_zero(self):
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy([self._case()], gemini_client=None, settings=None)
+        self.assertEqual(result.manifest.n_unparseable, 0)
+
+    def test_manifest_records_n_unparseable_when_caller_supplies_it(self):
+        """A caller that loaded a corpus with ``load_golden_cases`` and
+        chose to proceed anyway (rather than refuse, as the CLI does) must
+        still get an honest manifest: two sweeps over 40 and 39 papers are
+        not distinguishable from ``corpus_digest`` alone (it only hashes
+        whatever loaded), but they are from ``n_unparseable``."""
+        from lemely.accuracy.harness import measure_accuracy
+
+        result = measure_accuracy(
+            [self._case()], gemini_client=None, settings=None, n_unparseable=1
+        )
+        self.assertEqual(result.manifest.n_cases, 1)
+        self.assertEqual(result.manifest.n_unparseable, 1)
 
     def test_explicit_run_id_propagates_to_manifest_and_eval_records(self):
         from lemely.accuracy.harness import measure_accuracy
@@ -2245,3 +2357,78 @@ class CorpusDigestTests(unittest.TestCase):
             digest_without = _corpus_digest([case_without_that_render])
 
         self.assertNotEqual(digest_with_declared_missing, digest_without)
+
+
+class MeasureAccuracyCmdRefusesShrunkCorpusTests(unittest.TestCase):
+    """US-037: ``measure-accuracy`` is the one place a shrunken corpus turns
+    into a published accuracy figure (``cli.py`` prints "Loaded N golden
+    case(s)." and proceeds as though N were the whole corpus). It must
+    refuse rather than silently sweep over fewer papers than the corpus
+    actually contains.
+    """
+
+    def _make_case_dir(self, root: Path, name: str) -> Path:
+        case_dir = root / name
+        case_dir.mkdir()
+        ms = {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "mcq",
+                "maximum_mark": 1,
+                "scheme_format": "mcq",
+            },
+            "questions": [{"id": "1", "marks": 1, "type": "mcq", "mcq_answer": "A"}],
+        }
+        (case_dir / "mark_scheme.json").write_text(json.dumps(ms))
+        (case_dir / "answers.json").write_text(
+            json.dumps({"1": {"student_answer": "A", "awarded_marks": 1}})
+        )
+        return case_dir
+
+    def test_refuses_when_a_case_is_unparseable(self):
+        from click.testing import CliRunner
+
+        from lemely.app.cli import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_case_dir(root, "good_paper")
+            bad_dir = self._make_case_dir(root, "bad_paper")
+            (bad_dir / "mark_scheme.json").write_text("{ not valid json }")
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["measure-accuracy", "--golden", str(root)],
+                env={"GEMINI_API_KEY": "test-key-not-validated-with-no-network"},
+            )
+
+        self.assertNotEqual(result.exit_code, 0, result.output)
+        self.assertIn("bad_paper", result.output)
+
+    def test_proceeds_normally_when_corpus_is_clean(self):
+        """False-positive direction: a clean corpus must not be refused by
+        the new check -- only reaching a real target-miss/no-cases failure
+        downstream (no network call is expected to succeed in this test
+        environment, so this just asserts the refusal message is absent)."""
+        from click.testing import CliRunner
+
+        from lemely.app.cli import cli
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            self._make_case_dir(root, "good_paper")
+
+            runner = CliRunner()
+            result = runner.invoke(
+                cli,
+                ["measure-accuracy", "--golden", str(root)],
+                env={"GEMINI_API_KEY": "test-key-not-validated-with-no-network"},
+            )
+
+        self.assertNotIn("could not be parsed", result.output)

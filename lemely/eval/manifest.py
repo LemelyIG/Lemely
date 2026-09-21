@@ -56,6 +56,31 @@ class RunManifest(StrictModel):
     ``extra="forbid"`` even though an unknown key is rejected, so manifests
     archived before this field existed keep parsing."""
 
+    n_cases: int | None = None
+    """Count of golden cases this run actually measured (US-037), i.e.
+    ``len(cases)`` as ``measure_accuracy`` received it. This is the
+    complement to ``corpus_digest``: the digest is a real hash of the loaded
+    corpus, but it hashes the SAME already-loaded corpus, so it cannot by
+    itself reveal that the corpus was smaller than it should have been. A
+    corpus of 40 papers where one fails to parse produces a manifest with
+    ``n_cases=39`` and a `corpus_digest` that faithfully, and misleadingly,
+    describes those 39 as though they were the whole corpus -- ``n_cases``
+    is what lets a later reader notice the 39 at all. ``None`` for manifests
+    archived before this field existed (parsing compatibility, same as
+    ``arm`` above), not a claim that such a run measured zero cases."""
+
+    n_unparseable: int | None = None
+    """Count of golden-case directories ``load_golden_cases`` could not
+    parse into a usable case and dropped, for the run that produced
+    ``n_cases`` (US-037). ``0`` means the corpus this run measured was
+    verified complete; ``None`` means the caller building this manifest
+    had no such count to report (e.g. ``measure_accuracy`` invoked directly
+    on a hand-built ``cases`` list, as most of this module's own tests do,
+    or a manifest archived before this field existed). A nonzero value on an
+    otherwise-passing run means the published accuracy figure was computed
+    over fewer papers than the corpus actually contains -- see
+    ``GoldenCaseLoadResult.unparseable`` in ``lemely.accuracy.harness``."""
+
 
 class LabelManifest(StrictModel):
     """Split assignment and labeller identity for one paper's labels (spec §6).
