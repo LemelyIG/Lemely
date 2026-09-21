@@ -723,6 +723,83 @@ def _build_missing_corrected(
     )
 
 
+def _is_blank(value: str | None) -> bool:
+    """True for ``None``, ``""``, and whitespace-only text.
+
+    US-039: a whitespace-only answer (e.g. a stray newline the OCR box
+    picked up) is treated as blank, not as text worth a paid marking call --
+    there is no student judgement to evaluate in either case.
+    """
+    return value is None or value.strip() == ""
+
+
+#: US-039 product-owner ruling: a blank non-MCQ answer becomes an UNFLAGGED
+#: zero with NO paid call -- distinct from every other blank-shaped message
+#: this module can produce (``_build_mcq_corrected``'s "missing answer",
+#: ``_build_missing_corrected``'s "--mcq-only or no AI client", and
+#: ``_DROPPED_ANSWER_REVIEW_REASON``), so the review queue and any future
+#: reader of ``review_reason`` can tell a genuine blank from all three.
+_BLANK_ANSWER_REVIEW_REASON = "student left this question blank (0 awarded, no AI call made)"
+
+
+def _build_blank_corrected(
+    question: Question,
+    extraction_confidence: float | None = None,
+) -> CorrectedQuestion:
+    """Short-circuit for a non-MCQ leaf the student left BLANK.
+
+    US-039: before this function existed, ``correct_paper`` reached
+    ``ai.mark_question(q, student_answer or "", ...)`` for a blank exactly as
+    it did for real text -- a real, paid API call to mark an empty string,
+    which could return a confident judgement (observed: HIGH confidence,
+    0.97) tripping none of ``_build_ai_corrected``'s review gates. A student
+    was then marked 0 on the strength of a model's opinion about nothing,
+    with full confidence and no human ever told.
+
+    The product owner's ruling (recorded on the story, not re-litigated
+    here): the replacement is an UNFLAGGED zero with NO paid call. A flagged
+    zero was rejected -- it would flag every genuine blank on every paper,
+    turning a paper with 8 unattempted parts into 8 queue items a teacher
+    dismisses on sight, training them to bulk-approve without looking.
+
+    ``marker_source`` reuses ``"missing"`` rather than adding a fifth
+    literal: no engine ran for a blank (the short-circuit returns before any
+    marker is reached), which is exactly what ``"missing"`` already means.
+    The blank-vs-not-marked distinction lives in ``review_reason`` instead,
+    the same way US-031 carried the dropped-vs-missing distinction before
+    ``"dropped"`` had its own enum member.
+
+    Accepted residual risk, not solved here: a FALSE blank -- the student
+    wrote something and extraction missed it entirely -- is awarded 0
+    silently. That is an extraction defect, not a marking one; the narrower
+    model-returned-then-discarded case is already covered by
+    ``marker_source="dropped"``.
+
+    Position note (why this is a separate function/branch from
+    ``_build_missing_corrected``, not a parameter on it): callers must only
+    reach this from ``correct_paper``'s leaf loop AFTER the MCQ branch and
+    the ``ai is None`` branch, and BEFORE the AI marking call. Before the MCQ
+    branch would change already-correct MCQ behaviour; before ``ai is None``
+    would make ``--mcq-only``'s "we chose not to mark this" indistinguishable
+    from "the student left it blank", which is the same class of conflation
+    US-031's MUST-FIX 7 removed for dropped answers.
+    """
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=0,
+        maximum_marks=question.marks,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=False,
+        student_answer=None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="missing",
+        extraction_confidence=extraction_confidence,
+    )
+
+
 #: US-031 review MUST-FIX 7 (stronger fix): distinct from
 #: "AI marking failed: ..." (a live model/transport failure caught in
 #: ``correct_paper``'s ``except Exception`` branch) and from "non-MCQ
@@ -909,6 +986,34 @@ def correct_paper(
                 total=total_leaves,
             )
             continue
+
+        # US-039: a non-MCQ leaf the student left BLANK earns an unflagged 0
+        # with no paid call. Checked here -- AFTER the MCQ branch (already
+        # correct, left alone) and the `ai is None` branch (whose "missing"
+        # means "we chose not to mark this", a different statement from "the
+        # student left it blank") and BEFORE the AI marking call, so a blank
+        # never reaches `ai.mark_question` at all. `student_working` is
+        # checked too: a blank answer box accompanied by substantial working
+        # is not treated as a true blank -- the student visibly attempted the
+        # question, so awarding an unflagged 0 would be a worse claim than
+        # doing so for a truly empty response, and this still reaches the AI
+        # marker. See `_build_blank_corrected` for the full ruling.
+        if _is_blank(student_answer) and _is_blank(student_working):
+            cq = _build_blank_corrected(q, extraction_confidence)
+            corrected.append(cq)
+            prior_results_accumulated[q.id] = 0
+            bus.publish(
+                EventType.MARKING_PROGRESS,
+                question_id=q.id,
+                marker_source="missing",
+                confidence=0.0,
+                awarded=0,
+                max_marks=q.marks,
+                index=index,  # enumerate position, not an emitted-frame count
+                total=total_leaves,
+            )
+            continue
+
         sibling_prior: dict[str, int] = {}
         if q.parent_id is not None:
             sibling_prior = {

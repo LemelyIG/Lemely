@@ -487,6 +487,189 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         self.assertEqual(q2.topic, "forces")
 
 
+class BlankAnswerShortCircuitTests(unittest.TestCase):
+    """US-039: a non-MCQ leaf the student left BLANK must not pay for a
+    marking call, and must not come back as a confident, unflagged-by-accident
+    zero.
+
+    Before this fix, ``correct_paper`` reached ``ai.mark_question(q,
+    student_answer or "", ...)`` for a blank exactly like it did for real text
+    -- a full paid call to mark the empty string, which could return a
+    confident judgement (e.g. "blank, 0 marks", HIGH confidence) tripping none
+    of ``_build_ai_corrected``'s review gates. Two defects at once: spend
+    (one paid call per blank per paper) and honesty (0.97 confidence asserted
+    about no student work at all).
+
+    The product owner's ruling (see the brief) is deliberate and not
+    re-litigated here: a blank non-MCQ answer becomes an UNFLAGGED zero with
+    NO paid call. A flagged zero was rejected -- it would flag every genuine
+    blank on every paper and train teachers to bulk-approve without looking.
+    ``marker_source`` reuses ``"missing"`` (no engine ran, which is exactly
+    what that value already means); the blank-vs-not-marked distinction lives
+    in ``review_reason``, following the precedent US-031 set for ``"dropped"``
+    before its own enum member existed.
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        self.ms = _hybrid_paper_mark_scheme()  # "1" = MCQ, "2" = non-MCQ
+
+    def test_blank_non_mcq_answer_is_unflagged_zero_without_a_paid_call(self) -> None:
+        # No ExtractedAnswer for "2" at all -- the "no entry" shape of blank.
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        self.assertEqual(q2.awarded_marks, 0)
+        # The ruling: UNFLAGGED, not a flagged zero.
+        self.assertFalse(q2.needs_teacher_review)
+        # Honest about the fact that no model judged anything -- not the
+        # HIGH/0.97 the pre-fix path could assert about an empty string.
+        self.assertEqual(q2.confidence, ConfidenceBand.LOW)
+        self.assertEqual(q2.confidence_score, 0.0)
+        # Distinguishable from every other blank-shaped message this path can
+        # produce, per the enum ruling (carry the distinction in
+        # review_reason since marker_source is shared with "missing").
+        self.assertNotEqual(q2.review_reason, "missing answer")  # MCQ's message
+        self.assertNotIn("--mcq-only", q2.review_reason or "")  # the ai-is-None message
+        self.assertNotIn("dropped", q2.review_reason or "")
+        self.assertNotIn("AI marking failed", q2.review_reason or "")
+        client._client.models.generate_content.assert_not_called()
+
+    def test_empty_string_answer_is_treated_as_blank(self) -> None:
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2", answer="", confidence=0.9),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        self.assertFalse(q2.needs_teacher_review)
+        client._client.models.generate_content.assert_not_called()
+
+    def test_whitespace_only_answer_is_treated_as_blank(self) -> None:
+        """Decision: a whitespace-only answer counts as blank, not as text to mark."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(question_id="2", answer="   \n  ", confidence=0.9),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        self.assertFalse(q2.needs_teacher_review)
+        client._client.models.generate_content.assert_not_called()
+
+    def test_blank_answer_with_substantial_working_still_calls_the_marker(self) -> None:
+        """Decision: a blank answer box is not treated as a true blank when the
+        student left substantial working -- awarding an unflagged 0 to a
+        question the student visibly attempted is a worse claim than awarding
+        it to a truly empty one, so this must still reach the AI marker.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="A", confidence=0.99),
+                ExtractedAnswer(
+                    question_id="2",
+                    answer="",
+                    working_out="F = ma, so the object accelerates due to gravity",
+                    confidence=0.9,
+                ),
+            ],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(1, ["p1"])])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "ai")
+        client._client.models.generate_content.assert_called_once()
+
+    def test_mcq_blank_answer_is_unaffected(self) -> None:
+        """MCQ is already correct (``_build_mcq_corrected``'s own blank branch:
+        LOW, 0.0, flagged, no call) and must stay on that path untouched."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="2", answer="because gravity", confidence=0.9)],
+        )
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1", "p2"])])
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=client,
+            mcq_only=False,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.marker_source, "deterministic")
+        self.assertTrue(q1.needs_teacher_review)
+        self.assertEqual(q1.review_reason, "missing answer")
+
+    def test_position_mutation_mcq_only_blank_still_reads_as_chose_not_to_mark(self) -> None:
+        """Position mutation guard: the blank short-circuit sits AFTER
+        ``if ai is None`` in ``correct_paper``, not before it. Under
+        ``--mcq-only``, ``marker_source="missing"`` means "we chose not to
+        mark this" -- a different statement from "the student left it blank
+        and earns 0". Moving the short-circuit above the ``ai is None`` check
+        would make a blank read identically to a --mcq-only skip and must
+        break this test.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.99)],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q2 = next(q for q in result.questions if q.question_id == "2")
+        self.assertEqual(q2.marker_source, "missing")
+        # The pre-existing --mcq-only message, not the blank-specific one --
+        # and, per the pre-existing --mcq-only contract, still FLAGGED, unlike
+        # a real blank under a configured AI marker.
+        self.assertEqual(
+            q2.review_reason, "non-MCQ question not marked (--mcq-only or no AI client)"
+        )
+        self.assertTrue(q2.needs_teacher_review)
+
+
 class MCQAbstainHardeningTests(unittest.TestCase):
     """Defensive hardening for a latent, unreachable branch (D15, spec §2.2(ii)).
 
@@ -2072,6 +2255,85 @@ class MarkingProgressCounterTests(unittest.TestCase):
         self.assertEqual(len(result.questions), 5)
         q2a = next(q for q in result.questions if q.question_id == "2(a)")
         self.assertEqual(q2a.marker_source, "dropped")
+
+    def test_a_blank_answer_publishes_a_frame_and_reaches_its_sibling(self) -> None:
+        """US-039: the blank short-circuit needs the same two guarantees the
+        dropped short-circuit needed above -- ``_hybrid_paper_mark_scheme``
+        (used by ``BlankAnswerShortCircuitTests``) is two flat leaves with no
+        ``parent_id``, so ``sibling_prior`` is always ``{}`` there and this
+        property is unobservable in that class. This scheme's "2(a)"/"2(b)"
+        sibling pair is what makes it observable.
+
+        1. A ``MARKING_PROGRESS`` frame is still published for the blank leaf,
+           labelled with its ``marker_source`` ("missing") against the same
+           ``total`` every other frame carries -- omitting it would leave
+           ``total=5`` promising a question that never arrives.
+        2. ``prior_results_accumulated[q.id] = 0`` still runs for the blank
+           leaf, so its sibling sees it in ``prior_results`` rather than the
+           entry being silently omitted (``sibling_prior or None`` turns an
+           omitted entry into ``None``, not ``{}}``, so asserting
+           ``assertIsNotNone`` first is required -- otherwise this would pass
+           vacuously against a missing key).
+        """
+        import lemely.io.correction_ai as _corr_mod
+
+        # 2(a) has no extracted answer at all -- the "no entry" shape of blank.
+        # 2(b) is the sibling marked afterward under the same parent_id.
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[a for a in self._extracted().answers if a.question_id != "2(a)"],
+        )
+        # Three responses: the MCQ leaf is deterministic and 2(a) is
+        # short-circuited as blank before any marker is reached, so only
+        # 2(b), 3 and 4 consume one each.
+        client = _client_with_seq(self.tmp, [_mock_marker_response(2, ["p1"]) for _ in range(3)])
+
+        prompt_calls: list[dict[str, Any]] = []
+        original_fn = _corr_mod.build_marker_user_prompt
+
+        def _spy(*args: Any, **kwargs: Any) -> Any:
+            prompt_calls.append({"args": args, "kwargs": kwargs})
+            return original_fn(*args, **kwargs)
+
+        with (
+            _capturing(EventType.MARKING_PROGRESS) as captured,
+            patch.object(_corr_mod, "build_marker_user_prompt", side_effect=_spy),
+        ):
+            result = correct_paper(self.ms, extracted, gemini_client=client)
+
+        # (1) The frame is emitted, labelled "missing", and leaves the
+        # denominator reachable -- no gap for "2(a)".
+        frames = captured[EventType.MARKING_PROGRESS]
+        self.assertEqual([f["question_id"] for f in frames], list(self.LEAF_IDS))
+        self.assertEqual([f["index"] for f in frames], [1, 2, 3, 4, 5])
+        self.assertEqual({f["total"] for f in frames}, {5})
+        self.assertEqual(
+            [f["marker_source"] for f in frames],
+            ["deterministic", "missing", "ai", "ai", "ai"],
+        )
+        blank_frame = frames[1]
+        self.assertEqual(blank_frame["awarded"], 0)
+        self.assertEqual(blank_frame["confidence"], 0.0)
+        self.assertEqual(blank_frame["max_marks"], 2)
+
+        # (2) 2(b) is the only leaf marked after 2(a) under the same parent, so
+        # its ECF context is where the 0 has to show up.
+        by_qid = {c["args"][0].id: c for c in prompt_calls}
+        self.assertIn("2(b)", by_qid, "build_marker_user_prompt was never called for 2(b)")
+        call_2b = by_qid["2(b)"]
+        prior = call_2b["kwargs"].get("prior_results") or (
+            call_2b["args"][3] if len(call_2b["args"]) > 3 else None
+        )
+        self.assertIsNotNone(prior, "prior_results not passed for sibling 2(b)")
+        self.assertEqual(prior, {"2(a)": 0})
+
+        # Every leaf is still in the result, and the blank one is unflagged
+        # (the ruling), unlike the dropped equivalent above.
+        self.assertEqual(len(result.questions), 5)
+        q2a = next(q for q in result.questions if q.question_id == "2(a)")
+        self.assertEqual(q2a.marker_source, "missing")
+        self.assertFalse(q2a.needs_teacher_review)
 
 
 class CostCeilingAbortTests(unittest.TestCase):

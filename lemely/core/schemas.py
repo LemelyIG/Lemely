@@ -178,11 +178,18 @@ class CorrectedQuestion(StrictModel):
     of this note (transcribed from review prose carrying the same imprecision)
     claimed a single outcome for all of them. It does not hold:
 
-    * non-MCQ leaf with an AI marker configured -- ``ai.mark_question`` IS
-      dispatched on ``student_answer or ""``, a paid call to mark text
-      extraction had already discarded, and ``_build_ai_corrected`` can return
-      a zero at HIGH confidence tripping none of its four review gates. This
-      is exactly the defect MF7 exists to remove, surviving.
+    * non-MCQ leaf with an AI marker configured -- since US-039's blank
+      short-circuit (``correct_paper``, checked after the ``ai is None``
+      branch and before ``ai.mark_question``), this leaf no longer reaches
+      the paid call MF7 was written against: with no surviving ``answers``
+      entry, ``student_answer`` AND ``student_working`` both read as blank,
+      so it is awarded 0 unflagged with no AI call, exactly like a genuine
+      student blank. That removes the HIGH-confidence-zero defect this
+      bullet used to describe, but does not make the outcome correct: this
+      is the accepted FALSE-blank residual risk US-039 documents on
+      ``_build_blank_corrected`` -- the model may have returned an answer
+      extraction discarded, and it is now indistinguishable from a student
+      who genuinely wrote nothing, silently.
     * MCQ leaf, or non-MCQ under ``--mcq-only``/no AI client -- already LOW,
       0.0, ``needs_teacher_review=True``, and no AI call at all, via
       ``_build_mcq_corrected``'s ``answer is None`` branch or
@@ -194,17 +201,14 @@ class CorrectedQuestion(StrictModel):
       client)" on the other) -- so the queue tells the teacher the wrong
       thing about why the question is in it.
 
-    DB ROUND-TRIP (review SHOULD-FIX F3) -- ``"dropped"`` does NOT survive
-    persistence. ``lemely.db.models.enums.MarkerSource`` is a native Postgres
-    enum with only ``deterministic``/``ai``/``missing``, so
-    ``attempt_repo.py`` maps ``"dropped"`` onto ``missing`` on write; the
-    distinguishing text survives only in ``review_reason``. The split shows
-    in the review screen, where ``review_repo.py:440`` reads the DB enum and
-    yields ``"missing"`` while ``review_repo.py:1042`` reads ``report_json``
-    and yields ``"dropped"`` -- two labels for one situation in one queue.
-    The ``ALTER TYPE ... ADD VALUE`` migration is deliberately deferred to a
-    story of its own, which does not exist yet -- do not cite a story number
-    for it until one is opened."""
+    DB ROUND-TRIP (US-038, migration ``0038_marker_source_dropped``) --
+    ``"dropped"`` DOES survive persistence. ``lemely.db.models.enums.MarkerSource``
+    is a native Postgres enum rebuilt to add a ``dropped`` member alongside
+    ``deterministic``/``ai``/``missing``, and ``attempt_repo.py`` no longer maps
+    ``"dropped"`` onto ``missing`` on write -- the value round-trips unmapped.
+    That removed the split this note used to describe: ``review_repo.py:440``
+    (reading the DB enum) and ``review_repo.py:1042`` (reading ``report_json``)
+    now agree, both yielding ``"dropped"`` for the identical situation."""
     feedback: str | None = None
     matched_point_ids: list[str] = Field(default_factory=list)
     plagiarism_flagged: bool = False
@@ -216,12 +220,15 @@ class CorrectedQuestion(StrictModel):
     field alone cannot separate: the model genuinely returned nothing for this
     question, OR it returned something that was discarded as malformed before
     reaching ``ExtractedAnswers.answers`` (review SHOULD-FIX C). Check
-    ``marker_source == "dropped"`` to tell the two apart -- but ONLY on an
-    in-memory ``CorrectedQuestion``. Anything read back from the
-    ``QuestionResult`` table has already been narrowed to ``"missing"`` by the
-    Postgres enum (see ``marker_source`` above, review SHOULD-FIX F3), so
-    there the two causes are indistinguishable by this route and only
-    ``review_reason``'s text separates them."""
+    ``marker_source == "dropped"`` to tell the two apart -- since US-038
+    (migration ``0038_marker_source_dropped``) this works identically on an
+    in-memory ``CorrectedQuestion`` and on a row read back from the
+    ``QuestionResult`` table, because the enum now carries ``"dropped"``
+    without being narrowed to ``"missing"`` on write (see ``marker_source``
+    above). Every dropped row also carries the fixed
+    ``_DROPPED_ANSWER_REVIEW_REASON`` literal
+    (``lemely/io/correction_ai.py``), so the same distinction is recoverable
+    from ``review_reason`` too."""
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:
