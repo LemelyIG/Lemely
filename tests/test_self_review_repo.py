@@ -45,7 +45,7 @@ from lemely.core.self_review import JudgeRequest, JudgeVerdict
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult
+from lemely.db.models.attempts import Attempt, QuestionResult, QuestionResultPoint
 from lemely.db.models.enums import ReviewReason, ReviewStatus, RevisionSource, Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.self_review_repo import (
@@ -60,6 +60,8 @@ from lemely.db.self_review_repo import (
     SelfReviewNotFoundError,
     SelfReviewService,
     SelfReviewValidationError,
+    _PointFlags,
+    points_are_settleable,
     question_sort_key,
 )
 from lemely.runtime.config import DatabaseSettings
@@ -1764,3 +1766,171 @@ def test_list_questions_cost_does_not_grow_with_the_number_of_questions(
 
     assert counts[0] == counts[1], f"query count grew with question count: {counts}"
     assert counts[1] <= 5, f"{counts[1]} queries for 12 questions"
+
+
+def test_a_teacher_override_racing_a_student_self_mark_keeps_both_marks(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The lock has to hold on the teacher's side too, or the total loses marks.
+
+    ``submit`` locks the ``Attempt`` (the in-branch finding-3 fix), but
+    ``ReviewService.resolve`` reached the same attempt through
+    ``_find_any_item``'s plain ``session.get``. Mutual exclusion needs both
+    sides: a teacher overriding question 1 and a student self-marking question
+    2 each recompute ``attempts.awarded_marks`` from their own read, and under
+    READ COMMITTED the second write drops the first. Nothing recomputes again,
+    so the paper total disagrees with the sum of its own questions forever --
+    and this is precisely the window the feature opens, because a
+    ``low_confidence`` row sits in the teacher's queue *and* is what a student
+    self-marks.
+
+    Measured before the fix on this fixture: ``attempts.awarded_marks=2``
+    against the 5 its questions hold.
+    """
+    from lemely.db.class_repo import ClassService
+    from lemely.db.review_repo import ReviewService
+
+    class_service = ClassService(pg_sessionmaker)
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker)
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    attempt_id = _seed_attempt(
+        pg_sessionmaker,
+        student,
+        [
+            _question("1", matched=[], maximum=2, confidence_score=0.2, needs_review=True),
+            _question("2", matched=[], maximum=3, confidence_score=0.2, needs_review=True),
+        ],
+    )
+    qr1 = _qr_id(pg_sessionmaker, attempt_id, "1")
+    qr2 = _qr_id(pg_sessionmaker, attempt_id, "2")
+    item_id = next(
+        item.id for item in _queue_rows(pg_sessionmaker, qr1) if item.status is ReviewStatus.open
+    )
+
+    import lemely.db.review_repo as review_module
+    import lemely.db.self_review_repo as repo_module
+
+    real_recompute = repo_module.recompute_attempt_totals
+
+    def _slow_recompute(*args: object, **kwargs: object) -> None:
+        time.sleep(0.2)
+        real_recompute(*args, **kwargs)  # type: ignore[arg-type]
+
+    # Widen the window on both sides: each holds its read of question_results
+    # across the sleep, which is the interval in which the other's write lands.
+    # Each module calls the function through its own reference, so both are
+    # patched.
+    monkeypatch.setattr(repo_module, "recompute_attempt_totals", _slow_recompute)
+    monkeypatch.setattr(review_module, "recompute_attempt_totals", _slow_recompute)
+
+    barrier = threading.Barrier(2)
+    errors: list[BaseException] = []
+
+    def _student_self_marks() -> None:
+        try:
+            barrier.wait(timeout=5)
+            _service(pg_sessionmaker).submit(
+                student, attempt_id, qr2, _all_earned(["p1", "p2", "p3"])
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    def _teacher_overrides() -> None:
+        try:
+            barrier.wait(timeout=5)
+            ReviewService(pg_sessionmaker, class_service).resolve(
+                teacher, Role.teacher, item_id, note="re-marked", override_marks=2
+            )
+        except BaseException as exc:
+            errors.append(exc)
+
+    threads = [
+        threading.Thread(target=_student_self_marks),
+        threading.Thread(target=_teacher_overrides),
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(timeout=15)
+
+    assert not errors, errors
+    assert _load_qr(pg_sessionmaker, qr1).teacher_awarded_marks == 2
+    assert _load_qr(pg_sessionmaker, qr2).student_selfmark_marks == 3
+    after = _attempt_row(pg_sessionmaker, attempt_id)
+    assert after.awarded_marks == 5, "the teacher's 2 and the student's 3, neither lost"
+    assert after.percentage == 100.0
+
+
+# ── points written before the group columns existed (0037-era rows) ──────────
+
+
+def _null_out_group_columns(sm: sessionmaker[Session], attempt_id: uuid.UUID) -> None:
+    """Make an attempt's point rows look like rows written between 0037 and 0038."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(QuestionResultPoint)
+            .where(
+                QuestionResultPoint.question_result_id.in_(
+                    select(QuestionResult.id).where(QuestionResult.attempt_id == attempt_id)
+                )
+            )
+            .values(group_key=None, group_max_marks=None)
+        )
+
+
+def test_a_question_whose_points_predate_the_group_columns_is_not_self_reviewable(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """0037 ships the point rows; 0038 adds the group columns with no backfill.
+
+    Between the two deploys, rows exist that have points (so the old
+    "has points" test called them self-reviewable) but no group data, and
+    ``_settle_groups`` then treats every point as independent. On the either/or
+    fixture -- a 2-mark question whose alternatives are worth 1 -- a student
+    self-marking both halves scored 2/2, the exact exploit the group cap
+    exists to close. Migration 0038's own docstring claimed such attempts have
+    no self-review surface; they do.
+
+    The group data cannot be rebuilt from the row, so the question is withheld
+    rather than settled by guesswork.
+    """
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_group_attempt(
+        pg_sessionmaker, student, question_id="4", matched=["p2"], awarded=1, maximum=2
+    )
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "4")
+    _null_out_group_columns(pg_sessionmaker, attempt_id)
+    service = _service(pg_sessionmaker)
+
+    with pytest.raises(SelfReviewNotFoundError):
+        service.get(student, attempt_id, qr_id)
+    with pytest.raises(SelfReviewNotFoundError):
+        # The same verdicts that score 2/2 on these rows when the group data
+        # is missing and nothing withholds the question.
+        service.submit(student, attempt_id, qr_id, _verdicts(p1=False, p2=True, p3=True))
+
+    [row] = [r for r in service.list_questions(student, attempt_id) if r.question_id == "4"]
+    assert row.self_reviewable is False
+    # Nothing was written: the marker's total stands.
+    assert _load_qr(pg_sessionmaker, qr_id).student_selfmark_marks is None
+    assert _attempt_row(pg_sessionmaker, attempt_id).awarded_marks == 1
+
+
+def test_points_are_settleable_only_when_grouped_points_carry_their_group() -> None:
+    """The predicate itself, away from the database."""
+    independent = _PointFlags(is_alternative=False, is_optional=False, group_key=None)
+    grouped = _PointFlags(is_alternative=True, is_optional=False, group_key="alt:1")
+    ungrouped_alt = _PointFlags(is_alternative=True, is_optional=False, group_key=None)
+    ungrouped_optional = _PointFlags(is_alternative=False, is_optional=True, group_key=None)
+
+    assert points_are_settleable([independent, independent])
+    assert points_are_settleable([independent, grouped, grouped])
+    assert not points_are_settleable([independent, ungrouped_alt])
+    assert not points_are_settleable([independent, ungrouped_optional])
+    # Conservative: one ungrouped member is enough to withhold the question,
+    # even beside properly grouped ones.
+    assert not points_are_settleable([grouped, grouped, ungrouped_alt])

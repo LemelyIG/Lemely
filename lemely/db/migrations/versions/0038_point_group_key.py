@@ -8,10 +8,17 @@ Two additive nullable columns, **no data migration**. ``group_key`` names the
 mark-scheme group a point belongs to (``alt:n`` either/or run, ``pool:n``
 "any N from" pool, NULL when independent) and ``group_max_marks`` is the most
 that group can contribute. Both are derived from the parsed scheme at
-correction time (``lemely/db/question_points.py``); rows written before this
-revision keep NULL — the attempts behind them have no self-review surface
-(spec 1 D7), so there is nothing to protect and nothing honest to backfill
-from.
+correction time (``lemely/db/question_points.py``).
+
+Rows written before this revision keep NULL, and there is nothing honest to
+backfill them from — the parsed scheme is not kept. An earlier draft of this
+note added that those attempts "have no self-review surface (spec 1 D7)",
+which is false: 0037 writes the point rows and is deployed ahead of this
+revision, so rows exist with points and without group data, and self-review
+is offered on exactly the rows that have points. Left there, an either/or
+pair on such a row pays out twice. The read side therefore refuses them —
+``lemely.db.self_review_repo.points_are_settleable`` withholds any question
+whose grouped points carry no group, rather than capping by guesswork.
 
 Reversible: ``downgrade`` drops the two columns.
 """

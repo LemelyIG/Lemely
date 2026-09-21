@@ -484,8 +484,16 @@ class ReviewService:
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
+            # Locked: this is the one path that writes marks and recomputes the
+            # attempt's totals, and a student self-mark on another question of
+            # the same attempt does the same thing concurrently.
             item, attempt, qr, paper = self._find_any_item(
-                session, item_id, visible, caller_id=caller_id, caller_role=caller_role
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
             )
             if item.status != ReviewStatus.open:
                 raise ReviewAlreadyClosedError(
@@ -667,6 +675,7 @@ class ReviewService:
         *,
         caller_id: uuid.UUID | str | None = None,
         caller_role: Role | str | None = None,
+        for_update: bool = False,
     ) -> tuple[ReviewQueueItem, Attempt | None, QuestionResult | None, TeacherPaper | None]:
         """Load one item of **either** source, enforcing that source's tenancy.
 
@@ -703,11 +712,18 @@ class ReviewService:
             if paper is None:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
             return item, None, None, paper
-        attempt = session.get(Attempt, item.attempt_id)
+        # ``for_update`` takes the same attempt-then-question lock, in the same
+        # order, that ``SelfReviewService._owned_question`` takes. Mutual
+        # exclusion needs both sides: a student self-marking question 2 while a
+        # teacher overrides question 1 of the same attempt otherwise recomputes
+        # ``attempts.awarded_marks`` from two independent reads, and the second
+        # write drops the first. The paper total then disagrees with the sum of
+        # its own questions permanently, since nothing recomputes again.
+        attempt = session.get(Attempt, item.attempt_id, with_for_update=for_update)
         if attempt is None or attempt.user_id not in visible:
             raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
         qr = (
-            session.get(QuestionResult, item.question_result_id)
+            session.get(QuestionResult, item.question_result_id, with_for_update=for_update)
             if item.question_result_id
             else None
         )

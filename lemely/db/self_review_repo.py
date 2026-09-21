@@ -59,7 +59,7 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, Protocol
 
 import structlog
 from sqlalchemy import func, select
@@ -86,7 +86,7 @@ from lemely.db.review_repo import (
 from lemely.io.grade_boundaries import GradeBoundaryStore
 
 if TYPE_CHECKING:
-    from collections.abc import Sequence
+    from collections.abc import Iterable, Sequence
 
     from sqlalchemy.orm import Session, sessionmaker
 
@@ -479,13 +479,28 @@ class SelfReviewService:
             # One query for the whole attempt rather than lazy-loading every
             # question's points to compute a boolean: a 40-question paper was
             # 42 round trips, each materialising point rows nothing else reads.
-            with_points = set(
-                session.scalars(
-                    select(QuestionResultPoint.question_result_id)
-                    .where(QuestionResultPoint.question_result_id.in_([qr.id for qr in results]))
-                    .distinct()
-                ).all()
-            )
+            # It reads the three group columns as well, because self-reviewable
+            # means settleable, not merely "has points" — see
+            # :func:`points_are_settleable`, and the same predicate gates the
+            # route in ``_owned_question``, so the panel is never offered on a
+            # question whose ``GET`` would 404.
+            group_flags: dict[uuid.UUID, list[_HasGroupFlags]] = {}
+            flag_rows = session.execute(
+                select(
+                    QuestionResultPoint.question_result_id,
+                    QuestionResultPoint.is_alternative,
+                    QuestionResultPoint.is_optional,
+                    QuestionResultPoint.group_key,
+                ).where(QuestionResultPoint.question_result_id.in_([qr.id for qr in results]))
+            ).all()
+            for qr_id, is_alternative, is_optional, group_key in flag_rows:
+                group_flags.setdefault(qr_id, []).append(
+                    _PointFlags(
+                        is_alternative=is_alternative,
+                        is_optional=is_optional,
+                        group_key=group_key,
+                    )
+                )
             return [
                 AttemptQuestion(
                     question_result_id=qr.id,
@@ -498,7 +513,8 @@ class SelfReviewService:
                     review_reason=qr.review_reason,
                     topic=qr.topic,
                     matched_point_ids=list(qr.matched_point_ids),
-                    self_reviewable=qr.id in with_points,
+                    self_reviewable=bool(group_flags.get(qr.id))
+                    and points_are_settleable(group_flags[qr.id]),
                 )
                 for qr in results
             ]
@@ -594,6 +610,60 @@ def _settle_groups(passes: list[_PointPass]) -> int:
     return delta
 
 
+class _HasGroupFlags(Protocol):
+    """The three group columns :func:`points_are_settleable` reads.
+
+    A protocol rather than :class:`QuestionResultPoint` so the same predicate
+    serves ``list_questions``, which reads those columns without loading whole
+    rows.
+    """
+
+    @property
+    def is_alternative(self) -> bool: ...
+    @property
+    def is_optional(self) -> bool: ...
+    @property
+    def group_key(self) -> str | None: ...
+
+
+@dataclass(frozen=True, slots=True)
+class _PointFlags:
+    """The three group columns, read without loading whole point rows."""
+
+    is_alternative: bool
+    is_optional: bool
+    group_key: str | None
+
+
+def points_are_settleable(points: Iterable[_HasGroupFlags]) -> bool:
+    """Can this question's points be capped by the scheme groups they belong to?
+
+    ``_settle_groups`` caps a grant by ``group_key`` / ``group_max_marks``.
+    Migration 0038 added those columns with **no data migration**, and 0037 --
+    which writes the point rows -- is already deployed, so rows exist that are
+    self-reviewable (they have points) yet carry no group data. On those, every
+    point looks independent and an either/or pair pays out twice: measured on a
+    2-mark question whose alternatives are worth 1, a student self-marking both
+    halves scored 2. That is the exact exploit ``_settle_groups`` exists to
+    close.
+
+    The group data cannot be reconstructed here -- it comes from the parsed
+    mark scheme at correction time -- so such a question is not offered for
+    self-review at all, the same absence a quiz gets. Withholding the feature
+    on the papers marked in that window is the honest outcome; capping them by
+    guesswork is not.
+
+    Conservative by design: a point that is genuinely alone in its group (a
+    first-point alternative, a pool of one) also carries a NULL ``group_key``
+    and is refused here even though capping it by its own tariff would be
+    correct. That costs a rarely-shaped question its panel; the other error
+    direction hands out marks the scheme never had.
+    """
+    return not any(
+        (point.is_alternative or point.is_optional) and point.group_key is None for point in points
+    )
+
+
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:
     """Coerce to UUID; a malformed id is a 404, like every other student route."""
     if isinstance(value, uuid.UUID):
@@ -630,6 +700,10 @@ def _owned_question(
         # (spec 1 D7, no backfill): there is nothing to self-mark against, so
         # the surface is absent — derived from the rows, not a flag.
         raise SelfReviewNotFoundError(f"Question {qr_uuid} has no mark points to self-review")
+    if not points_are_settleable(qr.points):
+        raise SelfReviewNotFoundError(
+            f"Question {qr_uuid} has mark points written before the group columns existed"
+        )
     return attempt, qr
 
 
