@@ -1159,3 +1159,42 @@ def test_question_result_ids_maps_question_id_to_row_id(
     assert set(ids) == {"1a"}
     assert ids["1a"] == _only_result(pg_sessionmaker, attempt_id).id
     assert repo.question_result_ids(uuid.uuid4()) == {}
+
+
+def _report_with_two_questions() -> AccuracyReport:
+    """The same report as :func:`_report_with_one_question`, plus a second question.
+
+    Two questions are the minimum that can tell a per-question mapping from a
+    positional one: with a single question every wrong pairing is also the
+    right one.
+    """
+    base = _report_with_one_question()
+    first = base.correction.questions[0]
+    second = first.model_copy(update={"question_id": "1b", "awarded_marks": 2})
+    correction = base.correction.model_copy(update={"questions": [first, second]})
+    return base.model_copy(update={"correction": correction})
+
+
+def test_question_result_ids_pairs_each_question_with_its_own_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Each question id maps to *its* row, not to whichever row came back first."""
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_two_questions(),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionResult.question_id, QuestionResult.id).where(
+                QuestionResult.attempt_id == attempt_id
+            )
+        ).all()
+    expected = {question_id: row_id for question_id, row_id in rows}
+    assert set(expected) == {"1a", "1b"}, "fixture must persist two distinct questions"
+    assert ids == expected
+    assert ids["1a"] != ids["1b"]

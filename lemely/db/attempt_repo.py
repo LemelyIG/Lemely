@@ -228,9 +228,12 @@ class AttemptRepository:
 
         The student self-review routes (spec 2026-09-17) address a question
         by its ``question_results`` row id, so the ``/student/correct``
-        complete frame carries one per question. First occurrence wins on a
-        duplicated question id, mirroring ``get_question_by_id``'s
-        depth-first "first match". Empty for an unknown attempt.
+        complete frame carries one per question. A paper that repeats a
+        question id gets one row of the several, picked by
+        ``(created_at, id)``: rows of one attempt are written in a single
+        flush and so usually share ``created_at``, which leaves the row id as
+        the tie-break — stable for a given attempt, but not "the first one
+        marked". Empty for an unknown attempt.
         """
         ids: dict[str, uuid.UUID] = {}
         with self._sm() as session:
