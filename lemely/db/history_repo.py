@@ -205,6 +205,7 @@ def attempt_to_record(student_id: str, attempt: Attempt) -> PaperRecord:
         # the consumer's `is_grade_bearing` check that decides what each one
         # may back (docs/quiz-model.md §5).
         origin=attempt.origin.value,
+        attempt_id=str(attempt.id),
     )
 
 

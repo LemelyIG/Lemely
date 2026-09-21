@@ -685,6 +685,14 @@ def test_result_is_data_backed_with_empty_theory(tmp_path: Path) -> None:
     assert body["integrity"][0]["mark"] == "dash"
 
 
+def test_result_attempt_id_is_null_for_file_store_records(client: TestClient) -> None:
+    """The file-backed store has no attempts; the field is present and null,
+    never fabricated -- the frontend renders no self-review panel for it."""
+    body = client.get("/api/student/result/0").json()
+    assert "attemptId" in body
+    assert body["attemptId"] is None
+
+
 def test_result_unknown_id_is_404(client: TestClient) -> None:
     """An out-of-range or non-numeric paper id returns 404."""
     assert client.get("/api/student/result/99").status_code == 404

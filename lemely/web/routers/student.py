@@ -593,6 +593,7 @@ def student_result(
         theory=[],
         integrity=_integrity_summary(record),
         provenance=record.metadata.source_document or "",
+        attemptId=record.attempt_id,
     )
 
 
