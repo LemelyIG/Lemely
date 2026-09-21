@@ -100,20 +100,21 @@ export function outcomeSummary(view: SelfReviewRevealed): Record<PointOutcome, n
 export const OUTCOME_LABEL: Record<PointOutcome, string> = {
   agreed: "You and the marker agree",
   changed: "Your mark was applied",
-  kept: "The marker's mark stands",
+  kept: "This point's mark did not change",
   pending: "A teacher will look at this",
 }
 
 /**
  * A granted verdict the scheme group could not pay out (Task 6b's
- * `absorbedByGroup`). Written to hold in a mixed-direction group too: a
- * point can be `absorbedByGroup=true` while it actually held the group's
- * mark up (another point in the group moved down and this one covered it),
- * so the copy must not claim the student "already has" this specific mark
- * — only that the group's own cap didn't move. (Task 6a review carry-forward.)
+ * `absorbedByGroup`). Deliberately direction-agnostic and non-causal: in a
+ * mixed-direction group (one point claimed up, another disclaimed down, net
+ * zero) the granted point is not "sharing" a mark a sibling already has —
+ * it may be the very point now carrying the mark a sibling just dropped.
+ * `absorbedByGroup` only tells us the group's own cap didn't move, so that
+ * is all this line asserts. (Task 12 review, SHOULD-FIX 1.)
  */
 export const ABSORBED_COPY =
-  "Accepted, but this point's group has already earned all the marks it can, so the total did not change."
+  "Accepted, but this point is grouped with others on this question, so the group's total did not change."
 
 /** One short line under a point, or null when the label says it all. */
 export function outcomeDetail(
@@ -126,7 +127,10 @@ export function outcomeDetail(
       return null
     case "changed":
       if (point.evidenceVerdict === "accepted") return point.judgeReason ?? "Your reason was accepted."
-      return "The marker was not sure about this question, so your verdict counts."
+      if (point.evidenceVerdict === "not_required") {
+        return "The marker was not sure about this question, so your verdict counts."
+      }
+      return null
     case "kept":
       if (point.absorbedByGroup) return ABSORBED_COPY
       if (point.evidenceVerdict === "rejected") return point.judgeReason ?? "Your reason was not accepted."
@@ -145,6 +149,9 @@ export function evidenceHint(evidenceRequired: boolean): string {
 export function summaryLine(view: SelfReviewRevealed): string {
   if (view.teacherSettled) {
     return "A teacher has already reviewed this question, so their mark stands."
+  }
+  if (view.pendingTeacher) {
+    return `This question is at ${view.effectiveMarks} out of ${view.maxMarks} while a teacher looks at one of your reasons.`
   }
   if (view.effectiveMarks !== view.aiMarks) {
     return `Your self-mark moved this question from ${view.aiMarks} to ${view.effectiveMarks} out of ${view.maxMarks}.`
