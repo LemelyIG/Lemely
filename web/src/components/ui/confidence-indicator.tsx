@@ -75,7 +75,7 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
   "not-marked": {
     label: "Not marked",
     icon: Minus,
-    explanation: "This question was left blank. No marker — human or AI — looked at it.",
+    explanation: "This question was left blank. No marker, human or AI, looked at it.",
   },
 }
 
@@ -219,7 +219,7 @@ export function ConfidenceIndicatorSummary({
             "No questions on this paper were marked."
           )}
           {notMarked > 0 &&
-            ` ${notMarked} question${notMarked === 1 ? "" : "s"} left blank — not marked.`}
+            ` ${notMarked} question${notMarked === 1 ? "" : "s"} left blank and not marked.`}
         </p>
         <button
           type="button"
@@ -234,8 +234,8 @@ export function ConfidenceIndicatorSummary({
       {open && (
         <p className="text-sm text-t2 mt-2.5 mb-0 ps-7">
           Confidence tells you how sure we are about each mark. Low-confidence marks are
-          flagged for your teacher. Questions left blank have no confidence to report — no
-          marker looked at them.
+          flagged for your teacher. Questions left blank have no confidence to report,
+          because no marker looked at them.
         </p>
       )}
     </div>
