@@ -8,9 +8,16 @@ for.
 
 from __future__ import annotations
 
-from lemely.core.loose_schemas import AnswerPoint, MarkScheme, MathMarkType
-from lemely.core.schemas import ConfidenceBand, CorrectedQuestion
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MathMarkType,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.schemas import AIMarkResponse, ConfidenceBand, CorrectedQuestion, PointVerdict
 from lemely.db.question_points import derive_point_rows
+from lemely.io.correction_ai import _build_ai_corrected
 from tests.conftest import _scheme
 
 
@@ -52,6 +59,9 @@ def test_carries_tariff_mark_type_and_text_from_the_scheme() -> None:
         "rationale": None,
         "group_key": None,
         "group_max_marks": None,
+        "verdict": None,
+        "evidence_span": "",
+        "ecf_applied": False,
     }
 
 
@@ -430,3 +440,164 @@ def test_a_container_question_total_falls_back_to_the_marked_maximum() -> None:
     rows = derive_point_rows(_corrected(), scheme)
 
     assert _groups(rows) == [("alt:1", 2), ("alt:1", 2)]
+
+
+# ── US-045: `verdict` / `evidence_span` / `ecf_applied` ──────────────────────
+#
+# `PointVerdict` is I6's per-point record. `verdict` distinguishes `withheld`
+# from `unverifiable` where `awarded` alone collapses both to `False`; `note`
+# is deliberately NOT a second column and instead reuses `rationale` (see
+# `derive_point_rows`'s docstring and `QuestionResultPoint.rationale`).
+
+
+def _verdict_scheme() -> MarkScheme:
+    """A scheme whose one question mirrors
+    ``tests.test_correction_ai.PointVerdictBuildTests._question`` exactly
+    (same id, same two points), so a real ``_build_ai_corrected`` output can
+    be looked up against it by ``derive_point_rows``.
+    """
+    scheme = _scheme()
+    scheme.questions[0] = SchemeQuestion(
+        id="2",
+        marks=2,
+        type=SchemeQuestionType.EXPLANATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="method step", marks=1, math_mark_type=MathMarkType.M),
+            AnswerPoint(id="p2", point="final value", marks=1, math_mark_type=MathMarkType.A),
+        ],
+    )
+    return scheme
+
+
+def test_awarded_matches_the_verdict_over_real_verdict_path_output() -> None:
+    """The consistency invariant, proven over ``_build_ai_corrected_from_verdicts``'s
+    real output -- not hand-built rows (``probes/README.md``'s rule): wherever
+    a point carries a verdict, ``awarded`` must agree with it.
+    """
+    scheme = _verdict_scheme()
+    question = scheme.get_question_by_id("2")
+    assert question is not None
+    mark = AIMarkResponse(
+        awarded_marks=0,  # stale/ignored under the verdict path, as elsewhere
+        confidence=0.95,
+        matched_point_ids=[],
+        feedback="fb",
+        point_verdicts=[
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="did the method"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span=""),
+        ],
+    )
+    cq = _build_ai_corrected(
+        question,
+        "did the method, answer is 42",
+        mark,
+        student_working="did the method",
+        equivalence_gate=True,
+    )
+    assert cq.point_verdicts, "the verdict path must actually have run"
+
+    rows = derive_point_rows(cq, scheme)
+
+    by_id = {row["mark_point_id"]: row for row in rows}
+    assert by_id["p1"]["verdict"] == "awarded"
+    assert by_id["p1"]["awarded"] is True
+    assert by_id["p2"]["verdict"] == "withheld"
+    assert by_id["p2"]["awarded"] is False
+    for row in rows:
+        if row["verdict"] is not None:
+            assert row["awarded"] == (row["verdict"] == "awarded")
+
+
+def test_unverifiable_and_withheld_both_read_as_not_awarded_but_verdict_tells_them_apart() -> None:
+    """The distinction I6 exists to carry: both collapse to ``awarded=False``,
+    but ``verdict`` still tells them apart."""
+    scheme = _verdict_scheme()
+    question = scheme.get_question_by_id("2")
+    assert question is not None
+    mark = AIMarkResponse(
+        awarded_marks=0,
+        confidence=0.95,
+        matched_point_ids=[],
+        feedback="fb",
+        point_verdicts=[
+            PointVerdict(point_id="p1", verdict="withheld", evidence_span=""),
+            PointVerdict(point_id="p2", verdict="unverifiable", evidence_span=""),
+        ],
+    )
+    cq = _build_ai_corrected(
+        question, "attempted", mark, student_working="attempted", equivalence_gate=True
+    )
+
+    rows = derive_point_rows(cq, scheme)
+    by_id = {row["mark_point_id"]: row for row in rows}
+    assert by_id["p1"]["awarded"] is False
+    assert by_id["p2"]["awarded"] is False
+    assert by_id["p1"]["verdict"] == "withheld"
+    assert by_id["p2"]["verdict"] == "unverifiable"
+
+
+def test_verdict_note_wins_over_point_notes_when_a_verdict_exists_for_the_point() -> None:
+    rows = derive_point_rows(
+        _corrected(
+            point_verdicts=[
+                PointVerdict(point_id="p1", verdict="awarded", note="from the verdict")
+            ],
+            point_notes={"p1": "from point_notes, must lose"},
+        ),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] == "from the verdict"
+
+
+def test_point_notes_is_the_only_source_when_the_point_has_no_verdict() -> None:
+    rows = derive_point_rows(
+        _corrected(point_notes={"p1": "from point_notes"}),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] == "from point_notes"
+
+
+def test_both_note_sources_empty_yields_null_rationale() -> None:
+    rows = derive_point_rows(
+        _corrected(point_verdicts=[PointVerdict(point_id="p1", verdict="awarded")]),
+        _scheme(),
+    )
+
+    assert rows[0]["rationale"] is None
+
+
+def test_a_point_with_no_verdict_gets_the_column_defaults() -> None:
+    """No ``point_verdicts`` at all (the legacy path): every point gets
+    ``verdict=None``, matching ``QuestionResultPoint``'s nullable column, and
+    ``evidence_span``/``ecf_applied`` at the same defaults their columns
+    carry (``''``/``False``), not ``None``."""
+    rows = derive_point_rows(_corrected(), _scheme())
+
+    for row in rows:
+        assert row["verdict"] is None
+        assert row["evidence_span"] == ""
+        assert row["ecf_applied"] is False
+
+
+def test_evidence_span_and_ecf_applied_are_carried_from_the_verdict() -> None:
+    rows = derive_point_rows(
+        _corrected(
+            point_verdicts=[
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="12.5 m/s",
+                    ecf_applied=True,
+                )
+            ]
+        ),
+        _scheme(),
+    )
+
+    assert rows[0]["evidence_span"] == "12.5 m/s"
+    assert rows[0]["ecf_applied"] is True
+    # p2/p3 carry no verdict: defaults, not the first point's values.
+    assert rows[1]["evidence_span"] == ""
+    assert rows[1]["ecf_applied"] is False

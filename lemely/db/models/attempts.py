@@ -412,6 +412,56 @@ class QuestionResultPoint(TimestampMixin, Base):
     ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
     """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """The marker's own reasoning for this point, from whichever path scored
+
+    it. Deliberately ONE column for two producers rather than a second
+    ``note`` column beside it: I6's verdict path (``PointVerdict.note``) and
+    the legacy path (``CorrectedQuestion.point_notes``) both describe "did a
+    marker score this and why", and a second formulation would be the ninth
+    version of that idea -- the exact defect ``0040_marker_source_blank``'s
+    docstring describes curing for ``marker_source``, where eight
+    formulations cost nine hand-found consumers. See
+    :func:`lemely.db.question_points.derive_point_rows` for which producer
+    wins when both are present.
+    """
+    verdict: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """I6 (US-013): the marker's own judgement on this point --
+
+    ``"awarded"``, ``"withheld"`` or ``"unverifiable"`` (``PointVerdict``'s
+    ``Literal``, stored loosely since this table predates a native enum for
+    it and a fourth verdict must not require a migration). ``NULL`` when this
+    point was scored by the legacy (non-verdict) path, which has no such
+    distinction to record.
+
+    ``awarded`` (above) is NOT re-derived from this column and keeps its own
+    live consumers (``SelfReviewPoints``, ``points_are_settleable``,
+    ``_settle_groups``); ``verdict`` is strictly richer beside it. Where both
+    are present, ``awarded == (verdict == "awarded")`` is an invariant a
+    marker inconsistency should violate loudly, not silently reconcile --
+    see ``tests/test_question_points.py``. ``verdict`` is what tells a
+    teacher, that could not tell from ``awarded`` alone, that the marker
+    judged the point absent (``withheld``) rather than unable to verify it
+    (``unverifiable``) -- both of which collapse to ``awarded=False``.
+    """
+    evidence_span: Mapped[str] = mapped_column(
+        sa.Text, nullable=False, server_default=sa.text("''")
+    )
+    """The verbatim substring of the student's answer/working the marker
+
+    quoted as evidence for this point's verdict (``PointVerdict.evidence_span``).
+    ``''`` (not ``NULL``) when this point carries no verdict, matching
+    ``PointVerdict``'s own default so an absent verdict and an empty quote are
+    not distinguished at this column either.
+    """
+    ecf_applied: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """I7 (US-013): True when this point's verdict was reached only after
+
+    re-marking with a substituted prior value (error carried forward) --
+    mirrors ``PointVerdict.ecf_applied``. ``False`` for a legacy-path point,
+    which never re-marks against a substituted prior.
+    """
     student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
     student_selfmark_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
