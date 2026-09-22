@@ -102,6 +102,8 @@ def build_marker_user_prompt(
     student_working: str | None = None,
     prior_results: dict[str, int] | None = None,
     principles: list[str] | None = None,
+    *,
+    equivalence_gate: bool = False,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
@@ -116,6 +118,13 @@ def build_marker_user_prompt(
     principles are per-paper rather than per-run, and the cache key is built
     from the user prompt (``gemini.py:339``), so two papers with different
     printed principles cannot share a cached mark.
+
+    ``equivalence_gate`` (US-013, defaults False): when True, appends the I6
+    per-point-verdict instructions block below. With the flag at its default
+    (False, every call today), the returned prompt is BYTE-IDENTICAL to
+    before this story — no ``VERSION`` bump is needed because the prompt
+    actually sent for the default-off path never changes (D19: I6/I7/I8
+    share one bump, taken later at US-018's funded sweep).
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
@@ -145,6 +154,26 @@ def build_marker_user_prompt(
             f"PRIOR PART RESULTS (same parent question, corrected before this part):\n"
             f"{prior_lines}\n"
             "Use these when applying ECF / follow-through rules.\n"
+        )
+    if equivalence_gate:
+        parts.append(
+            "PER-POINT VERDICTS (I6): in addition to the fields above, populate "
+            "`point_verdicts` with one entry per AnswerPoint / LevelDescriptor / "
+            "DrawingCriteria id in the mark scheme subtree above. For each point, work "
+            "in this order — evidence, then verdict, then note:\n"
+            "  1. evidence_span: quote the EXACT substring, verbatim, from the STUDENT "
+            "ANSWER or WORKING above that justifies your verdict. Never invent or "
+            "paraphrase text that is not present verbatim; leave it as an empty string "
+            'for a "withheld" or "unverifiable" verdict.\n'
+            '  2. verdict: "awarded" (the quoted evidence satisfies the point), '
+            '"withheld" (the evidence shows the point was not satisfied), or '
+            '"unverifiable" (the transcription is too unclear or incomplete to judge '
+            "either way).\n"
+            "  3. note: a short reason for the verdict (optional).\n"
+            "Only once every point has a verdict, compute the total: sum the marks of "
+            'every "awarded" point into awarded_marks and list their ids in '
+            "matched_point_ids, exactly as you would without this section — "
+            "point_verdicts must agree with those totals, not contradict them.\n"
         )
     parts.append(
         f"Apply the mark scheme above. The maximum_marks for your awarded_marks field is "

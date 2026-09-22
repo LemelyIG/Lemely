@@ -142,6 +142,38 @@ class CostEstimate(StrictModel):
     token_policy: str
 
 
+class PointVerdict(StrictModel):
+    """I6 (#11, D19, US-013): one AnswerPoint's per-point marking decision.
+
+    ``point_id`` must resolve against ``Question.answer_points`` — dangling
+    ids are a coherence violation, same as the legacy
+    ``AIMarkResponse.matched_point_ids`` (``_check_coherence``).
+
+    ``evidence_span`` is the exact quoted substring from the student's
+    transcribed answer/working that justifies ``verdict`` — the whole point
+    of I6 is that an ``awarded`` verdict with no evidence can now be caught
+    (``correction_ai._check_point_evidence``). Empty for ``withheld``/
+    ``unverifiable``, where there is nothing to quote.
+
+    ``evidence_box`` is left ``None``-only for now (no OCR bounding-box
+    plumbing wired to the marker in this story — see ``lemely.io.box_plausibility``
+    for the box work that does exist, which is unrelated); declared per the
+    plan's schema so a later story can populate it without another schema
+    change invalidating the marking cache a second time.
+    """
+
+    point_id: str
+    verdict: Literal["awarded", "withheld", "unverifiable"]
+    evidence_span: str = ""
+    evidence_box: None = None
+    note: str = ""
+    ecf_applied: bool = False
+    """I7 (US-013): True when this verdict was reached only after
+    re-marking the point with a substituted prior value (error carried
+    forward). Always False when ``ecf_substitution`` is off or the point's
+    scheme carries no ``ecf``/``ft``/``dep`` marker."""
+
+
 class CorrectedQuestion(StrictModel):
     question_id: str
     awarded_marks: int = Field(..., ge=0)
@@ -211,6 +243,16 @@ class CorrectedQuestion(StrictModel):
     now agree, both yielding ``"dropped"`` for the identical situation."""
     feedback: str | None = None
     matched_point_ids: list[str] = Field(default_factory=list)
+    point_verdicts: list[PointVerdict] = Field(default_factory=list)
+    """I6 (US-013, defaults empty): the per-point verdicts + evidence spans
+    ``_build_ai_corrected`` derived ``awarded_marks``/``matched_point_ids``
+    from, when ``equivalence_gate`` was on and the marker returned any.
+    Empty on every question marked with the flag off (today's default) and
+    on every non-AI ``marker_source``. Carried on the record so a reviewer
+    (or ``ReviewItem.tsx``, once wired end to end -- out of this story's
+    file ownership: that needs ``lemely/web/schemas.py`` and
+    ``lemely/db/review_repo.py``, neither owned here) can see WHICH quoted
+    span justified an awarded mark, not just that one was awarded."""
     plagiarism_flagged: bool = False
     extraction_confidence: float | None = None
     """Extraction-side confidence (``ExtractedAnswer.confidence``) for the answer
@@ -477,6 +519,18 @@ class AIMarkResponse(StrictModel):
     confidence: float = Field(..., ge=0.0, le=1.0)
     matched_point_ids: list[str] = Field(default_factory=list)
     feedback: str
+    point_verdicts: list[PointVerdict] = Field(default_factory=list)
+    """I6 (US-013, defaults empty): per-point verdicts with quoted evidence
+    spans. Additive field on the SAME wire schema used for every marking
+    call, so a marker not yet asked for verdicts (the ``equivalence_gate``
+    default-OFF path, unchanged prompt, no ``VERSION`` bump this story)
+    simply never populates it. ``_build_ai_corrected`` in
+    ``lemely.io.correction_ai`` only reads it, and only computes
+    ``awarded_marks``/``matched_point_ids`` from it, when
+    ``equivalence_gate=True`` AND this list is non-empty — see that
+    function's docstring for the flag-off/empty-list fallback to the legacy
+    ``awarded_marks``/``matched_point_ids`` fields above, which remain the
+    source of truth until I6 is enabled (US-018)."""
 
 
 class SubjectResult(StrictModel):

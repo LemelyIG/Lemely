@@ -1415,6 +1415,369 @@ class EquivalenceGateTests(unittest.TestCase):
         self.assertTrue(cq.needs_teacher_review)
 
 
+class PointVerdictPromptTests(unittest.TestCase):
+    """I6 (US-013): ``build_marker_user_prompt``'s ``equivalence_gate`` kwarg.
+
+    This is the regression the predecessor's uncommitted work left broken:
+    ``AICorrector.mark_question`` calls
+    ``build_marker_user_prompt(..., equivalence_gate=equivalence_gate)`` but
+    the function did not accept that keyword — every call with the flag on
+    (and, before dispatch was wired, every call at all once the kwarg was
+    added to the call site) raised ``TypeError: build_marker_user_prompt()
+    got an unexpected keyword argument 'equivalence_gate'``.
+    """
+
+    def _question(self):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="gravity acts on it", marks=1),
+                AnswerPoint(id="p2", point="no air resistance", marks=1),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def test_flag_off_prompt_is_byte_identical_to_omitting_it(self):
+        from lemely.io.prompts.correction_ai import build_marker_user_prompt
+
+        q = self._question()
+        omitted = build_marker_user_prompt(q, "student text")
+        explicit_off = build_marker_user_prompt(q, "student text", equivalence_gate=False)
+        self.assertEqual(omitted, explicit_off)
+        self.assertNotIn("point_verdicts", omitted)
+        self.assertNotIn("PER-POINT VERDICTS", omitted)
+
+    def test_flag_on_appends_point_verdict_instructions_in_evidence_verdict_total_order(self):
+        from lemely.io.prompts.correction_ai import build_marker_user_prompt
+
+        q = self._question()
+        on = build_marker_user_prompt(q, "student text", equivalence_gate=True)
+        self.assertIn("point_verdicts", on)
+        evidence_pos = on.index("evidence_span")
+        verdict_pos = on.index("verdict:")
+        total_pos = on.index("compute the total")
+        self.assertLess(evidence_pos, verdict_pos)
+        self.assertLess(verdict_pos, total_pos)
+
+    def test_version_not_bumped(self):
+        """D19: I6/I7/I8 share one VERSION bump at US-018's funded sweep.
+        Asserted against the module constant, not retyped, so a later edit
+        cannot slip a bump in unnoticed."""
+        from lemely.io.prompts.correction_ai import VERSION
+
+        self.assertEqual(VERSION, "5")
+
+    def test_mark_question_forwards_equivalence_gate_without_raising(self):
+        """The actual regression: before the fix this call raised TypeError
+        from inside ``build_marker_user_prompt``, on the CALL SITE the
+        predecessor already wired at ``mark_question``. Uses a real
+        ``GeminiClient`` over a mocked genai SDK client (``_client_with_seq``)
+        rather than a bare ``MagicMock`` for ``_client``, so the escalation/
+        thinking-retry machinery in ``mark_question`` runs against real
+        resolved settings instead of comparing ``MagicMock`` objects."""
+        from lemely.io.correction_ai import AICorrector
+
+        q = self._question()
+        response = _mock_marker_response(1, ["p1"])
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _client_with_seq(tmp, [response])
+            corrector = AICorrector(client)
+            corrector.mark_question(q, "student text", equivalence_gate=True)
+
+        sent_call = client._client.models.generate_content.call_args
+        sent_contents = sent_call.kwargs["contents"]
+        sent_prompt = str(sent_contents)
+        self.assertIn("point_verdicts", sent_prompt)
+
+
+class PointVerdictBuildTests(unittest.TestCase):
+    """I6 (US-013): ``_build_ai_corrected`` dispatches to
+    ``_build_ai_corrected_from_verdicts`` when ``equivalence_gate`` is on
+    AND the marker returned at least one verdict; ``awarded_marks`` is
+    always computed in Python from the verdicts, capped at ``q.marks``.
+    """
+
+    def _question(self, marks=2):
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=marks,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="method step", marks=1, math_mark_type=MathMarkType.M),
+                AnswerPoint(id="p2", point="final value", marks=1, math_mark_type=MathMarkType.A),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _verdict(self, point_id, verdict="awarded", span="", note="", ecf=False):
+        from lemely.core.schemas import PointVerdict
+
+        return PointVerdict(
+            point_id=point_id, verdict=verdict, evidence_span=span, note=note, ecf_applied=ecf
+        )
+
+    def _mark(self, point_verdicts, confidence=0.95, feedback="fb"):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=0,  # deliberately wrong/stale -- must be IGNORED under the verdict path
+            confidence=confidence,
+            matched_point_ids=[],  # deliberately empty/stale -- must be IGNORED too
+            feedback=feedback,
+            point_verdicts=point_verdicts,
+        )
+
+    def test_flag_off_ignores_point_verdicts_and_uses_legacy_path(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [self._verdict("p1", span="did the method"), self._verdict("p2", span="42")]
+        )
+        cq = _build_ai_corrected(q, "did the method, answer is 42", mark, equivalence_gate=False)
+        # Legacy path trusts mark.awarded_marks (0) / matched_point_ids ([]),
+        # not the verdicts -- proving dispatch really is flag-gated.
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertEqual(cq.point_verdicts, [])
+
+    def test_flag_on_empty_verdicts_uses_legacy_path(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark([])
+        cq = _build_ai_corrected(q, "anything", mark, equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 0)  # legacy mark.awarded_marks, untouched
+        self.assertEqual(cq.point_verdicts, [])
+
+    def test_flag_on_with_verdicts_computes_awarded_marks_in_python(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="42"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        # sum(awarded verdicts' point marks) == awarded_marks (I6 acceptance 1)
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertEqual(set(cq.matched_point_ids), {"p1", "p2"})
+        self.assertEqual(cq.point_verdicts, mark.point_verdicts)
+        self.assertFalse(cq.needs_teacher_review)
+
+    def test_shuffling_point_order_leaves_marks_unchanged(self):
+        """I6 acceptance 1's metamorphic property."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        forward = [
+            self._verdict("p1", span="did the method"),
+            self._verdict("p2", span="42"),
+        ]
+        shuffled = list(reversed(forward))
+        mark_a = self._mark(forward)
+        mark_b = self._mark(shuffled)
+        cq_a = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark_a,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        cq_b = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark_b,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        self.assertEqual(cq_a.awarded_marks, cq_b.awarded_marks)
+        self.assertEqual(set(cq_a.matched_point_ids), set(cq_b.matched_point_ids))
+
+    def test_awarded_marks_capped_at_question_marks(self):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        # 1-mark question whose answer_points sum to more than the cap --
+        # a marker-side inconsistency the cap must survive regardless.
+        q = Question.model_construct(
+            id="2",
+            marks=1,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="a", marks=1),
+                AnswerPoint(id="p2", point="b", marks=1),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        mark = self._mark([self._verdict("p1", span="a text"), self._verdict("p2", span="b text")])
+        cq = _build_ai_corrected(q, "a text and b text", mark, equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 1)  # capped, not 2
+
+    def test_unverifiable_verdict_never_contributes_marks(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                self._verdict("p1", verdict="unverifiable"),
+                self._verdict("p2", span="42"),
+            ]
+        )
+        cq = _build_ai_corrected(q, "answer is 42", mark, equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p2"])
+
+    def test_awarded_point_with_no_matching_span_triggers_no_span_review(self):
+        from lemely.io.correction_ai import POINT_EVIDENCE_TRIGGER_MARKER, _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="text that never appears anywhere"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn(POINT_EVIDENCE_TRIGGER_MARKER, cq.review_reason or "")
+        # No new review-reason enum member: queued under the existing
+        # generic path, never the coherence-mismatch trigger.
+        self.assertNotIn("matched_point_ids", cq.review_reason or "")
+
+    def test_awarded_m_point_span_outside_working_out_is_caught(self):
+        """D11 working-vs-answer: an M-point's evidence must be found
+        INSIDE working_out when working was supplied, not merely somewhere
+        in the answer."""
+        from lemely.io.correction_ai import POINT_EVIDENCE_TRIGGER_MARKER, _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                # "42" only appears in the final answer line, never in the
+                # working -- not evidence of METHOD even though it is
+                # genuinely present verbatim in the transcript.
+                self._verdict("p1", span="42"),
+                self._verdict("p2", span="42"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "the answer is 42",
+            mark,
+            student_working="some unrelated working with no matching value in it",
+            equivalence_gate=True,
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn(POINT_EVIDENCE_TRIGGER_MARKER, cq.review_reason or "")
+        self.assertIn("working_out", cq.review_reason or "")
+
+    def test_full_marks_with_no_method_span_gets_feedback_note(self):
+        from lemely.io.correction_ai import _NO_METHOD_SPAN_NOTE, _build_ai_corrected
+
+        mark = self._mark(
+            [
+                # p1 is the M-point but its verdict is withheld -- no
+                # awarded M-point evidence at all, even though p2 (A) is
+                # awarded and the total happens to hit full marks via some
+                # other accounting path in a hypothetical scheme. Use a
+                # 1-mark question so p2 alone reaches "full marks".
+                self._verdict("p1", verdict="withheld"),
+                self._verdict("p2", span="42"),
+            ],
+            feedback="A1 awarded for the correct value.",
+        )
+        q1 = self._question(marks=1)
+        cq = _build_ai_corrected(q1, "answer is 42", mark, equivalence_gate=True)
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.maximum_marks, 1)
+        self.assertIn(_NO_METHOD_SPAN_NOTE, cq.feedback or "")
+
+    def test_full_marks_with_method_span_present_has_no_note(self):
+        from lemely.io.correction_ai import _NO_METHOD_SPAN_NOTE, _build_ai_corrected
+
+        q = self._question(marks=2)
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="42"),
+            ],
+            feedback="Full marks.",
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertNotIn(_NO_METHOD_SPAN_NOTE, cq.feedback or "")
+
+    def test_field_mutation_matrix_on_verdict_path_return(self):
+        """Lesson from rev-us039: a field can be set correctly in the
+        builder and still be completely unpinned by tests. Assert
+        POSITIVELY on every field this path sets, not just awarded_marks."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question(marks=2)
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method", note="method shown"),
+                self._verdict("p2", span="42"),
+            ],
+            feedback="Full marks awarded.",
+            confidence=0.95,
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, answer is 42",
+            mark,
+            student_working="did the method",
+            extraction_confidence=0.77,
+            equivalence_gate=True,
+        )
+        self.assertEqual(cq.question_id, "2")
+        self.assertEqual(cq.maximum_marks, 2)
+        self.assertEqual(cq.awarded_marks, 2)
+        self.assertEqual(cq.confidence_score, 0.95)
+        self.assertEqual(cq.marker_source, "ai")
+        self.assertEqual(cq.feedback, "Full marks awarded.")
+        self.assertEqual(set(cq.matched_point_ids), {"p1", "p2"})
+        self.assertEqual(cq.point_verdicts, mark.point_verdicts)
+        self.assertEqual(cq.extraction_confidence, 0.77)
+        self.assertFalse(cq.needs_teacher_review)
+        self.assertIsNone(cq.review_reason)
+
+
 class CoherenceGateTests(unittest.TestCase):
     """M1.5 (#40): awarded_marks must reconcile with matched_point_ids,
     and every matched_point_id must resolve in the mark scheme — a fourth

@@ -10,7 +10,13 @@ import structlog
 
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
-from lemely.core.loose_schemas import CalculatedAnswer, MarkScheme, Question, QuestionType
+from lemely.core.loose_schemas import (
+    CalculatedAnswer,
+    MarkScheme,
+    MathMarkType,
+    Question,
+    QuestionType,
+)
 from lemely.core.schemas import (
     REVIEW_CONFIDENCE_THRESHOLD,
     AIMarkResponse,
@@ -18,6 +24,7 @@ from lemely.core.schemas import (
     CorrectedQuestion,
     CorrectionResult,
     ExtractedAnswers,
+    PointVerdict,
     confidence_band_for_score,
 )
 from lemely.io.gemini import GeminiClient, thinking_rank
@@ -106,6 +113,8 @@ class AICorrector:
         student_working: str | None = None,
         prior_results: dict[str, int] | None = None,
         principles: list[str] | None = None,
+        *,
+        equivalence_gate: bool = False,
     ) -> AIMarkResponse:
         """Mark one question.
 
@@ -113,10 +122,27 @@ class AICorrector:
         (#41 / ruling A13). They are the authority on the M/A dependency; the
         system prompt's strict rule is the fallback for papers that do not print
         them or whose GMP pages could not be parsed.
+
+        ``equivalence_gate`` (US-013, defaults False): forwarded to
+        :func:`build_marker_user_prompt`, which appends the I6 point-verdict
+        instructions to the USER prompt only when True. ``AIMarkResponse``
+        (the ``response_schema`` below) is the SAME class either way --
+        ``point_verdicts`` is an additive field the model simply never
+        populates when not asked (see that model's docstring) -- and
+        ``VERSION`` is not bumped: the flag defaulting off means the prompt
+        actually sent for every call today is byte-identical to before this
+        story. See ``correction_ai`` module notes / the commit message for
+        the ``_params_fingerprint`` schema-hash consequence of the additive
+        field regardless of this flag.
         """
         g = self._client._settings.gemini
         user_prompt = build_marker_user_prompt(
-            question, student_answer, student_working, prior_results, principles
+            question,
+            student_answer,
+            student_working,
+            prior_results,
+            principles,
+            equivalence_gate=equivalence_gate,
         )
 
         result = self._client.generate_structured(
@@ -615,6 +641,251 @@ def _check_coherence(
     return None
 
 
+def _normalise_span(text: str) -> str:
+    """Whitespace-collapse + casefold, for :func:`_span_found`."""
+    return re.sub(r"\s+", " ", text).strip().casefold()
+
+
+def _span_found(evidence_span: str, *texts: str | None) -> bool:
+    """I6 (US-013) span-evidence check -- EXACT/SUBSTRING CONTAINMENT, no fuzzy threshold.
+
+    The plan's ``_check_coherence`` extension calls for
+    ``rapidfuzz.fuzz.partial_ratio(...) >= 0.8``. `rapidfuzz` is absent from
+    this project: confirmed absent from ``pyproject.toml`` and ``uv.lock``,
+    same finding US-010 hit first (filed as ``US-041`` for the dependency
+    itself, which is not in this story's file ownership -- ``pyproject.toml``
+    is explicitly out of scope here). US-010 substituted
+    ``difflib.SequenceMatcher`` under the plan's ``0.8`` threshold verbatim,
+    and an independent review of that commit found the substitution
+    dangerous even though it was disclosed: Ratcliff/Obershelp gestalt
+    pattern matching is NOT normalised Levenshtein distance, so the same
+    numeric threshold means a different thing under each metric, and ``0.8``
+    was never validated against the substitute.
+
+    Decision for I6 (route (b) from the brief, not route (a) --
+    disclosed-but-still-a-substitute -- or (c) -- block the whole gate):
+    implement the span check as containment with NO threshold at all. A
+    containment check that is too strict fails LOUDLY -- a genuine paraphrase
+    or OCR near-miss queues for review instead of matching -- which is the
+    safe failure direction for a check that gates whether a mark can be
+    auto-trusted. A fuzzy check against an unvalidated threshold fails
+    SILENTLY, in the direction of awarding marks nobody can point to
+    evidence for -- exactly the defect this story exists to catch. The
+    `rapidfuzz.fuzz.partial_ratio(...) >= 0.8` form the plan specifies is
+    tracked as US-041 and lands once, deliberately, with the dependency and
+    the lock refresh -- not smuggled in here against the wrong metric.
+    """
+    span = _normalise_span(evidence_span)
+    if not span:
+        return False
+    return any(span in _normalise_span(t) for t in texts if t)
+
+
+#: I6 (US-013): marker for the point-evidence extension of the coherence
+#: gate. Deliberately does NOT contain :data:`COHERENCE_TRIGGER_MARKER`
+#: ("matched_point_ids") -- the brief is explicit that a `no_span` finding
+#: is queued under the EXISTING `low_confidence` review bucket with a
+#: structural reason string, not a new `coherence_mismatch`-shaped trigger
+#: and not a new review-reason enum member (this branch already spent a
+#: whole story, US-038, on the cost of an inexpressible marker-source enum
+#: value; a fifth review-reason value would repeat it).
+#: ``lemely.accuracy.harness._review_triggers`` therefore reports a
+#: `no_span` finding exactly like any other generic `needs_teacher_review`
+#: reason, never as `coherence_mismatch`.
+POINT_EVIDENCE_TRIGGER_MARKER = "no_span"
+
+
+def _check_point_evidence(
+    question: Question,
+    point_verdicts: list[PointVerdict],
+    student_answer: str,
+    student_working: str | None,
+) -> str | None:
+    """I6 coherence-gate extension (#40 continuation, D11, US-013).
+
+    Two independent rules, checked per verdict in list order; the first
+    violation found is returned (one reason, like :func:`_check_coherence`,
+    not an exhaustive list):
+
+    1. Every ``awarded`` verdict must carry a non-empty ``evidence_span``
+       found (:func:`_span_found`) in the student's transcribed answer or
+       working -- otherwise a :data:`POINT_EVIDENCE_TRIGGER_MARKER`
+       (``no_span``) review trigger.
+    2. An awarded M-point (``AnswerPoint.math_mark_type is MathMarkType.M``)
+       requires its span to be found specifically INSIDE ``working_out``
+       when working was supplied (D11, working-vs-answer): a method mark
+       whose only "evidence" is the final answer line is not evidence of
+       method, even if that same text also happens to appear verbatim in
+       the answer box.
+
+    Only reached from :func:`_build_ai_corrected_from_verdicts`, itself
+    only reached when ``equivalence_gate`` is on and the marker returned at
+    least one verdict.
+    """
+    points_by_id = {p.id: p for p in question.answer_points}
+    for pv in point_verdicts:
+        if pv.verdict != "awarded":
+            continue
+        point = points_by_id.get(pv.point_id)
+        if point is not None and point.math_mark_type is MathMarkType.M and student_working:
+            if not _span_found(pv.evidence_span, student_working):
+                return (
+                    f"{POINT_EVIDENCE_TRIGGER_MARKER}: M-point {pv.point_id} evidence span "
+                    "not found in working_out"
+                )
+            continue
+        if not _span_found(pv.evidence_span, student_answer, student_working):
+            return (
+                f"{POINT_EVIDENCE_TRIGGER_MARKER}: point {pv.point_id} awarded with no "
+                "matching evidence span"
+            )
+    return None
+
+
+def _awarded_from_verdicts(
+    question: Question, point_verdicts: list[PointVerdict]
+) -> tuple[int, list[str]]:
+    """I6 (US-013): ``awarded_marks`` computed in Python from the verdicts.
+
+    Capped at ``question.marks`` -- the model no longer reports a trusted
+    total (see ``AIMarkResponse.point_verdicts``'s docstring). A plain sum
+    over ``point_id`` membership, which is order-independent by
+    construction: shuffling ``point_verdicts`` cannot change the result
+    (I6 acceptance 1's metamorphic property).
+
+    Unresolved (dangling) point ids are excluded from the sum here -- the
+    same dangling id is separately caught as a structural violation by
+    ``_check_coherence`` on the returned ``matched_point_ids``.
+    """
+    points_by_id = {p.id: p for p in question.answer_points}
+    matched_point_ids = [pv.point_id for pv in point_verdicts if pv.verdict == "awarded"]
+    total = sum(points_by_id[pid].marks for pid in matched_point_ids if pid in points_by_id)
+    return min(total, question.marks), matched_point_ids
+
+
+#: I6 (US-013, D11): auto-added to feedback when a question earned full
+#: marks but no awarded M-point carried a method-evidence span.
+_NO_METHOD_SPAN_NOTE = (
+    " [No method shown for full marks -- consider asking the student to show working.]"
+)
+
+
+def _maybe_add_no_method_span_note(
+    question: Question, feedback: str, awarded: int, point_verdicts: list[PointVerdict]
+) -> str:
+    """D11: a feedback note is auto-added when a correct answer has no method span.
+
+    Only fires when the question actually decomposes into at least one
+    M-point (a question with no M-points has nothing to ask for).
+    """
+    if awarded != question.marks or not point_verdicts:
+        return feedback
+    points_by_id = {p.id: p for p in question.answer_points}
+    m_points_exist = any(p.math_mark_type is MathMarkType.M for p in question.answer_points)
+    if not m_points_exist:
+        return feedback
+    has_method_evidence = any(
+        pv.verdict == "awarded"
+        and (point := points_by_id.get(pv.point_id)) is not None
+        and point.math_mark_type is MathMarkType.M
+        and pv.evidence_span
+        for pv in point_verdicts
+    )
+    if has_method_evidence:
+        return feedback
+    return feedback + _NO_METHOD_SPAN_NOTE
+
+
+def _build_ai_corrected_from_verdicts(
+    question: Question,
+    student_answer: str,
+    mark: AIMarkResponse,
+    student_working: str | None,
+    extraction_confidence: float | None,
+) -> CorrectedQuestion:
+    """I6 (US-013): the point-verdict marking path.
+
+    Reached only from :func:`_build_ai_corrected` when ``equivalence_gate``
+    is on AND the marker returned at least one ``PointVerdict`` -- see that
+    function's docstring. ``awarded_marks`` is always computed from the
+    verdicts (:func:`_awarded_from_verdicts`), never from
+    ``mark.awarded_marks``.
+
+    Five independent review reasons (the legacy path's four, minus the
+    "marker reported an out-of-range number" check -- meaningless once the
+    number is Python-computed and pre-capped -- plus the I6 span check),
+    with the SAME priority order the legacy path uses (structural reasons
+    before confidence):
+
+    1. ``matched_point_ids``/derived-total coherence (:func:`_check_coherence`,
+       run against the DERIVED ``matched_point_ids`` and capped total).
+    2. The deterministic calculated-answer backstop
+       (:func:`_verify_calculated_answers`), unconditionally run with
+       ``equivalence_gate=True`` here -- I8's equivalence fallback is
+       already gated by the SAME flag this whole branch requires, so there
+       is no independent "I8 without I6" state to preserve.
+    3. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
+       queued under the `low_confidence` bucket per that function's
+       docstring -- no new enum member, no new trigger.
+    4. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
+    """
+    capped, matched_point_ids = _awarded_from_verdicts(question, mark.point_verdicts)
+
+    coherence_reason = _check_coherence(question, matched_point_ids, capped)
+    coherence_mismatch = coherence_reason is not None
+
+    awarded, matched_point_ids, rejections = _verify_calculated_answers(
+        question,
+        student_answer,
+        student_working,
+        matched_point_ids,
+        capped,
+        equivalence_gate=True,
+    )
+    value_mismatch = bool(rejections)
+
+    evidence_reason = _check_point_evidence(
+        question, mark.point_verdicts, student_answer, student_working
+    )
+    no_span = evidence_reason is not None
+    low_confidence = mark.confidence < REVIEW_CONFIDENCE_THRESHOLD or no_span
+
+    reasons: list[str] = []
+    if coherence_mismatch:
+        reasons.append(coherence_reason or "")
+    if value_mismatch:
+        reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
+    if not reasons and low_confidence:
+        if no_span:
+            reasons.append(evidence_reason or "")
+        else:
+            reasons.append(
+                f"confidence {mark.confidence:.2f} below review threshold "
+                f"{REVIEW_CONFIDENCE_THRESHOLD:.2f}"
+            )
+    review_reason = " | ".join(reasons) if reasons else None
+
+    feedback = _maybe_add_no_method_span_note(question, mark.feedback, awarded, mark.point_verdicts)
+
+    return CorrectedQuestion(
+        question_id=question.id,
+        awarded_marks=awarded,
+        maximum_marks=question.marks,
+        confidence=confidence_band_for_score(mark.confidence),
+        confidence_score=mark.confidence,
+        needs_teacher_review=low_confidence or value_mismatch or coherence_mismatch,
+        review_reason=review_reason,
+        student_answer=student_answer or None,
+        expected_answer=None,
+        topic=question.topic_hint,
+        marker_source="ai",
+        feedback=feedback,
+        matched_point_ids=matched_point_ids,
+        point_verdicts=mark.point_verdicts,
+        extraction_confidence=extraction_confidence,
+    )
+
+
 def _build_ai_corrected(
     question: Question,
     student_answer: str,
@@ -630,6 +901,19 @@ def _build_ai_corrected(
     ``_verify_calculated_answers`` -- see its docstring. Never changes
     ``awarded_marks`` on its own in this story; a conflict only enriches the
     review reason for reason 3 below.
+
+    I6 (US-013) DISPATCH -- reused ``equivalence_gate`` also decides whether
+    this function runs the legacy body below at all: when the flag is on
+    AND ``mark.point_verdicts`` is non-empty, this function returns
+    :func:`_build_ai_corrected_from_verdicts`'s result instead, which
+    computes ``awarded_marks`` from the verdicts rather than trusting
+    ``mark.awarded_marks`` (see that function and
+    ``AIMarkResponse.point_verdicts``'s docstrings for the full I6 review-
+    reason set). With the flag off, or with the flag on but an empty
+    ``point_verdicts`` -- today's default and every existing test's shape,
+    since ``build_marker_user_prompt`` does not yet ask for them unless
+    ``equivalence_gate`` is also passed through to it -- everything below
+    this dispatch is UNCHANGED from before this story, line for line.
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
@@ -650,6 +934,11 @@ def _build_ai_corrected(
        confidence: a marker can be fully confident about an internally
        inconsistent result.
     """
+    if equivalence_gate and mark.point_verdicts:
+        return _build_ai_corrected_from_verdicts(
+            question, student_answer, mark, student_working, extraction_confidence
+        )
+
     clamped = max(0, min(mark.awarded_marks, question.marks))
     out_of_range = mark.awarded_marks != clamped
 
@@ -1031,6 +1320,7 @@ def correct_paper(
                 # dependency. `extract_gmp` has always populated this field and
                 # it was discarded here.
                 principles=scheme.metadata.generic_marking_principles or None,
+                equivalence_gate=equivalence_gate,
             )
         except CostCeilingError:
             # US-030: a per-run token/USD ceiling breach is a stop signal for
