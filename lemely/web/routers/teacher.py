@@ -794,9 +794,7 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
     # "was this question scored at all", not "does it need review" -- a
     # genuinely low-confidence *scored* question must still pull the minimum
     # down.
-    scored = [
-        q for q in correction.questions if q.marker_source not in ("missing", "dropped")
-    ]
+    scored = [q for q in correction.questions if q.marker_source not in ("missing", "dropped")]
     min_conf = min(
         (q.confidence_score for q in scored),
         default=1.0,
