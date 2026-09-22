@@ -7,13 +7,23 @@ from typing import Literal
 from lemely.core.loose_schemas import QuestionType
 from lemely.core.schemas import StrictModel
 
-#: The subset of QuestionType whose stated answer is a solvable expression —
-#: a number, formula, or equation — rather than free-form prose. This is the
-#: only slice N3's gate (lemely.io.question_gates) can check with a solver
-#: (docs/plans/ai-improvements-plan.md:610-618, step 2). Everything else
-#: stops at the validity pass alone (verified_by="validity_only").
+#: The subset of QuestionType whose stated answer is UNCONDITIONALLY a
+#: solvable expression — a number, formula, or equation — rather than
+#: free-form prose. This is the only slice N3's gate
+#: (lemely.io.question_gates) can check with a solver
+#: (docs/plans/ai-improvements-plan.md:610-618, step 2: "numeric RECALL").
+#: Everything else stops at the validity pass alone
+#: (verified_by="validity_only").
+#:
+#: RECALL is deliberately excluded here even though plan:611 admits
+#: *numeric* RECALL to the solver: most RECALL items are prose ("name the
+#: process...") with no stated answer a solver can check, and membership
+#: here used to be checked before any answer existed to inspect. A numeric
+#: RECALL item is admitted instead by
+#: lemely.io.question_gates.verify_question, which can look at the actual
+#: `answer` text before deciding — see that module's `_admits_solver`.
 SOLVABLE_QUESTION_TYPES: frozenset[QuestionType] = frozenset(
-    {QuestionType.CALCULATION, QuestionType.EQUATION, QuestionType.RECALL}
+    {QuestionType.CALCULATION, QuestionType.EQUATION}
 )
 
 #: What positively established a GeneratedQuestion's stated answer, per N3:

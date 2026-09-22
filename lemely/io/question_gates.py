@@ -48,12 +48,15 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from lemely.core.equivalence import VerdictKind, equivalent
+import structlog
+
+from lemely.core.equivalence import VerdictKind, equivalent, parse_expr_safe
 from lemely.core.generation import (
     SOLVABLE_QUESTION_TYPES,
     GeneratedQuestion,
     QuestionValidityCheck,
 )
+from lemely.core.loose_schemas import QuestionType
 from lemely.io.prompts.question_generation import (
     CODE_EXECUTION_VERSION,
     VALIDITY_VERSION,
@@ -101,6 +104,47 @@ def _validity_rejection_reason(validity: QuestionValidityCheck) -> str:
     return f"validity: {', '.join(reasons)}"
 
 
+def _admits_solver(question: GeneratedQuestion) -> bool:
+    """N3 step 2's scope, MUST-FIX 2.
+
+    CALCULATION/EQUATION always admit a
+    solver; RECALL admits one only when its stated answer is present and
+    SymPy-parseable — i.e. *numeric* RECALL (plan:611), not the far more
+    common prose RECALL ("name the process...") which has no stated
+    answer for a solver to check at all. Every other question_type never
+    admits a solver.
+    """
+    if question.question_type in SOLVABLE_QUESTION_TYPES:
+        return True
+    if question.question_type is QuestionType.RECALL:
+        return question.answer is not None and parse_expr_safe(question.answer) is not None
+    return False
+
+
+def _reject(
+    question: GeneratedQuestion, reason: str, *, subject_code: str, attempt: int
+) -> GeneratedQuestion:
+    """Return the rejected copy of ``question`` and log it.
+
+    N3 review MUST-FIX 3: an item that fails every gate step vanishes from
+    `QuestionGenerator.generate` with nothing else recording that it
+    happened — a teacher requesting 5 questions silently receiving 2, with
+    no log line, counter, or field anywhere saying 3 were rejected or why.
+    Every rejection is logged here, structured on the fields a production
+    diagnosis actually needs (subject_code, topic, rejection_reason, and
+    which attempt this was) rather than as free text.
+    """
+    structlog.get_logger().warning(
+        "question_rejected",
+        subject_code=subject_code,
+        topic=question.topic,
+        verified_by=None,
+        rejection_reason=reason,
+        attempt=attempt,
+    )
+    return question.model_copy(update={"verified_by": None, "rejection_reason": reason})
+
+
 def _run_code_execution(client: GeminiClient, question: GeneratedQuestion) -> str | None:
     """N3 step 3.
 
@@ -122,7 +166,11 @@ def _run_code_execution(client: GeminiClient, question: GeneratedQuestion) -> st
 
 
 def verify_question(
-    client: GeminiClient, question: GeneratedQuestion, *, subject_code: str
+    client: GeminiClient,
+    question: GeneratedQuestion,
+    *,
+    subject_code: str,
+    attempt: int = 0,
 ) -> GeneratedQuestion:
     """Run the full N3 gate pipeline on one generated question.
 
@@ -131,20 +179,25 @@ def verify_question(
     ``question`` (e.g. leftover fields a prior Gemini JSON response happened
     to fill in) is discarded and replaced — this function's own findings are
     the only source of truth for those two fields.
+
+    ``attempt`` is the 0-based regeneration attempt this call is running as
+    (see :mod:`lemely.io.question_generation`); it is carried through only
+    to the rejection log record (MUST-FIX 3), never into the pass/fail
+    decision itself.
     """
     validity = check_validity(client, question, subject_code=subject_code)
     if not validity.passes:
-        return question.model_copy(
-            update={
-                "verified_by": None,
-                "rejection_reason": _validity_rejection_reason(validity),
-            }
+        return _reject(
+            question,
+            _validity_rejection_reason(validity),
+            subject_code=subject_code,
+            attempt=attempt,
         )
 
-    if question.question_type not in SOLVABLE_QUESTION_TYPES:
-        # No solver applies to this question_type (plan:610-618 step 2 is
-        # scoped to CALCULATION/EQUATION/numeric RECALL only); the validity
-        # pass is the only check this gate can run.
+    if not _admits_solver(question):
+        # No solver applies to this question_type/answer shape (plan:610-618
+        # step 2 is scoped to CALCULATION/EQUATION/numeric RECALL only); the
+        # validity pass is the only check this gate can run.
         return question.model_copy(
             update={"verified_by": "validity_only", "rejection_reason": None}
         )
@@ -155,26 +208,36 @@ def verify_question(
         if verdict.kind is VerdictKind.EQUAL_PROVEN:
             return question.model_copy(update={"verified_by": "sympy", "rejection_reason": None})
         if verdict.kind is VerdictKind.NOT_EQUAL:
-            return question.model_copy(
-                update={
-                    "verified_by": None,
-                    "rejection_reason": (
-                        f"sympy: stated answer does not equal the solved value ({verdict.detail})"
-                    ),
-                }
+            return _reject(
+                question,
+                f"sympy: stated answer does not equal the solved value ({verdict.detail})",
+                subject_code=subject_code,
+                attempt=attempt,
             )
         # EQUAL_SAMPLED or UNPARSEABLE: SymPy did not PROVE the answer, so
         # fall through to the code-execution fallback (step 3) rather than
         # either rejecting on unproven evidence or accepting it.
 
+    if not question.answer:
+        # MUST-FIX 2's backstop: an item with no stated answer at all can
+        # never be verified by any step below, so reject it here rather
+        # than spending a paid code_execution call whose comparison
+        # against None would always fail anyway.
+        return _reject(
+            question,
+            "no stated answer to verify",
+            subject_code=subject_code,
+            attempt=attempt,
+        )
+
     sandbox_answer = _run_code_execution(client, question)
     if sandbox_answer is None:
-        detail = verdict.detail if verdict is not None else "no solution_expr/answer to solve"
-        return question.model_copy(
-            update={
-                "verified_by": None,
-                "rejection_reason": f"sandbox: code execution produced no usable result ({detail})",
-            }
+        detail = verdict.detail if verdict is not None else "no solution_expr to solve"
+        return _reject(
+            question,
+            f"sandbox: code execution produced no usable result ({detail})",
+            subject_code=subject_code,
+            attempt=attempt,
         )
 
     sandbox_verdict = equivalent(sandbox_answer, question.answer)
@@ -182,11 +245,9 @@ def verify_question(
         return question.model_copy(update={"verified_by": "sandbox", "rejection_reason": None})
 
     detail = sandbox_verdict.detail or sandbox_verdict.kind.value
-    return question.model_copy(
-        update={
-            "verified_by": None,
-            "rejection_reason": (
-                f"sandbox: code execution result does not match the stated answer ({detail})"
-            ),
-        }
+    return _reject(
+        question,
+        f"sandbox: code execution result does not match the stated answer ({detail})",
+        subject_code=subject_code,
+        attempt=attempt,
     )

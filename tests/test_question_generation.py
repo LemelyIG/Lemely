@@ -321,6 +321,133 @@ class TestVerifyQuestionSandboxGate:
         assert result.verified_by == "sandbox"
 
 
+class TestRecallScopedToNumeric:
+    def test_prose_recall_is_validity_only_and_never_spends_a_tool_call(self) -> None:
+        """MUST-FIX 2: a prose RECALL item (no parseable numeric answer)
+        must not be routed through the solver/sandbox path at all — it has
+        no stated answer a solver can check, so treating it as solvable
+        burns a paid code_execution call and then always rejects it with
+        the misleading reason 'code execution result does not match the
+        stated answer' (measured failure scenario: a 0625 quiz whose weak
+        areas are recall topics -> 5 areas x 3 attempts = 45 Gemini calls
+        including 15 tool calls, and 0 questions returned)."""
+        question = _generated_question(
+            "Photosynthesis",
+            question_type=QuestionType.RECALL,
+            answer="Photosynthesis converts light energy into chemical energy.",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by == "validity_only"
+        assert result.rejection_reason is None
+        client.generate_with_code_execution.assert_not_called()
+
+    def test_numeric_recall_is_still_solved_via_sympy(self) -> None:
+        """Plan:611 scopes RECALL admission to *numeric* recall — this must
+        keep working, not just the prose exclusion above."""
+        question = _generated_question(
+            "Atomic number of carbon",
+            question_type=QuestionType.RECALL,
+            solution_expr="6",
+            answer="6",
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by == "sympy"
+        assert result.rejection_reason is None
+        client.generate_with_code_execution.assert_not_called()
+
+    def test_missing_answer_is_rejected_before_spending_a_tool_call(self) -> None:
+        """MUST-FIX 2's backstop: an item with no stated answer at all must
+        be rejected before _run_code_execution ever runs — not after a
+        wasted call whose comparison against None always fails."""
+        question = _generated_question(
+            "Speed", question_type=QuestionType.CALCULATION, solution_expr="100 / 4", answer=None
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        assert result.rejection_reason == "no stated answer to verify"
+        client.generate_with_code_execution.assert_not_called()
+
+
+class TestRejectionLogging:
+    def test_rejection_is_logged_with_subject_topic_reason_and_attempt(self) -> None:
+        """MUST-FIX 3: every rejection must be logged with enough structure
+        to diagnose a generation-quality regression in production —
+        subject_code, topic, verified_by, rejection_reason, and which
+        attempt it was. Asserted on the structured fields a call carries,
+        never on log text (a text assertion would reproduce the very
+        defect this test exists to catch: an item vanishing with no
+        traceable record)."""
+        question = _generated_question(
+            "Motion", question_type=QuestionType.CALCULATION, solution_expr="2 * 3", answer="6"
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response(
+            well_posed=False, missing_data=True
+        )
+        with patch("lemely.io.question_gates.structlog") as mock_structlog:
+            mock_log = mock_structlog.get_logger.return_value
+            verify_question(client, question, subject_code="0625", attempt=1)
+
+        assert mock_log.warning.called
+        _, kwargs = mock_log.warning.call_args
+        assert kwargs["subject_code"] == "0625"
+        assert kwargs["topic"] == "Motion"
+        assert kwargs["verified_by"] is None
+        assert kwargs["rejection_reason"] is not None
+        assert kwargs["attempt"] == 1
+
+
+class TestGenerationSummaryLogging:
+    def test_summary_records_requested_generated_and_dropped_counts(self) -> None:
+        """MUST-FIX 3's backstop: `generate()` must record a per-subject
+        summary count of what it requested vs. what it returned, so a
+        teacher receiving fewer questions than requested is visible in
+        production even when every individual rejection scrolled off. This
+        is what makes an area dropped with no error anywhere else
+        detectable."""
+        bad = _generated_question(
+            "Waves", question_type=QuestionType.CALCULATION, solution_expr="1 + 1", answer="99"
+        )
+        good = _generated_question("Optics")
+        client = _dispatch_client(
+            quiz_sequence=[
+                GeneratedQuiz(subject_code="0625", questions=[bad]),
+                GeneratedQuiz(subject_code="0625", questions=[bad]),
+                GeneratedQuiz(subject_code="0625", questions=[bad]),
+                GeneratedQuiz(subject_code="0625", questions=[good]),
+            ],
+            validity_sequence=[
+                _validity_response(),
+                _validity_response(),
+                _validity_response(),
+                _validity_response(),
+            ],
+        )
+        generator = QuestionGenerator(client)
+        with patch("lemely.io.question_generation.structlog") as mock_structlog:
+            mock_log = mock_structlog.get_logger.return_value
+            result = generator.generate(
+                _weakness(["Waves", "Optics"]), subject_code="0625", count=2
+            )
+
+        assert len(result.questions) == 1
+        assert mock_log.info.called
+        _, kwargs = mock_log.info.call_args
+        assert kwargs["subject_code"] == "0625"
+        assert kwargs["requested"] == 2
+        assert kwargs["generated"] == 1
+        assert kwargs["dropped"] == 1
+
+
 class TestUnparseableNeverVerified:
     def test_sandbox_call_failure_is_never_tagged_verified(self) -> None:
         """UNPARSEABLE (which covers both unreadable text and a solver
@@ -449,6 +576,12 @@ class TestTeacherQuizCLI:
                 cli,
                 [
                     "--json",
+                    # --quiet (-> WARNING): the generation summary this
+                    # commit adds (question_gates/question_generation MUST-
+                    # FIX 3) logs at INFO to stderr, which CliRunner mixes
+                    # into `.output` — without this the log line would land
+                    # inside what must be pure JSON.
+                    "--quiet",
                     "teacher-quiz",
                     "--subject",
                     "0625",

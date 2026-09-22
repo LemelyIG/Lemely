@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+import structlog
+
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.io.prompts.question_generation import (
     VERSION,
@@ -60,6 +62,19 @@ class QuestionGenerator:
             verified = self._generate_verified_one(area, subject_code=subject_code)
             if verified is not None:
                 questions.append(verified)
+        # N3 review MUST-FIX 3: a per-generate() summary count, independent
+        # of question_gates' per-rejection log line. This is the backstop
+        # that stays visible even when individual rejection records scroll
+        # off — a teacher requesting 5 questions and receiving 2 must be
+        # detectable in production without reconstructing it from rejection
+        # counts by hand.
+        structlog.get_logger().info(
+            "question_generation_summary",
+            subject_code=subject_code,
+            requested=len(areas),
+            generated=len(questions),
+            dropped=len(areas) - len(questions),
+        )
         return GeneratedQuiz(subject_code=subject_code, questions=questions)
 
     def _generate_one(
@@ -93,11 +108,13 @@ class QuestionGenerator:
         self, area: WeakArea, *, subject_code: str
     ) -> GeneratedQuestion | None:
         failure_reason: str | None = None
-        for _attempt in range(MAX_GENERATION_ATTEMPTS):
+        for attempt in range(MAX_GENERATION_ATTEMPTS):
             candidate = self._generate_one(
                 area, subject_code=subject_code, failure_reason=failure_reason
             )
-            verified = verify_question(self._client, candidate, subject_code=subject_code)
+            verified = verify_question(
+                self._client, candidate, subject_code=subject_code, attempt=attempt
+            )
             if verified.verified_by is not None:
                 return verified
             failure_reason = verified.rejection_reason

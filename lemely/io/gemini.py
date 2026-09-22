@@ -574,17 +574,22 @@ class GeminiClient:
         would collide in the on-disk cache with a pre-I1 call that set no
         media resolution at all, silently serving a stale cached reply.
 
-        N3: ``tool`` folds in too — ``"code_execution"`` for
-        :meth:`generate_with_code_execution`, ``None`` for every plain
-        :meth:`generate_structured` call. Per
-        docs/plans/ai-improvements-plan.md:615 ("cache key includes tool
-        flag"), a code-execution call and a plain call sharing the same
-        prompt and model must never share a cache entry: the two ask Gemini
-        to do different things (verify an answer by running code vs. just
-        answer), so a cache hit across them would silently serve one call's
-        reply for the other's request — in the dangerous direction, a
-        verification that never actually ran being satisfied by a cached
-        plain reply.
+        N3: ``tool`` folds in too, but *only when set* — ``"code_execution"``
+        for :meth:`generate_with_code_execution`, and nothing at all
+        appended for every plain :meth:`generate_structured` call
+        (``tool=None``). Per docs/plans/ai-improvements-plan.md:615 ("cache
+        key includes tool flag"), a code-execution call and a plain call
+        sharing the same prompt and model must never share a cache entry:
+        the two ask Gemini to do different things (verify an answer by
+        running code vs. just answer), so a cache hit across them would
+        silently serve one call's reply for the other's request — in the
+        dangerous direction, a verification that never actually ran being
+        satisfied by a cached plain reply. The conditional form matters
+        just as much as the fold-in itself: appending an unconditional
+        ``|none`` segment for every plain call (the shape this method
+        shipped with) would move EVERY plain call's fingerprint, not just
+        separate the two tool states, silently orphaning the entire
+        on-disk cache the moment it ran against a populated one.
         """
         params = self._resolved_gen_params(task_tag, model)
         schema_hash = ""
@@ -595,8 +600,17 @@ class GeminiClient:
         raw = (
             f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
             f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
-            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}|{tool or 'none'}"
+            f"|{_MAX_OUTPUT_TOKENS}|{schema_hash}|{media_resolution or 'none'}"
         )
+        # N3 review MUST-FIX 1: `tool` folds in ONLY when set, not as a
+        # `|none` segment appended unconditionally. Every plain
+        # generate_structured call has tool=None, so an unconditional
+        # append moved EVERY plain call's fingerprint the moment this
+        # method shipped, orphaning the entire on-disk cache — not just
+        # separating code-execution calls from plain ones, which is all
+        # N3 (plan:615) actually requires.
+        if tool is not None:
+            raw += f"|{tool}"
         return hashlib.sha256(raw.encode()).hexdigest()[:12]
 
     def check_reachable(self) -> None:

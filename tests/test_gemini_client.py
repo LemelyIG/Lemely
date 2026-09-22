@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import os
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from unittest.mock import MagicMock
 from pydantic import BaseModel, Field
 
 from lemely.io.gemini import (
+    _MAX_OUTPUT_TOKENS,
     GeminiClient,
     _is_3x,
     _reset_process_counters,
@@ -1403,6 +1405,31 @@ class CodeExecutionTests(unittest.TestCase):
         )
 
         self.assertNotEqual(fp_plain, fp_tool)
+
+    def test_plain_call_fingerprint_unaffected_by_tool_param_existence(self) -> None:
+        """The companion pin: a `tool=None` call (every plain
+        `generate_structured` call has one) must produce the exact
+        fingerprint the pre-N3 format did — the `|tool` segment must be
+        entirely absent when tool is None, not present as `|none`.
+        Appending it unconditionally moves EVERY plain call's fingerprint
+        (measured against the parent module: a correction+schema call's
+        fingerprint moved from `c484bb603401` to `b7cbee1f90ef`), which
+        orphans the entire on-disk cache the moment this runs against a
+        populated one."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+        model = "gemini-2.5-flash"
+        params = client._resolved_gen_params("question_validity", model)
+        api_line = "3x" if _is_3x(model) else "2x"
+        expected_raw = (
+            f"{model}|{api_line}|{params['temperature']}|{params['top_p']}"
+            f"|{params['seed']}|{params['thinking_budget']}|{params['thinking_level']}"
+            f"|{_MAX_OUTPUT_TOKENS}||none"
+        )
+        expected = hashlib.sha256(expected_raw.encode()).hexdigest()[:12]
+
+        actual = client._params_fingerprint(model, "question_validity", None)
+
+        self.assertEqual(actual, expected)
 
     def test_code_execution_call_does_not_hit_a_plain_calls_cache_entry(self) -> None:
         """The observable-behaviour version of the pin above: a plain
