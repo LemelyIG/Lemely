@@ -1092,6 +1092,19 @@ def _build_ai_corrected(
         )
     review_reason = " | ".join(reasons) if reasons else None
 
+    # NIT 7 (post-review, documented not fixed): this legacy return never
+    # sets `point_verdicts`, so it defaults empty (`CorrectedQuestion`'s own
+    # field default) regardless of whether `mark.point_verdicts` is
+    # populated. Benign today -- every call that reaches this branch either
+    # never asked for verdicts (`equivalence_gate` False) or asked but the
+    # question's `answer_points` cannot support them (Critical A's empty-
+    # answer_points fallback) -- but a model that disobeys either
+    # instruction and returns verdicts anyway has them silently discarded
+    # here, with no flag and no log line. Left as a documented limit rather
+    # than plumbed through: this is the SAME legacy body every non-I6 call
+    # has always used, and preserving that body unchanged, line for line,
+    # is precisely what makes the two dispatch branches provably equivalent
+    # (see `_build_ai_corrected`'s own docstring).
     return CorrectedQuestion(
         question_id=question.id,
         awarded_marks=awarded,

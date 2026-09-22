@@ -727,11 +727,51 @@ class PairwiseDistinctBlankReasonsTests(unittest.TestCase):
     """
 
     def test_all_four_blank_shaped_reasons_are_pairwise_distinct(self) -> None:
+        """NIT 5 fix (post-review): the previous version of this test read
+        two of the four values from the module (catching a constant-side
+        mutation) but HARDCODED its own copies of the other two
+        ("missing answer" and the ``--mcq-only`` string) -- so a
+        literal-side mutation (e.g. `_build_mcq_corrected`'s inline
+        ``"missing answer"`` changed to collide with the blank message, a
+        plausible DRY edit) went undetected: the test's own copy stayed
+        unaffected while the real messages collided. All four are now
+        produced by calling the SAME builder functions ``correct_paper``
+        itself calls, so a mutation to any of the four literals is
+        reflected here automatically."""
+        from lemely.core.loose_schemas import MCQAnswer, Question, QuestionType
+        from lemely.io.correction_ai import _build_mcq_corrected, _build_missing_corrected
+
+        mcq_question = Question.model_construct(
+            id="1",
+            marks=1,
+            type=QuestionType.MCQ,
+            mcq_answer=MCQAnswer.A,
+            parts=[],
+            assessment_objectives=[],
+            answer_points=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        non_mcq_question = Question.model_construct(
+            id="2",
+            marks=1,
+            type=QuestionType.EXPLANATION,
+            parts=[],
+            assessment_objectives=[],
+            answer_points=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+        mcq_missing_answer_reason = _build_mcq_corrected(mcq_question, None).review_reason
+        mcq_only_or_no_client_reason = _build_missing_corrected(
+            non_mcq_question, None
+        ).review_reason
+
         reasons = {
             "blank": correction_ai._BLANK_ANSWER_REVIEW_REASON,
             "dropped": correction_ai._DROPPED_ANSWER_REVIEW_REASON,
-            "mcq_missing_answer": "missing answer",
-            "mcq_only_or_no_client": "non-MCQ question not marked (--mcq-only or no AI client)",
+            "mcq_missing_answer": mcq_missing_answer_reason,
+            "mcq_only_or_no_client": mcq_only_or_no_client_reason,
         }
         self.assertEqual(len(set(reasons.values())), len(reasons), reasons)
 
@@ -1986,6 +2026,31 @@ class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
             writing_marks=writing_marks,
         )
 
+    def _graph_draw_question(self, marks: int = 2) -> object:
+        """NIT 6 (post-review): the class docstring names ``graph_draw`` as
+        one of the affected types, but until now only
+        ``levels_based``/``indicative_content`` were exercised -- exactly
+        the coverage gap the reviewer noted would have surfaced MUST-FIX 1
+        (a NON-empty, partial-coverage case) had it been present at
+        authoring time. This fixture has EMPTY ``answer_points`` (marked
+        holistically via ``plot_requirements`` instead), so it belongs with
+        the other EMPTY-``answer_points`` cases here; MUST-FIX 1's own
+        ``VerdictPathPartialCoverageTests`` covers the NON-empty,
+        partial-coverage ``diagram`` shape separately."""
+        from lemely.core.loose_schemas import PlotRequirement, Question, QuestionType
+
+        return Question.model_construct(
+            id="3",
+            marks=marks,
+            type=QuestionType.GRAPH_DRAW,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+            plot_requirements=[PlotRequirement(x_value=1.0, y_value=2.0)],
+        )
+
     def _mark(self, awarded: int, matched: list[str], point_verdicts: list) -> object:
         from lemely.core.schemas import AIMarkResponse
 
@@ -1996,6 +2061,36 @@ class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
             feedback="fb",
             point_verdicts=point_verdicts,
         )
+
+    def test_graph_draw_flag_on_equals_flag_off(self) -> None:
+        """Unlike LEVELS_BASED/INDICATIVE_CONTENT, GRAPH_DRAW is NOT in
+        ``_COHERENCE_EXEMPT_TYPES`` -- so a claimed ``matched_point_ids``
+        entry that cannot resolve against its (empty) ``answer_points`` is
+        legitimately DANGLING and ``_check_coherence`` correctly flags it,
+        on BOTH the flag-off legacy path and the flag-on path (which also
+        falls back to legacy here, since ``question.answer_points`` is
+        empty). The point of this test is that BOTH paths flag it
+        IDENTICALLY -- not that neither does."""
+        from lemely.core.schemas import PointVerdict
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._graph_draw_question()
+        student_answer = "plots (1, 2) correctly with a smooth curve"
+        mark = self._mark(
+            2,
+            ["pt1"],
+            point_verdicts=[
+                PointVerdict(point_id="pt1", verdict="awarded", evidence_span=student_answer)
+            ],
+        )
+
+        cq_off = _build_ai_corrected(q, student_answer, mark, equivalence_gate=False)
+        cq_on = _build_ai_corrected(q, student_answer, mark, equivalence_gate=True)
+
+        self.assertEqual(cq_on.awarded_marks, cq_off.awarded_marks)
+        self.assertEqual(cq_on.needs_teacher_review, cq_off.needs_teacher_review)
+        self.assertTrue(cq_on.needs_teacher_review)  # "pt1" is a genuinely dangling id here
+        self.assertEqual(cq_on.review_reason, cq_off.review_reason)
 
     def test_levels_based_flag_on_equals_flag_off(self) -> None:
         from lemely.core.schemas import PointVerdict
@@ -4017,23 +4112,56 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
     A test computed live in THIS process cannot catch that class of
     regression by itself (both sides would lose the docstring together
     under ``-OO``), so this runs the ACTUAL hash computation in two
-    subprocesses -- one plain, one under the ``-OO`` flag directly (not the
-    ``PYTHONOPTIMIZE`` env var, so the ambient environment cannot mask a
-    regression) -- and asserts they agree, not merely that either one equals
-    a literal.
+    subprocesses -- one plain, one under the ``-OO`` flag.
+
+    Post-review SHOULD-FIX 2 fix: an earlier version of this test claimed
+    the flag argv (rather than the ``PYTHONOPTIMIZE`` env var) is what
+    prevents the ambient environment from masking a regression. That claim
+    was FALSE about the mechanism -- ``subprocess.run`` inherits
+    ``os.environ`` by default, so under a poisoned ambient
+    ``PYTHONOPTIMIZE=2`` the "plain" subprocess is ALSO optimized, and
+    since ``886c4232e7a7`` (the post-fix value) happens to equal the
+    STRIPPED (pre-fix, ``-OO``) hash, both assertions would pass on the
+    PRE-fix code too -- the test was fully inert in that environment, not
+    merely weakened. What actually protects local runs is
+    ``tests/conftest.py``'s ``UsageError`` refusal under ``PYTHONOPTIMIZE``
+    (``5669d5f8``) -- but that guards the PYTEST process only; these bare
+    interpreter subprocesses are invisible to it. Fixed two ways: each
+    subprocess now also reports ``sys.flags.optimize``, asserted directly
+    in THIS (pytest) process, where an assertion cannot be stripped --
+    proving what the subprocess actually ran under, not merely inferring
+    it from which flag was passed; and the subprocess environment strips
+    ``PYTHONOPTIMIZE`` explicitly as defence in depth. Matches US-036's own
+    ``WireSchemaSurvivesPythonOptimizeTests``, whose in-script
+    ``assert sys.flags.optimize == 2`` survives stripping precisely because
+    a bare assert is only live at ``optimize == 0`` -- it fires exactly
+    when the flag failed to apply; this test asserts the same fact from
+    the outside instead, since its script's own bare assert would have the
+    identical survive-only-when-it-should-fail problem.
     """
 
     _SCRIPT = (
-        "import hashlib, json\n"
+        "import hashlib, json, sys\n"
         "from lemely.core.schemas import AIMarkResponse\n"
         "schema_json = json.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)\n"
-        "print(hashlib.sha256(schema_json.encode()).hexdigest()[:12])\n"
+        "print(json.dumps({\n"
+        "    'optimize': sys.flags.optimize,\n"
+        "    'hash': hashlib.sha256(schema_json.encode()).hexdigest()[:12],\n"
+        "}))\n"
     )
 
-    def _hash_under(self, *interpreter_flags: str) -> str:
+    def _run_under(self, *interpreter_flags: str) -> dict[str, object]:
+        import json as json_module
+        import os
         import subprocess
         import sys
 
+        # Strip PYTHONOPTIMIZE from the child's environment as defence in
+        # depth -- the REAL guard is the `optimize` assertion below, which
+        # proves what the subprocess did rather than what the environment
+        # did not do.
+        env = dict(os.environ)
+        env.pop("PYTHONOPTIMIZE", None)
         # This module's own hard-coded _SCRIPT, no shell, no untrusted input
         # -- same pattern as US-036's WireSchemaSurvivesPythonOptimizeTests.
         result = subprocess.run(  # noqa: S603
@@ -4042,11 +4170,18 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
             capture_output=True,
             text=True,
             timeout=30,
+            env=env,
         )
-        return result.stdout.strip()
+        return json_module.loads(result.stdout)  # type: ignore[no-any-return]
 
     def test_schema_hash_identical_under_dash_oo(self) -> None:
-        normal = self._hash_under()
-        optimized = self._hash_under("-OO")
-        self.assertEqual(normal, optimized)
-        self.assertEqual(normal, "886c4232e7a7")
+        normal = self._run_under()
+        optimized = self._run_under("-OO")
+
+        # Proves the subprocesses actually ran at the intended optimize
+        # levels -- this is the guard, not the flag/env-var choice alone.
+        self.assertEqual(normal["optimize"], 0)
+        self.assertEqual(optimized["optimize"], 2)
+
+        self.assertEqual(normal["hash"], optimized["hash"])
+        self.assertEqual(normal["hash"], "886c4232e7a7")
