@@ -134,7 +134,7 @@ class ExamMetadata(StrictModel):
     paper_number: int = Field(..., ge=1, le=9)
     paper_variant: int = Field(..., ge=1, le=9)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
-    session_year: int | None = Field(None, ge=2000, le=2100)
+    session_year: int | None = Field(default=None, ge=2000, le=2100)
     source_document: str | None = None
 
     @field_validator("subject_code")
@@ -199,7 +199,7 @@ class CostEstimate(StrictModel):
     mark_scheme_pdfs: int = Field(..., ge=0)
     cached_json: int = Field(..., ge=0)
     needs_parsing: int = Field(..., ge=0)
-    estimated_pdf_pages: int | None = Field(None, ge=0)
+    estimated_pdf_pages: int | None = Field(default=None, ge=0)
     token_policy: str
 
 
@@ -646,7 +646,7 @@ class AIMarkResponse(StrictModel):
 class SubjectResult(StrictModel):
     subject_code: str = Field(...)
     session_month: Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]
-    session_year: int | None = Field(None, ge=2000, le=2100)
+    session_year: int | None = Field(default=None, ge=2000, le=2100)
     paper_results: list[CorrectionResult] = Field(..., min_length=1)
     awarded_marks: int = 0
     maximum_marks: int = 0
