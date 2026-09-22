@@ -28,7 +28,10 @@ from lemely.core.schemas import (
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.models.attempts import QuestionResult, QuestionResultPoint
+from lemely.db.models.enums import MarkerSource, ReviewReason
+from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.self_review_repo import SelfReviewService
+from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 from lemely.web.deps import get_self_review_service
 from lemely.web.schemas_student_self_review import SelfReviewPendingDTO, SelfReviewPendingPointDTO
 from tests import test_student_correct as _student_correct
@@ -405,11 +408,12 @@ def test_attempt_questions_route_lists_rows_with_ids_and_no_integrity_flags(
     # self-mark has happened yet to close it.
     assert row["pendingTeacher"] is True
     # The marker's frozen flag travels alongside `pendingTeacher`, which is the
-    # live queue state. Both are on the wire because `confidenceTierFor` needs
-    # both -- a US-039 blank is identified by this being `false` plus a
-    # `missing`/`dropped` marker source, and `pendingTeacher` is `false` for a
-    # blank too (it opens no queue row), so reading that alone renders a blank
-    # as "confident".
+    # live queue state. Both are on the wire because `confidenceTierFor` reads
+    # both: `pendingTeacher` is `false` for a US-039 blank too (it opens no queue
+    # row), so reading that alone renders a blank as "confident". Since task #36
+    # the blank is identified by `markerSource == "blank"` rather than by this
+    # being `false` plus a `missing`/`dropped` source -- see
+    # `test_attempt_questions_route_carries_a_blank_marker_source` below.
     assert row["needsTeacherReview"] is True
 
     # After a self-mark the list shows the effective mark.
@@ -459,7 +463,19 @@ def test_attempt_questions_route_never_shows_a_student_an_integrity_finding(
         row = session.get(QuestionResult, uuid.UUID(qr_id))
         assert row is not None
         row.review_reason = "plagiarism (score 0.94) | low confidence | ai_detection (score 0.88)"
-        row.plagiarism_flagged = True
+        # The integrity flag is a `plagiarism_flag` review_queue row, not a
+        # column: `0040_marker_source_blank` dropped
+        # `question_results.plagiarism_flagged` (task #36 ruling 2), and
+        # `review_reasons_for` was already the only thing that ever wrote it.
+        # Seeded here so this test still describes a genuinely flagged question
+        # rather than only a question whose `review_reason` mentions one.
+        session.add(
+            ReviewQueueItem(
+                attempt_id=row.attempt_id,
+                question_result_id=row.id,
+                reason=ReviewReason.plagiarism_flag,
+            )
+        )
 
     [wire_row] = api.get(f"/api/student/attempts/{attempt_id}/questions").json()
 
@@ -585,3 +601,43 @@ def test_no_student_payload_but_the_panels_own_names_a_mark_point(
     for name, resp in elsewhere.items():
         leaked = sorted(point_ids & _string_values(resp.json()))
         assert not leaked, f"{name} names mark points {leaked} before the reveal"
+
+
+def test_attempt_questions_route_carries_a_blank_marker_source(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Task #36: ``"blank"`` must survive the enum -> ``.value`` -> wire ``Literal`` hop.
+
+    This route is the one boundary where a plain ``str`` meets
+    ``QuestionResultDTO.markerSource``'s ``Literal`` with no narrowing function
+    in between (``AttemptQuestion.marker_source`` is a ``str``; the router passes
+    it straight in), and it is the class of defect task #41 tracks: mypy does not
+    see ``str`` -> ``Literal``, so a value the ``Literal`` does not list reaches
+    pydantic and 500s at runtime. Adding ``"blank"`` to
+    ``lemely.web.schemas.MarkerSource`` is what stops that happening for every
+    student who leaves a question empty; this asserts it end to end rather than
+    trusting the type.
+
+    ``pendingTeacher`` is the other half of the point: a blank opens NO queue row
+    (the US-039 exemption), so it is ``false`` here — which is exactly why
+    ``confidenceTierFor`` must gate on ``markerSource`` before it reads
+    ``pendingTeacher``, or a question no marker read renders as "confident".
+    """
+    api, student_id = _wire(client, pg_sessionmaker)
+    attempt_id, qr_id = _seed_attempt(pg_sessionmaker, student_id)
+    with pg_sessionmaker.begin() as session:
+        row = session.get(QuestionResult, uuid.UUID(qr_id))
+        assert row is not None
+        row.marker_source = MarkerSource.blank
+        row.confidence_score = 0.0
+        row.needs_teacher_review = False
+        row.review_reason = _BLANK_ANSWER_REVIEW_REASON
+
+    resp = api.get(f"/api/student/attempts/{attempt_id}/questions")
+
+    assert resp.status_code == 200, resp.text
+    [wire_row] = resp.json()
+    assert wire_row["markerSource"] == "blank"
+    assert wire_row["needsTeacherReview"] is False
+    assert wire_row["confidence"] == 0.0

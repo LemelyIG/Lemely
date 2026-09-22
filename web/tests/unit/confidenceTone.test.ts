@@ -42,6 +42,12 @@ describe("confidenceTone", () => {
     // for a question nobody was ever unsure about.
     expect(confidenceTone(0, "missing")).toBe("neutral")
     expect(confidenceTone(0, "dropped")).toBe("neutral")
+    // Task #36: `"blank"` reaches the same branch because this guard asks
+    // `markerScored` now. It used to be a hand-spelled
+    // `=== "missing" || === "dropped"` here, which would have silently
+    // excluded the new value and painted a question nobody read in the same
+    // green as one the marker was sure about.
+    expect(confidenceTone(0, "blank")).toBe("neutral")
   })
 
   it("a marker source without a low score does not spuriously go neutral", () => {

@@ -62,6 +62,7 @@ from lemely.core.schemas import (
     AccuracyReport,
     ExamMetadata,
     WeaknessReport,
+    marker_scored,
 )
 from lemely.db.at_risk_repo import (
     AtRiskAcknowledgementRow,
@@ -598,7 +599,13 @@ def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     """
     questions = report.correction.questions
     total = len(questions)
-    marked = sum(1 for q in questions if q.marker_source != "missing")
+    # Task #36: `marker_scored`, not `!= "missing"`. This was the third
+    # genuinely-different formulation of the same question and the only one that
+    # counted an unscored question as marked -- `"dropped"` (US-038) and
+    # `"blank"` (US-039) both mean no marker formed an opinion, and
+    # `0038_marker_source_dropped`'s own docstring predicted this call site would
+    # need widening once the enum could express them.
+    marked = sum(1 for q in questions if marker_scored(q.marker_source))
     # Finding F (US-039 consumer-fixes brief): count over the same population
     # `/grading/queue` uses (`review_reasons_for`), not a second copy of the
     # `>= _REVIEW_CONFIDENCE` threshold rule. A genuine blank has
@@ -789,12 +796,12 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
     # US-039 blank carries `confidence_score == 0.0` with
     # `needs_teacher_review == False`, so an unfiltered `min` renders a
     # ten-question "Graded" paper with one blank as "Graded · 0.00". Using
-    # `marker_source` here rather than `review_reasons_for` (as
+    # `marker_scored` here rather than `review_reasons_for` (as
     # `_graded_pipeline_steps` does for Finding F) because this population is
     # "was this question scored at all", not "does it need review" -- a
     # genuinely low-confidence *scored* question must still pull the minimum
     # down.
-    scored = [q for q in correction.questions if q.marker_source not in ("missing", "dropped")]
+    scored = [q for q in correction.questions if marker_scored(q.marker_source)]
     min_conf = min(
         (q.confidence_score for q in scored),
         default=1.0,

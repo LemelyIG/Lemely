@@ -8,7 +8,7 @@ import { SectionHead } from "@/components/ui/section-head"
 import { Chip } from "@/components/ui/chip"
 import { EmptyState } from "@/components/ui/state-views"
 import { relativeTime } from "@/lib/utils"
-import { confidenceTierFor } from "@/lib/markingConfidence"
+import { confidenceTierFor, markerScored } from "@/lib/markingConfidence"
 import { ListSkeleton, PageHeaderSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import {
@@ -181,32 +181,32 @@ export function paperIdentityLabel(item: {
  * view).
  *
  * **A genuine blank cannot reach this queue as a `plagiarism_flag` row at
- * all.** `integrity.py:101` is the only writer of `plagiarism_flagged`, and
- * its gate requires `expected_answer` truthy; every site that sets
- * `expected_answer` non-`None` also sets `marker_source="deterministic"`
- * (`review_queue_rules.py:89` states this on the backend). No
- * `marker_source` of `"missing"` or `"dropped"` can therefore ever be
- * `plagiarism_flagged`, so this parameter's neutral-tone branch cannot fire
- * on any row this queue holds today. It is added anyway, as a defensive
- * gate rather than a live one: `ReviewQueueItemDTO` doesn't carry
- * `markerSource` at all today, but if a future producer ever emits an
- * unscored row into this queue, this function already knows what to do
- * with it.
+ * all.** `integrity.py` is the only writer of `plagiarism_flagged` and its
+ * gate requires `expected_answer` truthy; every site that sets
+ * `expected_answer` non-`None` also sets `marker_source="deterministic"`. No
+ * unscored marker source can therefore ever be `plagiarism_flagged`, so this
+ * parameter's neutral-tone branch cannot fire on any row this queue holds
+ * today. It is added anyway, as a defensive gate rather than a live one:
+ * `ReviewQueueItemDTO` doesn't carry `markerSource` at all today, but if a
+ * future producer ever emits an unscored row into this queue, this function
+ * already knows what to do with it.
  *
- * This checks `markerSource` directly rather than going through
- * `confidenceTierFor`'s `needsTeacherReview`-gated "not-marked" branch: this
- * screen has no `reviewReason`/`needsTeacherReview` to give that function
- * (it never did — see the two-tones note above), so requiring them would
- * make the gate exactly as unreachable as the bug this closes. A marker
- * source of "missing"/"dropped" is unambiguous on its own: no marker (human
- * or AI) produced this score, so it cannot be a confidence tone at all.
+ * This asks `markerScored` rather than going through `confidenceTierFor`'s
+ * `needsTeacherReview`-gated "not-marked" branch: this screen has no
+ * `reviewReason`/`needsTeacherReview` to give that function (it never did —
+ * see the two-tones note above), so requiring them would make the gate
+ * exactly as unreachable as the bug this closes. An unscored marker source is
+ * unambiguous on its own: no marker (human or AI) produced this score, so it
+ * cannot be a confidence tone at all. Task #36 replaced a hand-spelled
+ * `=== "missing" || === "dropped"` here with the shared predicate — that
+ * spelling would have silently excluded `"blank"`.
  */
 export function confidenceTone(
   score: number | null,
   markerSource?: string | null,
 ): "ok" | "warn" | "neutral" {
   if (score == null) return "warn"
-  if (markerSource === "missing" || markerSource === "dropped") return "neutral"
+  if (!markerScored(markerSource)) return "neutral"
   return confidenceTierFor({ confidence: score }) === "confident" ? "ok" : "warn"
 }
 

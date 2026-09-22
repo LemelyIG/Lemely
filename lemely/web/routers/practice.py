@@ -80,24 +80,26 @@ def _marker_source(value: str) -> MarkerSource:
     ``lemely.db.models.enums.MarkerSource.value`` and does not import the web
     layer's literal type, mirroring how the rest of that module stays free of
     ``lemely.web`` imports. ``PracticeResultQuestionDTO.markerSource`` is typed
-    ``MarkerSource`` (``Literal["deterministic", "ai", "missing", "dropped"]``)
-    precisely so the frontend can branch on this value (Important A, US-039
-    final branch review), so a ``str`` reaching it unchecked would defeat that
-    one check. This is the one place that narrowing happens — an explicit
+    ``MarkerSource`` (``Literal["deterministic", "ai", "missing", "dropped",
+    "blank"]``) precisely so the frontend can branch on this value (Important A,
+    US-039 final branch review), so a ``str`` reaching it unchecked would defeat
+    that one check. This is the one place that narrowing happens — an explicit
     ``if``/``elif`` chain rather than a ``cast``/``# type: ignore``, so mypy
-    proves the return really is one of the four literal values and a fifth,
+    proves the return really is one of the five literal values and a sixth,
     unexpected one raises instead of silently reaching the wire.
 
     Checked, not assumed: ``lemely.db.models.enums.MarkerSource`` (the db
     enum ``PracticeResultQuestion.marker_source`` is sourced from, via
-    ``.value``) has exactly four members —
-    ``deterministic``/``ai``/``missing``/``dropped`` — with string values
-    identical to this literal's, and ``practice_repo.py``'s sole production
-    call site (``_result``) always passes ``qr.marker_source.value`` where
-    ``qr.marker_source: Mapped[MarkerSource]``. So today the ``ValueError``
-    branch is unreachable in production: it would only fire if a future
-    migration added a fifth db-enum member without updating this function to
-    match.
+    ``.value``) has exactly five members —
+    ``deterministic``/``ai``/``missing``/``dropped``/``blank`` — with string
+    values identical to this literal's, and ``practice_repo.py``'s sole
+    production call site (``_result``) always passes ``qr.marker_source.value``
+    where ``qr.marker_source: Mapped[MarkerSource]``. So today the
+    ``ValueError`` branch is unreachable in production: it would only fire if a
+    future migration added a sixth db-enum member without updating this function
+    to match. ``tests/test_web_practice.py`` parametrises this over
+    ``MarkerSource`` itself rather than a hand-written list, so adding a member
+    without a branch here fails there.
     """
     if value == "deterministic":
         return "deterministic"
@@ -107,6 +109,8 @@ def _marker_source(value: str) -> MarkerSource:
         return "missing"
     if value == "dropped":
         return "dropped"
+    if value == "blank":
+        return "blank"
     raise ValueError(f"Unknown marker source: {value!r}")  # pragma: no cover - enum guarantees this
 
 

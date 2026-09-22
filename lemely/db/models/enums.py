@@ -111,12 +111,23 @@ class MarkerSource(enum.Enum):
     the two review-detail readers (``review_repo.py``) disagreed on what a
     teacher saw for the identical situation -- this member removes that
     mapping and the disagreement it caused.
+
+    ``blank`` (task #36, migration ``0040_marker_source_blank``): the student
+    left the question empty and no marking call was made -- US-039's unflagged
+    zero. It reused ``missing`` until this member existed, carrying the
+    distinction in ``review_reason`` prose instead.
+
+    ``missing``, ``dropped`` and ``blank`` all mean "no marker formed an
+    opinion". ``lemely.core.schemas.UNSCORED_MARKER_SOURCES`` is the one place
+    that set is written down, and ``lemely.core.schemas.marker_scored`` the one
+    way to ask.
     """
 
     deterministic = "deterministic"
     ai = "ai"
     missing = "missing"
     dropped = "dropped"
+    blank = "blank"
 
 
 class BoundarySource(enum.Enum):

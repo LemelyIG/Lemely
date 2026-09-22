@@ -22,7 +22,14 @@ from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.db.base import Base
 from lemely.db.models import User
-from lemely.db.models.enums import DifficultySource, QuestionSource, QuizKind, QuizStatus, Role
+from lemely.db.models.enums import (
+    DifficultySource,
+    MarkerSource,
+    QuestionSource,
+    QuizKind,
+    QuizStatus,
+    Role,
+)
 from lemely.db.models.quizzes import Quiz, QuizAssignment
 from lemely.db.practice_repo import (
     PracticeRequest,
@@ -264,7 +271,7 @@ def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
     ``QuestionResultDTO`` carries on the quiz wire, not just ``confidenceBand``.
 
     ``_build_blank_corrected`` produces ``confidence_band=LOW``,
-    ``needs_teacher_review=False``, ``marker_source="missing"`` for a
+    ``needs_teacher_review=False``, ``marker_source="blank"`` for a
     genuine blank -- before this fix ``PracticeResultQuestion`` and its DTO
     had no way to carry the second two fields at all, so
     ``practiceData.ts::confidenceBandTier`` had only the band to go on and
@@ -293,7 +300,7 @@ def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
                 awarded_marks=0,
                 confidence_band="low",
                 confidence_score=0.0,
-                marker_source="missing",
+                marker_source="blank",
                 needs_teacher_review=False,
             ),
             PracticeResultQuestion(
@@ -313,37 +320,43 @@ def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
     dto = _result_to_dto(row)
 
     blank, scored = dto.questions
-    assert blank.markerSource == "missing"
+    assert blank.markerSource == "blank"
     assert blank.needsTeacherReview is False
     assert scored.markerSource == "ai"
     assert scored.needsTeacherReview is False
 
 
-@pytest.mark.parametrize("value", ["deterministic", "ai", "missing", "dropped"])
-def test_marker_source_narrows_every_sanctioned_value(value: str) -> None:
+@pytest.mark.parametrize("member", list(MarkerSource), ids=lambda m: m.value)
+def test_marker_source_narrows_every_sanctioned_value(member: MarkerSource) -> None:
     """``_marker_source`` (``lemely/web/routers/practice.py``) narrows
 
     ``PracticeResultQuestion.marker_source`` (a plain ``str`` in the repo
     layer, sourced from ``lemely.db.models.enums.MarkerSource.value``) onto
-    ``PracticeResultQuestionDTO.markerSource``'s
-    ``Literal["deterministic", "ai", "missing", "dropped"]`` -- the fix for
-    the type error the DTO field exists to enforce (a ``str`` reaching a
+    ``PracticeResultQuestionDTO.markerSource``'s ``Literal`` -- the fix for the
+    type error the DTO field exists to enforce (a ``str`` reaching a
     ``Literal``-typed wire field would defeat the one check that lets the
-    frontend branch on this value). All four of the db enum's sanctioned
-    values must round-trip unchanged.
+    frontend branch on this value). Every member of the db enum must round-trip
+    unchanged.
+
+    Parametrised over ``MarkerSource`` itself rather than a written-out list of
+    values, which is what it used to be. Task #36 added a fifth member
+    (``blank``) and a hand-written list would have gone green without covering
+    it -- exactly the "a fixture that names its field values freezes them"
+    failure ``tests/test_self_review_authority_builders.py`` was written about.
+    Adding a sixth member without a branch in ``_marker_source`` now fails here.
     """
     from lemely.web.routers.practice import _marker_source
 
-    assert _marker_source(value) == value
+    assert _marker_source(member.value) == member.value
 
 
 def test_marker_source_rejects_an_unsanctioned_value() -> None:
-    """Inverse of the parametrized case above: a value outside the four
+    """Inverse of the parametrized case above: a value outside the sanctioned
 
-    sanctioned ones raises rather than silently reaching the wire. Not
-    reachable today (the db enum only ever produces the four values), but
-    this is the one seam that would catch a future fifth enum member added
-    without updating this narrowing function.
+    set raises rather than silently reaching the wire. Not reachable today (the
+    db enum only ever produces its own members), but this is the one seam that
+    would catch a future enum member added without updating this narrowing
+    function.
     """
     from lemely.web.routers.practice import _marker_source
 

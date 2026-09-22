@@ -506,10 +506,12 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
     re-litigated here: a blank non-MCQ answer becomes an UNFLAGGED zero with
     NO paid call. A flagged zero was rejected -- it would flag every genuine
     blank on every paper and train teachers to bulk-approve without looking.
-    ``marker_source`` reuses ``"missing"`` (no engine ran, which is exactly
-    what that value already means); the blank-vs-not-marked distinction lives
-    in ``review_reason``, following the precedent US-031 set for ``"dropped"``
-    before its own enum member existed.
+    ``marker_source`` is ``"blank"`` (task #36, migration
+    ``0040_marker_source_blank``). It reused ``"missing"`` until then, with the
+    blank-vs-not-marked distinction carried in ``review_reason`` -- the interim
+    shape US-031 used for ``"dropped"`` before its own enum member existed, and
+    which failed here the same way: nine consumers could not tell a question
+    nobody read from one a marker scored 0.0 on.
     """
 
     def setUp(self) -> None:
@@ -531,7 +533,7 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
             mcq_only=False,
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
-        self.assertEqual(q2.marker_source, "missing")
+        self.assertEqual(q2.marker_source, "blank")
         self.assertEqual(q2.awarded_marks, 0)
         # The ruling: UNFLAGGED, not a flagged zero.
         self.assertFalse(q2.needs_teacher_review)
@@ -540,8 +542,10 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
         self.assertEqual(q2.confidence, ConfidenceBand.LOW)
         self.assertEqual(q2.confidence_score, 0.0)
         # Distinguishable from every other blank-shaped message this path can
-        # produce, per the enum ruling (carry the distinction in
-        # review_reason since marker_source is shared with "missing").
+        # produce. Since task #36 the STATE distinction is `marker_source`
+        # above; this string is what a teacher reads in the queue, and nothing
+        # parses it any more -- but a queue that names the wrong reason is
+        # still a defect, so the distinctness guard stays.
         #
         # US-039 MUST-FIX 3 (independent review, blocking 674f309d): asserted
         # POSITIVELY against the module constant rather than via
@@ -591,7 +595,7 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
             mcq_only=False,
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
-        self.assertEqual(q2.marker_source, "missing")
+        self.assertEqual(q2.marker_source, "blank")
         self.assertFalse(q2.needs_teacher_review)
         client._client.models.generate_content.assert_not_called()
 
@@ -613,7 +617,7 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
             mcq_only=False,
         )
         q2 = next(q for q in result.questions if q.question_id == "2")
-        self.assertEqual(q2.marker_source, "missing")
+        self.assertEqual(q2.marker_source, "blank")
         self.assertFalse(q2.needs_teacher_review)
         # US-039 MUST-FIX 3 survivor: `extraction_confidence -> None` went
         # undetected in the no-answer-entry test above because the true value
@@ -3121,9 +3125,13 @@ class MarkingProgressCounterTests(unittest.TestCase):
         sibling pair is what makes it observable.
 
         1. A ``MARKING_PROGRESS`` frame is still published for the blank leaf,
-           labelled with its ``marker_source`` ("missing") against the same
+           labelled with its ``marker_source`` ("blank") against the same
            ``total`` every other frame carries -- omitting it would leave
-           ``total=5`` promising a question that never arrives.
+           ``total=5`` promising a question that never arrives. The label is
+           read off the record now, not repeated as a literal: this frame said
+           "missing" until task #36 gave the blank its own value, which made it
+           a tenth hand-written copy of the same fact and the live progress
+           log's only disagreement with the row that gets persisted.
         2. ``prior_results_accumulated[q.id] = 0`` still runs for the blank
            leaf, so its sibling sees it in ``prior_results`` rather than the
            entry being silently omitted (``sibling_prior or None`` turns an
@@ -3158,7 +3166,7 @@ class MarkingProgressCounterTests(unittest.TestCase):
         ):
             result = correct_paper(self.ms, extracted, gemini_client=client)
 
-        # (1) The frame is emitted, labelled "missing", and leaves the
+        # (1) The frame is emitted, labelled "blank", and leaves the
         # denominator reachable -- no gap for "2(a)".
         frames = captured[EventType.MARKING_PROGRESS]
         self.assertEqual([f["question_id"] for f in frames], list(self.LEAF_IDS))
@@ -3166,7 +3174,13 @@ class MarkingProgressCounterTests(unittest.TestCase):
         self.assertEqual({f["total"] for f in frames}, {5})
         self.assertEqual(
             [f["marker_source"] for f in frames],
-            ["deterministic", "missing", "ai", "ai", "ai"],
+            ["deterministic", "blank", "ai", "ai", "ai"],
+        )
+        # The frame and the record agree, which is the property that broke when
+        # the literal was written out in the publish call a second time.
+        self.assertEqual(
+            frames[1]["marker_source"],
+            next(q for q in result.questions if q.question_id == "2(a)").marker_source,
         )
         blank_frame = frames[1]
         self.assertEqual(blank_frame["awarded"], 0)
@@ -3188,7 +3202,7 @@ class MarkingProgressCounterTests(unittest.TestCase):
         # (the ruling), unlike the dropped equivalent above.
         self.assertEqual(len(result.questions), 5)
         q2a = next(q for q in result.questions if q.question_id == "2(a)")
-        self.assertEqual(q2a.marker_source, "missing")
+        self.assertEqual(q2a.marker_source, "blank")
         self.assertFalse(q2a.needs_teacher_review)
 
 

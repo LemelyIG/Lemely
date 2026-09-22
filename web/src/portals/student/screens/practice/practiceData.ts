@@ -232,18 +232,18 @@ export function practiceMarkState(awardedMarks: number, totalMarks: number): Pra
  *
  * Important A (US-039 final branch review): a genuine blank
  * (`_build_blank_corrected`) sets `confidence_band=LOW` *and*
- * `needs_teacher_review=False`, `marker_source="missing"` — the same
+ * `needs_teacher_review=False`, `marker_source="blank"` — the same
  * unflagged-zero shape finding G fixed on the quiz result screen. Banding on
  * `confidenceBand` alone rendered that blank as `"needs-review"`, telling the
  * student a marker looked and was unsure when no marker ever looked. The
  * not-marked gate is delegated to `confidenceTierFor` — the one place that
  * rule is allowed to live — rather than re-testing `markerSource`/
  * `needsTeacherReview` here a second time; only when that gate does *not*
- * fire does this function fall back to its own band-based ladder. A
- * `markerSource` of `"missing"`/`"dropped"` with `needsTeacherReview: true`
- * (a flagged extraction failure, not a blank) is deliberately left to the
- * band ladder below, same as `confidenceTierFor` leaves it to its own score
- * check — it still needs the review it was flagged for.
+ * fire does this function fall back to its own band-based ladder. An unscored
+ * `markerSource` with `needsTeacherReview: true` (a flagged extraction
+ * failure, not a blank) is deliberately left to the band ladder below, same as
+ * `confidenceTierFor` leaves it to its own score check — it still needs the
+ * review it was flagged for.
  */
 export function confidenceBandTier(
   band: string,

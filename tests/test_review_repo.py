@@ -40,6 +40,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    MarkerSourceValue,
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -136,7 +137,7 @@ def _question(
     review_reason: str | None = None,
     plagiarism_flagged: bool = False,
     topic: str = "Waves",
-    marker_source: str = "ai",
+    marker_source: MarkerSourceValue = "ai",
 ) -> CorrectedQuestion:
     return CorrectedQuestion(
         question_id=question_id,
@@ -579,7 +580,7 @@ def test_review_queue_exempts_the_us039_unflagged_blank_console_path(
         confidence_score=0.0,
         needs_review=False,
         review_reason=_BLANK_ANSWER_REVIEW_REASON,
-        marker_source="missing",
+        marker_source="blank",
     )
     paper_id = _seed_console_paper(
         pg_sessionmaker, uploader=teacher, questions=[genuinely_low_confidence, blank]
@@ -674,15 +675,14 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_p
     (``tests/test_attempt_repo.py``) — third round of independent review.
 
     ``apply_integrity_checks`` APPENDS to ``review_reason`` rather than
-    replacing it, so a genuine blank that also picked up an integrity flag
-    carries the blank's own reason plus the real appended plagiarism reason
-    (see :func:`_real_plagiarism_review_reason` below) — not equal to the
-    bare blank reason. The exemption in
-    ``lemely.db.review_queue_rules.review_reasons_for`` now checks
-    membership of the blank's reason among the ``" | "``-split segments
-    instead of whole-field equality, so this must be exempted from
-    ``low_confidence`` on the console path exactly as it is on the attempt
-    path, leaving only the real ``plagiarism_flag`` reason.
+    replacing it and forces ``needs_teacher_review`` True, either of which used
+    to be able to defeat the blank exemption — first through a whole-field
+    equality test on ``review_reason``, then through a ``" | "``-split
+    membership test that needed its own ``plagiarism_flagged`` gate. Task #36
+    put the exemption on ``marker_source == "blank"``, which no appended text
+    can reach. The invariant is unchanged: this must be exempted from
+    ``low_confidence`` on the console path exactly as on the attempt path,
+    leaving only the real ``plagiarism_flag`` reason.
     """
     from lemely.db.models.enums import ReviewReason
     from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
@@ -695,7 +695,7 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_p
         confidence_score=0.0,
         needs_review=True,
         review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | {_real_plagiarism_review_reason()}",
-        marker_source="missing",
+        marker_source="blank",
         plagiarism_flagged=True,
     )
     paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[flagged_blank])
@@ -802,23 +802,22 @@ def test_review_reasons_for_structural_flag_survives_plagiarism_flag() -> None:
 
 
 def test_review_reasons_for_blank_carveout_does_not_fire_without_plagiarism_flag() -> None:
-    """Regression guard for a bug this fix's own first draft introduced.
+    """The prose collision, kept as the pin on task #36's removal of the prose test.
 
-    Fixing Finding A by adding an ``_is_unflagged_blank(question)`` disjunct
-    to ``marking_flagged``'s suppression, on its own, is wrong: it also fires
-    for a NON-blank question whose ``review_reason`` happens to collide with
-    ``_BLANK_ANSWER_REVIEW_REASON`` (the ``--mcq-only`` known-limit collision
-    ``review_queue_rules.py``'s own docstring already discusses), even with
-    NO plagiarism flag anywhere in sight -- silencing a real marking-side
-    ``low_confidence`` row that has nothing to do with plagiarism. The
-    exemption must be gated on ``question.plagiarism_flagged`` as well:
-    ``_is_unflagged_blank`` only stands in for "``needs_teacher_review`` was
-    forced True by integrity, not set genuinely by the builder", which is
-    only true when integrity actually ran (i.e. the question IS flagged).
+    This test was written for a real bug. Fixing Finding A by adding an
+    ``_is_unflagged_blank(question)`` disjunct to ``marking_flagged``'s
+    suppression fired for a NON-blank question whose ``review_reason`` merely
+    COLLIDED with ``_BLANK_ANSWER_REVIEW_REASON``, silencing a real
+    marking-side ``low_confidence`` row with no plagiarism flag in sight -- so
+    the exemption had to be gated on ``plagiarism_flagged`` as well, to stand in
+    for "``needs_teacher_review`` was forced True by integrity, not set by the
+    builder".
 
-    Simulates the collision the module's own docstring already names rather
-    than inventing a new one -- ``_build_missing_corrected``'s real
-    ``--mcq-only`` literal, forced equal to ``_BLANK_ANSWER_REVIEW_REASON``.
+    Task #36 made the collision unreachable rather than gated: the exemption
+    reads ``marker_source == "blank"`` and the row below is ``"missing"``, so no
+    text it carries can silence it. The assertions are unchanged and are now the
+    pin -- this goes red if the prose test is ever reintroduced, which is the
+    only way this row could be exempted again.
     """
     from lemely.db.models.enums import ReviewReason
     from lemely.db.review_queue_rules import review_reasons_for

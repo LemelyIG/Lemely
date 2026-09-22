@@ -1155,11 +1155,14 @@ def _is_blank(value: str | None) -> bool:
 
 
 #: US-039 product-owner ruling: a blank non-MCQ answer becomes an UNFLAGGED
-#: zero with NO paid call -- distinct from every other blank-shaped message
-#: this module can produce (``_build_mcq_corrected``'s "missing answer",
+#: zero with NO paid call. Human-readable queue text for a teacher, and
+#: deliberately distinct from every other blank-shaped message this module can
+#: produce (``_build_mcq_corrected``'s "missing answer",
 #: ``_build_missing_corrected``'s "--mcq-only or no AI client", and
-#: ``_DROPPED_ANSWER_REVIEW_REASON``), so the review queue and any future
-#: reader of ``review_reason`` can tell a genuine blank from all three.
+#: ``_DROPPED_ANSWER_REVIEW_REASON``) -- but since task #36 nothing DERIVES
+#: state from it: ``marker_source == "blank"`` is the signal. The distinctness
+#: guard (``PairwiseDistinctBlankReasonsTests``) stays because a queue that
+#: shows a teacher the wrong reason is still a defect.
 _BLANK_ANSWER_REVIEW_REASON = "student left this question blank (0 awarded, no AI call made)"
 
 
@@ -1183,12 +1186,20 @@ def _build_blank_corrected(
     turning a paper with 8 unattempted parts into 8 queue items a teacher
     dismisses on sight, training them to bulk-approve without looking.
 
-    ``marker_source`` reuses ``"missing"`` rather than adding a fifth
-    literal: no engine ran for a blank (the short-circuit returns before any
-    marker is reached), which is exactly what ``"missing"`` already means.
-    The blank-vs-not-marked distinction lives in ``review_reason`` instead,
-    the same way US-031 carried the dropped-vs-missing distinction before
-    ``"dropped"`` had its own enum member.
+    ``marker_source`` is ``"blank"``, its own fifth literal (task #36,
+    migration ``0040_marker_source_blank``). It reused ``"missing"`` until
+    then, with the blank-vs-not-marked distinction carried in
+    ``review_reason`` prose — the same interim shape US-031 used for
+    dropped-vs-missing before ``"dropped"`` had a member, and it failed the
+    same way, only more expensively: a blank shares ``confidence_score=0.0``,
+    ``ConfidenceBand.LOW`` and ``"missing"`` with a question a marker DID
+    look at, so "did a marker score this?" was un-answerable from the columns
+    and nine consumers had to be found by hand. Ask it through
+    ``lemely.core.schemas.marker_scored`` now.
+
+    ``review_reason`` keeps ``_BLANK_ANSWER_REVIEW_REASON``: it is what a
+    teacher reads in the queue. Nothing PARSES it any more — the review-queue
+    exemption is ``marker_source == "blank"``.
 
     Accepted residual risk, not solved here: a FALSE blank -- the student
     wrote something and extraction missed it entirely -- is awarded 0
@@ -1216,7 +1227,7 @@ def _build_blank_corrected(
         expected_answer=None,
         topic=question.topic_hint,
         review_reason=_BLANK_ANSWER_REVIEW_REASON,
-        marker_source="missing",
+        marker_source="blank",
         extraction_confidence=extraction_confidence,
     )
 
@@ -1894,7 +1905,13 @@ def correct_paper(
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
-                marker_source="missing",
+                # Read off the record rather than repeating the builder's
+                # literal: this frame said "missing" for a blank until task
+                # #36 gave the blank its own `marker_source`, which made it a
+                # tenth hand-written copy of the same fact and the live
+                # progress log's only disagreement with the row that gets
+                # persisted (`lemely/app/live_log.py` renders this).
+                marker_source=cq.marker_source,
                 confidence=0.0,
                 awarded=0,
                 max_marks=q.marks,

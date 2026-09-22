@@ -452,7 +452,7 @@ def test_question_to_dto_surfaces_per_question_needs_teacher_review() -> None:
             confidence=ConfidenceBand.LOW,
             confidence_score=0.0,
             needs_teacher_review=False,
-            marker_source="missing",
+            marker_source="blank",
             review_reason="student left this question blank (0 awarded, no AI call made)",
         )
     )
@@ -562,7 +562,7 @@ def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
         confidence=ConfidenceBand.LOW,
         confidence_score=0.0,
         needs_teacher_review=False,
-        marker_source="missing",
+        marker_source="blank",
         review_reason="student left this question blank (0 awarded, no AI call made)",
     )
     paper_id = uuid.uuid4()

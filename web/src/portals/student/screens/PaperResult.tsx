@@ -18,7 +18,7 @@ import { Tabs, TabsList } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
 import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
-import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { confidenceSummaryOf, confidenceTierFor, markerScored } from "@/lib/markingConfidence"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
@@ -104,16 +104,20 @@ const NO_QUESTION_DETAIL = {
  * `"missing"` "at least names a marking method", which stopped being true
  * once `_build_blank_corrected` started using `marker_source="missing"` for
  * a genuine blank the AI never saw at all (US-039) — no method ran, so the
- * raw token is exactly as misleading as `"dropped"` was. This deliberately
- * does NOT invent copy that implies the answer was marked or explain WHY
- * nothing was marked (a blank vs. `--mcq-only`/no client vs. a false-blank
- * extraction miss, US-042, all render identically) — that distinction is a
- * product decision, not this fix's to make. `"deterministic"`/`"ai"` are
- * left as the existing raw pass-through — pre-existing copy this story does
- * not touch.
+ * raw token is exactly as misleading as `"dropped"` was.
+ *
+ * `"blank"` (task #36) joins them by asking `markerScored`, which is the one
+ * statement of that set. Deliberately the SAME copy, not new copy for the new
+ * value: this label still does not invent wording that implies the answer was
+ * marked, nor explain WHY nothing was marked (a genuine blank vs.
+ * `--mcq-only`/no client vs. a false-blank extraction miss, US-042, all render
+ * identically). The backend can now tell those apart, but what a student
+ * should be TOLD about each is a product decision and remains unmade —
+ * distinguishing them here would be this fix inventing it.
+ * `"deterministic"`/`"ai"` are left as the existing raw pass-through.
  */
 export function markerSourceLabel(source: QuestionResult["markerSource"]): string {
-  return source === "dropped" || source === "missing" ? "not marked" : source
+  return markerScored(source) ? source : "not marked"
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {

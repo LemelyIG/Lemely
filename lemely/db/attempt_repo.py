@@ -61,7 +61,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, marker_scored
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import (
@@ -75,6 +75,7 @@ from lemely.db.models.enums import (
     AttemptOrigin,
     BoundarySource,
     MarkerSource,
+    ReviewReason,
     RevisionSource,
 )
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
@@ -427,10 +428,10 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     :data:`_CONFIDENCE_BAND_WEAKNESS_ORDER`, not enum declaration order.
 
     Finding I (US-039 consumer-fixes brief): a question no marker scored
-    (``marker_source`` ``"missing"`` or ``"dropped"``) does not enter the
-    minimum. ``_build_blank_corrected`` sets ``confidence=ConfidenceBand.LOW``
-    on a genuine blank explicitly, so one unattempted part out of ten used to
-    force the whole attempt's ``confidence_band`` to LOW alongside
+    (:func:`~lemely.core.schemas.marker_scored`) does not enter the minimum.
+    ``_build_blank_corrected`` sets ``confidence=ConfidenceBand.LOW`` on a
+    genuine blank explicitly, so one unattempted part out of ten used to force
+    the whole attempt's ``confidence_band`` to LOW alongside
     ``needs_teacher_review=False`` — the same changed-meaning-of-0.0 bug as
     Finding E, on the band rather than the score. A question that was
     genuinely scored LOW still pulls the minimum down; only the unscored ones
@@ -444,7 +445,7 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     """
     if not questions:
         raise ValueError("Cannot derive a confidence band from zero question results")
-    scored = [q for q in questions if q.marker_source not in ("missing", "dropped")]
+    scored = [q for q in questions if marker_scored(q.marker_source)]
     # Every question was unscored (e.g. a fully-blank quiz attempt) — fall
     # back to the full set rather than raising, so a real attempt still gets
     # a band instead of a 500.
@@ -455,51 +456,100 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     )
 
 
+def _integrity_flagged(qr: QuestionResult) -> bool:
+    """Was this question integrity-flagged at marking time?
+
+    Reads the ``review_queue`` rows, because that is where the flag lives.
+    ``0040_marker_source_blank`` dropped ``question_results.plagiarism_flagged``
+    (task #36 ruling 2: the plagiarism signal is dead end to end and was already
+    dead at the fork point, so a new persisted column on it is the wrong
+    direction), and :func:`~lemely.db.review_queue_rules.review_reasons_for` was
+    already opening a :attr:`ReviewReason.plagiarism_flag` row from the same
+    ``CorrectedQuestion.plagiarism_flagged`` the column was copied from. The row
+    IS the flag; it cannot disagree with a column that no longer exists.
+
+    Why not the two alternatives, since
+    :func:`is_marking_low_confidence` reads a PERSISTED row months later and so
+    needs the fact persisted somehow:
+
+    * **Derive it from ``review_reason``'s segments.** Prose parsing — the exact
+      defect task #36 removed from this predicate. It would delete one instance
+      and add another, on a field ``correct_paper``'s AI-failure branch rewrites
+      outright and ``web.schemas.student_safe_review_reason`` strips per
+      audience.
+    * **Drop the term.** It needs ``plagiarism_flagged=True`` to be
+      unreachable, and it is not: measured through real ``correct_paper`` ->
+      real ``apply_integrity_checks`` on a malformed scheme (a non-MCQ
+      question's id shadowing an MCQ leaf's, defeating the MCQ exemption's
+      first-match DFS at ``loose_schemas.get_question_by_id``), a
+      ``marker_source="deterministic"`` row comes out ``plagiarism_flagged=True``
+      with the plagiarism segment ALONE on ``review_reason``, and real
+      ``derive_point_rows`` gives it settleable points, so it reaches this gate.
+      Evaluated, not read: dropping the term flips that row's
+      ``evidence_required`` from True to False — a student self-marking an
+      integrity-flagged question with no evidence and no judge. The claim that
+      it is unreachable is exactly the claim this branch has been wrong about
+      six times, and ``test_integrity_flag_reaches_the_authority_gate`` fails if
+      anyone reinstates it.
+
+    Deliberately unfiltered by :class:`~lemely.db.models.enums.ReviewStatus`:
+    the question is what the marking side found, which a teacher's later
+    dismissal does not change. Attempt-sourced rows are never deleted —
+    ``self_review_repo`` only moves ``status``, and
+    ``teacher_paper_repo.finish``'s one ``DELETE`` is scoped to
+    ``teacher_paper_id`` rows, which the ``one_source`` check constraint
+    guarantees carry no ``question_result_id``.
+
+    On a transient (not yet flushed) ``QuestionResult`` the collection is empty
+    and this is False, which is correct — an unpersisted row has no findings —
+    but it is why the contract below says *persisted*.
+    """
+    return any(item.reason is ReviewReason.plagiarism_flag for item in qr.review_queue_items)
+
+
 def is_marking_low_confidence(qr: QuestionResult) -> bool:
     """Whether a question was flagged for a *marking* reason — the one definition.
 
-    True when the marker's own score is below ``REVIEW_CONFIDENCE_THRESHOLD``
-    or when review was forced by a marking-side structural signal (the D2.4
-    out-of-range / value-mismatch flag) rather than *only* by an integrity
-    check. This is exactly the condition under which :meth:`AttemptRepository._persist`
-    opens a ``low_confidence`` review-queue row, and it is also the condition
-    under which a student's self-mark carries authority (self-review spec,
-    "Authority"). Both read the same
-    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed` so the
+    True when the marker's own score is below ``REVIEW_CONFIDENCE_THRESHOLD`` or
+    when review was forced by a marking-side structural signal rather than
+    *only* by an integrity check. This is exactly the condition under which
+    :meth:`AttemptRepository._persist` opens a ``low_confidence`` review-queue
+    row, and also the condition under which a student's self-mark carries
+    authority (self-review spec, "Authority"). Both read the same
+    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed`, so the
     two can never draw the line differently: a question flagged purely
     ``plagiarism_flag`` is *not* low-confidence — integrity flags grant no
     authority and are never shown to a student.
 
-    Reads the persisted ``QuestionResult`` columns, which
-    :func:`_to_question_result` fills from the same ``CorrectedQuestion``
-    fields ``_persist`` reads through ``review_reasons_for`` — so calling this
-    on a freshly built row inside ``_persist`` and on a loaded row months
-    later gives the same answer.
+    **Reads a PERSISTED row**, whose columns :func:`_to_question_result` filled
+    from the same ``CorrectedQuestion`` fields ``persist_correction`` reads
+    through ``review_reasons_for``, plus its queue rows via
+    :func:`_integrity_flagged`. Both inputs are recorded in the same
+    transaction, so a row loaded months later answers as it did at marking time.
+    A freshly constructed, unflushed ``QuestionResult`` answers identically
+    except on an integrity-flagged question, whose queue row does not exist yet.
 
-    **The US-039 blank, and why this function is where it matters.** This is
-    an *authority gate*, not a queue predicate:
-    ``self_review_repo._to_view`` sets
+    **The US-039 blank, and why this function is where it matters.** This is an
+    *authority gate*, not a queue predicate: ``self_review_repo._to_view`` sets
     ``evidence_required = not is_marking_low_confidence(qr)``, and
     ``core.self_review.decide_point`` tests ``low_confidence`` **above**
     ``has_evidence`` — so on a question this returns ``True`` for, evidence is
-    never read and the lenient judge is never called; the student's self-mark
+    never read, the lenient judge is never called, and the student's self-mark
     is granted outright.
 
-    A genuine blank (``_build_blank_corrected``: ``marker_source="missing"``,
-    ``confidence_score=0.0``, ``needs_teacher_review=False``,
-    ``_BLANK_ANSWER_REVIEW_REASON``) would satisfy the bare
-    ``confidence_score < REVIEW_CONFIDENCE_THRESHOLD`` disjunct, so before the
-    US-039 exemption reached here a student could self-award every mark on a
-    question they left empty, with no evidence and no judge. Measured on the
-    merged tree: 0 of 4 to 4 of 4. ``derive_point_rows`` builds the ledger
-    from the mark scheme whether or not a marker ran, and
-    ``points_are_settleable`` does not withhold a blank, so the panel really
-    is offered — the exemption is what makes the claim face the judge.
+    A genuine blank has ``confidence_score == 0.0``, which satisfies the bare
+    ``< REVIEW_CONFIDENCE_THRESHOLD`` disjunct, so before the US-039 exemption
+    reached here a student could self-award every mark on a question they left
+    empty, with no evidence and no judge. Measured on the merged tree: 0 of 4 to
+    4 of 4. ``derive_point_rows`` builds the ledger from the mark scheme whether
+    or not a marker ran and ``points_are_settleable`` does not withhold a blank,
+    so the panel really is offered — the exemption is what makes the claim face
+    the judge. Since task #36 that exemption is ``marker_source == "blank"``
+    (migration ``0040_marker_source_blank``) rather than a substring search over
+    ``review_reason``.
 
-    Absence of a marker is not marker-doubt; ``review_queue_rules`` holds the
-    single statement of that, and this delegates rather than restating it.
-    ``marker_source`` is passed as ``.value`` because the persisted column is
-    a :class:`~lemely.db.models.enums.MarkerSource` member while the predicate
+    ``marker_source`` is passed as ``.value`` because the persisted column is a
+    :class:`~lemely.db.models.enums.MarkerSource` member while the predicate
     compares against the ``CorrectedQuestion`` spelling.
     """
     return low_confidence_review_needed(
@@ -507,7 +557,7 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
         review_reason=qr.review_reason,
         needs_teacher_review=qr.needs_teacher_review,
         confidence_score=qr.confidence_score,
-        plagiarism_flagged=qr.plagiarism_flagged,
+        plagiarism_flagged=_integrity_flagged(qr),
     )
 
 
@@ -536,7 +586,10 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         # The matched mark-scheme point ids ARE the method-mark breakdown.
         matched_point_ids=list(cq.matched_point_ids),
         extraction_confidence=cq.extraction_confidence,
-        plagiarism_flagged=cq.plagiarism_flagged,
+        # `cq.plagiarism_flagged` is deliberately NOT copied: there is no such
+        # column any more (`0040_marker_source_blank`). `review_reasons_for`
+        # persists the flag as a `ReviewReason.plagiarism_flag` queue row
+        # instead, which `_integrity_flagged` reads back.
         rationale=cq.rationale,
     )
 

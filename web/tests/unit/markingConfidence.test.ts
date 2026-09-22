@@ -73,6 +73,13 @@ describe("confidenceTierFor", () => {
     expect(
       confidenceTierFor({ confidence: 0, needsTeacherReview: false, markerSource: "dropped" }),
     ).toBe("not-marked")
+    // Task #36: the value a real blank actually carries now
+    // (`_build_blank_corrected`, migration `0040_marker_source_blank`). The
+    // guard reads `markerScored`, so this arrives covered rather than needing
+    // a tenth site to be found and edited.
+    expect(
+      confidenceTierFor({ confidence: 0, needsTeacherReview: false, markerSource: "blank" }),
+    ).toBe("not-marked")
   })
 
   it("US-039 finding G: markerSource alone does not trigger not-marked", () => {

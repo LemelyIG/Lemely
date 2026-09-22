@@ -43,6 +43,7 @@ from lemely.core.schemas import (
 )
 from lemely.db.attempt_repo import (
     AttemptRepository,
+    _integrity_flagged,
     fill_correction_topics,
     is_marking_low_confidence,
 )
@@ -56,9 +57,21 @@ from lemely.db.models.attempts import (
     QuestionResultRevision,
     WeaknessRecord,
 )
-from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, RevisionSource, Role
+from lemely.db.models.enums import (
+    BoundarySource,
+    MarkerSource,
+    ReviewReason,
+    ReviewStatus,
+    RevisionSource,
+    Role,
+)
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.review_queue_rules import low_confidence_review_needed
+from lemely.io.correction_ai import (
+    _BLANK_ANSWER_REVIEW_REASON,
+    _DROPPED_ANSWER_REVIEW_REASON,
+)
 from lemely.runtime.config import DatabaseSettings
 from tests.conftest import _scheme
 
@@ -307,11 +320,16 @@ def test_review_queue_exempts_the_us039_unflagged_blank(
     queue items a teacher dismisses on sight -- exactly the scenario the
     ruling rejected.
 
-    The exemption is narrow: it must key off BOTH ``marker_source=="missing"``
-    AND the blank reason, not off ``confidence_score`` or ``marker_source``
-    alone -- see ``test_review_queue_still_queues_genuine_missing_and_dropped``
-    for the two look-alike builders (real ``needs_teacher_review=True`` blanks)
-    that must keep queuing unaffected by this exemption.
+    The exemption is narrow: since task #36 it keys off
+    ``marker_source == "blank"`` and nothing else -- see
+    ``test_review_queue_still_queues_genuine_missing_and_dropped`` for the two
+    look-alike builders that must keep queuing unaffected by it. The blank
+    ``review_reason`` is still set on the fixture because the real builder sets
+    it, but it is deliberately no longer what the exemption reads: that
+    ``" | "``-split substring search over prose is the thing task #36 removed,
+    and this test would go green either way, so the narrowness proof lives in
+    the sibling test below and in
+    ``test_a_missing_row_carrying_the_blank_prose_is_not_exempt``.
     """
     from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 
@@ -328,7 +346,7 @@ def test_review_queue_exempts_the_us039_unflagged_blank(
         expected_answer=None,
         topic="Waves",
         review_reason=_BLANK_ANSWER_REVIEW_REASON,
-        marker_source="missing",
+        marker_source="blank",
         matched_point_ids=[],
     )
     report.correction.questions.append(blank)
@@ -356,17 +374,15 @@ def test_review_queue_still_queues_genuine_missing_and_dropped(
     UNLIKE the real builders, which always set it True -- so that each
     question here reaches the queue via ONLY the confidence-score disjunct
     (``low_confidence_flagged``), never via ``marking_flagged``. That isolates
-    the exemption's own gate: with both fixtures also true-blank look-alikes
-    (``marker_source == "missing"``/``"dropped"``, ``confidence_score == 0.0``,
-    the real review_reason literal from their builder), the only thing that
+    the exemption's own gate: both fixtures are blank look-alikes on every
+    field EXCEPT ``marker_source`` (``confidence_score == 0.0``, the real
+    ``review_reason`` literal from their own builder), so the only thing that
     can legitimately keep them out of the queue is the exemption keying on
-    the *exact* blank ``review_reason``, not on ``marker_source`` or
-    ``confidence_score`` alone. Before this rewrite, both fixtures also
-    carried ``needs_teacher_review=True``, so ``marking_flagged`` queued them
-    regardless of the exemption and the test could not distinguish a narrow
-    exemption from an over-broad one collapsed to ``marker_source ==
-    "missing"`` alone (verified: with the conjunct removed, this test still
-    passed -- see the commit message for the two mutation proofs).
+    ``marker_source == "blank"``. Widen it to
+    ``not marker_scored(marker_source)`` and both disappear from the queue and
+    this fails -- which is exactly the mutation task #36's one-formulation
+    refactor makes easy to write by accident, since that predicate is now
+    sitting right there and answers a *different* question.
     """
     from lemely.io.correction_ai import _DROPPED_ANSWER_REVIEW_REASON
 
@@ -599,21 +615,18 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
 
     ``apply_integrity_checks`` (``lemely/io/integrity.py``) APPENDS to
     ``review_reason`` rather than replacing it (its own docstring: "appended
-    to (preserving any existing text)") whenever it flags a question. Before
-    this fix, the exemption in ``review_queue_rules.review_reasons_for``
-    tested ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` by full string
-    equality, so a genuine blank that also picked up an integrity flag
-    carried the blank's own reason plus the real appended plagiarism reason
-    (see :func:`_real_plagiarism_review_reason`) -- not equal to the bare
-    blank reason -- which defeated the exemption. The row came back labelled
-    ``low_confidence`` (0.0 confidence, "unsure marker") stacked on top of
-    its own ``plagiarism_flag`` row, even though no marker ever ran to be
-    unsure. ``review_reasons_for`` now checks membership of the blank's
-    exact reason among the ``" | "``-split segments instead of whole-field
-    equality, so an appended integrity reason no longer defeats it. The
-    result: a flagged blank queues for the real reason it was flagged
-    (plagiarism) and ONLY that reason -- not a fabricated low-confidence
-    signal alongside it.
+    to (preserving any existing text)") whenever it flags a question, and it
+    forces ``needs_teacher_review`` True. Both of those used to be able to
+    defeat the blank exemption, in two successive ways: first a whole-field
+    ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` equality test, then a
+    ``" | "``-split membership test that had to be gated on
+    ``plagiarism_flagged`` so a literal collision could not silence a real
+    marking reason. Task #36 removed the prose from the question entirely: the
+    exemption is ``marker_source == "blank"``, which no appended text and no
+    collision can reach. The invariant this test pins is unchanged and is what
+    matters -- a flagged blank queues for the real reason it was flagged
+    (plagiarism) and ONLY that reason, not a fabricated low-confidence signal
+    alongside it for a marker that never ran.
 
     (In today's pipeline this exact combination cannot arise via
     ``correct_paper``: ``_build_blank_corrected`` sets both
@@ -647,7 +660,7 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
         expected_answer=None,
         topic="Waves",
         review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | {_real_plagiarism_review_reason()}",
-        marker_source="missing",
+        marker_source="blank",
         plagiarism_flagged=True,
         matched_point_ids=[],
     )
@@ -1011,18 +1024,24 @@ def test_marking_detail_tables_exist_and_relate() -> None:
     columns = QuestionResult.__table__.columns
     for name in (
         "extraction_confidence",
-        "plagiarism_flagged",
         "rationale",
         "student_selfmark_marks",
         "student_selfmarked_at",
     ):
         assert name in columns, f"{name} missing from question_results"
 
-    # F4 removed the AI-detection feature; `0039_merge_heads` drops the column
-    # develop's sibling `0037_question_result_pts` added for it, and nothing
-    # maps it. Asserted rather than merely absent above, so a re-add has to be
-    # deliberate.
+    # Both integrity flags are gone, for different reasons, and both are
+    # asserted absent rather than merely omitted above so a re-add has to be
+    # deliberate. F4 removed the AI-detection feature and `0039_merge_heads`
+    # drops the column develop's sibling `0037_question_result_pts` added for
+    # it. `plagiarism_flagged` went with `0040_marker_source_blank` (task #36
+    # ruling 2): the signal is dead end to end, and the one reader that needs
+    # the fact -- `attempt_repo.is_marking_low_confidence`, an authority gate
+    # -- reads the `ReviewReason.plagiarism_flag` queue row
+    # `review_reasons_for` opens, which is where the flag was already being
+    # persisted.
     assert "ai_detection_flagged" not in columns
+    assert "plagiarism_flagged" not in columns
 
     assert "points" in QuestionResult.__mapper__.relationships
     assert "revisions" in QuestionResult.__mapper__.relationships
@@ -1194,8 +1213,23 @@ def test_persist_carries_the_previously_dropped_fields(
     result = _only_result(pg_sessionmaker, attempt_id)
 
     assert result.extraction_confidence == 0.82
-    assert result.plagiarism_flagged is True
     assert result.rationale == "Method correct, rounding wrong."
+    # `plagiarism_flagged` is NOT carried onto the row -- there is no such
+    # column since `0040_marker_source_blank`. It is still carried, as the
+    # `plagiarism_flag` queue row `review_reasons_for` opens from the same
+    # `CorrectedQuestion` field, which is the persisted form
+    # `is_marking_low_confidence` reads. Asserted here rather than only in the
+    # authority tests below, because this is the test that would otherwise go
+    # green on the flag being dropped on the floor entirely.
+    assert not hasattr(result, "plagiarism_flagged")
+    with pg_sessionmaker() as session:
+        reasons = {
+            item.reason
+            for item in session.scalars(
+                select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+            ).all()
+        }
+    assert ReviewReason.plagiarism_flag in reasons
 
 
 def test_awarded_marks_is_untouched_by_the_point_ledger(
@@ -1389,50 +1423,58 @@ def test_persist_savepoint_isolates_a_ledger_row_postgres_rejects(
 
 
 # ── The one definition of "low confidence" (self-review spec, Authority) ──────
+#
+# Two layers, deliberately, because the gate has two inputs with different
+# lifetimes. The RULE is a pure function over five fields and is tested as one
+# (no database). The WIRING -- that the gate feeds the rule a truthful
+# integrity flag read back out of the `review_queue` rows, now that
+# `question_results.plagiarism_flagged` is gone (`0040_marker_source_blank`,
+# task #36 ruling 2) -- needs a real persisted row, and gets one below.
+#
+# The rule half used to be written against `is_marking_low_confidence` with a
+# hand-built transient `QuestionResult`. It cannot be any more: an
+# integrity-flagged row is no longer expressible as a field on that object, and
+# faking one would be testing the gate against an input no producer can emit,
+# which is the error `probes/README.md` exists about.
 
 
-def _qr_for_authority(
+def _rule(
     *,
     confidence_score: float,
     needs_review: bool,
     plagiarism: bool = False,
     review_reason: str | None = None,
     marker_source: MarkerSource = MarkerSource.ai,
-) -> QuestionResult:
-    """A persisted row for the authority tests below.
+) -> bool:
+    """Evaluate the shared rule directly, over the five fields it reads.
 
     ``review_reason`` and ``marker_source`` are parameters, not constants, and
-    that is a merge fix rather than a tidy-up. This fixture used to hardcode
-    ``marker_source=MarkerSource.ai`` with no ``review_reason`` at all, which
-    made every row here an AI mark with an empty reason — so the two fields the
-    US-039 exemption reads could not vary, and no combination of these tests
-    could reach the blank that granted evidence-free self-mark authority. The
-    producer-level enumeration that closes that class for good lives in
-    ``tests/test_self_review_authority_builders.py``; these stay as the
-    field-level table.
+    that is a merge fix rather than a tidy-up. The fixture this replaced
+    hardcoded ``marker_source=MarkerSource.ai`` with no ``review_reason`` at
+    all, so the fields the US-039 exemption reads could not vary and no
+    combination of these tests could reach the blank that granted evidence-free
+    self-mark authority. The producer-level enumeration that closes that class
+    for good lives in ``tests/test_self_review_authority_builders.py``; these
+    stay as the field-level table.
 
     ``ai_detection`` is gone with the detector (F4).
     """
-    return QuestionResult(
-        question_id="1a",
-        awarded_marks=1,
-        maximum_marks=3,
-        confidence_band=DBConfidenceBand.low if needs_review else DBConfidenceBand.high,
-        confidence_score=confidence_score,
-        needs_teacher_review=needs_review,
-        marker_source=marker_source,
+    return low_confidence_review_needed(
+        marker_source=marker_source.value,
         review_reason=review_reason,
+        needs_teacher_review=needs_review,
+        confidence_score=confidence_score,
         plagiarism_flagged=plagiarism,
     )
 
 
 def test_low_confidence_score_is_low_confidence() -> None:
-    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.55, needs_review=True))
+    assert _rule(confidence_score=0.55, needs_review=True)
 
 
 def test_structural_review_flag_without_integrity_flags_is_low_confidence() -> None:
     # The D2.4 out-of-range / value-mismatch signal: high score, review forced.
-    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.99, needs_review=True))
+    assert _rule(confidence_score=0.99, needs_review=True)
 
 
 def test_integrity_only_flag_is_not_low_confidence() -> None:
@@ -1452,13 +1494,11 @@ def test_integrity_only_flag_is_not_low_confidence() -> None:
     scheme (finding A). The merged predicate reads the reason instead, so this
     test now has to describe a genuinely reason-free row to make its point.
     """
-    assert not is_marking_low_confidence(
-        _qr_for_authority(
-            confidence_score=0.99,
-            needs_review=True,
-            plagiarism=True,
-            review_reason="plagiarism (score 0.94)",
-        )
+    assert not _rule(
+        confidence_score=0.99,
+        needs_review=True,
+        plagiarism=True,
+        review_reason="plagiarism (score 0.94)",
     )
 
 
@@ -1471,13 +1511,11 @@ def test_a_structural_reason_survives_an_integrity_flag_landing_on_top() -> None
     must still open a ``low_confidence`` row (and still grant self-mark
     authority, since the marker's own verdict is the thing in doubt).
     """
-    assert is_marking_low_confidence(
-        _qr_for_authority(
-            confidence_score=0.99,
-            needs_review=True,
-            plagiarism=True,
-            review_reason="out of range | plagiarism (score 0.94)",
-        )
+    assert _rule(
+        confidence_score=0.99,
+        needs_review=True,
+        plagiarism=True,
+        review_reason="out of range | plagiarism (score 0.94)",
     )
 
 
@@ -1487,44 +1525,183 @@ def test_an_unflagged_blank_is_not_low_confidence() -> None:
     ``confidence_score=0.0`` satisfies the bare
     ``< REVIEW_CONFIDENCE_THRESHOLD`` disjunct, so this row is exactly the one
     that let a student self-award every mark on a blank with no evidence and no
-    judge. The exemption keys on ``marker_source == "missing"`` AND the blank's
-    own literal being one of the ``" | "`` segments of ``review_reason`` —
-    never on the score or the marker source alone.
+    judge. Since task #36 the exemption keys on ``marker_source ==
+    MarkerSource.blank`` and nothing else.
     """
-    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
-
-    assert not is_marking_low_confidence(
-        _qr_for_authority(
-            confidence_score=0.0,
-            needs_review=False,
-            review_reason=_BLANK_ANSWER_REVIEW_REASON,
-            marker_source=MarkerSource.missing,
-        )
+    assert not _rule(
+        confidence_score=0.0,
+        needs_review=False,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source=MarkerSource.blank,
     )
-    # A "missing" row the builder itself flagged (--mcq-only, no client) is NOT
-    # the US-039 blank and still counts: same marker_source, different reason.
-    assert is_marking_low_confidence(
-        _qr_for_authority(
-            confidence_score=0.0,
-            needs_review=True,
-            review_reason="no marker available for this question",
-            marker_source=MarkerSource.missing,
-        )
+
+
+def test_a_missing_row_carrying_the_blank_prose_is_not_exempt() -> None:
+    """The removal of the prose test, pinned from the side that would reintroduce it.
+
+    Same ``review_reason`` as the blank above, same score, same absent marker —
+    but ``marker_source`` is ``missing``, so this is a ``--mcq-only``/no-client
+    question, not a student blank, and it must still carry authority. Under the
+    ``" | "``-split substring search this replaced, a ``missing`` row whose
+    prose collided with the blank literal was silenced; the gate is on the
+    column now, so nothing a builder writes into ``review_reason`` can reach
+    the exemption.
+    """
+    assert _rule(
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source=MarkerSource.missing,
+    )
+    # And the real `--mcq-only` reason, which is what actually ships there.
+    assert _rule(
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason="non-MCQ question not marked (--mcq-only or no AI client)",
+        marker_source=MarkerSource.missing,
+    )
+
+
+def test_a_blank_flagged_by_something_that_opens_no_row_still_queues() -> None:
+    """The conjunct on the blank's ``needs_teacher_review`` exemption, from the
+    direction that would remove it.
+
+    ``_build_blank_corrected`` sets ``needs_teacher_review=False``, and today the
+    only stage that can flip it True on a blank is ``apply_integrity_checks`` —
+    which sets it inside the same ``if updates:`` that just set
+    ``plagiarism_flagged``, and which therefore already opens its own
+    ``plagiarism_flag`` row. So this row is NOT producible today, and the
+    exemption could be simplified to ``unscored_blank`` alone with no observable
+    change. That simplification is the wrong direction, which is why this test
+    exists rather than the simplification.
+
+    A later stage that flags a blank WITHOUT opening a row of its own (a
+    false-blank detector — US-042's accepted residual is exactly this shape)
+    would, under the simplified predicate, produce a flagged question with NO
+    queue row at all. Suppressing a signal is worse than the duplicate row the
+    exemption exists to prevent, and the duplicate is not even possible here:
+    with ``plagiarism_flagged`` False there is no second row to duplicate.
+    """
+    assert _rule(
+        confidence_score=0.0,
+        needs_review=True,
+        plagiarism=False,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source=MarkerSource.blank,
+    )
+    # The producible counterpart, unchanged: integrity forced the flag and owns
+    # its own row, so `low_confidence` stays suppressed.
+    assert not _rule(
+        confidence_score=0.0,
+        needs_review=True,
+        plagiarism=True,
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | plagiarism (score 0.94)",
+        marker_source=MarkerSource.blank,
+    )
+
+
+def test_a_dropped_row_is_not_exempt_even_though_no_marker_scored_it() -> None:
+    """``marker_scored`` is a DIFFERENT question from "is this a student blank".
+
+    Both ``dropped`` and ``blank`` are unscored, so the one-formulation refactor
+    puts a predicate answering "was this scored?" within easy reach of this
+    exemption — and substituting it here would silence a dropped answer, which
+    the model DID respond to and whose mark is therefore genuinely in doubt.
+    """
+    assert _rule(
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason=_DROPPED_ANSWER_REVIEW_REASON,
+        marker_source=MarkerSource.dropped,
     )
 
 
 def test_low_score_with_integrity_flag_is_still_low_confidence() -> None:
     # The score is a marking-side signal in its own right; an integrity flag
     # on top does not launder it away.
-    assert is_marking_low_confidence(
-        _qr_for_authority(confidence_score=0.55, needs_review=True, plagiarism=True)
-    )
+    assert _rule(confidence_score=0.55, needs_review=True, plagiarism=True)
 
 
 def test_confident_unflagged_question_is_not_low_confidence() -> None:
-    assert not is_marking_low_confidence(
-        _qr_for_authority(confidence_score=0.95, needs_review=False)
+    assert not _rule(confidence_score=0.95, needs_review=False)
+
+
+def test_integrity_flag_reaches_the_authority_gate(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The wiring half: the gate must read the integrity fact off the queue row.
+
+    This is the test the "just drop the integrity term" option fails, and it is
+    a security property, not a tidiness one. The row below is what real
+    ``correct_paper`` -> real ``apply_integrity_checks`` produces on a
+    malformed scheme (a non-MCQ question's id shadowing an MCQ leaf's, defeating
+    the MCQ exemption's first-match DFS in ``get_question_by_id``):
+    ``marker_source="deterministic"``, ``confidence_score=1.0``,
+    ``needs_teacher_review=True`` forced by integrity, and the plagiarism
+    segment ALONE on ``review_reason``. Measured, not assumed — that
+    combination is producible, so the term cannot be dropped as unreachable.
+
+    With the flag reaching the rule, the gate says False and
+    ``self_review_repo._to_view`` sets ``evidence_required=True``. Feed it
+    ``False`` instead — which is all a gate with no access to the flag can do —
+    and it says True, and a student self-marks an integrity-flagged question
+    with no evidence and without the lenient judge, because ``decide_point``
+    tests ``low_confidence`` above ``has_evidence``.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=user_id, report=_report_with_integrity_flags()
     )
+
+    with pg_sessionmaker() as session:
+        qr = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).one()
+        # The flag survived the column's removal, as a queue row.
+        assert _integrity_flagged(qr) is True
+        # So the gate withholds authority, and evidence is required.
+        assert is_marking_low_confidence(qr) is False
+
+        # The inversion: a gate that could not see the flag would grant it.
+        assert (
+            low_confidence_review_needed(
+                marker_source=qr.marker_source.value,
+                review_reason=qr.review_reason,
+                needs_teacher_review=qr.needs_teacher_review,
+                confidence_score=qr.confidence_score,
+                plagiarism_flagged=False,
+            )
+            is True
+        )
+
+
+def test_the_integrity_flag_is_not_read_off_the_queue_status(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A teacher dismissing the row does not change what the marker found.
+
+    ``_integrity_flagged`` is deliberately unfiltered by ``ReviewStatus``: the
+    gate asks a historical question. Filtering on ``open`` would hand a student
+    evidence-free authority over an integrity-flagged question the moment a
+    teacher closed the row.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=user_id, report=_report_with_integrity_flags()
+    )
+
+    with pg_sessionmaker() as session, session.begin():
+        for item in session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+        ).all():
+            item.status = ReviewStatus.dismissed
+
+    with pg_sessionmaker() as session:
+        qr = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).one()
+        assert _integrity_flagged(qr) is True
+        assert is_marking_low_confidence(qr) is False
 
 
 def test_question_result_ids_maps_question_id_to_row_id(

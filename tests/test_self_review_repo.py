@@ -42,6 +42,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    MarkerSourceValue,
 )
 from lemely.core.self_review import JudgeRequest, JudgeVerdict
 from lemely.db.attempt_repo import AttemptRepository
@@ -168,7 +169,7 @@ def _question(
     confidence_score: float = 0.95,
     needs_review: bool = False,
     plagiarism_flagged: bool = False,
-    marker_source: str = "ai",
+    marker_source: MarkerSourceValue = "ai",
     review_reason: str | None = None,
 ) -> CorrectedQuestion:
     """One marked question for the self-review fixtures.
@@ -780,7 +781,7 @@ def test_a_us039_blank_requires_evidence_and_faces_the_judge(
         maximum=2,
         confidence_score=0.0,
         needs_review=False,
-        marker_source="missing",
+        marker_source="blank",
         review_reason=_BLANK_ANSWER_REVIEW_REASON,
     )
     attempt_id = _seed_attempt(pg_sessionmaker, student, [blank, _low()])

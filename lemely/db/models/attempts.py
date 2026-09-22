@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime
+from typing import TYPE_CHECKING
 
 import sqlalchemy as sa
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -21,6 +22,13 @@ from lemely.db.models.enums import (
     TimestampMixin,
     UploadStatus,
 )
+
+if TYPE_CHECKING:
+    # Type-check only: `ops` maps `ReviewQueueItem.question_result` back onto
+    # this module's `QuestionResult`, so a runtime import here would be a cycle.
+    # SQLAlchemy resolves the relationship from its own class registry (the
+    # `"ReviewQueueItem"` string below), not from this name.
+    from lemely.db.models.ops import ReviewQueueItem
 
 
 class Upload(TimestampMixin, Base):
@@ -230,27 +238,6 @@ class QuestionResult(TimestampMixin, Base):
     Computed by the pipeline (``CorrectedQuestion.extraction_confidence``) and,
     before spec 2026-09-17, discarded at persist time.
     """
-    plagiarism_flagged: Mapped[bool] = mapped_column(
-        sa.Boolean, nullable=False, server_default=sa.text("false")
-    )
-    """The integrity flag, persisted rather than only fanned out to the review queue.
-
-    Teacher-only on every surface (QUALITY-BAR.md): it must never be rendered
-    on a student-facing screen, where it would read as an accusation. It is,
-    however, present in the ``/api/student/correct`` complete frame
-    (``lemely/web/schemas.py``) and typed on the frontend
-    (``web/src/lib/studentTypes.ts``) — the UI simply does not render it, and
-    ``question_to_dto``/``student_safe_review_reason`` force it off and strip
-    the matching ``review_reason`` segment for student call sites.
-
-    ``ai_detection_flagged`` was its twin until F4
-    (``0037_remove_ai_detection``) deleted the detector: no measured
-    false-positive rate, and JCQ guidance is that such a detector must never
-    be sole evidence. ``0037_question_result_pts`` — develop's sibling
-    revision, written before that removal landed — still adds the column, so
-    ``0039_merge_heads`` drops it; there is no mapped attribute for it here
-    and nothing writes it.
-    """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
     student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     student_selfmarked_at: Mapped[datetime | None] = mapped_column(
@@ -259,9 +246,31 @@ class QuestionResult(TimestampMixin, Base):
     """Written by the student self-review spec. Created here per its D5."""
 
     attempt: Mapped[Attempt] = relationship("Attempt", back_populates="question_results")
-    review_queue_items: Mapped[list] = relationship(  # type: ignore[type-arg]
+    review_queue_items: Mapped[list[ReviewQueueItem]] = relationship(
         "ReviewQueueItem", back_populates="question_result"
     )
+    """The queue rows this question earned, and the ONLY persisted record of its
+    integrity findings.
+
+    The annotation was a bare ``Mapped[list]`` until task #36 made this the
+    first reader. SQLAlchemy cannot see a collection in ``list`` with no
+    element type, so it configured the relationship ``uselist=False`` — a
+    ONETOMANY mapped as a scalar, returning ``None`` on a transient instance
+    and a single row on a loaded one. Nothing read it, so nothing failed; the
+    element type makes it the collection it was always declared to be.
+
+    There is deliberately no ``plagiarism_flagged`` column (nor its
+    ``ai_detection_flagged`` twin). ``0037_question_result_pts`` — develop's
+    revision, written before F4 deleted the detector — added both;
+    ``0039_merge_heads`` dropped the detector's and
+    ``0040_marker_source_blank`` dropped this one, per the task #36 ruling: the
+    plagiarism signal is dead end to end and a new persisted column on a signal
+    nothing produces is the wrong direction. ``review_reasons_for`` opens a
+    ``ReviewReason.plagiarism_flag`` row here from
+    ``CorrectedQuestion.plagiarism_flagged`` (which still exists, in memory, in
+    core), so the row IS the flag —
+    ``attempt_repo._integrity_flagged`` is the one reader.
+    """
     points: Mapped[list[QuestionResultPoint]] = relationship(
         "QuestionResultPoint",
         back_populates="question_result",

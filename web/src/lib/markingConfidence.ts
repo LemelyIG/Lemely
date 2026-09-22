@@ -23,16 +23,51 @@ import type { ConfidenceTier } from "@/components/ui/confidence-indicator"
  *
  * The constant is duplicated here rather than imported because it lives in
  * Python and there is no shared schema artefact between the two languages.
- * `tests/test_design_tokens.py` pins it against the Python definition, so the
- * two cannot drift silently — the same technique that file already uses to pin
- * CSS tokens against DESIGN.md.
+ * `tests/test_web_shared_constants.py` pins it against the Python definition, so
+ * the two cannot drift silently — the same technique `tests/test_design_tokens.py`
+ * already uses to pin CSS tokens against DESIGN.md. (This comment and the one on
+ * the constant below named `test_design_tokens.py` itself until task #36; that
+ * file contains no reference to this one, and the pin has always lived in
+ * `test_web_shared_constants.py`.)
  */
 
 /**
  * Mirror of `lemely.core.schemas.REVIEW_CONFIDENCE_THRESHOLD`. Below this, the
- * backend asks a human to look. Pinned by `tests/test_design_tokens.py`.
+ * backend asks a human to look. Pinned by `tests/test_web_shared_constants.py`.
  */
 export const REVIEW_CONFIDENCE_THRESHOLD = 0.9
+
+/**
+ * Mirror of `lemely.core.schemas.UNSCORED_MARKER_SOURCES`. Pinned against the
+ * Python set by `tests/test_web_shared_constants.py`, the same file that pins
+ * `REVIEW_CONFIDENCE_THRESHOLD` above.
+ */
+export const UNSCORED_MARKER_SOURCES: ReadonlySet<string> = new Set([
+  "missing",
+  "dropped",
+  "blank",
+])
+
+/**
+ * Did a marker (deterministic or AI) actually form an opinion about this
+ * question? The single frontend formulation — mirror of
+ * `lemely.core.schemas.marker_scored`.
+ *
+ * `undefined` reads as scored. Several callers have no marker source on the
+ * wire at all (`ReviewQueueItemDTO`, a live `/student/correct` frame), and
+ * before this function existed each of them spelled the check out itself:
+ * `markerSource === "missing" || markerSource === "dropped"`, in two places,
+ * which is how `"blank"` would have been missed in both. Treating an absent
+ * value as scored preserves exactly what those spellings did.
+ *
+ * A `false` question's `confidence` is a placeholder, not a signal: it must
+ * not reach a confidence tier, a tone, or a summary count as if a marker had
+ * produced it.
+ */
+export function markerScored(markerSource?: string | null): boolean {
+  if (markerSource == null) return true
+  return !UNSCORED_MARKER_SOURCES.has(markerSource)
+}
 
 /** The subset of a corrected question this bucketing reads. */
 export interface ConfidenceInput {
@@ -56,10 +91,9 @@ export interface ConfidenceInput {
   needsTeacherReview?: boolean
   /**
    * The backend's own per-question marking method (mirrors
-   * `QuestionResultDTO.markerSource` — `"deterministic" | "ai" | "missing" |
-   * "dropped"`). Only `"missing"`/`"dropped"` matter here: they are the two
-   * values that mean no marker (human or AI) ever produced an opinion about
-   * this question (US-038's `MarkerSource` enum). Optional because several
+   * `QuestionResultDTO.markerSource`). Read through `markerScored` above:
+   * `"missing"`, `"dropped"` and `"blank"` all mean no marker (human or AI)
+   * ever produced an opinion about this question. Optional because several
    * callers (`Review.tsx`'s queue-list row, `ReviewQueueItemDTO`) have no
    * marker source on the wire at all — `undefined` behaves exactly as before
    * this field existed.
@@ -142,10 +176,7 @@ export function confidenceTierFor(q: ConfidenceInput): ConfidenceTier {
   // FIRST — see the guard-order note above. `pendingTeacher === false` is true
   // for a question no marker read, so the guard below would claim "confident"
   // for it.
-  if (
-    q.needsTeacherReview === false &&
-    (q.markerSource === "missing" || q.markerSource === "dropped")
-  ) {
+  if (q.needsTeacherReview === false && !markerScored(q.markerSource)) {
     return "not-marked"
   }
   if (q.pendingTeacher === false) return "confident"

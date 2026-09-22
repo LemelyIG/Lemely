@@ -10,8 +10,17 @@ export type PortalId = "teacher" | "student"
  *
  * "dropped" (US-038, migration `0038_marker_source_dropped`): the model
  * returned an answer for this question, but extraction discarded it as
- * malformed. Distinct from "missing" — nothing was ever attempted. */
-export type MarkerSource = "deterministic" | "ai" | "missing" | "dropped"
+ * malformed. Distinct from "missing" — nothing was ever attempted.
+ *
+ * "blank" (task #36, migration `0040_marker_source_blank`): the student left
+ * the question empty and no marking call was made — US-039's unflagged zero.
+ * It shared "missing" until then, which made a question nobody read
+ * indistinguishable from one the AI was never asked about.
+ *
+ * "missing", "dropped" and "blank" all mean no marker formed an opinion. Ask
+ * that through `markerScored` (`markingConfidence.ts`), never by re-spelling
+ * the membership test. */
+export type MarkerSource = "deterministic" | "ai" | "missing" | "dropped" | "blank"
 
 /*
  * The vocabulary is data now, served per subject and tier by

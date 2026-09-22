@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from enum import StrEnum
 from pathlib import Path
-from typing import Literal
+from typing import Final, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator, model_validator
 
@@ -66,6 +66,67 @@ def confidence_band_for_score(score: float) -> ConfidenceBand:
 # D2.2 for the step-function evidence and the mandatory revisit once 0580/0606
 # golden fixtures exist.
 REVIEW_CONFIDENCE_THRESHOLD = 0.90
+
+
+#: The ONE statement of "no marker ever formed an opinion about this question",
+#: as a set of ``CorrectedQuestion.marker_source`` values. Read it through
+#: :func:`marker_scored`, never by re-spelling the membership test.
+#:
+#: Before this existed the same question was asked eight different ways across
+#: the tree, three of them genuinely different -- ``not in ("missing",
+#: "dropped")`` in five places, ``!= "missing"`` in one (which counted a
+#: dropped answer as marked), and a ``review_reason`` substring match for the
+#: US-039 blank in a ninth. That happened because US-039 made a blank an
+#: UNFLAGGED zero without giving it a value of its own: ``confidence_score =
+#: 0.0`` stopped meaning "the marker looked and was unsure" and started also
+#: meaning "nothing looked", with no change to its representation, so every
+#: consumer that read it the old way silently changed behaviour on unchanged
+#: input. Nine consumers had to be found by hand, in three waves; the last was
+#: a grading-AUTHORITY gate (``attempt_repo.is_marking_low_confidence``).
+#:
+#: ``"blank"`` is the member that closes it (migration
+#: ``0040_marker_source_blank``, following US-038's ``0038_marker_source_dropped``
+#: precedent): a genuine student blank is now a value, so the blank exemption is
+#: a column comparison instead of prose parsing, and widening the set is the one
+#: edit a tenth consumer needs.
+UNSCORED_MARKER_SOURCES: Final[frozenset[str]] = frozenset({"missing", "dropped", "blank"})
+
+#: The full ``marker_source`` vocabulary, as a named type.
+#:
+#: Named so a caller can annotate against it instead of writing ``str``. That is
+#: not cosmetic: the pydantic mypy plugin checks a ``BaseModel(...)`` call's
+#: keyword arity but NOT each value against its field's declared type, so mypy
+#: silently accepts ``str`` where this ``Literal`` is declared and only pyright
+#: catches it. A helper that types its parameter ``str`` and forwards it into
+#: :class:`CorrectedQuestion` is therefore an unchecked hole, and a test helper
+#: is where one hides longest.
+#:
+#: :data:`UNSCORED_MARKER_SOURCES` is the subset of these values meaning "no
+#: marker formed an opinion" — see :func:`marker_scored`. The two are kept
+#: adjacent deliberately: widening one without the other is the mistake.
+MarkerSourceValue = Literal["deterministic", "ai", "missing", "dropped", "blank"]
+
+
+def marker_scored(marker_source: str) -> bool:
+    """Did a marker (deterministic or AI) actually form an opinion about this question?
+
+    The single formulation. ``False`` for every ``marker_source`` in
+    :data:`UNSCORED_MARKER_SOURCES`: nothing was attempted (``"missing"``), the
+    model answered and extraction discarded it (``"dropped"``), or the student
+    left the question empty and no call was made (``"blank"``).
+
+    A ``False`` question's ``confidence_score`` and ``confidence`` band are
+    placeholders, not signals -- they must not enter a confidence minimum, a
+    calibration bucket, a "needs a human look" count, or a student-facing
+    confidence tier. The frontend mirror is ``markerScored`` in
+    ``web/src/lib/markingConfidence.ts``, pinned against this set by
+    ``tests/test_web_shared_constants.py``.
+
+    Takes the raw string rather than a record so the one function serves both
+    spellings: the ``Literal`` on :class:`CorrectedQuestion` and
+    ``lemely.db.models.enums.MarkerSource``'s ``.value``.
+    """
+    return marker_source not in UNSCORED_MARKER_SOURCES
 
 
 class ExamMetadata(StrictModel):
@@ -209,8 +270,19 @@ class CorrectedQuestion(StrictModel):
     expected_answer: str | None = None
     topic: str | None = None
     review_reason: str | None = None
-    marker_source: Literal["deterministic", "ai", "missing", "dropped"] = "deterministic"
-    """``"dropped"`` (US-031 review MUST-FIX 7): the model DID return an
+    marker_source: MarkerSourceValue = "deterministic"
+    """``"blank"`` (task #36, migration ``0040_marker_source_blank``): the
+    student left this non-MCQ question EMPTY and no marking call was made --
+    US-039's unflagged zero (``_build_blank_corrected``). It used to reuse
+    ``"missing"`` and carry the distinction in ``review_reason`` prose, which
+    made "did a marker score this?" un-answerable from the columns alone and
+    cost nine hand-found consumers; see :data:`UNSCORED_MARKER_SOURCES`. Ask
+    that question through :func:`marker_scored`, and ask "was this a student
+    blank?" with ``marker_source == "blank"`` -- never off ``confidence_score``,
+    ``confidence`` or ``review_reason``, all three of which a blank shares with
+    a marker that looked and was unsure.
+
+    ``"dropped"`` (US-031 review MUST-FIX 7): the model DID return an
     answer for this question, but extraction discarded it as malformed
     (unrecoverable ``question_id``/``answer`` shape) -- see
     ``ExtractedAnswers.dropped_question_ids``. Distinct from ``"missing"``,

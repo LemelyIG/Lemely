@@ -6,7 +6,8 @@ import { markerSourceLabel } from "@/portals/student/screens/PaperResult"
  * Second independent review of the US-039 blank-exemption fix (fix-us039-2).
  *
  * `QuestionResult.markerSource` is a wire-level token
- * ("deterministic" | "ai" | "missing" | "dropped"), not student-facing copy.
+ * ("deterministic" | "ai" | "missing" | "dropped" | "blank"), not
+ * student-facing copy.
  * Before this fix, `markerSourceLabel` only translated `"dropped"`; every
  * other value — including `"missing"` — passed straight through. That was a
  * latent gap even before US-039 (a `--mcq-only` skip already produced
@@ -29,6 +30,17 @@ describe("markerSourceLabel", () => {
 
   it("keeps the existing dropped->not marked mapping (US-038)", () => {
     expect(markerSourceLabel("dropped")).toBe("not marked")
+  })
+
+  it("maps task #36's dedicated blank value, with the SAME copy", () => {
+    // `"blank"` (migration `0040_marker_source_blank`) is the genuine student
+    // blank, split out of `"missing"` so the backend can tell it from a
+    // `--mcq-only` skip. The copy deliberately does not follow: what a student
+    // should be told about each is a product decision and remains unmade, so
+    // distinguishing them here would be this change inventing it. What must not
+    // happen is the raw token reaching the chip, which is what a label written
+    // as an explicit list of values would have done.
+    expect(markerSourceLabel("blank")).toBe("not marked")
   })
 
   it("leaves deterministic/ai as the existing raw pass-through", () => {

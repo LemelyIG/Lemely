@@ -26,7 +26,10 @@ from lemely.core.schemas import (
 # it here, question_to_dto's markerSource=question.marker_source raised a
 # pydantic ValidationError for the exact class of answer this fix exists to
 # surface, turning a wrong-but-flagged mark into an unhandled 500 instead.
-MarkerSource = Literal["deterministic", "ai", "missing", "dropped"]
+# Task #36: "blank" (a question the student left empty, no marking call made)
+# is a fifth real value, migration `0040_marker_source_blank`. The frontend
+# mirror is `web/src/lib/types.ts`.
+MarkerSource = Literal["deterministic", "ai", "missing", "dropped", "blank"]
 
 
 class ApiModel(BaseModel):

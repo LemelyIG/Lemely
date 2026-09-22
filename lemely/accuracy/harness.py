@@ -340,7 +340,7 @@ class QuestionResult:
     #: opinion about this leaf. ``_build_blank_corrected`` and
     #: ``_build_missing_corrected`` short-circuit to
     #: ``confidence_score=0.0``/``needs_teacher_review=False`` for a leaf no
-    #: engine ever looked at (``marker_source in ("missing", "dropped")``) --
+    #: engine ever looked at (``not marker_scored(marker_source)``) --
     #: a genuine blank scored 0 against a truth of 0 is a real correct
     #: prediction for ``mark_accuracy``, but it is not a confidence signal:
     #: it manufactures a "correct at 0.0 confidence" datum that pollutes the
@@ -1137,7 +1137,7 @@ def measure_accuracy(
                 f"measure_accuracy(arm='extract+mark') requires every case to have "
                 f"a scan_path; missing for: {missing}"
             )
-    from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers
+    from lemely.core.schemas import ExtractedAnswer, ExtractedAnswers, marker_scored
     from lemely.io.correction_ai import correct_paper
     from lemely.io.prompts.answer_extraction import VERSION as EXT_VERSION
     from lemely.io.prompts.correction_ai import VERSION as COR_VERSION
@@ -1262,7 +1262,7 @@ def measure_accuracy(
 
             if not extracted_this_leaf:
                 # Attempted (correct_paper marked it, typically
-                # marker_source="missing") but the extractor never returned
+                # marker_source="missing"/"blank") but the extractor never returned
                 # an answer for it — stays in the denominator as unmatched,
                 # never counted as correct.
                 eval_records.append(
@@ -1294,14 +1294,13 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
-                # Finding H (US-039 consumer fixes): "missing"/"dropped" mean
-                # no engine ever formed an opinion about this leaf (a
-                # genuine blank short-circuits to marker_source="missing",
-                # per _build_blank_corrected's docstring) -- its
-                # confidence_score is a placeholder, not a signal, and must
-                # not enter the calibration curve. See QuestionResult.scored
-                # and _build_calibration.
-                scored=cq.marker_source not in ("missing", "dropped"),
+                # Finding H (US-039 consumer fixes): "missing"/"dropped"/
+                # "blank" all mean no engine ever formed an opinion about this
+                # leaf -- its confidence_score is a placeholder, not a signal,
+                # and must not enter the calibration curve. The set itself is
+                # `lemely.core.schemas.UNSCORED_MARKER_SOURCES`; see
+                # QuestionResult.scored and _build_calibration.
+                scored=marker_scored(cq.marker_source),
                 # Only real vision extraction produces a measured extraction
                 # confidence; the oracle+mark bypass injects a constant 1.0
                 # `ExtractedAnswer.confidence` purely to satisfy the schema
