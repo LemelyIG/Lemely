@@ -86,10 +86,18 @@ def _marker_source(value: str) -> MarkerSource:
     one check. This is the one place that narrowing happens — an explicit
     ``if``/``elif`` chain rather than a ``cast``/``# type: ignore``, so mypy
     proves the return really is one of the four literal values and a fifth,
-    unexpected one raises instead of silently reaching the wire. The db enum
-    and this literal are kept in lock-step by
-    ``tests/test_web_practice.py``'s wiring test; a mismatch here is a real
-    bug, not defensive noise, so it is never expected to fire in production.
+    unexpected one raises instead of silently reaching the wire.
+
+    Checked, not assumed: ``lemely.db.models.enums.MarkerSource`` (the db
+    enum ``PracticeResultQuestion.marker_source`` is sourced from, via
+    ``.value``) has exactly four members —
+    ``deterministic``/``ai``/``missing``/``dropped`` — with string values
+    identical to this literal's, and ``practice_repo.py``'s sole production
+    call site (``_result``) always passes ``qr.marker_source.value`` where
+    ``qr.marker_source: Mapped[MarkerSource]``. So today the ``ValueError``
+    branch is unreachable in production: it would only fire if a future
+    migration added a fifth db-enum member without updating this function to
+    match.
     """
     if value == "deterministic":
         return "deterministic"
