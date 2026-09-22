@@ -3450,7 +3450,7 @@ class EcfChainResolverTests(unittest.TestCase):
     """I7 (US-013) CHAIN resolver + GATE, as pure functions -- independent of
     ``correct_paper`` orchestration and any marking call. Measured on the
     full 289-scheme corpus (10,314 answer points): 820 same-leaf chains,
-    438 cross-leaf chains, 28 gated points across 10 schemes -- and their
+    438 cross-leaf chains, 26 gated points across 10 schemes -- and their
     intersection (the true I7 activation ceiling) is 0. See
     ``_resolve_ecf_chain``/``_maybe_apply_ecf_substitution``'s own
     docstrings for why same-leaf and cross-leaf chains are structurally
@@ -3587,8 +3587,10 @@ class EcfChainResolverTests(unittest.TestCase):
         ("Strict FT", "FT their median reading"), confirmed by
         re-measuring the whole corpus with the fix (29 -> 28 points,
         11 -> 10 schemes, dropping exactly this one hit and no genuine
-        one) -- so `FT` alone is matched case-sensitively; `ecf`/`dep` stay
-        case-insensitive."""
+        one) -- so `FT` alone is matched case-sensitively; `ecf` stays
+        case-insensitive (`dep` is excluded from the pattern entirely --
+        see `test_gate_does_not_fire_on_dependent_marker` -- since CAIE's
+        "Dependent" is the opposite of follow-through)."""
         from lemely.core.loose_schemas import AnswerPoint, MathMarkType
         from lemely.io.correction_ai import _ecf_gated
 
@@ -3605,7 +3607,7 @@ class EcfChainResolverTests(unittest.TestCase):
         self.assertFalse(_ecf_gated(leaf, impulse_point))
 
     def test_gate_does_not_fire_without_a_marker(self) -> None:
-        """The measured 0.27% activation rate (28 of 10,314 points): absent
+        """The measured 0.25% activation rate (26 of 10,314 points): absent
         a marker, GATE must stay closed even though the point is otherwise
         perfectly ordinary."""
         from lemely.core.loose_schemas import AnswerPoint, MathMarkType
@@ -3613,6 +3615,25 @@ class EcfChainResolverTests(unittest.TestCase):
 
         point = AnswerPoint(id="p1", point="value", marks=1, math_mark_type=MathMarkType.A)
         leaf = self._leaf("1", 1, [point])
+
+        self.assertFalse(_ecf_gated(leaf, point))
+
+    def test_gate_does_not_fire_on_dependent_marker(self) -> None:
+        """Whole-branch-review Important B: in CAIE notation `dep` means
+        "Dependent" (the mark requires a stated prerequisite mark to also
+        be awarded), the opposite of `ecf`/`FT` ("follow-through after
+        error" / "error carried forward"). I7's re-mark fires only when
+        the prerequisite was NOT awarded -- exactly when a dependent mark
+        must be withheld, not carried forward -- so `dep` must never gate
+        a point as ECF-eligible. Corpus-measured: this token alone gated
+        2 of the (former) 28 hits, both dep-only, in `0606_s22_ms_23`
+        leaf 10/p8 and 11a/p3; excluding it narrows the corpus gate
+        population to 26 points / 10 schemes."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _ecf_gated
+
+        point = AnswerPoint(id="p1", point="value", marks=1, math_mark_type=MathMarkType.A)
+        leaf = self._leaf("1", 1, [point], notes="dep on 1(a)")
 
         self.assertFalse(_ecf_gated(leaf, point))
 
@@ -3981,7 +4002,7 @@ class ECFSubstitutionTests(unittest.TestCase):
         computation's method and accuracy marks, not error carried FORWARD
         between two parts -- there is nothing to substitute. Measured on the
         full corpus, same-leaf chains (820) structurally outnumber cross-leaf
-        ones (438) -- but the gate (28 points) never co-occurs with EITHER
+        ones (438) -- but the gate (26 points) never co-occurs with EITHER
         chain shape on this corpus (measured: gate-and-chain intersection is
         0 for both), so the unfixed code would have substituted on ZERO
         corpus points, not 820. The exclusion is correct on PRINCIPLE, not

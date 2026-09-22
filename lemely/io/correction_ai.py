@@ -1291,8 +1291,8 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
     )
 
 
-#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 28 points
-#: (0.27% of 10,314) in 10 schemes carry this marker, as unstructured prose
+#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 26 points
+#: (0.25% of 10,314) in 10 schemes carry this marker, as unstructured prose
 #: on the point itself or its question's notes/marking_guidance -- e.g.
 #: "R = 4.05 / ecf, 3.89, 3.81" and "Strict FT their median reading".
 #: Deliberately NOT widened to "any A point with a resolvable M chain" --
@@ -1318,16 +1318,36 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
 #: ECF-eligible would then receive a substituted value and an award --
 #: the mis-gate and a chain must BOTH be present, and only the mis-gate
 #: was, which this fix closes regardless.
-_ECF_MARKER_RE = re.compile(r"(?i:\becf\b|\bdep\b)|\bFT\b")
+#:
+#: Post-whole-branch-review fix: ``dep`` is EXCLUDED from this pattern.
+#: In CAIE mark-scheme notation ``dep`` means "Dependent" -- the mark can
+#: only be awarded when a stated prerequisite mark is ALSO awarded --
+#: while ``FT``/``ecf`` mean "Follow-through after error" / "Error carried
+#: forward". I7's re-mark fires only when the prerequisite was NOT
+#: awarded, which is exactly the situation in which a dependent mark must
+#: be WITHHELD, not carried forward -- the old pattern gated these marks
+#: into the one behaviour CAIE says they must never get, an over-award
+#: direction. Measured: 2 of the 28 gate hits (both in
+#: `0606_s22_ms_23`, leaf 10/p8 and 11a/p3) were dep-only; dropping the
+#: token narrows the gate population to 26 points / 10 schemes (see
+#: :func:`_maybe_apply_ecf_substitution`'s activation-ceiling docstring
+#: and ``_run_ai_marking``'s ``ecf_substitution`` note, both updated to
+#: match). Inert on the committed det-parsed corpus today (the gate/chain
+#: intersection is still 0 either way), but not inert in general: Gemini
+#: -parsed schemes are unconstrained in marker vocabulary and could
+#: produce a live dep+chain co-occurrence this excludes.
+_ECF_MARKER_RE = re.compile(r"(?i:\becf\b)|\bFT\b")
 
 
 def _ecf_gated(question: Question, point: AnswerPoint) -> bool:
     """I7 GATE -- may ``point`` ever be re-marked with a substituted prior value?
 
-    True only when an ecf/ft/dep marker appears on the point's own ``point``
+    True only when an ecf/ft marker appears on the point's own ``point``
     text or ``condition``, or on its (leaf) question's ``notes`` or
-    ``marking_guidance``. See :data:`_ECF_MARKER_RE`'s docstring for the
-    measured activation ceiling and why this is not widened.
+    ``marking_guidance`` -- deliberately excluding ``dep`` (Dependent),
+    which is the opposite marking behaviour to ECF. See
+    :data:`_ECF_MARKER_RE`'s docstring for the measured activation ceiling
+    and why this is not widened.
     """
     texts = (point.point, point.condition, question.notes, question.marking_guidance)
     return any(_ECF_MARKER_RE.search(t) for t in texts if t)
@@ -1493,7 +1513,7 @@ def _maybe_apply_ecf_substitution(
     STRUCTURAL matter, against 438 cross-leaf ones. This is NOT the same
     as saying the unfixed code would have substituted on 820 points --
     substitution additionally requires the GATE, and on this corpus the
-    gate (28 points) and ANY chain, same-leaf or cross-leaf, never
+    gate (26 points) and ANY chain, same-leaf or cross-leaf, never
     co-occur (measured: gate-and-chain intersection is 0 in both
     buckets). So the unfixed code would have substituted on ZERO corpus
     points, not 820 -- the exclusion is correct on PRINCIPLE (nothing is
@@ -1534,11 +1554,11 @@ def _maybe_apply_ecf_substitution(
     THREE separate numbers rather than one -- publishing a single figure
     (this story's own earlier ``29 points, 11 schemes`` was wrong in
     exactly this way) invites reading a true zero as a regression:
-    GATE population 28 points / 10 schemes (:data:`_ECF_MARKER_RE`);
+    GATE population 26 points / 10 schemes (:data:`_ECF_MARKER_RE`);
     genuine CROSS-LEAF chain population 438; their INTERSECTION -- the
     actual number of points I7 can activate on -- **0**. The gated
     population and the M/A/B/C-typed population are disjoint on this
-    det-parsed corpus: not one of the 28 gated points has a preceding
+    det-parsed corpus: not one of the 26 gated points has a preceding
     typed point in a different leaf. I7 is therefore provably inert on the
     committed corpus BY CONSTRUCTION, not merely rare -- the feature
     targets Gemini-parsed schemes, where ``required_with`` is populated and
@@ -1747,7 +1767,7 @@ def correct_paper(
             ``GradingSettings.ecf_substitution`` and
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules,
             why it has no observable effect unless ``equivalence_gate`` is
-            ALSO True, and the measured activation ceiling: 28 gated points /
+            ALSO True, and the measured activation ceiling: 26 gated points /
             10 of 289 schemes, 438 genuine cross-leaf chains, 0 in the
             intersection -- provably inert on the committed corpus by
             construction.
