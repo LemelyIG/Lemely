@@ -3345,9 +3345,36 @@ class EcfChainResolverTests(unittest.TestCase):
 
         self.assertTrue(_ecf_gated(leaf, point))
 
+    def test_gate_is_case_sensitive_for_ft_to_exclude_impulse_formulae(self) -> None:
+        """Post-I7-review fix B: the corpus hit
+        `0625_s23_ms_42` q2b/p2 -- `"Ft = ∆mv OR F = ma OR ..."` -- is the
+        impulse formula (force x time), not follow-through, and the
+        original case-INSENSITIVE `\\bft\\b` gated it regardless. Every
+        genuine follow-through marker in the corpus is written uppercase
+        ("Strict FT", "FT their median reading"), confirmed by
+        re-measuring the whole corpus with the fix (29 -> 28 points,
+        11 -> 10 schemes, dropping exactly this one hit and no genuine
+        one) -- so `FT` alone is matched case-sensitively; `ecf`/`dep` stay
+        case-insensitive."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _ecf_gated
+
+        impulse_point = AnswerPoint(
+            id="p2",
+            # Corpus-verbatim glyphs, not ASCII substitutes -- this is the
+            # exact text of the corpus hit the fix removes.
+            point="Ft = ∆mv OR F = ma OR (F =) (0.16 × 18) / 0.12 C1",  # noqa: RUF001
+            marks=1,
+            math_mark_type=MathMarkType.C,
+        )
+        leaf = self._leaf("2b", 1, [impulse_point])
+
+        self.assertFalse(_ecf_gated(leaf, impulse_point))
+
     def test_gate_does_not_fire_without_a_marker(self) -> None:
-        """The measured 0.28% activation rate: absent a marker, GATE must
-        stay closed even though the point is otherwise perfectly ordinary."""
+        """The measured 0.27% activation rate (28 of 10,314 points): absent
+        a marker, GATE must stay closed even though the point is otherwise
+        perfectly ordinary."""
         from lemely.core.loose_schemas import AnswerPoint, MathMarkType
         from lemely.io.correction_ai import _ecf_gated
 
@@ -3372,7 +3399,7 @@ class ECFSubstitutionTests(unittest.TestCase):
     test asserts on the EXACT sequence of marking calls and their kwargs.
     """
 
-    def _scheme(self, *, gate_marker: str | None = "ft") -> MarkScheme:
+    def _scheme(self, *, gate_marker: str | None = "ecf") -> MarkScheme:
         point_ii: dict[str, object] = {
             "id": "p1",
             "point": "final numeric value",
@@ -3461,7 +3488,7 @@ class ECFSubstitutionTests(unittest.TestCase):
                                 "point": "final value",
                                 "marks": 1,
                                 "math_mark_type": "A",
-                                "condition": "ft",
+                                "condition": "ecf",
                             }
                         ],
                     },
@@ -3659,6 +3686,181 @@ class ECFSubstitutionTests(unittest.TestCase):
         cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
         self.assertEqual(cq_ii.awarded_marks, 0)
         self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_equivalence_gate_off_never_pays_for_a_second_call(self) -> None:
+        """Post-I7-review fix A: ``point_verdicts`` is NOT in the wire
+        schema's ``required`` list, so a model COULD volunteer it even when
+        ``equivalence_gate`` is off (the I6 prompt block never appended).
+        Before this fix, ``_maybe_apply_ecf_substitution`` gated only on
+        ``mark.point_verdicts`` being non-empty -- so
+        ``ecf_substitution=True, equivalence_gate=False`` could spend an
+        extra BILLED marking call per eligible question, with its result
+        discarded (``_build_ai_corrected`` only consumes verdicts when
+        ``equivalence_gate`` is also True). Same wrong-(a)/gated/resolvable
+        shape as the positive test above, but with ``equivalence_gate=False``
+        and the mocked responses volunteering ``point_verdicts`` anyway (to
+        prove the guard, not the prompt, is what stops the call) -- assert
+        on the CALL COUNT, since that is what costs money."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii = self._mark([self._pv("p1", "withheld")])
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1a_i, mark_1a_ii]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=False,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 2)  # no billed ECF re-mark call
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        # Legacy path: trusts mark.awarded_marks/matched_point_ids, not the
+        # volunteered point_verdicts -- and point_verdicts is empty on the
+        # persisted CorrectedQuestion either way (CorrectedQuestion.point_verdicts
+        # defaults empty, only ever populated by the verdicts path).
+        self.assertEqual(cq_ii.point_verdicts, [])
+
+    def test_same_leaf_chain_never_triggers_substitution(self) -> None:
+        """Post-I7-review Critical 2 (a design error in the original brief,
+        not the implementation): a same-leaf M-then-A pair is one
+        computation's method and accuracy marks, not error carried FORWARD
+        between two parts -- there is nothing to substitute. Measured on the
+        full corpus, this is the MAJORITY shape (820 same-leaf chains vs.
+        438 cross-leaf), and the original code would have substituted on it
+        exclusively, echoing the question's own answer back as its "prior
+        value" with an explicit instruction not to re-verify it -- an
+        over-award defect this test pins against directly, since neither
+        `_scheme()` nor `_unresolvable_scheme()` exercises the same-leaf
+        majority at all."""
+        # One leaf, two points: p1=M (wrong), p2=A (gated, resolvable to p1
+        # -- but SAME leaf, so must be excluded regardless of the M being wrong).
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 3,
+                    "paper_variant": 2,
+                    "session_month": "Oct/Nov",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 2,
+                        "type": "calculation",
+                        "answer_points": [
+                            {
+                                "id": "p1",
+                                "point": "(a=) (v-u)/t in any form",
+                                "marks": 1,
+                                "math_mark_type": "M",
+                            },
+                            {
+                                "id": "p2",
+                                "point": "final numeric value",
+                                "marks": 1,
+                                "math_mark_type": "A",
+                                "condition": "ecf",
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1", answer="wrong method, consistent value", confidence=0.9
+                )
+            ],
+        )
+        # ONE leaf -> ONE mark_question call carries BOTH points' verdicts.
+        mark_1 = self._mark(
+            [self._pv("p1", "withheld"), self._pv("p2", "withheld")],
+        )
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 1)  # no ECF re-mark call at all
+        cq = result.questions[0]
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertFalse(cq.point_verdicts[0].ecf_applied)
+        self.assertFalse(cq.point_verdicts[1].ecf_applied)
+
+    def test_ecf_remark_confidence_and_feedback_replace_first_pass(self) -> None:
+        """Post-I7-review Critical 1: before this fix,
+        ``merged_mark = mark.model_copy(update={"point_verdicts": ...})``
+        replaced ONLY the verdicts -- ``mark.confidence``/``mark.feedback``
+        stayed at the FIRST pass's values, so
+        ``_build_ai_corrected_from_verdicts`` evaluated the review-confidence
+        gate against a number the re-mark never reported. A re-mark the
+        model was only 40% confident about shipped as whatever confidence
+        band the FIRST (rejecting) pass happened to report, carrying
+        feedback that describes the rejection rather than the award that
+        actually happened. ECF awards are precisely the marks most in need
+        of a human look. Fixed via
+        ``confidence=min(mark.confidence, mark2.confidence)`` and taking
+        ``mark2.feedback`` whenever the merge actually changed the outcome."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")], confidence=0.95)
+        mark_1a_ii_pass1 = self._mark(
+            [self._pv("p1", "withheld")],
+            confidence=0.95,
+            feedback="FIRST PASS: no mark -- your value does not match the scheme",
+        )
+        mark_1a_ii_pass2 = self._mark(
+            [self._pv("p1", "awarded", span="consistent")],
+            confidence=0.40,  # the re-mark itself is UNSURE
+            feedback="ECF RE-MARK: method consistent with your (incorrect) part (a) value",
+        )
+
+        with patch.object(
+            correction_ai.AICorrector,
+            "mark_question",
+            side_effect=[mark_1a_i, mark_1a_ii_pass1, mark_1a_ii_pass2],
+        ):
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 1)
+        self.assertTrue(cq_ii.point_verdicts[0].ecf_applied)
+        # The re-mark's own (low) confidence governs -- never the first
+        # pass's higher one -- so a genuinely uncertain ECF award is queued.
+        self.assertEqual(cq_ii.confidence_score, 0.40)
+        self.assertTrue(cq_ii.needs_teacher_review)
+        # Feedback describes the award that actually happened, not the
+        # first pass's rejection.
+        self.assertEqual(
+            cq_ii.feedback,
+            "ECF RE-MARK: method consistent with your (incorrect) part (a) value",
+        )
 
     def test_no_version_bump(self) -> None:
         """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's

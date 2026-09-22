@@ -559,16 +559,31 @@ class GradingSettings(BaseModel):
     equivalence_gate: bool = False
     # I7 (US-013, D19): error-carried-forward by substitution. Defaults
     # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither
-    # flag implies the other in this config. In practice `ecf_substitution`
-    # has no observable effect unless `equivalence_gate` is ALSO True: the
+    # flag implies the other in this config. `ecf_substitution` has no
+    # observable effect unless `equivalence_gate` is ALSO True: the
     # `ecf_applied` marker it sets lives on `PointVerdict`
     # (`core/schemas.py`), and `PointVerdict`s are only populated on the
-    # verdicts marking path, which `equivalence_gate` alone controls. That
-    # is a consequence of where the field lives, not a coupling written into
-    # this flag's own wiring. See `correction_ai._maybe_apply_ecf_substitution`
-    # for the gate/chain rules and the measured activation ceiling (29
-    # points across 11 of 289 committed mark schemes -- an input-data limit,
-    # not a reason to widen the gate).
+    # verdicts marking path, which `equivalence_gate` alone controls. Post-
+    # I7-review fix A: this was previously an ASPIRATIONAL claim, not an
+    # enforced one -- `point_verdicts` is absent from the wire schema's
+    # `required` list, so a model could volunteer it unasked, and
+    # `_maybe_apply_ecf_substitution` gated only on `mark.point_verdicts`
+    # being non-empty, so `ecf_substitution=True, equivalence_gate=False`
+    # could spend an extra BILLED marking call per eligible question with
+    # its result silently discarded. `_maybe_apply_ecf_substitution` now
+    # checks `equivalence_gate` explicitly, so the claim is enforced by
+    # code, not merely by where a field happens to live.
+    #
+    # See `correction_ai._maybe_apply_ecf_substitution` for the gate/chain
+    # rules and the measured activation ceiling, published as three
+    # separate numbers rather than one (a single number invited reading a
+    # true zero as a regression): GATE population 28 points / 10 of 289
+    # committed schemes (`_ECF_MARKER_RE`); genuine CROSS-LEAF chain
+    # population 438; their INTERSECTION -- the actual number of points I7
+    # can activate on -- 0. The gated and M/A/B/C-typed populations are
+    # disjoint on this det-parsed corpus, so I7 is provably inert on it BY
+    # CONSTRUCTION; this is an input-data limit (the feature targets
+    # Gemini-parsed schemes), not a reason to widen the gate.
     ecf_substitution: bool = False
 
 

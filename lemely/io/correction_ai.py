@@ -1226,15 +1226,28 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
     )
 
 
-#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 29 points
-#: (0.28% of 10,314) in 11 schemes carry this marker, as unstructured prose
+#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 28 points
+#: (0.27% of 10,314) in 10 schemes carry this marker, as unstructured prose
 #: on the point itself or its question's notes/marking_guidance -- e.g.
 #: "R = 4.05 / ecf, 3.89, 3.81" and "Strict FT their median reading".
 #: Deliberately NOT widened to "any A point with a resolvable M chain" --
 #: that would apply ECF where CAIE never marked the point ECF-eligible, and
 #: award marks nobody earned. Under-firing (this) is the safe direction;
 #: over-firing is a correctness defect.
-_ECF_MARKER_RE = re.compile(r"\b(ecf|ft|dep)\b", re.IGNORECASE)
+#:
+#: Post-I7-review fix: ``FT`` is matched CASE-SENSITIVELY, unlike ``ecf``/
+#: ``dep`` -- the original case-insensitive `\bft\b` also matched
+#: `0625_s23_ms_42` q2b/p2's `"Ft = ∆mv OR F = ma OR ..."`, where `Ft` is
+#: impulse (force x time), a physics formula with no connection to
+#: follow-through. Every genuine follow-through marker in the corpus is
+#: written uppercase ("Strict FT", "FT their median reading"), so
+#: restricting `FT` to that case drops exactly the one false positive (29
+#: -> 28 points, 11 -> 10 schemes) and no genuine hit -- re-measured against
+#: the full corpus, not assumed. The over-award scenario this closes: a
+#: physics formula point misread as a follow-through marker would gate a
+#: point CAIE never marked ECF-eligible, in the exact top-level question
+#: group where a genuine M/A/C chain already exists to substitute against.
+_ECF_MARKER_RE = re.compile(r"(?i:\becf\b|\bdep\b)|\bFT\b")
 
 
 def _ecf_gated(question: Question, point: AnswerPoint) -> bool:
@@ -1378,9 +1391,25 @@ def _maybe_apply_ecf_substitution(
 
     ``cq``/``mark`` were already marked by the caller with no substitution;
     only re-mark when a part is BELOW MAX *and* GATED *and* has a resolvable
-    CHAIN whose prerequisite was itself NOT already correct (there is no
-    error to carry forward otherwise -- this is what makes a correct
-    prerequisite never trigger a second call).
+    CROSS-LEAF CHAIN whose prerequisite was itself NOT already correct
+    (there is no error to carry forward otherwise -- this is what makes a
+    correct prerequisite never trigger a second call).
+
+    Post-I7-review Critical 2 fix (a design error in the original brief, not
+    the implementation): a chain that resolves to a point in the SAME leaf
+    as ``question`` is EXCLUDED here, deliberately, even though
+    :func:`_resolve_ecf_chain` still reports it. A same-leaf M/A pair (or a
+    ``required_with`` reference, which by construction can only ever name a
+    sibling in the SAME leaf -- point ids are question-scoped) is one
+    computation's method and accuracy marks, not two separate parts with an
+    error carried FORWARD between them -- there is nothing to substitute.
+    Measured on the full corpus: 820 same-leaf chains exist against 438
+    cross-leaf ones, and the ORIGINAL (unfixed) code would have substituted
+    on the same-leaf majority exclusively, re-asking the model with the
+    question's own answer echoed back as its own "prior value" and an
+    explicit instruction not to re-verify it -- the over-award direction
+    this story is required to pin against. See
+    ``EcfSameLeafNeverTriggersSubstitutionTests`` for the regression test.
 
     Honest limit, stated here rather than implied: recomputation is BY THE
     MODEL with the substituted value (plus I8's separate numeric check),
@@ -1389,16 +1418,44 @@ def _maybe_apply_ecf_substitution(
 
     No-op (returns ``cq`` unchanged, no second Gemini call) whenever:
     - ``ecf_substitution`` is off (flag-off byte-identical inertness);
+    - ``equivalence_gate`` is off -- post-I7-review fix A: ``point_verdicts``
+      is NOT in the wire schema's ``required`` list, so a model MAY
+      volunteer it even when the I6 prompt block was never appended (i.e.
+      ``equivalence_gate`` False). Gating on ``mark.point_verdicts`` alone
+      let ``ecf_substitution=True, equivalence_gate=False`` spend a second,
+      billed marking call per eligible question -- with its result
+      discarded, since ``_build_ai_corrected`` only ever consumes verdicts
+      when ``equivalence_gate`` is also True -- a silent cost regression
+      against the USD ceiling that contradicted this module's own claim of
+      inertness. This explicit check is the fix, not a cosmetic guard;
     - ``cq`` is already at ``maximum_marks``;
-    - ``mark.point_verdicts`` is empty -- ``ecf_applied`` lives on
-      ``PointVerdict``, which only exists on the verdicts marking path that
-      ``equivalence_gate`` controls (see ``GradingSettings.ecf_substitution``'s
-      docstring); this is a consequence of where the field lives, not a
-      coupling written into this flag's own gating;
-    - no answer_point is simultaneously below-max, gated, chain-resolvable,
-      not already awarded, and backed by a non-blank prerequisite answer.
+    - ``mark.point_verdicts`` is empty;
+    - no answer_point is simultaneously below-max, gated, CROSS-LEAF
+      chain-resolvable, not already awarded, and backed by a non-blank
+      prerequisite answer.
+
+    Measured activation ceiling on the 289-scheme committed corpus, as
+    THREE separate numbers rather than one -- publishing a single figure
+    (this story's own earlier ``29 points, 11 schemes`` was wrong in
+    exactly this way) invites reading a true zero as a regression:
+    GATE population 28 points / 10 schemes (:data:`_ECF_MARKER_RE`);
+    genuine CROSS-LEAF chain population 438; their INTERSECTION -- the
+    actual number of points I7 can activate on -- **0**. The gated
+    population and the M/A/B/C-typed population are disjoint on this
+    det-parsed corpus: not one of the 28 gated points has a preceding
+    typed point in a different leaf. I7 is therefore provably inert on the
+    committed corpus BY CONSTRUCTION, not merely rare -- the feature
+    targets Gemini-parsed schemes, where ``required_with`` is populated and
+    real cross-part chains exist, which this corpus is not. The synthetic
+    tests in ``tests/test_correction_ai.py`` are the ONLY evidence this
+    path behaves as designed; the corpus provides none.
     """
-    if not ecf_substitution or cq.awarded_marks >= cq.maximum_marks or not mark.point_verdicts:
+    if (
+        not ecf_substitution
+        or not equivalence_gate
+        or cq.awarded_marks >= cq.maximum_marks
+        or not mark.point_verdicts
+    ):
         return cq
 
     current_matched = set(cq.matched_point_ids)
@@ -1412,6 +1469,8 @@ def _maybe_apply_ecf_substitution(
         if prereq is None:
             continue
         prereq_leaf_id, prereq_point_id = prereq
+        if prereq_leaf_id == question.id:
+            continue  # same-leaf: nothing to carry FORWARD within one computation
         if _point_was_awarded(
             prereq_leaf_id, prereq_point_id, question.id, current_matched, corrected_by_id
         ):
@@ -1424,7 +1483,22 @@ def _maybe_apply_ecf_substitution(
     if not eligible:
         return cq
 
-    prior_values = {leaf_id: (answers[leaf_id][0] or "") for _, leaf_id in eligible}
+    # Post-I7-review fix D: include the prerequisite's WORKING alongside its
+    # answer -- an ECF-relevant intermediate value can live in working_out
+    # rather than the final answer line, and the old code dropped it
+    # entirely. Still a per-LEAF value, not a per-POINT one: extraction
+    # resolves no finer than one question's answer/working as a whole, so a
+    # multi-point prerequisite leaf's full text is what is actually
+    # available to substitute, not a single point's isolated value -- the
+    # docstrings say so explicitly rather than implying more precision than
+    # extraction provides.
+    def _prior_value_text(leaf_id: str) -> str:
+        answer, working, _ = answers[leaf_id]
+        if working and working.strip():
+            return f"{answer}\n(working: {working.strip()})"
+        return answer or ""
+
+    prior_values = {leaf_id: _prior_value_text(leaf_id) for _, leaf_id in eligible}
     try:
         mark2 = ai.mark_question(
             question,
@@ -1455,7 +1529,25 @@ def _maybe_apply_ecf_substitution(
     if not changed:
         return cq
 
-    merged_mark = mark.model_copy(update={"point_verdicts": merged_verdicts})
+    # Post-I7-review Critical 1 fix: the re-mark's OWN confidence/feedback
+    # must replace the first pass's, not the other way round.
+    # `_build_ai_corrected_from_verdicts` evaluates
+    # `mark.confidence < REVIEW_CONFIDENCE_THRESHOLD` -- if `merged_mark`
+    # kept the first pass's (often HIGH) confidence, an ECF re-mark the
+    # model itself was UNSURE about would ship unflagged, carrying feedback
+    # that describes the first pass's rejection rather than the award that
+    # actually happened. ECF awards are precisely the marks most in need of
+    # a human look; `min()` -- not the re-mark's confidence alone -- so a
+    # confident first pass can never mask genuine uncertainty in the
+    # re-mark, and a confident re-mark can never override genuine
+    # uncertainty already flagged by the first pass.
+    merged_mark = mark.model_copy(
+        update={
+            "point_verdicts": merged_verdicts,
+            "confidence": min(mark.confidence, mark2.confidence),
+            "feedback": mark2.feedback,
+        }
+    )
     return _build_ai_corrected(
         question,
         student_answer,
@@ -1491,8 +1583,10 @@ def correct_paper(
             ``GradingSettings.ecf_substitution`` and
             :func:`_maybe_apply_ecf_substitution` for the gate/chain rules,
             why it has no observable effect unless ``equivalence_gate`` is
-            ALSO True, and the measured activation ceiling (29 points across
-            11 of 289 committed mark schemes).
+            ALSO True, and the measured activation ceiling: 28 gated points /
+            10 of 289 schemes, 438 genuine cross-leaf chains, 0 in the
+            intersection -- provably inert on the committed corpus by
+            construction.
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.

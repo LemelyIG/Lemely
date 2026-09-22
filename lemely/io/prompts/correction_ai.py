@@ -140,17 +140,21 @@ def build_marker_user_prompt(
     to the legacy (non-verdict) body in that exact case.
 
     ``prior_values`` (I7, US-013, defaults None): the student's OWN
-    extracted answer text for each prerequisite part a gated point
-    structurally depends on -- see
-    ``correction_ai._maybe_apply_ecf_substitution`` for how the caller
-    decides when to pass this. A NEW channel, distinct from
-    ``prior_results`` above: that dict carries AWARDED MARKS for ECF's
-    predecessor story; this one carries the raw answer VALUE, because I7's
-    re-mark needs to know what the student actually wrote, not how many
-    marks it earned. Appends its own block only when non-empty, so a call
-    that never substitutes (every call today, and every call with
-    ``ecf_substitution`` off) produces a BYTE-IDENTICAL prompt to before
-    this story existed.
+    extracted answer (and working, if supplied) for each prerequisite part
+    -- always a DIFFERENT LEAF question, never ``question`` itself, since
+    ``correction_ai._maybe_apply_ecf_substitution`` excludes any prerequisite
+    that resolves to the same leaf -- that a gated point structurally
+    depends on. A NEW channel, distinct from ``prior_results`` above: that
+    dict carries AWARDED MARKS for ECF's predecessor story; this one
+    carries the raw answer VALUE (and working), because I7's re-mark needs
+    to know what the student actually wrote, not how many marks it earned.
+    Per-LEAF, not per-POINT: extraction resolves no finer than one
+    question's answer/working as a whole, so a multi-point prerequisite
+    leaf's full text is what is actually available to substitute, never an
+    isolated single point's value. Appends its own block only when
+    non-empty, so a call that never substitutes (every call today, and
+    every call with ``ecf_substitution`` off) produces a BYTE-IDENTICAL
+    prompt to before this story existed.
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
