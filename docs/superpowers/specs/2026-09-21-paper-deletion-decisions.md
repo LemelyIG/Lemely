@@ -104,3 +104,60 @@ vanished. A mark the teacher already overrode does not block the delete.
   deletion exists, and who signs that off.
 - The exact reader-exclusion mechanism for D3, given a missed reader leaks a
   deleted paper back onto a screen.
+
+---
+
+## Owner rulings, 2026-09-22
+
+Put to the product owner after the design pass surfaced what the code makes
+possible. Recorded verbatim in effect; where a ruling reverses the design's
+recommendation that is noted, because the design argued the other way and the
+owner's call stands.
+
+**R1 — D6 amended, ratified. "One number, one instant."** The 5-minute
+deferral is withdrawn. Every derived figure — the student's grade, predicted
+grade and weaknesses, and every class average, at-risk count, parent card and
+school roll-up — is computed on read from the same store and changes at the
+moment the paper is hidden, changing back on restore. There is no second
+recompute path. The deferral had nothing to attach to: implementing it would
+have meant building a cache whose only purpose was to hold a number already
+known to be wrong.
+
+**R2 — D5's teacher clause is in scope now.** *Reverses the design's
+recommendation to defer it.* Teacher-console papers (`teacher_papers`) get
+their own soft delete in this work, mirroring the student flow exactly: the
+same `RETENTION_DAYS`, a restore path, a recently-deleted surface and the same
+purge sweeper pass. One retention number across the product.
+
+**R3 — Unshare does remove the paper's open review items from that class's
+queue.** *Reverses the design's v1 recommendation.* The queue is class-scoped,
+so an unshared paper leaving it is the consistent behaviour. The design's
+objection stands on the record: the teacher who unshares is the teacher who
+would review it, so this hands them a way to clear their own queue. Accepted
+knowingly.
+
+**R4 — D8's block lifts when a teacher closes the integrity item.**
+*Amends D8.* A block held for the full 30 days regardless of adjudication was
+judged too blunt. Lifting outcomes are `resolved` **or** `dismissed` — both
+mean a teacher looked, and the student is never told which.
+
+**R4a — `withdrawn` never lifts the block.** A student must not be able to
+lift their own hold by deleting and restoring the paper; that is exactly the
+laundering cycle the restore-reopens rule closes.
+
+**R4b — The timing signal is accepted, not papered over.** A paper that
+refuses deletion on Monday and allows it on Thursday tells the student that a
+teacher acted on something. Jitter was considered and rejected as unexplainable
+in copy. The student learns that something was resolved, never what.
+
+**R5 — The data-handling page is written by the implementer and reviewed by
+the owner after merge.** *Reverses the design's blocking sign-off.* The
+rewrite still ships in the same pull request; it simply does not gate the
+merge. Noted as a risk: a published disclosure goes live before the owner has
+read it.
+
+**R6 — One pull request, everything.** *Reverses the design's split.* The
+student flow, the loader criterion, purge, teacher-console deletion, unshare
+and the page land together. Noted as a risk: the session-level loader
+criterion is the highest-consequence mechanism here and would have been
+reviewed in isolation under a split.

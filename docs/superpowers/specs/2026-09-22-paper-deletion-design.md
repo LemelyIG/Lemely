@@ -1,12 +1,16 @@
 # Deleting an uploaded paper — design
 
-Date: 2026-09-22 · Status: design, ready for plan
-Decisions: `docs/superpowers/specs/2026-09-21-paper-deletion-decisions.md` (D1–D10)
+Date: 2026-09-22 · Status: design, **owner-ruled** (R1–R6), ready for plan
+Decisions: `docs/superpowers/specs/2026-09-21-paper-deletion-decisions.md` (D1–D10, plus the owner rulings R1–R6 appended 2026-09-22)
 
-Written against the interview record rather than re-deciding it. Where this
-design amends a decision it says so explicitly and marks it for the product
-owner's ratification; there is exactly one such amendment (D6) and two
-scope reductions (D5's teacher-console clause, upload-less attempts).
+Written against the interview record rather than re-deciding it. Every point
+this design raised has now been ruled on. **The owner reversed four of this
+document's recommendations** — R2 (teacher-console deletion is in scope),
+R3 (unshare clears the class queue), R5 (the page is reviewed after merge,
+not before) and R6 (one pull request, not a split). Those reversals are
+reflected in the sections below; the arguments this design made against them
+are left standing on the record rather than deleted, because they are the
+reason to look twice if something goes wrong there.
 
 ## 1. Shape, in one paragraph
 
@@ -62,11 +66,26 @@ Consequently:
 of the review queue, and **no `Attempt` row at all**. Nothing in this design's
 attempt-level `deleted_at` reaches it.
 
-**Scope reduction, for ratification:** teacher deletion of console papers is a
-separate mechanism over `teacher_papers`, out of this spec. When it is built it
-should reuse `RETENTION_DAYS` and the purge sweeper rather than mint a second
-retention number. Inventing a second soft-delete now, for a surface nobody
-asked to change, is not justified.
+This design recommended deferring it. **The owner ruled otherwise (R2): it is
+in scope now, mirroring the student flow exactly** — `teacher_papers.deleted_at`,
+the same `RETENTION_DAYS`, a restore path, a recently-deleted surface and the
+same purge sweeper pass.
+
+What that means concretely, and why it is not simply "the same code twice":
+
+- `TeacherPaper` needs its own `deleted_at` and its own loader criterion in the
+  same listener (§3.1), so the entity tuple becomes `(Attempt, Upload, TeacherPaper)`.
+- Its review-queue branch is the `teacher_paper_id` one, so the withdraw/reopen
+  rule of §6 applies to it through a different foreign key.
+- There is **no student and no integrity hold**: D8 exists to stop a student
+  destroying evidence about themselves, and a teacher deleting their own console
+  upload is not that. Applying the hold here would block a teacher on the
+  strength of a flag raised against a paper with no attributed student at all.
+- Its per-question marks live in `teacher_papers.report_json`, not in
+  `question_results`, so nothing cascades — purge deletes one row and its object.
+
+**Risk carried:** two soft-deleted tables ship in one change rather than one,
+and the second has no prior art in this codebase to copy from.
 
 ### 2.3 A published disclosure goes false on deploy
 
@@ -269,10 +288,31 @@ read only by the wrapper, and the wrapper is constructed only in `classes.py`.
 exist are over quiz assignments, which are not paper attempts. The spec says so
 rather than claiming an exclusion reaches something that does not exist.
 
-**Unshare does not touch the review queue in v1.** Consistency argues it should
-(the queue is class-scoped), but the teacher who unshares is the teacher who
-would review it, and letting a teacher make a flagged paper vanish from their
-own queue by unsharing is a quality-bar smell. Flagged as an owner decision.
+**Unshare removes the paper's open review items from that class's queue (R3).**
+This design recommended leaving the queue alone; the owner ruled for
+consistency, the queue being class-scoped.
+
+The objection stands on the record and shapes the implementation: the teacher
+who unshares is the teacher who would review it, so this is a route by which a
+flagged paper leaves the queue of the person meant to look at it. Two
+consequences follow, and both are requirements, not suggestions:
+
+- **Unshare must not change the item's `status`.** It is filtered out of the
+  class's queue view by the exclusion join, exactly as the paper is filtered out
+  of the class's analytics. It is *not* marked `withdrawn` — that status means
+  the subject was deleted, and reusing it here would make a teacher's reversible
+  toggle indistinguishable from a student's deletion, and would feed `withdrawn`
+  into R4a's blocked set for no reason.
+- **Resharing restores the item to the queue unchanged**, with its original
+  `created_at`, because nothing about it was ever mutated.
+
+So the queue filter is one more reader of `class_paper_exclusions`, joined in
+`review_repo.list_queue`'s class-scoped branch — not a write path.
+
+**Audit consequence to accept:** an integrity-flagged paper can be removed from
+a class queue by a teacher with no record beyond the exclusion row. The
+`excluded_by` column is therefore not optional bookkeeping; it is the only
+trace that this happened.
 
 **Unshare and delete stay separate mechanisms** — different actor, grain,
 lifetime and disclosure. Sharing `deleted_at` for both would make a teacher's
@@ -395,12 +435,28 @@ that FK in the same migration.
 
 ## 8. D8 — the integrity hold, told honestly
 
-**Predicate:** `EXISTS (question_results WHERE attempt_id = :id AND
-(plagiarism_flagged OR ai_detection_flagged))` **and** `now() < attempt.recorded_at
-+ RETENTION_DAYS`. The flags are set at marking time, so `recorded_at` is the
-clock — do not invent a `flagged_at`. Derive it from the **booleans**, never from
-`review_reason` text or from review-queue rows, which are echoes of the same
-fact.
+**Predicate, as ruled (R4).** The paper is blocked when **all three** hold:
+
+1. `EXISTS (question_results WHERE attempt_id = :id AND (plagiarism_flagged OR
+   ai_detection_flagged))` — the flags are the source of the fact. Never
+   `review_reason` text, never the mere presence of a review row; both are
+   echoes, and an echo can be resolved away while the fact stands.
+2. `now() < attempt.recorded_at + RETENTION_DAYS` — the flags are written at
+   marking time, so `recorded_at` is the clock. Do not invent a `flagged_at`.
+3. **No integrity review item on the attempt has been closed by a teacher** —
+   that is, no `ReviewQueueItem` with `reason IN (plagiarism_flag,
+   ai_detection_flag)` and `status IN (resolved, dismissed)`.
+
+Condition 3 is R4's amendment: a teacher who closes the item lifts the hold,
+whether they resolved it or dismissed it. Both mean a teacher looked, and the
+student is never told which.
+
+**`withdrawn` is excluded from condition 3, deliberately (R4a).** A student must
+not be able to lift their own hold by deleting and restoring the paper. Restore
+reopens what deletion withdrew (§6), so a cycle leaves the item `open` and the
+block standing — but only if `withdrawn` is absent from the lifting set. Putting
+it there would reopen the laundering hole from the other side. This needs its own
+test, because it is the kind of set membership that looks harmless in review.
 
 **API:** `409 Conflict`, body `{"detail": "This paper can't be deleted yet.",
 "deletableFrom": "<ISO date>"}`. No reason, no review language.
@@ -422,11 +478,22 @@ Copy: *"This paper can't be deleted yet. You'll be able to delete it from
 21 October."* A student with an ordinary low-confidence item deletes fine, so
 the word "review" must not appear either.
 
-**Cost accepted, stated plainly:** a teacher who resolves the integrity item on
-day 3 and clears the student does **not** lift the block; the student waits 27
-more days with no reason given. That follows from D8's "one number". If the owner
-wants the block to lift on teacher resolution, that is a D8 amendment — offered
-here, not assumed.
+**The cost that R4 buys, and the one it creates.** A cleared student no longer
+waits 27 further days for nothing — that was the point of the amendment. In
+exchange, **the lift is itself a signal**: a paper that refuses deletion on
+Monday and permits it on Thursday tells the student that a teacher acted on
+something in between. Jitter (holding a random further 1–7 days) was considered
+and rejected as unexplainable in the refusal copy, which must name a date.
+
+**Ruled accepted (R4b), and recorded rather than papered over.** The student
+learns that something was resolved; they never learn what it was, and no screen
+ever names it. That is a weaker guarantee than D8's original, and it is the
+owner's call knowingly made.
+
+One implementation consequence: because the deletable date can now move earlier,
+the `deletableFrom` in the 409 body is a **statement about now**, not a promise.
+The copy must not say "you will be able to delete it on X" in a way that reads
+as a commitment the system might beat.
 
 ## 9. The remaining open questions, settled
 
@@ -473,9 +540,16 @@ during it; and the hold, worded without a reason — *"In some cases a paper can
 be deleted for up to 30 days after it was marked; Lemely tells you the date when
 that applies."*
 
-**Sign-off is the product owner who gave the interview**, because the page cites
-decisions by number and this work reverses one. The plan carries it as a task
-with an explicit review checkbox, not as a note.
+**Sign-off (R5): the implementer writes it, the owner reviews after merge.**
+This design asked for a blocking checkbox; the owner ruled it non-blocking. The
+rewrite still ships in the same pull request.
+
+**Risk carried, stated once:** a published disclosure about how a product
+handles people's data goes live before the person accountable for it has read
+it. The mitigation available inside the change is to make the copy hard to get
+quietly wrong — the tests in §11 assert what the page must say (the window, what
+goes, what stays) and what it must not (any naming of the hold's reason), so a
+wrong version fails CI rather than merely reading oddly.
 
 ## 11. Test strategy, aimed at the vacuity trap
 
@@ -514,10 +588,25 @@ class. Every item below is written so that it fails against an empty database.
 9. **The positional-URL e2e** — delete paper *i*, open what was *i+1*, assert the
    title is the paper the student tapped.
 
-## 12. Still open for the owner
+## 12. Rulings, and what they cost
 
-- **D6's amendment** (§4) — ratify or reject. Blocks the plan's first task.
-- **D5's teacher-console clause** (§2.2) — confirm it is out of scope here.
-- **Unshare and the review queue** (§5) — v1 leaves the queue untouched.
-- **D8 lifting on teacher resolution** (§8) — offered, not assumed.
-- **The disclosure copy** (§10) — needs the owner's sign-off, not just review.
+Nothing here is open. All seven questions were put to the owner on 2026-09-22
+and answered; the full text is appended to the decisions document.
+
+| Ruling | Outcome | Cost carried |
+|---|---|---|
+| R1 — D6 amended | Ratified: one number, one instant | None. The live-read architecture gives it for free. |
+| R2 — D5 teacher papers | **In scope now**, mirroring the student flow | Two soft-deleted tables in one change; the second has no prior art to copy. |
+| R3 — unshare and the queue | **Clears the class queue** | A teacher can remove a flagged paper from their own queue; `excluded_by` is the only trace. |
+| R4 — D8 lift | **Lifts on `resolved` or `dismissed`** | The lift is a timing signal (R4b, accepted). Predicate now reads queue state, not only the flags. |
+| R4a — `withdrawn` excluded | Never lifts the block | None, provided the test exists. Getting this set wrong reopens the laundering hole. |
+| R5 — page sign-off | **Reviewed after merge** | A data-handling disclosure publishes before the accountable person reads it. |
+| R6 — delivery | **One pull request** | The loader criterion — the highest-consequence mechanism here — is reviewed inside a large diff rather than alone. |
+
+Four of these reversed this document's recommendation. The arguments are left
+in place above rather than edited out, so that if one of the costs above is
+paid for real, the reasoning is still there to read.
+
+**Where to look first if something goes wrong:** R4a (a student lifting their
+own hold), R3 (a flagged paper quietly leaving a queue), and R6 (a defect in
+the loader criterion reaching production inside a large review).

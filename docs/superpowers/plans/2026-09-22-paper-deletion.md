@@ -24,36 +24,30 @@
 - **Integrity flags (`plagiarism_flagged`, `ai_detection_flagged`, and integrity segments of `review_reason`) must never reach a student-facing surface** — `BUILD/QUALITY-BAR.md`. This constrains Task 6's refusal copy absolutely.
 - Alembic revision ids are capped at 32 characters (`alembic_version.version_num` is `varchar(32)`).
 - Ruff enforces `D205` — a docstring summary is one line, followed by a blank line.
-- **Task 0 is a human gate.** Do not start Task 1 until the product owner has ratified the D6 amendment.
+- **The owner's rulings R1–R6 are settled** and recorded in the decisions document. Four of them reversed the design's recommendation; the plan below implements the rulings, not the recommendations. Do not re-open them.
+- **One pull request (R6).** Every task below lands on one branch. The loader criterion (Task 3) is the highest-consequence change in that diff — flag it explicitly in the PR body so a reviewer knows where to spend their attention.
 
 ---
 
-### Task 0: Owner ratification gate (human, no code)
+### Task 0: Confirm the rulings are recorded (no code)
 
-**Files:** none.
+**Files:** `docs/superpowers/specs/2026-09-21-paper-deletion-decisions.md` (already written).
 
-The design amends one interview decision and reduces scope twice. None of the
-code below is safe to write until the owner answers, because Task 10's purge
-job and Task 12's wrapper both assume the amended D6.
+No longer a gate — the owner answered on 2026-09-22. This task exists so the
+implementer reads the rulings before writing code that contradicts them.
 
-- [ ] **Step 1: Put these five questions to the product owner**
+- [ ] **Step 1: Read the "Owner rulings, 2026-09-22" section**
 
-1. **D6 amended — "one number, one instant"** (design §4). Class averages, at-risk counts, parent cards and school roll-ups are all computed live on read from the same store; there is no cache and no stored aggregate, so the 5-minute deferral has nothing to attach to and would mean building a cache purely to hold a number we know is wrong. Ratify the amendment, or reject it and accept that we build a cache?
-2. **D5's teacher clause** (design §2.2) — teacher-console papers are `teacher_papers` rows with no `Attempt`. Confirm teacher deletion of their own console papers is out of scope here, to be built later reusing `RETENTION_DAYS`.
-3. **Unshare vs the review queue** (design §5) — v1 leaves an unshared paper's open review item in the class queue. Confirm.
-4. **D8 lifting early** (design §8) — a teacher who resolves the integrity item on day 3 does *not* lift the student's 30-day block. Confirm, or amend D8.
-5. **Disclosure copy** (design §10) — you sign off the rewritten "How Lemely handles your data" page, since it currently promises nothing can ever be deleted.
+The four that reversed the design, and therefore the four most likely to be
+implemented from stale memory of the design's prose:
 
-- [ ] **Step 2: Record the answers**
-
-Append an "Owner rulings, 2026-09-XX" section to
-`docs/superpowers/specs/2026-09-21-paper-deletion-decisions.md` with the five
-answers verbatim. Commit:
-
-```bash
-git add docs/superpowers/specs/2026-09-21-paper-deletion-decisions.md
-git commit -S -m "docs(specs): record owner rulings on the deletion amendments"
-```
+- **R2** — teacher-console deletion is **in scope** (Tasks 16–17).
+- **R3** — unshare **does** clear the paper from that class's review queue,
+  by filtering, never by mutating the item's status (Task 13).
+- **R4/R4a** — D8's block **lifts** when a teacher closes the integrity item as
+  `resolved` **or** `dismissed`, and **never** on `withdrawn` (Tasks 5, 8).
+- **R5** — the data-handling page is reviewed after merge, so Task 15 carries
+  no blocking checkbox.
 
 ---
 
@@ -893,6 +887,48 @@ def test_a_low_confidence_review_does_not_block_deletion(service, attempt, open_
     service.delete(OWNER, str(attempt.id))  # does not raise
 
 
+@pytest.mark.parametrize("closed_as", [ReviewStatus.resolved, ReviewStatus.dismissed])
+def test_a_teacher_closing_the_integrity_item_lifts_the_block(
+    service, flagged_attempt, integrity_item, closed_as
+) -> None:
+    """R4: both outcomes mean a teacher looked. The student is never told which."""
+    _set_status(integrity_item, closed_as)
+    service.delete(OWNER, str(flagged_attempt.id))  # does not raise
+
+
+def test_a_withdrawn_integrity_item_does_not_lift_the_block(
+    service, flagged_attempt, integrity_item
+) -> None:
+    """R4a. Without this, delete+restore lifts a student's own hold.
+
+    The cycle is the attack: deleting withdraws the item, and if `withdrawn`
+    counted as closed, the restored paper would be freely deletable. Restore
+    reopens the item (Task 6), so the block only holds if `withdrawn` is
+    absent from the lifting set here.
+    """
+    _set_status(integrity_item, ReviewStatus.withdrawn)
+    with pytest.raises(PaperNotDeletableError):
+        service.delete(OWNER, str(flagged_attempt.id))
+
+
+def test_delete_restore_delete_does_not_launder_the_hold(
+    service, attempt_flagged_after_first_delete
+) -> None:
+    """End-to-end form of R4a, through the real delete and restore paths."""
+    service.delete(OWNER, str(attempt_flagged_after_first_delete.id))
+    service.restore(OWNER, str(attempt_flagged_after_first_delete.id))
+    with pytest.raises(PaperNotDeletableError):
+        service.delete(OWNER, str(attempt_flagged_after_first_delete.id))
+
+
+def test_a_closed_low_confidence_item_does_not_lift_an_integrity_hold(
+    service, flagged_attempt, integrity_item, resolved_low_confidence_item
+) -> None:
+    """The lifting query must filter on reason, not merely on status."""
+    with pytest.raises(PaperNotDeletableError):
+        service.delete(OWNER, str(flagged_attempt.id))
+
+
 def test_a_quiz_attempt_is_refused(service, quiz_attempt) -> None:
     with pytest.raises(PaperNotDeletableError) as exc:
         service.delete(OWNER, str(quiz_attempt.id))
@@ -931,7 +967,11 @@ if attempt.origin is not AttemptOrigin.past_paper or attempt.upload_id is None:
     raise PaperNotDeletableError("Only uploaded papers can be deleted.", deletable_from=None)
 
 hold_until = integrity_hold_until(attempt.recorded_at)
-if self._has_integrity_flag(session, attempt.id) and now < hold_until:
+if (
+    self._has_integrity_flag(session, attempt.id)
+    and now < hold_until
+    and not self._integrity_item_closed_by_teacher(session, attempt.id)
+):
     raise PaperNotDeletableError(
         "This paper can't be deleted yet.", deletable_from=hold_until
     )
@@ -978,6 +1018,42 @@ def _has_integrity_flag(self, session: Session, attempt_id: uuid.UUID) -> bool:
                         QuestionResult.plagiarism_flagged.is_(True),
                         QuestionResult.ai_detection_flagged.is_(True),
                     ),
+                )
+                .exists()
+            )
+        )
+    )
+```
+
+And the lifting query R4 introduces:
+
+```python
+#: The outcomes that mean a teacher looked at an integrity finding (R4).
+#: ``withdrawn`` is deliberately absent (R4a): it is set by a student's own
+#: deletion, so counting it would let a delete-then-restore cycle lift the
+#: student's own hold. Adding a member to this set is a security decision.
+_TEACHER_CLOSED = (ReviewStatus.resolved, ReviewStatus.dismissed)
+
+_INTEGRITY_REASONS = (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag)
+
+
+def _integrity_item_closed_by_teacher(
+    self, session: Session, attempt_id: uuid.UUID
+) -> bool:
+    """Whether a teacher has closed an integrity review on this attempt (R4).
+
+    Filters on **reason as well as status**: a resolved low-confidence item
+    says nothing about an integrity finding, and treating any closed item as
+    clearance would let an ordinary marking review unlock the hold.
+    """
+    return bool(
+        session.scalar(
+            select(
+                select(ReviewQueueItem.id)
+                .where(
+                    ReviewQueueItem.attempt_id == attempt_id,
+                    ReviewQueueItem.reason.in_(_INTEGRITY_REASONS),
+                    ReviewQueueItem.status.in_(_TEACHER_CLOSED),
                 )
                 .exists()
             )
@@ -1949,10 +2025,49 @@ def test_unsharing_twice_is_idempotent(teacher_client, class_id, attempt) -> Non
     ).status_code == 204
 
 
-def test_unshare_leaves_the_review_queue_alone(teacher_client, class_id, attempt, open_item) -> None:
-    """v1 decision (design §5): a teacher cannot clear their own queue by unsharing."""
+def test_unshare_removes_the_item_from_that_classs_queue(
+    teacher_client, class_id, attempt, open_item
+) -> None:
+    """R3: the queue is class-scoped, so an unshared paper leaves it."""
+    before = {i["id"] for i in teacher_client.get("/api/review/queue").json()["items"]}
+    assert str(open_item.id) in before                      # present first
+
     teacher_client.post(f"/api/classes/{class_id}/papers/{attempt.id}/unshare")
-    assert open_item.id in {i["id"] for i in teacher_client.get("/api/review/queue").json()["items"]}
+
+    after = {i["id"] for i in teacher_client.get("/api/review/queue").json()["items"]}
+    assert str(open_item.id) not in after
+
+
+def test_unshare_does_not_mutate_the_items_status(
+    teacher_client, sessionmaker_, class_id, attempt, open_item
+) -> None:
+    """It is filtered out, not withdrawn.
+
+    `withdrawn` means a student deleted the subject, and it is excluded from
+    D8's lifting set (R4a). Setting it here would both lie about what happened
+    and entangle a teacher's reversible toggle with the integrity hold.
+    """
+    teacher_client.post(f"/api/classes/{class_id}/papers/{attempt.id}/unshare")
+    with sessionmaker_() as session:
+        assert session.get(ReviewQueueItem, open_item.id).status is ReviewStatus.open
+
+
+def test_resharing_returns_the_item_to_the_queue_unchanged(
+    teacher_client, class_id, attempt, open_item
+) -> None:
+    teacher_client.post(f"/api/classes/{class_id}/papers/{attempt.id}/unshare")
+    teacher_client.delete(f"/api/classes/{class_id}/papers/{attempt.id}/unshare")
+    items = teacher_client.get("/api/review/queue").json()["items"]
+    assert str(open_item.id) in {i["id"] for i in items}
+
+
+def test_another_classs_queue_still_shows_the_item(
+    teacher_client, other_class_teacher_client, class_id, attempt, open_item
+) -> None:
+    """Exclusion is per class, so a second class teaching this student is unaffected."""
+    teacher_client.post(f"/api/classes/{class_id}/papers/{attempt.id}/unshare")
+    items = other_class_teacher_client.get("/api/review/queue").json()["items"]
+    assert str(open_item.id) in {i["id"] for i in items}
 ```
 
 - [ ] **Step 2: Run tests to verify they fail**
@@ -1964,8 +2079,29 @@ Expected: FAIL — 404 on the unshare route.
 
 The repository is an upsert and a delete on `class_paper_exclusions`
 (`ON CONFLICT DO NOTHING` for idempotency). Authorisation reuses `classes.py`'s
-existing class-visibility check — do not write a second one. Unshare does not
-touch `review_queue`.
+existing class-visibility check — do not write a second one.
+
+**The queue change (R3) is a read filter, not a write.** In
+`review_repo.list_queue`'s class-scoped branch, exclude rows whose
+`attempt_id` appears in `class_paper_exclusions` for the class being listed:
+
+```python
+# R3: an unshared paper leaves that class's queue the same way it leaves that
+# class's analytics — by exclusion at read time. The item itself is never
+# mutated, so resharing restores it with its original created_at, and
+# `withdrawn` keeps meaning only "the student deleted the paper".
+.where(
+    ~select(ClassPaperExclusion.attempt_id)
+    .where(
+        ClassPaperExclusion.class_id.in_(visible_class_ids),
+        ClassPaperExclusion.attempt_id == ReviewQueueItem.attempt_id,
+    )
+    .exists()
+)
+```
+
+Set `excluded_by` on every insert. Per design §5 it is the only trace that a
+teacher removed a flagged paper from their own queue.
 
 - [ ] **Step 4: Run tests to verify they pass**
 
@@ -2148,12 +2284,13 @@ retention machinery" paragraph and the `Upload` model docstring.
 Run: `cd web && npx vitest run tests/unit/dataHandling.test.ts`
 Expected: PASS, 3 passed.
 
-- [ ] **Step 5: Owner sign-off — human gate**
+- [ ] **Step 5: Flag the copy for post-merge review (R5)**
 
-- [ ] The product owner has read the rewritten page and approved the wording.
-
-Do not merge without this checkbox ticked. The page cites decisions by number
-and this work reverses one.
+Not a gate — the owner ruled review happens after merge. Add the rewritten
+copy to the PR body under a heading the reviewer cannot miss, and say plainly
+that it publishes on merge without prior sign-off. The tests in Step 1 are the
+real safeguard: a version that omits the window, or that names the hold's
+reason, fails CI rather than merely reading oddly.
 
 - [ ] **Step 6: Commit**
 
@@ -2165,7 +2302,171 @@ git commit -S -m "docs(web): the data-handling page describes deletion truthfull
 
 ---
 
-### Task 16: End-to-end proof
+### Task 16: Teacher-console paper deletion (R2), backend
+
+**Files:**
+- Modify: `lemely/db/migrations/versions/0039_paper_soft_delete.py` (add `teacher_papers.deleted_at`)
+- Modify: `lemely/db/models/teacher_papers.py`
+- Modify: `lemely/db/session.py` (add `TeacherPaper` to the criterion)
+- Modify: `lemely/db/deletion_repo.py` (`TeacherPaperDeletionService`)
+- Modify: `lemely/web/purge.py`
+- Test: `tests/test_teacher_paper_deletion.py`
+
+**Interfaces:**
+- Consumes: Tasks 1, 2, 3, 10.
+- Produces: `TeacherPaperDeletionService` with `delete(user_id, paper_id)`, `restore(user_id, paper_id)`, `list_deleted(user_id)`; `purge_expired_teacher_papers(...)`.
+
+R2 ruled this in scope, mirroring the student flow. It is **not** the same code
+twice — four differences are load-bearing:
+
+- A console paper has **no `Attempt` and no `question_results`**; its marks live
+  in `teacher_papers.report_json`. Nothing cascades. Purge deletes one row and
+  its object.
+- Its review-queue rows hang off `teacher_paper_id`, not `attempt_id`, so §6's
+  withdraw-and-reopen applies through a different foreign key.
+- **There is no integrity hold.** D8 exists to stop a student destroying
+  evidence about themselves; a console paper has no attributed student
+  (`teacher_papers.student_id` is always NULL). Applying the hold would block a
+  teacher over a flag raised against nobody.
+- The owner is `uploaded_by`, not `user_id`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+def test_a_teacher_deletes_their_own_console_paper(service, console_paper) -> None:
+    service.delete(TEACHER, str(console_paper.id))
+    assert service.list_deleted(TEACHER)[0].paper_id == console_paper.id
+
+
+def test_another_teacher_cannot_delete_it(service, console_paper) -> None:
+    with pytest.raises(PaperNotFoundError):
+        service.delete(OTHER_TEACHER, str(console_paper.id))
+
+
+def test_an_integrity_flag_does_not_block_a_console_paper(service, flagged_console_paper) -> None:
+    """No attributed student, so D8's evidence argument does not apply."""
+    service.delete(TEACHER, str(flagged_console_paper.id))  # does not raise
+
+
+def test_deletion_withdraws_its_queue_items_through_teacher_paper_id(
+    service, sessionmaker_, console_paper, console_item
+) -> None:
+    result = service.delete(TEACHER, str(console_paper.id))
+    with sessionmaker_() as session:
+        item = session.get(ReviewQueueItem, console_item.id)
+    assert item.status is ReviewStatus.withdrawn
+    assert item.withdrawn_at == result.deleted_at
+
+
+def test_restore_reopens_them(service, sessionmaker_, console_paper, console_item) -> None:
+    service.delete(TEACHER, str(console_paper.id))
+    service.restore(TEACHER, str(console_paper.id))
+    with sessionmaker_() as session:
+        assert session.get(ReviewQueueItem, console_item.id).status is ReviewStatus.open
+
+
+def test_the_console_list_hides_a_deleted_paper(teacher_client, console_paper) -> None:
+    before = teacher_client.get("/api/teacher/papers").json()["papers"]
+    assert str(console_paper.id) in {p["id"] for p in before}
+    teacher_client.delete(f"/api/teacher/papers/{console_paper.id}")
+    after = teacher_client.get("/api/teacher/papers").json()["papers"]
+    assert str(console_paper.id) not in {p["id"] for p in after}
+
+
+def test_purge_removes_the_row_and_its_object(
+    sessionmaker_, fake_storage, expired_console_paper
+) -> None:
+    assert purge_expired_teacher_papers(sessionmaker_, fake_storage, BUCKET) == 1
+    assert fake_storage.deleted == [(BUCKET, expired_console_paper.storage_path)]
+
+
+def test_purge_uses_the_same_retention_as_the_student_flow(sessionmaker_, fake_storage) -> None:
+    """One number across the product, as the decisions doc asked."""
+    assert purge_cutoff(NOW) == purge_cutoff(NOW)  # same function, not a second constant
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_teacher_paper_deletion.py --no-cov -q`
+Expected: FAIL — no `TeacherPaperDeletionService`.
+
+- [ ] **Step 3: Implement**
+
+Add the column to migration 0039 (it has not shipped yet, so extend it rather
+than writing 0040):
+
+```python
+op.add_column(
+    "teacher_papers", sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True)
+)
+```
+
+and extend the listener's entity tuple in `session.py`:
+
+```python
+for entity in (Attempt, Upload, TeacherPaper):
+```
+
+Update Task 3's `test_listener_is_registered_at_class_level` module with a
+`TeacherPaper` presence-then-absence pair, so the third entity is covered by
+the same three-assertion shape as the first two.
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_teacher_paper_deletion.py tests/test_soft_delete_criteria.py --no-cov -q`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+pre-commit run --all-files
+git add lemely/db lemely/web/purge.py tests/test_teacher_paper_deletion.py
+git commit -S -m "feat(db): soft delete, restore and purge for teacher console papers"
+```
+
+---
+
+### Task 17: Teacher-console deletion, the console surface
+
+**Files:**
+- Modify: `lemely/web/routers/teacher.py` (delete/restore/deleted routes)
+- Modify: the teacher console screens under `web/src/portals/teacher/`
+- Test: `tests/test_teacher_paper_routes.py`, `web/tests/unit/teacherPaperDeletion.test.ts`
+
+**Interfaces:**
+- Consumes: Task 16.
+- Produces: `DELETE /api/teacher/papers/{paper_id}`, `POST /api/teacher/papers/{paper_id}/restore`, `GET /api/teacher/papers/deleted`.
+
+**REQUIRED SUB-SKILL:** frontend work — invoke `hallmark` and the design skills
+before writing the component, and carry the pre-emit critique stamp. The
+recently-deleted console surface is a real screen, not a modal afterthought:
+R2 chose the full mirror of the student flow, and D4's objection to a hidden
+safety net applies here too.
+
+Routes mirror Task 8's shapes and error mapping. There is no 409 hold here, so
+the only refusals are 404 (not yours / not found, one fixed body) and 410
+(past the restore window).
+
+- [ ] **Step 1: Write the failing tests** — the route-level authz matrix
+  (owner deletes; another teacher 404s; a student 403s), plus a source-text
+  gate that the console list invalidates after a delete rather than trusting
+  its optimistic removal.
+- [ ] **Step 2: Run to verify they fail** — `pytest tests/test_teacher_paper_routes.py --no-cov -q`
+- [ ] **Step 3: Implement the routes and the screen.**
+- [ ] **Step 4: Run to verify they pass.**
+- [ ] **Step 5: Capture the screens** — desktop and mobile, list / deleted /
+  empty, into `reports/phase-8/screens/teacher-paper-deletion/`.
+- [ ] **Step 6: Commit**
+
+```bash
+pre-commit run --all-files
+git add lemely/web/routers/teacher.py web/src web/tests tests reports/phase-8
+git commit -S -m "feat(web): delete and restore a paper from the teacher console"
+```
+
+---
+
+### Task 18: End-to-end proof
 
 **Files:**
 - Modify: `scripts/seed_e2e.py`
@@ -2176,7 +2477,7 @@ git commit -S -m "docs(web): the data-handling page describes deletion truthfull
 
 - [ ] **Step 1: Write the spec**
 
-Five scenarios against a real backend and browser:
+Eight scenarios against a real backend and browser:
 
 1. Delete a paper from the result screen; the overview no longer lists it and
    the grade moves.
@@ -2187,20 +2488,29 @@ Five scenarios against a real backend and browser:
 3. Restore from recently deleted; the paper and the grade come back.
 4. Attempt to delete an integrity-flagged paper; the refusal shows a date and
    the page contains no integrity language.
-5. A teacher unshares a paper; the class average moves and the student's own
-   overview is byte-identical.
+5. **R4 end to end:** the teacher resolves the integrity item, and the same
+   paper then deletes successfully — the block lifted without any screen
+   saying why.
+6. A teacher unshares a paper; the class average moves, the item leaves that
+   teacher's review queue (R3), and the student's own overview is
+   byte-identical.
+7. Reshare; the average and the queue item both come back.
+8. **R2:** a teacher deletes their own console paper, sees it in the console's
+   recently-deleted area, and restores it.
 
 - [ ] **Step 2: Extend the seed**
 
-Add a student with three corrected papers, one of them integrity-flagged, and
-a class with a teacher enrolled — following `seed_e2e.py`'s existing shape.
+Add a student with three corrected papers, one of them integrity-flagged; a
+class with a teacher enrolled; an open integrity review item the teacher can
+resolve in scenario 5; and one teacher-console paper for scenario 8 — following
+`seed_e2e.py`'s existing shape.
 
 - [ ] **Step 3: Run**
 
 ```bash
 cd web && npx playwright test e2e/paper-deletion.spec.ts
 ```
-Expected: 5 passed.
+Expected: 8 passed.
 
 - [ ] **Step 4: Commit**
 
@@ -2216,16 +2526,34 @@ git commit -S -m "test(e2e): prove deletion, restore, the hold and unshare in a 
 
 **Spec coverage.** D1 → Tasks 5, 10. D2 → Task 10 (scheme rows untouched; the
 student's own scheme scan goes, recorded as a clarification). D3 → Tasks 2, 3,
-4. D4 → Tasks 7, 14. D5 → Task 8 (student-only; teacher-console scoped out at
-Task 0). D6 amended → Task 0 gate, then satisfied for free by the live-read
-architecture. D7 → no task needed; verified in design §9. D8 → Tasks 5, 8, 14.
-D9 → Tasks 12, 13. D10 → Tasks 5, 6, 9. Open questions → design §7 (purge/GCS),
-§9 (parents, quizzes), §10 (the page, Task 15).
+4. D4 → Tasks 7, 14. D5 → Task 8 (student) **and Tasks 16–17 (teacher console,
+per R2)**. D6 amended → ratified as R1, then satisfied for free by the
+live-read architecture. D7 → no task needed; verified in design §9. D8 →
+Tasks 5, 8, 14, **with R4's lifting predicate and R4a's exclusion of
+`withdrawn` in Task 5**. D9 → Tasks 12, 13, **including R3's queue filter**.
+D10 → Tasks 5, 6, 9. Open questions → design §7 (purge/GCS), §9 (parents,
+quizzes), §10 (the page, Task 15, non-blocking per R5).
+
+**Ruling coverage.** R1 → the architecture, no task. R2 → Tasks 16, 17.
+R3 → Task 13. R4/R4a → Task 5 (`_TEACHER_CLOSED`, and four tests including the
+delete-restore-delete cycle). R4b → recorded in design §8, no code. R5 →
+Task 15 Step 5. R6 → one branch, flagged in the Global Constraints.
 
 **Gaps deliberately left:** notification batching for a bulk delete (design §4,
 follow-up); per-question class analytics for unshare, which has no surface
-today (design §5); teacher-console paper deletion (design §2.2).
+today (design §5).
 
-**Known unknown, carried openly:** whether `with_loader_criteria` reaches a
-column-only select. Task 3 Step 4 names the fallback and the test that pins
-whichever answer is true.
+**Known unknowns, carried openly:**
+1. Whether `with_loader_criteria` reaches a column-only select. Task 3 Step 4
+   names the fallback and the test that pins whichever answer is true.
+2. Whether `review_queue.question_result_id`'s missing `ondelete` survives the
+   attempt cascade. Task 10 Step 4 names the fixture that decides it and the
+   one-line fix if it does not.
+
+**Where this plan is most likely to go wrong, given the rulings.** R4a is a
+tuple membership — `_TEACHER_CLOSED` gaining `withdrawn` in some later
+"tidy-up" silently hands students the ability to lift their own integrity hold,
+and nothing but that one test would notice. R3's queue filter must stay a read
+filter; the moment someone "simplifies" it into a status write, unshare and
+deletion become indistinguishable in the audit trail. R6 means both of those
+land inside one large diff.
