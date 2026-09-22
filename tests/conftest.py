@@ -23,6 +23,17 @@ from typing import TYPE_CHECKING
 import pytest
 
 import lemely.runtime.config as config_module
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    MathMarkType,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.runtime.config import Settings
 
 if TYPE_CHECKING:
@@ -75,6 +86,42 @@ def pytest_configure(config: pytest.Config) -> None:
             "with -O that forces a sympy recompile per subprocess and has "
             "already broken a timeout-bounded test on this branch."
         )
+
+
+def _scheme() -> MarkScheme:
+    """A one-question scheme with three points: p1 (M, 1), p2 (A, 1), p3 (B, 1).
+
+    Shared by ``tests/test_question_points.py`` and ``tests/test_attempt_repo.py``
+    (moved here so neither imports a private helper out of the other's test
+    module). Field names here are verified against the real schema, not
+    guessed: ``Question`` takes ``type=`` (not ``question_type=``), every enum
+    member is UPPERCASE, and ``MarkSchemeMetadata`` requires ``subject`` and
+    ``maximum_mark`` as well as the obvious fields.
+    """
+    question = SchemeQuestion(
+        id="1a",
+        marks=3,
+        type=SchemeQuestionType.CALCULATION,
+        answer_points=[
+            AnswerPoint(id="p1", point="Correct method", marks=1, math_mark_type=MathMarkType.M),
+            AnswerPoint(id="p2", point="Answer to 3sf", marks=1, math_mark_type=MathMarkType.A),
+            AnswerPoint(id="p3", point="Units stated", marks=1, math_mark_type=MathMarkType.B),
+        ],
+    )
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Mathematics",
+            subject_code="0580",
+            paper_number=2,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_EXTENDED,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[question],
+    )
 
 
 @pytest.fixture(scope="session", autouse=True)

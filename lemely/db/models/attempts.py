@@ -14,7 +14,9 @@ from lemely.db.models.enums import (
     AttemptOrigin,
     BoundarySource,
     ConfidenceBand,
+    EvidenceVerdict,
     MarkerSource,
+    RevisionSource,
     SessionMonth,
     TimestampMixin,
     UploadStatus,
@@ -222,32 +224,239 @@ class QuestionResult(TimestampMixin, Base):
     overridden_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True
     )
+    extraction_confidence: Mapped[float | None] = mapped_column(sa.Float, nullable=True)
+    """Extraction-stage confidence, distinct from ``confidence_score``.
+
+    Computed by the pipeline (``CorrectedQuestion.extraction_confidence``) and,
+    before spec 2026-09-17, discarded at persist time.
+    """
+    plagiarism_flagged: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """The integrity flag, persisted rather than only fanned out to the review queue.
+
+    Teacher-only on every surface (QUALITY-BAR.md): it must never be rendered
+    on a student-facing screen, where it would read as an accusation. It is,
+    however, present in the ``/api/student/correct`` complete frame
+    (``lemely/web/schemas.py``) and typed on the frontend
+    (``web/src/lib/studentTypes.ts``) — the UI simply does not render it, and
+    ``question_to_dto``/``student_safe_review_reason`` force it off and strip
+    the matching ``review_reason`` segment for student call sites.
+
+    ``ai_detection_flagged`` was its twin until F4
+    (``0037_remove_ai_detection``) deleted the detector: no measured
+    false-positive rate, and JCQ guidance is that such a detector must never
+    be sole evidence. ``0037_question_result_pts`` — develop's sibling
+    revision, written before that removal landed — still adds the column, so
+    ``0039_merge_heads`` drops it; there is no mapped attribute for it here
+    and nothing writes it.
+    """
+    rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    student_selfmarked_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    """Written by the student self-review spec. Created here per its D5."""
 
     attempt: Mapped[Attempt] = relationship("Attempt", back_populates="question_results")
     review_queue_items: Mapped[list] = relationship(  # type: ignore[type-arg]
         "ReviewQueueItem", back_populates="question_result"
+    )
+    points: Mapped[list[QuestionResultPoint]] = relationship(
+        "QuestionResultPoint",
+        back_populates="question_result",
+        cascade="all, delete-orphan",
+        order_by="QuestionResultPoint.ordinal",
+    )
+    revisions: Mapped[list[QuestionResultRevision]] = relationship(
+        "QuestionResultRevision",
+        back_populates="question_result",
+        cascade="all, delete-orphan",
+        order_by="QuestionResultRevision.revision",
     )
 
     @property
     def effective_marks(self) -> int:
         """The mark that must reach every student-facing surface.
 
-        The teacher's override when one has been recorded, else the AI's
-        ``awarded_marks`` unchanged. **The single accessor** — anything
-        (a route, a DTO converter, a future report) that needs "this
-        question's mark" reads this, never ``awarded_marks`` directly, so a
-        teacher correction can never be shown on one screen and silently
-        missing on another (P3.4; the same anti-drift discipline D3.3 applied
-        to "at risk").
+        Precedence: the teacher's override, else the student's self-mark, else
+        the AI's ``awarded_marks`` unchanged. **The single accessor** — anything
+        (a route, a DTO converter, a report) that needs "this question's mark"
+        reads this, never ``awarded_marks`` directly, so a correction can never
+        be shown on one screen and silently missing on another (P3.4).
+
+        The student tier (spec 2026-09-17 self-review, D5) is an accepted
+        trade-off, not an oversight: self-reported marks reach teacher class
+        analytics (``quiz_results_repo``), placement (``placement_repo``) and
+        the student's own grade. The alternative — a second accessor for
+        teacher-facing surfaces — was rejected as two numbers for one question.
+        ``student_selfmark_marks`` is only ever set where the marker was
+        low-confidence or a lenient judge accepted the student's evidence;
+        a self-mark that moved marks *down* (D6) is honoured on the same terms.
         """
         if self.teacher_awarded_marks is not None:
             return self.teacher_awarded_marks
+        if self.student_selfmark_marks is not None:
+            return self.student_selfmark_marks
         return self.awarded_marks
+
+    @property
+    def is_self_marked(self) -> bool:
+        """Whether the student has completed their one self-review pass.
+
+        Reads the timestamp, not the marks: a pass that agreed with the marker
+        on every point sets ``student_selfmarked_at`` and leaves
+        ``student_selfmark_marks`` NULL, and it still counts as the pass.
+        """
+        return self.student_selfmarked_at is not None
 
     @property
     def is_overridden(self) -> bool:
         """Whether a teacher has recorded a correction for this question."""
         return self.teacher_awarded_marks is not None
+
+
+class QuestionResultPoint(TimestampMixin, Base):
+    """One mark point of one marked question.
+
+    Derived at attempt-write time from the parsed mark scheme
+    (:func:`lemely.db.question_points.derive_point_rows`). ``tariff``,
+    ``point_text`` and ``mark_type`` are **snapshotted**, not joined live: mark
+    schemes get re-parsed and corrected, and a student's marked paper must not
+    change meaning underneath them months later (spec 2026-09-17 D3).
+
+    ``mark_type`` is text, not an enum. ``MathMarkType`` has fifteen members
+    and a narrower DB enum would silently drop most of them.
+
+    Not re-derived on a teacher override: :meth:`ReviewRepository.resolve`
+    (``lemely/db/review_repo.py``) sets ``QuestionResult.teacher_awarded_marks``
+    directly and never touches this table. After an override,
+    ``QuestionResult.effective_marks`` returns the teacher's mark while every
+    row here (``awarded``, and the sum of ``tariff`` where ``awarded``) still
+    describes the AI's original marking. A reader that wants "why this many
+    marks" must check ``is_overridden`` first.
+    """
+
+    __tablename__ = "question_result_points"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "question_result_id", "mark_point_id", name="uq_question_result_points_point"
+        ),
+        sa.Index("ix_question_result_points_question_result_id", "question_result_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    question_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("question_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    mark_point_id: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    ordinal: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    mark_type: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    tariff: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    tariff_defaulted: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """True when ``tariff`` was minted (``AnswerPoint.marks_defaulted``), not read
+
+    from the source — the marks cell was absent or unparseable. Provenance
+    only: without this, a minted tariff and one CAIE actually printed are
+    indistinguishable on this row (spec 2026-09-17 fix).
+    """
+    point_text: Mapped[str] = mapped_column(sa.Text, nullable=False)
+    awarded: Mapped[bool] = mapped_column(sa.Boolean, nullable=False)
+    is_alternative: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    is_optional: Mapped[bool] = mapped_column(
+        sa.Boolean, nullable=False, server_default=sa.text("false")
+    )
+    """``is_alternative``/``is_optional`` (from ``AnswerPoint``) mark a point as
+
+    part of a non-additive OR/optional group (``correction_ai._check_coherence``):
+    summing every ``awarded`` point's ``tariff`` on this table does NOT
+    generally equal ``QuestionResult.awarded_marks`` when either flag is set on
+    a matched point, because the mark scheme allows at most the group's own
+    cap, not the sum of its members. A consumer that sums ticked tariffs
+    without checking these flags will show a breakdown that disagrees with the
+    student's own mark.
+    """
+
+    group_key: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    """The scheme group this point belongs to; see ``group_max_marks`` below,
+    which documents the pair."""
+    group_max_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """``group_key``/``group_max_marks``: the scheme group this point belongs
+
+    to, recorded at derivation time
+    (:func:`lemely.db.question_points.derive_point_rows`): ``alt:n`` for an
+    either/or run, ``pool:n`` for an "any N from" pool, ``NULL`` for an
+    independent point. ``group_max_marks`` is the most the whole group can
+    contribute. ``is_alternative`` alone cannot say where a group starts or
+    ends (it means "alternative to the previous point"), which is why the
+    group is stored rather than re-derived — the self-review write path caps
+    granted marks at ``group_max_marks`` (self-review spec, D6), and the panel
+    renders the group as one unit. Rows written before migration
+    ``0038_point_group_key`` keep ``NULL`` (no backfill, spec 1 D7).
+    """
+    rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    student_selfmark: Mapped[bool | None] = mapped_column(sa.Boolean, nullable=True)
+    student_selfmark_at: Mapped[datetime | None] = mapped_column(
+        sa.DateTime(timezone=True), nullable=True
+    )
+    student_evidence: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    evidence_verdict: Mapped[EvidenceVerdict | None] = mapped_column(
+        sa.Enum(EvidenceVerdict, name="evidenceverdict"), nullable=True
+    )
+
+    question_result: Mapped[QuestionResult] = relationship(
+        "QuestionResult", back_populates="points"
+    )
+
+
+class QuestionResultRevision(TimestampMixin, Base):
+    """One recorded state of a question's marks. Append-only.
+
+    Revision 1 is written at correction time with ``source=ai``. The existing
+    ``question_results`` row stays the current projection, so no read surface
+    has to change to keep working (spec 2026-09-17 D4).
+    """
+
+    __tablename__ = "question_result_revisions"
+    __table_args__ = (
+        sa.UniqueConstraint(
+            "question_result_id", "revision", name="uq_question_result_revisions_revision"
+        ),
+        sa.Index("ix_question_result_revisions_question_result_id", "question_result_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, server_default=sa.text("gen_random_uuid()")
+    )
+    question_result_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        sa.ForeignKey("question_results.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    revision: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    source: Mapped[RevisionSource] = mapped_column(
+        sa.Enum(RevisionSource, name="revisionsource"), nullable=False
+    )
+    awarded_marks: Mapped[int] = mapped_column(sa.Integer, nullable=False)
+    points_snapshot: Mapped[list] = mapped_column(  # type: ignore[type-arg]
+        JSONB, nullable=False, server_default=sa.text("'[]'::jsonb")
+    )
+    actor_user_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), sa.ForeignKey("users.id", ondelete="SET NULL"), nullable=True
+    )
+    reason: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+
+    question_result: Mapped[QuestionResult] = relationship(
+        "QuestionResult", back_populates="revisions"
+    )
 
 
 class WeaknessRecord(TimestampMixin, Base):
@@ -282,4 +491,11 @@ class WeaknessRecord(TimestampMixin, Base):
     attempt: Mapped[Attempt | None] = relationship("Attempt", back_populates="weakness_records")
 
 
-__all__ = ["Attempt", "QuestionResult", "Upload", "WeaknessRecord"]
+__all__ = [
+    "Attempt",
+    "QuestionResult",
+    "QuestionResultPoint",
+    "QuestionResultRevision",
+    "Upload",
+    "WeaknessRecord",
+]

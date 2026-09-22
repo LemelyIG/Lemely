@@ -582,6 +582,7 @@ export function CorrectPaper() {
           theory: [],
           integrity: [],
           provenance: "",
+          attemptId: frame.attempt_id ?? null,
           questions: frame.questions ?? [],
         }
         navigate(`/student/result/${id}`, { state: assembled })

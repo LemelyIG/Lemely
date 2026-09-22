@@ -41,15 +41,26 @@ from lemely.core.schemas import (
     WeakArea,
     WeaknessReport,
 )
-from lemely.db.attempt_repo import AttemptRepository, fill_correction_topics
+from lemely.db.attempt_repo import (
+    AttemptRepository,
+    fill_correction_topics,
+    is_marking_low_confidence,
+)
 from lemely.db.base import Base
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, Role
+from lemely.db.models.attempts import (
+    Attempt,
+    QuestionResult,
+    QuestionResultPoint,
+    QuestionResultRevision,
+    WeaknessRecord,
+)
+from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, RevisionSource, Role
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.runtime.config import DatabaseSettings
+from tests.conftest import _scheme
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -984,3 +995,589 @@ def test_persist_quiz_correction_writes_weakness_records_grouped_by_real_topic(
     with pg_sessionmaker() as session:
         records = session.scalars(select(WeaknessRecord)).all()
         assert {r.topic for r in records} == {"5.2 Radioactivity"}
+
+
+def test_marking_detail_tables_exist_and_relate() -> None:
+    """The two new tables and the six additive columns are reachable from the ORM.
+
+    A schema-shape test, not a behaviour test — Task 5 is what fills them. It
+    takes no ``pg_sessionmaker``: every assertion here reads SQLAlchemy mapper
+    metadata, and that fixture creates and drops a throwaway database per test,
+    which this would pay for and never use.
+    """
+    assert QuestionResultPoint.__tablename__ == "question_result_points"
+    assert QuestionResultRevision.__tablename__ == "question_result_revisions"
+
+    columns = QuestionResult.__table__.columns
+    for name in (
+        "extraction_confidence",
+        "plagiarism_flagged",
+        "rationale",
+        "student_selfmark_marks",
+        "student_selfmarked_at",
+    ):
+        assert name in columns, f"{name} missing from question_results"
+
+    # F4 removed the AI-detection feature; `0039_merge_heads` drops the column
+    # develop's sibling `0037_question_result_pts` added for it, and nothing
+    # maps it. Asserted rather than merely absent above, so a re-add has to be
+    # deliberate.
+    assert "ai_detection_flagged" not in columns
+
+    assert "points" in QuestionResult.__mapper__.relationships
+    assert "revisions" in QuestionResult.__mapper__.relationships
+
+
+def _report_with_one_question(**overrides: object) -> AccuracyReport:
+    """An AccuracyReport carrying exactly one question against ``_scheme()``.
+
+    Keyword overrides land on the CorrectedQuestion, so a test can vary
+    ``matched_point_ids``, ``extraction_confidence``, the integrity flags or
+    ``rationale`` without rebuilding the whole report.
+    """
+    question: dict[str, object] = {
+        "question_id": "1a",
+        "awarded_marks": 1,
+        "maximum_marks": 3,
+        "confidence": ConfidenceBand.HIGH,
+        "confidence_score": 0.95,
+        "needs_teacher_review": False,
+        "matched_point_ids": ["p1"],
+    }
+    question.update(overrides)
+    awarded = question["awarded_marks"]
+    maximum = question["maximum_marks"]
+    assert isinstance(awarded, int)
+    assert isinstance(maximum, int)
+
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0580",
+            session_month="May/June",
+            session_year=2024,
+            paper_number=2,
+            paper_variant=1,
+        ),
+        questions=[CorrectedQuestion(**question)],  # type: ignore[arg-type]
+    )
+    return AccuracyReport(
+        correction=correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+        # Kept in step with an overridden awarded_marks/maximum_marks so the
+        # prediction never reads as an error next to the QuestionResult it
+        # nominally summarizes (nothing here validates the two against each
+        # other; this is legibility only).
+        grade_prediction=GradePrediction(
+            awarded_marks=awarded,
+            maximum_marks=maximum,
+            percentage=round(awarded / maximum * 100, 2) if maximum else 0.0,
+            grade="E",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+
+
+def _points_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultPoint]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultPoint)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResultPoint.ordinal)
+            ).all()
+        )
+
+
+def _revisions_for(
+    pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID
+) -> list[QuestionResultRevision]:
+    with pg_sessionmaker() as session:
+        return list(
+            session.scalars(
+                select(QuestionResultRevision)
+                .join(QuestionResult)
+                .where(QuestionResult.attempt_id == attempt_id)
+            ).all()
+        )
+
+
+def _only_result(pg_sessionmaker: sessionmaker[Session], attempt_id: uuid.UUID) -> QuestionResult:
+    with pg_sessionmaker() as session:
+        return session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).one()
+
+
+def test_persist_writes_point_rows_including_missed_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The inversion, end to end: a missed point is a row with awarded=False."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    points = _points_for(pg_sessionmaker, attempt_id)
+
+    assert [p.mark_point_id for p in points] == ["p1", "p2", "p3"]
+    assert [p.awarded for p in points] == [True, False, False]
+    assert [p.tariff for p in points] == [1, 1, 1]
+    assert points[0].mark_type == "M"
+
+
+def test_persist_writes_revision_one(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """``awarded_marks=3`` (not 1) so pass-through and point-ledger recomputation
+
+    disagree: ``matched_point_ids=["p1"]`` against three tariff-1 points sums
+    to 1 on the ledger, so a wrong implementation that recomputed the
+    revision's ``awarded_marks`` from the ledger instead of passing it
+    through would write 1 here, not 3 — see
+    ``test_awarded_marks_is_untouched_by_the_point_ledger`` for the same
+    reasoning against ``QuestionResult`` itself.
+    """
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=3),
+        mark_scheme=_scheme(),
+    )
+
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+
+    assert len(revisions) == 1
+    assert revisions[0].revision == 1
+    assert revisions[0].source is RevisionSource.ai
+    assert revisions[0].awarded_marks == 3
+    assert len(revisions[0].points_snapshot) == 3
+
+
+def test_persist_without_a_scheme_writes_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The quiz case. The attempt itself must still persist normally, and a
+    revision is still written for the question result — with an empty
+    snapshot, not skipped — because ``awarded_marks`` still needs a revision
+    trail even when there is no scheme to derive points from.
+    """
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=None,
+    )
+
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+    assert len(revisions) == 1
+    assert revisions[0].points_snapshot == []
+
+
+def test_persist_carries_the_previously_dropped_fields(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(
+            matched_point_ids=["p1"],
+            extraction_confidence=0.82,
+            plagiarism_flagged=True,
+            rationale="Method correct, rounding wrong.",
+        ),
+        mark_scheme=_scheme(),
+    )
+
+    result = _only_result(pg_sessionmaker, attempt_id)
+
+    assert result.extraction_confidence == 0.82
+    assert result.plagiarism_flagged is True
+    assert result.rationale == "Method correct, rounding wrong."
+
+
+def test_awarded_marks_is_untouched_by_the_point_ledger(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The accuracy guard: lemely/eval reads awarded_marks and must not shift.
+
+    ``matched_point_ids=["p1"]`` against three tariff-1 points sums to 1 on
+    the ledger, so ``awarded_marks`` is deliberately set to 3 instead of 1: a
+    wrong implementation that recomputed ``awarded_marks`` from the ledger
+    would yield 1 here, not 3, and this assertion would catch it. With the
+    previous awarded_marks=1 fixture, pass-through and recomputation produced
+    the same number and the test could not fail.
+    """
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"], awarded_marks=3),
+        mark_scheme=_scheme(),
+    )
+
+    result = _only_result(pg_sessionmaker, attempt_id)
+
+    assert result.awarded_marks == 3
+    assert result.effective_marks == 3
+
+
+def test_snapshot_is_independent_of_later_scheme_edits(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """D3: a re-parsed scheme must not change a paper already marked.
+
+    The row read back through ``_points_for`` is a plain committed row and
+    cannot change regardless of implementation, so it proves nothing about
+    D3's "snapshot, do not join live" rule on its own. The stored JSON
+    snapshot on the revision is what that rule is actually about, so it is
+    asserted here too.
+    """
+    scheme = _scheme()
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    scheme.questions[0].answer_points[0].point = "COMPLETELY DIFFERENT TEXT"
+    scheme.questions[0].answer_points[0].marks = 99
+
+    point = _points_for(pg_sessionmaker, attempt_id)[0]
+    assert point.point_text == "Correct method"
+    assert point.tariff == 1
+
+    snapshot = _revisions_for(pg_sessionmaker, attempt_id)[0].points_snapshot[0]
+    assert snapshot["point_text"] == "Correct method"
+    assert snapshot["tariff"] == 1
+
+
+def test_quiz_correction_persists_with_no_points(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """persist_quiz_correction passes no scheme and must be unaffected."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_quiz_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        correction=_report_with_one_question(matched_point_ids=["p1"]).correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+    )
+
+    with pg_sessionmaker() as session:
+        attempt = session.get(Attempt, attempt_id)
+        assert attempt is not None
+        assert attempt.paper_id is None
+
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    assert len(_revisions_for(pg_sessionmaker, attempt_id)) == 1, (
+        "revision 1 is written even with no points"
+    )
+
+
+def test_persist_survives_derive_point_rows_raising(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``_safe_derive_point_rows``'s except branch, exercised end to end.
+
+    Nothing in the suite previously called ``derive_point_rows`` in a way that
+    could raise, so this branch — and ``_warn_if_point_ids_were_deduplicated``,
+    which it also guards downstream of — could be deleted with the suite
+    staying green (fix 4). Monkeypatching the name as imported into
+    ``lemely.db.attempt_repo`` (not the original module) is what actually
+    exercises the call site.
+    """
+    import lemely.db.attempt_repo as attempt_repo_module
+
+    def _boom(*_args: object, **_kwargs: object) -> list[dict[str, object]]:
+        raise RuntimeError("scheme derivation exploded")
+
+    monkeypatch.setattr(attempt_repo_module, "derive_point_rows", _boom)
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        assert session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    # A revision is still written, with an empty snapshot — the same contract
+    # as the no-scheme case.
+    revisions = _revisions_for(pg_sessionmaker, attempt_id)
+    assert len(revisions) == 1
+    assert revisions[0].points_snapshot == []
+
+
+def test_persist_deduplicates_shared_point_ids_at_the_database(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The end-to-end proof that deduped rows satisfy the DB's own unique
+
+    constraint (``uq_question_result_points_point``): the pure-function test
+    in ``tests/test_question_points.py`` proves ``derive_point_rows`` never
+    *emits* two rows for one id, but only a real flush proves that dedup is
+    what's needed to satisfy the constraint at all (fix 4).
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points = [
+        AnswerPoint(id="p1", point="Correct method", marks=1),
+        AnswerPoint(id="p1", point="Duplicate, should be dropped", marks=5),
+        AnswerPoint(id="p2", point="Answer to 3sf", marks=1),
+    ]
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+
+    points = _points_for(pg_sessionmaker, attempt_id)
+    assert [p.mark_point_id for p in points] == ["p1", "p2"]
+    assert len({p.mark_point_id for p in points}) == len(points)
+
+
+def test_persist_savepoint_isolates_a_ledger_row_postgres_rejects(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """FIX 1, proven at the database: a tariff Postgres itself rejects must
+
+    cost only the ledger, not the attempt. ``AnswerPoint.marks`` is
+    ``ge=0`` with no upper bound in pydantic, and an ``is_optional`` point is
+    excluded from ``Question.validate_mark_point_sum``'s primary-sum check —
+    so a point with ``marks=3_000_000_000`` escapes every validator upstream
+    and only fails at the Postgres ``tariff`` column (``sa.Integer``, int4) on
+    flush.
+    """
+    scheme = _scheme()
+    scheme.questions[0].answer_points = [
+        AnswerPoint(id="p1", point="Correct method", marks=1),
+        AnswerPoint(
+            id="p2",
+            point="Optional point with an out-of-range tariff",
+            marks=3_000_000_000,
+            is_optional=True,
+        ),
+        AnswerPoint(id="p3", point="Units stated", marks=1),
+    ]
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=scheme,
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+        assert len(results) == 1
+        assert results[0].awarded_marks == 1
+
+    # The revision insert lives in the same savepoint as the point rows (it
+    # carries the same bad tariff in its ``points_snapshot``), so it rolls
+    # back with them — unlike the no-scheme/derivation-failure cases, where
+    # there is nothing bad to roll back and a revision is still written.
+    assert _points_for(pg_sessionmaker, attempt_id) == []
+    assert _revisions_for(pg_sessionmaker, attempt_id) == []
+
+
+# ── The one definition of "low confidence" (self-review spec, Authority) ──────
+
+
+def _qr_for_authority(
+    *,
+    confidence_score: float,
+    needs_review: bool,
+    plagiarism: bool = False,
+    review_reason: str | None = None,
+    marker_source: MarkerSource = MarkerSource.ai,
+) -> QuestionResult:
+    """A persisted row for the authority tests below.
+
+    ``review_reason`` and ``marker_source`` are parameters, not constants, and
+    that is a merge fix rather than a tidy-up. This fixture used to hardcode
+    ``marker_source=MarkerSource.ai`` with no ``review_reason`` at all, which
+    made every row here an AI mark with an empty reason — so the two fields the
+    US-039 exemption reads could not vary, and no combination of these tests
+    could reach the blank that granted evidence-free self-mark authority. The
+    producer-level enumeration that closes that class for good lives in
+    ``tests/test_self_review_authority_builders.py``; these stay as the
+    field-level table.
+
+    ``ai_detection`` is gone with the detector (F4).
+    """
+    return QuestionResult(
+        question_id="1a",
+        awarded_marks=1,
+        maximum_marks=3,
+        confidence_band=DBConfidenceBand.low if needs_review else DBConfidenceBand.high,
+        confidence_score=confidence_score,
+        needs_teacher_review=needs_review,
+        marker_source=marker_source,
+        review_reason=review_reason,
+        plagiarism_flagged=plagiarism,
+    )
+
+
+def test_low_confidence_score_is_low_confidence() -> None:
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.55, needs_review=True))
+
+
+def test_structural_review_flag_without_integrity_flags_is_low_confidence() -> None:
+    # The D2.4 out-of-range / value-mismatch signal: high score, review forced.
+    assert is_marking_low_confidence(_qr_for_authority(confidence_score=0.99, needs_review=True))
+
+
+def test_integrity_only_flag_is_not_low_confidence() -> None:
+    """Purely plagiarism-flagged: review is needed, but not for a marking reason.
+
+    ``review_reason`` carries the integrity segment and NOTHING else, which is
+    what "integrity-only" actually looks like on the wire:
+    ``apply_integrity_checks`` APPENDS its segment to whatever the builder
+    wrote, so the segment standing alone is precisely the case where the
+    marking side had no complaint of its own.
+
+    Setting the reason matters, and this assertion used to pass without it for
+    the wrong reason. develop's predicate suppressed ``marking_flagged`` on the
+    bare boolean, so ANY plagiarism-flagged question was treated as
+    integrity-only — including a fully-confident, out-of-range mark, whose
+    ``low_confidence`` row is the sole signal that the marker misread the mark
+    scheme (finding A). The merged predicate reads the reason instead, so this
+    test now has to describe a genuinely reason-free row to make its point.
+    """
+    assert not is_marking_low_confidence(
+        _qr_for_authority(
+            confidence_score=0.99,
+            needs_review=True,
+            plagiarism=True,
+            review_reason="plagiarism (score 0.94)",
+        )
+    )
+
+
+def test_a_structural_reason_survives_an_integrity_flag_landing_on_top() -> None:
+    """Finding A: the integrity exemption must not swallow a marking reason.
+
+    Same flag, same score, same forced review — the only difference is that a
+    builder wrote a structural reason before integrity appended its segment.
+    That reason is the one signal that the marker misread the scheme, and it
+    must still open a ``low_confidence`` row (and still grant self-mark
+    authority, since the marker's own verdict is the thing in doubt).
+    """
+    assert is_marking_low_confidence(
+        _qr_for_authority(
+            confidence_score=0.99,
+            needs_review=True,
+            plagiarism=True,
+            review_reason="out of range | plagiarism (score 0.94)",
+        )
+    )
+
+
+def test_an_unflagged_blank_is_not_low_confidence() -> None:
+    """US-039, at the field level: a question no marker read grants no authority.
+
+    ``confidence_score=0.0`` satisfies the bare
+    ``< REVIEW_CONFIDENCE_THRESHOLD`` disjunct, so this row is exactly the one
+    that let a student self-award every mark on a blank with no evidence and no
+    judge. The exemption keys on ``marker_source == "missing"`` AND the blank's
+    own literal being one of the ``" | "`` segments of ``review_reason`` —
+    never on the score or the marker source alone.
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    assert not is_marking_low_confidence(
+        _qr_for_authority(
+            confidence_score=0.0,
+            needs_review=False,
+            review_reason=_BLANK_ANSWER_REVIEW_REASON,
+            marker_source=MarkerSource.missing,
+        )
+    )
+    # A "missing" row the builder itself flagged (--mcq-only, no client) is NOT
+    # the US-039 blank and still counts: same marker_source, different reason.
+    assert is_marking_low_confidence(
+        _qr_for_authority(
+            confidence_score=0.0,
+            needs_review=True,
+            review_reason="no marker available for this question",
+            marker_source=MarkerSource.missing,
+        )
+    )
+
+
+def test_low_score_with_integrity_flag_is_still_low_confidence() -> None:
+    # The score is a marking-side signal in its own right; an integrity flag
+    # on top does not launder it away.
+    assert is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.55, needs_review=True, plagiarism=True)
+    )
+
+
+def test_confident_unflagged_question_is_not_low_confidence() -> None:
+    assert not is_marking_low_confidence(
+        _qr_for_authority(confidence_score=0.95, needs_review=False)
+    )
+
+
+def test_question_result_ids_maps_question_id_to_row_id(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(matched_point_ids=["p1"]),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    assert set(ids) == {"1a"}
+    assert ids["1a"] == _only_result(pg_sessionmaker, attempt_id).id
+    assert repo.question_result_ids(uuid.uuid4()) == {}
+
+
+def _report_with_two_questions() -> AccuracyReport:
+    """The same report as :func:`_report_with_one_question`, plus a second question.
+
+    Two questions are the minimum that can tell a per-question mapping from a
+    positional one: with a single question every wrong pairing is also the
+    right one.
+    """
+    base = _report_with_one_question()
+    first = base.correction.questions[0]
+    second = first.model_copy(update={"question_id": "1b", "awarded_marks": 2})
+    correction = base.correction.model_copy(update={"questions": [first, second]})
+    return base.model_copy(update={"correction": correction})
+
+
+def test_question_result_ids_pairs_each_question_with_its_own_row(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Each question id maps to *its* row, not to whichever row came back first."""
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_two_questions(),
+        mark_scheme=_scheme(),
+    )
+
+    ids = repo.question_result_ids(attempt_id)
+
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionResult.question_id, QuestionResult.id).where(
+                QuestionResult.attempt_id == attempt_id
+            )
+        ).all()
+    expected = {question_id: row_id for question_id, row_id in rows}
+    assert set(expected) == {"1a", "1b"}, "fixture must persist two distinct questions"
+    assert ids == expected
+    assert ids["1a"] != ids["1b"]

@@ -11,16 +11,18 @@ import { GradeBadge } from "@/components/ui/grade-badge"
 import { BoundaryBar, type GradeBoundary } from "@/components/ui/boundary-bar"
 import { ConfidenceIndicatorSummary } from "@/components/ui/confidence-indicator"
 import { QuestionRow } from "@/components/ui/question-row"
-import { EmptyState } from "@/components/ui/state-views"
+import { EmptyState, ErrorState } from "@/components/ui/state-views"
 import { ListSkeleton, PanelSkeleton } from "@/components/ui/loading-shapes"
 import { QueryState } from "@/components/ui/query-state"
 import { Tabs, TabsList } from "@/components/ui/tabs"
 import { useToast } from "@/components/ui/toast"
+import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
+import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
 import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
@@ -31,9 +33,11 @@ import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
  *     `/student/correct` run completes - carries a real `questions` array, so
  *     the flat per-question list renders.
  *   - history: `GET /student/result/{paperId}` (useResult) when there's no
- *     live state (browsing from `Subject`'s paper-history table) - no
- *     per-question detail is stored for history records, so an honest note
- *     replaces the list instead of an empty or fabricated one.
+ *     live state (browsing from `Subject`'s paper-history table), for the
+ *     header - plus `GET /student/attempts/{attemptId}/questions`
+ *     (useAttemptQuestions) for the per-question rows, when the record
+ *     carries an attempt id. A file-store record has none, so an honest
+ *     note replaces the list instead of an empty or fabricated one.
  * The shared header (marks/percentage/grade, boundary bar, integrity +
  * provenance sidebar) renders from whichever source is active.
  *
@@ -339,6 +343,7 @@ function QuestionList({
   onShare,
   filter,
   onFilterChange,
+  attemptId,
 }: {
   questions: QuestionResult[]
   /** The paper's subject code (`res.code.split("/")[0]`), used to build
@@ -353,6 +358,13 @@ function QuestionList({
   onShare?: () => void
   filter: QuestionFilter
   onFilterChange: (filter: QuestionFilter) => void
+  /**
+   * Self-review (spec 2026-09-17): when the result knows its attempt and a
+   * row knows its `question_results` id, the row's expanded slot carries the
+   * self-mark panel. Both come from the backend, never guessed here, so a
+   * history record from before either existed simply renders no panel.
+   */
+  attemptId?: string | null
 }) {
   if (questions.length === 0) {
     // Inside a Card, like the populated list it stands in for. Bare, it
@@ -367,7 +379,12 @@ function QuestionList({
 
   const lostCount = filterQuestions(questions, "lost").length
   const flaggedCount = filterQuestions(questions, "flagged").length
-  const visible = filterQuestions(questions, filter)
+  // `filterQuestions` is typed against `./types`' base `QuestionResult`
+  // (shared with non-self-review call sites), which lacks `questionResultId`.
+  // It filters `questions` in place without rebuilding rows, so the objects
+  // coming back are still the full `QuestionResult`s passed in — the cast
+  // just restores what filtering already preserves at runtime.
+  const visible = filterQuestions(questions, filter) as QuestionResult[]
 
   return (
     <Card className="px-3">
@@ -434,6 +451,9 @@ function QuestionList({
                   Needs review: {q.reviewReason}
                 </div>
               ) : null}
+              {attemptId && q.questionResultId ? (
+                <SelfReviewPanel attemptId={attemptId} questionResultId={q.questionResultId} />
+              ) : null}
             </div>
           </QuestionRow>
         ))
@@ -447,6 +467,75 @@ function QuestionList({
 function filterFromParams(searchParams: URLSearchParams): QuestionFilter {
   const raw = searchParams.get("q")
   return raw === "lost" || raw === "flagged" ? raw : "all"
+}
+
+/**
+ * The history-sourced question list. A separate component so the hook is
+ * called unconditionally inside `QueryState`'s render prop. `result.attemptId`
+ * is `null` for a file-store record, which leaves the query disabled and the
+ * list empty — the same honest state this screen always had for those. A
+ * fetched 404 reads the same way (see the comment on that branch below); any
+ * other failure renders its own `ErrorState` rather than the honest-empty
+ * list, so a broken request is never mistaken for a paper with no detail.
+ */
+function HistoryQuestions({
+  result,
+  filter,
+  onFilterChange,
+  onShare,
+}: {
+  result: Result
+  filter: QuestionFilter
+  onFilterChange: (filter: QuestionFilter) => void
+  onShare?: () => void
+}) {
+  const questions = useAttemptQuestions(result.attemptId)
+  if (result.attemptId && questions.isPending) {
+    return <ListSkeleton rows={5} />
+  }
+  /*
+   * A 404 here is an expected answer, not a failure: the new server-side
+   * gate (`routers/student.py`) withholds a paper whose stored mark points
+   * predate the group columns, deliberately, rather than serving detail it
+   * cannot stand behind. That is the same "there is no per-question detail
+   * for this paper" state `QuestionList`'s own empty branch already renders
+   * for a file-store record with no `attemptId` at all — so a gated 404
+   * falls through to `rows = []` below rather than into the error branch.
+   * Anything else (a 500, a dropped connection) is a real failure the
+   * honest-empty state must not be confused with, so it gets its own
+   * `ErrorState` instead of silently reading as "this paper has none."
+   */
+  if (questions.isError && !(questions.error instanceof ApiError && questions.error.status === 404)) {
+    return (
+      <ErrorState
+        compact
+        heading="We couldn't load your questions"
+        body={studentLoadFailureMessage(questions.error)}
+        action={{ label: "Try again", onClick: () => void questions.refetch() }}
+      />
+    )
+  }
+  const rows = questions.data ?? []
+  const summary = confidenceSummaryOf(rows)
+  return (
+    <>
+      {rows.length > 0 ? (
+        <ConfidenceIndicatorSummary
+          confident={summary.confident}
+          uncertain={summary.uncertain}
+          needsReview={summary.needsReview}
+        />
+      ) : null}
+      <QuestionList
+        questions={rows}
+        subjectCode={result.code.split("/")[0]}
+        onShare={onShare}
+        filter={filter}
+        onFilterChange={onFilterChange}
+        attemptId={result.attemptId}
+      />
+    </>
+  )
 }
 
 export function PaperResult() {
@@ -516,6 +605,7 @@ export function PaperResult() {
           onShare={shareHandler(live)}
           filter={filter}
           onFilterChange={setFilter}
+          attemptId={live.attemptId}
         />
       </ResultScreen>
     )
@@ -592,34 +682,25 @@ export function PaperResult() {
           <>
             <ResultHeader res={data} paperId={paperId} />
             {/*
-             * PR 4 investigation (deferred audit item): checked whether
-             * `ResultDTO` — `data` here — actually carries per-question rows
-             * before touching this. It does not, and not by omission: every
-             * `GET /student/result/{paper_id}` response builds `theory=[]`
-             * unconditionally (`routers/student.py::student_result`, whose
-             * own docstring calls it "structurally empty" — history rows
-             * persist totals, weak-areas and metadata only, never the
-             * per-question answers/mark-scheme points theory marking used).
-             * `theory` is also the wrong shape for this list regardless:
-             * `TheoryQuestionDTO` (`conf`/`confColor`/`points`/`markOk`, all
-             * pre-bucketed presentation fields) is not `QuestionResult`
-             * (`confidence`/`awardedMarks`/`reviewReason`, the raw fields
-             * `QuestionList`/`confidenceTierFor` read) — passing it through
-             * would need a second, speculative mapping for data that never
-             * arrives today. `questions={[]}` is therefore the honest
-             * literal, not a stand-in for `data.theory`: it renders
-             * `QuestionList`'s own "No per-question detail for this paper"
-             * empty state, which is the true state of every history-sourced
-             * result right now. Revisit this once the backend actually
-             * populates per-question history detail — the live path just
-             * above already proves `QuestionList` can render it real.
+             * `data.theory` is never the source for this list: it's the
+             * wrong shape (`TheoryQuestionDTO`'s pre-bucketed
+             * `conf`/`confColor`/`points`/`markOk`, not `QuestionResult`'s
+             * raw `confidence`/`awardedMarks`/`reviewReason`) and every
+             * `GET /student/result/{paper_id}` response still builds it as
+             * `[]` unconditionally (`routers/student.py::student_result`).
+             * The real rows come from a second endpoint keyed on the
+             * attempt instead: `GET /student/attempts/{attemptId}/questions`
+             * (`useAttemptQuestions`, `HistoryQuestions` below). A
+             * file-store record has no `attemptId`, which disables that
+             * query and leaves `QuestionList`'s own honest "No per-question
+             * detail for this paper" empty state — the true state of that
+             * one record, not a stand-in for data that could exist.
              */}
-            <QuestionList
-              questions={[]}
-              subjectCode={data.code.split("/")[0]}
-              onShare={paperId ? shareHandler(data, paperId) : undefined}
+            <HistoryQuestions
+              result={data}
               filter={filter}
               onFilterChange={setFilter}
+              onShare={paperId ? shareHandler(data, paperId) : undefined}
             />
           </>
         )}

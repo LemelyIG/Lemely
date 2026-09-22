@@ -27,7 +27,17 @@ from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import ExamMetadata, ExtractedAnswer, ExtractedAnswers
+from lemely.core.schemas import (
+    AccuracyReport,
+    ConfidenceBand,
+    CorrectedQuestion,
+    CorrectionResult,
+    ExamMetadata,
+    ExtractedAnswer,
+    ExtractedAnswers,
+    GradePrediction,
+    WeaknessReport,
+)
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.models import User
@@ -391,6 +401,63 @@ def test_upload_then_correct_persists_attempt(
         assert {item.reason.value for item in items} == {"low_confidence"}
 
 
+def test_correct_passes_the_resolved_mark_scheme_to_persist_correction(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without this, ``persist_correction``'s ``mark_scheme`` default of
+
+    ``None`` silently applies and no paper ever gets a point ledger — a
+    failure with no error, which is why it is pinned here rather than left to
+    integration.
+    """
+    api, _, _ = client
+
+    persist = MagicMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(AttemptRepository, "persist_correction", persist)
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert persist.call_count == 1
+    scheme = persist.call_args.kwargs["mark_scheme"]
+    assert isinstance(scheme, MarkScheme), "route passed no scheme; ledger would be empty"
+    assert scheme == _mcq_scheme(), (
+        "route passed a different scheme than resolve_mark_scheme returned"
+    )
+
+
+def test_correct_does_not_pass_the_upload_id_as_paper_id(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``payload.paperId`` is an UPLOAD id and must never reach ``attempts.paper_id``."""
+    api, _, _ = client
+
+    persist = MagicMock(return_value=uuid.uuid4())
+    monkeypatch.setattr(AttemptRepository, "persist_correction", persist)
+
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    assert up.status_code == 200, up.text
+    paper_id = up.json()["paperId"]
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    assert persist.call_count == 1
+    assert "paper_id" not in persist.call_args.kwargs
+
+
 def test_correct_complete_frame_includes_full_questions(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:
@@ -429,6 +496,81 @@ def test_correct_complete_frame_includes_full_questions(
     # q2: extracted answer is blank, so no marks are awarded.
     assert by_id["2"]["awardedMarks"] == 0
     assert "reviewReason" in by_id["2"]
+
+
+def test_correct_complete_frame_never_shows_a_student_an_integrity_finding(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live student frame carries no integrity trace, in either form.
+
+    ``lemely/io/integrity.py`` writes "plagiarism (score 0.94)" into the same
+    ``" | "``-joined ``review_reason`` as ordinary marking reasons, and
+    ``PaperResult`` renders it verbatim as "Needs review: ...". Both the
+    booleans and that sentence are teacher-only (QUALITY-BAR.md). Since
+    ``3690ccfe`` this screen also renders history rows, so the same guard is
+    asserted on both surfaces.
+    """
+    flagged = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.99,
+        needs_teacher_review=True,
+        marker_source="deterministic",
+        review_reason="plagiarism (score 0.94) | low confidence | ai_detection (score 0.88)",
+        plagiarism_flagged=True,
+    )
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[flagged],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=1,
+            percentage=100.0,
+            grade="A",
+            confidence=ConfidenceBand.HIGH,
+        ),
+    )
+    monkeypatch.setattr(student, "grade_paper", lambda *a, **k: report)
+
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    [question] = complete_frame["questions"]
+    assert question["reviewReason"] == "low confidence"
+    assert question["plagiarismFlagged"] is False
+    # The pre-F4 "ai_detection (score 0.88)" segment in the input above is
+    # deliberate: F4 deleted the detector and the `aiDetectionFlagged` field,
+    # but `0037_remove_ai_detection` does not rewrite
+    # `teacher_papers.report_json`, so that text can still arrive on a
+    # console-graded paper snapshot and `_INTEGRITY_REASON_PREFIXES` still has
+    # to strip it. The last assertion below is what pins that.
+    # Values only -- the field *name* carries "plagiarism", so a whole-frame
+    # substring check would pass on the key alone.
+    values = json.dumps([v for v in question.values() if isinstance(v, str)])
+    assert "plagiarism" not in values
+    assert "ai_detection" not in values
 
 
 def test_correct_complete_frame_includes_result_header_fields(
@@ -908,3 +1050,100 @@ def test_resolver_corpus_near_miss_returns_none_not_a_different_papers_scheme(
     assert (
         resolve_mark_scheme(None, corpus_repo, settings, gemini_client, metadata=near_miss) is None
     )
+
+
+def test_correct_complete_frame_carries_question_result_ids(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The self-review surface (spec 2026-09-17) is addressed by
+    ``question_results.id``; the live result must carry it per question."""
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    with pg_sessionmaker() as session:
+        rows = session.execute(
+            select(QuestionResult.question_id, QuestionResult.id).where(
+                QuestionResult.attempt_id == uuid.UUID(complete_frame["attempt_id"])
+            )
+        ).all()
+    expected = {question_id: str(row_id) for question_id, row_id in rows}
+    assert {q["questionId"]: q["questionResultId"] for q in complete_frame["questions"]} == expected
+
+
+def test_correct_complete_frame_names_no_awarded_mark_point(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live frame carries ``questionResultId`` — so it must not carry the verdict.
+
+    ``matchedPointIds`` is the set of point ids the marker awarded, and
+    ``QuestionResultPoint.awarded`` is derived from exactly that list
+    (``lemely/db/question_points.py``). The same frame is what
+    ``CorrectPaper`` parks in ``location.state`` and what supplies the id the
+    self-review panel renders on, so shipping both puts the answer and the
+    question on one screen: a student could read the awarded points out of the
+    Network tab before committing to a self-mark. A teacher surface still gets
+    the field — this is gated on ``for_student``, not deleted.
+    """
+    marked = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=3,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.55,
+        needs_teacher_review=True,
+        marker_source="ai",
+        matched_point_ids=["p_method"],
+    )
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[marked],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=3,
+            percentage=33.33,
+            grade="E",
+            confidence=ConfidenceBand.LOW,
+        ),
+    )
+    monkeypatch.setattr(student, "grade_paper", lambda *a, **k: report)
+
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    [question] = complete_frame["questions"]
+    assert question["matchedPointIds"] is None
+    # The whole frame, not just that key: a point id reaching the student under
+    # any other name is the same reveal.
+    assert "p_method" not in json.dumps(complete_frame)

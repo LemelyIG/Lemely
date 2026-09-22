@@ -198,7 +198,12 @@ class AuthService:
         self._tokens = tokens
 
     def _register_device(
-        self, user_id: uuid.UUID, device: DeviceContext | None, *, allow_eviction: bool = True
+        self,
+        user_id: uuid.UUID,
+        device: DeviceContext | None,
+        *,
+        allow_eviction: bool = True,
+        evict_device_id: str | None = None,
     ) -> DeviceRegistration | None:
         """Register the login's device and return the registration, or ``None``.
 
@@ -209,6 +214,8 @@ class AuthService:
         With ``allow_eviction=False`` a login that would consume a fourth slot
         raises :class:`~lemely.db.device_repo.DeviceLimitReachedError` and writes
         nothing, letting the caller confirm with the user first (D5.12).
+        ``evict_device_id`` is the device the user picked on that confirm (G-10);
+        see :meth:`~lemely.db.device_repo.DeviceRegistry.register_login`.
         """
         if self._device_registry is None or device is None:
             return None
@@ -218,6 +225,7 @@ class AuthService:
             user_agent=device.user_agent,
             device_label=device.label,
             allow_eviction=allow_eviction,
+            evict_device_id=evict_device_id,
         )
 
     def _mint_refresh(
@@ -368,6 +376,7 @@ class AuthService:
         device: DeviceContext | None = None,
         *,
         confirm_device_eviction: bool = False,
+        evict_device_id: str | None = None,
     ) -> AuthResult:
         """Verify the credential via GoTrue, re-mirror, and mint a token.
 
@@ -383,7 +392,9 @@ class AuthService:
         ``confirm_device_eviction`` is set — the credential has been verified by
         then, so the caller may show the user which devices would be signed out
         (D5.12) and re-send the login confirmed. Nothing is written on the
-        unconfirmed attempt; in particular no device is evicted.
+        unconfirmed attempt; in particular no device is evicted. ``evict_device_id``
+        carries the device the user picked from that list (G-10); a stale or
+        missing choice falls back to oldest-first, same as before this existed.
         """
         token = self._gotrue.password_grant(email, password)
         existing = self._mirror.get_by_id(token.user.id)
@@ -391,7 +402,10 @@ class AuthService:
         phone = existing.phone if existing is not None else None
         self._mirror.upsert(token.user.id, email=token.user.email, role=role)
         registration = self._register_device(
-            token.user.id, device, allow_eviction=confirm_device_eviction
+            token.user.id,
+            device,
+            allow_eviction=confirm_device_eviction,
+            evict_device_id=evict_device_id,
         )
         access_token = self._mint_email_token(
             user_id=token.user.id,

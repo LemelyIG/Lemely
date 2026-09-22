@@ -88,6 +88,11 @@ export const REASON_LABEL: Record<string, string> = {
   plagiarism_flag: "Matches mark-scheme wording",
   manual: "Manually flagged",
   random_audit: "Random audit",
+  student_evidence_unjudged: "Student challenged a mark",
+  // `ai_detection_flag` is deliberately absent: F4 removed the detector and
+  // `0037_remove_ai_detection` rewrote every row carrying that reason to
+  // `manual`, so no queue row can reach this map with it. `reasonLabel` falls
+  // back to the raw value, which is what `reviewAdvisoryCopy.test.ts` pins.
 }
 
 export function reasonLabel(reason: string): string {
@@ -208,7 +213,10 @@ export function confidenceTone(
 const REASON_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: "", label: "All reasons" },
   { value: "low_confidence", label: "Low confidence" },
+  // F4's wording, not develop's "Possible mark-scheme copying" — see
+  // `REASON_LABEL` above for why the label does not imply intent.
   { value: "plagiarism_flag", label: "Matches mark-scheme wording" },
+  { value: "student_evidence_unjudged", label: "Student challenged a mark" },
 ]
 
 const AGE_FILTER_OPTIONS: { value: string; label: string }[] = [

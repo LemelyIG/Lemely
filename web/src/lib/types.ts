@@ -51,6 +51,17 @@ export interface QuestionResult {
    * `!== false` rather than requiring this field to be present.
    */
   needsTeacherReview?: boolean
+  /** Mirrors `QuestionResultDTO.pendingTeacher` — whether a teacher still has
+   * an open review queued for this question right now, as opposed to
+   * `reviewReason`'s frozen record of why it was once flagged. `undefined`
+   * on every source that has no queue to ask (a teacher-console grade, a
+   * live `/student/correct` frame); only the student self-review list sets
+   * it, and only there should a `false` be read as "settled".
+   *
+   * NOT a rename of `needsTeacherReview` above: that is the marker's flag
+   * frozen at marking time, this is the live queue state. `confidenceTierFor`
+   * and `isFlagged` read both. */
+  pendingTeacher?: boolean
 }
 
 export interface WeakArea {

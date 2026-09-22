@@ -295,6 +295,20 @@ class CorrectedQuestion(StrictModel):
     ``_DROPPED_ANSWER_REVIEW_REASON`` literal
     (``lemely/io/correction_ai.py``), so the same distinction is recoverable
     from ``review_reason`` too."""
+    rationale: str | None = None
+    """The marker's own reasoning for this question's mark, verbatim.
+
+    Distinct from ``feedback``, which is written for the student. This is the
+    marker explaining itself. ``None`` until a marker emits one — never
+    synthesised from the mark scheme text, per spec 2026-09-17 D2.
+    """
+    point_notes: dict[str, str] | None = None
+    """Per-mark-point reasoning, keyed by ``AnswerPoint.id``.
+
+    ``None`` until a marker emits it. Keys that do not correspond to a point in
+    the mark scheme are ignored by the derivation rather than written as rows
+    for points that do not exist.
+    """
 
     @model_validator(mode="after")
     def validate_awarded_marks(self) -> CorrectedQuestion:

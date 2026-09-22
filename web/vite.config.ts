@@ -30,6 +30,16 @@ export default defineConfig(({ mode }) => ({
   define: {
     __LEMELY_BUILD_ID__: JSON.stringify((process.env.GITHUB_SHA ?? "dev").slice(0, 12)),
   },
+  build: {
+    // CSP HIGH: `font-src 'self'` (public/_headers, web/worker/index.ts) has
+    // no `data:` grant. Vite's default `assetsInlineLimit` (4096 bytes)
+    // base64-inlines any font under that size straight into the built CSS as
+    // a `data:font/woff2;...` URL, which the CSP then blocks at runtime —
+    // the file loads at build time and fails silently at request time. `0`
+    // keeps every font (and every other asset) as its own `/assets/*` file,
+    // served same-origin, which `'self'` already permits.
+    assetsInlineLimit: 0,
+  },
   plugins: [
     react(),
     tailwindcss(),

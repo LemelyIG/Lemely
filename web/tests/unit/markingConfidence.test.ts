@@ -109,6 +109,83 @@ describe("confidenceTierFor", () => {
     ).toBe("needs-review")
   })
 
+  it("stale-flag defect (S2 review): a settled self-review beats a frozen reviewReason", () => {
+    // A resolved `low_confidence` queue row: `pendingTeacher: false` says no
+    // teacher review is open for this question *right now*, and that wins
+    // outright even though `reviewReason` -- the marker's frozen record of
+    // why it was once flagged -- is still sitting there, unrewritten by
+    // design. Before this fix there was no `pendingTeacher` signal at all,
+    // so a self-reviewed, fully-settled question still read "needs-review"
+    // forever.
+    expect(
+      confidenceTierFor({ reviewReason: "low confidence", pendingTeacher: false }),
+    ).toBe("confident")
+    // `pendingTeacher: true` (still open) behaves exactly as `reviewReason`
+    // alone always has.
+    expect(
+      confidenceTierFor({ reviewReason: "low confidence", pendingTeacher: true }),
+    ).toBe("needs-review")
+    // `pendingTeacher` absent (a teacher-console grade, a live
+    // `/student/correct` frame -- no queue to ask) must not change today's
+    // behaviour for every source that never sends the field.
+    expect(confidenceTierFor({ reviewReason: "low confidence" })).toBe("needs-review")
+  })
+
+  it("merge intersection: a blank with NO open queue row is still 'not-marked'", () => {
+    // The row neither side's suite could hold, because neither side alone
+    // produced it. `pendingTeacher: false` (develop: no review is open) and
+    // the unflagged-blank shape (this branch) co-occur on every US-039 blank
+    // once both exist: a blank is exempt from the queue BY DESIGN, so no row
+    // is ever open for it.
+    //
+    // Resolving `confidenceTierFor` with develop's `pendingTeacher === false`
+    // guard first returns "confident" here -- the marker is confident about a
+    // question no marker read -- and leaves `not-marked` dead code. Strictly
+    // worse than the "uncertain" finding G replaced. This is the assertion
+    // that fails if the guard order is ever flipped back.
+    expect(
+      confidenceTierFor({
+        reviewReason: "student left this question blank (0 awarded, no AI call made)",
+        needsTeacherReview: false,
+        confidence: 0,
+        markerSource: "missing",
+        pendingTeacher: false,
+      }),
+    ).toBe("not-marked")
+  })
+
+  it("merge intersection: not-marked-first does not capture a settled self-review", () => {
+    // The mirror direction, and the row that could not be settled by reading
+    // either file: putting `not-marked` first must not cost develop's fix. A
+    // question a self-mark has settled has a REAL marker source ("ai"), so it
+    // fails the `not-marked` gate, falls through to `pendingTeacher === false`
+    // and still reads "confident".
+    expect(
+      confidenceTierFor({
+        reviewReason: "low confidence",
+        needsTeacherReview: false,
+        confidence: 0.55,
+        markerSource: "ai",
+        pendingTeacher: false,
+      }),
+    ).toBe("confident")
+  })
+
+  it("merge intersection: a FLAGGED missing answer with an open row still needs review", () => {
+    // `markerSource` alone is not the gate, and `pendingTeacher` does not
+    // become one either: an extraction failure the backend flagged
+    // (needsTeacherReview: true) falls past `not-marked` and keeps surfacing.
+    expect(
+      confidenceTierFor({
+        reviewReason: "Question could not be extracted",
+        needsTeacherReview: true,
+        confidence: 0,
+        markerSource: "missing",
+        pendingTeacher: true,
+      }),
+    ).toBe("needs-review")
+  })
+
   it("treats a missing score as confident rather than doubtful", () => {
     // The arguable call, made deliberately: MCQ marking is deterministic
     // string comparison and carries no score, so the alternative would flag

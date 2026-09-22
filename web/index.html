@@ -129,7 +129,11 @@
       Content-Security-Policy. `public/_headers`/`nginx.conf`/`worker/
       index.ts` now all ship one (`headers.test.ts` pins `script-src 'self'`
       with no `unsafe-inline`, no nonce, no hash — never weaken that
-      assertion to fix a page instead). This inline `<style>` block is
+      assertion to fix a page instead). `script-src` does carry one host,
+      `https://static.cloudflareinsights.com`, for the Web Analytics beacon
+      Cloudflare injects into every response it proxies; a host allowlist for
+      one vendored script is a different concession from an inline escape
+      hatch, and the nonce/hash/`unsafe-inline` ban above is unchanged. This inline `<style>` block is
       covered by `style-src 'self' 'unsafe-inline'`, which the CSP already
       grants — style is not the tightened directive. `script-src` is, and an
       inline `<style>` block has never needed anything from it, so there was

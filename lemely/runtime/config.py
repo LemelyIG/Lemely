@@ -127,6 +127,17 @@ class GeminiSettings(BaseModel):
     generation_model: str | None = "gemini-3.5-flash-lite"
     study_plan_model: str | None = None
     scan_metadata_model: str | None = "gemini-3.5-flash-lite"
+    # develop's self-review evidence judge. Left on the `model` fallback
+    # (``None``) as develop shipped it — F1's per-task migration predates the
+    # judge and made no ruling about it, and inventing one here would be a
+    # model choice smuggled in through a merge.
+    #
+    # `integrity_model` is deliberately NOT re-added from develop's side: F4
+    # deleted the AI-detection feature it configured, and the key is listed in
+    # `_REMOVED_CONFIG_KEYS["gemini"]` below so `lemely doctor` warns a stale
+    # config instead of the knob silently doing nothing. Taking develop's
+    # declaration back would make that entry describe a key that still exists.
+    self_review_judge_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
     # try to improve this mark before it is final". It is NOT the human-review
@@ -227,6 +238,7 @@ class GeminiSettings(BaseModel):
             "generation": self.generation_model,
             "study_plan": self.study_plan_model,
             "scan_metadata": self.scan_metadata_model,
+            "self_review_judge": self.self_review_judge_model,
         }
         return mapping.get(task_tag) or self.model
 

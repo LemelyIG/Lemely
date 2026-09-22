@@ -13,9 +13,16 @@ two parallel work-streams never collide on a second Alembic head:
 
 1. **Remove** ``ReviewReason.ai_detection_flag``. Postgres has no
    ``ALTER TYPE ... DROP VALUE``, so the enum is rebuilt: rename the old
-   type out of the way, create the replacement with the surviving and new
-   members, cast the column across, drop the old type. ``SET lock_timeout``
-   first (see point 5 below).
+   type out of the way, create the replacement, cast the column across, drop
+   the old type. ``SET lock_timeout`` first (see point 5 below). Because this
+   is a rebuild rather than an ``ALTER TYPE ... DROP VALUE``, every member the
+   type is meant to KEEP has to be named on the way back in — and the
+   survivors are therefore read from the live type
+   (:func:`_members_now`) rather than hardcoded, so that a member belonging to
+   the Alembic *sibling* revision ``0037_question_result_pts``
+   (``student_evidence_unjudged``) is not silently dropped on whichever
+   ordering the merge head runs that revision first. See the
+   ``_REMOVED_MEMBER`` comment below.
 2. **One-way data rewrite, ``review_queue.reason``.** Any existing row with
    ``reason = 'ai_detection_flag'`` becomes ``reason = 'manual'`` — the
    closest surviving member; ``manual`` already means "flagged for a reason
@@ -115,10 +122,63 @@ down_revision: str | Sequence[str] | None = "0036_upload_idempotency_key"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
-# The enum's member set before and after this migration. Declared once so
-# upgrade()/downgrade() cannot drift apart on the member list.
-_OLD_MEMBERS = ("low_confidence", "plagiarism_flag", "ai_detection_flag", "manual")
-_NEW_MEMBERS = ("low_confidence", "plagiarism_flag", "manual", "random_audit")
+# The one member this migration REMOVES and the one it ADDS. Every other member
+# is carried across from whatever the type currently holds, read from the
+# database rather than listed here — see :func:`_members_now`.
+#
+# Listing the survivors was the original design and it was wrong once ``develop``
+# merged in. This migration REBUILDS ``reviewreason`` wholesale (Postgres has no
+# ``ALTER TYPE ... DROP VALUE``), and it is an Alembic SIBLING of
+# ``0037_question_result_pts``, which reaches ``student_evidence_unjudged`` with
+# ``ALTER TYPE ... ADD VALUE IF NOT EXISTS``. The order the two run in belongs to
+# the merge head (``0039_merge_heads``) and is not something either file can see,
+# so a hardcoded survivor list silently DROPS the sibling's member on whichever
+# ordering runs that revision first. The loss does not surface as a migration
+# failure: ``lemely.db.self_review_repo`` writes that member into
+# ``review_queue.reason``, so it surfaces as a runtime enum error on a student's
+# evidence-backed challenge.
+#
+# Naming the sibling's member in a hardcoded list instead would fix the ordering
+# but break this migration's own documented property 2a — an upgrade+downgrade
+# round trip on an empty database leaves the schema exactly as it started — by
+# pre-creating, and then leaving behind, a member this chain's ancestors never
+# added. Reading the live member set satisfies both: nothing is invented and
+# nothing is lost, in either direction and in either order.
+_REMOVED_MEMBER = "ai_detection_flag"
+_ADDED_MEMBER = "random_audit"
+
+
+def _members_now(bind: sa.engine.Connection) -> tuple[str, ...]:
+    """``reviewreason``'s current members, in the type's own sort order.
+
+    Preserving ``enumsortorder`` keeps the rebuilt type ordered as it was, so an
+    ``ORDER BY reason`` does not silently change meaning across this migration.
+    """
+    rows = bind.execute(
+        sa.text(
+            "SELECT enumlabel FROM pg_enum "
+            "JOIN pg_type ON pg_type.oid = pg_enum.enumtypid "
+            "WHERE pg_type.typname = 'reviewreason' "
+            "ORDER BY pg_enum.enumsortorder"
+        )
+    ).scalars()
+    return tuple(rows)
+
+
+def _rebuild_reviewreason(bind: sa.engine.Connection, members: tuple[str, ...]) -> None:
+    """Replace the ``reviewreason`` type with exactly ``members``.
+
+    Rename the old type out of the way, create the replacement, cast
+    ``review_queue.reason`` across, drop the old type. Shared by ``upgrade`` and
+    ``downgrade`` so the two cannot drift on the mechanics.
+    """
+    op.execute("ALTER TYPE reviewreason RENAME TO reviewreason_old")
+    sa.Enum(*members, name="reviewreason").create(bind)
+    op.execute(
+        "ALTER TABLE review_queue "
+        "ALTER COLUMN reason TYPE reviewreason USING reason::text::reviewreason"
+    )
+    op.execute("DROP TYPE reviewreason_old")
 
 # The exact literal appended by pre-F4 `apply_integrity_checks`
 # (`lemely/io/integrity.py`, `f"ai_detection (score {finding.score:.2f})"`) —
@@ -222,15 +282,15 @@ def upgrade() -> None:
         """
     )
 
-    # Rebuild the enum: drop ai_detection_flag, add random_audit. Postgres
-    # has no ALTER TYPE ... DROP VALUE, so the type is recreated wholesale.
-    op.execute("ALTER TYPE reviewreason RENAME TO reviewreason_old")
-    sa.Enum(*_NEW_MEMBERS, name="reviewreason").create(op.get_bind())
-    op.execute(
-        "ALTER TABLE review_queue "
-        "ALTER COLUMN reason TYPE reviewreason USING reason::text::reviewreason"
-    )
-    op.execute("DROP TYPE reviewreason_old")
+    # Rebuild the enum: drop ai_detection_flag, add random_audit, KEEP everything
+    # else the type currently holds (see the _REMOVED_MEMBER comment above for
+    # why the survivors are read rather than listed).
+    bind = op.get_bind()
+    members = _members_now(bind)
+    new_members = tuple(m for m in members if m != _REMOVED_MEMBER)
+    if _ADDED_MEMBER not in new_members:
+        new_members += (_ADDED_MEMBER,)
+    _rebuild_reviewreason(bind, new_members)
 
     op.add_column(
         "review_queue",
@@ -262,13 +322,23 @@ def downgrade() -> None:
 
     op.drop_column("review_queue", "is_audit")
 
-    op.execute("ALTER TYPE reviewreason RENAME TO reviewreason_new")
-    sa.Enum(*_OLD_MEMBERS, name="reviewreason").create(op.get_bind())
-    op.execute(
-        "ALTER TABLE review_queue "
-        "ALTER COLUMN reason TYPE reviewreason USING reason::text::reviewreason"
-    )
-    op.execute("DROP TYPE reviewreason_new")
+    # The mirror image of upgrade(): drop random_audit, put ai_detection_flag
+    # back where it was, keep every other member the type currently holds. A
+    # member the sibling revision 0037_question_result_pts added is therefore
+    # preserved rather than dropped -- that revision's own downgrade
+    # deliberately never removes it either (Postgres cannot drop an enum value),
+    # and dropping it here would fail the `reason::text::reviewreason` cast
+    # outright on any row still carrying it.
+    bind = op.get_bind()
+    members = _members_now(bind)
+    old_members = tuple(m for m in members if m != _ADDED_MEMBER)
+    if _REMOVED_MEMBER not in old_members:
+        # Restore it in its original position (immediately after
+        # plagiarism_flag, per 0002_core_schema) rather than appending, so the
+        # type's sort order round-trips too.
+        anchor = old_members.index("plagiarism_flag") + 1
+        old_members = old_members[:anchor] + (_REMOVED_MEMBER,) + old_members[anchor:]
+    _rebuild_reviewreason(bind, old_members)
 
     op.drop_table("ai_detection_removal_audit_log")
 

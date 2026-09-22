@@ -195,12 +195,24 @@ class ReviewReason(enum.Enum):
     see the migration's docstring). ``random_audit`` (N2) is a new member
     added in the same migration, so the two changes share one Alembic head
     instead of racing for it.
+
+    ``student_evidence_unjudged`` arrives from the student self-review spec
+    (``0037_question_result_pts``, which reaches this member with
+    ``ALTER TYPE ... ADD VALUE IF NOT EXISTS``). Because that revision and
+    ``0037_remove_ai_detection`` are Alembic *siblings* off
+    ``0036_upload_idempotency_key``, whichever order the merge head resolves
+    them in must leave the same member set — so ``0037_remove_ai_detection``'s
+    enum REBUILD names this member in both its member lists rather than
+    relying on develop's revision having already run. Dropping it is not a
+    cosmetic loss: ``lemely.db.self_review_repo`` writes it into
+    ``review_queue.reason``.
     """
 
     low_confidence = "low_confidence"
     plagiarism_flag = "plagiarism_flag"
     manual = "manual"
     random_audit = "random_audit"
+    student_evidence_unjudged = "student_evidence_unjudged"
 
 
 class NotificationType(enum.Enum):
@@ -368,6 +380,36 @@ class InviteRole(enum.StrEnum):
     parent = "parent"
 
 
+class RevisionSource(enum.Enum):
+    """What produced a :class:`QuestionResultRevision`.
+
+    ``ai`` is written at correction time (the only writer today —
+    ``AttemptRepository._persist``). ``teacher`` exists for a future writer:
+    the current override path (``ReviewRepository.resolve``) records a
+    teacher's correction on ``QuestionResult.teacher_awarded_marks`` directly
+    and never writes a ``QuestionResultRevision``, so no revision with
+    ``source=teacher`` is produced today. ``student_selfmark`` and ``remark``
+    are likewise written by the student self-review spec; all three exist
+    here so that spec needs no enum migration of its own (spec 2026-09-17 D5).
+    """
+
+    ai = "ai"
+    teacher = "teacher"
+    student_selfmark = "student_selfmark"
+    remark = "remark"
+
+
+class EvidenceVerdict(enum.Enum):
+    """Outcome of judging a student's written claim on a mark point.
+
+    Written by the student self-review spec; created here per D5.
+    """
+
+    accepted = "accepted"
+    rejected = "rejected"
+    not_required = "not_required"
+
+
 # ---------------------------------------------------------------------------
 # Shared ORM mixins
 # ---------------------------------------------------------------------------
@@ -405,6 +447,7 @@ __all__ = [
     "BoundarySource",
     "ConfidenceBand",
     "DifficultySource",
+    "EvidenceVerdict",
     "ExamBoard",
     "FriendshipStatus",
     "InviteRole",
@@ -422,6 +465,7 @@ __all__ = [
     "QuizSubmissionStatus",
     "ReviewReason",
     "ReviewStatus",
+    "RevisionSource",
     "Role",
     "SeatStatus",
     "SessionMonth",

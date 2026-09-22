@@ -65,6 +65,23 @@ export interface ConfidenceInput {
    * this field existed.
    */
   markerSource?: string
+  /**
+   * Whether a teacher review is open for this question *right now*
+   * (`QuestionResultDTO.pendingTeacher`) — as opposed to `reviewReason`,
+   * which is the marker's record of why it was once flagged and is never
+   * rewritten. `undefined` where nothing computed this (a teacher-console
+   * grade, a live `/student/correct` frame): those sources have no queue to
+   * ask, so this function falls back to `reviewReason` exactly as before.
+   * `false` is a positive, current claim that nothing is pending, and wins
+   * over a stale `reviewReason` outright — a self-mark that settled the
+   * queue row does not leave a "needs review" chip on a "3/3" question.
+   *
+   * NOT the same field as `needsTeacherReview` above, and neither is a rename
+   * of the other: that one is the marker's flag frozen at marking time, this
+   * one is the live queue state. Both are read below, in that order, and
+   * dropping either loses a fix — see the guard order there.
+   */
+  pendingTeacher?: boolean
 }
 
 /**
@@ -79,12 +96,39 @@ export interface ConfidenceInput {
  * `PaperResult.markerSourceLabel` already renders for the same
  * `markerSource` values.
  *
- * `reviewReason` wins whenever `needsTeacherReview` is not explicitly `false`:
- * it is a decision the backend already made, and a question can be flagged
- * for review at any confidence (integrity checks set it without touching the
- * score at all). The one exception is the unflagged blank described on
- * `ConfidenceInput.needsTeacherReview` above, which this function now names
- * explicitly rather than letting it fall through to the score check.
+ * `pendingTeacher === false` then wins: it is the current truth about whether
+ * a teacher is going to look, and a `reviewReason` frozen from marking time
+ * cannot outrank it (a resolved question must not still read "needs review"
+ * merely because `reviewReason` is immutable by design).
+ *
+ * Short of that, `reviewReason` wins whenever `needsTeacherReview` is not
+ * explicitly `false`: it is a decision the backend already made, and a
+ * question can be flagged for review at any confidence (integrity checks set
+ * it without touching the score at all). The one exception is the unflagged
+ * blank described on `ConfidenceInput.needsTeacherReview` above, which the
+ * `not-marked` guard names explicitly rather than letting it fall through to
+ * the score check.
+ *
+ * ORDER MATTERS, AND `not-marked` MUST COME FIRST. `pendingTeacher === false`
+ * is *true* for an unflagged blank — no review is open for it, by design —
+ * so putting that guard first returns `"confident"`: the marker is confident
+ * about a question no marker read. That is strictly worse than the
+ * `"uncertain"` this tier was added to replace, and it leaves `not-marked`
+ * dead code. Measured on a paper of 8 blanks + 2 clean marks, guard-first
+ * gives `confident: 10`.
+ *
+ * Putting `not-marked` first does NOT cost the `pendingTeacher` fix, which was
+ * the row that could not be settled by reading: a question a self-mark has
+ * settled has a real `markerSource` (`"ai"`), so it fails the `not-marked`
+ * gate, falls through, and still returns `"confident"`.
+ *
+ * `confidenceSummaryOf`'s four-key return type is the third part of the same
+ * spec, not a separate concern: with a three-key summary, `not-marked` falls
+ * through the final `else` into `needsReview` and the strip reports
+ * `needsReview: 8` on those same 8 blanks — the exact "8 items a teacher
+ * bulk-dismisses" outcome US-039 removed from the queue, the tier and the DB.
+ * Guard order, four-key return type, and the five `ConfidenceInput` fields are
+ * one spec; any two of the three is half a spec.
  *
  * A missing or non-finite `confidence` is treated as confident rather than
  * uncertain. That is deliberate and it is the arguable call in this function:
@@ -95,13 +139,17 @@ export interface ConfidenceInput {
  * genuinely in doubt.
  */
 export function confidenceTierFor(q: ConfidenceInput): ConfidenceTier {
-  if (q.reviewReason && q.needsTeacherReview !== false) return "needs-review"
+  // FIRST — see the guard-order note above. `pendingTeacher === false` is true
+  // for a question no marker read, so the guard below would claim "confident"
+  // for it.
   if (
     q.needsTeacherReview === false &&
     (q.markerSource === "missing" || q.markerSource === "dropped")
   ) {
     return "not-marked"
   }
+  if (q.pendingTeacher === false) return "confident"
+  if (q.reviewReason && q.needsTeacherReview !== false) return "needs-review"
   if (typeof q.confidence !== "number" || !Number.isFinite(q.confidence)) {
     return "confident"
   }

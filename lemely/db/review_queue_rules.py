@@ -17,6 +17,34 @@ student submission.
 function on the same :class:`~lemely.core.schemas.CorrectedQuestion`, so the
 "same rule" claim is a fact about the code, not a comment that can drift out
 from under it.
+
+**A third consumer, and why the verdict is split out from the row producer.**
+The ``develop`` merge brought :func:`lemely.db.attempt_repo.is_marking_low_confidence`,
+which had independently arrived at the same two-disjunct shape for a *different*
+job: it is the student self-review **authority gate**
+(``self_review_repo``'s ``evidence_required = not is_marking_low_confidence(qr)``),
+not a queue predicate. Its argument is a persisted
+:class:`~lemely.db.models.attempts.QuestionResult`, not a
+:class:`~lemely.core.schemas.CorrectedQuestion`.
+
+A gate and a queue row are not the same question, but they must not disagree
+about *this* one: "did the marking side ask for a human look". So
+:func:`low_confidence_review_needed` holds that verdict over the five raw
+fields both record types carry, and both callers read it —
+:func:`review_reasons_for` to decide whether to yield
+:attr:`~lemely.db.models.enums.ReviewReason.low_confidence`,
+``is_marking_low_confidence`` to decide whether a self-mark carries authority.
+
+That sharing is load-bearing in one direction specifically. Without it, a
+US-039 blank (``needs_teacher_review=False``, ``confidence_score=0.0``) is
+exempt from the queue on this side and reads as ``low_confidence`` on
+develop's, so the gate would set ``evidence_required=False`` on a question no
+marker ever read — and ``decide_point`` tests low-confidence *above*
+``has_evidence``, so the student's self-mark would be granted outright, with
+no evidence and without the lenient judge being consulted. Measured on the
+merged tree before this was shared: 0 of 4 marks to 4 of 4. Treating
+absence-of-a-marker as marker-doubt happens to favour the student here and
+burden them in the queue, which is why it reads as benign on each side alone.
 """
 
 from __future__ import annotations
@@ -33,6 +61,11 @@ if TYPE_CHECKING:
 
 def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     """Yield the :class:`ReviewReason` values one graded question earns.
+
+    The ``low_confidence`` verdict itself lives in
+    :func:`low_confidence_review_needed`, which this delegates to so the
+    self-review authority gate can read the identical rule (module docstring).
+    The rule it applies is documented here, where the rows are produced:
 
     * ``low_confidence`` when the marking side asked for review — a real
       low confidence score, or ``needs_teacher_review`` set for a structural
@@ -52,8 +85,8 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
          mint a duplicate, mislabelled row alongside the ``plagiarism_flag``
          row below.
       2. A genuine US-039 blank that also picked up an integrity flag
-         (``question.plagiarism_flagged and _is_unflagged_blank(question)``
-         — see below). Currently unreachable in practice — a blank can
+         (``plagiarism_flagged and _is_unflagged_blank(...)`` — see below).
+         Currently unreachable in practice — a blank can
          never actually be ``plagiarism_flagged`` (see below) — but gated
          on ``plagiarism_flagged`` rather than dropped, since
          ``_is_unflagged_blank`` alone would also silence a real
@@ -74,7 +107,8 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     unflagged zero should not become a queue item, so a paper with several
     unattempted parts does not become that many items a teacher
     bulk-dismisses. The exemption suppresses both the confidence-score
-    disjunct of ``low_confidence`` (via ``low_confidence_flagged``) and, per
+    disjunct of ``low_confidence`` (via ``low_confidence_review_needed``'s
+    ``low_confidence_flagged``) and, per
     exemption 2 above, the ``needs_teacher_review`` disjunct once integrity
     forces it True — and only when ``marker_source == "missing"`` AND the
     blank's own reason is one of the ``" | "``-split segments of
@@ -121,20 +155,61 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     which derives all four blank-shaped literals from the real builders
     rather than hardcoding copies.
     """
-    unflagged_blank = _is_unflagged_blank(question)
-    marking_flagged = question.needs_teacher_review and not (
-        (question.plagiarism_flagged and unflagged_blank) or _is_solely_plagiarism_flagged(question)
-    )
-    low_confidence_flagged = (
-        not unflagged_blank and question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
-    )
-    if marking_flagged or low_confidence_flagged:
+    if low_confidence_review_needed(
+        marker_source=question.marker_source,
+        review_reason=question.review_reason,
+        needs_teacher_review=question.needs_teacher_review,
+        confidence_score=question.confidence_score,
+        plagiarism_flagged=question.plagiarism_flagged,
+    ):
         yield ReviewReason.low_confidence
     if question.plagiarism_flagged:
         yield ReviewReason.plagiarism_flag
 
 
-def _is_unflagged_blank(question: CorrectedQuestion) -> bool:
+def low_confidence_review_needed(
+    *,
+    marker_source: str,
+    review_reason: str | None,
+    needs_teacher_review: bool,
+    confidence_score: float,
+    plagiarism_flagged: bool,
+) -> bool:
+    """Did the MARKING side ask for a human look at this question?
+
+    The ``low_confidence`` half of :func:`review_reasons_for`, over raw fields
+    rather than a record, so the queue producers and
+    :func:`lemely.db.attempt_repo.is_marking_low_confidence` — which reads a
+    persisted :class:`~lemely.db.models.attempts.QuestionResult`, not a
+    :class:`~lemely.core.schemas.CorrectedQuestion` — cannot draw the line
+    differently. See this module's docstring for why those two must agree and
+    what goes wrong when they do not.
+
+    Fields, not a :class:`typing.Protocol`: the two record types spell
+    ``marker_source`` differently (a ``Literal[...]`` string on
+    ``CorrectedQuestion``, a :class:`~lemely.db.models.enums.MarkerSource` enum
+    member on ``QuestionResult``), so a structural type would need one of them
+    to change shape. Keyword-only because five same-typed-ish values in a row
+    is exactly the signature a positional call gets silently wrong.
+
+    ``ai_detection_flagged`` is absent by design, not by omission: develop's
+    version of this predicate suppressed ``marking_flagged`` on
+    ``plagiarism_flagged or ai_detection_flagged``, and F4
+    (``0037_remove_ai_detection``) deleted the detector, its column and its
+    enum member outright.
+    """
+    unflagged_blank = _is_unflagged_blank(marker_source=marker_source, review_reason=review_reason)
+    marking_flagged = needs_teacher_review and not (
+        (plagiarism_flagged and unflagged_blank)
+        or _is_solely_plagiarism_flagged(
+            plagiarism_flagged=plagiarism_flagged, review_reason=review_reason
+        )
+    )
+    low_confidence_flagged = not unflagged_blank and confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+    return marking_flagged or low_confidence_flagged
+
+
+def _is_unflagged_blank(*, marker_source: str, review_reason: str | None) -> bool:
     """True for a genuine US-039 blank, tolerant of a later stage APPENDING to ``review_reason``.
 
     ``apply_integrity_checks`` joins new reasons onto the existing ones with
@@ -144,12 +219,12 @@ def _is_unflagged_blank(question: CorrectedQuestion) -> bool:
     whole field for equality, means an integrity flag landing on top of a
     genuine blank does not defeat this check.
     """
-    if question.marker_source != "missing" or not question.review_reason:
+    if marker_source != "missing" or not review_reason:
         return False
-    return _BLANK_ANSWER_REVIEW_REASON in question.review_reason.split(" | ")
+    return _BLANK_ANSWER_REVIEW_REASON in review_reason.split(" | ")
 
 
-def _is_solely_plagiarism_flagged(question: CorrectedQuestion) -> bool:
+def _is_solely_plagiarism_flagged(*, plagiarism_flagged: bool, review_reason: str | None) -> bool:
     """True when the integrity-appended plagiarism segment is the only reason on record.
 
     ``apply_integrity_checks`` appends
@@ -164,10 +239,10 @@ def _is_solely_plagiarism_flagged(question: CorrectedQuestion) -> bool:
     its ``low_confidence`` row hides the sole signal that the marker
     misread the mark scheme).
     """
-    if not question.plagiarism_flagged or not question.review_reason:
+    if not plagiarism_flagged or not review_reason:
         return False
-    segments = question.review_reason.split(" | ")
+    segments = review_reason.split(" | ")
     return len(segments) == 1 and segments[0].startswith("plagiarism (score")
 
 
-__all__ = ["review_reasons_for"]
+__all__ = ["low_confidence_review_needed", "review_reasons_for"]

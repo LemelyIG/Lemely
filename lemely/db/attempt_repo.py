@@ -57,14 +57,30 @@ from __future__ import annotations
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import structlog
+from sqlalchemy import select
+from sqlalchemy.exc import SQLAlchemyError
+
 from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import AttemptOrigin, BoundarySource, MarkerSource
+from lemely.db.models.attempts import (
+    Attempt,
+    QuestionResult,
+    QuestionResultPoint,
+    QuestionResultRevision,
+    WeaknessRecord,
+)
+from lemely.db.models.enums import (
+    AttemptOrigin,
+    BoundarySource,
+    MarkerSource,
+    RevisionSource,
+)
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
-from lemely.db.review_queue_rules import review_reasons_for
+from lemely.db.question_points import derive_point_rows
+from lemely.db.review_queue_rules import low_confidence_review_needed, review_reasons_for
 from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
@@ -82,6 +98,8 @@ if TYPE_CHECKING:
         WeaknessReport,
     )
     from lemely.core.topics import SyllabusTaxonomy
+
+log = structlog.get_logger(__name__)
 
 # The review threshold now has exactly one definition, in
 # :mod:`lemely.core.schemas` (D2.2) — the marking layer, this repository and the
@@ -118,6 +136,7 @@ class AttemptRepository:
         report: AccuracyReport,
         upload_id: uuid.UUID | None = None,
         recorded_at: str | None = None,
+        mark_scheme: MarkScheme | None = None,
     ) -> uuid.UUID:
         """Persist a self-marked past paper's :class:`AccuracyReport`.
 
@@ -132,6 +151,10 @@ class AttemptRepository:
             report: The assembled marking report to persist.
             upload_id: The source upload row, when the attempt came from one.
             recorded_at: ISO timestamp for the attempt; defaults to now (UTC).
+            mark_scheme: The parsed scheme this report was marked against, used
+                to derive the per-point ledger (spec 2026-09-17). ``None`` when
+                the caller has none — every existing caller, until Task 6 wires
+                one through — in which case no point rows are written.
 
         Returns:
             The id of the newly-created :class:`Attempt`.
@@ -148,6 +171,7 @@ class AttemptRepository:
             origin=AttemptOrigin.past_paper,
             upload_id=upload_id,
             recorded_at=recorded_at,
+            mark_scheme=mark_scheme,
         )
 
     def persist_quiz_correction(
@@ -199,6 +223,29 @@ class AttemptRepository:
             recorded_at=recorded_at,
         )
 
+    def question_result_ids(self, attempt_id: uuid.UUID) -> dict[str, uuid.UUID]:
+        """``question_id -> question_results.id`` for one attempt.
+
+        The student self-review routes (spec 2026-09-17) address a question
+        by its ``question_results`` row id, so the ``/student/correct``
+        complete frame carries one per question. A paper that repeats a
+        question id gets one row of the several, picked by
+        ``(created_at, id)``: rows of one attempt are written in a single
+        flush and so usually share ``created_at``, which leaves the row id as
+        the tie-break — stable for a given attempt, but not "the first one
+        marked". Empty for an unknown attempt.
+        """
+        ids: dict[str, uuid.UUID] = {}
+        with self._sm() as session:
+            rows = session.execute(
+                select(QuestionResult.question_id, QuestionResult.id)
+                .where(QuestionResult.attempt_id == attempt_id)
+                .order_by(QuestionResult.created_at, QuestionResult.id)
+            ).all()
+        for question_id, row_id in rows:
+            ids.setdefault(question_id, row_id)
+        return ids
+
     def _persist(
         self,
         *,
@@ -209,6 +256,7 @@ class AttemptRepository:
         origin: AttemptOrigin,
         upload_id: uuid.UUID | None,
         recorded_at: str | None,
+        mark_scheme: MarkScheme | None = None,
     ) -> uuid.UUID:
         """Assemble and write one :class:`Attempt` + its child rows.
 
@@ -216,6 +264,14 @@ class AttemptRepository:
         :meth:`persist_quiz_correction` call (``docs/quiz-model.md`` §4.4) —
         including the review-queue fan-out, so a low-confidence / plagiarism
         / AI-detection flag fires identically for a past paper and a quiz.
+
+        ``mark_scheme`` drives the per-point ledger (spec 2026-09-17): each
+        question result gets one :class:`QuestionResultPoint` row per point
+        derived by :func:`~lemely.db.question_points.derive_point_rows`, plus
+        a revision-1 :class:`QuestionResultRevision` snapshot. ``None`` (a
+        quiz, or any caller that hasn't threaded a scheme through yet) writes
+        no point rows — the attempt and its question results persist exactly
+        as before.
 
         When ``prediction is None`` (a quiz, no grade boundaries exist):
 
@@ -299,6 +355,37 @@ class AttemptRepository:
             session.flush()
             attempt_id = attempt.id
             for qr, cq in zip(attempt.question_results, correction.questions, strict=True):
+                point_rows = _safe_derive_point_rows(cq, mark_scheme, qr.id)
+                # ``_safe_derive_point_rows`` only guards the pure derivation —
+                # a value Postgres itself rejects (an overflowing ``tariff``, a
+                # NUL byte in ``point_text``, ...) still reaches the flush, and
+                # without this savepoint that would abort the *whole*
+                # transaction, taking the attempt, every ``QuestionResult``,
+                # ``WeaknessRecord`` and ``ReviewQueueItem`` with it — the
+                # student loses their marked paper over a broken ledger row.
+                # Nothing on this path may fail a correction (spec
+                # 2026-09-17, "Error handling"), so a bad ledger costs only
+                # the ledger.
+                try:
+                    with session.begin_nested():
+                        for row in point_rows:
+                            session.add(QuestionResultPoint(question_result_id=qr.id, **row))
+                        session.add(
+                            QuestionResultRevision(
+                                question_result_id=qr.id,
+                                revision=1,
+                                source=RevisionSource.ai,
+                                awarded_marks=qr.awarded_marks,
+                                points_snapshot=point_rows,
+                            )
+                        )
+                except SQLAlchemyError as exc:
+                    log.warning(
+                        "question_point_write_failed",
+                        question_result_id=str(qr.id),
+                        error=str(exc),
+                    )
+
                 # The predicate itself is
                 # ``lemely.db.review_queue_rules.review_reasons_for`` — the
                 # *same* function ``TeacherPaperRepository``'s
@@ -310,6 +397,15 @@ class AttemptRepository:
                 # confidence/flag/marker_source/review_reason values here —
                 # ``_to_question_result`` is a straight field copy — so
                 # passing ``cq`` is equivalent to passing ``qr``.
+                #
+                # This replaced develop's three explicit `if`s
+                # (``is_marking_low_confidence(qr)`` /
+                # ``cq.plagiarism_flagged`` / ``cq.ai_detection_flagged``),
+                # which were the fourth hand-written copy of the rule. Both
+                # reasons it can still yield come out of the one function;
+                # the third is gone with the detector. The gate
+                # ``is_marking_low_confidence`` still exists for self-review
+                # authority and now reads the same shared verdict.
                 for reason in review_reasons_for(cq):
                     session.add(
                         ReviewQueueItem(
@@ -359,6 +455,62 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     )
 
 
+def is_marking_low_confidence(qr: QuestionResult) -> bool:
+    """Whether a question was flagged for a *marking* reason — the one definition.
+
+    True when the marker's own score is below ``REVIEW_CONFIDENCE_THRESHOLD``
+    or when review was forced by a marking-side structural signal (the D2.4
+    out-of-range / value-mismatch flag) rather than *only* by an integrity
+    check. This is exactly the condition under which :meth:`AttemptRepository._persist`
+    opens a ``low_confidence`` review-queue row, and it is also the condition
+    under which a student's self-mark carries authority (self-review spec,
+    "Authority"). Both read the same
+    :func:`~lemely.db.review_queue_rules.low_confidence_review_needed` so the
+    two can never draw the line differently: a question flagged purely
+    ``plagiarism_flag`` is *not* low-confidence — integrity flags grant no
+    authority and are never shown to a student.
+
+    Reads the persisted ``QuestionResult`` columns, which
+    :func:`_to_question_result` fills from the same ``CorrectedQuestion``
+    fields ``_persist`` reads through ``review_reasons_for`` — so calling this
+    on a freshly built row inside ``_persist`` and on a loaded row months
+    later gives the same answer.
+
+    **The US-039 blank, and why this function is where it matters.** This is
+    an *authority gate*, not a queue predicate:
+    ``self_review_repo._to_view`` sets
+    ``evidence_required = not is_marking_low_confidence(qr)``, and
+    ``core.self_review.decide_point`` tests ``low_confidence`` **above**
+    ``has_evidence`` — so on a question this returns ``True`` for, evidence is
+    never read and the lenient judge is never called; the student's self-mark
+    is granted outright.
+
+    A genuine blank (``_build_blank_corrected``: ``marker_source="missing"``,
+    ``confidence_score=0.0``, ``needs_teacher_review=False``,
+    ``_BLANK_ANSWER_REVIEW_REASON``) would satisfy the bare
+    ``confidence_score < REVIEW_CONFIDENCE_THRESHOLD`` disjunct, so before the
+    US-039 exemption reached here a student could self-award every mark on a
+    question they left empty, with no evidence and no judge. Measured on the
+    merged tree: 0 of 4 to 4 of 4. ``derive_point_rows`` builds the ledger
+    from the mark scheme whether or not a marker ran, and
+    ``points_are_settleable`` does not withhold a blank, so the panel really
+    is offered — the exemption is what makes the claim face the judge.
+
+    Absence of a marker is not marker-doubt; ``review_queue_rules`` holds the
+    single statement of that, and this delegates rather than restating it.
+    ``marker_source`` is passed as ``.value`` because the persisted column is
+    a :class:`~lemely.db.models.enums.MarkerSource` member while the predicate
+    compares against the ``CorrectedQuestion`` spelling.
+    """
+    return low_confidence_review_needed(
+        marker_source=qr.marker_source.value,
+        review_reason=qr.review_reason,
+        needs_teacher_review=qr.needs_teacher_review,
+        confidence_score=qr.confidence_score,
+        plagiarism_flagged=qr.plagiarism_flagged,
+    )
+
+
 def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
     """Map one core :class:`CorrectedQuestion` onto a :class:`QuestionResult` row."""
     return QuestionResult(
@@ -383,7 +535,83 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         feedback=cq.feedback,
         # The matched mark-scheme point ids ARE the method-mark breakdown.
         matched_point_ids=list(cq.matched_point_ids),
+        extraction_confidence=cq.extraction_confidence,
+        plagiarism_flagged=cq.plagiarism_flagged,
+        rationale=cq.rationale,
     )
+
+
+def _safe_derive_point_rows(
+    cq: CorrectedQuestion,
+    mark_scheme: MarkScheme | None,
+    question_result_id: uuid.UUID,
+) -> list[dict[str, object]]:
+    """Derive point rows, or none at all if the scheme is unusable.
+
+    A malformed mark scheme must never fail a correction: a student losing
+    their marked paper because a breakdown could not be derived is strictly
+    worse than a missing breakdown (spec 2026-09-17, "Error handling").
+    """
+    try:
+        rows = derive_point_rows(cq, mark_scheme)
+    except Exception as exc:
+        log.warning(
+            "question_point_derivation_failed",
+            question_result_id=str(question_result_id),
+            question_id=cq.question_id,
+            error=str(exc),
+        )
+        return []
+
+    # Resolve the question once here and hand it down, rather than making
+    # ``_warn_if_point_ids_were_deduplicated`` repeat the same depth-first
+    # ``get_question_by_id`` search ``derive_point_rows`` already just did.
+    question = None
+    if mark_scheme is not None:
+        try:
+            question = mark_scheme.get_question_by_id(cq.question_id)
+        except Exception:
+            question = None
+    _warn_if_point_ids_were_deduplicated(cq, question, question_result_id, len(rows))
+    return rows
+
+
+def _warn_if_point_ids_were_deduplicated(
+    cq: CorrectedQuestion,
+    question: Question | None,
+    question_result_id: uuid.UUID,
+    row_count: int,
+) -> None:
+    """Log when ``derive_point_rows`` silently dropped duplicate mark-point ids.
+
+    ``derive_point_rows`` (``lemely/db/question_points.py``) drops a
+    duplicate ``mark_point_id`` (first wins) rather than aborting the whole
+    ledger — that is what keeps a malformed scheme from failing a student's
+    correction. But an ``AnswerPoint.id`` is an LLM-parsed loose field, so a
+    duplicate is a real data-quality signal worth recording. Comparing the
+    row count to the scheme's own ``answer_points`` count for the same
+    question is enough to detect it without duplicating any of
+    ``derive_point_rows``'s dedup logic. ``question`` is the caller's
+    already-resolved lookup, not looked up again here.
+
+    Guarded end-to-end: nothing on this path may ever fail a correction
+    (spec 2026-09-17, "Error handling"), so a failure while comparing is
+    swallowed, not raised.
+    """
+    try:
+        if question is None:
+            return
+        scheme_count = len(question.answer_points)
+        if row_count != scheme_count:
+            log.warning(
+                "question_point_ids_deduplicated",
+                question_result_id=str(question_result_id),
+                question_id=cq.question_id,
+                row_count=row_count,
+                scheme_count=scheme_count,
+            )
+    except Exception:
+        return
 
 
 def _parse_recorded_at(value: str | None) -> datetime:
@@ -519,4 +747,9 @@ def _classification_text(question: Question) -> str:
     return "\n".join(p for p in parts if p)
 
 
-__all__ = ["REVIEW_CONFIDENCE_THRESHOLD", "AttemptRepository", "fill_correction_topics"]
+__all__ = [
+    "REVIEW_CONFIDENCE_THRESHOLD",
+    "AttemptRepository",
+    "fill_correction_topics",
+    "is_marking_low_confidence",
+]

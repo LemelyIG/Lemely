@@ -66,9 +66,13 @@ export default {
 			"Permissions-Policy",
 			"camera=(self), microphone=(), geolocation=(), interest-cohort=()",
 		);
+		// `img-src` allows storage.googleapis.com for the signed-URL avatars
+		// (`_avatar_url_for`), and `script-src` allows static.cloudflareinsights.com
+		// for Cloudflare's auto-injected Web Analytics beacon; see nginx.conf for
+		// the full rationale.
 		out.headers.set(
 			"Content-Security-Policy",
-			"default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
+			"default-src 'self'; script-src 'self' https://static.cloudflareinsights.com; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob: https://storage.googleapis.com; media-src 'self' blob:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'",
 		);
 		return out;
 	},

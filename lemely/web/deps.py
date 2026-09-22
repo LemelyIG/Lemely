@@ -58,6 +58,7 @@ from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.school_admin_repo import SchoolAdminService
 from lemely.db.school_provisioning_repo import SchoolProvisioningService
 from lemely.db.seat_repo import SeatService
+from lemely.db.self_review_repo import SelfReviewService
 from lemely.db.session import get_sessionmaker
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.db.study_plan_repo import StudyPlanService
@@ -65,6 +66,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.db.threshold_repo import ThresholdService
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.db.xp_repo import UserZoneReader, XpService
+from lemely.io.evidence_judge import GeminiEvidenceJudge
 from lemely.io.flashcard_generation import FlashcardGenerator
 from lemely.io.gemini import GeminiClient
 from lemely.io.grade_boundaries import GradeBoundaryStore
@@ -82,6 +84,7 @@ if TYPE_CHECKING:
 
     from lemely.auth.cooldown import CooldownStoreProtocol
     from lemely.core.history import HistoryStoreProtocol
+    from lemely.core.self_review import EvidenceJudge
     from lemely.io.storage import StorageBackend
 
 
@@ -440,6 +443,37 @@ def get_review_service() -> ReviewService:
     service built on a throwaway Postgres database.
     """
     return ReviewService(get_sessionmaker(get_settings()), get_class_service())
+
+
+def build_self_review_judge(
+    settings: Settings, gemini_client: GeminiClient
+) -> EvidenceJudge | None:
+    """The lenient judge, or ``None`` when no Gemini key is configured.
+
+    ``None`` is a first-class state for :class:`SelfReviewService`: every
+    evidence-backed challenge becomes a ``student_evidence_unjudged`` queue
+    row for a teacher. Constructing a client that would fail on first use
+    instead would surface the same gap as a judge failure per call — noisier,
+    and no more honest.
+    """
+    if not settings.gemini_api_key or not settings.gemini_api_key.get_secret_value():
+        return None
+    return GeminiEvidenceJudge(gemini_client)
+
+
+@lru_cache(maxsize=1)
+def get_self_review_service() -> SelfReviewService:
+    """Return the process-wide :class:`SelfReviewService` singleton.
+
+    The judge is :func:`build_self_review_judge` over the shared
+    :func:`get_gemini_client` (``ledger=None``, DS3 — one call per challenged
+    point is the only budget; the cloud billing budget is the guard).
+    """
+    settings = get_settings()
+    return SelfReviewService(
+        get_sessionmaker(settings),
+        judge=build_self_review_judge(settings, get_gemini_client()),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -1101,6 +1135,7 @@ def reset_singletons() -> None:
     get_notification_prefs_service.cache_clear()
     get_user_mirror.cache_clear()
     get_review_service.cache_clear()
+    get_self_review_service.cache_clear()
     get_at_risk_ack_service.cache_clear()
     get_question_bank_service.cache_clear()
     get_quiz_service.cache_clear()

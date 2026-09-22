@@ -710,6 +710,30 @@ export interface ReviewBreakdown {
 }
 
 /**
+ * One mark point's self-review state (mirrors `ReviewItemPointDTO`, S2
+ * part2+3 final review I-2). What a teacher deciding a
+ * `student_evidence_unjudged` item needs to see: the marker's own verdict,
+ * the student's claim, and — because a `student_evidence_unjudged` row
+ * exists precisely when the automatic judge never ran or never returned
+ * — usually `evidenceVerdict: null`, the sentence the row exists to have a
+ * human read instead.
+ *
+ * `studentEvidence` is text a student wrote, rendered on a teacher's
+ * screen: never sanitised for content (this is the teacher console, not a
+ * student-facing surface — QUALITY-BAR's integrity sanitising is per call
+ * site and does not apply here), but always rendered as plain text, never
+ * interpreted as markup.
+ */
+export interface ReviewItemPoint {
+  markPointId: string
+  pointText: string
+  awarded: boolean
+  studentSelfmark: boolean | null
+  studentEvidence: string | null
+  evidenceVerdict: string | null
+}
+
+/**
  * Response for `GET /teacher/review/{itemId}` (mirrors `ReviewItemDetailDTO`,
  * T-08). Extends `ReviewQueueItem` with the question content, AI marking
  * evidence, and any recorded teacher override.
@@ -741,6 +765,7 @@ export interface ReviewItemDetail extends ReviewQueueItem {
   resolutionNote: string | null
   resolvedBy: string | null
   resolvedAt: string | null
+  points: ReviewItemPoint[]
 }
 
 /**

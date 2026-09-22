@@ -33,6 +33,7 @@ import anyio
 import structlog
 from fastapi import APIRouter, Depends, File, Header, HTTPException, UploadFile
 from fastapi.responses import StreamingResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 # WeaknessReport and HistoryStoreProtocol stay as runtime imports (noqa: TC001):
 # FastAPI dependency injection and the response converters resolve their
@@ -561,6 +562,11 @@ def student_result(
     answers/mark-scheme points that theory marking and the plagiarism check
     require. Those lists are populated by the ``/correct`` SSE flow which
     holds a live :class:`CorrectionResult`; they are empty here by construction.
+
+    ``attemptId`` is data-backed but nullable by store: the Postgres-backed
+    store carries the attempt's id, and the JSON file store has no attempts
+    table to point at, so it is ``None`` there. A null is what tells the
+    frontend there is no per-question detail to fetch for this record.
     """
     history = history_store.load(auth.user_id)
     try:
@@ -593,6 +599,7 @@ def student_result(
         theory=[],
         integrity=_integrity_summary(record),
         provenance=record.metadata.source_document or "",
+        attemptId=record.attempt_id,
     )
 
 
@@ -1057,9 +1064,33 @@ def student_correct(
                     integrity_settings=settings.integrity,
                 )
                 attempt_id = attempt_repo.persist_correction(
-                    user_id=auth.user_id, report=report, upload_id=owned.id
+                    user_id=auth.user_id,
+                    report=report,
+                    upload_id=owned.id,
+                    mark_scheme=mark_scheme,
                 )
                 upload_repo.set_status(owned.id, UploadStatus.complete)
+                # The self-review routes address a question by its
+                # question_results row id, which only exists once persisted.
+                # Ordered *after* set_status and swallowed on failure for the
+                # same reason the XP call below is: the paper is marked and
+                # stored by this point, and a database blip on a
+                # presentation-only lookup must not fall into the handler at
+                # the bottom of this function, which would set the upload to
+                # `failed` and send an error frame for a correction that
+                # succeeded. Without the ids the frame simply carries
+                # questionResultId=None and the student sees their marks
+                # without the self-review affordance.
+                try:
+                    result_ids = attempt_repo.question_result_ids(attempt_id)
+                except SQLAlchemyError:
+                    log.warning(
+                        "question_result_ids_failed",
+                        attempt_id=str(attempt_id),
+                        paper_id=payload.paperId,
+                        exc_info=True,
+                    )
+                    result_ids = {}
                 # P5.2 chunk B, D5.1: XP for the *act* of correcting a paper,
                 # never for how well it was corrected — no mark/score/grade
                 # is read here or passed to XpService.award. The attempt is
@@ -1161,7 +1192,19 @@ def student_correct(
                     confidence=report.grade_prediction.confidence.value,
                     needs_review=report.correction.needs_teacher_review,
                     questions=[
-                        question_to_dto(q).model_dump(by_alias=True)
+                        question_to_dto(
+                            q,
+                            question_result_id=(
+                                str(result_ids[q.question_id])
+                                if q.question_id in result_ids
+                                else None
+                            ),
+                            # Student-facing frame: integrity findings are
+                            # teacher-only (QUALITY-BAR.md), and they travel in
+                            # review_reason's free text as well as in the two
+                            # booleans.
+                            for_student=True,
+                        ).model_dump(by_alias=True)
                         for q in report.correction.questions
                     ],
                     # SSE frames are raw kwargs forwarded snake_case (bypassing the

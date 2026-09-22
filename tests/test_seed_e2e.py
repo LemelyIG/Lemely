@@ -837,3 +837,22 @@ class TestBuildResultPayload:
         assert "phone" not in payload["parent"]
         assert payload["emptyParent"]["email"] == "empty-parent-tag123@e2e.lemely.local"
         assert "phone" not in payload["emptyParent"]
+
+
+class TestSelfReviewSeed:
+    def test_the_paper_has_point_rows_and_one_low_confidence_question(self) -> None:
+        from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import self_review_report, self_review_scheme
+
+        report = self_review_report()
+        scheme = self_review_scheme()
+        by_id = {q.question_id: q for q in report.correction.questions}
+        assert set(by_id) == {"1", "2"}
+        assert by_id["1"].confidence_score >= REVIEW_CONFIDENCE_THRESHOLD
+        assert by_id["2"].confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+        assert by_id["2"].needs_teacher_review is True
+        assert not by_id["2"].plagiarism_flagged
+        assert len(derive_point_rows(by_id["2"], scheme)) == 3
+        assert [r["awarded"] for r in derive_point_rows(by_id["2"], scheme)] == [True, False, False]
+        assert report.correction.awarded_marks == 3 and report.correction.maximum_marks == 5

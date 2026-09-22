@@ -62,6 +62,7 @@ const SHAPE: Record<string, "string" | "number"> = {
   ...account("students.inactive"),
   ...account("students.control"),
   ...account("students.correctedPaper"),
+  ...account("students.selfReview"),
   ...account("students.belowTarget"),
   "students.belowTarget.targetGrade": "string",
   "students.belowTarget.predictedGrade": "string",
@@ -232,6 +233,9 @@ test("the at-risk reason arrays and the corrected-paper id keep their shapes", (
   // Optional on the interface, and genuinely only on this one student.
   expect(typeof resolve(seed, "students.correctedPaper.correctedPaperId")).toBe("string")
   expect(resolve(seed, "students.declining.correctedPaperId")).toBeUndefined()
+
+  expect(typeof resolve(seed, "students.selfReview.selfReviewAttemptId")).toBe("string")
+  expect(resolve(seed, "students.selfReview.expectedAtRiskReasons")).toEqual([])
 
   // The below-target student is in its OWN class, not the seeded roster class —
   // the whole reason a second class exists (see `seed.ts`). If these ever

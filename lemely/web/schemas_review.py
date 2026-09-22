@@ -83,6 +83,23 @@ class ReviewQueueListDTO(ApiModel):
     total: int
 
 
+class ReviewItemPointDTO(ApiModel):
+    """One mark point's self-review state.
+
+    For a ``student_evidence_unjudged`` item (S2 part2+3 final review, I-2):
+    without this, a teacher opening such an item has no way to see the
+    student's own claim or evidence — the sentence the queue row exists to
+    have them adjudicate.
+    """
+
+    markPointId: str
+    pointText: str
+    awarded: bool
+    studentSelfmark: bool | None
+    studentEvidence: str | None
+    evidenceVerdict: str | None
+
+
 class ReviewItemDetailDTO(ApiModel):
     """Response for ``GET /api/teacher/review/{item_id}`` (T-08).
 
@@ -140,6 +157,8 @@ class ReviewItemDetailDTO(ApiModel):
     resolutionNote: str | None
     resolvedBy: str | None
     resolvedAt: str | None
+    points: list[ReviewItemPointDTO]
+    """Empty for a ``"console_paper"`` row — see ``ReviewItemDetail.points``."""
 
 
 class ResolveReviewRequestDTO(ApiModel):
@@ -194,6 +213,7 @@ __all__ = [
     "ResolveReviewRequestDTO",
     "ReviewBreakdownDTO",
     "ReviewItemDetailDTO",
+    "ReviewItemPointDTO",
     "ReviewQueueItemDTO",
     "ReviewQueueListDTO",
 ]

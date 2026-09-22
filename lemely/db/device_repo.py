@@ -120,6 +120,7 @@ class DeviceRegistry:
         user_agent: str | None = None,
         device_label: str | None = None,
         allow_eviction: bool = True,
+        evict_device_id: uuid.UUID | str | None = None,
         now: datetime | None = None,
     ) -> DeviceRegistration:
         """Register (or refresh) a device for ``user_id`` and evict the oldest if needed.
@@ -141,6 +142,12 @@ class DeviceRegistry:
                 check runs **inside** this method's ``FOR UPDATE`` transaction
                 rather than as a preflight query, because two concurrent logins
                 asking "would this evict?" separately could both be told no.
+            evict_device_id: The device the user picked to sign out on a
+                confirmed retry (G-10). Evicted first if it is still live and
+                is not the device being registered; ignored otherwise (silently
+                falling back to oldest-first) since the device list may have
+                changed between the 409 and the confirm. Anything beyond what
+                this one device covers still evicts oldest-first.
             now: Injectable clock for deterministic tests.
 
         Raises:
@@ -183,7 +190,10 @@ class DeviceRegistry:
             device.refresh_token_id = refresh_token_id
             session.flush()  # assign device.id before we evict / return it
 
-            evicted = self._evict_oldest(session, uid, keep_id=device.id, now=stamp)
+            prefer_id = _try_uuid(evict_device_id)
+            evicted = self._evict_oldest(
+                session, uid, keep_id=device.id, prefer_id=prefer_id, now=stamp
+            )
             return DeviceRegistration(
                 session_id=device.id,
                 reused=reused,
@@ -303,9 +313,21 @@ class DeviceRegistry:
         return list(session.scalars(stmt).all())
 
     def _evict_oldest(
-        self, session: Session, uid: uuid.UUID, *, keep_id: uuid.UUID, now: datetime
+        self,
+        session: Session,
+        uid: uuid.UUID,
+        *,
+        keep_id: uuid.UUID,
+        prefer_id: uuid.UUID | None,
+        now: datetime,
     ) -> list[uuid.UUID]:
-        """Revoke the oldest non-revoked devices until at most :data:`MAX_DEVICES` remain."""
+        """Revoke non-revoked devices until at most :data:`MAX_DEVICES` remain.
+
+        ``prefer_id``, when it names a live device other than ``keep_id``, is
+        evicted first (G-10's confirmed choice); any further surplus beyond that
+        one device still falls back to oldest-first, same as an unconfirmed or
+        stale choice.
+        """
         stmt = (
             select(Device)
             .where(Device.user_id == uid, Device.revoked_at.is_(None))
@@ -314,7 +336,14 @@ class DeviceRegistry:
         live = list(session.scalars(stmt).all())
         surplus = len(live) - MAX_DEVICES
         evicted: list[uuid.UUID] = []
-        for device in live:
+
+        ordered = live
+        if prefer_id is not None:
+            chosen = [d for d in live if d.id == prefer_id and d.id != keep_id]
+            rest = [d for d in live if d.id != prefer_id]
+            ordered = chosen + rest
+
+        for device in ordered:
             if surplus <= 0:
                 break
             if device.id == keep_id:
@@ -334,6 +363,16 @@ def _row(device: Device) -> DeviceRow:
         user_agent=device.user_agent,
         last_seen_at=device.last_seen_at,
     )
+
+
+def _try_uuid(value: uuid.UUID | str | None) -> uuid.UUID | None:
+    """Best-effort coercion for a caller-supplied id: invalid/missing becomes ``None``."""
+    if value is None:
+        return None
+    try:
+        return _as_uuid(value)
+    except ValueError:
+        return None
 
 
 def _as_uuid(value: uuid.UUID | str) -> uuid.UUID:

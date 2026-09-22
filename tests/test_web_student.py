@@ -685,6 +685,54 @@ def test_result_is_data_backed_with_empty_theory(tmp_path: Path) -> None:
     assert body["integrity"][0]["mark"] == "dash"
 
 
+def test_result_attempt_id_is_null_for_file_store_records(client: TestClient) -> None:
+    """The file-backed store has no attempts; the field is present and null,
+    never fabricated -- the frontend renders no self-review panel for it."""
+    body = client.get("/api/student/result/0").json()
+    assert "attemptId" in body
+    assert body["attemptId"] is None
+
+
+def test_result_attempt_id_is_the_records_own_attempt_for_a_db_backed_store(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A Postgres-backed result carries *its* attempt id, on the wire.
+
+    The sibling test above pins only the file store, where ``None`` is also
+    what a dropped ``attemptId=`` wiring would produce -- the two are
+    indistinguishable there, and production runs the DB store
+    (``lemely/web/deps.py``). Two records with different grades are seeded so
+    the assertion also fails on an id that belongs to the *other* attempt,
+    not merely on a null.
+    """
+    from lemely.db.history_repo import DbHistoryStore
+    from lemely.db.models.attempts import Attempt
+
+    uid = _seed_pg_user(pg_sessionmaker, Role.student)
+    store = DbHistoryStore(pg_sessionmaker)
+    store.append(str(uid), _record(grade="C", recorded_at="2020-06-01T10:00:00+00:00"))
+    store.append(str(uid), _record(grade="B", recorded_at="2020-06-02T10:00:00+00:00"))
+
+    app = create_app()
+    app.dependency_overrides[get_history_store] = lambda: store
+    app.dependency_overrides[get_auth_context] = lambda: AuthContext(
+        user_id=str(uid), role=Role.student.value
+    )
+    local = TestClient(app)
+
+    bodies = [local.get(f"/api/student/result/{index}").json() for index in (0, 1)]
+
+    with pg_sessionmaker() as session:
+        attempts = session.scalars(sa.select(Attempt).where(Attempt.user_id == uid)).all()
+    by_grade = {attempt.grade: str(attempt.id) for attempt in attempts}
+    assert set(by_grade) == {"B", "C"}, "fixture must seed two distinguishable attempts"
+    assert [body["attemptId"] for body in bodies] == [
+        by_grade[bodies[0]["grade"]],
+        by_grade[bodies[1]["grade"]],
+    ]
+    assert bodies[0]["attemptId"] != bodies[1]["attemptId"]
+
+
 def test_result_unknown_id_is_404(client: TestClient) -> None:
     """An out-of-range or non-numeric paper id returns 404."""
     assert client.get("/api/student/result/99").status_code == 404

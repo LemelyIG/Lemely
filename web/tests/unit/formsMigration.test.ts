@@ -83,6 +83,13 @@ const ALLOWLIST: { file: string; type: string; count: number; reason: string }[]
     reason:
       "Audience radio pair (classes/school) — a native <input type=radio> pair already has full keyboard/AT semantics via its own fieldset/legend; RadioGroup's own fieldset would duplicate that structure for no behavioural gain.",
   },
+  {
+    file: "src/portals/auth/DeviceLimitNotice.tsx",
+    type: "radio",
+    count: 1,
+    reason:
+      "Device sign-out picker (D5.12) — each option is a whole row carrying a \"Will be signed out\" Chip and a title-bearing device name, which Radio's string-only label/description cannot express; the native input sits inside the component's own fieldset/legend and keeps full keyboard/AT semantics.",
+  },
 ]
 
 describe("hand-rolled form fields under src/portals", () => {

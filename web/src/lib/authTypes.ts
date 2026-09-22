@@ -29,8 +29,10 @@ export interface LoginRequest {
   email: string
   password: string
   deviceId?: string | null
-  /** Agreed to sign the oldest device out (the second half of D5.12's 409 handshake). */
+  /** Agreed to sign a device out (the second half of D5.12's 409 handshake). */
   confirmDeviceEviction?: boolean
+  /** Which device to sign out (G-10); a stale/absent value falls back to oldest-first. */
+  deviceToSignOut?: string | null
 }
 
 /**
