@@ -293,7 +293,7 @@ def test_the_gate_fires_on_the_real_pre_change_file() -> None:
         'marked = sum(1 for q in questions if q.marker_source != "missing")',
     ).replace(
         "scored = [q for q in correction.questions if marker_scored(q.marker_source)]",
-        'scored = [q for q in correction.questions if q.marker_source '
+        "scored = [q for q in correction.questions if q.marker_source "
         'not in ("missing", "dropped")]',
     )
     assert reverted != current, "neither call site was found — this test has drifted"
@@ -378,7 +378,7 @@ def test_the_paper_card_confidence_ignores_every_unscored_question() -> None:
     assert summary.confidence == 0.93
 
 
-def _report_of(questions: list[CorrectedQuestion]):  # noqa: ANN202 - local helper
+def _report_of(questions: list[CorrectedQuestion]):
     from lemely.core.schemas import (
         AccuracyReport,
         CorrectionResult,
@@ -412,7 +412,7 @@ def _report_of(questions: list[CorrectedQuestion]):  # noqa: ANN202 - local help
     )
 
 
-def _row_of(report):  # noqa: ANN001, ANN202 - local helper
+def _row_of(report):
     import uuid
     from datetime import UTC, datetime
 
