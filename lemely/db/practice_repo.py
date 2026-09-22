@@ -272,6 +272,20 @@ class PracticeResultQuestion:
     :attr:`~lemely.db.placement_repo.PlacementQuestionResult.awarded_marks`)."""
     confidence_band: str
     confidence_score: float
+    marker_source: str
+    """:class:`~lemely.db.models.enums.MarkerSource` value — which engine (or
+    none) produced this mark. Paired with :attr:`needs_teacher_review`
+    because neither alone tells a genuine blank apart from a real low-
+    confidence mark or a flagged extraction failure (Important A, US-039
+    final branch review: the practice result screen was rendering a blank as
+    "needs review" — the same false claim finding G fixed for the quiz
+    result screen, one screen over)."""
+    needs_teacher_review: bool
+    """:attr:`~lemely.db.models.attempts.QuestionResult.needs_teacher_review`
+    verbatim. ``_build_blank_corrected`` sets this ``False`` on a genuine
+    blank even though its ``confidence_band`` is ``LOW`` — the unflagged-zero
+    shape :mod:`lemely.web.schemas`'s ``QuestionResultDTO`` already carries;
+    this is that same field on the practice DTO."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -588,6 +602,8 @@ class PracticeService:
                         awarded_marks=qr.effective_marks,
                         confidence_band=qr.confidence_band.value,
                         confidence_score=qr.confidence_score,
+                        marker_source=qr.marker_source.value,
+                        needs_teacher_review=qr.needs_teacher_review,
                     )
                     for qr in question_results
                     if qr.question_id in positions

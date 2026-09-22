@@ -257,6 +257,68 @@ def test_result_payload_structurally_cannot_carry_marking_material() -> None:
     assert not banned & set(PracticeResultRow.__dataclass_fields__)
 
 
+def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
+    """Important A (US-039 final branch review): the practice result wire DTO
+
+    must carry the same ``markerSource``/``needsTeacherReview`` twin signal
+    ``QuestionResultDTO`` carries on the quiz wire, not just ``confidenceBand``.
+
+    ``_build_blank_corrected`` produces ``confidence_band=LOW``,
+    ``needs_teacher_review=False``, ``marker_source="missing"`` for a
+    genuine blank -- before this fix ``PracticeResultQuestion`` and its DTO
+    had no way to carry the second two fields at all, so
+    ``practiceData.ts::confidenceBandTier`` had only the band to go on and
+    rendered the blank as "needs-review" (the same false claim finding G
+    fixed for the quiz result screen). This test needs no database: it pins
+    the dataclass -> DTO conversion directly, the same way
+    ``test_result_payload_structurally_cannot_carry_marking_material`` pins
+    the field set above without one.
+    """
+    from lemely.web.routers.practice import _result_to_dto
+
+    row = PracticeResultRow(
+        assignment_id=uuid.uuid4(),
+        quiz_id=uuid.uuid4(),
+        subject_code="0625",
+        marked=True,
+        submission_status="marked",
+        awarded_marks=3,
+        maximum_marks=10,
+        questions=[
+            PracticeResultQuestion(
+                question_ref="q1",
+                position=1,
+                topic="1 Motion",
+                total_marks=5,
+                awarded_marks=0,
+                confidence_band="low",
+                confidence_score=0.0,
+                marker_source="missing",
+                needs_teacher_review=False,
+            ),
+            PracticeResultQuestion(
+                question_ref="q2",
+                position=2,
+                topic="1 Motion",
+                total_marks=5,
+                awarded_marks=3,
+                confidence_band="high",
+                confidence_score=0.98,
+                marker_source="ai",
+                needs_teacher_review=False,
+            ),
+        ],
+    )
+
+    dto = _result_to_dto(row)
+
+    blank, scored = dto.questions
+    assert blank.markerSource == "missing"
+    assert blank.needsTeacherReview is False
+    assert scored.markerSource == "ai"
+    assert scored.needsTeacherReview is False
+
+
 def test_export_route_never_returns_marking_material(
     client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
 ) -> None:

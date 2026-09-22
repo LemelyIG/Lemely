@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pydantic import Field
 
-from lemely.web.schemas import ApiModel
+from lemely.web.schemas import ApiModel, MarkerSource
 
 
 class PracticeRequestDTO(ApiModel):
@@ -90,6 +90,19 @@ class PracticeResultQuestionDTO(ApiModel):
     ``PracticeExportQuestionDTO``). ``confidenceBand``/``confidenceScore``
     are the marking engine's own confidence for this mark — every displayed
     mark carries its confidence (QUALITY-BAR.md).
+
+    ``markerSource``/``needsTeacherReview`` are the same twin US-039/finding-G
+    signal ``QuestionResultDTO`` carries on the quiz wire — a genuine blank
+    (``_build_blank_corrected``: ``confidence_band=LOW``,
+    ``needs_teacher_review=False``, ``marker_source="missing"``) is
+    indistinguishable from a real low-confidence mark by ``confidenceBand``
+    alone, and indistinguishable from a *flagged* extraction failure
+    (``marker_source`` also ``"missing"``/``"dropped"``, but
+    ``needs_teacher_review=True``) by ``markerSource`` alone. Both fields are
+    required so the frontend can tell "nobody looked at this" apart from
+    "somebody looked and is unsure" without re-deriving a second copy of that
+    rule (see ``practiceData.ts::confidenceBandTier``, finding A in the
+    US-039 final branch review).
     """
 
     questionRef: str
@@ -99,6 +112,8 @@ class PracticeResultQuestionDTO(ApiModel):
     awardedMarks: int
     confidenceBand: str
     confidenceScore: float
+    markerSource: MarkerSource
+    needsTeacherReview: bool
 
 
 class PracticeResultDTO(ApiModel):

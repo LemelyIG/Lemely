@@ -139,6 +139,8 @@ def _result_to_dto(row: PracticeResultRow) -> PracticeResultDTO:
                 awardedMarks=q.awarded_marks,
                 confidenceBand=q.confidence_band,
                 confidenceScore=q.confidence_score,
+                markerSource=q.marker_source,
+                needsTeacherReview=q.needs_teacher_review,
             )
             for q in row.questions
         ],

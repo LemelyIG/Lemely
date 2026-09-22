@@ -5,6 +5,7 @@
  * `placementData.ts` (D3.20: `vitest.config.ts` runs unit-only, no jsdom).
  */
 
+import { confidenceTierFor } from "@/lib/markingConfidence"
 import type { PracticePreview, PracticeResult, PracticeTopicCount } from "@/lib/practiceTypes"
 
 /*
@@ -17,8 +18,12 @@ import type { PracticePreview, PracticeResult, PracticeTopicCount } from "@/lib/
  * of a `.tsx` module fails to resolve under that config (TS6142). The
  * literal sets are identical, so a value typed here still satisfies the
  * component prop's own type at every call site (structural typing).
+ *
+ * `markingConfidence.ts` is a plain `.ts` module (no JSX, no DOM), so
+ * `confidenceTierFor` itself imports here cleanly under the same config —
+ * only the `.tsx`-declared *type* has the resolution problem above.
  */
-export type PracticeConfidenceTier = "confident" | "uncertain" | "needs-review"
+export type PracticeConfidenceTier = "confident" | "uncertain" | "needs-review" | "not-marked"
 export type PracticeMarkState = "correct" | "partial" | "wrong"
 
 // ── S-20: topic chips nested by syllabusGroup ────────────────────────────
@@ -218,12 +223,36 @@ export function practiceMarkState(awardedMarks: number, totalMarks: number): Pra
   return "partial"
 }
 
-/** `confidenceBand` on the wire is `"high" | "medium" | "low"`
+/**
+ * `confidenceBand` on the wire is `"high" | "medium" | "low"`
  * (`lemely.db.models.enums.ConfidenceBand`) — maps onto the shared C-4
  * `ConfidenceTier` ladder rather than inlining a new confidence display. An
  * unrecognised band (future backend addition) reads as `"uncertain"` rather
- * than silently as `"confident"`, so an unknown value is never hidden. */
-export function confidenceBandTier(band: string): PracticeConfidenceTier {
+ * than silently as `"confident"`, so an unknown value is never hidden.
+ *
+ * Important A (US-039 final branch review): a genuine blank
+ * (`_build_blank_corrected`) sets `confidence_band=LOW` *and*
+ * `needs_teacher_review=False`, `marker_source="missing"` — the same
+ * unflagged-zero shape finding G fixed on the quiz result screen. Banding on
+ * `confidenceBand` alone rendered that blank as `"needs-review"`, telling the
+ * student a marker looked and was unsure when no marker ever looked. The
+ * not-marked gate is delegated to `confidenceTierFor` — the one place that
+ * rule is allowed to live — rather than re-testing `markerSource`/
+ * `needsTeacherReview` here a second time; only when that gate does *not*
+ * fire does this function fall back to its own band-based ladder. A
+ * `markerSource` of `"missing"`/`"dropped"` with `needsTeacherReview: true`
+ * (a flagged extraction failure, not a blank) is deliberately left to the
+ * band ladder below, same as `confidenceTierFor` leaves it to its own score
+ * check — it still needs the review it was flagged for.
+ */
+export function confidenceBandTier(
+  band: string,
+  markerSource?: string,
+  needsTeacherReview?: boolean,
+): PracticeConfidenceTier {
+  if (confidenceTierFor({ markerSource, needsTeacherReview }) === "not-marked") {
+    return "not-marked"
+  }
   if (band === "high") return "confident"
   if (band === "low") return "needs-review"
   return "uncertain"
