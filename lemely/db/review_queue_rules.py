@@ -88,19 +88,19 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     ``review_reason`` rather than replacing it, so a flagged blank still
     carries the blank's own reason as one of possibly several segments.
 
-    In today's pipeline a real blank can never also be ``plagiarism_flagged``:
-    ``_build_blank_corrected`` sets both ``student_answer`` and
-    ``expected_answer`` to ``None``, and ``apply_integrity_checks``'s
-    plagiarism check requires both truthy before it runs. This does not rest
-    on the MCQ exemption — that exemption is an id lookup against the mark
-    scheme (``integrity.py:92``), not a builder property, so a scheme whose
-    MCQ leaf id is shadowed in DFS order by an earlier same-id non-MCQ
-    question defeats it and the check runs anyway. It rests on
-    ``expected_answer`` instead: every site that sets it to a non-``None``
-    value also sets ``marker_source="deterministic"``
+    On a well-formed scheme, the plagiarism check never fires for any
+    ``correct_paper`` output: it requires ``expected_answer`` truthy
+    (``integrity.py:101``), and every site that sets ``expected_answer``
+    non-``None`` also sets ``marker_source="deterministic"``
     (``correction_ai.py:310``, ``:325``, ``:361``, ``core/correction.py:93``,
-    ``:111``, ``:129``), so a genuine blank's ``expected_answer`` is
-    ``None`` regardless of how the scheme is shaped.
+    ``:111``, ``:129``). On a malformed scheme — one where a non-MCQ
+    question's id shadows an MCQ leaf's id, defeating the MCQ exemption's
+    first-match DFS lookup (``get_question_by_id``,
+    ``lemely/core/loose_schemas.py:1023-1036``; ``integrity.py:92``) — it
+    can fire, but only on that same ``deterministic`` row, never on
+    ``ai``, ``missing`` or ``dropped``. A real blank
+    (``marker_source="missing"``) can therefore never also be
+    ``plagiarism_flagged``, on any scheme.
 
     **Known limits.** ``_is_unflagged_blank`` is a string signal, not a
     dedicated boolean on :class:`~lemely.core.schemas.CorrectedQuestion` —
@@ -112,16 +112,14 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     another builder's literal. That collision is harmless whenever
     ``plagiarism_flagged`` is False (exemption 2 above is gated on it, so an
     unflagged colliding question still queues via ``marking_flagged``
-    exactly as before); only if the same question is ALSO
-    ``plagiarism_flagged`` does the collision cost a real ``low_confidence``
-    row, and a colliding question is also unreachable today: a literal
-    match requires ``marker_source == "missing"`` (see
-    :func:`_is_unflagged_blank`), which implies ``expected_answer is None``
-    (see above) and so ``plagiarism_flagged=False``. The collision guard
-    lives in ``lemely.io.correction_ai``'s own
-    pairwise-distinctness test (``PairwiseDistinctBlankReasonsTests``,
-    ``tests/test_correction_ai.py``), which derives all four blank-shaped
-    literals from the real builders rather than hardcoding copies.
+    exactly as before); a colliding question that is ALSO
+    ``plagiarism_flagged`` is unreachable, since a literal match requires
+    ``marker_source == "missing"`` (:func:`_is_unflagged_blank`), which per
+    above can never be ``plagiarism_flagged``. The collision guard lives in
+    ``lemely.io.correction_ai``'s own pairwise-distinctness test
+    (``PairwiseDistinctBlankReasonsTests``, ``tests/test_correction_ai.py``),
+    which derives all four blank-shaped literals from the real builders
+    rather than hardcoding copies.
     """
     unflagged_blank = _is_unflagged_blank(question)
     marking_flagged = question.needs_teacher_review and not (
