@@ -544,22 +544,15 @@ reportArgumentType = "none"
 # as not-a-defect — do not let this block sit unactioned.
 # =====================================================================
 
-# DEFERRED (task #44): `_HasRowcount.rowcount` is a docstring-only
-# `@property` inside a `Protocol` (never instantiated), so pyright reads
-# the fall-through as `-> None`. No runtime effect since Protocols aren't
-# called; cosmetic fix is a `...` body.
-[[tool.pyright.executionEnvironments]]
-root = "lemely/db/notification_repo.py"
-reportReturnType = "none"
-
-[[tool.pyright.executionEnvironments]]
-root = "lemely/db/teacher_paper_repo.py"
-reportReturnType = "none"
-
-# DEFERRED (task #44): pypdfium2's stub types `render`'s `scale` param as
-# `int`; this call passes `dpi / 72.0` (a `float`). Unresolved: whether
-# pypdfium2 genuinely requires `int` at runtime (possible silent
-# truncation) or accepts `float` fine — not verified here.
+# NOT A DEFECT: pypdfium2's stub types `render`'s `scale` param as `int`;
+# `rasterise_pdf_to_pages` passes `dpi / 72.0`, a float. MEASURED, not
+# assumed: `PdfPage.render` computes
+# `src_width = math.ceil(self.get_width() * scale)` — it ceils the PRODUCT,
+# never `scale` itself, so a float is honoured at full resolution. Rendering
+# `tests/fixtures/0580_s11_gt.pdf` (595x842 pt) gives 1653x2339 at
+# `scale=2.7778` (EXTRACTION_DPI 200) versus 1190x1684 at `scale=2`, so
+# truncation would have cost ~28% of linear resolution — it does not happen.
+# Upstream stub inaccuracy, not a code defect.
 [[tool.pyright.executionEnvironments]]
 root = "lemely/io/rasterise.py"
 reportArgumentType = "none"

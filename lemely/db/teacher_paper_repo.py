@@ -81,6 +81,7 @@ class _HasRowcount(Protocol):
     @property
     def rowcount(self) -> int:
         """Number of rows the statement affected."""
+        ...
 
 
 def _rowcount(result: object) -> int:
