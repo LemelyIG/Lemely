@@ -61,10 +61,10 @@ from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
-from lemely.db.models.enums import AttemptOrigin, BoundarySource, MarkerSource, ReviewReason
+from lemely.db.models.enums import AttemptOrigin, BoundarySource, MarkerSource
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
-from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+from lemely.db.review_queue_rules import review_reasons_for
 from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
@@ -299,52 +299,23 @@ class AttemptRepository:
             session.flush()
             attempt_id = attempt.id
             for qr, cq in zip(attempt.question_results, correction.questions, strict=True):
-                # ``needs_teacher_review`` is also forced True by an integrity flag
-                # (see ``apply_integrity_checks``), which already gets its own,
-                # more specific row below — only fall back to the generic
-                # low_confidence reason when something on the MARKING side (an
-                # actual low confidence score, or the D2.4 structural
-                # out-of-range/value-mismatch signal) is why review is needed, so
-                # a high-confidence, in-range question that is *purely*
-                # plagiarism-flagged doesn't also get a duplicate, mislabeled
-                # low_confidence row.
-                marking_flagged = qr.needs_teacher_review and not cq.plagiarism_flagged
-                # US-039 MUST-FIX 1 (independent review, blocking 674f309d):
-                # ``_build_blank_corrected`` sets ``confidence_score=0.0`` *and*
-                # ``needs_teacher_review=False`` — the product owner's explicit
-                # "unflagged zero, no queue item" ruling for a genuine blank. Left
-                # alone, the low-confidence disjunct below fires unconditionally
-                # for it regardless of ``needs_teacher_review``, so every blank
-                # still queued: a paper with 8 unattempted parts produced 8 queue
-                # items a teacher dismisses on sight, the exact scenario the
-                # ruling rejected. The exemption is narrow on purpose — it keys
-                # off BOTH ``marker_source == "missing"`` AND the blank reason,
-                # not off confidence_score or marker_source alone, so it cannot
-                # leak onto ``_build_missing_corrected``'s or
-                # ``_build_dropped_corrected``'s output (also confidence_score
-                # 0.0, but ``needs_teacher_review=True`` there, so they already
-                # queue via ``marking_flagged`` and are unaffected either way).
-                unflagged_blank = (
-                    cq.marker_source == "missing"
-                    and cq.review_reason == _BLANK_ANSWER_REVIEW_REASON
-                )
-                low_confidence_flagged = (
-                    not unflagged_blank and qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
-                )
-                if marking_flagged or low_confidence_flagged:
+                # The predicate itself is
+                # ``lemely.db.review_queue_rules.review_reasons_for`` — the
+                # *same* function ``TeacherPaperRepository``'s
+                # ``_review_items_for`` calls for a console-graded paper, so
+                # the two review-queue producers cannot disagree about what
+                # "needs review" means (including the US-039 unflagged-blank
+                # exemption; see that function's docstring for the full
+                # rule). ``qr`` and ``cq`` carry identical
+                # confidence/flag/marker_source/review_reason values here —
+                # ``_to_question_result`` is a straight field copy — so
+                # passing ``cq`` is equivalent to passing ``qr``.
+                for reason in review_reasons_for(cq):
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,
                             question_result_id=qr.id,
-                            reason=ReviewReason.low_confidence,
-                        )
-                    )
-                if cq.plagiarism_flagged:
-                    session.add(
-                        ReviewQueueItem(
-                            attempt_id=attempt_id,
-                            question_result_id=qr.id,
-                            reason=ReviewReason.plagiarism_flag,
+                            reason=reason,
                         )
                     )
         return attempt_id

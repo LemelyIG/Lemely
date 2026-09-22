@@ -544,6 +544,54 @@ def test_get_item_marker_source_agrees_between_attempt_and_console_paths(
     assert attempt_detail.marker_source == console_detail.marker_source
 
 
+def test_review_queue_exempts_the_us039_unflagged_blank_console_path(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Console twin of ``test_review_queue_exempts_the_us039_unflagged_blank``
+    (``tests/test_attempt_repo.py``) — MUST-FIX A, second independent review
+    of ``4166e535``.
+
+    ``4166e535`` added the US-039 unflagged-blank exemption to
+    ``AttemptRepository.persist_correction`` only. ``_review_items_for``
+    (``lemely/db/teacher_paper_repo.py``) — the console/teacher-paper twin
+    producer whose own docstring claims it applies "the same three-reason
+    rule" — kept queuing every blank via its own ``low_confidence`` arm
+    regardless: exactly the "8 unattempted parts, 8 queue items a teacher
+    bulk-dismisses" scenario the product owner rejected, just reached via
+    ``lemely.web.services.grading.grade_paper`` (which calls
+    ``TeacherPaperRepository.finish``) instead of a student submission. Both
+    producers now share ``lemely.db.review_queue_rules.review_reasons_for``,
+    so a genuine blank graded through the console must be exempted exactly
+    like one graded through a student attempt.
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    genuinely_low_confidence = _question(
+        "2", awarded=0, maximum=1, confidence_score=0.2, needs_review=True
+    )
+    blank = _question(
+        "3",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=False,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="missing",
+    )
+    paper_id = _seed_console_paper(
+        pg_sessionmaker, uploader=teacher, questions=[genuinely_low_confidence, blank]
+    )
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).all()
+        # Question "2" (genuinely low-confidence) still queues; the unflagged
+        # blank ("3") must NOT.
+        assert {item.question_id for item in items} == {"2"}
+
+
 def test_get_item_unknown_id_is_not_found(
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,

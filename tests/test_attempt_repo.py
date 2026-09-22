@@ -339,12 +339,26 @@ def test_review_queue_still_queues_genuine_missing_and_dropped(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
     """The MUST-FIX 1 exemption must not leak onto ``_build_missing_corrected``'s
-    and ``_build_dropped_corrected``'s output, which also carry
-    ``confidence_score=0.0`` but set ``needs_teacher_review=True`` -- they
-    queue via the FIRST disjunct (``marking_flagged``), unaffected by the
-    exemption, which only ever suppresses the SECOND disjunct and only for
-    the exact blank marker_source+review_reason pairing.
+    and ``_build_dropped_corrected``'s output.
+
+    These fixtures deliberately set ``needs_teacher_review=False`` --
+    UNLIKE the real builders, which always set it True -- so that each
+    question here reaches the queue via ONLY the confidence-score disjunct
+    (``low_confidence_flagged``), never via ``marking_flagged``. That isolates
+    the exemption's own gate: with both fixtures also true-blank look-alikes
+    (``marker_source == "missing"``/``"dropped"``, ``confidence_score == 0.0``,
+    the real review_reason literal from their builder), the only thing that
+    can legitimately keep them out of the queue is the exemption keying on
+    the *exact* blank ``review_reason``, not on ``marker_source`` or
+    ``confidence_score`` alone. Before this rewrite, both fixtures also
+    carried ``needs_teacher_review=True``, so ``marking_flagged`` queued them
+    regardless of the exemption and the test could not distinguish a narrow
+    exemption from an over-broad one collapsed to ``marker_source ==
+    "missing"`` alone (verified: with the conjunct removed, this test still
+    passed -- see the commit message for the two mutation proofs).
     """
+    from lemely.io.correction_ai import _DROPPED_ANSWER_REVIEW_REASON
+
     user_id = _seed_user(pg_sessionmaker)
     report = _report()
     missing = CorrectedQuestion(
@@ -353,7 +367,7 @@ def test_review_queue_still_queues_genuine_missing_and_dropped(
         maximum_marks=1,
         confidence=ConfidenceBand.LOW,
         confidence_score=0.0,
-        needs_teacher_review=True,
+        needs_teacher_review=False,
         student_answer=None,
         expected_answer=None,
         topic="Waves",
@@ -367,11 +381,11 @@ def test_review_queue_still_queues_genuine_missing_and_dropped(
         maximum_marks=1,
         confidence=ConfidenceBand.LOW,
         confidence_score=0.0,
-        needs_teacher_review=True,
+        needs_teacher_review=False,
         student_answer=None,
         expected_answer="A",
         topic="Waves",
-        review_reason="answer discarded as malformed",
+        review_reason=_DROPPED_ANSWER_REVIEW_REASON,
         marker_source="dropped",
         matched_point_ids=[],
     )

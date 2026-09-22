@@ -55,10 +55,9 @@ import sqlalchemy as sa
 from sqlalchemy import or_, select
 
 from lemely.core.loose_schemas import MarkScheme
-from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, AccuracyReport, ExamMetadata
+from lemely.core.schemas import AccuracyReport, ExamMetadata
 from lemely.db.models.enums import (
     MembershipRole,
-    ReviewReason,
     ReviewStatus,
     Role,
     UploadStatus,
@@ -66,6 +65,7 @@ from lemely.db.models.enums import (
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.models.orgs import SchoolMembership
 from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.review_queue_rules import review_reasons_for
 
 if TYPE_CHECKING:
     import uuid
@@ -123,38 +123,25 @@ class TeacherPaperRow:
 def _review_items_for(paper_id: uuid.UUID, report: AccuracyReport) -> Iterator[ReviewQueueItem]:
     """Yield one open review row per flagged question of a console-graded paper.
 
-    Deliberately the same three-reason rule
-    ``AttemptRepository.persist_correction`` applies to a student attempt, so
-    the two sources cannot disagree about what "needs review" means:
-
-    * ``low_confidence`` when the **marking** side asked for review — a real
-      low confidence score, or ``needs_teacher_review`` set for a structural
-      reason. A question that is *purely* integrity-flagged is excluded here,
-      because ``apply_integrity_checks`` forces ``needs_teacher_review`` True
-      and that would mint a duplicate, mislabelled row alongside the specific
-      one below.
-    * ``plagiarism_flag`` per integrity flag actually raised.
-      ``lemely.web.services.grading.grade_paper`` runs
-      ``apply_integrity_checks`` on the console path too, so this is as real
-      here as on a student submission.
+    The predicate itself is :func:`~lemely.db.review_queue_rules.review_reasons_for`
+    — the *same* function :meth:`~lemely.db.attempt_repo.AttemptRepository.persist_correction`
+    calls for a student attempt, so the two sources cannot disagree about what
+    "needs review" means. That includes the US-039 unflagged-blank exemption:
+    a genuine blank must not queue here any more than it queues on the
+    attempt path, else a console-graded paper with several unattempted parts
+    reproduces the "8 queue items a teacher bulk-dismisses" scenario the
+    product owner rejected.
 
     ``question_result_id`` stays NULL — a console paper has no
     ``question_results`` rows — and ``question_id`` carries the mark scheme's
     own id instead (migration ``0034``).
     """
     for question in report.correction.questions:
-        marking_flagged = question.needs_teacher_review and not question.plagiarism_flagged
-        if marking_flagged or question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
+        for reason in review_reasons_for(question):
             yield ReviewQueueItem(
                 teacher_paper_id=paper_id,
                 question_id=question.question_id,
-                reason=ReviewReason.low_confidence,
-            )
-        if question.plagiarism_flagged:
-            yield ReviewQueueItem(
-                teacher_paper_id=paper_id,
-                question_id=question.question_id,
-                reason=ReviewReason.plagiarism_flag,
+                reason=reason,
             )
 
 
