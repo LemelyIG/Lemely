@@ -592,6 +592,47 @@ def test_review_queue_exempts_the_us039_unflagged_blank_console_path(
         assert {item.question_id for item in items} == {"2"}
 
 
+def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_path(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Console twin of ``test_review_queue_blank_with_integrity_flag_queues_plagiarism_only``
+    (``tests/test_attempt_repo.py``) — third round of independent review.
+
+    ``apply_integrity_checks`` APPENDS to ``review_reason`` rather than
+    replacing it, so a genuine blank that also picked up an integrity flag
+    carries ``"<blank reason> | copied from another candidate"`` — not equal
+    to the bare blank reason. The exemption in
+    ``lemely.db.review_queue_rules.review_reasons_for`` now checks
+    membership of the blank's reason among the ``" | "``-split segments
+    instead of whole-field equality, so this must be exempted from
+    ``low_confidence`` on the console path exactly as it is on the attempt
+    path, leaving only the real ``plagiarism_flag`` reason.
+    """
+    from lemely.db.models.enums import ReviewReason
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    flagged_blank = _question(
+        "3",
+        awarded=0,
+        maximum=1,
+        confidence_score=0.0,
+        needs_review=True,
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | copied from another candidate",
+        marker_source="missing",
+        plagiarism_flagged=True,
+    )
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[flagged_blank])
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).all()
+        reasons = {item.reason for item in items}
+        # ONLY plagiarism_flag -- no fabricated low_confidence row.
+        assert reasons == {ReviewReason.plagiarism_flag}
+
+
 def test_get_item_unknown_id_is_not_found(
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,

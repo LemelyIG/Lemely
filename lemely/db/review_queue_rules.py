@@ -50,31 +50,60 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     unflagged zero, no queue item, so a paper with several unattempted parts
     does not become that many items a teacher learns to bulk-dismiss. The
     exemption only ever suppresses the confidence-score disjunct of
-    ``low_confidence``, and only when BOTH ``marker_source == "missing"`` AND
-    ``review_reason`` is the blank's own reason — not off ``confidence_score``
-    or ``marker_source`` alone — so it cannot leak onto
+    ``low_confidence``, and only when ``marker_source == "missing"`` AND
+    ``review_reason`` CARRIES the blank's own reason (see
+    :func:`_is_unflagged_blank` below) — not off ``confidence_score`` or
+    ``marker_source`` alone — so it cannot leak onto
     ``_build_missing_corrected``'s or ``_build_dropped_corrected``'s output
     (also ``confidence_score`` 0.0, but ``needs_teacher_review=True`` there,
     so they already queue via ``marking_flagged`` regardless).
 
-    **Known limit, not fixed here.** The exemption's ``marker_source``/
-    ``review_reason`` pairing is a string match against
-    ``_BLANK_ANSWER_REVIEW_REASON`` — there is no dedicated boolean on
-    :class:`~lemely.core.schemas.CorrectedQuestion` marking "this is a
-    genuine blank", and adding one would mean editing that schema, which this
-    module does not own. If ``_BLANK_ANSWER_REVIEW_REASON`` and
-    ``_build_missing_corrected``'s message were ever made equal, this
-    function would start exempting ``--mcq-only``/no-AI-client skips too,
-    silently dropping their low-confidence queue row — the over-broad
-    direction, the worse one. The guard against that is
+    **Second independent review (proven, fixed).** The exemption originally
+    tested ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` by full equality.
+    ``apply_integrity_checks`` (:mod:`lemely.io.integrity`) APPENDS to
+    ``review_reason`` (``" | ".join([*existing.split(" | "), new_reason])``,
+    preserving the original text) whenever it flags a question — so a blank
+    that also picked up an integrity flag would carry
+    ``"<blank reason> | copied from another candidate"``, which is not equal
+    to ``_BLANK_ANSWER_REVIEW_REASON``. Under the old check that made
+    ``unflagged_blank`` False, so ``low_confidence_flagged`` fired
+    (``0.0 < threshold``) and the row came back labelled ``low_confidence``
+    alongside its ``plagiarism_flag`` row — the exact "duplicate, mislabelled
+    row" this docstring's ``marking_flagged`` disjunct claims to avoid, minted
+    by the OTHER disjunct instead. :func:`_is_unflagged_blank` now checks
+    MEMBERSHIP of the blank's exact reason in the ``" | "``-split segments,
+    which matches regardless of what gets appended after it. Verified: a
+    genuine blank with ``plagiarism_flagged=True`` and
+    ``review_reason="<blank reason> | copied from another candidate"`` now
+    yields only ``plagiarism_flag`` — queued because it was flagged, not
+    because a marker that never ran was "unsure".
+
+    In today's pipeline this exact combination cannot actually occur:
+    ``_build_blank_corrected`` sets both ``student_answer`` and
+    ``expected_answer`` to ``None``, and ``apply_integrity_checks``'s
+    plagiarism check requires both to be truthy before it ever runs — so a
+    real blank can never reach the flagged branch. The fix stands anyway:
+    this function's contract is "given a ``CorrectedQuestion`` shaped like
+    X, decide Y", not "given only what today's two callers happen to
+    produce", and relying on a coincidental gate in an unrelated module to
+    keep this predicate sound is exactly the fragile coupling worth removing
+    now rather than after some future builder changes that gate.
+
+    **Remaining known limit.** ``_is_unflagged_blank`` is still a string
+    signal, not a dedicated boolean on
+    :class:`~lemely.core.schemas.CorrectedQuestion` — that schema is owned by
+    another lane and adding a field there is out of this module's reach. It
+    is now robust to *appending* (the one real mutation
+    ``apply_integrity_checks`` performs today), but would still be defeated
+    by a future stage that rewrites ``review_reason`` outright rather than
+    appending to it, or by ``_BLANK_ANSWER_REVIEW_REASON`` ever colliding
+    with another builder's literal as one of its own ``" | "``-split
+    segments. The guard against the latter is
     ``lemely.io.correction_ai``'s own pairwise-distinctness test (see
     ``tests/test_correction_ai.py``), not anything in this module.
     """
     marking_flagged = question.needs_teacher_review and not question.plagiarism_flagged
-    unflagged_blank = (
-        question.marker_source == "missing"
-        and question.review_reason == _BLANK_ANSWER_REVIEW_REASON
-    )
+    unflagged_blank = _is_unflagged_blank(question)
     low_confidence_flagged = (
         not unflagged_blank and question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
     )
@@ -82,6 +111,21 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
         yield ReviewReason.low_confidence
     if question.plagiarism_flagged:
         yield ReviewReason.plagiarism_flag
+
+
+def _is_unflagged_blank(question: CorrectedQuestion) -> bool:
+    """True for a genuine US-039 blank, tolerant of a later stage APPENDING to ``review_reason``.
+
+    ``apply_integrity_checks`` joins new reasons onto the existing ones with
+    ``" | "`` and never rewrites what was already there (its own docstring:
+    "review_reason appended to (preserving any existing text)"). Splitting on
+    the same separator and checking membership, rather than testing the
+    whole field for equality, means an integrity flag landing on top of a
+    genuine blank does not defeat this check.
+    """
+    if question.marker_source != "missing" or not question.review_reason:
+        return False
+    return _BLANK_ANSWER_REVIEW_REASON in question.review_reason.split(" | ")
 
 
 __all__ = ["review_reasons_for"]

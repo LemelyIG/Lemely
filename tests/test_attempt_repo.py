@@ -530,6 +530,92 @@ def test_review_queue_low_confidence_row_survives_alongside_integrity_flags(
         assert all(item.attempt_id == attempt_id for item in items)
 
 
+def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """Second independent review of the US-039 blank exemption, round 2.
+
+    ``apply_integrity_checks`` (``lemely/io/integrity.py``) APPENDS to
+    ``review_reason`` rather than replacing it (its own docstring: "appended
+    to (preserving any existing text)") whenever it flags a question. Before
+    this fix, the exemption in ``review_queue_rules.review_reasons_for``
+    tested ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` by full string
+    equality, so a genuine blank that also picked up an integrity flag
+    carried ``"<blank reason> | copied from another candidate"`` -- not
+    equal to the bare blank reason -- which defeated the exemption. The row
+    came back labelled ``low_confidence`` (0.0 confidence, "unsure marker")
+    stacked on top of its own ``plagiarism_flag`` row, even though no marker
+    ever ran to be unsure. ``review_reasons_for`` now checks membership of
+    the blank's exact reason among the ``" | "``-split segments instead of
+    whole-field equality, so an appended integrity reason no longer defeats
+    it. The result: a flagged blank queues for the real reason it was
+    flagged (plagiarism) and ONLY that reason -- not a fabricated
+    low-confidence signal alongside it.
+
+    (In today's pipeline this exact combination cannot arise via
+    ``correct_paper``: ``_build_blank_corrected`` sets both
+    ``student_answer`` and ``expected_answer`` to ``None``, and
+    ``apply_integrity_checks``'s plagiarism check requires both truthy
+    before it runs. This test constructs the ``CorrectedQuestion`` directly,
+    the same way ``test_review_queue_low_confidence_row_survives_alongside_integrity_flags``
+    above does, because the predicate's contract must hold for any
+    question shaped this way, not merely for what today's one caller
+    happens to produce.)
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    metadata = ExamMetadata(
+        subject_code="0625",
+        paper_number=1,
+        paper_variant=2,
+        session_month="May/June",
+        session_year=2020,
+    )
+    flagged_blank = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer=None,
+        topic="Waves",
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | copied from another candidate",
+        marker_source="missing",
+        plagiarism_flagged=True,
+        matched_point_ids=[],
+    )
+    correction = CorrectionResult(metadata=metadata, questions=[flagged_blank])
+    prediction = GradePrediction(
+        awarded_marks=0,
+        maximum_marks=1,
+        percentage=0.0,
+        grade="U",
+        confidence=ConfidenceBand.LOW,
+        needs_teacher_review=True,
+        boundary_source="subject_default",
+    )
+    report = AccuracyReport(
+        correction=correction,
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=prediction,
+    )
+
+    user_id = _seed_user(pg_sessionmaker)
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=user_id, report=report
+    )
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(select(ReviewQueueItem)).all()
+        reasons = {item.reason for item in items}
+        # ONLY plagiarism_flag -- no fabricated low_confidence row for a
+        # marker that never ran.
+        assert reasons == {ReviewReason.plagiarism_flag}
+        assert all(item.attempt_id == attempt_id for item in items)
+
+
 def test_coexists_with_db_history_store(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
