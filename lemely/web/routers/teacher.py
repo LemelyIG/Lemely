@@ -599,7 +599,14 @@ def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     questions = report.correction.questions
     total = len(questions)
     marked = sum(1 for q in questions if q.marker_source != "missing")
-    confident = sum(1 for q in questions if q.confidence_score >= _REVIEW_CONFIDENCE)
+    # Finding F (US-039 consumer-fixes brief): count over the same population
+    # `/grading/queue` uses (`review_reasons_for`), not a second copy of the
+    # `>= _REVIEW_CONFIDENCE` threshold rule. A genuine blank has
+    # `confidence_score == 0.0`, which used to count it as a confidence-check
+    # failure here while the queue -- correctly, per the US-039 exemption --
+    # reports zero rows for it. This label means "needs no human check", so
+    # it must agree with the one place that actually decides that.
+    confident = sum(1 for q in questions if next(review_reasons_for(q), None) is None)
     return [
         PipelineStepDTO(label="Scan ingested", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Handwriting read", count=f"{total} / {total}", state="done"),
@@ -777,8 +784,21 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
             error=_row_error(row),
         )
     correction = report.correction
+    # Finding E (US-039 consumer-fixes brief): the minimum must be over
+    # questions a marker actually scored, not every question. A genuine
+    # US-039 blank carries `confidence_score == 0.0` with
+    # `needs_teacher_review == False`, so an unfiltered `min` renders a
+    # ten-question "Graded" paper with one blank as "Graded · 0.00". Using
+    # `marker_source` here rather than `review_reasons_for` (as
+    # `_graded_pipeline_steps` does for Finding F) because this population is
+    # "was this question scored at all", not "does it need review" -- a
+    # genuinely low-confidence *scored* question must still pull the minimum
+    # down.
+    scored = [
+        q for q in correction.questions if q.marker_source not in ("missing", "dropped")
+    ]
     min_conf = min(
-        (q.confidence_score for q in correction.questions),
+        (q.confidence_score for q in scored),
         default=1.0,
     )
     return PaperSummaryDTO(

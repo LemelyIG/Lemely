@@ -330,6 +330,16 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     confidence is only as strong as its weakest question. Ordering is
     :data:`_CONFIDENCE_BAND_WEAKNESS_ORDER`, not enum declaration order.
 
+    Finding I (US-039 consumer-fixes brief): a question no marker scored
+    (``marker_source`` ``"missing"`` or ``"dropped"``) does not enter the
+    minimum. ``_build_blank_corrected`` sets ``confidence=ConfidenceBand.LOW``
+    on a genuine blank explicitly, so one unattempted part out of ten used to
+    force the whole attempt's ``confidence_band`` to LOW alongside
+    ``needs_teacher_review=False`` — the same changed-meaning-of-0.0 bug as
+    Finding E, on the band rather than the score. A question that was
+    genuinely scored LOW still pulls the minimum down; only the unscored ones
+    are excluded.
+
     Raises:
         ValueError: ``questions`` is empty — an attempt must always carry at
             least one question result, so there is nothing to derive a band
@@ -338,8 +348,13 @@ def _weakest_confidence_band(questions: Sequence[CorrectedQuestion]) -> DBConfid
     """
     if not questions:
         raise ValueError("Cannot derive a confidence band from zero question results")
+    scored = [q for q in questions if q.marker_source not in ("missing", "dropped")]
+    # Every question was unscored (e.g. a fully-blank quiz attempt) — fall
+    # back to the full set rather than raising, so a real attempt still gets
+    # a band instead of a 500.
+    population = scored or questions
     return min(
-        (DBConfidenceBand(cq.confidence.value) for cq in questions),
+        (DBConfidenceBand(cq.confidence.value) for cq in population),
         key=lambda band: _CONFIDENCE_BAND_WEAKNESS_ORDER[band],
     )
 

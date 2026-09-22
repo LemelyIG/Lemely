@@ -707,6 +707,98 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_p
         assert reasons == {ReviewReason.plagiarism_flag}
 
 
+def test_review_reasons_for_structural_flag_survives_plagiarism_flag() -> None:
+    """Finding A (US-039 consumer-fixes brief) -- Important, MUST-FIX.
+
+    ``marking_flagged = needs_teacher_review and not plagiarism_flagged``
+    used to drop the marking side's ``low_confidence`` row for *every*
+    plagiarism-flagged question, including one the marker flagged for a
+    structural reason (here, an out-of-range mark) at a confidence
+    **above** ``REVIEW_CONFIDENCE_THRESHOLD``. The four structural reasons
+    (``out_of_range``, ``value_mismatch``, ``coherence_mismatch``,
+    ``no_span``) are documented as independent of the stated confidence
+    (``correction_ai.py:1043-1055``), so losing the row loses the sole
+    signal that the marker misread the mark scheme -- not a spurious
+    duplicate.
+
+    No unit test at this producer x flag tuple existed before this fix.
+    Runs the REAL ``apply_integrity_checks`` pipeline to append the
+    plagiarism segment (mirrors ``_real_plagiarism_review_reason`` above),
+    rather than hand-typing it, so this cannot silently drift from what the
+    real producer appends.
+    """
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.db.models.enums import ReviewReason
+    from lemely.db.review_queue_rules import review_reasons_for
+    from lemely.io.integrity import apply_integrity_checks
+    from lemely.runtime.config import IntegritySettings
+
+    verbatim = "gravity acts on the object"
+    scheme = MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 3,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 3,
+                    "type": "explanation",
+                    "answer_points": [{"id": "p1", "point": verbatim, "marks": 3}],
+                },
+            ],
+        }
+    )
+    out_of_range_reason = "marker returned 4 marks for a 3-mark question (clamped to 3)"
+    structural = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=3,
+        maximum_marks=3,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.97,
+        needs_teacher_review=True,
+        review_reason=out_of_range_reason,
+        student_answer=verbatim,
+        expected_answer=verbatim,
+        marker_source="ai",
+    )
+    # Sanity: before any integrity flag, the structural reason alone queues.
+    assert list(review_reasons_for(structural)) == [ReviewReason.low_confidence]
+
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[structural],
+    )
+    flagged = apply_integrity_checks(
+        correction, scheme, gemini_client=None, settings=IntegritySettings()
+    ).questions[0]
+    assert flagged.plagiarism_flagged is True
+    assert flagged.review_reason == f"{out_of_range_reason} | plagiarism (score 1.00)"
+
+    # The bug this guards: with the old ``not plagiarism_flagged`` check,
+    # both disjuncts of ``low_confidence`` were silenced by the plagiarism
+    # flag, leaving only ``plagiarism_flag``. With the fix, the structural
+    # reason survives alongside it.
+    assert set(review_reasons_for(flagged)) == {
+        ReviewReason.low_confidence,
+        ReviewReason.plagiarism_flag,
+    }
+
+
 def test_get_item_unknown_id_is_not_found(
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,

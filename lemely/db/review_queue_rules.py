@@ -34,126 +34,80 @@ if TYPE_CHECKING:
 def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     """Yield the :class:`ReviewReason` values one graded question earns.
 
-    * ``low_confidence`` when the **marking** side asked for review — a real
+    * ``low_confidence`` when the marking side asked for review — a real
       low confidence score, or ``needs_teacher_review`` set for a structural
-      reason — OR the confidence score itself falls below
-      ``REVIEW_CONFIDENCE_THRESHOLD``. A HIGH-CONFIDENCE, IN-RANGE question
-      that is *purely* integrity-flagged does not count as
-      ``marking_flagged``: ``apply_integrity_checks`` forces
-      ``needs_teacher_review`` True and that would mint a duplicate,
-      mislabelled row alongside the specific ``plagiarism_flag`` row below.
-      This qualifier matters: a question that is BOTH genuinely
-      low-confidence AND integrity-flagged still gets both rows —
-      ``low_confidence_flagged`` fires independently of ``marking_flagged``
-      whenever the score itself is below threshold, regardless of the
-      plagiarism flag (see
-      ``test_review_queue_low_confidence_row_survives_alongside_integrity_flags``).
-      Measured: a purely-plagiarism-flagged question at ``confidence_score
-      == 1.0`` yields only ``['plagiarism_flag']``; the same question at
-      ``confidence_score == 0.5`` yields
-      ``['low_confidence', 'plagiarism_flag']`` — the exemption from
-      ``marking_flagged`` never suppresses a real low-confidence signal, it
-      only stops a fully-confident, in-range mark from getting a spurious
-      second row.
+      reason (``out_of_range``, ``value_mismatch``, ``coherence_mismatch``,
+      ``no_span`` — all four independent of confidence,
+      ``correction_ai.py:1043-1055``) — OR the confidence score itself falls
+      below ``REVIEW_CONFIDENCE_THRESHOLD``.
+
+      Two narrow exemptions from the ``needs_teacher_review`` disjunct
+      (``marking_flagged``), both because ``apply_integrity_checks`` forces
+      ``needs_teacher_review`` True on ANY flagged question regardless of
+      what the marking side actually said:
+
+      1. A question whose *only* ``review_reason`` segment is the
+         integrity-appended plagiarism text (:func:`_is_solely_plagiarism_flagged`)
+         — the marking side had nothing to say, so ``marking_flagged`` would
+         mint a duplicate, mislabelled row alongside the ``plagiarism_flag``
+         row below.
+      2. A genuine US-039 blank that also picked up an integrity flag
+         (:func:`_is_unflagged_blank`) — see below.
+
+      Neither exemption suppresses a real marking-side reason: a question
+      that is *also* structurally flagged or genuinely low-confidence keeps
+      that segment in ``review_reason``, so it fails both checks and
+      ``marking_flagged`` still fires alongside ``plagiarism_flag``.
+
     * ``plagiarism_flag`` per integrity flag actually raised.
 
     **US-039 unflagged-blank exemption.** ``_build_blank_corrected`` marks a
     genuine blank ``marker_source="missing"``, ``confidence_score=0.0``, and
-    ``needs_teacher_review=False`` — the product owner's explicit ruling: an
-    unflagged zero, no queue item, so a paper with several unattempted parts
-    does not become that many items a teacher learns to bulk-dismiss. The
-    exemption only ever suppresses the confidence-score disjunct of
-    ``low_confidence``, and only when ``marker_source == "missing"`` AND
-    ``review_reason`` CARRIES the blank's own reason (see
-    :func:`_is_unflagged_blank` below) — not off ``confidence_score`` or
-    ``marker_source`` alone — so it cannot leak onto
-    ``_build_missing_corrected``'s or ``_build_dropped_corrected``'s output
-    (also ``confidence_score`` 0.0, but ``needs_teacher_review=True`` there,
-    so they already queue via ``marking_flagged`` regardless).
-
-    **Second independent review (proven, fixed).** The exemption originally
-    tested ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` by full equality.
+    ``needs_teacher_review=False`` — the product owner's ruling: an
+    unflagged zero should not become a queue item, so a paper with several
+    unattempted parts does not become that many items a teacher
+    bulk-dismisses. The exemption suppresses both the confidence-score
+    disjunct of ``low_confidence`` (via ``low_confidence_flagged``) and, per
+    exemption 2 above, the ``needs_teacher_review`` disjunct once integrity
+    forces it True — and only when ``marker_source == "missing"`` AND the
+    blank's own reason is one of the ``" | "``-split segments of
+    ``review_reason`` (:func:`_is_unflagged_blank`), never off
+    ``confidence_score`` or ``marker_source`` alone. That keeps it from
+    leaking onto ``_build_missing_corrected``'s or ``_build_dropped_corrected``'s
+    output (also ``confidence_score == 0.0``, but ``needs_teacher_review=True``
+    from the builder itself, not just from integrity, so they still queue).
+    Membership rather than whole-field equality matters because
     ``apply_integrity_checks`` (:mod:`lemely.io.integrity`) APPENDS to
-    ``review_reason`` (``" | ".join([*existing.split(" | "), new_reason])``,
-    preserving the original text) whenever it flags a question — so a blank
-    that also picked up an integrity flag would carry
-    ``"<blank reason> | plagiarism (score 1.00)"`` (the exact format
-    ``apply_integrity_checks`` appends —
-    ``f"plagiarism (score {finding.score:.2f})"``, ``integrity.py:102``, not
-    an illustrative placeholder), which is not equal
-    to ``_BLANK_ANSWER_REVIEW_REASON``. Under the old check that made
-    ``unflagged_blank`` False, so ``low_confidence_flagged`` fired
-    (``0.0 < threshold``) and the row came back labelled ``low_confidence``
-    alongside its ``plagiarism_flag`` row — the exact "duplicate, mislabelled
-    row" this docstring's ``marking_flagged`` disjunct claims to avoid, minted
-    by the OTHER disjunct instead. :func:`_is_unflagged_blank` now checks
-    MEMBERSHIP of the blank's exact reason in the ``" | "``-split segments,
-    which matches regardless of what gets appended after it. Verified: a
-    genuine blank with ``plagiarism_flagged=True`` and
-    ``review_reason="<blank reason> | plagiarism (score 1.00)"`` now
-    yields only ``plagiarism_flag`` — queued because it was flagged, not
-    because a marker that never ran was "unsure".
+    ``review_reason`` rather than replacing it, so a flagged blank still
+    carries the blank's own reason as one of possibly several segments.
 
-    In today's pipeline this exact combination cannot actually occur:
+    In today's pipeline a real blank can never also be ``plagiarism_flagged``:
     ``_build_blank_corrected`` sets both ``student_answer`` and
     ``expected_answer`` to ``None``, and ``apply_integrity_checks``'s
-    plagiarism check requires both to be truthy before it ever runs — so a
-    real blank can never reach the flagged branch. The fix stands anyway:
-    this function's contract is "given a ``CorrectedQuestion`` shaped like
-    X, decide Y", not "given only what today's two callers happen to
-    produce", and relying on a coincidental gate in an unrelated module to
-    keep this predicate sound is exactly the fragile coupling worth removing
-    now rather than after some future builder changes that gate.
+    plagiarism check requires both truthy before it runs — a gate that in
+    fact holds for every ``CorrectedQuestion`` ``correct_paper`` emits (no
+    non-MCQ builder ever sets ``expected_answer``, and MCQ questions are
+    exempted from the plagiarism check outright, ``integrity.py:92``). This
+    function does not rely on that coincidence: its contract is "given a
+    ``CorrectedQuestion`` shaped like X, decide Y", not "given only what
+    today's callers happen to produce".
 
-    **Remaining known limit.** ``_is_unflagged_blank`` is still a string
-    signal, not a dedicated boolean on
-    :class:`~lemely.core.schemas.CorrectedQuestion` — that schema is owned by
-    another lane and adding a field there is out of this module's reach. It
-    is now robust to *appending* (the one real mutation
-    ``apply_integrity_checks`` performs today), but would still be defeated
-    by a future stage that rewrites ``review_reason`` outright rather than
-    appending to it, or by ``_BLANK_ANSWER_REVIEW_REASON`` ever colliding
-    with another builder's literal as one of its own ``" | "``-split
-    segments.
-
-    That collision, TRACED THROUGH (corrected from an earlier, overstated
-    version of this note): if ``_BLANK_ANSWER_REVIEW_REASON`` ever became
-    equal to e.g. ``_build_missing_corrected``'s ``--mcq-only`` message, the
-    ``--mcq-only`` skip's row does **not** silently disappear —
-    ``_build_missing_corrected`` sets ``needs_teacher_review=True``, so
-    ``marking_flagged`` fires independently of the blank exemption and the
-    row still queues (verified:
-    ``review_reasons_for(missing_question)`` yields ``['low_confidence']``
-    both before and after simulating the collision). The real cost of a
-    collision is a LEGIBILITY hazard, not a correctness one: the exemption
-    would then also treat the ``--mcq-only`` skip as an unflagged blank for
-    the *confidence-score* disjunct specifically — invisible today because
-    ``marking_flagged`` already covers that case, but a maintainer reading
-    this function could reasonably believe the two states are
-    indistinguishable to it, which they would then genuinely be. The guard
-    against the collision itself is ``lemely.io.correction_ai``'s own
-    pairwise-distinctness test (``PairwiseDistinctBlankReasonsTests`` in
-    ``tests/test_correction_ai.py``), not anything in this module; that
-    test derives all four blank-shaped literals by calling the real builder
-    functions rather than hardcoding copies, so a literal-side mutation on
-    any of the four is caught there, not silently absorbed by a test's own
-    stale copy.
-
-    **One over-exemption this predicate now admits, unreachable today.** A
-    question with ``marker_source == "missing"``, ``needs_teacher_review=
-    False``, ``confidence_score < REVIEW_CONFIDENCE_THRESHOLD``, and
-    ``_BLANK_ANSWER_REVIEW_REASON`` as one segment of a MULTI-segment
-    ``review_reason`` (i.e. something else got appended alongside it) is now
-    exempted, where the original whole-field-equality check would have
-    queued it. Not reachable via any real builder today —
-    ``_build_blank_corrected`` is the only producer of that literal, and a
-    genuinely-unattempted question the product owner ruled unflagged is
-    exactly what this exemption is meant to catch even when another stage
-    later appends a reason alongside it (the integrity-append case above is
-    one such stage). Documented here as a known, deliberate consequence of
-    the membership check, not a gap.
+    **Known limits.** ``_is_unflagged_blank`` is a string signal, not a
+    dedicated boolean on :class:`~lemely.core.schemas.CorrectedQuestion` —
+    robust to ``apply_integrity_checks`` *appending* onto ``review_reason``,
+    but would be defeated by a stage that rewrites the field outright
+    (``correct_paper``'s AI-failure branch, ``correction_ai.py:1922``, does
+    exactly that — harmless here only because a blank ``continue``s before
+    reaching it), or by ``_BLANK_ANSWER_REVIEW_REASON`` ever colliding with
+    another builder's literal. The collision guard lives in
+    ``lemely.io.correction_ai``'s own pairwise-distinctness test
+    (``PairwiseDistinctBlankReasonsTests``, ``tests/test_correction_ai.py``),
+    which derives all four blank-shaped literals from the real builders
+    rather than hardcoding copies.
     """
-    marking_flagged = question.needs_teacher_review and not question.plagiarism_flagged
+    marking_flagged = question.needs_teacher_review and not (
+        _is_unflagged_blank(question) or _is_solely_plagiarism_flagged(question)
+    )
     unflagged_blank = _is_unflagged_blank(question)
     low_confidence_flagged = (
         not unflagged_blank and question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
@@ -177,6 +131,27 @@ def _is_unflagged_blank(question: CorrectedQuestion) -> bool:
     if question.marker_source != "missing" or not question.review_reason:
         return False
     return _BLANK_ANSWER_REVIEW_REASON in question.review_reason.split(" | ")
+
+
+def _is_solely_plagiarism_flagged(question: CorrectedQuestion) -> bool:
+    """True when the integrity-appended plagiarism segment is the only reason on record.
+
+    ``apply_integrity_checks`` appends
+    ``f"plagiarism (score {finding.score:.2f})"`` (``integrity.py:102``) onto
+    whatever ``review_reason`` a builder already produced, joined by
+    ``" | "``. When that segment is the *only* one, the marking side had no
+    complaint of its own — ``review_reason`` was empty before integrity ran.
+    When it is one of several segments, a builder wrote a structural or
+    low-confidence reason of its own, and that reason must not be dropped
+    just because the question also got plagiarism-flagged (Finding A: a
+    fully-confident but out-of-range mark is exactly this case, and losing
+    its ``low_confidence`` row hides the sole signal that the marker
+    misread the mark scheme).
+    """
+    if not question.plagiarism_flagged or not question.review_reason:
+        return False
+    segments = question.review_reason.split(" | ")
+    return len(segments) == 1 and segments[0].startswith("plagiarism (score")
 
 
 __all__ = ["review_reasons_for"]
