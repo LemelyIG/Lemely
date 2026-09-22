@@ -576,11 +576,14 @@ class TestTeacherQuizCLI:
                 cli,
                 [
                     "--json",
-                    # --quiet (-> WARNING): the generation summary this
-                    # commit adds (question_gates/question_generation MUST-
-                    # FIX 3) logs at INFO to stderr, which CliRunner mixes
-                    # into `.output` — without this the log line would land
-                    # inside what must be pure JSON.
+                    # --quiet (-> WARNING): workaround for click.testing.CliRunner's
+                    # stream-mixing behaviour. Logs go to stderr in production
+                    # (logging.py:35), but CliRunner merges stderr into .output.
+                    # The generation summary (MUST-FIX 3) logs at INFO, which
+                    # would land inside the JSON payload during test execution.
+                    # This is not a production issue — real --json piping works
+                    # correctly. (mix_stderr=False was removed in click 8.2, so
+                    # this workaround is required with click 8.3.3.)
                     "--quiet",
                     "teacher-quiz",
                     "--subject",
