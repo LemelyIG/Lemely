@@ -60,7 +60,18 @@ class QuestionResultDTO(ApiModel):
     #: this field the frontend has no way to see that distinction and rendered
     #: "Needs review: <blank message>" for every unattempted question exactly
     #: like the review queue used to before MUST-FIX 1. See ``question_to_dto``.
-    needsTeacherReview: bool = False
+    #:
+    #: No default (second review pass on US-039's fix): ``False`` is the value
+    #: that *suppresses* the frontend's review signal
+    #: (``reviewReason && needsTeacherReview !== false``,
+    #: ``web/src/lib/studentTypes.ts``), so a DTO built without setting this
+    #: field explicitly would default to exactly the value that hides a
+    #: flagged question. ``question_to_dto`` always sets it today, but a
+    #: future constructor built from persisted ``QuestionResult`` rows that
+    #: forgets this field would ship a silently-unflagged page with no test
+    #: failure. A missing field now raises ``ValidationError`` at
+    #: construction instead.
+    needsTeacherReview: bool
 
 
 class WeakAreaDTO(ApiModel):

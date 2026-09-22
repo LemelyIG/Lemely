@@ -92,14 +92,24 @@ const NO_QUESTION_DETAIL = {
  * question now round-trip as `"dropped"` where it previously always arrived
  * as `"missing"` — the model returned an answer for this question, but
  * extraction discarded it as malformed before marking ever saw it. The raw
- * token reads as an internal/technical word a student would not recognise
- * (worse than "deterministic"/"ai"/"missing", which at least name a marking
- * *method*), so it is mapped to student-facing copy here rather than shipped
- * verbatim. The other three values are left as the existing raw pass-through
- * — pre-existing copy this story does not touch.
+ * token reads as an internal/technical word a student would not recognise,
+ * so it is mapped to student-facing copy here rather than shipped verbatim.
+ *
+ * `"missing"` gets the same "not marked" label (second independent review of
+ * the US-039 blank-exemption fix): the docstring here used to claim
+ * `"missing"` "at least names a marking method", which stopped being true
+ * once `_build_blank_corrected` started using `marker_source="missing"` for
+ * a genuine blank the AI never saw at all (US-039) — no method ran, so the
+ * raw token is exactly as misleading as `"dropped"` was. This deliberately
+ * does NOT invent copy that implies the answer was marked or explain WHY
+ * nothing was marked (a blank vs. `--mcq-only`/no client vs. a false-blank
+ * extraction miss, US-042, all render identically) — that distinction is a
+ * product decision, not this fix's to make. `"deterministic"`/`"ai"` are
+ * left as the existing raw pass-through — pre-existing copy this story does
+ * not touch.
  */
-function markerSourceLabel(source: QuestionResult["markerSource"]): string {
-  return source === "dropped" ? "not marked" : source
+export function markerSourceLabel(source: QuestionResult["markerSource"]): string {
+  return source === "dropped" || source === "missing" ? "not marked" : source
 }
 
 function IntegrityMark({ row }: { row: IntegrityRow }) {
