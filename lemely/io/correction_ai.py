@@ -1267,30 +1267,41 @@ def _resolve_ecf_chain(
 ) -> tuple[str, str] | None:
     """I7 CHAIN resolver -- which prior point's value gets substituted for ``point``.
 
-    Two tiers, in order (measured on the 289-scheme corpus: 578 same-question
-    chains, 7 cross-part, 141 unresolvable -- ``required_with`` itself is
-    non-null in 0 of 1,776 corpus points today, a Gemini-path-only field on
-    this det-parsed corpus, so tier 1 is correct-but-dormant and tier 2 is
-    the one that actually fires):
+    Two tiers, in order (measured on the 289-scheme corpus, walking
+    ``parts`` recursively -- an earlier probe that walked a non-existent
+    ``sub_questions`` key silently visited only top-level questions and
+    understated every denominator by 5.8x): ``required_with`` itself is
+    non-null in 0 of **10,314** corpus points today, a Gemini-path-only
+    field on this det-parsed corpus, so tier 1 is correct-but-dormant and
+    tier 2 is the one that actually fires, resolving 820 SAME-LEAF chains
+    and 438 CROSS-LEAF ones. Both tiers are reported here as STRUCTURAL
+    facts only -- whether a same-leaf result is USABLE for substitution is
+    a separate policy decision :func:`_maybe_apply_ecf_substitution` makes,
+    not this function's job (see its own docstring's Critical 2 note: a
+    same-leaf M-then-A pair is one computation's method and accuracy
+    marks, not an error carried FORWARD between two parts, so that
+    majority of chains this resolver reports is never actually
+    substituted on).
 
     1. ``point.required_with``, if set, resolved ONLY against ``question``'s
        OWN ``answer_points`` -- point ids are question-scoped by design
        (``loose_schemas.py:202``, "Sequential ID within the question"), so a
-       bare id can never name a point in a different question. A dangling
+       bare id can never name a point in a different question, and this
+       tier can therefore only ever return a SAME-LEAF result. A dangling
        ``required_with`` (no such sibling) resolves to no prerequisite,
        never a paper-wide search.
     2. Otherwise, the nearest preceding ``math_mark_type == M`` point within
        the SAME top-level question, walking parts in document order --
-       first backwards through ``question``'s own earlier points, then
-       backwards through ``top_level_leaves`` (every leaf under the same
-       top-level ancestor, in document order, as this story's own
-       ``correct_paper`` grouping presents it). This is the parsing prompt's
-       own rule 9 (``io/prompts/mark_scheme_parsing.py:338``), computed here
-       rather than re-derived from scratch.
+       first backwards through ``question``'s own earlier points (SAME-LEAF
+       result), then backwards through ``top_level_leaves`` (every leaf
+       under the same top-level ancestor, in document order, as this
+       story's own ``correct_paper`` grouping presents it -- a CROSS-LEAF
+       result). This is the parsing prompt's own rule 9
+       (``io/prompts/mark_scheme_parsing.py:338``), computed here rather
+       than re-derived from scratch.
 
     Returns ``(prerequisite_leaf_question_id, prerequisite_point_id)``, or
-    ``None`` when neither tier resolves -- 141 of 726 A-points in the corpus
-    are in this state and must never receive a substituted value.
+    ``None`` when neither tier resolves.
     """
     if point.required_with is not None:
         if any(sibling.id == point.required_with for sibling in question.answer_points):

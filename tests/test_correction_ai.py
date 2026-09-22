@@ -3220,8 +3220,13 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
 
 class EcfChainResolverTests(unittest.TestCase):
     """I7 (US-013) CHAIN resolver + GATE, as pure functions -- independent of
-    ``correct_paper`` orchestration and any marking call. See the I7 brief's
-    measured 578/7/141 chain split and 29/11 gate population.
+    ``correct_paper`` orchestration and any marking call. Measured on the
+    full 289-scheme corpus (10,314 answer points): 820 same-leaf chains,
+    438 cross-leaf chains, 28 gated points across 10 schemes -- and their
+    intersection (the true I7 activation ceiling) is 0. See
+    ``_resolve_ecf_chain``/``_maybe_apply_ecf_substitution``'s own
+    docstrings for why same-leaf and cross-leaf chains are structurally
+    identical here but only cross-leaf ones are ever substituted on.
     """
 
     def _leaf(
@@ -3268,8 +3273,8 @@ class EcfChainResolverTests(unittest.TestCase):
         self.assertEqual(result, ("1a_i", "p1"))
 
     def test_no_preceding_m_point_anywhere_is_unresolvable(self) -> None:
-        """141 of 726 A-points in the corpus are in this state -- must never
-        resolve to a substitutable prerequisite."""
+        """A point with no preceding M anywhere in its top-level question
+        must never resolve to a substitutable prerequisite."""
         from lemely.core.loose_schemas import AnswerPoint, MathMarkType
         from lemely.io.correction_ai import _resolve_ecf_chain
 
@@ -3586,8 +3591,20 @@ class ECFSubstitutionTests(unittest.TestCase):
 
     def test_unresolvable_chain_is_inert(self) -> None:
         """An A-point with no preceding M anywhere in its top-level question
-        is never substituted even when gated."""
+        is never substituted even when gated.
+
+        Tightened per review: ``answers.get(prereq_leaf_id)`` returning
+        ``None`` would ALSO skip substitution for an unrelated reason (a
+        resolver bug returning an unknown leaf id) -- not vacuous (it does
+        go red under such a bug), but the resolver's own answer is asserted
+        directly too, so this test fails specifically on "the chain
+        resolves to something", not merely on "nothing got substituted"."""
+        from lemely.io.correction_ai import _resolve_ecf_chain
+
         scheme = self._unresolvable_scheme()
+        leaf = scheme.questions[0]
+        self.assertIsNone(_resolve_ecf_chain(leaf, leaf.answer_points[0], [leaf]))
+
         extracted = ExtractedAnswers(
             paper_id="test",
             source_scan="scan.png",
