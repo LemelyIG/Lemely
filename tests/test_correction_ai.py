@@ -2019,6 +2019,7 @@ class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
         self.assertEqual(cq_on.matched_point_ids, cq_off.matched_point_ids)
         self.assertEqual(cq_on.needs_teacher_review, cq_off.needs_teacher_review)
         self.assertFalse(cq_on.needs_teacher_review)  # confirms it was never flagged either
+        self.assertEqual(cq_on.review_reason, cq_off.review_reason)
 
     def test_indicative_content_flag_on_equals_flag_off(self) -> None:
         from lemely.core.schemas import PointVerdict
@@ -2041,6 +2042,96 @@ class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
         self.assertEqual(cq_on.awarded_marks, 2)
         self.assertEqual(cq_on.needs_teacher_review, cq_off.needs_teacher_review)
         self.assertFalse(cq_on.needs_teacher_review)
+        self.assertEqual(cq_on.review_reason, cq_off.review_reason)
+
+
+class VerdictPathPartialCoverageTests(unittest.TestCase):
+    """Post-``2deea2c5``-review Critical fix: the verdict-path dispatch
+    guard added by that commit only handles EMPTY ``answer_points``
+    (``question.answer_points`` falsy). It does not handle the ADJACENT
+    case -- ``answer_points`` present but summing to LESS than
+    ``question.marks`` (e.g. a ``DIAGRAM`` mixing an ``AnswerPoint`` with a
+    ``DrawingCriterion`` this path cannot resolve ids against) -- which
+    still dispatches to the verdicts path and silently under-caps.
+
+    Worse: that same commit's narrower (and CORRECT, per its own Critical A
+    fix) I6 prompt wording -- "one entry per AnswerPoint id" instead of the
+    old, wrong "AnswerPoint / LevelDescriptor / DrawingCriteria id" -- also
+    removed an ACCIDENTAL safety net for exactly this shape: under the OLD
+    wording the model would volunteer a verdict for the DrawingCriterion id
+    too, which ``_check_coherence`` would then flag as an unknown
+    ``matched_point_ids`` entry. The new, correct wording no longer elicits
+    that dangling id, so the flag-off path (unaffected, structural) still
+    catches the under-coverage via its own coherence check, but the
+    flag-on (verdict) path silently lost the only signal it had --
+    ``_build_ai_corrected_from_verdicts``'s new coverage-mismatch check
+    (reason 2 in its docstring) restores it, deliberately, by comparing the
+    DERIVED total against the marker's OWN claim rather than re-deriving
+    which question types can have incomplete ``answer_points``.
+
+    Demonstrated on a constructed ``DIAGRAM`` fixture. The committed
+    289-scheme corpus has ZERO exposure today (11,024 leaves, all
+    ``recall``/``mcq``, none carrying ``drawing_criteria``) -- an
+    input-data limit, not a reason this can wait, per Critical A's own
+    precedent that a latent trap fires first when money is spent.
+    """
+
+    def _question(self) -> object:
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        return Question.model_construct(
+            id="1",
+            marks=4,
+            type=QuestionType.DIAGRAM,
+            answer_points=[AnswerPoint(id="p1", point="clearly labelled axis", marks=2)],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def test_partial_coverage_is_flagged_on_both_paths(self) -> None:
+        """Before the fix: flag OFF flags it (coherence: the model's own
+        claimed 4 marks is outside the [2, 2] range its 2-mark AnswerPoint
+        implies); flag ON silently drops to 2/4 with no flag at all. After
+        the fix, both paths flag the question for review -- the derived
+        mark itself is NOT required to match between the two paths (the
+        verdict path deliberately computes from the DERIVED total, never
+        the marker's claim, which is I6's whole point), but the review
+        SIGNAL that a human must look at this question is restored on both.
+        """
+        from lemely.core.schemas import PointVerdict
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        student_answer = "diagram with a clearly labelled axis and a correctly drawn line"
+        mark = self._mark(
+            4,  # the marker's OWN claim: full marks
+            ["p1"],
+            point_verdicts=[
+                PointVerdict(point_id="p1", verdict="awarded", evidence_span=student_answer)
+            ],
+        )
+
+        cq_off = _build_ai_corrected(q, student_answer, mark, equivalence_gate=False)
+        cq_on = _build_ai_corrected(q, student_answer, mark, equivalence_gate=True)
+
+        self.assertTrue(cq_off.needs_teacher_review)
+        self.assertTrue(cq_on.needs_teacher_review)  # the fix: this used to be False
+        self.assertIsNotNone(cq_on.review_reason)
+        self.assertIn("2", cq_on.review_reason or "")  # names the derived total
+        self.assertIn("4", cq_on.review_reason or "")  # names the question maximum
+
+    def _mark(self, awarded: int, matched: list[str], point_verdicts: list) -> object:
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=awarded,
+            confidence=0.95,
+            matched_point_ids=matched,
+            feedback="fb",
+            point_verdicts=point_verdicts,
+        )
 
 
 class CoherenceGateTests(unittest.TestCase):

@@ -843,28 +843,65 @@ def _build_ai_corrected_from_verdicts(
     verdicts (:func:`_awarded_from_verdicts`), never from
     ``mark.awarded_marks``.
 
-    Five independent review reasons (the legacy path's four, minus the
+    Six independent review reasons (the legacy path's four, minus the
     "marker reported an out-of-range number" check -- meaningless once the
-    number is Python-computed and pre-capped -- plus the I6 span check),
-    with the SAME priority order the legacy path uses (structural reasons
-    before confidence):
+    number is Python-computed and pre-capped -- plus the I6 span check and
+    the post-``2deea2c5``-review coverage check below), with the SAME
+    priority order the legacy path uses (structural reasons before
+    confidence):
 
     1. ``matched_point_ids``/derived-total coherence (:func:`_check_coherence`,
        run against the DERIVED ``matched_point_ids`` and capped total).
-    2. The deterministic calculated-answer backstop
+    2. COVERAGE mismatch -- ``capped < question.marks`` (the verdicts do not
+       account for the question's full marks) yet ``mark.awarded_marks``
+       (the marker's OWN claimed total) is HIGHER than ``capped``. Critical
+       fix, post-``2deea2c5``-review: that commit's dispatch guard added
+       ``question.answer_points`` truthiness to route empty-``answer_points``
+       questions (LEVELS_BASED, etc.) to the legacy body, but a question
+       whose ``answer_points`` are simply an INCOMPLETE description of its
+       marking (e.g. a ``DIAGRAM`` mixing a 2-mark ``AnswerPoint`` with a
+       2-mark ``DrawingCriterion`` this path cannot resolve ids against) is
+       non-empty and still dispatches here, silently under-capping. The
+       narrower I6 prompt wording that commit also shipped (asking only for
+       AnswerPoint ids, not the LevelDescriptor/DrawingCriteria ids the
+       schema cannot support anyway) removed the ACCIDENTAL safety net: the
+       OLD wording's dangling extra id used to trip
+       :func:`_check_coherence`'s "unknown mark point id(s)" branch on
+       exactly this shape. This check restores an equivalent signal
+       deliberately, by comparing the DERIVED total against the marker's
+       OWN claim -- the same philosophy the legacy path already uses
+       (never trust the model's arithmetic, but DO notice when it disagrees
+       with a structural computation) -- rather than re-litigating which
+       question types can have incomplete ``answer_points``, so it protects
+       any future under-coverage shape, not an enumerated list of types.
+       Demonstrated on a constructed ``DIAGRAM`` fixture; the committed
+       corpus has zero exposure today (11,024 leaves, all ``recall``/``mcq``,
+       none carrying ``drawing_criteria``) -- an input-data limit, not a
+       reason this can wait, per Critical A's own precedent: a latent trap
+       fires first when money is spent.
+    3. The deterministic calculated-answer backstop
        (:func:`_verify_calculated_answers`), unconditionally run with
        ``equivalence_gate=True`` here -- I8's equivalence fallback is
        already gated by the SAME flag this whole branch requires, so there
        is no independent "I8 without I6" state to preserve.
-    3. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
+    4. `no_span` / M-point-outside-``working_out`` (:func:`_check_point_evidence`),
        queued under the `low_confidence` bucket per that function's
        docstring -- no new enum member, no new trigger.
-    4. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
+    5. ``mark.confidence < REVIEW_CONFIDENCE_THRESHOLD``.
     """
     capped, matched_point_ids = _awarded_from_verdicts(question, mark.point_verdicts)
 
     coherence_reason = _check_coherence(question, matched_point_ids, capped)
     coherence_mismatch = coherence_reason is not None
+
+    coverage_reason: str | None = None
+    if capped < question.marks and mark.awarded_marks > capped:
+        coverage_reason = (
+            f"verdict-derived total {capped} is below the {question.marks}-mark "
+            f"maximum but the marker's own claim ({mark.awarded_marks}) was higher -- "
+            "this question's answer_points may not fully describe its marking scheme"
+        )
+    coverage_mismatch = coverage_reason is not None
 
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
         question,
@@ -885,6 +922,8 @@ def _build_ai_corrected_from_verdicts(
     reasons: list[str] = []
     if coherence_mismatch:
         reasons.append(coherence_reason or "")
+    if coverage_mismatch:
+        reasons.append(coverage_reason or "")
     if value_mismatch:
         reasons.append("unverified accuracy mark(s): " + "; ".join(rejections))
     if not reasons and low_confidence:
@@ -905,7 +944,9 @@ def _build_ai_corrected_from_verdicts(
         maximum_marks=question.marks,
         confidence=confidence_band_for_score(mark.confidence),
         confidence_score=mark.confidence,
-        needs_teacher_review=low_confidence or value_mismatch or coherence_mismatch,
+        needs_teacher_review=(
+            low_confidence or value_mismatch or coherence_mismatch or coverage_mismatch
+        ),
         review_reason=review_reason,
         student_answer=student_answer or None,
         expected_answer=None,
@@ -981,6 +1022,17 @@ def _build_ai_corrected(
     :func:`build_marker_user_prompt`'s matching fix to the I6 prompt block,
     which no longer asks the model for point_verdicts at all when
     ``question.answer_points`` is empty.
+
+    This guard covers only the EMPTY case. ``INDICATIVE_CONTENT`` is NOT
+    required by its own validator to have empty ``answer_points``
+    (unlike ``LEVELS_BASED``), so a question that carries SOME
+    ``answer_points`` summing to LESS than ``question.marks`` (e.g. a
+    ``DIAGRAM`` mixing an ``AnswerPoint`` with a ``DrawingCriterion`` this
+    path cannot resolve ids against) still dispatches to the verdicts path
+    and would silently under-cap the same way, absent
+    :func:`_build_ai_corrected_from_verdicts`'s own coverage-mismatch check
+    (its docstring, reason 2) -- that check, not this guard, is what closes
+    the adjacent gap.
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
