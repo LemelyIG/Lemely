@@ -170,12 +170,26 @@ export function paperIdentityLabel(item: {
  * US-039 finding G. `markerSource` is optional and — for this queue's own
  * row type, `ReviewQueueItemDTO` — always absent: it isn't on that DTO's
  * wire shape at all today, only on `ReviewItemDetailDTO`'s (T-08's single-item
- * view). A genuine blank should never reach either, because
- * `_build_blank_corrected` sets `needs_teacher_review = False` and the
- * backend excludes it from this queue entirely — but the parameter is added
- * here, not left as a bare score, so the gate exists and fires the moment a
- * caller has the data to supply it, rather than this file staying the one
- * place a blank can never render as anything but a confidence tone.
+ * view).
+ *
+ * **This is a live gap, not a hypothetical one — a genuine blank CAN reach
+ * this queue.** `_build_blank_corrected`'s `needs_teacher_review = False`
+ * only removes the `low_confidence` review-queue row for an *unflagged*
+ * blank; it does nothing to a `plagiarism_flag` row on the same question, and
+ * `AttemptRepository.persist_correction` can write both
+ * (`review_repo.py:45`: "a `low_confidence` row and a `plagiarism_flag` row"
+ * for one question). `ReviewService.list_queue`
+ * (`review_repo.py:349`) filters on `reason` only when the caller supplies
+ * one, so the unfiltered T-07 listing this screen renders by default
+ * includes those `plagiarism_flag` rows. A blank that is also
+ * plagiarism-flagged therefore appears here today with
+ * `marker_source = "missing"` and `confidence_score = 0.0` — exactly the row
+ * this tier exists for — and renders as a plain confidence tone because
+ * `ReviewQueueItemDTO` cannot hand this function the marker source. The
+ * parameter below is added anyway, not left as a bare score, so the gate
+ * exists and is unit-tested — but it is *not yet reachable from this
+ * screen's real data*, and closing that requires adding `markerSource` to
+ * `ReviewQueueItemDTO` (a backend/DTO change, out of this file's scope).
  *
  * This checks `markerSource` directly rather than going through
  * `confidenceTierFor`'s `needsTeacherReview`-gated "not-marked" branch: this
