@@ -157,8 +157,13 @@ class CostEstimate(StrictModel):
 # ``evidence_box`` is left ``None``-only for now (no OCR bounding-box
 # plumbing wired to the marker in this story — see
 # ``lemely.io.box_plausibility`` for the box work that does exist, which is
-# unrelated); declared per the plan's schema so a later story can populate it
-# without another schema change invalidating the marking cache a second time.
+# unrelated); declared per the plan's schema as a placeholder so the field
+# NAME exists on the wire today. Type ``None`` rejects every non-``None``
+# value, though, so it buys none of the forward-compatibility a first read
+# suggests: a later story that wants to populate this field must still widen
+# the annotation, which is its own marking-cache-invalidating schema change
+# (Important 7, US-013 review) — the same cost this comment used to claim
+# the field's presence avoided.
 #
 # Post-I6-review Critical B fix: this used to be the class's DOCSTRING, not
 # a comment. Pydantic derives a model's JSON-Schema ``description`` from

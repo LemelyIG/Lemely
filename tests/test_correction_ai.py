@@ -7,7 +7,7 @@ import json
 import os
 import tempfile
 import unittest
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -17,6 +17,7 @@ from lemely.core.schemas import (
     ConfidenceBand,
     ExtractedAnswer,
     ExtractedAnswers,
+    PointVerdict,
 )
 from lemely.io import correction_ai
 from lemely.io.correction_ai import _build_mcq_corrected, _flatten_answers, correct_paper
@@ -4419,3 +4420,169 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
 
         self.assertEqual(normal["hash"], optimized["hash"])
         self.assertEqual(normal["hash"], "886c4232e7a7")
+
+
+_GOLDEN_DIR = Path(__file__).parent / "golden"
+
+
+class PointVerdictGoldenFixtureTests(unittest.TestCase):
+    """I6 (US-013) Important 7 -- acceptance 1 and acceptance 2, actually
+    exercised against the three golden ``_theory_partial`` fixtures rather
+    than only against ``Question.model_construct`` synthetics.
+
+    Every prior I6 test (``PointVerdictBuildTests`` above) builds BOTH the
+    question and the evidence spans itself, so ``_normalise_span`` had never
+    run against a real transcribed answer. Here the ``Question`` comes from
+    ``MarkScheme.model_validate_json`` parsing an actual fixture's
+    ``mark_scheme.json`` (full pydantic validation, not ``model_construct``),
+    and each ``PointVerdict.evidence_span`` is a real substring of the
+    fixture's ``answers.json`` student answer -- deliberately re-cased and/or
+    re-spaced from how it appears verbatim, so a passing assertion actually
+    proves ``_normalise_span``'s whitespace-collapse and casefold survive
+    real transcription noise, not just synthetic round-trips.
+
+    Which points are "awarded" per leaf is read from each fixture's
+    ``answers.json`` ``notes`` field (the only place the golden data records
+    partial-credit attribution) and hard-coded per leaf below -- there is no
+    machine-readable point-level ground truth format for this repo to load
+    instead.
+    """
+
+    def _leaf(self, fixture: str, question_id: str) -> Question:
+        mark_scheme = MarkScheme.model_validate_json(
+            (_GOLDEN_DIR / fixture / "mark_scheme.json").read_text(encoding="utf-8")
+        )
+        question = mark_scheme.get_question_by_id(question_id)
+        assert question is not None, f"{fixture}: no leaf {question_id!r}"
+        return question
+
+    def _ground_truth_awarded(self, fixture: str, question_id: str) -> int:
+        answers = json.loads((_GOLDEN_DIR / fixture / "answers.json").read_text(encoding="utf-8"))
+        return int(answers[question_id]["awarded_marks"])
+
+    def _student_answer(self, fixture: str, question_id: str) -> str:
+        answers = json.loads((_GOLDEN_DIR / fixture / "answers.json").read_text(encoding="utf-8"))
+        return str(answers[question_id]["student_answer"])
+
+    def _assert_row(
+        self,
+        fixture: str,
+        question_id: str,
+        verdicts_factory: Callable[[], list[PointVerdict]],
+    ) -> None:
+        """Load one golden row, mark it via the verdict path, and assert
+        I6 acceptance 1 (sum of awarded points == awarded_marks, matching
+        the fixture's own ground truth) plus acceptance 1's metamorphic
+        shuffle property.
+        """
+        from lemely.core.schemas import AIMarkResponse
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        question = self._leaf(fixture, question_id)
+        student_answer = self._student_answer(fixture, question_id)
+        expected_awarded = self._ground_truth_awarded(fixture, question_id)
+        point_verdicts = verdicts_factory()
+
+        mark = AIMarkResponse(
+            awarded_marks=0,  # must be ignored -- the verdict path computes its own
+            confidence=0.95,
+            matched_point_ids=[],
+            feedback="",
+            point_verdicts=point_verdicts,
+        )
+        cq = _build_ai_corrected(question, student_answer, mark, equivalence_gate=True)
+
+        # Acceptance 1, on a REAL golden row: sum(awarded verdicts' point
+        # marks) == awarded_marks, and it matches the fixture's own
+        # human-labelled ground truth.
+        points_by_id = {p.id: p for p in question.answer_points}
+        awarded_ids = [pv.point_id for pv in point_verdicts if pv.verdict == "awarded"]
+        self.assertEqual(sum(points_by_id[pid].marks for pid in awarded_ids), cq.awarded_marks)
+        self.assertEqual(cq.awarded_marks, expected_awarded)
+
+        # Acceptance 1's metamorphic property: shuffling point_verdicts
+        # order leaves marks unchanged.
+        shuffled_mark = AIMarkResponse(
+            awarded_marks=0,
+            confidence=0.95,
+            matched_point_ids=[],
+            feedback="",
+            point_verdicts=list(reversed(point_verdicts)),
+        )
+        shuffled_cq = _build_ai_corrected(
+            question, student_answer, shuffled_mark, equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, shuffled_cq.awarded_marks)
+        self.assertEqual(set(cq.matched_point_ids), set(shuffled_cq.matched_point_ids))
+
+        # Acceptance 2: every awarded point's evidence span is found in the
+        # fixture's real answer text -- proven by the absence of a `no_span`
+        # review trigger, since `_check_point_evidence` runs unconditionally
+        # inside `_build_ai_corrected_from_verdicts`.
+        from lemely.io.correction_ai import POINT_EVIDENCE_TRIGGER_MARKER
+
+        self.assertNotIn(POINT_EVIDENCE_TRIGGER_MARKER, cq.review_reason or "")
+
+    def test_0606_leaf_1_three_b_points_two_awarded(self) -> None:
+        """0606_s23_qp_12_theory_partial, leaf "1": a=4 (hit), b=3/8 (hit),
+        c=-2 (missed -- student wrote the sign-flipped "c = 2"). Real
+        multi-point B-mark leaf; ground truth awarded_marks is 2."""
+
+        def verdicts() -> list[PointVerdict]:
+            return [
+                PointVerdict(point_id="p1", verdict="awarded", evidence_span="A = 4"),
+                PointVerdict(point_id="p2", verdict="awarded", evidence_span="b =   3/8"),
+                PointVerdict(point_id="p3", verdict="withheld", evidence_span=""),
+            ]
+
+        self._assert_row("0606_s23_qp_12_theory_partial", "1", verdicts)
+
+    def test_0625_leaf_1b_density_two_m_points_awarded_a_missed(self) -> None:
+        """0625_s20_qp_31_theory_partial, leaf "1b": both M points hit
+        (formula stated, correct substitution); the final A point missed
+        (89 g/cm3 instead of 8.9 -- a decimal-place slip). Ground truth
+        awarded_marks is 2. Evidence spans are deliberately re-cased and
+        re-spaced from the verbatim answer text to exercise
+        ``_normalise_span``'s casefold + whitespace-collapse against real
+        transcription noise, not a synthetic round-trip."""
+
+        def verdicts() -> list[PointVerdict]:
+            return [
+                PointVerdict(
+                    point_id="p1", verdict="awarded", evidence_span="Density  =  Mass / Volume"
+                ),
+                PointVerdict(point_id="p2", verdict="awarded", evidence_span="148 / 16.6"),
+                PointVerdict(point_id="p3", verdict="withheld", evidence_span=""),
+            ]
+
+        self._assert_row("0625_s20_qp_31_theory_partial", "1b", verdicts)
+
+    def test_0580_leaf_1_single_point_full_marks(self) -> None:
+        """0580_s23_qp_22_theory_partial, leaf "1": a single-point 1-mark
+        leaf hit in full ("-5 - 8 = -13"). This excerpt fixture's
+        mark_scheme.json only carries one full-mark point per leaf (its
+        ``answers.json`` notes describe a real scheme's partial-credit
+        structure that this excerpt does not reproduce) -- exercised here
+        with a leading/trailing-whitespace evidence span to prove
+        ``_normalise_span``'s ``.strip()`` against real fixture text."""
+
+        def verdicts() -> list[PointVerdict]:
+            return [PointVerdict(point_id="p1", verdict="awarded", evidence_span="  -13  ")]
+
+        self._assert_row("0580_s23_qp_22_theory_partial", "1", verdicts)
+
+    def test_0580_leaf_12b_single_point_full_marks_uppercase_span(self) -> None:
+        """Same fixture, leaf "12b" -- 1 mark, hit in full. Evidence span
+        deliberately uppercased against the real lowercase answer text to
+        prove ``_normalise_span``'s ``.casefold()``."""
+
+        def verdicts() -> list[PointVerdict]:
+            return [
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="THE OTHER SOLUTION IS X = -8",
+                )
+            ]
+
+        self._assert_row("0580_s23_qp_22_theory_partial", "12b", verdicts)
