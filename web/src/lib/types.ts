@@ -35,6 +35,22 @@ export interface QuestionResult {
   matchedPointIds?: string[]
   reviewReason?: string
   topic?: string
+  /**
+   * The backend's own "does this question need a human" signal (mirrors
+   * `QuestionResultDTO.needsTeacherReview` in `lemely/web/schemas.py`),
+   * distinct from the paper-level `GradeResult.needsTeacherReview`.
+   *
+   * US-039: `reviewReason` alone used to mean "needs review" for every case
+   * -- true for every builder except the unflagged blank
+   * (`_build_blank_corrected`), which sets a `reviewReason` message purely
+   * to distinguish a genuine blank from every other blank-shaped state,
+   * while deliberately setting `needsTeacherReview` false. `undefined`
+   * (older payloads, or callers that never set it) preserves today's
+   * behaviour everywhere else -- see `lib/markingConfidence.ts` and
+   * `lib/questionFilter.ts`, both of which gate on
+   * `!== false` rather than requiring this field to be present.
+   */
+  needsTeacherReview?: boolean
 }
 
 export interface WeakArea {

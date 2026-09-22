@@ -59,6 +59,24 @@ describe("isFlagged", () => {
     expect(confidenceTierFor(q({ confidence: 0.5 }))).toBe("uncertain")
     expect(isFlagged(q({ confidence: 0.5 }))).toBe(false)
   })
+
+  it("US-039 MUST-FIX 2: false on an unflagged blank (reviewReason set, needsTeacherReview false)", () => {
+    // `_build_blank_corrected`'s shape: a `reviewReason` message the DB
+    // needs to distinguish a genuine blank, but `needsTeacherReview: false`
+    // -- the product owner's "unflagged zero" ruling. Before this fix,
+    // `isFlagged` read `reviewReason != null` ALONE, so this question was
+    // flagged despite the backend explicitly deciding it needs no review.
+    const blank = q({
+      reviewReason: "student left this question blank (0 awarded, no AI call made)",
+      needsTeacherReview: false,
+      confidence: 0,
+    })
+    expect(isFlagged(blank)).toBe(false)
+  })
+
+  it("US-039 MUST-FIX 2: `needsTeacherReview: undefined` preserves today's behaviour", () => {
+    expect(isFlagged(q({ reviewReason: "Handwriting unclear" }))).toBe(true)
+  })
 })
 
 describe("filterQuestions", () => {

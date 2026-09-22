@@ -408,7 +408,18 @@ function QuestionList({
                   {q.feedback}
                 </div>
               ) : null}
-              {q.reviewReason ? (
+              {/* US-039 MUST-FIX 2 (independent review, blocking 674f309d): a set
+                  `reviewReason` alone used to mean "needs review" for every
+                  case except `_build_blank_corrected`'s unflagged blank,
+                  which sets a `reviewReason` message purely so the review
+                  queue/DB can distinguish it from every other blank-shaped
+                  state, while deliberately leaving `needsTeacherReview`
+                  false. Gated the same way as `markingConfidence.ts` and
+                  `questionFilter.ts` so this warn-coloured, student-facing
+                  line doesn't render for a question the backend explicitly
+                  decided needs no review. `undefined` (every other
+                  `reviewReason`) preserves today's behaviour. */}
+              {q.reviewReason && q.needsTeacherReview !== false ? (
                 <div className="text-body-md leading-snug text-warn">
                   Needs review: {q.reviewReason}
                 </div>

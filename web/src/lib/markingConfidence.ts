@@ -40,12 +40,28 @@ export interface ConfidenceInput {
   reviewReason?: string
   /** 0–1. Absent on question types that carry no confidence score. */
   confidence?: number
+  /**
+   * The backend's own per-question "does this need a human" signal (mirrors
+   * `QuestionResultDTO.needsTeacherReview`) — distinct from `reviewReason`.
+   *
+   * US-039 MUST-FIX 2 (independent review, blocking 674f309d): `reviewReason`
+   * alone used to mean "needs review" for every case except one --
+   * `_build_blank_corrected`'s unflagged blank, which sets a `reviewReason`
+   * message purely so the review queue/DB can tell a genuine blank apart from
+   * every other blank-shaped state, while deliberately leaving
+   * `needsTeacherReview` false. `undefined` (every existing caller, and every
+   * other `reviewReason`-setting path) preserves today's behaviour: only an
+   * explicit `false` suppresses the review signal.
+   */
+  needsTeacherReview?: boolean
 }
 
 /**
- * `reviewReason` always wins: it is a decision the backend already made, and a
- * question can be flagged for review at any confidence (integrity checks set it
- * without touching the score at all).
+ * `reviewReason` wins whenever `needsTeacherReview` is not explicitly `false`:
+ * it is a decision the backend already made, and a question can be flagged
+ * for review at any confidence (integrity checks set it without touching the
+ * score at all). The one exception is the unflagged blank described on
+ * `ConfidenceInput.needsTeacherReview` above.
  *
  * A missing or non-finite `confidence` is treated as confident rather than
  * uncertain. That is deliberate and it is the arguable call in this function:
@@ -56,7 +72,7 @@ export interface ConfidenceInput {
  * genuinely in doubt.
  */
 export function confidenceTierFor(q: ConfidenceInput): ConfidenceTier {
-  if (q.reviewReason) return "needs-review"
+  if (q.reviewReason && q.needsTeacherReview !== false) return "needs-review"
   if (typeof q.confidence !== "number" || !Number.isFinite(q.confidence)) {
     return "confident"
   }

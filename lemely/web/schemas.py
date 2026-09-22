@@ -49,6 +49,18 @@ class QuestionResultDTO(ApiModel):
     reviewReason: str | None = None
     plagiarismFlagged: bool = False
     topic: str | None = None
+    #: US-039 MUST-FIX 2 (independent review, blocking 674f309d): the paper-level
+    #: ``needsTeacherReview`` on ``GradeResultDTO`` is not this. The frontend's
+    #: review signal is ``reviewReason`` (``markingConfidence.ts::confidenceTierFor``,
+    #: ``questionFilter.ts::isFlagged``), which used to mean "any non-null
+    #: reviewReason needs a human" -- true for every case *except* US-039's
+    #: unflagged blank, which sets a `review_reason` message precisely so the
+    #: DB/queue can tell a genuine blank apart from every other blank-shaped
+    #: state, while deliberately leaving `needs_teacher_review=False`. Without
+    #: this field the frontend has no way to see that distinction and rendered
+    #: "Needs review: <blank message>" for every unattempted question exactly
+    #: like the review queue used to before MUST-FIX 1. See ``question_to_dto``.
+    needsTeacherReview: bool = False
 
 
 class WeakAreaDTO(ApiModel):
@@ -110,6 +122,7 @@ def question_to_dto(question: CorrectedQuestion) -> QuestionResultDTO:
         reviewReason=question.review_reason,
         plagiarismFlagged=question.plagiarism_flagged,
         topic=question.topic,
+        needsTeacherReview=question.needs_teacher_review,
     )
 
 

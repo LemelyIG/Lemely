@@ -281,6 +281,113 @@ def test_review_queue_only_for_flagged_questions(
         assert flagged.question_id == "2"
 
 
+def test_review_queue_exempts_the_us039_unflagged_blank(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """US-039 MUST-FIX 1 (independent review, blocking 674f309d).
+
+    ``_build_blank_corrected`` sets ``confidence_score=0.0`` *and*
+    ``needs_teacher_review=False`` -- the second disjunct at
+    ``attempt_repo.py``'s review-queue fan-out
+    (``qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD``) used to fire
+    unconditionally for it regardless of the first, so every blank still
+    entered the review queue despite the product owner's explicit "unflagged
+    zero, no queue item" ruling. A paper with 8 unattempted parts produced 8
+    queue items a teacher dismisses on sight -- exactly the scenario the
+    ruling rejected.
+
+    The exemption is narrow: it must key off BOTH ``marker_source=="missing"``
+    AND the blank reason, not off ``confidence_score`` or ``marker_source``
+    alone -- see ``test_review_queue_still_queues_genuine_missing_and_dropped``
+    for the two look-alike builders (real ``needs_teacher_review=True`` blanks)
+    that must keep queuing unaffected by this exemption.
+    """
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    user_id = _seed_user(pg_sessionmaker)
+    report = _report()
+    blank = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=False,
+        student_answer=None,
+        expected_answer=None,
+        topic="Waves",
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="missing",
+        matched_point_ids=[],
+    )
+    report.correction.questions.append(blank)
+    AttemptRepository(pg_sessionmaker).persist_correction(user_id=user_id, report=report)
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(select(ReviewQueueItem)).all()
+        queued_question_ids = set()
+        for item in items:
+            flagged = session.get(QuestionResult, item.question_result_id)
+            assert flagged is not None
+            queued_question_ids.add(flagged.question_id)
+        # Question "2" (genuinely low-confidence) still queues; the new
+        # unflagged blank ("3") must NOT.
+        assert queued_question_ids == {"2"}
+
+
+def test_review_queue_still_queues_genuine_missing_and_dropped(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The MUST-FIX 1 exemption must not leak onto ``_build_missing_corrected``'s
+    and ``_build_dropped_corrected``'s output, which also carry
+    ``confidence_score=0.0`` but set ``needs_teacher_review=True`` -- they
+    queue via the FIRST disjunct (``marking_flagged``), unaffected by the
+    exemption, which only ever suppresses the SECOND disjunct and only for
+    the exact blank marker_source+review_reason pairing.
+    """
+    user_id = _seed_user(pg_sessionmaker)
+    report = _report()
+    missing = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer=None,
+        topic="Waves",
+        review_reason="non-MCQ question not marked (--mcq-only or no AI client)",
+        marker_source="missing",
+        matched_point_ids=[],
+    )
+    dropped = CorrectedQuestion(
+        question_id="4",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        student_answer=None,
+        expected_answer="A",
+        topic="Waves",
+        review_reason="answer discarded as malformed",
+        marker_source="dropped",
+        matched_point_ids=[],
+    )
+    report.correction.questions.extend([missing, dropped])
+    AttemptRepository(pg_sessionmaker).persist_correction(user_id=user_id, report=report)
+
+    with pg_sessionmaker() as session:
+        items = session.scalars(select(ReviewQueueItem)).all()
+        queued_question_ids = set()
+        for item in items:
+            flagged = session.get(QuestionResult, item.question_result_id)
+            assert flagged is not None
+            queued_question_ids.add(flagged.question_id)
+        assert queued_question_ids == {"2", "3", "4"}
+
+
 def _report_with_integrity_flags() -> AccuracyReport:
     """One HIGH-confidence question flagged for plagiarism.
 

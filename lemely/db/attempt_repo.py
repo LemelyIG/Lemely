@@ -64,6 +64,7 @@ from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import AttemptOrigin, BoundarySource, MarkerSource, ReviewReason
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 from lemely.io.syllabus_topics import get_taxonomy
 
 if TYPE_CHECKING:
@@ -308,7 +309,29 @@ class AttemptRepository:
                 # plagiarism-flagged doesn't also get a duplicate, mislabeled
                 # low_confidence row.
                 marking_flagged = qr.needs_teacher_review and not cq.plagiarism_flagged
-                if marking_flagged or qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD:
+                # US-039 MUST-FIX 1 (independent review, blocking 674f309d):
+                # ``_build_blank_corrected`` sets ``confidence_score=0.0`` *and*
+                # ``needs_teacher_review=False`` — the product owner's explicit
+                # "unflagged zero, no queue item" ruling for a genuine blank. Left
+                # alone, the low-confidence disjunct below fires unconditionally
+                # for it regardless of ``needs_teacher_review``, so every blank
+                # still queued: a paper with 8 unattempted parts produced 8 queue
+                # items a teacher dismisses on sight, the exact scenario the
+                # ruling rejected. The exemption is narrow on purpose — it keys
+                # off BOTH ``marker_source == "missing"`` AND the blank reason,
+                # not off confidence_score or marker_source alone, so it cannot
+                # leak onto ``_build_missing_corrected``'s or
+                # ``_build_dropped_corrected``'s output (also confidence_score
+                # 0.0, but ``needs_teacher_review=True`` there, so they already
+                # queue via ``marking_flagged`` and are unaffected either way).
+                unflagged_blank = (
+                    cq.marker_source == "missing"
+                    and cq.review_reason == _BLANK_ANSWER_REVIEW_REASON
+                )
+                low_confidence_flagged = (
+                    not unflagged_blank and qr.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+                )
+                if marking_flagged or low_confidence_flagged:
                     session.add(
                         ReviewQueueItem(
                             attempt_id=attempt_id,

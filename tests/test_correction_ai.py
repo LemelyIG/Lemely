@@ -18,6 +18,7 @@ from lemely.core.schemas import (
     ExtractedAnswer,
     ExtractedAnswers,
 )
+from lemely.io import correction_ai
 from lemely.io.correction_ai import _build_mcq_corrected, _flatten_answers, correct_paper
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import PathsSettings, load_settings
@@ -540,10 +541,21 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
         # Distinguishable from every other blank-shaped message this path can
         # produce, per the enum ruling (carry the distinction in
         # review_reason since marker_source is shared with "missing").
-        self.assertNotEqual(q2.review_reason, "missing answer")  # MCQ's message
-        self.assertNotIn("--mcq-only", q2.review_reason or "")  # the ai-is-None message
-        self.assertNotIn("dropped", q2.review_reason or "")
-        self.assertNotIn("AI marking failed", q2.review_reason or "")
+        #
+        # US-039 MUST-FIX 3 (independent review, blocking 674f309d): asserted
+        # POSITIVELY against the module constant rather than via
+        # `assertNotEqual`/`assertNotIn` against unrelated literals -- with
+        # `review_reason=None` every one of those negative assertions passed
+        # vacuously (`assertNotIn(x, "")` is trivially true), so dropping
+        # `review_reason` entirely made a genuine blank and a `--mcq-only`
+        # skip byte-identical in the database and this test still went green.
+        self.assertEqual(q2.review_reason, correction_ai._BLANK_ANSWER_REVIEW_REASON)
+        # Field-mutation survivors from the same review: `topic` and
+        # `maximum_marks` (on the question AND the paper total) previously
+        # went unpinned by any assertion in this class.
+        self.assertEqual(q2.topic, "forces")
+        self.assertEqual(q2.maximum_marks, 2)
+        self.assertEqual(result.maximum_marks, 3)
         client._client.models.generate_content.assert_not_called()
 
     def test_empty_string_answer_is_treated_as_blank(self) -> None:
@@ -587,6 +599,12 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
         q2 = next(q for q in result.questions if q.question_id == "2")
         self.assertEqual(q2.marker_source, "missing")
         self.assertFalse(q2.needs_teacher_review)
+        # US-039 MUST-FIX 3 survivor: `extraction_confidence -> None` went
+        # undetected in the no-answer-entry test above because the true value
+        # is already `None` there (no ExtractedAnswer for "2" at all). This
+        # scenario carries a real extracted confidence (0.9, whitespace
+        # answer) for a value a hardcoded-`None` mutant would falsify.
+        self.assertEqual(q2.extraction_confidence, 0.9)
         client._client.models.generate_content.assert_not_called()
 
     def test_blank_answer_with_substantial_working_still_calls_the_marker(self) -> None:

@@ -35,6 +35,39 @@ describe("confidenceTierFor", () => {
     )
   })
 
+  it("US-039 MUST-FIX 2: an unflagged blank (needsTeacherReview: false) does not need review", () => {
+    // `_build_blank_corrected` sets a `reviewReason` message purely so the
+    // review queue/DB can tell a genuine blank apart from every other
+    // blank-shaped state, while deliberately leaving `needsTeacherReview`
+    // false -- the product owner's "unflagged zero" ruling. Before this fix,
+    // `reviewReason` alone meant "needs review" for every case, so 8
+    // unattempted parts on a paper rendered 8 warn-coloured "Needs review"
+    // lines for questions the backend explicitly decided need none.
+    expect(
+      confidenceTierFor({
+        reviewReason: "student left this question blank (0 awarded, no AI call made)",
+        needsTeacherReview: false,
+        confidence: 0,
+      }),
+    ).not.toBe("needs-review")
+  })
+
+  it("US-039 MUST-FIX 2: `needsTeacherReview: undefined` preserves today's behaviour", () => {
+    // The whole reason this shape is safe: every existing caller that never
+    // set `needsTeacherReview` must keep behaving exactly as before -- a
+    // set `reviewReason` alone still wins.
+    expect(confidenceTierFor({ reviewReason: "Handwriting unclear" })).toBe("needs-review")
+    expect(
+      confidenceTierFor({ reviewReason: "Handwriting unclear", needsTeacherReview: undefined }),
+    ).toBe("needs-review")
+  })
+
+  it("US-039 MUST-FIX 2: an explicit needsTeacherReview: true still needs review", () => {
+    expect(
+      confidenceTierFor({ reviewReason: "Two answers given", needsTeacherReview: true }),
+    ).toBe("needs-review")
+  })
+
   it("treats a missing score as confident rather than doubtful", () => {
     // The arguable call, made deliberately: MCQ marking is deterministic
     // string comparison and carries no score, so the alternative would flag

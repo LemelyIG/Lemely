@@ -28,9 +28,19 @@ export function markState(q: QuestionResult): MarkState {
  * today (a `reviewReason` also makes `confidenceTierFor` return
  * "needs-review"), but `reviewReason` is checked explicitly rather than
  * relying on that as an implementation detail of the tier function.
+ *
+ * US-039 MUST-FIX 2 (independent review, blocking 674f309d): the direct
+ * `reviewReason` check is gated by `needsTeacherReview !== false`, mirroring
+ * `confidenceTierFor`'s gate — see `ConfidenceInput.needsTeacherReview` in
+ * `lib/markingConfidence.ts` for why a set `reviewReason` does not always
+ * mean "needs review" (`_build_blank_corrected`'s unflagged blank).
+ * `undefined` preserves today's behaviour for every existing caller.
  */
 export function isFlagged(q: QuestionResult): boolean {
-  return q.reviewReason != null || confidenceTierFor(q) === "needs-review"
+  return (
+    (q.reviewReason != null && q.needsTeacherReview !== false) ||
+    confidenceTierFor(q) === "needs-review"
+  )
 }
 
 export type QuestionFilter = "all" | "lost" | "flagged"

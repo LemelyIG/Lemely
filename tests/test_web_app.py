@@ -368,6 +368,52 @@ def test_question_to_dto_surfaces_topic() -> None:
     assert untopic.topic is None
 
 
+def test_question_to_dto_surfaces_per_question_needs_teacher_review() -> None:
+    """US-039 MUST-FIX 2 (independent review, blocking 674f309d).
+
+    ``GradeResultDTO.needsTeacherReview`` is paper-level only; the frontend's
+    per-question review signal is ``QuestionResultDTO.reviewReason``, which
+    used to mean "any non-null reviewReason needs a human" -- true for every
+    case except US-039's unflagged blank, which sets a `review_reason`
+    message precisely so the queue/DB can tell a genuine blank apart from
+    every other blank-shaped state, while deliberately leaving
+    `needs_teacher_review=False`. Without this field on the DTO the frontend
+    has no way to see that distinction and renders "Needs review: <blank
+    message>" for every unattempted question -- exactly the bug MUST-FIX 1
+    fixed on the review-queue side. Both a genuinely-flagged blank-shaped
+    message and the unflagged one must round-trip their own boolean, not a
+    single hardcoded value.
+    """
+    flagged = question_to_dto(
+        CorrectedQuestion(
+            question_id="5",
+            awarded_marks=0,
+            maximum_marks=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=True,
+            marker_source="missing",
+            review_reason="non-MCQ question not marked (--mcq-only or no AI client)",
+        )
+    )
+    assert flagged.needsTeacherReview is True
+
+    unflagged_blank = question_to_dto(
+        CorrectedQuestion(
+            question_id="6",
+            awarded_marks=0,
+            maximum_marks=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=0.0,
+            needs_teacher_review=False,
+            marker_source="missing",
+            review_reason="student left this question blank (0 awarded, no AI call made)",
+        )
+    )
+    assert unflagged_blank.needsTeacherReview is False
+    assert unflagged_blank.model_dump()["needsTeacherReview"] is False
+
+
 # -- The notification sweeper's lifespan (push-delivery spec §4) ---------------
 
 
