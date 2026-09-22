@@ -77,7 +77,10 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     ``review_reason`` (``" | ".join([*existing.split(" | "), new_reason])``,
     preserving the original text) whenever it flags a question — so a blank
     that also picked up an integrity flag would carry
-    ``"<blank reason> | copied from another candidate"``, which is not equal
+    ``"<blank reason> | plagiarism (score 1.00)"`` (the exact format
+    ``apply_integrity_checks`` appends —
+    ``f"plagiarism (score {finding.score:.2f})"``, ``integrity.py:102``, not
+    an illustrative placeholder), which is not equal
     to ``_BLANK_ANSWER_REVIEW_REASON``. Under the old check that made
     ``unflagged_blank`` False, so ``low_confidence_flagged`` fired
     (``0.0 < threshold``) and the row came back labelled ``low_confidence``
@@ -87,7 +90,7 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     MEMBERSHIP of the blank's exact reason in the ``" | "``-split segments,
     which matches regardless of what gets appended after it. Verified: a
     genuine blank with ``plagiarism_flagged=True`` and
-    ``review_reason="<blank reason> | copied from another candidate"`` now
+    ``review_reason="<blank reason> | plagiarism (score 1.00)"`` now
     yields only ``plagiarism_flag`` — queued because it was flagged, not
     because a marker that never ran was "unsure".
 

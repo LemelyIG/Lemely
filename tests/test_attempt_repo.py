@@ -530,6 +530,57 @@ def test_review_queue_low_confidence_row_survives_alongside_integrity_flags(
         assert all(item.attempt_id == attempt_id for item in items)
 
 
+def _real_plagiarism_review_reason() -> str:
+    """The exact ``review_reason`` segment ``apply_integrity_checks`` appends for a flagged answer.
+
+    Derived by running the REAL integrity-check pipeline
+    (``lemely.io.integrity.apply_integrity_checks``) against a
+    verbatim-copied answer -- not retyped or invented -- so a fixture built
+    from this cannot silently drift from what the real producer actually
+    appends (``lemely/io/integrity.py:102``,
+    ``f"plagiarism (score {finding.score:.2f})"``).
+
+    (Independent review, third pass: an earlier version of this test's
+    fixture hand-typed ``"copied from another candidate"`` as the appended
+    reason -- a string no builder in this codebase produces, exactly the
+    defect class ``129297cc`` removed elsewhere in this same file. This
+    function exists so that mistake cannot recur here.)
+    """
+    from lemely.io.integrity import apply_integrity_checks
+    from lemely.runtime.config import IntegritySettings
+
+    verbatim = "gravity acts on the object"
+    scheme = _mark_scheme([_scheme_question("1", point_text=verbatim)])
+    near_verbatim = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer=verbatim,
+        expected_answer=verbatim,
+        marker_source="ai",
+    )
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[near_verbatim],
+    )
+    result = apply_integrity_checks(
+        correction, scheme, gemini_client=None, settings=IntegritySettings()
+    )
+    flagged = result.questions[0]
+    assert flagged.plagiarism_flagged is True
+    assert flagged.review_reason is not None
+    return flagged.review_reason
+
+
 def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -541,16 +592,17 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
     this fix, the exemption in ``review_queue_rules.review_reasons_for``
     tested ``review_reason == _BLANK_ANSWER_REVIEW_REASON`` by full string
     equality, so a genuine blank that also picked up an integrity flag
-    carried ``"<blank reason> | copied from another candidate"`` -- not
-    equal to the bare blank reason -- which defeated the exemption. The row
-    came back labelled ``low_confidence`` (0.0 confidence, "unsure marker")
-    stacked on top of its own ``plagiarism_flag`` row, even though no marker
-    ever ran to be unsure. ``review_reasons_for`` now checks membership of
-    the blank's exact reason among the ``" | "``-split segments instead of
-    whole-field equality, so an appended integrity reason no longer defeats
-    it. The result: a flagged blank queues for the real reason it was
-    flagged (plagiarism) and ONLY that reason -- not a fabricated
-    low-confidence signal alongside it.
+    carried the blank's own reason plus the real appended plagiarism reason
+    (see :func:`_real_plagiarism_review_reason`) -- not equal to the bare
+    blank reason -- which defeated the exemption. The row came back labelled
+    ``low_confidence`` (0.0 confidence, "unsure marker") stacked on top of
+    its own ``plagiarism_flag`` row, even though no marker ever ran to be
+    unsure. ``review_reasons_for`` now checks membership of the blank's
+    exact reason among the ``" | "``-split segments instead of whole-field
+    equality, so an appended integrity reason no longer defeats it. The
+    result: a flagged blank queues for the real reason it was flagged
+    (plagiarism) and ONLY that reason -- not a fabricated low-confidence
+    signal alongside it.
 
     (In today's pipeline this exact combination cannot arise via
     ``correct_paper``: ``_build_blank_corrected`` sets both
@@ -560,7 +612,9 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
     the same way ``test_review_queue_low_confidence_row_survives_alongside_integrity_flags``
     above does, because the predicate's contract must hold for any
     question shaped this way, not merely for what today's one caller
-    happens to produce.)
+    happens to produce -- but the APPENDED text itself is derived from a
+    real run of the integrity pipeline, not invented, so this test cannot
+    silently drift from what that pipeline actually produces.)
     """
     from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
 
@@ -581,7 +635,7 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only(
         student_answer=None,
         expected_answer=None,
         topic="Waves",
-        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | copied from another candidate",
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | {_real_plagiarism_review_reason()}",
         marker_source="missing",
         plagiarism_flagged=True,
         matched_point_ids=[],

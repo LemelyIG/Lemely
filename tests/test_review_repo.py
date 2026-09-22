@@ -592,6 +592,79 @@ def test_review_queue_exempts_the_us039_unflagged_blank_console_path(
         assert {item.question_id for item in items} == {"2"}
 
 
+def _real_plagiarism_review_reason() -> str:
+    """The exact ``review_reason`` segment ``apply_integrity_checks`` appends for a flagged answer.
+
+    Derived by running the REAL integrity-check pipeline
+    (``lemely.io.integrity.apply_integrity_checks``) against a
+    verbatim-copied answer -- not retyped or invented -- so a fixture built
+    from this cannot silently drift from what the real producer actually
+    appends (``lemely/io/integrity.py:102``,
+    ``f"plagiarism (score {finding.score:.2f})"``).
+
+    (Independent review, third pass: an earlier version of this test's
+    fixture hand-typed ``"copied from another candidate"`` as the appended
+    reason -- a string no builder in this codebase produces. This function
+    exists so that mistake cannot recur here.)
+    """
+    from lemely.core.loose_schemas import MarkScheme
+    from lemely.io.integrity import apply_integrity_checks
+    from lemely.runtime.config import IntegritySettings
+
+    verbatim = "gravity acts on the object"
+    scheme = MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "0625",
+                "paper_number": 1,
+                "paper_variant": 2,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_extended",
+                "maximum_mark": 1,
+                "scheme_format": "mixed",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 1,
+                    "type": "explanation",
+                    "answer_points": [{"id": "p1", "point": verbatim, "marks": 1}],
+                },
+            ],
+        }
+    )
+    near_verbatim = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=1,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer=verbatim,
+        expected_answer=verbatim,
+        marker_source="ai",
+    )
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code="0625",
+            paper_number=1,
+            paper_variant=2,
+            session_month="May/June",
+            session_year=2020,
+        ),
+        questions=[near_verbatim],
+    )
+    result = apply_integrity_checks(
+        correction, scheme, gemini_client=None, settings=IntegritySettings()
+    )
+    flagged = result.questions[0]
+    assert flagged.plagiarism_flagged is True
+    assert flagged.review_reason is not None
+    return flagged.review_reason
+
+
 def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_path(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
@@ -600,8 +673,9 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_p
 
     ``apply_integrity_checks`` APPENDS to ``review_reason`` rather than
     replacing it, so a genuine blank that also picked up an integrity flag
-    carries ``"<blank reason> | copied from another candidate"`` — not equal
-    to the bare blank reason. The exemption in
+    carries the blank's own reason plus the real appended plagiarism reason
+    (see :func:`_real_plagiarism_review_reason` below) — not equal to the
+    bare blank reason. The exemption in
     ``lemely.db.review_queue_rules.review_reasons_for`` now checks
     membership of the blank's reason among the ``" | "``-split segments
     instead of whole-field equality, so this must be exempted from
@@ -618,7 +692,7 @@ def test_review_queue_blank_with_integrity_flag_queues_plagiarism_only_console_p
         maximum=1,
         confidence_score=0.0,
         needs_review=True,
-        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | copied from another candidate",
+        review_reason=f"{_BLANK_ANSWER_REVIEW_REASON} | {_real_plagiarism_review_reason()}",
         marker_source="missing",
         plagiarism_flagged=True,
     )
