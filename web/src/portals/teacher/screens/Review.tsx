@@ -40,10 +40,13 @@ import { ForwardArrow } from "@/components/ui/inline-arrow"
  * to queue" restores the filters instead of silently resetting them.
  *
  * **`manual`/`random_audit` are deliberately excluded from the reason
- * filter.** Nothing in the live marking pipeline
- * (`AttemptRepository.persist_correction`, the only place `ReviewQueueItem`
- * rows are created) ever writes either reason — every row it creates is
- * `low_confidence` or `plagiarism_flag`. (Migration `0037` did write
+ * filter.** `ReviewQueueItem` rows have two production producers —
+ * `AttemptRepository.persist_correction` for a student attempt and
+ * `_review_items_for` (`teacher_paper_repo.py`) for a console-graded paper
+ * — and both route through the same `review_reasons_for`
+ * (`review_queue_rules.py`), which only ever yields `low_confidence` or
+ * `plagiarism_flag`. Neither producer writes `manual` or `random_audit`.
+ * (Migration `0037` did write
  * `manual` once, as the one-way rewrite target for the now-removed
  * AI-generated-answer detector's flag — but that is historical data from a
  * schema migration, not something the live pipeline produces, so it stays
@@ -172,24 +175,18 @@ export function paperIdentityLabel(item: {
  * wire shape at all today, only on `ReviewItemDetailDTO`'s (T-08's single-item
  * view).
  *
- * **This is a live gap, not a hypothetical one — a genuine blank CAN reach
- * this queue.** `_build_blank_corrected`'s `needs_teacher_review = False`
- * only removes the `low_confidence` review-queue row for an *unflagged*
- * blank; it does nothing to a `plagiarism_flag` row on the same question, and
- * `AttemptRepository.persist_correction` can write both
- * (`review_repo.py:45`: "a `low_confidence` row and a `plagiarism_flag` row"
- * for one question). `ReviewService.list_queue`
- * (`review_repo.py:349`) filters on `reason` only when the caller supplies
- * one, so the unfiltered T-07 listing this screen renders by default
- * includes those `plagiarism_flag` rows. A blank that is also
- * plagiarism-flagged therefore appears here today with
- * `marker_source = "missing"` and `confidence_score = 0.0` — exactly the row
- * this tier exists for — and renders as a plain confidence tone because
- * `ReviewQueueItemDTO` cannot hand this function the marker source. The
- * parameter below is added anyway, not left as a bare score, so the gate
- * exists and is unit-tested — but it is *not yet reachable from this
- * screen's real data*, and closing that requires adding `markerSource` to
- * `ReviewQueueItemDTO` (a backend/DTO change, out of this file's scope).
+ * **A genuine blank cannot reach this queue as a `plagiarism_flag` row at
+ * all.** `integrity.py:101` is the only writer of `plagiarism_flagged`, and
+ * its gate requires `expected_answer` truthy; every site that sets
+ * `expected_answer` non-`None` also sets `marker_source="deterministic"`
+ * (`review_queue_rules.py:89` states this on the backend). No
+ * `marker_source` of `"missing"` or `"dropped"` can therefore ever be
+ * `plagiarism_flagged`, so this parameter's neutral-tone branch cannot fire
+ * on any row this queue holds today. It is added anyway, as a defensive
+ * gate rather than a live one: `ReviewQueueItemDTO` doesn't carry
+ * `markerSource` at all today, but if a future producer ever emits an
+ * unscored row into this queue, this function already knows what to do
+ * with it.
  *
  * This checks `markerSource` directly rather than going through
  * `confidenceTierFor`'s `needsTeacherReview`-gated "not-marked" branch: this

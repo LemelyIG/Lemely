@@ -53,11 +53,13 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
          row below.
       2. A genuine US-039 blank that also picked up an integrity flag
          (``question.plagiarism_flagged and _is_unflagged_blank(question)``
-         — see below). Gated on ``plagiarism_flagged`` deliberately:
-         ``_is_unflagged_blank`` alone is not enough, or a hypothetical
-         literal collision with another builder's unflagged
-         ``review_reason`` (see **Known limits** below) would silence a real
-         marking-side reason even with no plagiarism flag in sight.
+         — see below). Currently unreachable in practice — a blank can
+         never actually be ``plagiarism_flagged`` (see below) — but gated
+         on ``plagiarism_flagged`` rather than dropped, since
+         ``_is_unflagged_blank`` alone would also silence a real
+         marking-side reason on a hypothetical literal collision with
+         another builder's unflagged ``review_reason`` (see **Known
+         limits** below).
 
       Neither exemption suppresses a real marking-side reason: a question
       that is *also* structurally flagged or genuinely low-confidence keeps
@@ -89,13 +91,16 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     In today's pipeline a real blank can never also be ``plagiarism_flagged``:
     ``_build_blank_corrected`` sets both ``student_answer`` and
     ``expected_answer`` to ``None``, and ``apply_integrity_checks``'s
-    plagiarism check requires both truthy before it runs — a gate that in
-    fact holds for every ``CorrectedQuestion`` ``correct_paper`` emits (no
-    non-MCQ builder ever sets ``expected_answer``, and MCQ questions are
-    exempted from the plagiarism check outright, ``integrity.py:92``). This
-    function does not rely on that coincidence: its contract is "given a
-    ``CorrectedQuestion`` shaped like X, decide Y", not "given only what
-    today's callers happen to produce".
+    plagiarism check requires both truthy before it runs. This does not rest
+    on the MCQ exemption — that exemption is an id lookup against the mark
+    scheme (``integrity.py:92``), not a builder property, so a scheme whose
+    MCQ leaf id is shadowed in DFS order by an earlier same-id non-MCQ
+    question defeats it and the check runs anyway. It rests on
+    ``expected_answer`` instead: every site that sets it to a non-``None``
+    value also sets ``marker_source="deterministic"``
+    (``correction_ai.py:310``, ``:325``, ``:361``, ``core/correction.py:93``,
+    ``:111``, ``:129``), so a genuine blank's ``expected_answer`` is
+    ``None`` regardless of how the scheme is shaped.
 
     **Known limits.** ``_is_unflagged_blank`` is a string signal, not a
     dedicated boolean on :class:`~lemely.core.schemas.CorrectedQuestion` —
@@ -109,9 +114,11 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     unflagged colliding question still queues via ``marking_flagged``
     exactly as before); only if the same question is ALSO
     ``plagiarism_flagged`` does the collision cost a real ``low_confidence``
-    row, and only then because ``plagiarism_flagged`` on any
-    ``correct_paper`` output is itself unreachable today (see above). The
-    collision guard lives in ``lemely.io.correction_ai``'s own
+    row, and a colliding question is also unreachable today: a literal
+    match requires ``marker_source == "missing"`` (see
+    :func:`_is_unflagged_blank`), which implies ``expected_answer is None``
+    (see above) and so ``plagiarism_flagged=False``. The collision guard
+    lives in ``lemely.io.correction_ai``'s own
     pairwise-distinctness test (``PairwiseDistinctBlankReasonsTests``,
     ``tests/test_correction_ai.py``), which derives all four blank-shaped
     literals from the real builders rather than hardcoding copies.
