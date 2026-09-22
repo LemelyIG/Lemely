@@ -35,7 +35,7 @@ from lemely.io.prompts.correction_ai import (
     build_marker_user_prompt,
 )
 from lemely.io.validation import validate_mark_scheme
-from lemely.runtime.errors import ConfigError, CostCeilingError
+from lemely.runtime.errors import ConfigError, CostCeilingError, LemelyError
 from lemely.runtime.events import EventType, bus
 
 
@@ -1308,10 +1308,16 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
 #: written uppercase ("Strict FT", "FT their median reading"), so
 #: restricting `FT` to that case drops exactly the one false positive (29
 #: -> 28 points, 11 -> 10 schemes) and no genuine hit -- re-measured against
-#: the full corpus, not assumed. The over-award scenario this closes: a
-#: physics formula point misread as a follow-through marker would gate a
-#: point CAIE never marked ECF-eligible, in the exact top-level question
-#: group where a genuine M/A/C chain already exists to substitute against.
+#: the full corpus, not assumed. The over-award scenario this closes is
+#: CONDITIONAL, not already live: `0625_s23_ms_42`'s q2 top-level group
+#: carries A/C-typed points (`2a`: p1=A, p2=C, p3=C) but no M point
+#: anywhere in it today, so `_resolve_ecf_chain` returns `None` for every
+#: point in the group and there is nothing to substitute against yet. A
+#: single M point ADDED LATER (e.g. by a Gemini re-parse) would give this
+#: exact group a resolvable chain, and a point CAIE never marked
+#: ECF-eligible would then receive a substituted value and an award --
+#: the mis-gate and a chain must BOTH be present, and only the mis-gate
+#: was, which this fix closes regardless.
 _ECF_MARKER_RE = re.compile(r"(?i:\becf\b|\bdep\b)|\bFT\b")
 
 
@@ -1426,21 +1432,24 @@ def _group_leaves_by_top_level(
 def _point_was_awarded(
     leaf_id: str,
     point_id: str,
-    current_leaf_id: str,
-    current_leaf_matched: set[str],
     corrected_by_id: dict[str, CorrectedQuestion],
 ) -> bool:
-    """Was ``point_id`` (owned by ``leaf_id``) already awarded?
+    """Was ``point_id`` (owned by the EARLIER leaf ``leaf_id``) already awarded?
 
-    ``leaf_id == current_leaf_id`` covers both I7 chain tiers that resolve
-    within the leaf under test right now (``required_with``, or a preceding
-    M point earlier in the SAME leaf) -- that leaf has no ``CorrectedQuestion``
-    yet (it is still being built), so its in-flight matched-point set is
-    passed in directly. Any other ``leaf_id`` is an earlier leaf already
-    appended to ``corrected_by_id``.
+    Post-Critical-2-review NIT fix: this used to also handle
+    ``leaf_id == the CURRENT leaf under test`` (``required_with``, or a
+    preceding M point earlier in the SAME leaf, before Critical 2 excluded
+    the same-leaf case from substitution entirely). That branch was DEAD:
+    its only caller (:func:`_maybe_apply_ecf_substitution`) already filters
+    out ``prereq_leaf_id == question.id`` before ever calling this
+    function, so ``leaf_id`` can never equal the leaf under test here --
+    the removed branch asserted a scenario the caller had already ruled
+    out. Simplified to what actually happens: ``leaf_id`` is always a leaf
+    STRICTLY EARLIER, in document order, than the one being marked, and is
+    therefore already present in ``corrected_by_id`` by construction --
+    ``correct_paper`` processes leaves in the same document order
+    :func:`_resolve_ecf_chain`'s cross-leaf tier walks backwards through.
     """
-    if leaf_id == current_leaf_id:
-        return point_id in current_leaf_matched
     prior_cq = corrected_by_id.get(leaf_id)
     return prior_cq is not None and point_id in prior_cq.matched_point_ids
 
@@ -1479,13 +1488,24 @@ def _maybe_apply_ecf_substitution(
     sibling in the SAME leaf -- point ids are question-scoped) is one
     computation's method and accuracy marks, not two separate parts with an
     error carried FORWARD between them -- there is nothing to substitute.
-    Measured on the full corpus: 820 same-leaf chains exist against 438
-    cross-leaf ones, and the ORIGINAL (unfixed) code would have substituted
-    on the same-leaf majority exclusively, re-asking the model with the
-    question's own answer echoed back as its own "prior value" and an
-    explicit instruction not to re-verify it -- the over-award direction
-    this story is required to pin against. See
-    ``EcfSameLeafNeverTriggersSubstitutionTests`` for the regression test.
+
+    Measured on the full corpus: 820 same-leaf chains exist as a
+    STRUCTURAL matter, against 438 cross-leaf ones. This is NOT the same
+    as saying the unfixed code would have substituted on 820 points --
+    substitution additionally requires the GATE, and on this corpus the
+    gate (28 points) and ANY chain, same-leaf or cross-leaf, never
+    co-occur (measured: gate-and-chain intersection is 0 in both
+    buckets). So the unfixed code would have substituted on ZERO corpus
+    points, not 820 -- the exclusion is correct on PRINCIPLE (nothing is
+    carried forward inside one computation) and is NOT load-bearing on
+    this corpus; a reader sizing a revert of this fix should know it would
+    change nothing here, while a reader deciding whether the rule is
+    necessary should still take it, because Gemini-parsed schemes are
+    where a genuine same-leaf/cross-leaf distinction and a co-occurring
+    gate can both appear. See ``ECFSubstitutionTests::
+    test_same_leaf_chain_never_triggers_substitution`` for the regression
+    test (a constructed fixture, since the corpus itself cannot exercise
+    this path).
 
     Honest limit, stated here rather than implied: recomputation is BY THE
     MODEL with the substituted value (plus I8's separate numeric check),
@@ -1547,9 +1567,7 @@ def _maybe_apply_ecf_substitution(
         prereq_leaf_id, prereq_point_id = prereq
         if prereq_leaf_id == question.id:
             continue  # same-leaf: nothing to carry FORWARD within one computation
-        if _point_was_awarded(
-            prereq_leaf_id, prereq_point_id, question.id, current_matched, corrected_by_id
-        ):
+        if _point_was_awarded(prereq_leaf_id, prereq_point_id, corrected_by_id):
             continue  # prerequisite was already correct -- nothing to carry forward
         prereq_answer = answers.get(prereq_leaf_id)
         if not prereq_answer or _is_blank(prereq_answer[0]):
@@ -1578,12 +1596,22 @@ def _maybe_apply_ecf_substitution(
     # in the first place, regardless of how this function is written. That
     # is a limit of what extraction records, not a documentation choice.
     def _prior_value_text(leaf_id: str, point_ids: list[str]) -> str:
+        # Post-review fix: rendered as separate labelled LINES ("answer:",
+        # "working:", "depends on:"), never packed onto one line -- the
+        # prompt-building side used to wrap this in `{value!r}`, which
+        # turned a real line break into a literal `\n` escape sequence the
+        # model could not use as one, and a naive unescaped join would
+        # instead put a continuation line at column 0 with nothing marking
+        # which entry it belongs to. `build_marker_user_prompt` indents
+        # every line of the returned string under its own `qid:` header,
+        # so labelled lines here are what keeps a multi-field value
+        # unambiguous once indented. `answer` is typed ``str`` in
+        # `answers` (never ``None``), so no `or ""` fallback is needed for
+        # it.
         answer, working, _ = answers[leaf_id]
-        value = (
-            f"{answer}\n(working: {working.strip()})"
-            if working and working.strip()
-            else (answer or "")
-        )
+        lines = [f"answer: {answer}"]
+        if working and working.strip():
+            lines.append(f"working: {working.strip()}")
         scheme_texts = [
             sibling.point
             for leaf in top_level_leaves
@@ -1592,9 +1620,8 @@ def _maybe_apply_ecf_substitution(
             if sibling.id in point_ids
         ]
         if scheme_texts:
-            depends_on = "; ".join(dict.fromkeys(scheme_texts))
-            return f"[depends on: {depends_on}] {value}"
-        return value
+            lines.append(f"depends on: {'; '.join(dict.fromkeys(scheme_texts))}")
+        return "\n".join(lines)
 
     prereq_point_ids_by_leaf: dict[str, list[str]] = {}
     for _, prereq_leaf_id, prereq_point_id in eligible:
@@ -1615,7 +1642,21 @@ def _maybe_apply_ecf_substitution(
         )
     except CostCeilingError:
         raise
-    except Exception as exc:
+    except LemelyError as exc:
+        # Post-review NIT fix: was `except Exception`, which also caught
+        # (and silently masked as "the API call failed") any PROGRAMMING
+        # bug in the code above -- e.g. a `StopIteration` from a test's own
+        # mock exhausting its `side_effect` list proved nothing under the
+        # old bare catch, since it looked identical to a real transport
+        # failure. `ai.mark_question`'s genuine failure modes are
+        # `LemelyError` subclasses (`ExternalServiceError` for transport,
+        # `ParseError` for a malformed response `GeminiClient` could not
+        # parse into `AIMarkResponse`) -- `CostCeilingError` is also one,
+        # already re-raised above. Anything outside that hierarchy now
+        # propagates instead of being swallowed. Deliberately narrower than
+        # `correct_paper`'s own pre-existing `except Exception` (a separate,
+        # documented decision on a different call site, out of this
+        # story's scope).
         log.warning("ecf_substitution_remark_failed", question_id=question.id, error=str(exc))
         return cq
 
@@ -1653,14 +1694,16 @@ def _maybe_apply_ecf_substitution(
     # (e.g. an ungated point pass 2 also happened to award), while that
     # point's verdict is correctly discarded from `merged_verdicts`. Without
     # `awarded_marks` also carrying pass 2's claim, `merged_mark.awarded_marks`
-    # stayed at pass 1's stale value, which also defeated
-    # `_build_ai_corrected_from_verdicts`'s own coverage-mismatch check
-    # (this function's docstring, reason 2): that check compares the
-    # DERIVED total against `mark.awarded_marks`, so a stale claim could
-    # never disagree with anything. Propagating `mark2.awarded_marks` here
-    # makes `merged_mark` internally consistent and lets that EXISTING
-    # check catch any residual disagreement between the merged verdicts and
-    # what pass 2 claimed, rather than adding a second, parallel check.
+    # stayed at pass 1's stale value, which meant
+    # `_build_ai_corrected_from_verdicts`'s coverage-mismatch check (this
+    # function's docstring, reason 2) could never disagree with it either --
+    # not because this fix broke that check (the two landed as a MERGE-ORDER
+    # collision: the coverage check did not exist when this bug was
+    # introduced, and only arrived with a later commit), but because a
+    # stale claim can never disagree with anything by construction.
+    # Propagating `mark2.awarded_marks` here makes `merged_mark` internally
+    # consistent and lets that check do the catching, rather than adding a
+    # second, parallel check.
     merged_mark = mark.model_copy(
         update={
             "point_verdicts": merged_verdicts,

@@ -1603,6 +1603,47 @@ class PointVerdictPromptTests(unittest.TestCase):
         self.assertIn("point_verdicts", sent_prompt)
 
 
+class PriorValuesPromptRenderingTests(unittest.TestCase):
+    """Post-review fix: ``build_marker_user_prompt``'s ``prior_values``
+    block used to render each value with ``{value!r}``, which escapes a
+    real line break in a multi-line value (answer + working) into a
+    literal ``\\n`` the model cannot use as one. Dropping ``repr()``
+    outright traded that for a different defect: an unindented
+    continuation line at column 0 that is ambiguous with a new top-level
+    entry. Fixed by indenting every line of the value under its own
+    ``qid:`` header instead of rendering it inline.
+    """
+
+    def _question(self):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=1,
+            type=QuestionType.EXPLANATION,
+            answer_points=[AnswerPoint(id="p1", point="value", marks=1)],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def test_multiline_value_is_indented_not_escaped(self):
+        from lemely.io.prompts.correction_ai import build_marker_user_prompt
+
+        q = self._question()
+        prompt = build_marker_user_prompt(
+            q,
+            "student text",
+            prior_values={"1a_i": "answer: v = 18\nworking: a = 150"},
+        )
+        # No literal backslash-n escape sequence from a `repr()` call.
+        self.assertNotIn("\\n", prompt)
+        # Every line of the value survives as a REAL line break, indented
+        # under its own qid -- distinguishable from a new top-level entry.
+        self.assertIn("  1a_i:\n    answer: v = 18\n    working: a = 150", prompt)
+
+
 class EcfAppliedIsCodeSetOnlyTests(unittest.TestCase):
     """Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be CODE-set
     only. I7's whole contract is that it records a re-mark the CODE
@@ -3750,7 +3791,7 @@ class ECFSubstitutionTests(unittest.TestCase):
         _, third_call_kwargs = mock_mark.call_args_list[2]
         self.assertEqual(
             third_call_kwargs["prior_values"],
-            {"1a_i": "[depends on: (a=) (v-u)/t in any form] wrong value"},
+            {"1a_i": "answer: wrong value\ndepends on: (a=) (v-u)/t in any form"},
         )
 
     def test_correct_prerequisite_never_triggers_substitution(self) -> None:
@@ -3938,13 +3979,14 @@ class ECFSubstitutionTests(unittest.TestCase):
         not the implementation): a same-leaf M-then-A pair is one
         computation's method and accuracy marks, not error carried FORWARD
         between two parts -- there is nothing to substitute. Measured on the
-        full corpus, this is the MAJORITY shape (820 same-leaf chains vs.
-        438 cross-leaf), and the original code would have substituted on it
-        exclusively, echoing the question's own answer back as its "prior
-        value" with an explicit instruction not to re-verify it -- an
-        over-award defect this test pins against directly, since neither
-        `_scheme()` nor `_unresolvable_scheme()` exercises the same-leaf
-        majority at all."""
+        full corpus, same-leaf chains (820) structurally outnumber cross-leaf
+        ones (438) -- but the gate (28 points) never co-occurs with EITHER
+        chain shape on this corpus (measured: gate-and-chain intersection is
+        0 for both), so the unfixed code would have substituted on ZERO
+        corpus points, not 820. The exclusion is correct on PRINCIPLE, not
+        load-bearing on this corpus -- this test pins the principle directly,
+        since neither `_scheme()` nor `_unresolvable_scheme()` exercises the
+        same-leaf shape at all, and no corpus row can exercise it either."""
         # One leaf, two points: p1=M (wrong), p2=A (gated, resolvable to p1
         # -- but SAME leaf, so must be excluded regardless of the M being wrong).
         scheme = MarkScheme.model_validate(
@@ -4195,6 +4237,67 @@ class ECFSubstitutionTests(unittest.TestCase):
         # total (1) and the EXISTING coverage check catches it.
         self.assertTrue(cq_ii.needs_teacher_review)
         self.assertIsNotNone(cq_ii.review_reason)
+
+    def test_remark_transport_failure_is_swallowed_gracefully(self) -> None:
+        """The ECF re-mark's exception handler must still absorb a genuine
+        transport/API failure (an ``ExternalServiceError`` -- the class
+        ``ai.mark_question`` actually raises for those) and fall back to
+        the un-substituted result, exactly as before the NIT fix below."""
+        from lemely.runtime.errors import ExternalServiceError
+
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass1 = self._mark([self._pv("p1", "withheld")])
+
+        with patch.object(
+            correction_ai.AICorrector,
+            "mark_question",
+            side_effect=[mark_1a_i, mark_1a_ii_pass1, ExternalServiceError("Gemini unreachable")],
+        ):
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 0)  # un-substituted result, no crash
+        self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_remark_programming_bug_is_not_swallowed(self) -> None:
+        """Post-review NIT fix: the ECF re-mark's exception handler used to
+        be a bare ``except Exception``, which also caught a PROGRAMMING bug
+        in the surrounding code (or, as in the review that found this, a
+        test's own ``StopIteration`` from an exhausted mock ``side_effect``
+        list) and silently returned the un-substituted result -- identical
+        to a genuine transport failure, proving nothing about which one
+        actually happened. Narrowed to ``LemelyError`` (``ai.mark_question``'s
+        actual failure-mode hierarchy); a plain ``RuntimeError`` -- standing
+        in for any bug outside that hierarchy -- must now PROPAGATE instead
+        of being absorbed."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass1 = self._mark([self._pv("p1", "withheld")])
+
+        with (
+            patch.object(
+                correction_ai.AICorrector,
+                "mark_question",
+                side_effect=[mark_1a_i, mark_1a_ii_pass1, RuntimeError("not a LemelyError")],
+            ),
+            self.assertRaises(RuntimeError),
+        ):
+            correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
 
     def test_no_version_bump(self) -> None:
         """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's

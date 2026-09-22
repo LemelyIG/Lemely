@@ -149,9 +149,12 @@ def build_marker_user_prompt(
     carries the raw answer VALUE (and working), because I7's re-mark needs
     to know what the student actually wrote, not how many marks it earned.
     Each value is now also TAGGED with the prerequisite point's own scheme
-    text ("[depends on: ...] <value>") when known, so the model is told
-    WHICH of the leaf's numbers is being carried forward when a leaf's
-    answer contains more than one.
+    text (a "depends on: ..." line) when known, so the model is told WHICH
+    of the leaf's numbers is being carried forward when a leaf's answer
+    contains more than one. Rendered as separate labelled LINES
+    ("answer:"/"working:"/"depends on:"), indented under the id, never
+    packed onto one line -- see the rendering site's own comment for why a
+    single-line ``repr()`` was rejected.
 
     Per-LEAF VALUE, not per-POINT VALUE -- a DECLINED finding, not merely
     an undocumented one: extraction resolves no finer than one question's
@@ -222,13 +225,37 @@ def build_marker_user_prompt(
                 "exactly as you would without this section.\n"
             )
     if prior_values:
-        prior_value_lines = "\n".join(f"  {qid}: {value!r}" for qid, value in prior_values.items())
+        # Post-review fix: `{value!r}` on a value containing a newline (the
+        # answer/working composite -- see `_prior_value_text`) emitted a
+        # literal backslash-n inside one quoted line, e.g.
+        # `1a_i: 'v = 18\na = 150'` -- the model never sees a real line
+        # break, only the two-character escape sequence. Dropping `!r`
+        # outright traded that for a different defect: an unindented
+        # continuation line at column 0 breaks out of this list, making it
+        # ambiguous whether it is still part of the entry above or a new
+        # top-level one. Fixed by indenting every line of `value` under its
+        # own `qid:` header instead of rendering it inline, so a multi-line
+        # value cannot be confused with an escape sequence OR with a
+        # sibling entry:
+        #     1a_i:
+        #       answer: v = 18
+        #       working: a = 150
+        #       depends on: (a=) (v-u)/t in any form
+        prior_value_blocks = []
+        for qid, value in prior_values.items():
+            indented = "\n".join(f"    {line}" for line in value.splitlines())
+            prior_value_blocks.append(f"  {qid}:\n{indented}")
+        prior_value_text = "\n".join(prior_value_blocks)
         parts.append(
-            "PRIOR PART ANSWER VALUES -- ERROR CARRIED FORWARD (I7, US-013): the "
-            "student's OWN extracted answer to an earlier part that a point below "
-            "structurally depends on, exactly as transcribed -- this is NOT the mark "
-            "scheme's correct value for that earlier part, and NOT marks awarded:\n"
-            f"{prior_value_lines}\n"
+            "PRIOR PART ANSWER VALUES -- ERROR CARRIED FORWARD (I7, US-013): for each "
+            "id below, `answer`/`working` are the student's OWN extracted text for an "
+            "earlier part a point below structurally depends on, verbatim -- this is "
+            "NOT the mark scheme's correct value for that earlier part, and NOT marks "
+            "awarded. `depends on`, where present, is the SCHEME's own text for the "
+            "specific prerequisite point being carried forward, supplied by this tool, "
+            "not transcribed from the student -- it tells you WHICH of the leaf's "
+            "value(s) matters when the leaf answers more than one point:\n"
+            f"{prior_value_text}\n"
             "The point(s) this applies to are marked ecf / ft / dep in the scheme and "
             "were NOT satisfied when checked against the scheme's correct value. "
             "Re-mark them now: if the student's method in THIS part correctly follows "
