@@ -2969,3 +2969,468 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
         self.assertEqual(frames, [])
         self.assertEqual(flattened["1"], ("A", None, 1.0))
         self.assertEqual(flattened["2"], ("B", None, 1.0))
+
+
+class EcfChainResolverTests(unittest.TestCase):
+    """I7 (US-013) CHAIN resolver + GATE, as pure functions -- independent of
+    ``correct_paper`` orchestration and any marking call. See the I7 brief's
+    measured 578/7/141 chain split and 29/11 gate population.
+    """
+
+    def _leaf(
+        self,
+        id_: str,
+        marks: int,
+        points: list,
+        parent_id: str | None = None,
+        notes: str | None = None,
+        marking_guidance: str | None = None,
+    ):
+        from lemely.core.loose_schemas import Question, QuestionType
+
+        return Question.model_construct(
+            id=id_,
+            parent_id=parent_id,
+            marks=marks,
+            type=QuestionType.CALCULATION,
+            answer_points=points,
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+            notes=notes,
+            marking_guidance=marking_guidance,
+        )
+
+    def test_top_level_scoping_resolves_cross_leaf_chain(self) -> None:
+        """The golden fixture's own shape (1a_i M -> 1a_ii A): an
+        immediate-parent-only resolver -- one that looks only inside
+        ``question``'s own ``answer_points`` or its container parent's,
+        never a SIBLING LEAF's -- finds nothing here and must fail this
+        test."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _resolve_ecf_chain
+
+        m_point = AnswerPoint(id="p1", point="(a=) (v-u)/t", marks=1, math_mark_type=MathMarkType.M)
+        a_point = AnswerPoint(id="p1", point="final value", marks=1, math_mark_type=MathMarkType.A)
+        leaf_i = self._leaf("1a_i", 1, [m_point])
+        leaf_ii = self._leaf("1a_ii", 1, [a_point])
+
+        result = _resolve_ecf_chain(leaf_ii, a_point, [leaf_i, leaf_ii])
+
+        self.assertEqual(result, ("1a_i", "p1"))
+
+    def test_no_preceding_m_point_anywhere_is_unresolvable(self) -> None:
+        """141 of 726 A-points in the corpus are in this state -- must never
+        resolve to a substitutable prerequisite."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _resolve_ecf_chain
+
+        a_point = AnswerPoint(id="p1", point="value", marks=1, math_mark_type=MathMarkType.A)
+        leaf = self._leaf("1a", 1, [a_point])
+
+        self.assertIsNone(_resolve_ecf_chain(leaf, a_point, [leaf]))
+
+    def test_required_with_resolves_within_same_question_only(self) -> None:
+        """A non-null ``required_with`` of "p1" must resolve to THIS
+        question's own "p1", never another question's -- even when another
+        question in the same top-level group happens to reuse the id (point
+        ids are question-scoped by design, ``loose_schemas.py:202``)."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _resolve_ecf_chain
+
+        other_p1 = AnswerPoint(id="p1", point="x's own p1", marks=5, math_mark_type=MathMarkType.M)
+        other_leaf = self._leaf("9", 5, [other_p1])
+
+        own_p1 = AnswerPoint(id="p1", point="y's own p1", marks=1, math_mark_type=MathMarkType.M)
+        dependent = AnswerPoint(
+            id="p2",
+            point="y's dependent",
+            marks=1,
+            math_mark_type=MathMarkType.A,
+            required_with="p1",
+            condition="ft",
+        )
+        y_leaf = self._leaf("10", 2, [own_p1, dependent])
+
+        result = _resolve_ecf_chain(y_leaf, dependent, [other_leaf, y_leaf])
+
+        self.assertEqual(result, ("10", "p1"))  # Y's own p1, never X's
+
+    def test_required_with_dangling_never_falls_back_to_a_paper_wide_lookup(self) -> None:
+        """A paper-wide lookup would wrongly find X's "p1" for Y's dangling
+        reference; the correct answer is "no prerequisite", not X's point."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _resolve_ecf_chain
+
+        other_p1 = AnswerPoint(id="p1", point="x's p1", marks=1, math_mark_type=MathMarkType.M)
+        other_leaf = self._leaf("9", 1, [other_p1])
+        dependent = AnswerPoint(
+            id="p2",
+            point="y's dependent",
+            marks=1,
+            math_mark_type=MathMarkType.A,
+            required_with="p1",  # Y has NO "p1" of its own
+            condition="ft",
+        )
+        y_leaf = self._leaf("10", 1, [dependent])
+
+        self.assertIsNone(_resolve_ecf_chain(y_leaf, dependent, [other_leaf, y_leaf]))
+
+    def test_gate_fires_on_point_condition_marker(self) -> None:
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _ecf_gated
+
+        point = AnswerPoint(
+            id="p1", point="value", marks=1, math_mark_type=MathMarkType.A, condition="Strict FT"
+        )
+        leaf = self._leaf("1", 1, [point])
+
+        self.assertTrue(_ecf_gated(leaf, point))
+
+    def test_gate_fires_on_question_notes_marker(self) -> None:
+        """Measured example from the corpus: `"R = 4.05 / ecf, 3.89, 3.81"`."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _ecf_gated
+
+        point = AnswerPoint(id="p1", point="value", marks=1, math_mark_type=MathMarkType.A)
+        leaf = self._leaf("1", 1, [point], notes="R = 4.05 / ecf, 3.89, 3.81")
+
+        self.assertTrue(_ecf_gated(leaf, point))
+
+    def test_gate_does_not_fire_without_a_marker(self) -> None:
+        """The measured 0.28% activation rate: absent a marker, GATE must
+        stay closed even though the point is otherwise perfectly ordinary."""
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType
+        from lemely.io.correction_ai import _ecf_gated
+
+        point = AnswerPoint(id="p1", point="value", marks=1, math_mark_type=MathMarkType.A)
+        leaf = self._leaf("1", 1, [point])
+
+        self.assertFalse(_ecf_gated(leaf, point))
+
+
+class ECFSubstitutionTests(unittest.TestCase):
+    """I7 (US-013): error-carried-forward by substitution, behind
+    ``ecf_substitution`` (default OFF), orchestrated end-to-end through
+    ``correct_paper``. Fixture: top-level Q1 -> 1a -> {1a_i (M point p1),
+    1a_ii (A point p1)} -- the same cross-leaf, same-top-level-question
+    shape the nested golden fixture
+    (``tests/golden/0625_w21_qp_32_theory_nested``) exercises; built here in
+    Python so this test file owns the fixture outright (FILE OWNERSHIP) and
+    the committed corpus/golden JSON is never touched.
+
+    ``AICorrector.mark_question`` is patched directly (never a live Gemini
+    call, and never a cache/thinking-retry side channel to control) so each
+    test asserts on the EXACT sequence of marking calls and their kwargs.
+    """
+
+    def _scheme(self, *, gate_marker: str | None = "ft") -> MarkScheme:
+        point_ii: dict[str, object] = {
+            "id": "p1",
+            "point": "final numeric value",
+            "marks": 1,
+            "math_mark_type": "A",
+        }
+        if gate_marker is not None:
+            point_ii["condition"] = gate_marker
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 3,
+                    "paper_variant": 2,
+                    "session_month": "Oct/Nov",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 2,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 0,
+                        "type": "calculation",
+                        "parts": [
+                            {
+                                "id": "1a",
+                                "marks": 0,
+                                "type": "calculation",
+                                "parent_id": "1",
+                                "parts": [
+                                    {
+                                        "id": "1a_i",
+                                        "marks": 1,
+                                        "type": "calculation",
+                                        "parent_id": "1a",
+                                        "answer_points": [
+                                            {
+                                                "id": "p1",
+                                                "point": "(a=) (v-u)/t in any form",
+                                                "marks": 1,
+                                                "math_mark_type": "M",
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        "id": "1a_ii",
+                                        "marks": 1,
+                                        "type": "calculation",
+                                        "parent_id": "1a",
+                                        "answer_points": [point_ii],
+                                    },
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+    def _unresolvable_scheme(self) -> MarkScheme:
+        """A single leaf, gated A-point, no M anywhere in the paper."""
+        return MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 3,
+                    "paper_variant": 2,
+                    "session_month": "Oct/Nov",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 1,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 1,
+                        "type": "calculation",
+                        "answer_points": [
+                            {
+                                "id": "p1",
+                                "point": "final value",
+                                "marks": 1,
+                                "math_mark_type": "A",
+                                "condition": "ft",
+                            }
+                        ],
+                    },
+                ],
+            }
+        )
+
+    def _extracted(self, a_answer: str, aii_answer: str) -> ExtractedAnswers:
+        return ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1a_i", answer=a_answer, confidence=0.9),
+                ExtractedAnswer(question_id="1a_ii", answer=aii_answer, confidence=0.9),
+            ],
+        )
+
+    def _pv(self, point_id: str, verdict: str, ecf: bool = False, span: str = "x"):
+        from lemely.core.schemas import PointVerdict
+
+        return PointVerdict(point_id=point_id, verdict=verdict, evidence_span=span, ecf_applied=ecf)
+
+    def _mark(self, point_verdicts, confidence: float = 0.95, feedback: str = "fb"):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=0,  # deliberately stale -- the verdict path ignores it
+            confidence=confidence,
+            matched_point_ids=[],  # deliberately stale, same reason
+            feedback=feedback,
+            point_verdicts=point_verdicts,
+        )
+
+    def test_wrong_prerequisite_triggers_substitution_to_full_marks(self) -> None:
+        """Direction 1 of the false-positive axis: a wrong (a) with a
+        correct, consistent method in (b) earns full marks via ECF, with
+        ``ecf_applied=True`` recorded on the awarded verdict."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])  # (a) got the M wrong
+        # not satisfied vs the scheme's correct value:
+        mark_1a_ii_pass1 = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass2 = self._mark([self._pv("p1", "awarded", span="consistent")])  # ECF re-mark
+
+        with patch.object(
+            correction_ai.AICorrector,
+            "mark_question",
+            side_effect=[mark_1a_i, mark_1a_ii_pass1, mark_1a_ii_pass2],
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 3)  # (a), (b) pass 1, (b) ECF re-mark
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 1)
+        self.assertEqual(cq_ii.point_verdicts[0].verdict, "awarded")
+        self.assertTrue(cq_ii.point_verdicts[0].ecf_applied)
+        # The third call is the substitution itself: the student's OWN
+        # extracted VALUE for the prerequisite, never marks or the scheme's
+        # correct value.
+        _, third_call_kwargs = mock_mark.call_args_list[2]
+        self.assertEqual(third_call_kwargs["prior_values"], {"1a_i": "wrong value"})
+
+    def test_correct_prerequisite_never_triggers_substitution(self) -> None:
+        """Direction 2 of the false-positive axis -- the dangerous one: a
+        CORRECT (a) must never cause a second marking call for (b), even
+        though (b) is gated, chain-resolvable, and below max. Asserted by
+        VALUE (the marker was never called a third time, and ecf_applied
+        stays False), never by a log line."""
+        scheme = self._scheme()
+        extracted = self._extracted("correct value", "some working")
+        mark_1a_i = self._mark([self._pv("p1", "awarded", span="correct")])  # (a) correct
+        mark_1a_ii = self._mark([self._pv("p1", "withheld")])  # below max, gated, resolvable
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1a_i, mark_1a_ii]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 2)  # no third (ECF) call
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 0)
+        self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_unresolvable_chain_is_inert(self) -> None:
+        """An A-point with no preceding M anywhere in its top-level question
+        is never substituted even when gated."""
+        scheme = self._unresolvable_scheme()
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="something", confidence=0.9)],
+        )
+        mark_1 = self._mark([self._pv("p1", "withheld")])
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 1)  # no second call -- no prerequisite exists
+        cq = result.questions[0]
+        self.assertEqual(cq.awarded_marks, 0)
+        self.assertFalse(cq.point_verdicts[0].ecf_applied)
+
+    def test_ungated_point_is_inert(self) -> None:
+        """A point with a resolvable chain but no ecf/ft/dep marker is never
+        substituted, even though the prerequisite is wrong."""
+        scheme = self._scheme(gate_marker=None)
+        extracted = self._extracted("wrong value", "some working")
+        # (a) wrong -- would be eligible for a re-mark if the point were gated:
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii = self._mark([self._pv("p1", "withheld")])
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1a_i, mark_1a_ii]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 2)  # no ECF call -- gate closed
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 0)
+        self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_below_max_precondition(self) -> None:
+        """A part already at full marks is never re-marked even when gated
+        with a resolvable (and wrong) prerequisite."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "some working")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])  # (a) wrong
+        # already full marks before the ECF check ever runs:
+        mark_1a_ii = self._mark([self._pv("p1", "awarded", span="some working")])
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1a_i, mark_1a_ii]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        self.assertEqual(mock_mark.call_count, 2)  # already at max -- never re-marked
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 1)
+        self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_flag_off_is_inert(self) -> None:
+        """With ``ecf_substitution`` off, behaviour is byte-identical to the
+        same fixture/mocks with the flag simply absent -- every
+        ``ecf_applied`` stays False and the marker is never called a third
+        time, asserted at the outcome level (not by checking a branch)."""
+        scheme = self._scheme()
+        extracted = self._extracted("wrong value", "consistent working from wrong value")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii = self._mark([self._pv("p1", "withheld")])
+
+        with patch.object(
+            correction_ai.AICorrector, "mark_question", side_effect=[mark_1a_i, mark_1a_ii]
+        ) as mock_mark:
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=False,
+            )
+
+        self.assertEqual(mock_mark.call_count, 2)  # never a third (ECF) call
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        self.assertEqual(cq_ii.awarded_marks, 0)
+        self.assertFalse(cq_ii.point_verdicts[0].ecf_applied)
+
+    def test_no_version_bump(self) -> None:
+        """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's
+        funded sweep -- this story bumps nothing."""
+        from lemely.io.prompts.correction_ai import VERSION
+
+        self.assertEqual(VERSION, "5")
+
+    def test_schema_hash_unchanged(self) -> None:
+        """I7 adds no schema field (``PointVerdict.ecf_applied`` and
+        ``AnswerPoint.math_mark_type``/``required_with`` all already
+        existed) -- the marking response schema's hash, measured on the
+        UNSTRIPPED schema exactly as ``GeminiClient._params_fingerprint``
+        computes it, must be unchanged from ``6ad23e79``."""
+        import hashlib
+        import json as json_module
+
+        from lemely.core.schemas import AIMarkResponse
+
+        schema_json = json_module.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)
+        actual = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
+        self.assertEqual(actual, "137d81ff7e91")

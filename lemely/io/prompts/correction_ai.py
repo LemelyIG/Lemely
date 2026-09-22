@@ -104,6 +104,7 @@ def build_marker_user_prompt(
     principles: list[str] | None = None,
     *,
     equivalence_gate: bool = False,
+    prior_values: dict[str, str] | None = None,
 ) -> str:
     """Build the per-question marking prompt embedding the mark scheme subtree + student response.
 
@@ -125,6 +126,19 @@ def build_marker_user_prompt(
     before this story — no ``VERSION`` bump is needed because the prompt
     actually sent for the default-off path never changes (D19: I6/I7/I8
     share one bump, taken later at US-018's funded sweep).
+
+    ``prior_values`` (I7, US-013, defaults None): the student's OWN
+    extracted answer text for each prerequisite part a gated point
+    structurally depends on -- see
+    ``correction_ai._maybe_apply_ecf_substitution`` for how the caller
+    decides when to pass this. A NEW channel, distinct from
+    ``prior_results`` above: that dict carries AWARDED MARKS for ECF's
+    predecessor story; this one carries the raw answer VALUE, because I7's
+    re-mark needs to know what the student actually wrote, not how many
+    marks it earned. Appends its own block only when non-empty, so a call
+    that never substitutes (every call today, and every call with
+    ``ecf_substitution`` off) produces a BYTE-IDENTICAL prompt to before
+    this story existed.
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
@@ -174,6 +188,21 @@ def build_marker_user_prompt(
             'every "awarded" point into awarded_marks and list their ids in '
             "matched_point_ids, exactly as you would without this section — "
             "point_verdicts must agree with those totals, not contradict them.\n"
+        )
+    if prior_values:
+        prior_value_lines = "\n".join(f"  {qid}: {value!r}" for qid, value in prior_values.items())
+        parts.append(
+            "PRIOR PART ANSWER VALUES -- ERROR CARRIED FORWARD (I7, US-013): the "
+            "student's OWN extracted answer to an earlier part that a point below "
+            "structurally depends on, exactly as transcribed -- this is NOT the mark "
+            "scheme's correct value for that earlier part, and NOT marks awarded:\n"
+            f"{prior_value_lines}\n"
+            "The point(s) this applies to are marked ecf / ft / dep in the scheme and "
+            "were NOT satisfied when checked against the scheme's correct value. "
+            "Re-mark them now: if the student's method in THIS part correctly follows "
+            "from the (possibly wrong) value shown above, award the point. Do not "
+            "re-check or recompute whether the value above is itself correct -- that "
+            "was already marked separately and is not this call's job.\n"
         )
     parts.append(
         f"Apply the mark scheme above. The maximum_marks for your awarded_marks field is "

@@ -557,6 +557,19 @@ class GradingSettings(BaseModel):
     # a conflict only earns extra detail in the review reason. Acting on
     # the signal is a separate, later story.
     equivalence_gate: bool = False
+    # I7 (US-013, D19): error-carried-forward by substitution. Defaults
+    # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither
+    # flag implies the other in this config. In practice `ecf_substitution`
+    # has no observable effect unless `equivalence_gate` is ALSO True: the
+    # `ecf_applied` marker it sets lives on `PointVerdict`
+    # (`core/schemas.py`), and `PointVerdict`s are only populated on the
+    # verdicts marking path, which `equivalence_gate` alone controls. That
+    # is a consequence of where the field lives, not a coupling written into
+    # this flag's own wiring. See `correction_ai._maybe_apply_ecf_substitution`
+    # for the gate/chain rules and the measured activation ceiling (29
+    # points across 11 of 289 committed mark schemes -- an input-data limit,
+    # not a reason to widen the gate).
+    ecf_substitution: bool = False
 
 
 class StorageSettings(BaseModel):

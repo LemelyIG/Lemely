@@ -11,6 +11,7 @@ import structlog
 from lemely.core.correction import _exam_metadata, _load_mark_scheme
 from lemely.core.equivalence import Verdict, VerdictKind, equivalent
 from lemely.core.loose_schemas import (
+    AnswerPoint,
     CalculatedAnswer,
     MarkScheme,
     MathMarkType,
@@ -115,6 +116,7 @@ class AICorrector:
         principles: list[str] | None = None,
         *,
         equivalence_gate: bool = False,
+        prior_values: dict[str, str] | None = None,
     ) -> AIMarkResponse:
         """Mark one question.
 
@@ -134,6 +136,12 @@ class AICorrector:
         story. See ``correction_ai`` module notes / the commit message for
         the ``_params_fingerprint`` schema-hash consequence of the additive
         field regardless of this flag.
+
+        ``prior_values`` (I7, US-013, defaults None): forwarded to
+        :func:`build_marker_user_prompt` -- see its docstring and
+        :func:`_maybe_apply_ecf_substitution`, the only caller that ever
+        passes this non-empty. Not tied to ``equivalence_gate``: this
+        parameter exists on every call regardless of that flag's value.
         """
         g = self._client._settings.gemini
         user_prompt = build_marker_user_prompt(
@@ -143,6 +151,7 @@ class AICorrector:
             prior_results,
             principles,
             equivalence_gate=equivalence_gate,
+            prior_values=prior_values,
         )
 
         result = self._client.generate_structured(
@@ -1159,6 +1168,246 @@ def _build_dropped_corrected(question: Question) -> CorrectedQuestion:
     )
 
 
+#: I7 (US-013) GATE. Measured on all 289 committed mark schemes: 29 points
+#: (0.28% of 10,314) in 11 schemes carry this marker, as unstructured prose
+#: on the point itself or its question's notes/marking_guidance -- e.g.
+#: "R = 4.05 / ecf, 3.89, 3.81" and "Strict FT their median reading".
+#: Deliberately NOT widened to "any A point with a resolvable M chain" --
+#: that would apply ECF where CAIE never marked the point ECF-eligible, and
+#: award marks nobody earned. Under-firing (this) is the safe direction;
+#: over-firing is a correctness defect.
+_ECF_MARKER_RE = re.compile(r"\b(ecf|ft|dep)\b", re.IGNORECASE)
+
+
+def _ecf_gated(question: Question, point: AnswerPoint) -> bool:
+    """I7 GATE -- may ``point`` ever be re-marked with a substituted prior value?
+
+    True only when an ecf/ft/dep marker appears on the point's own ``point``
+    text or ``condition``, or on its (leaf) question's ``notes`` or
+    ``marking_guidance``. See :data:`_ECF_MARKER_RE`'s docstring for the
+    measured activation ceiling and why this is not widened.
+    """
+    texts = (point.point, point.condition, question.notes, question.marking_guidance)
+    return any(_ECF_MARKER_RE.search(t) for t in texts if t)
+
+
+def _resolve_ecf_chain(
+    question: Question, point: AnswerPoint, top_level_leaves: list[Question]
+) -> tuple[str, str] | None:
+    """I7 CHAIN resolver -- which prior point's value gets substituted for ``point``.
+
+    Two tiers, in order (measured on the 289-scheme corpus: 578 same-question
+    chains, 7 cross-part, 141 unresolvable -- ``required_with`` itself is
+    non-null in 0 of 1,776 corpus points today, a Gemini-path-only field on
+    this det-parsed corpus, so tier 1 is correct-but-dormant and tier 2 is
+    the one that actually fires):
+
+    1. ``point.required_with``, if set, resolved ONLY against ``question``'s
+       OWN ``answer_points`` -- point ids are question-scoped by design
+       (``loose_schemas.py:202``, "Sequential ID within the question"), so a
+       bare id can never name a point in a different question. A dangling
+       ``required_with`` (no such sibling) resolves to no prerequisite,
+       never a paper-wide search.
+    2. Otherwise, the nearest preceding ``math_mark_type == M`` point within
+       the SAME top-level question, walking parts in document order --
+       first backwards through ``question``'s own earlier points, then
+       backwards through ``top_level_leaves`` (every leaf under the same
+       top-level ancestor, in document order, as this story's own
+       ``correct_paper`` grouping presents it). This is the parsing prompt's
+       own rule 9 (``io/prompts/mark_scheme_parsing.py:338``), computed here
+       rather than re-derived from scratch.
+
+    Returns ``(prerequisite_leaf_question_id, prerequisite_point_id)``, or
+    ``None`` when neither tier resolves -- 141 of 726 A-points in the corpus
+    are in this state and must never receive a substituted value.
+    """
+    if point.required_with is not None:
+        if any(sibling.id == point.required_with for sibling in question.answer_points):
+            return question.id, point.required_with
+        return None  # dangling required_with -- no paper-wide fallback
+
+    try:
+        point_index = next(i for i, p in enumerate(question.answer_points) if p.id == point.id)
+    except StopIteration:
+        return None
+
+    for sibling in reversed(question.answer_points[:point_index]):
+        if sibling.math_mark_type is MathMarkType.M:
+            return question.id, sibling.id
+
+    try:
+        leaf_index = next(i for i, leaf in enumerate(top_level_leaves) if leaf.id == question.id)
+    except StopIteration:
+        return None
+
+    for leaf in reversed(top_level_leaves[:leaf_index]):
+        for sibling in reversed(leaf.answer_points):
+            if sibling.math_mark_type is MathMarkType.M:
+                return leaf.id, sibling.id
+
+    return None
+
+
+def _top_level_ancestor_id(question_id: str, all_by_id: dict[str, Question]) -> str:
+    """Walk ``parent_id`` up to the root and return that root's id."""
+    q = all_by_id[question_id]
+    seen = {q.id}
+    while q.parent_id is not None and q.parent_id in all_by_id:
+        q = all_by_id[q.parent_id]
+        if q.id in seen:  # defensive only -- a well-formed scheme cannot cycle
+            break
+        seen.add(q.id)
+    return q.id
+
+
+def _group_leaves_by_top_level(
+    leaves: list[Question], all_by_id: dict[str, Question]
+) -> dict[str, list[Question]]:
+    """Group marked leaves by their top-level ancestor id.
+
+    Preserves the document order ``leaves`` already carries --
+    :func:`_resolve_ecf_chain` walks each group backwards to find the
+    nearest preceding M point.
+    """
+    groups: dict[str, list[Question]] = {}
+    for leaf in leaves:
+        tid = _top_level_ancestor_id(leaf.id, all_by_id)
+        groups.setdefault(tid, []).append(leaf)
+    return groups
+
+
+def _point_was_awarded(
+    leaf_id: str,
+    point_id: str,
+    current_leaf_id: str,
+    current_leaf_matched: set[str],
+    corrected_by_id: dict[str, CorrectedQuestion],
+) -> bool:
+    """Was ``point_id`` (owned by ``leaf_id``) already awarded?
+
+    ``leaf_id == current_leaf_id`` covers both I7 chain tiers that resolve
+    within the leaf under test right now (``required_with``, or a preceding
+    M point earlier in the SAME leaf) -- that leaf has no ``CorrectedQuestion``
+    yet (it is still being built), so its in-flight matched-point set is
+    passed in directly. Any other ``leaf_id`` is an earlier leaf already
+    appended to ``corrected_by_id``.
+    """
+    if leaf_id == current_leaf_id:
+        return point_id in current_leaf_matched
+    prior_cq = corrected_by_id.get(leaf_id)
+    return prior_cq is not None and point_id in prior_cq.matched_point_ids
+
+
+def _maybe_apply_ecf_substitution(
+    question: Question,
+    cq: CorrectedQuestion,
+    mark: AIMarkResponse,
+    student_answer: str,
+    student_working: str | None,
+    extraction_confidence: float | None,
+    *,
+    ai: AICorrector,
+    ecf_substitution: bool,
+    equivalence_gate: bool,
+    principles: list[str] | None,
+    sibling_prior: dict[str, int] | None,
+    answers: dict[str, tuple[str, str | None, float]],
+    top_level_leaves: list[Question],
+    corrected_by_id: dict[str, CorrectedQuestion],
+    log: structlog.BoundLogger,
+) -> CorrectedQuestion:
+    """I7 (US-013) ORDER: try without substitution first.
+
+    ``cq``/``mark`` were already marked by the caller with no substitution;
+    only re-mark when a part is BELOW MAX *and* GATED *and* has a resolvable
+    CHAIN whose prerequisite was itself NOT already correct (there is no
+    error to carry forward otherwise -- this is what makes a correct
+    prerequisite never trigger a second call).
+
+    Honest limit, stated here rather than implied: recomputation is BY THE
+    MODEL with the substituted value (plus I8's separate numeric check),
+    never a literal (e.g. Numbas-style) recompute -- mark schemes carry no
+    machine-readable formula to recompute against.
+
+    No-op (returns ``cq`` unchanged, no second Gemini call) whenever:
+    - ``ecf_substitution`` is off (flag-off byte-identical inertness);
+    - ``cq`` is already at ``maximum_marks``;
+    - ``mark.point_verdicts`` is empty -- ``ecf_applied`` lives on
+      ``PointVerdict``, which only exists on the verdicts marking path that
+      ``equivalence_gate`` controls (see ``GradingSettings.ecf_substitution``'s
+      docstring); this is a consequence of where the field lives, not a
+      coupling written into this flag's own gating;
+    - no answer_point is simultaneously below-max, gated, chain-resolvable,
+      not already awarded, and backed by a non-blank prerequisite answer.
+    """
+    if not ecf_substitution or cq.awarded_marks >= cq.maximum_marks or not mark.point_verdicts:
+        return cq
+
+    current_matched = set(cq.matched_point_ids)
+    eligible: list[tuple[AnswerPoint, str]] = []
+    for point in question.answer_points:
+        if point.id in current_matched:
+            continue
+        if not _ecf_gated(question, point):
+            continue
+        prereq = _resolve_ecf_chain(question, point, top_level_leaves)
+        if prereq is None:
+            continue
+        prereq_leaf_id, prereq_point_id = prereq
+        if _point_was_awarded(
+            prereq_leaf_id, prereq_point_id, question.id, current_matched, corrected_by_id
+        ):
+            continue  # prerequisite was already correct -- nothing to carry forward
+        prereq_answer = answers.get(prereq_leaf_id)
+        if not prereq_answer or _is_blank(prereq_answer[0]):
+            continue
+        eligible.append((point, prereq_leaf_id))
+
+    if not eligible:
+        return cq
+
+    prior_values = {leaf_id: (answers[leaf_id][0] or "") for _, leaf_id in eligible}
+    try:
+        mark2 = ai.mark_question(
+            question,
+            student_answer,
+            student_working,
+            prior_results=sibling_prior,
+            principles=principles,
+            equivalence_gate=equivalence_gate,
+            prior_values=prior_values,
+        )
+    except CostCeilingError:
+        raise
+    except Exception as exc:
+        log.warning("ecf_substitution_remark_failed", question_id=question.id, error=str(exc))
+        return cq
+
+    eligible_ids = {p.id for p, _ in eligible}
+    mark2_by_id = {pv.point_id: pv for pv in mark2.point_verdicts}
+    merged_verdicts: list[PointVerdict] = []
+    changed = False
+    for pv in mark.point_verdicts:
+        replacement = mark2_by_id.get(pv.point_id) if pv.point_id in eligible_ids else None
+        if replacement is not None and replacement.verdict == "awarded":
+            merged_verdicts.append(replacement.model_copy(update={"ecf_applied": True}))
+            changed = True
+        else:
+            merged_verdicts.append(pv)
+    if not changed:
+        return cq
+
+    merged_mark = mark.model_copy(update={"point_verdicts": merged_verdicts})
+    return _build_ai_corrected(
+        question,
+        student_answer,
+        merged_mark,
+        student_working,
+        extraction_confidence,
+        equivalence_gate=equivalence_gate,
+    )
+
+
 def correct_paper(
     mark_scheme: MarkScheme | str | Mapping[str, object],
     extracted_answers: ExtractedAnswers | Mapping[str, str],
@@ -1166,6 +1415,7 @@ def correct_paper(
     gemini_client: GeminiClient | None = None,
     mcq_only: bool = False,
     equivalence_gate: bool = False,
+    ecf_substitution: bool = False,
 ) -> CorrectionResult:
     """Hybrid paper correction: MCQ deterministic, non-MCQ via AICorrector.
 
@@ -1178,6 +1428,13 @@ def correct_paper(
             defaults False -- see ``GradingSettings.equivalence_gate`` and
             ``_verify_calculated_answers``). Never auto-awards a mark in
             this story regardless of value.
+        ecf_substitution: I7 (US-013, D19), defaults False. Threaded
+            INDEPENDENTLY of ``equivalence_gate`` -- see
+            ``GradingSettings.ecf_substitution`` and
+            :func:`_maybe_apply_ecf_substitution` for the gate/chain rules,
+            why it has no observable effect unless ``equivalence_gate`` is
+            ALSO True, and the measured activation ceiling (29 points across
+            11 of 289 committed mark schemes).
 
     Raises:
         ConfigError: paper has non-MCQ questions, mcq_only=False, and gemini_client is None.
@@ -1198,6 +1455,9 @@ def correct_paper(
     leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
     leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
+    corrected_by_id: dict[str, CorrectedQuestion] = {}  # I7: for _point_was_awarded
+    all_by_id: dict[str, Question] = {qq.id: qq for qq in scheme.all_questions_flat()}
+    top_level_groups = _group_leaves_by_top_level(leaves, all_by_id)
     has_non_mcq = any(q.type != QuestionType.MCQ for q in leaves)
 
     if has_non_mcq and not mcq_only and gemini_client is None:
@@ -1233,6 +1493,7 @@ def correct_paper(
             cq = _build_dropped_corrected(q)
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -1249,6 +1510,7 @@ def correct_paper(
             cq = _build_mcq_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = cq.awarded_marks
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -1264,6 +1526,7 @@ def correct_paper(
             cq = _build_missing_corrected(q, student_answer, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -1291,6 +1554,7 @@ def correct_paper(
             cq = _build_blank_corrected(q, extraction_confidence)
             corrected.append(cq)
             prior_results_accumulated[q.id] = 0
+            corrected_by_id[q.id] = cq
             bus.publish(
                 EventType.MARKING_PROGRESS,
                 question_id=q.id,
@@ -1339,7 +1603,9 @@ def correct_paper(
         except Exception as exc:
             log.warning("ai_marking_failed", question_id=q.id, error=str(exc))
             cq = _build_missing_corrected(q, student_answer, extraction_confidence)
-            corrected.append(cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"}))
+            cq = cq.model_copy(update={"review_reason": f"AI marking failed: {exc!s}"})
+            corrected.append(cq)
+            corrected_by_id[q.id] = cq
             # Deliberately no index/total here: the per-question counter belongs to
             # MARKING_PROGRESS, and ERROR is not a progress frame. This `index` is
             # simply skipped — the next question still reports its own enumerate
@@ -1357,8 +1623,26 @@ def correct_paper(
             extraction_confidence,
             equivalence_gate=equivalence_gate,
         )
+        cq = _maybe_apply_ecf_substitution(
+            q,
+            cq,
+            mark,
+            student_answer or "",
+            student_working,
+            extraction_confidence,
+            ai=ai,
+            ecf_substitution=ecf_substitution,
+            equivalence_gate=equivalence_gate,
+            principles=scheme.metadata.generic_marking_principles or None,
+            sibling_prior=sibling_prior or None,
+            answers=answers,
+            top_level_leaves=top_level_groups[_top_level_ancestor_id(q.id, all_by_id)],
+            corrected_by_id=corrected_by_id,
+            log=log,
+        )
         corrected.append(cq)
         prior_results_accumulated[q.id] = cq.awarded_marks
+        corrected_by_id[q.id] = cq
         bus.publish(
             EventType.MARKING_PROGRESS,
             question_id=q.id,

@@ -125,6 +125,32 @@ class TestSecondReaderSettings:
             assert s.thinking_level_for["correction"] == level
 
 
+class TestEcfSubstitutionSettings:
+    """I7 (US-013, D19): defaults must stay False, independently of
+    ``equivalence_gate``, until the funded US-018 sweep measures the batch."""
+
+    def test_default_is_off(self) -> None:
+        from lemely.runtime.config import GradingSettings
+
+        assert GradingSettings().ecf_substitution is False
+
+    def test_independent_of_equivalence_gate(self) -> None:
+        from lemely.runtime.config import GradingSettings
+
+        s = GradingSettings(equivalence_gate=True)
+        assert s.ecf_substitution is False  # not implied by equivalence_gate
+        s2 = GradingSettings(ecf_substitution=True)
+        assert s2.equivalence_gate is False  # not implied the other way either
+
+    def test_extra_fields_forbidden(self) -> None:
+        from pydantic import ValidationError
+
+        from lemely.runtime.config import GradingSettings
+
+        with pytest.raises(ValidationError):
+            GradingSettings(ecf_substituton=True)  # type: ignore[call-arg]
+
+
 class TestIntegritySettings:
     def test_defaults(self) -> None:
         s = IntegritySettings()
