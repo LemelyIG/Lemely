@@ -1425,6 +1425,11 @@ class EquivalenceGateTests(unittest.TestCase):
         self.assertEqual(cq.awarded_marks, 0)
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn("equal_sampled", cq.review_reason or "")
+        # NIT H (final-branch-review): the reason must name which side sampled
+        # equal, not just that something did -- a reviewer weighing an A-mark
+        # needs the side. No `student_working` was passed here, so it is the
+        # answer.
+        self.assertIn("on answer", cq.review_reason or "")
         self.assertFalse(sampled.auto_awardable)  # the property this story must respect
 
     def test_flag_on_not_equal_behaves_as_specified(self):
@@ -1468,9 +1473,10 @@ class EquivalenceGateTests(unittest.TestCase):
             return not_equal if text == "student_answer" else sampled
 
         with patch("lemely.io.correction_ai.equivalent", side_effect=fake_equivalent):
-            verdict = _equivalence_fallback_verdict(calc, "student_answer", "student_working")
+            verdict, side = _equivalence_fallback_verdict(calc, "student_answer", "student_working")
 
         self.assertIs(verdict, sampled)
+        self.assertEqual(side, "working")
 
     def test_flag_on_not_equal_answer_and_equal_sampled_working_routes_to_review(self):
         """End-to-end companion to the fallback-priority test above: the
@@ -1502,6 +1508,11 @@ class EquivalenceGateTests(unittest.TestCase):
         self.assertEqual(cq.awarded_marks, 0)
         self.assertTrue(cq.needs_teacher_review)
         self.assertIn("equal_sampled", cq.review_reason or "")
+        # NIT H (final-branch-review): the answer was `NOT_EQUAL` and the
+        # working sampled equal, so the reason must say "working", not
+        # "answer" -- naming the wrong side would point a reviewer at the
+        # part of the response that was actually wrong.
+        self.assertIn("on working", cq.review_reason or "")
 
     def test_flag_on_unparseable_never_marks_wrong_beyond_the_literal_check(self):
         """A timeout or unreadable expression must not degrade the mark any

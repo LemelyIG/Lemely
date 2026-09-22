@@ -350,9 +350,37 @@ def test_the_marked_count_excludes_every_unscored_question() -> None:
     steps = {step.label: step.count for step in _graded_pipeline_steps(report)}
 
     assert steps["Mark scheme aligned"] == "1 / 4"
-    # And the confidence check counts the blank as needing no human look, per
-    # the US-039 exemption, while both flagged unscored questions still do.
-    assert steps["Confidence check"] == "2 / 4"
+    # Minor F (final-branch-review): the denominator is the marked population
+    # (1), not the paper total (4) -- the blank/dropped/missing questions were
+    # never checked, so they must not appear to have passed a check. Of the
+    # one question a marker actually scored (the "ai" one), it needed no
+    # human look, hence 1 / 1.
+    assert steps["Confidence check"] == "1 / 1"
+
+
+def test_confidence_check_reports_the_marked_denominator_not_the_paper_total() -> None:
+    """Minor F (final-branch-review): the exact scenario the finding named.
+
+    A 10-question paper with 8 blanks and 2 clean marks used to read
+    "Confidence check 10 / 10" -- every blank is exempt from review, which the
+    unfiltered count mistook for "passed the check". It should read 2 / 2:
+    both of the questions a marker actually scored needed no human look, and
+    the 8 that were never scored are no longer counted as if they had been.
+    """
+    from lemely.web.routers.teacher import _graded_pipeline_steps
+
+    report = _report_of(
+        [_question("blank", confidence=0.0, needs_review=False) for _ in range(8)]
+        + [
+            _question("ai", confidence=0.95, needs_review=False),
+            _question("deterministic", confidence=1.0, needs_review=False),
+        ]
+    )
+
+    steps = {step.label: step.count for step in _graded_pipeline_steps(report)}
+
+    assert steps["Mark scheme aligned"] == "2 / 10"
+    assert steps["Confidence check"] == "2 / 2"
 
 
 def test_the_paper_card_confidence_ignores_every_unscored_question() -> None:

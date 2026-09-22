@@ -5,6 +5,7 @@ from __future__ import annotations
 import math
 import re
 from collections.abc import Mapping
+from typing import Literal
 
 import structlog
 
@@ -444,7 +445,7 @@ def _calculated_value_present(calc: CalculatedAnswer, candidates: list[float]) -
 
 def _equivalence_fallback_verdict(
     calc: CalculatedAnswer, student_answer: str, student_working: str | None
-) -> Verdict:
+) -> tuple[Verdict, Literal["answer", "working"]]:
     """Consult ``lemely.core.equivalence`` for a rejected point (I8, US-005b).
 
     A fallback for a point ``_calculated_value_present`` already rejected —
@@ -467,26 +468,31 @@ def _equivalence_fallback_verdict(
     ``EQUAL_SAMPLED`` is still never promoted to ``auto_awardable`` -- it
     is evidence, not proof (see ``Verdict.auto_awardable``) -- this only
     decides which finding a reviewer gets to see.
+
+    Returns the verdict alongside which side it came from (NIT H,
+    final-branch-review): a reviewer weighing an A-mark needs to know
+    whether the *answer* or the *working* sampled equal, not just that
+    something did.
     """
     target = str(calc.value)
     answer_verdict = equivalent(
         student_answer, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
     )
     if answer_verdict.kind is VerdictKind.EQUAL_PROVEN or not student_working:
-        return answer_verdict
+        return answer_verdict, "answer"
     working_verdict = equivalent(
         student_working, target, sig_figs=calc.sig_figs, dp=calc.dp, tolerance=calc.tolerance
     )
     if working_verdict.kind is VerdictKind.EQUAL_PROVEN:
-        return working_verdict
+        return working_verdict, "working"
     rank = {
         VerdictKind.EQUAL_SAMPLED: 2,
         VerdictKind.NOT_EQUAL: 1,
         VerdictKind.UNPARSEABLE: 0,
     }
     if rank[working_verdict.kind] > rank[answer_verdict.kind]:
-        return working_verdict
-    return answer_verdict
+        return working_verdict, "working"
+    return answer_verdict, "answer"
 
 
 def _verify_calculated_answers(
@@ -555,13 +561,13 @@ def _verify_calculated_answers(
                 "in student answer/working"
             )
             if equivalence_gate:
-                verdict = _equivalence_fallback_verdict(
+                verdict, side = _equivalence_fallback_verdict(
                     point.calculated_answer, student_answer, student_working
                 )
                 if verdict.equal_by_any_method:
                     reason += (
-                        f"; lemely.core.equivalence found this {verdict.kind.value} to the "
-                        "scheme value -- routed to review, not auto-awarded"
+                        f"; lemely.core.equivalence found this {verdict.kind.value} on "
+                        f"{side} to the scheme value -- routed to review, not auto-awarded"
                     )
             awarded = max(0, awarded - point.marks)
             rejections.append(reason)

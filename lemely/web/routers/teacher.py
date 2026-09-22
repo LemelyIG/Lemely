@@ -613,12 +613,26 @@ def _graded_pipeline_steps(report: AccuracyReport) -> list[PipelineStepDTO]:
     # failure here while the queue -- correctly, per the US-039 exemption --
     # reports zero rows for it. This label means "needs no human check", so
     # it must agree with the one place that actually decides that.
-    confident = sum(1 for q in questions if next(review_reasons_for(q), None) is None)
+    #
+    # Minor F (final-branch-review): that fix left the denominator at `total`,
+    # so a paper with 8 unattempted parts and 2 clean marks read
+    # "Confidence check 10 / 10" -- every one of the 8 blanks/dropped/missing
+    # questions is exempt from review, which the count then reported as
+    # having *passed* a check that never ran on it. `_paper_summary`'s
+    # confidence minimum (below) already narrows to `marker_scored` for the
+    # same reason; narrow this count the same way so the two card-facing
+    # confidence figures rest on the same population and neither implies more
+    # was checked than was.
+    confident = sum(
+        1
+        for q in questions
+        if marker_scored(q.marker_source) and next(review_reasons_for(q), None) is None
+    )
     return [
         PipelineStepDTO(label="Scan ingested", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Handwriting read", count=f"{total} / {total}", state="done"),
         PipelineStepDTO(label="Mark scheme aligned", count=f"{marked} / {total}", state="done"),
-        PipelineStepDTO(label="Confidence check", count=f"{confident} / {total}", state="done"),
+        PipelineStepDTO(label="Confidence check", count=f"{confident} / {marked}", state="done"),
         PipelineStepDTO(label="Grade boundaries", count=f"{total} / {total}", state="done"),
     ]
 
