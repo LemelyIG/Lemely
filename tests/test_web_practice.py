@@ -319,6 +319,38 @@ def test_result_dto_carries_marker_source_and_needs_teacher_review() -> None:
     assert scored.needsTeacherReview is False
 
 
+@pytest.mark.parametrize("value", ["deterministic", "ai", "missing", "dropped"])
+def test_marker_source_narrows_every_sanctioned_value(value: str) -> None:
+    """``_marker_source`` (``lemely/web/routers/practice.py``) narrows
+
+    ``PracticeResultQuestion.marker_source`` (a plain ``str`` in the repo
+    layer, sourced from ``lemely.db.models.enums.MarkerSource.value``) onto
+    ``PracticeResultQuestionDTO.markerSource``'s
+    ``Literal["deterministic", "ai", "missing", "dropped"]`` -- the fix for
+    the type error the DTO field exists to enforce (a ``str`` reaching a
+    ``Literal``-typed wire field would defeat the one check that lets the
+    frontend branch on this value). All four of the db enum's sanctioned
+    values must round-trip unchanged.
+    """
+    from lemely.web.routers.practice import _marker_source
+
+    assert _marker_source(value) == value
+
+
+def test_marker_source_rejects_an_unsanctioned_value() -> None:
+    """Inverse of the parametrized case above: a value outside the four
+
+    sanctioned ones raises rather than silently reaching the wire. Not
+    reachable today (the db enum only ever produces the four values), but
+    this is the one seam that would catch a future fifth enum member added
+    without updating this narrowing function.
+    """
+    from lemely.web.routers.practice import _marker_source
+
+    with pytest.raises(ValueError, match="Unknown marker source"):
+        _marker_source("some_future_source")
+
+
 def test_export_route_never_returns_marking_material(
     client: TestClient, pg_sessionmaker: sessionmaker[Session], practice_service: PracticeService
 ) -> None:

@@ -45,6 +45,7 @@ from lemely.web.schemas_practice import (
 
 if TYPE_CHECKING:
     from lemely.core.difficulty import Band
+    from lemely.web.schemas import MarkerSource
 
 router = APIRouter(
     prefix="/api/student/practice", dependencies=[Depends(require_role(Role.student))]
@@ -69,6 +70,36 @@ def _parse_source(source: str | None) -> QuestionSource | None:
         return QuestionSource(source)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=f"Unknown source: {source!r}") from exc
+
+
+def _marker_source(value: str) -> MarkerSource:
+    """Narrow :attr:`PracticeResultQuestion.marker_source` onto the wire's `MarkerSource` literal.
+
+    ``PracticeResultQuestion.marker_source`` (``practice_repo.py``) is a plain
+    ``str`` — the repo layer sources it from
+    ``lemely.db.models.enums.MarkerSource.value`` and does not import the web
+    layer's literal type, mirroring how the rest of that module stays free of
+    ``lemely.web`` imports. ``PracticeResultQuestionDTO.markerSource`` is typed
+    ``MarkerSource`` (``Literal["deterministic", "ai", "missing", "dropped"]``)
+    precisely so the frontend can branch on this value (Important A, US-039
+    final branch review), so a ``str`` reaching it unchecked would defeat that
+    one check. This is the one place that narrowing happens — an explicit
+    ``if``/``elif`` chain rather than a ``cast``/``# type: ignore``, so mypy
+    proves the return really is one of the four literal values and a fifth,
+    unexpected one raises instead of silently reaching the wire. The db enum
+    and this literal are kept in lock-step by
+    ``tests/test_web_practice.py``'s wiring test; a mismatch here is a real
+    bug, not defensive noise, so it is never expected to fire in production.
+    """
+    if value == "deterministic":
+        return "deterministic"
+    if value == "ai":
+        return "ai"
+    if value == "missing":
+        return "missing"
+    if value == "dropped":
+        return "dropped"
+    raise ValueError(f"Unknown marker source: {value!r}")  # pragma: no cover - enum guarantees this
 
 
 def _parse_bands(bands: list[str]) -> tuple[Band, ...]:
@@ -139,7 +170,7 @@ def _result_to_dto(row: PracticeResultRow) -> PracticeResultDTO:
                 awardedMarks=q.awarded_marks,
                 confidenceBand=q.confidence_band,
                 confidenceScore=q.confidence_score,
-                markerSource=q.marker_source,
+                markerSource=_marker_source(q.marker_source),
                 needsTeacherReview=q.needs_teacher_review,
             )
             for q in row.questions
