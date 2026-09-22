@@ -166,9 +166,31 @@ export function paperIdentityLabel(item: {
  *
  * `null` stays its own case: a queue item with no score at all, which the
  * integrity checks produce, is genuinely not the same as a low score.
+ *
+ * US-039 finding G. `markerSource` is optional and — for this queue's own
+ * row type, `ReviewQueueItemDTO` — always absent: it isn't on that DTO's
+ * wire shape at all today, only on `ReviewItemDetailDTO`'s (T-08's single-item
+ * view). A genuine blank should never reach either, because
+ * `_build_blank_corrected` sets `needs_teacher_review = False` and the
+ * backend excludes it from this queue entirely — but the parameter is added
+ * here, not left as a bare score, so the gate exists and fires the moment a
+ * caller has the data to supply it, rather than this file staying the one
+ * place a blank can never render as anything but a confidence tone.
+ *
+ * This checks `markerSource` directly rather than going through
+ * `confidenceTierFor`'s `needsTeacherReview`-gated "not-marked" branch: this
+ * screen has no `reviewReason`/`needsTeacherReview` to give that function
+ * (it never did — see the two-tones note above), so requiring them would
+ * make the gate exactly as unreachable as the bug this closes. A marker
+ * source of "missing"/"dropped" is unambiguous on its own: no marker (human
+ * or AI) produced this score, so it cannot be a confidence tone at all.
  */
-export function confidenceTone(score: number | null): "ok" | "warn" {
+export function confidenceTone(
+  score: number | null,
+  markerSource?: string | null,
+): "ok" | "warn" | "neutral" {
   if (score == null) return "warn"
+  if (markerSource === "missing" || markerSource === "dropped") return "neutral"
   return confidenceTierFor({ confidence: score }) === "confident" ? "ok" : "warn"
 }
 

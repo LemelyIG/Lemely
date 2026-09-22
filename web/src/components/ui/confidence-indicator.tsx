@@ -1,5 +1,5 @@
 import { useState } from "react"
-import { CheckCircle, Flag, Info, WarningCircle, type Icon } from "@phosphor-icons/react"
+import { CheckCircle, Flag, Info, Minus, WarningCircle, type Icon } from "@phosphor-icons/react"
 import { cn } from "@/lib/utils"
 
 /*
@@ -37,7 +37,7 @@ import { cn } from "@/lib/utils"
  * whether the product actually performs it.
  */
 
-export type ConfidenceTier = "confident" | "uncertain" | "needs-review"
+export type ConfidenceTier = "confident" | "uncertain" | "needs-review" | "not-marked"
 
 interface TierMeta {
   label: string
@@ -65,12 +65,25 @@ const tierMeta: Record<ConfidenceTier, TierMeta> = {
     // beyond its label is what happens next, and the product does not
     // guarantee anything happens next. See the header.
   },
+  // US-039 finding G. Neither a pass nor a warning — no marker (human or AI)
+  // formed an opinion here, so this must not borrow the confident tier's
+  // "we checked and we're sure" green or the uncertain/needs-review tiers'
+  // "look at this" tones. `text-ink-muted` / `bg-paper-sunk` are the same
+  // pair `<Chip tone="neutral">` uses, so this reads as the same "quiet,
+  // administrative" register as the "not marked" chip already on this
+  // screen (`PaperResult.markerSourceLabel`).
+  "not-marked": {
+    label: "Not marked",
+    icon: Minus,
+    explanation: "This question was left blank. No marker — human or AI — looked at it.",
+  },
 }
 
 const tierClasses: Record<ConfidenceTier, string> = {
   confident: "text-confidence-high hover:bg-confidence-high-bg",
   uncertain: "text-confidence-medium bg-confidence-medium-bg border-confidence-medium",
   "needs-review": "text-confidence-low bg-confidence-low-bg border-confidence-low font-medium",
+  "not-marked": "text-ink-muted bg-paper-sunk hover:bg-paper-sunk",
 }
 
 export interface ConfidenceIndicatorProps {
@@ -83,7 +96,10 @@ export function ConfidenceIndicator({ tier, className }: ConfidenceIndicatorProp
   const [open, setOpen] = useState(false)
   const meta = tierMeta[tier]
   const Icon = meta.icon
-  const loud = tier !== "confident"
+  // "not-marked" stays quiet alongside "confident" — it is deliberately
+  // neither a pass nor a warning (US-039 finding G), so it gets none of the
+  // bordered/labelled chrome the two tiers that DO want attention use.
+  const loud = tier === "uncertain" || tier === "needs-review"
 
   // A tier with no explanation has nothing to disclose, so it renders as a
   // plain labelled span rather than a button: an expand affordance that
@@ -150,6 +166,15 @@ export interface ConfidenceIndicatorSummaryProps {
   confident: number
   uncertain: number
   needsReview: number
+  /**
+   * US-039 finding G. Questions no marker scored (a genuine blank) — excluded
+   * from the confidence population entirely, per the same rule lane 1 applied
+   * to the backend's own confidence populations (`review_queue_rules.py`,
+   * `teacher.py`'s pipeline cards): a blank has no confidence, neither high
+   * nor low, so it must not inflate or deflate "confident about X of Y".
+   * Defaults to 0 so every existing caller keeps behaving exactly as before.
+   */
+  notMarked?: number
   className?: string
 }
 
@@ -158,10 +183,14 @@ export function ConfidenceIndicatorSummary({
   confident,
   uncertain,
   needsReview,
+  notMarked = 0,
   className,
 }: ConfidenceIndicatorSummaryProps) {
   const [open, setOpen] = useState(false)
-  const total = confident + uncertain + needsReview
+  // `scored` — not `total` — because `notMarked` questions were never scored
+  // by any marker and must not appear in either half of "confident about X
+  // of Y" (see `notMarked`'s doc above).
+  const scored = confident + uncertain + needsReview
   const flagged = uncertain + needsReview
   const allConfident = flagged === 0
 
@@ -180,9 +209,17 @@ export function ConfidenceIndicatorSummary({
           <Flag weight="fill" className="w-4.5 h-4.5 flex-none mt-0.5 text-confidence-low" aria-hidden />
         )}
         <p className={cn("text-body-md m-0", allConfident ? "text-t1" : "text-confidence-low font-medium")}>
-          We're confident about {confident} of {total} question{total === 1 ? "" : "s"}.
-          {flagged > 0 &&
-            ` ${flagged} ${flagged === 1 ? "is" : "are"} flagged for your teacher.`}
+          {scored > 0 ? (
+            <>
+              We're confident about {confident} of {scored} question{scored === 1 ? "" : "s"}.
+              {flagged > 0 &&
+                ` ${flagged} ${flagged === 1 ? "is" : "are"} flagged for your teacher.`}
+            </>
+          ) : (
+            "No questions on this paper were marked."
+          )}
+          {notMarked > 0 &&
+            ` ${notMarked} question${notMarked === 1 ? "" : "s"} left blank — not marked.`}
         </p>
         <button
           type="button"
@@ -197,7 +234,8 @@ export function ConfidenceIndicatorSummary({
       {open && (
         <p className="text-sm text-t2 mt-2.5 mb-0 ps-7">
           Confidence tells you how sure we are about each mark. Low-confidence marks are
-          flagged for your teacher.
+          flagged for your teacher. Questions left blank have no confidence to report — no
+          marker looked at them.
         </p>
       )}
     </div>

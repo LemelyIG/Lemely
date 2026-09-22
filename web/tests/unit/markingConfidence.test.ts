@@ -48,8 +48,49 @@ describe("confidenceTierFor", () => {
         reviewReason: "student left this question blank (0 awarded, no AI call made)",
         needsTeacherReview: false,
         confidence: 0,
+        markerSource: "missing",
       }),
     ).not.toBe("needs-review")
+  })
+
+  it("US-039 finding G: a genuine blank is 'not-marked', not 'uncertain'", () => {
+    // Wire values for `_build_blank_corrected` (`lemely/web/schemas.py`):
+    // confidence 0.0, needsTeacherReview false, markerSource "missing". Before
+    // this fix, 0.0 fell through the needs-review check (needsTeacherReview
+    // is false) straight into the score check, and 0 < 0.9 read "uncertain" --
+    // the same false claim ("the marker was unsure") one notch quieter than
+    // "needs-review". A blank has no confidence, neither high nor low.
+    expect(
+      confidenceTierFor({
+        confidence: 0,
+        needsTeacherReview: false,
+        markerSource: "missing",
+        reviewReason: "student left this question blank (0 awarded, no AI call made)",
+      }),
+    ).toBe("not-marked")
+    // "dropped" (US-038: extraction discarded a malformed answer) gets the
+    // same treatment when it carries the same unflagged-zero shape.
+    expect(
+      confidenceTierFor({ confidence: 0, needsTeacherReview: false, markerSource: "dropped" }),
+    ).toBe("not-marked")
+  })
+
+  it("US-039 finding G: markerSource alone does not trigger not-marked", () => {
+    // The gate is the unflagged-zero SHAPE (needsTeacherReview === false),
+    // not the marker source in isolation -- a "missing"/"dropped" question
+    // that DOES need review (needsTeacherReview: true, every pre-existing
+    // 0.0 producer) must keep surfacing as "needs-review", not go quiet.
+    expect(
+      confidenceTierFor({
+        confidence: 0,
+        needsTeacherReview: true,
+        markerSource: "missing",
+        reviewReason: "Question could not be extracted",
+      }),
+    ).toBe("needs-review")
+    // No markerSource at all (every caller that predates this field) must
+    // keep behaving exactly as before: score-based bucketing.
+    expect(confidenceTierFor({ confidence: 0, needsTeacherReview: false })).toBe("uncertain")
   })
 
   it("US-039 MUST-FIX 2: `needsTeacherReview: undefined` preserves today's behaviour", () => {
@@ -85,11 +126,37 @@ describe("confidenceSummaryOf", () => {
       { confidence: 0.6 },
       { confidence: 0.99, reviewReason: "Two answers given" },
     ])
-    expect(summary).toEqual({ confident: 2, uncertain: 1, needsReview: 1 })
-    expect(summary.confident + summary.uncertain + summary.needsReview).toBe(4)
+    expect(summary).toEqual({ confident: 2, uncertain: 1, needsReview: 1, notMarked: 0 })
+    expect(summary.confident + summary.uncertain + summary.needsReview + summary.notMarked).toBe(
+      4,
+    )
   })
 
   it("returns zeroes for a paper with no questions", () => {
-    expect(confidenceSummaryOf([])).toEqual({ confident: 0, uncertain: 0, needsReview: 0 })
+    expect(confidenceSummaryOf([])).toEqual({
+      confident: 0,
+      uncertain: 0,
+      needsReview: 0,
+      notMarked: 0,
+    })
+  })
+
+  it("US-039 finding G: a paper with 8 blanks reports 8 not-marked, not 8 uncertain", () => {
+    // The exact scenario the finding names: before this fix, every one of
+    // these 8 unattempted parts fell through to "uncertain" and the summary
+    // strip read "8 uncertain" for questions no marker ever looked at.
+    const blank = {
+      confidence: 0,
+      needsTeacherReview: false,
+      markerSource: "missing",
+      reviewReason: "student left this question blank (0 awarded, no AI call made)",
+    }
+    const questions = [
+      { confidence: 0.95 },
+      { confidence: 0.95 },
+      ...Array.from({ length: 8 }, () => blank),
+    ]
+    const summary = confidenceSummaryOf(questions)
+    expect(summary).toEqual({ confident: 2, uncertain: 0, needsReview: 0, notMarked: 8 })
   })
 })

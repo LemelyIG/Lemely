@@ -54,14 +54,37 @@ export interface ConfidenceInput {
    * explicit `false` suppresses the review signal.
    */
   needsTeacherReview?: boolean
+  /**
+   * The backend's own per-question marking method (mirrors
+   * `QuestionResultDTO.markerSource` — `"deterministic" | "ai" | "missing" |
+   * "dropped"`). Only `"missing"`/`"dropped"` matter here: they are the two
+   * values that mean no marker (human or AI) ever produced an opinion about
+   * this question (US-038's `MarkerSource` enum). Optional because several
+   * callers (`Review.tsx`'s queue-list row, `ReviewQueueItemDTO`) have no
+   * marker source on the wire at all — `undefined` behaves exactly as before
+   * this field existed.
+   */
+  markerSource?: string
 }
 
 /**
+ * US-039 finding G: a genuinely-blank answer (`_build_blank_corrected`) gets
+ * `confidence = 0.0` and `needsTeacherReview = false` — the backend's
+ * deliberate "unflagged zero", exempting a question no marker ever looked at
+ * from the review queue. Before this tier existed that combination fell
+ * through to `q.confidence < REVIEW_CONFIDENCE_THRESHOLD` and came out
+ * `"uncertain"`, which tells the student "the marker looked and was unsure" —
+ * false, because no marker looked. `"not-marked"` is the honest third
+ * tier: neither a pass nor a warning, matching the "not marked" label
+ * `PaperResult.markerSourceLabel` already renders for the same
+ * `markerSource` values.
+ *
  * `reviewReason` wins whenever `needsTeacherReview` is not explicitly `false`:
  * it is a decision the backend already made, and a question can be flagged
  * for review at any confidence (integrity checks set it without touching the
  * score at all). The one exception is the unflagged blank described on
- * `ConfidenceInput.needsTeacherReview` above.
+ * `ConfidenceInput.needsTeacherReview` above, which this function now names
+ * explicitly rather than letting it fall through to the score check.
  *
  * A missing or non-finite `confidence` is treated as confident rather than
  * uncertain. That is deliberate and it is the arguable call in this function:
@@ -73,6 +96,12 @@ export interface ConfidenceInput {
  */
 export function confidenceTierFor(q: ConfidenceInput): ConfidenceTier {
   if (q.reviewReason && q.needsTeacherReview !== false) return "needs-review"
+  if (
+    q.needsTeacherReview === false &&
+    (q.markerSource === "missing" || q.markerSource === "dropped")
+  ) {
+    return "not-marked"
+  }
   if (typeof q.confidence !== "number" || !Number.isFinite(q.confidence)) {
     return "confident"
   }
@@ -84,15 +113,17 @@ export function confidenceSummaryOf(questions: ConfidenceInput[]): {
   confident: number
   uncertain: number
   needsReview: number
+  notMarked: number
 } {
   return questions.reduce(
     (acc, q) => {
       const tier = confidenceTierFor(q)
       if (tier === "confident") acc.confident += 1
       else if (tier === "uncertain") acc.uncertain += 1
+      else if (tier === "not-marked") acc.notMarked += 1
       else acc.needsReview += 1
       return acc
     },
-    { confident: 0, uncertain: 0, needsReview: 0 },
+    { confident: 0, uncertain: 0, needsReview: 0, notMarked: 0 },
   )
 }

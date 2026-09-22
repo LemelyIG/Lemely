@@ -507,6 +507,7 @@ export function PaperResult() {
             confident={summary.confident}
             uncertain={summary.uncertain}
             needsReview={summary.needsReview}
+            notMarked={summary.notMarked}
           />
         ) : null}
         <QuestionList
