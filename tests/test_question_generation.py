@@ -583,7 +583,7 @@ class TestTeacherQuizCLI:
                     # would land inside the JSON payload during test execution.
                     # This is not a production issue — real --json piping works
                     # correctly. (mix_stderr=False was removed in click 8.2, so
-                    # this workaround is required with click 8.3.3.)
+                    # this workaround is required on the pinned click 8.4.2.)
                     "--quiet",
                     "teacher-quiz",
                     "--subject",
