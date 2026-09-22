@@ -118,13 +118,23 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
 
 
 def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
-    """The result screen's row shape. Nothing integrity-related reaches a student.
+    """The result screen's row shape, carrying no verdict and no integrity signal.
 
-    That means the two booleans *and* ``review_reason``: the reason is free
+    Integrity means the two booleans *and* ``review_reason``: the reason is free
     text that ``lemely/io/integrity.py`` appends ``"plagiarism (score 0.94)"``
     to, and ``PaperResult`` renders it verbatim. Suppressing the flags while
     forwarding the sentence would tell the student anyway, with a score on it
     (QUALITY-BAR.md: integrity flags are teacher-only).
+
+    Per-point means ``matched_point_ids``, which is withheld outright.
+    ``QuestionResultPoint.awarded`` is ``point.id in matched_point_ids``
+    (``lemely/db/question_points.py``), so the list *is* the marker's per-point
+    verdict — the very thing the self-review panel asks the student to commit
+    against before the reveal. These rows render on the same screen as that
+    panel, and this route's ``questionResultId`` is what makes it render, so
+    forwarding the ids would leave the answer one Network-tab click away. The
+    question's *aggregate* ``awardedMarks`` stays; only per-point ``awarded``
+    was ever promised to be withheld.
     """
     return QuestionResultDTO(
         questionId=row.question_id,
@@ -133,12 +143,13 @@ def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
         markerSource=row.marker_source,
         confidence=row.confidence_score,
         feedback=row.feedback,
-        matchedPointIds=row.matched_point_ids or None,
+        matchedPointIds=None,
         reviewReason=student_safe_review_reason(row.review_reason),
         plagiarismFlagged=False,
         aiDetectionFlagged=False,
         topic=row.topic,
         questionResultId=str(row.question_result_id) if row.self_reviewable else None,
+        pendingTeacher=row.pending_teacher,
     )
 
 

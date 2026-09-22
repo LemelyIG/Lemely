@@ -294,8 +294,19 @@ from typing import TYPE_CHECKING, Any
 
 from sqlalchemy import delete as sa_delete
 
+from lemely.core.analytics import summarize_weaknesses
 from lemely.core.at_risk import AtRiskReason
 from lemely.core.history import PaperRecord
+from lemely.core.loose_schemas import (
+    AnswerPoint,
+    MarkScheme,
+    MarkSchemeMetadata,
+    PaperType,
+    SchemeFormat,
+)
+from lemely.core.loose_schemas import Question as SchemeQuestion
+from lemely.core.loose_schemas import QuestionType as SchemeQuestionType
+from lemely.core.loose_schemas import SessionMonth as LooseSessionMonth
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -740,6 +751,111 @@ def accuracy_report_for_score(
         boundary_source="subject_default",
     )
     return AccuracyReport(correction=correction, weaknesses=weaknesses, grade_prediction=prediction)
+
+
+#: Below ``REVIEW_CONFIDENCE_THRESHOLD`` (0.90): question "2" of the
+#: self-review paper is genuinely low-confidence, so the student's verdict
+#: carries authority there (self-review spec D2) with no judge and no key.
+SELF_REVIEW_LOW_CONFIDENCE_SCORE = 0.55
+
+
+def self_review_scheme() -> MarkScheme:
+    """The point-based scheme the self-review student's paper was marked against.
+
+    Two questions, five marks, every point tariff 1 — small enough to assert
+    on by eye in ``web/e2e/self-review.spec.ts``.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=3,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2023,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=5,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States that speed is distance over time", marks=1),
+                    AnswerPoint(id="p2", point="Gives the unit m/s", marks=1),
+                ],
+            ),
+            SchemeQuestion(
+                id="2",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Correct method", marks=1),
+                    AnswerPoint(id="p2", point="Correct substitution", marks=1),
+                    AnswerPoint(id="p3", point="Answer to 2 significant figures", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+def self_review_report() -> AccuracyReport:
+    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence."""
+    questions = [
+        CorrectedQuestion(
+            question_id="1",
+            awarded_marks=2,
+            maximum_marks=2,
+            confidence=ConfidenceBand.HIGH,
+            confidence_score=0.97,
+            needs_teacher_review=False,
+            student_answer="speed = distance / time = 10 / 2 = 5 m/s",
+            expected_answer="5 m/s",
+            topic="Motion",
+            marker_source="ai",
+            matched_point_ids=["p1", "p2"],
+        ),
+        CorrectedQuestion(
+            question_id="2",
+            awarded_marks=1,
+            maximum_marks=3,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=SELF_REVIEW_LOW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            student_answer="F = ma = 2 x 6 = 12",
+            expected_answer="12 N",
+            topic="Forces",
+            marker_source="ai",
+            review_reason="Working hard to read",
+            feedback="Method shown, but the substitution and rounding were not clear.",
+            matched_point_ids=["p1"],
+        ),
+    ]
+    correction = CorrectionResult(
+        metadata=ExamMetadata(
+            subject_code=SUBJECT_CODE,
+            paper_number=3,
+            paper_variant=1,
+            session_month="May/June",
+            session_year=2023,
+        ),
+        questions=questions,
+    )
+    return AccuracyReport(
+        correction=correction,
+        weaknesses=summarize_weaknesses(correction),
+        grade_prediction=GradePrediction(
+            awarded_marks=3,
+            maximum_marks=5,
+            percentage=60.0,
+            grade="C",
+            confidence=ConfidenceBand.LOW,
+            needs_teacher_review=True,
+            boundary_source="subject_default",
+        ),
+    )
 
 
 def build_quiz_bank_questions(teacher_id: uuid.UUID) -> list[NewBankQuestion]:
@@ -1208,6 +1324,26 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
 
+    self_review = _signup_account("self-review", Role.student, run_tag)
+    self_review_uuid = uuid.UUID(self_review["userId"])
+    # Onboarding-complete, same as `below_target`/the placement/practice
+    # accounts below: `StudentLayout`'s gate (`studentOnboardingRedirect` in
+    # `web/src/portals/student/index.tsx`) sends ANY route under `/student`
+    # to `/student/onboard` once `GET /me/student-profile` has created a
+    # profile row with `onboarding_completed_at` still NULL — which a first
+    # `GET` does unconditionally. Skipping this call left `self-review.spec.ts`
+    # bounced to onboarding on its very first navigation to
+    # `/student/result/0`; a student revisiting a marked paper has plainly
+    # been through onboarding already.
+    student_profile_service.mark_onboarding_complete(self_review_uuid)
+    _log("Persisting the self-review student's point-based, low-confidence paper")
+    self_review_attempt_id = attempt_repo.persist_correction(
+        user_id=self_review["userId"],
+        report=self_review_report(),
+        recorded_at=corrected_recorded_at(now).isoformat(),
+        mark_scheme=self_review_scheme(),
+    )
+
     parent_account = _signup_account("parent", Role.parent, run_tag, email_verified=True)
     declining_uuid = uuid.UUID(declining["userId"])
     parent_uuid = uuid.UUID(parent_account["userId"])
@@ -1436,6 +1572,11 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
             **corrected,
             "expectedAtRiskReasons": [],
             "correctedPaperId": str(corrected_attempt_ids[0]),
+        },
+        "selfReview": {
+            **self_review,
+            "expectedAtRiskReasons": [],
+            "selfReviewAttemptId": str(self_review_attempt_id),
         },
         "belowTarget": {
             **below_target,

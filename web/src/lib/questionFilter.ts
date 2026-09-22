@@ -28,8 +28,17 @@ export function markState(q: QuestionResult): MarkState {
  * today (a `reviewReason` also makes `confidenceTierFor` return
  * "needs-review"), but `reviewReason` is checked explicitly rather than
  * relying on that as an implementation detail of the tier function.
+ *
+ * `pendingTeacher === false` overrides both: it says no teacher review is
+ * open for this question right now, so a `reviewReason` frozen from marking
+ * time must not keep it in the Flagged tab (or its count) after a self-mark
+ * has settled it — the same current-truth-over-frozen-flag rule
+ * `confidenceTierFor` applies, checked explicitly here for the same reason
+ * `reviewReason` is: this function must not depend on it as an
+ * implementation detail of the tier function.
  */
 export function isFlagged(q: QuestionResult): boolean {
+  if (q.pendingTeacher === false) return false
   return q.reviewReason != null || confidenceTierFor(q) === "needs-review"
 }
 

@@ -327,6 +327,39 @@ def test_question_to_dto_for_a_student_drops_every_integrity_signal() -> None:
     assert "ai_detection" not in serialised_values
 
 
+def test_question_to_dto_for_a_student_drops_the_per_point_verdict() -> None:
+    """``matchedPointIds`` is the marker's per-point verdict, so a student never sees it.
+
+    ``QuestionResultPoint.awarded`` is ``point.id in matched_point_ids``
+    (``lemely/db/question_points.py``), so this list *is* ``awarded``, one id per
+    point the marker credited. The same DTO carries ``questionResultId``, which
+    is what the self-review panel renders on — shipping both would put the
+    answer next to the question the student is asked to commit against, before
+    the reveal.
+
+    The teacher console reads this same converter (``routers/teacher.py``), and
+    the field is exactly what a teacher is there to see, so the gate is per call
+    site like the integrity ones — asserted here in both directions.
+    """
+    question = CorrectedQuestion(
+        question_id="3b",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.55,
+        needs_teacher_review=True,
+        marker_source="ai",
+        matched_point_ids=["p_unit"],
+    )
+
+    assert question_to_dto(question).matchedPointIds == ["p_unit"]
+
+    student_dto = question_to_dto(question, question_result_id="qr-123", for_student=True)
+    assert student_dto.matchedPointIds is None
+    assert student_dto.questionResultId == "qr-123"
+    assert "p_unit" not in json.dumps(student_dto.model_dump(by_alias=True))
+
+
 def test_student_safe_review_reason_table() -> None:
     """Every shape the joined reason takes, including all-integrity and empty."""
     assert student_safe_review_reason(None) is None

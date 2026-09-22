@@ -59,6 +59,16 @@ describe("isFlagged", () => {
     expect(confidenceTierFor(q({ confidence: 0.5 }))).toBe("uncertain")
     expect(isFlagged(q({ confidence: 0.5 }))).toBe(false)
   })
+
+  it("stale-flag defect (S2 review): false once pendingTeacher says the queue closed", () => {
+    // Same question, `reviewReason` unchanged -- only `pendingTeacher` moves,
+    // exactly as a settled self-mark leaves it. Without this, a question the
+    // self-review panel just reported as marked and closed still counted
+    // toward the Flagged tab and its badge forever.
+    const settled = q({ reviewReason: "low confidence", pendingTeacher: false })
+    expect(isFlagged(settled)).toBe(false)
+    expect(isFlagged(q({ reviewReason: "low confidence", pendingTeacher: true }))).toBe(true)
+  })
 })
 
 describe("filterQuestions", () => {

@@ -49,6 +49,10 @@ class TestModelForNewTags:
         assert s.model_for("correction") == "gemini-2.5-pro"
         assert s.model_for("mark_scheme") == "gemini-2.5-flash"
 
+    def test_self_review_judge_override(self) -> None:
+        s = GeminiSettings(self_review_judge_model="gemini-2.5-flash-lite")
+        assert s.model_for("self_review_judge") == "gemini-2.5-flash-lite"
+
 
 class TestIntegritySettings:
     def test_defaults(self) -> None:

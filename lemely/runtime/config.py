@@ -100,6 +100,7 @@ class GeminiSettings(BaseModel):
     study_plan_model: str | None = None
     integrity_model: str | None = None
     scan_metadata_model: str | None = None
+    self_review_judge_model: str | None = None
     # Escalation: re-mark with a stronger model when marker confidence is low.
     # NOTE (D2.2): this is a *budget* knob — "spend a thinking retry / a Pro call to
     # try to improve this mark before it is final". It is NOT the human-review
@@ -160,6 +161,7 @@ class GeminiSettings(BaseModel):
             "study_plan": self.study_plan_model,
             "integrity": self.integrity_model,
             "scan_metadata": self.scan_metadata_model,
+            "self_review_judge": self.self_review_judge_model,
         }
         return mapping.get(task_tag) or self.model
 

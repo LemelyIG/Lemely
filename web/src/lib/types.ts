@@ -31,6 +31,13 @@ export interface QuestionResult {
   matchedPointIds?: string[]
   reviewReason?: string
   topic?: string
+  /** Mirrors `QuestionResultDTO.pendingTeacher` — whether a teacher still has
+   * an open review queued for this question right now, as opposed to
+   * `reviewReason`'s frozen record of why it was once flagged. `undefined`
+   * on every source that has no queue to ask (a teacher-console grade, a
+   * live `/student/correct` frame); only the student self-review list sets
+   * it, and only there should a `false` be read as "settled". */
+  pendingTeacher?: boolean
 }
 
 export interface WeakArea {

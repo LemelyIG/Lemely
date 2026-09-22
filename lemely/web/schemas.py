@@ -46,6 +46,12 @@ class QuestionResultDTO(ApiModel):
     """``question_results.id`` once the attempt is persisted; the address the
     self-review routes take. ``None`` on a frame built before persistence
     (a teacher-console grade, which has no ``question_results`` row)."""
+    pendingTeacher: bool | None = None
+    """Whether a teacher still has an open review queued for this question,
+    right now — not ``reviewReason``'s frozen record of why it was once
+    flagged. ``None`` on every call site except the student self-review list
+    (``routers/student_self_review.py``), which is the only one with a queue
+    to ask; a client must not read absence as "settled"."""
 
 
 class WeakAreaDTO(ApiModel):
@@ -125,11 +131,22 @@ def question_to_dto(
 ) -> QuestionResultDTO:
     """Convert a core :class:`CorrectedQuestion` into a :class:`QuestionResultDTO`.
 
-    ``for_student`` suppresses everything integrity-related: both flags and any
-    integrity segment of ``review_reason``. It defaults to ``False`` because the
-    teacher console (``routers/teacher.py``) reads this same DTO and integrity
-    findings are exactly what a teacher is there to see — so the sanitising is
-    per call site, never global.
+    ``for_student`` suppresses everything integrity-related — both flags and any
+    integrity segment of ``review_reason`` — and the marker's per-point verdict,
+    ``matched_point_ids``. It defaults to ``False`` because the teacher console
+    (``routers/teacher.py``) reads this same DTO and all three are exactly what a
+    teacher is there to see, so the sanitising is per call site, never global.
+
+    ``matched_point_ids`` is withheld because it *is* the per-point verdict:
+    ``lemely/db/question_points.py`` sets each point row's ``awarded`` to
+    ``point.id in matched_point_ids``, so naming the matched ids names the
+    awarded points. This DTO also carries ``question_result_id``, the id the
+    self-review panel renders on — shipping both would put the answer beside the
+    question a student is asked to commit against, before the reveal (self-review
+    spec: "If the verdict were in the payload and merely hidden in the UI, the
+    entire exercise is defeated by opening devtools"). The question's *aggregate*
+    ``awarded_marks`` stays: the panel sits on a screen that shows the mark, and
+    the promise was only ever to withhold ``awarded`` per point.
     """
     return QuestionResultDTO(
         questionId=question.question_id,
@@ -138,7 +155,7 @@ def question_to_dto(
         markerSource=question.marker_source,
         confidence=question.confidence_score,
         feedback=question.feedback,
-        matchedPointIds=list(question.matched_point_ids) or None,
+        matchedPointIds=None if for_student else (list(question.matched_point_ids) or None),
         reviewReason=(
             student_safe_review_reason(question.review_reason)
             if for_student

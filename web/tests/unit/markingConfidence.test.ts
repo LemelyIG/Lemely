@@ -35,6 +35,28 @@ describe("confidenceTierFor", () => {
     )
   })
 
+  it("stale-flag defect (S2 review): a settled self-review beats a frozen reviewReason", () => {
+    // A resolved `low_confidence` queue row: `pendingTeacher: false` says no
+    // teacher review is open for this question *right now*, and that wins
+    // outright even though `reviewReason` -- the marker's frozen record of
+    // why it was once flagged -- is still sitting there, unrewritten by
+    // design. Before this fix there was no `pendingTeacher` signal at all,
+    // so a self-reviewed, fully-settled question still read "needs-review"
+    // forever.
+    expect(
+      confidenceTierFor({ reviewReason: "low confidence", pendingTeacher: false }),
+    ).toBe("confident")
+    // `pendingTeacher: true` (still open) behaves exactly as `reviewReason`
+    // alone always has.
+    expect(
+      confidenceTierFor({ reviewReason: "low confidence", pendingTeacher: true }),
+    ).toBe("needs-review")
+    // `pendingTeacher` absent (a teacher-console grade, a live
+    // `/student/correct` frame -- no queue to ask) must not change today's
+    // behaviour for every source that never sends the field.
+    expect(confidenceTierFor({ reviewReason: "low confidence" })).toBe("needs-review")
+  })
+
   it("treats a missing score as confident rather than doubtful", () => {
     // The arguable call, made deliberately: MCQ marking is deterministic
     // string comparison and carries no score, so the alternative would flag

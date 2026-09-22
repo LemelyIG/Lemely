@@ -1076,3 +1076,70 @@ def test_correct_complete_frame_carries_question_result_ids(
         ).all()
     expected = {question_id: str(row_id) for question_id, row_id in rows}
     assert {q["questionId"]: q["questionResultId"] for q in complete_frame["questions"]} == expected
+
+
+def test_correct_complete_frame_names_no_awarded_mark_point(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The live frame carries ``questionResultId`` — so it must not carry the verdict.
+
+    ``matchedPointIds`` is the set of point ids the marker awarded, and
+    ``QuestionResultPoint.awarded`` is derived from exactly that list
+    (``lemely/db/question_points.py``). The same frame is what
+    ``CorrectPaper`` parks in ``location.state`` and what supplies the id the
+    self-review panel renders on, so shipping both puts the answer and the
+    question on one screen: a student could read the awarded points out of the
+    Network tab before committing to a self-mark. A teacher surface still gets
+    the field — this is gated on ``for_student``, not deleted.
+    """
+    marked = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=3,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.55,
+        needs_teacher_review=True,
+        marker_source="ai",
+        matched_point_ids=["p_method"],
+    )
+    report = AccuracyReport(
+        correction=CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0580",
+                session_month="May/June",
+                session_year=2024,
+                paper_number=2,
+                paper_variant=1,
+            ),
+            questions=[marked],
+        ),
+        weaknesses=WeaknessReport(weak_areas=[]),
+        grade_prediction=GradePrediction(
+            awarded_marks=1,
+            maximum_marks=3,
+            percentage=33.33,
+            grade="E",
+            confidence=ConfidenceBand.LOW,
+        ),
+    )
+    monkeypatch.setattr(student, "grade_paper", lambda *a, **k: report)
+
+    api, _, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    resp = api.post("/api/student/correct", json={"paperId": up.json()["paperId"]})
+    assert resp.status_code == 200
+
+    complete_frame = next(
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data:") and '"phase": "complete"' in frame
+    )
+    [question] = complete_frame["questions"]
+    assert question["matchedPointIds"] is None
+    # The whole frame, not just that key: a point id reaching the student under
+    # any other name is the same reveal.
+    assert "p_method" not in json.dumps(complete_frame)

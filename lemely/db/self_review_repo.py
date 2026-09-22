@@ -18,13 +18,18 @@ that opened the ``low_confidence`` review-queue row at correction time, so
 "the marker was unsure" means one thing across both paths. Integrity flags
 never reach the rule.
 
-**One transaction.** Point rows, ``student_selfmark_marks``, the
-``student_selfmark`` revision, the totals/weakness recompute (the module-level
-functions in :mod:`lemely.db.review_repo` — the same code the teacher-override
-path runs, so identical marks can never round differently) and the
-``low_confidence`` queue auto-resolve all commit together or not at all. The
-``QuestionResult`` row is locked ``FOR UPDATE`` for the pass, which is what
-turns a racing second POST into a 409 rather than a second self-mark.
+**One transaction — but not the judge.** ``submit`` is three phases (Task
+11a): a read-only plan, the judge round-trips themselves with no session or
+lock held at all, then a single locked apply. Point rows,
+``student_selfmark_marks``, the ``student_selfmark`` revision, the
+totals/weakness recompute (the module-level functions in
+:mod:`lemely.db.review_repo` — the same code the teacher-override path runs,
+so identical marks can never round differently) and the ``low_confidence``
+queue auto-resolve all commit together in that last phase, or not at all. The
+``QuestionResult`` row is locked ``FOR UPDATE`` only for the apply, which is
+what turns a racing second POST into a 409 rather than a second self-mark —
+not the read in the planning phase, which is unlocked precisely so an LLM
+call never holds a row lock or a pooled connection.
 
 **Judge failure is never a decision.** ``judge=None`` (no Gemini key), an
 exception, or a malformed answer all leave ``evidence_verdict`` NULL, move no
@@ -84,6 +89,7 @@ from lemely.db.review_repo import (
     recompute_weakness_records,
 )
 from lemely.io.grade_boundaries import GradeBoundaryStore
+from lemely.io.prompts.self_review_judge import evidence_was_tampered
 
 if TYPE_CHECKING:
     from collections.abc import Iterable, Sequence
@@ -218,6 +224,15 @@ class AttemptQuestion:
     ``self_reviewable`` is derived from the presence of point rows — the same
     fact :meth:`SelfReviewService.get` 404s on — so the screen and the route
     can never disagree about which rows offer the panel.
+
+    ``pending_teacher`` is the truthful, current answer to "is a teacher
+    still going to look at this question": whether an open
+    :class:`ReviewQueueItem` exists for it right now, of any reason. Unlike
+    ``review_reason`` — the marker's own record of *why* the question was
+    flagged, fixed at marking time and never ours to rewrite — this reflects
+    the queue as it stands, so it drops to ``False`` the moment a self-mark
+    (or anything else) resolves the row, even though ``review_reason`` still
+    reads exactly as it did.
     """
 
     question_result_id: uuid.UUID
@@ -231,6 +246,7 @@ class AttemptQuestion:
     topic: str | None
     matched_point_ids: list[str]
     self_reviewable: bool
+    pending_teacher: bool
 
 
 def question_sort_key(question_id: str) -> tuple[tuple[int, int, str], ...]:
@@ -295,7 +311,11 @@ class SelfReviewService:
     ) -> RevealedSelfReview:
         """Record the student's one self-mark pass and reveal the marker's verdict.
 
-        One transaction; see the module docstring for what moves and why.
+        Three phases, none of which shares a session with another (Task 11a):
+        a read-only plan (no lock), the judge round-trips themselves (no
+        session at all — an LLM call can take seconds and must never hold a
+        row lock or a pooled connection while it does), then the locked apply
+        that writes. See the module docstring for what moves and why.
 
         Raises:
             SelfReviewNotFoundError: as :meth:`get` (404).
@@ -307,10 +327,70 @@ class SelfReviewService:
         student_uuid = _as_uuid(student_id)
         attempt_uuid = _as_uuid(attempt_id)
         qr_uuid = _as_uuid(question_result_id)
+
+        # Phase A — plan, read-only, no lock. A submission that fails
+        # validation here, or arrives after the question was already
+        # self-marked, leaves the question untouched and re-submittable,
+        # exactly as `_verdicts_by_point`'s docstring promises. Nothing below
+        # this block writes.
+        with self._sessionmaker() as session:
+            attempt, qr = _owned_question(
+                session, student_uuid, attempt_uuid, qr_uuid, for_update=False
+            )
+            if qr.is_self_marked:
+                raise SelfReviewAlreadySubmittedError(
+                    f"Question {qr.id} has already been self-marked"
+                )
+            by_point = _verdicts_by_point(verdicts, qr.points)
+            low_confidence = is_marking_low_confidence(qr)
+            teacher_settled = qr.is_overridden
+            judge_requests: dict[str, JudgeRequest] = {}
+            for point in qr.points:
+                verdict = by_point[point.mark_point_id]
+                evidence = _clean_text(verdict.evidence, MAX_EVIDENCE_CHARS)
+                decision = _decide_with_precedence(
+                    ai_awarded=point.awarded,
+                    student_earned=verdict.earned,
+                    low_confidence=low_confidence,
+                    has_evidence=evidence is not None,
+                    teacher_settled=teacher_settled,
+                )
+                if decision is PointDecision.JUDGE:
+                    judge_requests[point.mark_point_id] = JudgeRequest(
+                        subject_code=attempt.subject_code or "",
+                        question_id=qr.question_id,
+                        point_text=point.point_text,
+                        mark_type=point.mark_type,
+                        tariff=point.tariff,
+                        student_answer=qr.student_answer,
+                        marker_rationale=point.rationale or qr.rationale or qr.feedback,
+                        student_claims_earned=verdict.earned,
+                        student_evidence=evidence or "",
+                    )
+
+        # Phase B — judge, holding nothing: no session, no transaction, no
+        # row lock, no pooled connection. Phase A's `with` block above has
+        # already exited by the time this runs, so its session is closed and
+        # its connection returned to the pool before the first judge call —
+        # not merely unlocked, but off the pool entirely. `qr` is detached
+        # here, but every attribute `_judge_safely` reads off it (`qr.id`,
+        # for logging) was already loaded while the session above was open.
+        judge_results: dict[str, JudgeVerdict | None] = {
+            mark_point_id: self._judge_safely(request, qr)
+            for mark_point_id, request in judge_requests.items()
+        }
+
+        # Phase C — apply, locked.
         with self._sessionmaker() as session, session.begin():
             attempt, qr = _owned_question(
                 session, student_uuid, attempt_uuid, qr_uuid, for_update=True
             )
+            # Phase A's check above ran against an unlocked read and is only a
+            # fast reject for the common case — a second POST could pass it
+            # concurrently, or land while this one was off judging. This
+            # re-check runs against the row now locked FOR UPDATE, so it is
+            # the one that actually turns a racing second submission into a
+            # 409 rather than a second self-mark: the one-pass guarantee.
             if qr.is_self_marked:
                 raise SelfReviewAlreadySubmittedError(
                     f"Question {qr.id} has already been self-marked"
@@ -333,36 +413,28 @@ class SelfReviewService:
                 judge_reason: str | None = None
                 granted = False
 
-                decision = decide_point(
+                # Recomputed from the state this locked pass actually sees —
+                # never from Phase A's plan, which may now be stale (a
+                # teacher override, say, landed while Phase B was judging).
+                decision = _decide_with_precedence(
                     ai_awarded=point.awarded,
                     student_earned=verdict.earned,
                     low_confidence=low_confidence,
                     has_evidence=evidence is not None,
+                    teacher_settled=teacher_settled,
                 )
-                if teacher_settled and decision is not PointDecision.AGREE:
-                    # Precedence already settles this question; the self-mark
-                    # is recorded for its learning signal and nothing moves,
-                    # so a judge call could not change any outcome.
-                    decision = PointDecision.NO_CHANGE
 
                 if decision is PointDecision.GRANT:
                     point.evidence_verdict = EvidenceVerdict.not_required
                     granted = True
                 elif decision is PointDecision.JUDGE:
-                    outcome = self._judge_safely(
-                        JudgeRequest(
-                            subject_code=attempt.subject_code or "",
-                            question_id=qr.question_id,
-                            point_text=point.point_text,
-                            mark_type=point.mark_type,
-                            tariff=point.tariff,
-                            student_answer=qr.student_answer,
-                            marker_rationale=point.rationale or qr.rationale or qr.feedback,
-                            student_claims_earned=verdict.earned,
-                            student_evidence=evidence or "",
-                        ),
-                        qr,
-                    )
+                    # `judge_results` holds Phase B's verdicts, keyed by the
+                    # points Phase A planned to judge. A point absent here
+                    # means the state drifted inside the window and this
+                    # point now needs a judge that was never asked — the same
+                    # honest "unjudged" path as a judge failure, not a silent
+                    # verdict.
+                    outcome = judge_results.get(point.mark_point_id)
                     if outcome is None:
                         unjudged = True
                     else:
@@ -513,6 +585,19 @@ class SelfReviewService:
                         group_max_marks=group_max_marks,
                     )
                 )
+            # Same one-query-for-the-whole-attempt shape as `group_flags`
+            # above, and for the same reason: a per-question `EXISTS` here
+            # would be another 40-question paper turned into 40 round trips.
+            open_review_ids: set[uuid.UUID] = {
+                qr_id
+                for qr_id in session.scalars(
+                    select(ReviewQueueItem.question_result_id).where(
+                        ReviewQueueItem.question_result_id.in_([qr.id for qr in results]),
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                ).all()
+                if qr_id is not None
+            }
             return [
                 AttemptQuestion(
                     question_result_id=qr.id,
@@ -527,6 +612,7 @@ class SelfReviewService:
                     matched_point_ids=list(qr.matched_point_ids),
                     self_reviewable=bool(group_flags.get(qr.id))
                     and points_are_settleable(group_flags[qr.id]),
+                    pending_teacher=qr.id in open_review_ids,
                 )
                 for qr in results
             ]
@@ -537,9 +623,24 @@ class SelfReviewService:
         A failure is never a decision — the caller opens a
         ``student_evidence_unjudged`` queue row. The verdict's reason is an
         LLM string bound for JSONB, so it is NUL-stripped and truncated here.
+
+        Whether the fence marker had to be stripped from ``request`` is
+        checked here, in both failure branches, not only inside
+        :class:`GeminiEvidenceJudge`: an attempted forgery is exactly the
+        thing worth recording, and on a deployment with no judge (or one
+        that just failed) it would otherwise go unlogged — the near-zero-
+        false-positive signal the module docstring on
+        :mod:`lemely.io.evidence_judge` describes would silently not apply in
+        the state most of this branch is actually developed and run in
+        (S2 part2+3 final review, m-3).
         """
+        sanitised = evidence_was_tampered(request)
         if self._judge is None:
-            log.warning("self_review_judge_unavailable", question_result_id=str(qr.id))
+            log.warning(
+                "self_review_judge_unavailable",
+                question_result_id=str(qr.id),
+                evidence_sanitised=sanitised,
+            )
             return None
         try:
             verdict = self._judge.judge(request)
@@ -552,11 +653,43 @@ class SelfReviewService:
             # .reason) is caught here too, not just a raised exception from
             # the judge call itself — junk from a judge must never abort the
             # student's whole self-mark (finding 1).
-            log.warning("self_review_judge_failed", question_result_id=str(qr.id), error=str(exc))
+            log.warning(
+                "self_review_judge_failed",
+                question_result_id=str(qr.id),
+                error=str(exc),
+                evidence_sanitised=sanitised,
+            )
             return None
 
 
 # ── Internals ────────────────────────────────────────────────────────────────
+
+
+def _decide_with_precedence(
+    *,
+    ai_awarded: bool,
+    student_earned: bool,
+    low_confidence: bool,
+    has_evidence: bool,
+    teacher_settled: bool,
+) -> PointDecision:
+    """:func:`decide_point` plus the teacher-override downgrade.
+
+    Pulled out so Phase A's plan and Phase C's apply (:meth:`SelfReviewService.submit`)
+    compute this identically, from whatever state each actually reads.
+    """
+    decision = decide_point(
+        ai_awarded=ai_awarded,
+        student_earned=student_earned,
+        low_confidence=low_confidence,
+        has_evidence=has_evidence,
+    )
+    if teacher_settled and decision is not PointDecision.AGREE:
+        # Precedence already settles this question; the self-mark is recorded
+        # for its learning signal and nothing moves, so a judge call could
+        # not change any outcome.
+        return PointDecision.NO_CHANGE
+    return decision
 
 
 @dataclass(slots=True)
@@ -590,9 +723,17 @@ def _settle_groups(passes: list[_PointPass]) -> int:
     member still covers removes nothing; in both directions the result is
     never further from the marker's total than the per-point rule was.
 
-    Per point: the granted members whose direction is the group's are
-    ``mark_changed``; every other granted member is ``absorbed_by_group`` —
-    recorded, never silent (module docstring).
+    Per point: when every granted member of a group agrees on direction, the
+    granted members are ``mark_changed`` and every other granted member is
+    ``absorbed_by_group`` — recorded, never silent (module docstring). When a
+    group has granted members in *both* directions, that same-sign rule
+    mis-describes what happened (S2 part2+3 final review, m-5): it can flag a
+    downward grant ``absorbed_by_group`` when it in fact removed a mark, and
+    flag an upward grant ``mark_changed`` twice for one net mark. In that
+    case each granted member's own flag instead follows whether *its own*
+    verdict actually moved the group's capped running total, walked in list
+    order — order-dependent only when the group is at capacity, which is an
+    inherent ambiguity of a shared cap, not a property this method invents.
     """
     # A synthetic key for an independent point must never collide with a real
     # ``group_key`` — a scheme whose key were literally ``"point:0"`` would
@@ -614,11 +755,37 @@ def _settle_groups(passes: list[_PointPass]) -> int:
         )
         group_delta = after - before
         delta += group_delta
-        for m in members:
-            if not m.granted:
-                continue
-            m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
-            m.absorbed_by_group = not m.mark_changed
+
+        granted = [m for m in members if m.granted]
+        directions = {m.earned for m in granted}
+        if len(directions) <= 1:
+            # Every granted member (if any) agrees on direction: the naive
+            # same-sign rule is unambiguous — a group that moved credits all
+            # of them, a group that didn't absorbs all of them.
+            for m in granted:
+                m.mark_changed = group_delta != 0 and (group_delta > 0) == m.earned
+                m.absorbed_by_group = not m.mark_changed
+        else:
+            # Mixed-direction grants: walk the group in list order, tracking
+            # each member's own marginal contribution to the capped running
+            # total, before and after. A member's flag is `mark_changed`
+            # only if flipping *its own* verdict actually moved that running
+            # total; the rest are `absorbed_by_group`.
+            running_before = running_after = 0
+            capped_before_prev = capped_after_prev = 0
+            for m in members:
+                running_before += m.point.tariff if m.point.awarded else 0
+                capped_before = min(cap, running_before)
+                after_flag = m.earned if m.granted else m.point.awarded
+                running_after += m.point.tariff if after_flag else 0
+                capped_after = min(cap, running_after)
+                if m.granted:
+                    m.mark_changed = (capped_after - capped_after_prev) != (
+                        capped_before - capped_before_prev
+                    )
+                    m.absorbed_by_group = not m.mark_changed
+                capped_before_prev = capped_before
+                capped_after_prev = capped_after
     return delta
 
 
