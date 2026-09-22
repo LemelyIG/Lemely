@@ -12,7 +12,7 @@ route is not an existence oracle for another student's attempts.
 
 from __future__ import annotations
 
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -38,6 +38,10 @@ from lemely.web.schemas_student_self_review import (
     SelfReviewSubmissionDTO,
 )
 
+if TYPE_CHECKING:
+    from lemely.web.schemas import MarkerSource
+    from lemely.web.schemas_student_self_review import EvidenceVerdictWire
+
 router = APIRouter(prefix="/api/student/attempts")
 
 _SELF_REVIEW_PATH = "/{attempt_id}/questions/{question_result_id}/self-review"
@@ -52,6 +56,82 @@ def _raise_for(exc: SelfReviewError) -> NoReturn:
     if isinstance(exc, SelfReviewValidationError):
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+def _marker_source(value: str) -> MarkerSource:
+    """Narrow :attr:`AttemptQuestion.marker_source` onto the wire's `MarkerSource` literal.
+
+    ``AttemptQuestion.marker_source`` (``self_review_repo.py``) is a plain
+    ``str`` -- the repo layer sources it from
+    ``lemely.db.models.enums.MarkerSource.value`` and does not import the web
+    layer's literal type, mirroring
+    ``lemely.web.routers.practice._marker_source``, the sibling instance of
+    this same defect (US-041 wire-literals fix). ``QuestionResultDTO.markerSource``
+    is typed ``MarkerSource`` (``Literal["deterministic", "ai", "missing",
+    "dropped", "blank"]``) precisely so the frontend can branch on this value,
+    so a ``str`` reaching it unchecked would defeat that one check. An explicit
+    ``if``/``elif`` chain, not a ``cast``/``# type: ignore``, so mypy proves the
+    return really is one of the five literal values and a sixth, unexpected
+    one raises instead of silently reaching the wire.
+
+    Checked, not assumed: ``lemely.db.models.enums.MarkerSource`` has exactly
+    five members -- ``deterministic``/``ai``/``missing``/``dropped``/``blank``
+    -- with string values identical to this literal's, and
+    ``self_review_repo.py``'s sole production call site (``list_questions``)
+    always passes ``qr.marker_source.value`` where
+    ``qr.marker_source: Mapped[MarkerSource]``. So today the ``ValueError``
+    branch is unreachable in production: it would only fire if a future
+    migration added a sixth db-enum member without updating this function to
+    match.
+    """
+    if value == "deterministic":
+        return "deterministic"
+    if value == "ai":
+        return "ai"
+    if value == "missing":
+        return "missing"
+    if value == "dropped":
+        return "dropped"
+    if value == "blank":
+        return "blank"
+    raise ValueError(f"Unknown marker source: {value!r}")  # pragma: no cover - enum guarantees this
+
+
+def _evidence_verdict(value: str | None) -> EvidenceVerdictWire | None:
+    """Narrow :attr:`RevealedPoint.evidence_verdict` onto the wire's `EvidenceVerdictWire` literal.
+
+    ``RevealedPoint.evidence_verdict`` (``self_review_repo.py``) is a plain
+    ``str | None`` -- the repo layer sources it from
+    ``lemely.db.models.enums.EvidenceVerdict.value`` (or ``None``) and does
+    not import the web layer's literal type.
+    ``SelfReviewRevealedPointDTO.evidenceVerdict`` is typed
+    ``EvidenceVerdictWire | None`` (``Literal["accepted", "rejected",
+    "not_required"] | None``) precisely so the frontend can branch on this
+    value, so a ``str`` reaching it unchecked would defeat that one check.
+    An explicit ``if``/``elif`` chain, not a ``cast``/``# type: ignore``, so
+    mypy proves the return really is one of the three literal values (or
+    ``None``) and a fourth, unexpected string raises instead of silently
+    reaching the wire.
+
+    Checked, not assumed: ``lemely.db.models.enums.EvidenceVerdict`` has
+    exactly three members -- ``accepted``/``rejected``/``not_required`` --
+    with string values identical to this literal's, and
+    ``self_review_repo.py``'s sole production call site (``_revealed_view``)
+    always passes ``p.evidence_verdict.value if p.evidence_verdict else
+    None`` where ``p.evidence_verdict: Mapped[EvidenceVerdict | None]``. So
+    today the ``ValueError`` branch is unreachable in production: it would
+    only fire if a future migration added a fourth db-enum member without
+    updating this function to match.
+    """
+    if value is None:
+        return None
+    if value == "accepted":
+        return "accepted"
+    if value == "rejected":
+        return "rejected"
+    if value == "not_required":
+        return "not_required"
+    raise ValueError(f"Unknown evidence verdict: {value!r}")  # pragma: no cover
 
 
 def _pending_dto(view: PendingSelfReview) -> SelfReviewPendingDTO:
@@ -107,7 +187,7 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
                 awarded=p.awarded,
                 studentSelfmark=p.student_selfmark,
                 studentEvidence=p.student_evidence,
-                evidenceVerdict=p.evidence_verdict,
+                evidenceVerdict=_evidence_verdict(p.evidence_verdict),
                 markChanged=p.mark_changed,
                 absorbedByGroup=p.absorbed_by_group,
                 judgeReason=p.judge_reason,
@@ -140,7 +220,7 @@ def _question_dto(row: AttemptQuestion) -> QuestionResultDTO:
         questionId=row.question_id,
         awardedMarks=row.effective_marks,
         maxMarks=row.maximum_marks,
-        markerSource=row.marker_source,
+        markerSource=_marker_source(row.marker_source),
         confidence=row.confidence_score,
         feedback=row.feedback,
         matchedPointIds=None,

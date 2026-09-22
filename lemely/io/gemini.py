@@ -446,7 +446,16 @@ class GeminiClient:
         #: call site does not pass an explicit ``cache_mode`` (spec §3.3):
         #: ``_build_run_manifest`` reads this attribute rather than assuming
         #: the ``"read_write"`` literal (#73).
-        self.default_cache_mode = default_cache_mode
+        #:
+        #: Explicitly annotated, not left to inference: pyright widens an
+        #: un-annotated ``self.attr = param`` assignment to ``str`` even when
+        #: ``param`` is already typed ``Literal[...]`` (confirmed by isolated
+        #: repro), which is what let ``cache_mode = self.default_cache_mode``
+        #: below (:meth:`generate_structured`, :meth:`generate_with_code_execution`)
+        #: silently widen back to ``str`` under pyright while mypy stayed
+        #: precise. An explicit annotation pins the attribute's type instead
+        #: of leaving it to that widening.
+        self.default_cache_mode: Literal["read_write", "bypass", "refresh"] = default_cache_mode
 
     @property
     def _client(self) -> Any:

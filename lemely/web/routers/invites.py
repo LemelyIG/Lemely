@@ -29,7 +29,7 @@ enforced in the service, not a route-level guard.
 # imports at runtime (see the per-file-ignore in pyproject.toml).
 from __future__ import annotations
 
-from typing import Annotated
+from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -40,11 +40,47 @@ from lemely.db.invite_repo import (
     InviteService,
 )
 from lemely.db.models import Invite
-from lemely.db.models.enums import Role
+from lemely.db.models.enums import InviteRole, Role
 from lemely.web.deps import AuthContext, get_auth_context, get_invite_service
 from lemely.web.schemas_invites import InviteCodeDTO, InvitePreviewDTO, RedeemInviteResponseDTO
 
 router = APIRouter(prefix="/api/invites")
+
+
+def _mintable_invite_role(role: InviteRole) -> Literal["student", "teacher"]:
+    """Narrow :class:`InviteRole` onto :attr:`InviteCodeDTO.role`'s wire literal.
+
+    ``InviteRole`` (``lemely.db.models.enums``) has three members --
+    ``student``/``teacher``/``parent`` -- deliberately narrower than the
+    five-member ``Role``. ``InviteCodeDTO.role`` is narrower still:
+    ``Literal["student", "teacher"]``, because the only two mint routes that
+    build an :class:`InviteCodeDTO` (``school.py``'s
+    ``mint_seat_invite_code`` and ``classes.py``'s ``mint_class_invite_code``)
+    both mint with ``role=InviteRole.student`` today -- neither ever mints a
+    ``teacher`` or ``parent`` invite through this path. Parent invites are
+    minted by :meth:`~lemely.db.invite_repo.InviteService.mint_parent_invite`
+    and :meth:`~lemely.db.invite_repo.InviteService.rotate_parent_code`, but
+    those return :class:`ParentInviteLinkDTO`/:class:`ParentCodeDTO`
+    (``student.py``), never this DTO.
+
+    So the ``parent`` branch below is unreachable **today**, checked, not
+    assumed -- both ``_invite_to_dto`` call sites pass a freshly-minted
+    ``Invite`` whose ``role`` was set from a hardcoded ``InviteRole.student``
+    a few lines up the same call stack. It is real risk for tomorrow: if a
+    third mint route or a future ``mint_class_invite``/``mint_seat_invite``
+    parameter ever lets a caller choose ``InviteRole.parent`` and routes the
+    result through ``_invite_to_dto``, pydantic's own field validation would
+    raise inside the constructor before this ever reaches the wire -- this
+    function's explicit raise just makes that failure a clear ``ValueError``
+    at the narrowing site (mypy-checked) instead of an opaque
+    ``ValidationError`` from ``InviteCodeDTO(...)``, and a ``cast``/
+    ``# type: ignore`` here would suppress that message entirely.
+    """
+    if role is InviteRole.student:
+        return "student"
+    if role is InviteRole.teacher:
+        return "teacher"
+    raise ValueError(f"Invite role {role!r} has no mintable wire representation")
 
 
 def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
@@ -57,7 +93,7 @@ def _invite_to_dto(invite: Invite) -> InviteCodeDTO:
     """
     return InviteCodeDTO(
         code=invite.code,
-        role=invite.role.value,
+        role=_mintable_invite_role(invite.role),
         schoolId=str(invite.school_id) if invite.school_id is not None else None,
         classId=str(invite.class_id) if invite.class_id is not None else None,
     )

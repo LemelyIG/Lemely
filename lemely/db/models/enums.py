@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import enum
 from datetime import datetime
+from typing import Literal
 
 import sqlalchemy as sa
 from sqlalchemy.orm import Mapped, mapped_column
@@ -69,8 +70,15 @@ class SessionMonth(enum.Enum):
     specimen = "specimen"
 
 
-#: Display labels for :class:`SessionMonth` members.
-SESSION_MONTH_LABELS: dict[SessionMonth, str] = {
+#: Display labels for :class:`SessionMonth` members. Typed onto the exact
+#: ``Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]`` that
+#: ``lemely.core.schemas.ExamMetadata.session_month`` declares (same four
+#: values), rather than the wider ``str`` this dict used to carry -- a
+#: ``dict[SessionMonth, str]`` let ``history_repo.py``/``review_repo.py``
+#: feed a value with no static guarantee of membership into that ``Literal``
+#: field, which mypy's pydantic plugin does not check on construction.
+#: Typing the lookup table itself closes every call site at once.
+SESSION_MONTH_LABELS: dict[SessionMonth, Literal["May/June", "Oct/Nov", "Feb/Mar", "Specimen"]] = {
     SessionMonth.may_june: "May/June",
     SessionMonth.oct_nov: "Oct/Nov",
     SessionMonth.feb_mar: "Feb/Mar",
