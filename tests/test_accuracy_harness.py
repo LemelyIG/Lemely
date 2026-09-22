@@ -351,7 +351,13 @@ class LoadGoldenCasesTests(unittest.TestCase):
 
 class MetricComputationTests(unittest.TestCase):
     def _qr(
-        self, predicted: int, truth: int, confidence: float, review: bool, is_mcq: bool = False
+        self,
+        predicted: int,
+        truth: int,
+        confidence: float,
+        review: bool,
+        is_mcq: bool = False,
+        scored: bool = True,
     ) -> object:
         from lemely.accuracy.harness import QuestionResult
 
@@ -362,6 +368,7 @@ class MetricComputationTests(unittest.TestCase):
             truth_marks=truth,
             confidence_score=confidence,
             needs_teacher_review=review,
+            scored=scored,
         )
 
     def test_all_correct_accuracy_is_1(self):
@@ -443,6 +450,35 @@ class MetricComputationTests(unittest.TestCase):
         buckets = _build_calibration(results)
         total_predictions = sum(b.predictions for b in buckets)
         self.assertEqual(total_predictions, 1)
+
+    def test_unscored_result_excluded_from_calibration(self) -> None:
+        """Finding H (US-039 consumer fixes, lane 3): a genuinely-blank answer
+        earns ``predicted_marks=0`` against a ``truth_marks=0`` ground truth,
+        so ``is_correct`` is True at ``confidence_score=0.0`` -- a correct
+        prediction the calibration curve would read as "confidently right
+        when it claims to be unsure", even though no marker ever formed an
+        opinion. ``scored=False`` marks that row as having no marking
+        evidence, and ``_build_calibration`` must drop it from the
+        population entirely (not just from the numerator).
+        """
+        from lemely.accuracy.harness import _build_calibration
+
+        results = [self._qr(0, 0, 0.0, False, scored=False)]
+        buckets = _build_calibration(results)
+        total_predictions = sum(b.predictions for b in buckets)
+        self.assertEqual(total_predictions, 0)
+
+    def test_unscored_result_still_counts_for_mark_accuracy(self) -> None:
+        """The same blank row must NOT disappear from ``mark_accuracy`` --
+        a blank scored 0 against a truth of 0 is a genuinely correct
+        prediction for that metric. Only the calibration population is
+        wrong (Finding H); ``scored`` must not touch ``_compute_metrics``.
+        """
+        from lemely.accuracy.harness import _compute_metrics
+
+        results = [self._qr(0, 0, 0.0, False, scored=False)]
+        m = _compute_metrics(results)
+        self.assertAlmostEqual(m.mark_accuracy, 1.0)
 
 
 class MeasureAccuracyTests(unittest.TestCase):

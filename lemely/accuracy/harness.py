@@ -336,6 +336,18 @@ class QuestionResult:
     truth_marks: int
     confidence_score: float
     needs_teacher_review: bool
+    #: US-039 consumer fixes, Finding H: True iff a marker actually formed an
+    #: opinion about this leaf. ``_build_blank_corrected`` and
+    #: ``_build_missing_corrected`` short-circuit to
+    #: ``confidence_score=0.0``/``needs_teacher_review=False`` for a leaf no
+    #: engine ever looked at (``marker_source in ("missing", "dropped")``) --
+    #: a genuine blank scored 0 against a truth of 0 is a real correct
+    #: prediction for ``mark_accuracy``, but it is not a confidence signal:
+    #: it manufactures a "correct at 0.0 confidence" datum that pollutes the
+    #: calibration curve (see ``_build_calibration``). Defaults to True so
+    #: every pre-existing call site (tests included) keeps its old meaning;
+    #: only the real marker_source-aware construction site sets it False.
+    scored: bool = True
     extraction_confidence: float | None = None
     maximum_marks: int | None = None
     review_reason: str | None = None
@@ -683,7 +695,7 @@ def _metrics_from_eval_records(
 
 
 def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]:
-    """Build calibration buckets from every question result, MCQ and theory alike.
+    """Build calibration buckets from every SCORED question result, MCQ and theory alike.
 
     D19 (spec §2.1): previously filtered to ``question_type == "theory"``
     only, silently excluding every MCQ result from the calibration curve.
@@ -691,9 +703,24 @@ def _build_calibration(results: list[QuestionResult]) -> list[CalibrationBucket]
     belongs in the same curve. This does not touch `mark_accuracy_theory`'s
     own theory-only selection in `_compute_metrics` — D19 is specifically
     about the calibration curve.
+
+    US-039 consumer fixes, Finding H: ``r.scored is False`` means no marker
+    ever formed an opinion about this leaf (a genuine blank, or a leaf
+    ``correct_paper`` skipped marking entirely) — its
+    ``confidence_score=0.0`` is not a confidence judgement, it is the
+    absence of one. Including it would add a "correct prediction at zero
+    confidence" datum to the lowest bucket for every such leaf, flattening
+    the calibration curve by an amount proportional to the corpus's blank
+    rate. Excluding it here — and ONLY here, `mark_accuracy` still wants the
+    row since a blank scored 0 against a truth of 0 is a genuinely correct
+    prediction for that metric — invalidates every calibration baseline
+    measured before this fix; that is accepted, not incidental. See the
+    commit message and CHANGELOG.
     """
     buckets = _make_calibration_buckets()
     for r in results:
+        if not r.scored:
+            continue
         _assign_to_bucket(buckets, r.confidence_score, r.is_correct)
     return buckets
 
@@ -1230,6 +1257,14 @@ def measure_accuracy(
                 truth_marks=gt.awarded_marks,
                 confidence_score=cq.confidence_score,
                 needs_teacher_review=cq.needs_teacher_review,
+                # Finding H (US-039 consumer fixes): "missing"/"dropped" mean
+                # no engine ever formed an opinion about this leaf (a
+                # genuine blank short-circuits to marker_source="missing",
+                # per _build_blank_corrected's docstring) -- its
+                # confidence_score is a placeholder, not a signal, and must
+                # not enter the calibration curve. See QuestionResult.scored
+                # and _build_calibration.
+                scored=cq.marker_source not in ("missing", "dropped"),
                 # Only real vision extraction produces a measured extraction
                 # confidence; the oracle+mark bypass injects a constant 1.0
                 # `ExtractedAnswer.confidence` purely to satisfy the schema
