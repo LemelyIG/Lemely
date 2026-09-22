@@ -584,7 +584,7 @@ class GradingSettings(BaseModel):
     # See `correction_ai._maybe_apply_ecf_substitution` for the gate/chain
     # rules and the measured activation ceiling, published as three
     # separate numbers rather than one (a single number invited reading a
-    # true zero as a regression): GATE population 28 points / 10 of 289
+    # true zero as a regression): GATE population 26 points / 10 of 289
     # committed schemes (`_ECF_MARKER_RE`); genuine CROSS-LEAF chain
     # population 438; their INTERSECTION -- the actual number of points I7
     # can activate on -- 0. The gated and M/A/B/C-typed populations are

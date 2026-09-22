@@ -190,6 +190,23 @@ class TestUnwiredFlagsAreDisclosedInProse:
         assert "US-040" in block
         assert "not read by any" in block
 
+    def test_ecf_substitution_gate_population_figure_is_current(self) -> None:
+        """`4759d116` dropped `\\bdep\\b` from `_ECF_MARKER_RE`, narrowing the
+        measured gate population from 28 points/11 schemes to 26 points/10
+        schemes (`lemely.io.correction_ai._ECF_MARKER_RE`'s docstring, and
+        `_maybe_apply_ecf_substitution`'s activation-ceiling docstring, were
+        both updated to match). This is a CURRENT-state claim about the
+        deployed gate's measured ceiling, not a historical note (contrast
+        `correction_ai.py`'s two deliberately-kept `28` references, which
+        narrate the re-measurement itself) -- it must stay in sync with the
+        live figure, not the stale one from before the `dep`-token fix.
+        """
+        block = self._comment_block_before("ecf_substitution: bool = False")
+        # The pre-fix, now-stale figure must not survive as a current claim.
+        assert "28 points" not in block
+        assert "26 points" in block
+        assert "10 of 289" in block or "10 schemes" in block
+
 
 class TestIntegritySettings:
     def test_defaults(self) -> None:
