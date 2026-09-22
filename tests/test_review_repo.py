@@ -799,6 +799,47 @@ def test_review_reasons_for_structural_flag_survives_plagiarism_flag() -> None:
     }
 
 
+def test_review_reasons_for_blank_carveout_does_not_fire_without_plagiarism_flag() -> None:
+    """Regression guard for a bug this fix's own first draft introduced.
+
+    Fixing Finding A by adding an ``_is_unflagged_blank(question)`` disjunct
+    to ``marking_flagged``'s suppression, on its own, is wrong: it also fires
+    for a NON-blank question whose ``review_reason`` happens to collide with
+    ``_BLANK_ANSWER_REVIEW_REASON`` (the ``--mcq-only`` known-limit collision
+    ``review_queue_rules.py``'s own docstring already discusses), even with
+    NO plagiarism flag anywhere in sight -- silencing a real marking-side
+    ``low_confidence`` row that has nothing to do with plagiarism. The
+    exemption must be gated on ``question.plagiarism_flagged`` as well:
+    ``_is_unflagged_blank`` only stands in for "``needs_teacher_review`` was
+    forced True by integrity, not set genuinely by the builder", which is
+    only true when integrity actually ran (i.e. the question IS flagged).
+
+    Simulates the collision the module's own docstring already names rather
+    than inventing a new one -- ``_build_missing_corrected``'s real
+    ``--mcq-only`` literal, forced equal to ``_BLANK_ANSWER_REVIEW_REASON``.
+    """
+    from lemely.db.models.enums import ReviewReason
+    from lemely.db.review_queue_rules import review_reasons_for
+    from lemely.io.correction_ai import _BLANK_ANSWER_REVIEW_REASON
+
+    colliding_missing_question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=True,
+        review_reason=_BLANK_ANSWER_REVIEW_REASON,
+        marker_source="missing",
+        plagiarism_flagged=False,
+    )
+    # The bug this guards: gating the blank carve-out on
+    # ``_is_unflagged_blank`` alone -- without also requiring
+    # ``plagiarism_flagged`` -- silences this row entirely (``[]``) even
+    # though no integrity check ever ran to force ``needs_teacher_review``.
+    assert list(review_reasons_for(colliding_missing_question)) == [ReviewReason.low_confidence]
+
+
 def test_get_item_unknown_id_is_not_found(
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,

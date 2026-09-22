@@ -52,7 +52,12 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
          mint a duplicate, mislabelled row alongside the ``plagiarism_flag``
          row below.
       2. A genuine US-039 blank that also picked up an integrity flag
-         (:func:`_is_unflagged_blank`) — see below.
+         (``question.plagiarism_flagged and _is_unflagged_blank(question)``
+         — see below). Gated on ``plagiarism_flagged`` deliberately:
+         ``_is_unflagged_blank`` alone is not enough, or a hypothetical
+         literal collision with another builder's unflagged
+         ``review_reason`` (see **Known limits** below) would silence a real
+         marking-side reason even with no plagiarism flag in sight.
 
       Neither exemption suppresses a real marking-side reason: a question
       that is *also* structurally flagged or genuinely low-confidence keeps
@@ -99,16 +104,22 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     (``correct_paper``'s AI-failure branch, ``correction_ai.py:1922``, does
     exactly that — harmless here only because a blank ``continue``s before
     reaching it), or by ``_BLANK_ANSWER_REVIEW_REASON`` ever colliding with
-    another builder's literal. The collision guard lives in
-    ``lemely.io.correction_ai``'s own pairwise-distinctness test
-    (``PairwiseDistinctBlankReasonsTests``, ``tests/test_correction_ai.py``),
-    which derives all four blank-shaped literals from the real builders
-    rather than hardcoding copies.
+    another builder's literal. That collision is harmless whenever
+    ``plagiarism_flagged`` is False (exemption 2 above is gated on it, so an
+    unflagged colliding question still queues via ``marking_flagged``
+    exactly as before); only if the same question is ALSO
+    ``plagiarism_flagged`` does the collision cost a real ``low_confidence``
+    row, and only then because ``plagiarism_flagged`` on any
+    ``correct_paper`` output is itself unreachable today (see above). The
+    collision guard lives in ``lemely.io.correction_ai``'s own
+    pairwise-distinctness test (``PairwiseDistinctBlankReasonsTests``,
+    ``tests/test_correction_ai.py``), which derives all four blank-shaped
+    literals from the real builders rather than hardcoding copies.
     """
-    marking_flagged = question.needs_teacher_review and not (
-        _is_unflagged_blank(question) or _is_solely_plagiarism_flagged(question)
-    )
     unflagged_blank = _is_unflagged_blank(question)
+    marking_flagged = question.needs_teacher_review and not (
+        (question.plagiarism_flagged and unflagged_blank) or _is_solely_plagiarism_flagged(question)
+    )
     low_confidence_flagged = (
         not unflagged_blank and question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
     )
