@@ -3744,9 +3744,14 @@ class ECFSubstitutionTests(unittest.TestCase):
         self.assertTrue(cq_ii.point_verdicts[0].ecf_applied)
         # The third call is the substitution itself: the student's OWN
         # extracted VALUE for the prerequisite, never marks or the scheme's
-        # correct value.
+        # correct value -- tagged with the prerequisite POINT's own scheme
+        # text (the SHOULD-FIX that followed Critical 2's review), so the
+        # model knows WHICH of the leaf's numbers is being carried forward.
         _, third_call_kwargs = mock_mark.call_args_list[2]
-        self.assertEqual(third_call_kwargs["prior_values"], {"1a_i": "wrong value"})
+        self.assertEqual(
+            third_call_kwargs["prior_values"],
+            {"1a_i": "[depends on: (a=) (v-u)/t in any form] wrong value"},
+        )
 
     def test_correct_prerequisite_never_triggers_substitution(self) -> None:
         """Direction 2 of the false-positive axis -- the dangerous one: a
@@ -4064,6 +4069,132 @@ class ECFSubstitutionTests(unittest.TestCase):
             cq_ii.feedback,
             "ECF RE-MARK: method consistent with your (incorrect) part (a) value",
         )
+
+    def test_partial_merge_with_pass2_overclaim_is_still_queued(self) -> None:
+        """Post-Critical-1-review Critical fix: ``feedback=mark2.feedback``
+        is unconditional, but ``point_verdicts`` is merged SELECTIVELY --
+        only points in ``eligible_ids`` take pass 2's verdict. Pass 2 is a
+        full re-mark of the WHOLE question, so it can claim credit for an
+        INELIGIBLE point too (here, an ungated ``p2``) while that point's
+        verdict is correctly discarded from the merge. Chimera case: a leaf
+        with one eligible point (``p1``, gated, resolvable) and one
+        ineligible point (``p2``, ungated) where pass 2 claims BOTH are
+        correct (2/2) but only ``p1``'s verdict survives the merge (1/2) --
+        before the fix, the student would see pass 2's "2 marks awarded"
+        feedback while receiving 1, unqueued, because
+        ``merged_mark.awarded_marks`` stayed at pass 1's stale claim (0)
+        and could never disagree with the derived total. Propagating
+        ``mark2.awarded_marks`` into the merge lets the EXISTING
+        coverage-mismatch check (``242c524f``) catch this without a second,
+        parallel mechanism."""
+        scheme = MarkScheme.model_validate(
+            {
+                "metadata": {
+                    "subject": "Physics",
+                    "subject_code": "0625",
+                    "paper_number": 3,
+                    "paper_variant": 2,
+                    "session_month": "Oct/Nov",
+                    "session_year": 2021,
+                    "paper_type": "theory_extended",
+                    "maximum_mark": 3,
+                    "scheme_format": "point_based",
+                },
+                "questions": [
+                    {
+                        "id": "1",
+                        "marks": 0,
+                        "type": "calculation",
+                        "parts": [
+                            {
+                                "id": "1a",
+                                "marks": 0,
+                                "type": "calculation",
+                                "parent_id": "1",
+                                "parts": [
+                                    {
+                                        "id": "1a_i",
+                                        "marks": 1,
+                                        "type": "calculation",
+                                        "parent_id": "1a",
+                                        "answer_points": [
+                                            {
+                                                "id": "p1",
+                                                "point": "(a=) (v-u)/t in any form",
+                                                "marks": 1,
+                                                "math_mark_type": "M",
+                                            }
+                                        ],
+                                    },
+                                    {
+                                        "id": "1a_ii",
+                                        "marks": 2,
+                                        "type": "calculation",
+                                        "parent_id": "1a",
+                                        "answer_points": [
+                                            {
+                                                "id": "p1",
+                                                "point": "follow-through value",
+                                                "marks": 1,
+                                                "math_mark_type": "A",
+                                                "condition": "ecf",
+                                            },
+                                            {
+                                                "id": "p2",
+                                                "point": "correct unit",
+                                                "marks": 1,
+                                                "math_mark_type": "A",
+                                            },
+                                        ],
+                                    },
+                                ],
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+        extracted = self._extracted("wrong value", "some working covering both p1 and p2")
+        mark_1a_i = self._mark([self._pv("p1", "withheld")])
+        mark_1a_ii_pass1 = self._mark([self._pv("p1", "withheld"), self._pv("p2", "withheld")])
+        from lemely.core.schemas import AIMarkResponse
+
+        mark_1a_ii_pass2 = AIMarkResponse(
+            awarded_marks=2,  # pass 2's OWN claim: both points now earn a mark
+            confidence=0.90,
+            matched_point_ids=["p1", "p2"],
+            feedback=(
+                "PASS 2: both the follow-through value AND the unit earn a mark - 2 marks awarded."
+            ),
+            point_verdicts=[
+                self._pv("p1", "awarded", span="some working covering both p1 and p2"),
+                self._pv("p2", "awarded", span="some working covering both p1 and p2"),
+            ],
+        )
+
+        with patch.object(
+            correction_ai.AICorrector,
+            "mark_question",
+            side_effect=[mark_1a_i, mark_1a_ii_pass1, mark_1a_ii_pass2],
+        ):
+            result = correct_paper(
+                mark_scheme=scheme,
+                extracted_answers=extracted,
+                gemini_client=MagicMock(),
+                equivalence_gate=True,
+                ecf_substitution=True,
+            )
+
+        cq_ii = next(q for q in result.questions if q.question_id == "1a_ii")
+        # p2 was never eligible (ungated) -- its verdict must stay "withheld"
+        # from pass 1, NOT pass 2's "awarded", regardless of the fix.
+        verdicts_by_id = {pv.point_id: pv for pv in cq_ii.point_verdicts}
+        self.assertEqual(verdicts_by_id["p2"].verdict, "withheld")
+        self.assertEqual(cq_ii.awarded_marks, 1)  # derived total: only p1 credited
+        # The fix: pass 2's overclaim (2) now disagrees with the derived
+        # total (1) and the EXISTING coverage check catches it.
+        self.assertTrue(cq_ii.needs_teacher_review)
+        self.assertIsNotNone(cq_ii.review_reason)
 
     def test_no_version_bump(self) -> None:
         """D19: I6/I7/I8 share one VERSION bump, taken later at US-018's

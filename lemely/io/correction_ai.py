@@ -1535,7 +1535,7 @@ def _maybe_apply_ecf_substitution(
         return cq
 
     current_matched = set(cq.matched_point_ids)
-    eligible: list[tuple[AnswerPoint, str]] = []
+    eligible: list[tuple[AnswerPoint, str, str]] = []
     for point in question.answer_points:
         if point.id in current_matched:
             continue
@@ -1554,27 +1554,55 @@ def _maybe_apply_ecf_substitution(
         prereq_answer = answers.get(prereq_leaf_id)
         if not prereq_answer or _is_blank(prereq_answer[0]):
             continue
-        eligible.append((point, prereq_leaf_id))
+        eligible.append((point, prereq_leaf_id, prereq_point_id))
 
     if not eligible:
         return cq
 
-    # Post-I7-review fix D: include the prerequisite's WORKING alongside its
-    # answer -- an ECF-relevant intermediate value can live in working_out
-    # rather than the final answer line, and the old code dropped it
-    # entirely. Still a per-LEAF value, not a per-POINT one: extraction
-    # resolves no finer than one question's answer/working as a whole, so a
-    # multi-point prerequisite leaf's full text is what is actually
-    # available to substitute, not a single point's isolated value -- the
-    # docstrings say so explicitly rather than implying more precision than
-    # extraction provides.
-    def _prior_value_text(leaf_id: str) -> str:
+    # Post-I7-review fix D, and the SHOULD-FIX that followed Critical 2's
+    # review: include the prerequisite's WORKING alongside its answer (an
+    # ECF-relevant intermediate value can live in working_out rather than
+    # the final answer line, and the old code dropped it entirely), AND
+    # the prerequisite POINT's own scheme text, so the model knows WHICH of
+    # the leaf's numbers is being carried forward -- without it, a leaf
+    # extracting as e.g. "v = 18, a = 150" gives the model two numbers and
+    # no way to tell which one the gated point actually depends on.
+    #
+    # DECLINED (not merely undocumented): true per-POINT VALUE granularity
+    # -- substituting only the specific number the prerequisite point
+    # produced, rather than the prerequisite leaf's whole answer -- is not
+    # achievable with today's extraction. `answers` is
+    # `dict[str, tuple[str, str | None, float]]`, keyed by LEAF question
+    # id; extraction never resolves a value below one question's
+    # answer/working as a whole, so there is no per-point value to look up
+    # in the first place, regardless of how this function is written. That
+    # is a limit of what extraction records, not a documentation choice.
+    def _prior_value_text(leaf_id: str, point_ids: list[str]) -> str:
         answer, working, _ = answers[leaf_id]
-        if working and working.strip():
-            return f"{answer}\n(working: {working.strip()})"
-        return answer or ""
+        value = (
+            f"{answer}\n(working: {working.strip()})"
+            if working and working.strip()
+            else (answer or "")
+        )
+        scheme_texts = [
+            sibling.point
+            for leaf in top_level_leaves
+            if leaf.id == leaf_id
+            for sibling in leaf.answer_points
+            if sibling.id in point_ids
+        ]
+        if scheme_texts:
+            depends_on = "; ".join(dict.fromkeys(scheme_texts))
+            return f"[depends on: {depends_on}] {value}"
+        return value
 
-    prior_values = {leaf_id: _prior_value_text(leaf_id) for _, leaf_id in eligible}
+    prereq_point_ids_by_leaf: dict[str, list[str]] = {}
+    for _, prereq_leaf_id, prereq_point_id in eligible:
+        prereq_point_ids_by_leaf.setdefault(prereq_leaf_id, []).append(prereq_point_id)
+    prior_values = {
+        leaf_id: _prior_value_text(leaf_id, point_ids)
+        for leaf_id, point_ids in prereq_point_ids_by_leaf.items()
+    }
     try:
         mark2 = ai.mark_question(
             question,
@@ -1591,7 +1619,7 @@ def _maybe_apply_ecf_substitution(
         log.warning("ecf_substitution_remark_failed", question_id=question.id, error=str(exc))
         return cq
 
-    eligible_ids = {p.id for p, _ in eligible}
+    eligible_ids = {p.id for p, _, _ in eligible}
     mark2_by_id = {pv.point_id: pv for pv in mark2.point_verdicts}
     merged_verdicts: list[PointVerdict] = []
     changed = False
@@ -1617,11 +1645,28 @@ def _maybe_apply_ecf_substitution(
     # confident first pass can never mask genuine uncertainty in the
     # re-mark, and a confident re-mark can never override genuine
     # uncertainty already flagged by the first pass.
+    # Post-Critical-1-review Critical fix: `feedback=mark2.feedback` above
+    # is unconditional, but `point_verdicts` is merged SELECTIVELY (only
+    # `eligible_ids` are replaced with pass 2's verdict). Pass 2 is a full
+    # re-mark of the WHOLE question, not just the eligible point(s) -- so
+    # its feedback can describe crediting a point that was NOT eligible
+    # (e.g. an ungated point pass 2 also happened to award), while that
+    # point's verdict is correctly discarded from `merged_verdicts`. Without
+    # `awarded_marks` also carrying pass 2's claim, `merged_mark.awarded_marks`
+    # stayed at pass 1's stale value, which also defeated
+    # `_build_ai_corrected_from_verdicts`'s own coverage-mismatch check
+    # (this function's docstring, reason 2): that check compares the
+    # DERIVED total against `mark.awarded_marks`, so a stale claim could
+    # never disagree with anything. Propagating `mark2.awarded_marks` here
+    # makes `merged_mark` internally consistent and lets that EXISTING
+    # check catch any residual disagreement between the merged verdicts and
+    # what pass 2 claimed, rather than adding a second, parallel check.
     merged_mark = mark.model_copy(
         update={
             "point_verdicts": merged_verdicts,
             "confidence": min(mark.confidence, mark2.confidence),
             "feedback": mark2.feedback,
+            "awarded_marks": mark2.awarded_marks,
         }
     )
     return _build_ai_corrected(

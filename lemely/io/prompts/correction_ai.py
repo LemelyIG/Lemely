@@ -148,13 +148,20 @@ def build_marker_user_prompt(
     dict carries AWARDED MARKS for ECF's predecessor story; this one
     carries the raw answer VALUE (and working), because I7's re-mark needs
     to know what the student actually wrote, not how many marks it earned.
-    Per-LEAF, not per-POINT: extraction resolves no finer than one
-    question's answer/working as a whole, so a multi-point prerequisite
-    leaf's full text is what is actually available to substitute, never an
-    isolated single point's value. Appends its own block only when
-    non-empty, so a call that never substitutes (every call today, and
-    every call with ``ecf_substitution`` off) produces a BYTE-IDENTICAL
-    prompt to before this story existed.
+    Each value is now also TAGGED with the prerequisite point's own scheme
+    text ("[depends on: ...] <value>") when known, so the model is told
+    WHICH of the leaf's numbers is being carried forward when a leaf's
+    answer contains more than one.
+
+    Per-LEAF VALUE, not per-POINT VALUE -- a DECLINED finding, not merely
+    an undocumented one: extraction resolves no finer than one question's
+    answer/working as a whole (``answers`` is keyed by leaf question id),
+    so there is no per-point VALUE to look up regardless of how this
+    channel is built; only the scheme TEXT the prerequisite point is
+    checked against can be point-scoped, and now is. Appends its own block
+    only when non-empty, so a call that never substitutes (every call
+    today, and every call with ``ecf_substitution`` off) produces a
+    BYTE-IDENTICAL prompt to before this story existed.
     """
     q_json = question.model_dump_json(indent=2, exclude_none=True, exclude_defaults=True)
     answer_text = student_answer if student_answer.strip() else "(blank — no response written)"
