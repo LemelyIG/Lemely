@@ -513,12 +513,32 @@ reportArgumentType = "none"
 root = "lemely/app/cli.py"
 reportAttributeAccessIssue = "none"
 
+# NOT A DEFECT: `points_are_settleable(qr.points)` expects
+# `Iterable[_HasGroupFlags]`; `qr.points: list[QuestionResultPoint]` does
+# NOT structurally satisfy `_HasGroupFlags` per pyright — but this was
+# confirmed to be a pyright artifact, not a real attribute gap, and is not
+# task #44 material. `QuestionResultPoint` declares all four columns
+# (`is_alternative`, `is_optional`, `group_key`, `group_max_marks`) with
+# the exact runtime types the Protocol wants; pyright instead sees each as
+# `Mapped[bool]` / `Mapped[str | None]` / `Mapped[int | None]` — the
+# *class-level* SQLAlchemy ORM descriptor type — because pyright has no
+# SQLAlchemy plugin to know that *instance* attribute access resolves
+# `Mapped[T]` to plain `T` (mypy's `sqlalchemy.ext.mypy.plugin` does know
+# this). Repro: isolating the same Protocol + `QuestionResultPoint` pair
+# and checking it with mypy alone (no pydantic plugin involved) reports
+# zero issues. Resolves the open question in the type-gate-gap report —
+# this Protocol gates marking settlement, so it mattered to check rather
+# than assume.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/self_review_repo.py"
+reportArgumentType = "none"
+
 # =====================================================================
 # DEFERRED (task #44) — real findings, excluded to land the pyright gate.
 #
 # These ARE genuine defects, not pyright artifacts. Excluding them here
 # means the gate currently asserts "pyright finds nothing" only because
-# it was told not to look at these six sites. Each is out of scope for
+# it was told not to look at these five sites. Each is out of scope for
 # task #42 (Field-default migration + gating pyright itself), tracked by
 # task #44, and MUST be removed from this file when fixed or reclassified
 # as not-a-defect — do not let this block sit unactioned.
@@ -535,16 +555,6 @@ reportReturnType = "none"
 [[tool.pyright.executionEnvironments]]
 root = "lemely/db/teacher_paper_repo.py"
 reportReturnType = "none"
-
-# DEFERRED (task #44): `points_are_settleable(qr.points)` expects
-# `Iterable[_HasGroupFlags]`; `qr.points: list[QuestionResultPoint]`
-# doesn't structurally satisfy `_HasGroupFlags` per pyright. Unresolved:
-# whether this is a real attribute gap on `QuestionResultPoint` or an
-# inference artifact — not chased further here. This Protocol gates
-# marking settlement, so this is the highest-priority item in task #44.
-[[tool.pyright.executionEnvironments]]
-root = "lemely/db/self_review_repo.py"
-reportArgumentType = "none"
 
 # DEFERRED (task #44): pypdfium2's stub types `render`'s `scale` param as
 # `int`; this call passes `dpi / 72.0` (a `float`). Unresolved: whether
