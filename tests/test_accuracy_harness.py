@@ -480,6 +480,49 @@ class MetricComputationTests(unittest.TestCase):
         m = _compute_metrics(results)
         self.assertAlmostEqual(m.mark_accuracy, 1.0)
 
+    def test_unscored_blank_inflates_flag_precision_high(self) -> None:
+        """Whole-branch review Minor D: unlike ``_build_calibration``,
+        ``_compute_metrics`` does not check ``r.scored`` before folding a row
+        into ``flag_precision_high``/``flag_recall``. A genuine blank
+        (``scored=False``, ``predicted_marks=truth_marks=0``,
+        ``needs_teacher_review=False``) is confident-and-correct by
+        construction -- US-039's short-circuit never asks a marker, so it
+        never flags -- so it is a free correct-unflagged row that inflates
+        ``flag_precision_high``. This pins the CURRENT (accepted, now
+        disclosed -- see ``_compute_metrics``'s docstring) behaviour: it
+        must keep failing if someone later filters ``scored`` here without
+        updating the disclosure alongside it.
+        """
+        from lemely.accuracy.harness import _compute_metrics
+
+        genuine_blank = self._qr(0, 0, 0.0, False, scored=False)  # confident + "correct"
+        confident_and_wrong = self._qr(0, 2, 0.91, False)
+        m = _compute_metrics([genuine_blank, confident_and_wrong])
+        # If the blank were excluded (the calibration treatment), precision
+        # would be 0/1 = 0.0; because it is not, the blank's free "correct"
+        # drags a 0-for-1 confident set up to 1-for-2.
+        self.assertAlmostEqual(m.flag_precision_high, 0.5)
+
+    def test_unscored_blank_flag_metrics_disclosed_as_population_change(self) -> None:
+        """The docstring must name the same population change for
+        ``flag_precision_high``/``flag_recall`` that
+        ``_build_calibration``'s docstring names for calibration -- both are
+        downstream of US-039's blank short-circuit, and only the
+        calibration one was disclosed when that fix landed (877869c9).
+        """
+        import inspect
+
+        from lemely.accuracy.harness import _compute_metrics, _metrics_from_eval_records
+
+        for fn in (_compute_metrics, _metrics_from_eval_records):
+            doc = inspect.getdoc(fn) or ""
+            self.assertIn("US-039", doc, f"{fn.__name__} does not name US-039")
+            self.assertIn(
+                "not comparable",
+                doc,
+                f"{fn.__name__} does not disclose the pre/post baseline break",
+            )
+
 
 class MeasureAccuracyTests(unittest.TestCase):
     """Tests for measure_accuracy()'s scan_path-gated extraction path.
@@ -946,6 +989,59 @@ class MeasureAccuracyTests(unittest.TestCase):
 
         # …and it is still reported, just not as a stage.
         self.assertIn("extracted=", report)
+
+    def test_report_discloses_flag_metric_baseline_break(self):
+        """Whole-branch review Minor D: the printed run report -- the thing a
+        human reads to compare one run against a prior baseline -- must
+        carry the same disclosure ``_metrics_from_eval_records``'s docstring
+        does, not just bury it in source: pre-US-039 ``flag_precision_high``/
+        ``flag_recall`` numbers are not comparable to post-fix numbers, and
+        the next baseline should be taken post-merge.
+        """
+        from lemely.accuracy.harness import (
+            GoldenAnswer,
+            GoldenCase,
+            format_report,
+            measure_accuracy,
+        )
+        from lemely.runtime.config import Settings
+
+        case = GoldenCase(
+            paper_id="pDisclosure",
+            mark_scheme=self._mark_scheme(["1"]),
+            ground_truth={"1": GoldenAnswer(student_answer="A", awarded_marks=1)},
+            scan_path=None,
+        )
+        report = format_report(
+            measure_accuracy([case], gemini_client=None, settings=None),
+            Settings().accuracy_eval,
+        )
+        self.assertIn("US-039", report)
+        self.assertIn("not comparable", report)
+
+    def test_format_report_local_scored_var_does_not_collide_with_the_field(self):
+        """Whole-branch review Minor E: ``QuestionResult.scored`` ("a marker
+        ran") and the DA6a funnel stage exposed by
+        ``analyses.exclusion_funnel()["scored"]`` ("the leaf was attempted")
+        are two different things, printed on the same funnel line the first
+        is excluded from. ``format_report``'s local variable must not be
+        bare ``scored`` -- that name collision is exactly what would confuse
+        a reader of a run report the first time both are non-trivial. The
+        printed label stays ``scored=`` (that is the funnel stage's name,
+        not a Python identifier) -- only the local variable is renamed.
+        """
+        import inspect
+
+        from lemely.accuracy.harness import format_report
+
+        src = inspect.getsource(format_report)
+        self.assertNotIn(
+            "\n    scored = exclusion_funnel(",
+            src,
+            "format_report's local funnel-stage variable still shadows the "
+            "QuestionResult.scored field name",
+        )
+        self.assertIn("scored=", src, "the printed funnel line must still say scored=")
 
     def test_mixed_batch_id_match_rate_only_from_extraction_case(self):
         from lemely.accuracy.harness import (

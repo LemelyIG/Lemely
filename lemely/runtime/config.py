@@ -556,6 +556,13 @@ class GradingSettings(BaseModel):
     # a mark (D12: `auto_awardable` means "could justify", not "does");
     # a conflict only earns extra detail in the review reason. Acting on
     # the signal is a separate, later story.
+    #
+    # Whole-branch review Minor C: declared ahead of wiring -- this field
+    # is not read by any `correct_paper` caller off a loaded config today
+    # (it is only ever passed as an explicit keyword argument, e.g. by
+    # tests and the accuracy harness). Setting `equivalence_gate = true`
+    # in `lemely.toml` currently has NO effect on a live `correct_paper`
+    # run; see US-040.
     equivalence_gate: bool = False
     # I7 (US-013, D19): error-carried-forward by substitution. Defaults
     # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither
@@ -584,6 +591,11 @@ class GradingSettings(BaseModel):
     # disjoint on this det-parsed corpus, so I7 is provably inert on it BY
     # CONSTRUCTION; this is an input-data limit (the feature targets
     # Gemini-parsed schemes), not a reason to widen the gate.
+    #
+    # Whole-branch review Minor C: same as `equivalence_gate` above -- this
+    # field is not read by any `correct_paper` caller off a loaded config
+    # either. Setting `ecf_substitution = true` in `lemely.toml` currently
+    # has NO effect on a live `correct_paper` run; see US-040.
     ecf_substitution: bool = False
 
 

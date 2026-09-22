@@ -459,6 +459,26 @@ def _assign_to_bucket(buckets: list[CalibrationBucket], score: float, correct: b
 def _compute_metrics(
     results: list[QuestionResult], id_match_rate: float | None = None
 ) -> AccuracyMetrics:
+    """Aggregate per-question :class:`QuestionResult` rows into :class:`AccuracyMetrics`.
+
+    Whole-branch review Minor D: unlike :func:`_build_calibration`, this
+    does NOT check ``r.scored`` before folding a row into
+    ``flag_precision_high``/``flag_recall``. Post-US-039, a genuine blank
+    (``scored=False``) is confident (``needs_teacher_review=False``, no
+    marker was ever consulted) and, since it earns 0 marks against a truth
+    of 0, also "correct" -- a free correct-unflagged row that inflates
+    ``flag_precision_high``. A US-042 false blank is wrong-and-unflagged,
+    which instead lowers ``flag_recall``. This is deliberate: filtering
+    ``scored`` here (as ``_build_calibration`` does) is NOT recommended --
+    the metric is honest about what the deployed system actually released
+    on the leaf, which is exactly what these two gate. But it means
+    ``flag_precision_high``/``flag_recall`` moved population for the same
+    reason calibration did when 877869c9 landed, and that was not disclosed
+    at the time. Numbers from these two metrics measured before US-039's
+    blank short-circuit are not comparable to numbers measured after it;
+    do not diff them as though they were. The next baseline for both should
+    be taken post-merge.
+    """
     total = len(results)
     if total == 0:
         return AccuracyMetrics(0.0, 0.0, id_match_rate, 0.0, 1.0)
@@ -660,6 +680,23 @@ def _metrics_from_eval_records(
     that isn't a leaf in the mark scheme) are dropped from the denominator,
     mirroring :func:`lemely.eval.analyses._scored`: they carry no marking
     evidence and must not be scored as wrong.
+
+    Whole-branch review Minor D: a genuinely-blank leaf (``QuestionResult.scored
+    is False``, ``question_result_to_eval_record`` does not read that field)
+    is NOT an ``excluded`` row here -- it has an ``outcome`` and empty
+    ``triggers`` like any other row -- so it is NOT dropped from
+    ``flag_precision_high``/``flag_recall``'s population the way it is
+    dropped from the calibration curve (see :func:`_build_calibration`).
+    Post-US-039 this is a free correct-unflagged row for ``flag_precision_high``
+    and, for a US-042 false blank, a free wrong-unflagged row that lowers
+    ``flag_recall``. Filtering it out is deliberately NOT done: these two
+    metrics gate what the deployed system actually released on the leaf,
+    which a scored/unscored split would obscure. But the population moved
+    for the same reason the calibration curve's did when 877869c9 disclosed
+    that break -- this was not disclosed at the time. Numbers from these two
+    metrics measured before US-039's blank short-circuit are not comparable
+    to numbers measured after it; do not diff them as though they were. The
+    next baseline for both should be taken post-merge.
     """
     qlevel = [r for r in records if r.mark_point_id is None and r.outcome != "excluded"]
     total = len(qlevel)
@@ -1381,6 +1418,12 @@ def format_report(result: AccuracyResult, targets: object) -> str:
         ok = "?" if score is None else ("✓" if score >= target else "✗")
         lines.append(f"{stage:<12} {metric:<26} {score_s:>8} {_target(target):>8} {ok}  {desc}")
     lines.append(sep)
+    lines.append(
+        "NOTE: flag_precision (HIGH) / flag_recall population changed under "
+        "US-039 (see _metrics_from_eval_records docstring, whole-branch review "
+        "Minor D) -- numbers from before that fix are not comparable to "
+        "numbers measured after it. Take the next baseline post-merge."
+    )
 
     lines.append("")
     lines.append(
@@ -1400,15 +1443,19 @@ def format_report(result: AccuracyResult, targets: object) -> str:
     )
 
     # Exclusion funnel (spec §4 M0.5): how many ground-truth leaves survived
-    # each stage. `scored` comes from analyses.exclusion_funnel() — the
-    # single, DA6a-aware source of truth for the mark_accuracy/wilson/
-    # review_rate denominator — not recomputed here.
+    # each stage. `funnel_scored` comes from analyses.exclusion_funnel() —
+    # the single, DA6a-aware source of truth for the mark_accuracy/wilson/
+    # review_rate denominator — not recomputed here. Named `funnel_scored`
+    # rather than `scored` (whole-branch review Minor E) because it is a
+    # different thing from `QuestionResult.scored` ("a marker ran"): this is
+    # "the leaf was attempted" per DA6a. The printed label stays `scored=`
+    # -- that is the funnel stage's name, not this Python identifier.
     f = result.funnel
-    scored = exclusion_funnel(result.eval_records)["scored"]
+    funnel_scored = exclusion_funnel(result.eval_records)["scored"]
     lines.append("")
     lines.append(
         f"Exclusion funnel: leaves={f.leaves} -> matched={f.matched} -> "
-        f"marked={f.marked} -> scored={scored}"
+        f"marked={f.marked} -> scored={funnel_scored}"
     )
     # `extracted` is NOT a nested stage of this chain: it counts leaves the
     # extractor returned an id for, while `matched` counts leaves

@@ -151,6 +151,46 @@ class TestEcfSubstitutionSettings:
             GradingSettings(ecf_substituton=True)  # type: ignore[call-arg]
 
 
+class TestUnwiredFlagsAreDisclosedInProse:
+    """Whole-branch review Minor C: ``equivalence_gate``/``ecf_substitution``
+    are declared here (US-005b, US-013) but no ``correct_paper`` caller
+    reads ``GradingSettings.equivalence_gate``/``.ecf_substitution`` off a
+    loaded config -- they are only ever passed as explicit keyword
+    arguments by tests and by the accuracy harness. US-040 records this
+    unreachability; what this pins is that the comment BESIDE each field
+    also says so, so an operator reading ``lemely.toml.example`` (or the
+    source) does not set ``equivalence_gate = true`` expecting an effect
+    and get a silent no-op.
+    """
+
+    def _comment_block_before(self, field_line: str) -> str:
+        """Return the contiguous ``#``-comment block immediately above
+        *field_line* in ``GradingSettings``'s source -- i.e. just that
+        field's own prose, not the whole class or a neighbouring field's."""
+        import inspect
+
+        from lemely.runtime import config as config_module
+
+        lines = inspect.getsource(config_module.GradingSettings).splitlines()
+        idx = next(i for i, line in enumerate(lines) if field_line in line)
+        block: list[str] = []
+        i = idx - 1
+        while i >= 0 and lines[i].strip().startswith("#"):
+            block.insert(0, lines[i])
+            i -= 1
+        return "\n".join(block)
+
+    def test_equivalence_gate_names_us040(self) -> None:
+        block = self._comment_block_before("equivalence_gate: bool = False")
+        assert "US-040" in block
+        assert "not read by any" in block
+
+    def test_ecf_substitution_names_us040(self) -> None:
+        block = self._comment_block_before("ecf_substitution: bool = False")
+        assert "US-040" in block
+        assert "not read by any" in block
+
+
 class TestIntegritySettings:
     def test_defaults(self) -> None:
         s = IntegritySettings()
