@@ -549,6 +549,21 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
         # vacuously (`assertNotIn(x, "")` is trivially true), so dropping
         # `review_reason` entirely made a genuine blank and a `--mcq-only`
         # skip byte-identical in the database and this test still went green.
+        # MUST-FIX C (post-US-039-review): the module-constant comparison
+        # above pins nothing about the VALUE -- `_build_blank_corrected`
+        # reads `_BLANK_ANSWER_REVIEW_REASON` as a module global and so does
+        # this assertion, so both sides move together under ANY mutation of
+        # the constant (run-verified: setting it to
+        # `_build_missing_corrected`'s own message still passes). What the
+        # constant's own docstring says it must guarantee is DISTINCTNESS
+        # from the other three blank-shaped messages, which a same-global
+        # comparison cannot check at all. Assert the literal string instead
+        # -- see PairwiseDistinctBlankReasonsTests below for the
+        # distinctness guarantee itself.
+        self.assertEqual(
+            q2.review_reason,
+            "student left this question blank (0 awarded, no AI call made)",
+        )
         self.assertEqual(q2.review_reason, correction_ai._BLANK_ANSWER_REVIEW_REASON)
         # Field-mutation survivors from the same review: `topic` and
         # `maximum_marks` (on the question AND the paper total) previously
@@ -686,6 +701,39 @@ class BlankAnswerShortCircuitTests(unittest.TestCase):
             q2.review_reason, "non-MCQ question not marked (--mcq-only or no AI client)"
         )
         self.assertTrue(q2.needs_teacher_review)
+
+
+class PairwiseDistinctBlankReasonsTests(unittest.TestCase):
+    """MUST-FIX C (post-US-039-review): the four blank-shaped
+    ``review_reason`` messages must be pairwise DISTINCT strings, which is
+    the actual property ``_BLANK_ANSWER_REVIEW_REASON``'s own docstring
+    claims (``correction_ai.py``, "distinct from every other blank-shaped
+    message this module can produce").
+
+    A same-module-global comparison (``review_reason ==
+    correction_ai._BLANK_ANSWER_REVIEW_REASON``) cannot catch a copy-paste
+    that sets two of these constants to the identical string, because both
+    sides of that comparison would move together. This test would catch it:
+    it fails if any two of the four collide.
+
+    Why this matters beyond tidiness: ``attempt_repo.py``'s review-queue
+    exemption keys on the literal blank message
+    (``_BLANK_ANSWER_REVIEW_REASON``) to skip queuing a genuine blank. If a
+    maintainer ever copy-pasted ``_build_missing_corrected``'s message onto
+    it, a genuine blank and a ``--mcq-only`` skip would carry an identical
+    ``marker_source`` ("missing") AND an identical ``review_reason`` --
+    indistinguishable to that exemption, which would then also silently
+    skip queuing the ``--mcq-only`` case it was never meant to exempt.
+    """
+
+    def test_all_four_blank_shaped_reasons_are_pairwise_distinct(self) -> None:
+        reasons = {
+            "blank": correction_ai._BLANK_ANSWER_REVIEW_REASON,
+            "dropped": correction_ai._DROPPED_ANSWER_REVIEW_REASON,
+            "mcq_missing_answer": "missing answer",
+            "mcq_only_or_no_client": "non-MCQ question not marked (--mcq-only or no AI client)",
+        }
+        self.assertEqual(len(set(reasons.values())), len(reasons), reasons)
 
 
 class MCQAbstainHardeningTests(unittest.TestCase):
@@ -1515,6 +1563,79 @@ class PointVerdictPromptTests(unittest.TestCase):
         self.assertIn("point_verdicts", sent_prompt)
 
 
+class EcfAppliedIsCodeSetOnlyTests(unittest.TestCase):
+    """Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be CODE-set
+    only. I7's whole contract is that it records a re-mark the CODE
+    performed (:func:`_maybe_apply_ecf_substitution`), never something the
+    model claims about its own single-pass answer -- but the field sits on
+    the wire response schema with no description telling the model that, so
+    nothing previously stopped the model setting ``ecf_applied=True``
+    unprompted, on a call where ``ecf_substitution`` was never even wired
+    (every call before this fix, and every call today with the flag off).
+    ``AICorrector.mark_question`` now forces every verdict's ``ecf_applied``
+    to False unconditionally, regardless of what the model returned or
+    whether ``equivalence_gate``/``ecf_substitution`` is on -- the ONLY
+    place this field may become True is :func:`_maybe_apply_ecf_substitution`'s
+    explicit merge, downstream of this call.
+    """
+
+    def _question(self):
+        from lemely.core.loose_schemas import AnswerPoint, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=1,
+            type=QuestionType.EXPLANATION,
+            answer_points=[AnswerPoint(id="p1", point="gravity acts on it", marks=1)],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _response_asserting_ecf_applied(self) -> MagicMock:
+        body = {
+            "awarded_marks": 1,
+            "confidence": 0.95,
+            "matched_point_ids": ["p1"],
+            "feedback": "fb",
+            # The model claims ecf_applied=True on its own -- unprompted,
+            # since no ecf/prior_values context was ever sent on this call.
+            "point_verdicts": [
+                {
+                    "point_id": "p1",
+                    "verdict": "awarded",
+                    "evidence_span": "gravity",
+                    "ecf_applied": True,
+                }
+            ],
+        }
+        return MagicMock(
+            text=json.dumps(body),
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+        )
+
+    def test_model_asserted_ecf_applied_is_forced_false(self) -> None:
+        from lemely.io.correction_ai import AICorrector
+
+        q = self._question()
+        response = self._response_asserting_ecf_applied()
+        with tempfile.TemporaryDirectory() as tmp:
+            client = _client_with_seq(tmp, [response])
+            corrector = AICorrector(client)
+            # equivalence_gate=True so point_verdicts is even consulted;
+            # ecf_substitution never enters mark_question at all -- it is a
+            # correct_paper-level concept -- which is the point: this call
+            # has no substitution context whatsoever, and the model's own
+            # ecf_applied claim must still be rejected.
+            mark = corrector.mark_question(q, "gravity acts on it", equivalence_gate=True)
+
+        self.assertEqual(len(mark.point_verdicts), 1)
+        self.assertEqual(mark.point_verdicts[0].verdict, "awarded")  # rest of the verdict intact
+        self.assertFalse(mark.point_verdicts[0].ecf_applied)
+
+
 class PointVerdictBuildTests(unittest.TestCase):
     """I6 (US-013): ``_build_ai_corrected`` dispatches to
     ``_build_ai_corrected_from_verdicts`` when ``equivalence_gate`` is on
@@ -1794,6 +1915,132 @@ class PointVerdictBuildTests(unittest.TestCase):
         self.assertEqual(cq.extraction_confidence, 0.77)
         self.assertFalse(cq.needs_teacher_review)
         self.assertIsNone(cq.review_reason)
+
+
+class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
+    """Post-I6-review Critical A: the verdict path resolves every
+    ``PointVerdict.point_id`` ONLY against ``question.answer_points``
+    (:func:`_awarded_from_verdicts`, :func:`_check_point_evidence`).
+    ``LEVELS_BASED`` questions are REQUIRED to have an empty
+    ``answer_points`` list, and ``INDICATIVE_CONTENT``/diagram/``graph_draw``
+    questions marked holistically typically do too. With the old dispatch
+    (``equivalence_gate and mark.point_verdicts``, no ``answer_points``
+    guard), every ``point_verdicts`` entry for such a question was dangling
+    by construction, :func:`_awarded_from_verdicts` summed to 0, and
+    ``LEVELS_BASED``/``INDICATIVE_CONTENT`` are BOTH in
+    :data:`_COHERENCE_EXEMPT_TYPES` -- so the dangling-id coherence check
+    that would otherwise catch a zeroed score was switched off for exactly
+    these two types, and the zero reached a student unflagged.
+
+    Demonstrated here on CONSTRUCTED fixtures. The committed 289-scheme
+    corpus contains zero questions of either type (11,024 leaf questions are
+    entirely ``recall``/``mcq``, all det-parsed) -- this is a latent defect
+    in code reachable once Gemini-parsed schemes populate these types, never
+    a measured corpus regression, and the assertions below say so by
+    checking flag-ON equals flag-OFF rather than claiming a corpus number
+    moved.
+    """
+
+    def _levels_question(self, marks: int = 6) -> object:
+        from lemely.core.loose_schemas import (
+            DescriptorText,
+            LevelDescriptor,
+            Question,
+            QuestionType,
+        )
+
+        return Question.model_construct(
+            id="1",
+            marks=marks,
+            type=QuestionType.LEVELS_BASED,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+            level_descriptors=[
+                LevelDescriptor(
+                    level=3,
+                    mark_range=[5, 6],
+                    descriptors=[DescriptorText(label="general", text="excellent, well-argued")],
+                )
+            ],
+        )
+
+    def _indicative_question(self, content_marks: int = 1, writing_marks: int = 1) -> object:
+        from lemely.core.loose_schemas import IndicativeContentPoint, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=content_marks + writing_marks,
+            type=QuestionType.INDICATIVE_CONTENT,
+            answer_points=[],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+            indicative_content=[
+                IndicativeContentPoint(id="ic1", point="uses evidence from the text")
+            ],
+            content_marks=content_marks,
+            writing_marks=writing_marks,
+        )
+
+    def _mark(self, awarded: int, matched: list[str], point_verdicts: list) -> object:
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=awarded,
+            confidence=0.95,
+            matched_point_ids=matched,
+            feedback="fb",
+            point_verdicts=point_verdicts,
+        )
+
+    def test_levels_based_flag_on_equals_flag_off(self) -> None:
+        from lemely.core.schemas import PointVerdict
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._levels_question()
+        student_answer = "a genuinely excellent, well-argued extended response"
+        mark = self._mark(
+            6,
+            ["lvl1"],
+            point_verdicts=[
+                PointVerdict(point_id="lvl1", verdict="awarded", evidence_span=student_answer)
+            ],
+        )
+
+        cq_off = _build_ai_corrected(q, student_answer, mark, equivalence_gate=False)
+        cq_on = _build_ai_corrected(q, student_answer, mark, equivalence_gate=True)
+
+        self.assertEqual(cq_on.awarded_marks, cq_off.awarded_marks)
+        self.assertEqual(cq_on.awarded_marks, 6)  # not silently zeroed by the verdict path
+        self.assertEqual(cq_on.matched_point_ids, cq_off.matched_point_ids)
+        self.assertEqual(cq_on.needs_teacher_review, cq_off.needs_teacher_review)
+        self.assertFalse(cq_on.needs_teacher_review)  # confirms it was never flagged either
+
+    def test_indicative_content_flag_on_equals_flag_off(self) -> None:
+        from lemely.core.schemas import PointVerdict
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._indicative_question()
+        student_answer = "the response uses evidence from the text effectively"
+        mark = self._mark(
+            2,
+            ["ic1"],
+            point_verdicts=[
+                PointVerdict(point_id="ic1", verdict="awarded", evidence_span=student_answer)
+            ],
+        )
+
+        cq_off = _build_ai_corrected(q, student_answer, mark, equivalence_gate=False)
+        cq_on = _build_ai_corrected(q, student_answer, mark, equivalence_gate=True)
+
+        self.assertEqual(cq_on.awarded_marks, cq_off.awarded_marks)
+        self.assertEqual(cq_on.awarded_marks, 2)
+        self.assertEqual(cq_on.needs_teacher_review, cq_off.needs_teacher_review)
+        self.assertFalse(cq_on.needs_teacher_review)
 
 
 class CoherenceGateTests(unittest.TestCase):
@@ -3425,7 +3672,17 @@ class ECFSubstitutionTests(unittest.TestCase):
         ``AnswerPoint.math_mark_type``/``required_with`` all already
         existed) -- the marking response schema's hash, measured on the
         UNSTRIPPED schema exactly as ``GeminiClient._params_fingerprint``
-        computes it, must be unchanged from ``6ad23e79``."""
+        computes it, must be unchanged from ``6ad23e79``.
+
+        Pinned value updated to ``886c4232e7a7`` by the post-I6-review
+        Critical B commit (which landed after I7): removing
+        ``PointVerdict``'s class docstring (moved to a module comment) took
+        its text out of ``model_json_schema()`` entirely, which moved this
+        hash once, deliberately, for a documented reason -- see that
+        commit's message and ``MarkingSchemaHashStableAcrossPythonOptimizeTests``
+        below for why the OLD value silently differed by interpreter mode.
+        I7 itself still adds no field and moves nothing on its own.
+        """
         import hashlib
         import json as json_module
 
@@ -3433,4 +3690,53 @@ class ECFSubstitutionTests(unittest.TestCase):
 
         schema_json = json_module.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)
         actual = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
-        self.assertEqual(actual, "137d81ff7e91")
+        self.assertEqual(actual, "886c4232e7a7")
+
+
+class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
+    """Post-I6-review Critical B: ``PointVerdict`` used to carry a class
+    DOCSTRING, and it is nested inside ``AIMarkResponse`` -- the
+    ``response_schema`` for every marking call. Pydantic derives a model's
+    JSON-Schema ``description`` from ``__doc__`` when nothing overrides it,
+    and CPython's ``-O``/``-OO`` strips docstrings, so
+    ``GeminiClient._params_fingerprint`` (which hashes the UNSTRIPPED
+    ``model_json_schema()`` for the on-disk cache key) computed a DIFFERENT
+    hash depending on the ambient ``PYTHONOPTIMIZE`` setting -- US-036's
+    exact defect, reintroduced on the marking path.
+
+    A test computed live in THIS process cannot catch that class of
+    regression by itself (both sides would lose the docstring together
+    under ``-OO``), so this runs the ACTUAL hash computation in two
+    subprocesses -- one plain, one under the ``-OO`` flag directly (not the
+    ``PYTHONOPTIMIZE`` env var, so the ambient environment cannot mask a
+    regression) -- and asserts they agree, not merely that either one equals
+    a literal.
+    """
+
+    _SCRIPT = (
+        "import hashlib, json\n"
+        "from lemely.core.schemas import AIMarkResponse\n"
+        "schema_json = json.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)\n"
+        "print(hashlib.sha256(schema_json.encode()).hexdigest()[:12])\n"
+    )
+
+    def _hash_under(self, *interpreter_flags: str) -> str:
+        import subprocess
+        import sys
+
+        # This module's own hard-coded _SCRIPT, no shell, no untrusted input
+        # -- same pattern as US-036's WireSchemaSurvivesPythonOptimizeTests.
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, *interpreter_flags, "-c", self._SCRIPT],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        return result.stdout.strip()
+
+    def test_schema_hash_identical_under_dash_oo(self) -> None:
+        normal = self._hash_under()
+        optimized = self._hash_under("-OO")
+        self.assertEqual(normal, optimized)
+        self.assertEqual(normal, "886c4232e7a7")

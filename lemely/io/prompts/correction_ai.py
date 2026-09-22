@@ -127,6 +127,18 @@ def build_marker_user_prompt(
     actually sent for the default-off path never changes (D19: I6/I7/I8
     share one bump, taken later at US-018's funded sweep).
 
+    Post-I6-review Critical A fix: the I6 block used to ask for "one entry
+    per AnswerPoint / LevelDescriptor / DrawingCriteria id", but
+    ``correction_ai._awarded_from_verdicts``/``_check_point_evidence`` only
+    ever resolve a verdict's ``point_id`` against ``question.answer_points``
+    -- and ``LevelDescriptor`` (``loose_schemas.py``) has no ``id`` field at
+    all, so the old wording asked the model for something the schema cannot
+    supply. When ``question.answer_points`` is empty (levels-based,
+    indicative-content, or a diagram/graph question judged holistically),
+    the block now tells the model to leave ``point_verdicts`` empty instead
+    -- matching ``_build_ai_corrected``'s dispatch guard, which falls back
+    to the legacy (non-verdict) body in that exact case.
+
     ``prior_values`` (I7, US-013, defaults None): the student's OWN
     extracted answer text for each prerequisite part a gated point
     structurally depends on -- see
@@ -170,25 +182,34 @@ def build_marker_user_prompt(
             "Use these when applying ECF / follow-through rules.\n"
         )
     if equivalence_gate:
-        parts.append(
-            "PER-POINT VERDICTS (I6): in addition to the fields above, populate "
-            "`point_verdicts` with one entry per AnswerPoint / LevelDescriptor / "
-            "DrawingCriteria id in the mark scheme subtree above. For each point, work "
-            "in this order — evidence, then verdict, then note:\n"
-            "  1. evidence_span: quote the EXACT substring, verbatim, from the STUDENT "
-            "ANSWER or WORKING above that justifies your verdict. Never invent or "
-            "paraphrase text that is not present verbatim; leave it as an empty string "
-            'for a "withheld" or "unverifiable" verdict.\n'
-            '  2. verdict: "awarded" (the quoted evidence satisfies the point), '
-            '"withheld" (the evidence shows the point was not satisfied), or '
-            '"unverifiable" (the transcription is too unclear or incomplete to judge '
-            "either way).\n"
-            "  3. note: a short reason for the verdict (optional).\n"
-            "Only once every point has a verdict, compute the total: sum the marks of "
-            'every "awarded" point into awarded_marks and list their ids in '
-            "matched_point_ids, exactly as you would without this section — "
-            "point_verdicts must agree with those totals, not contradict them.\n"
-        )
+        if question.answer_points:
+            parts.append(
+                "PER-POINT VERDICTS (I6): in addition to the fields above, populate "
+                "`point_verdicts` with one entry per AnswerPoint id in the mark scheme "
+                "subtree above. For each point, work in this order — evidence, then "
+                "verdict, then note:\n"
+                "  1. evidence_span: quote the EXACT substring, verbatim, from the STUDENT "
+                "ANSWER or WORKING above that justifies your verdict. Never invent or "
+                "paraphrase text that is not present verbatim; leave it as an empty string "
+                'for a "withheld" or "unverifiable" verdict.\n'
+                '  2. verdict: "awarded" (the quoted evidence satisfies the point), '
+                '"withheld" (the evidence shows the point was not satisfied), or '
+                '"unverifiable" (the transcription is too unclear or incomplete to judge '
+                "either way).\n"
+                "  3. note: a short reason for the verdict (optional).\n"
+                "Only once every point has a verdict, compute the total: sum the marks of "
+                'every "awarded" point into awarded_marks and list their ids in '
+                "matched_point_ids, exactly as you would without this section — "
+                "point_verdicts must agree with those totals, not contradict them.\n"
+            )
+        else:
+            parts.append(
+                "PER-POINT VERDICTS (I6): this question has no `answer_points` "
+                "(levels-based, indicative-content, or a diagram/graph question judged "
+                "holistically) — there is no per-point id to attach a verdict to. Leave "
+                "`point_verdicts` EMPTY and report `awarded_marks` / `matched_point_ids` "
+                "exactly as you would without this section.\n"
+            )
     if prior_values:
         prior_value_lines = "\n".join(f"  {qid}: {value!r}" for qid, value in prior_values.items())
         parts.append(

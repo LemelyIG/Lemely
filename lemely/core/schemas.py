@@ -142,26 +142,45 @@ class CostEstimate(StrictModel):
     token_policy: str
 
 
+# I6 (#11, D19, US-013): one AnswerPoint's per-point marking decision.
+#
+# ``point_id`` must resolve against ``Question.answer_points`` — dangling
+# ids are a coherence violation, same as the legacy
+# ``AIMarkResponse.matched_point_ids`` (``_check_coherence``).
+#
+# ``evidence_span`` is the exact quoted substring from the student's
+# transcribed answer/working that justifies ``verdict`` — the whole point of
+# I6 is that an ``awarded`` verdict with no evidence can now be caught
+# (``correction_ai._check_point_evidence``). Empty for ``withheld``/
+# ``unverifiable``, where there is nothing to quote.
+#
+# ``evidence_box`` is left ``None``-only for now (no OCR bounding-box
+# plumbing wired to the marker in this story — see
+# ``lemely.io.box_plausibility`` for the box work that does exist, which is
+# unrelated); declared per the plan's schema so a later story can populate it
+# without another schema change invalidating the marking cache a second time.
+#
+# Post-I6-review Critical B fix: this used to be the class's DOCSTRING, not
+# a comment. Pydantic derives a model's JSON-Schema ``description`` from
+# ``__doc__`` when nothing overrides it, and this class's schema is nested
+# inside ``AIMarkResponse`` — the ``response_schema`` for EVERY marking call,
+# regardless of ``equivalence_gate`` — so the full text above was sent to
+# Gemini, verbatim, on every single call. Worse: CPython's ``-O``/``-OO``
+# strips docstrings, so ``GeminiClient._params_fingerprint`` (which hashes
+# the UNSTRIPPED ``model_json_schema()`` for the on-disk cache key) computed
+# a DIFFERENT hash depending on the ambient ``PYTHONOPTIMIZE`` setting —
+# US-036's exact defect (``fix(io): stop PYTHONOPTIMIZE from stripping
+# wire-schema description text``), reintroduced on the marking path this
+# story added. US-036's own fix (hard-coding ``description`` via a
+# ``__get_pydantic_json_schema__`` override, independent of ``__doc__``) was
+# considered and rejected here: it would still send this whole block to
+# Gemini on every call, merely stabilising which text gets sent rather than
+# stopping the waste. A plain module comment (this block) documents the
+# design exactly as before, for exactly the same readers (git blame, IDE
+# navigation to the class), while carrying no doc text into
+# ``model_json_schema()`` under EITHER interpreter mode, so the fingerprint
+# cannot depend on ``PYTHONOPTIMIZE`` again by construction.
 class PointVerdict(StrictModel):
-    """I6 (#11, D19, US-013): one AnswerPoint's per-point marking decision.
-
-    ``point_id`` must resolve against ``Question.answer_points`` — dangling
-    ids are a coherence violation, same as the legacy
-    ``AIMarkResponse.matched_point_ids`` (``_check_coherence``).
-
-    ``evidence_span`` is the exact quoted substring from the student's
-    transcribed answer/working that justifies ``verdict`` — the whole point
-    of I6 is that an ``awarded`` verdict with no evidence can now be caught
-    (``correction_ai._check_point_evidence``). Empty for ``withheld``/
-    ``unverifiable``, where there is nothing to quote.
-
-    ``evidence_box`` is left ``None``-only for now (no OCR bounding-box
-    plumbing wired to the marker in this story — see ``lemely.io.box_plausibility``
-    for the box work that does exist, which is unrelated); declared per the
-    plan's schema so a later story can populate it without another schema
-    change invalidating the marking cache a second time.
-    """
-
     point_id: str
     verdict: Literal["awarded", "withheld", "unverifiable"]
     evidence_span: str = ""

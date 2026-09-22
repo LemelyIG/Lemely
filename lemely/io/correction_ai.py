@@ -243,6 +243,29 @@ class AICorrector:
                 model=escalation_model,
             )
 
+        # Post-I6-review Item A: ``PointVerdict.ecf_applied`` must be
+        # CODE-set only -- I7's whole contract is that it records a re-mark
+        # the CODE performed (:func:`_maybe_apply_ecf_substitution`), never
+        # something the model claims about its own single-pass answer. But
+        # the field is on the wire response schema with no description
+        # telling the model that, so nothing stops it setting
+        # ``ecf_applied=True`` unprompted -- which would persist onto
+        # ``CorrectedQuestion.point_verdicts`` as an ECF claim the code never
+        # made, on a call where no substitution happened at all (including
+        # every call today, since ``ecf_substitution`` defaults off).
+        # Unconditionally forced False here, regardless of
+        # ``equivalence_gate``/``ecf_substitution`` or what the model
+        # returned, so ``_maybe_apply_ecf_substitution``'s explicit
+        # ``ecf_applied=True`` merge is the ONLY place this field can ever
+        # become True.
+        if result.point_verdicts:
+            result = result.model_copy(
+                update={
+                    "point_verdicts": [
+                        pv.model_copy(update={"ecf_applied": False}) for pv in result.point_verdicts
+                    ]
+                }
+            )
         return result
 
 
@@ -913,16 +936,51 @@ def _build_ai_corrected(
 
     I6 (US-013) DISPATCH -- reused ``equivalence_gate`` also decides whether
     this function runs the legacy body below at all: when the flag is on
-    AND ``mark.point_verdicts`` is non-empty, this function returns
+    AND ``mark.point_verdicts`` is non-empty AND ``question.answer_points``
+    is non-empty, this function returns
     :func:`_build_ai_corrected_from_verdicts`'s result instead, which
     computes ``awarded_marks`` from the verdicts rather than trusting
     ``mark.awarded_marks`` (see that function and
     ``AIMarkResponse.point_verdicts``'s docstrings for the full I6 review-
-    reason set). With the flag off, or with the flag on but an empty
-    ``point_verdicts`` -- today's default and every existing test's shape,
-    since ``build_marker_user_prompt`` does not yet ask for them unless
-    ``equivalence_gate`` is also passed through to it -- everything below
-    this dispatch is UNCHANGED from before this story, line for line.
+    reason set). With the flag off, with the flag on but an empty
+    ``point_verdicts`` -- today's default and every existing point-based
+    test's shape, since ``build_marker_user_prompt`` does not yet ask for
+    them unless ``equivalence_gate`` is also passed through to it -- or with
+    an empty ``question.answer_points``, everything below this dispatch is
+    UNCHANGED from before this story, line for line.
+
+    The ``question.answer_points`` guard (post-I6 review, Critical A) exists
+    because :func:`_awarded_from_verdicts` and :func:`_check_point_evidence`
+    resolve every verdict's ``point_id`` ONLY against ``question.answer_points``
+    -- the wire prompt's I6 block used to (wrongly) ask the model for a
+    verdict per ``LevelDescriptor``/``DrawingCriteria`` id too, but
+    ``LevelDescriptor`` has no ``id`` field at all (``loose_schemas.py``) and
+    ``question.answer_points`` is required to be EMPTY for
+    ``QuestionType.LEVELS_BASED`` and typically empty for
+    ``INDICATIVE_CONTENT``/diagram/``graph_draw`` questions judged
+    holistically. Without this guard, every verdict for such a question
+    resolves to nothing, ``_awarded_from_verdicts`` sums to 0, and
+    ``LEVELS_BASED``/``INDICATIVE_CONTENT`` are BOTH in
+    :data:`_COHERENCE_EXEMPT_TYPES` -- so the dangling-id coherence check
+    that would otherwise catch this is switched off for exactly these types,
+    and the zero reaches a student unflagged. Demonstrated on a constructed
+    6-mark ``LEVELS_BASED`` question (6/6 -> 0/6, no review triggered) and a
+    constructed ``INDICATIVE_CONTENT`` question (2/2 -> 0/2, no review
+    triggered); the committed 289-scheme corpus contains zero questions of
+    either type (it is entirely ``recall``/``mcq``, det-parsed), so no
+    corpus regression was ever produced or possible -- this is a latent
+    defect in code reachable only once Gemini-parsed schemes populate these
+    types, not a measured corpus regression. Falling back to the legacy body
+    (which never reads ``point_verdicts`` and is therefore identical whether
+    ``equivalence_gate`` is True or False once ``answer_points`` is empty,
+    since ``_verify_calculated_answers`` has nothing to iterate either) was
+    chosen over resolving ids against ``level_descriptors``/
+    ``drawing_criteria`` as well: ``LevelDescriptor`` has no id to resolve
+    against, so a partial per-type extension would still leave levels-based
+    marking broken while superficially "fixing" diagram/graph_draw -- see
+    :func:`build_marker_user_prompt`'s matching fix to the I6 prompt block,
+    which no longer asks the model for point_verdicts at all when
+    ``question.answer_points`` is empty.
 
     Four independent reasons flag a question for human review (D2.2, D2.3 for #3, M1.5 for #40):
 
@@ -943,7 +1001,7 @@ def _build_ai_corrected(
        confidence: a marker can be fully confident about an internally
        inconsistent result.
     """
-    if equivalence_gate and mark.point_verdicts:
+    if equivalence_gate and mark.point_verdicts and question.answer_points:
         return _build_ai_corrected_from_verdicts(
             question, student_answer, mark, student_working, extraction_confidence
         )
