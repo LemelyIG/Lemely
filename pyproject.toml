@@ -84,6 +84,10 @@ dev = [
   # floor said `>=1.13`, i.e. the declared range spanned a major this build has
   # never run a gate on.
   "mypy>=2.1,<2.2",
+  # Minor-capped for the same reason as mypy above: pyright ships new checks
+  # in minor releases, so an unpinned range is a gate whose verdict can move
+  # without a commit. Installed here: 1.1.414.
+  "pyright>=1.1.414,<1.2",
   "pre-commit>=4,<5",      # installed: 4.6.0
   "import-linter>=2.1,<3", # installed: 2.12
   # Parallel test execution, used only by `scripts/check.sh --fast` (the
@@ -436,3 +440,108 @@ forbidden_modules = [
 [tool.pyright]
 venvPath = '.'
 venv = '.venv'
+include = ["lemely"]
+
+# Residual findings after task #42's `Field(default=...)` migration (which
+# removed the 7 `reportCallIssue` false positives caused by this codebase's
+# previously-positional `Field(None, ...)` style — pyright only recognises a
+# pydantic default via the `default=` keyword). Each entry below is scoped to
+# one file (or one tight file group) and one or two specific rules, never a
+# whole-file or project-wide suppression, and each has a named cause. See
+# `.omc/state/sessions/33cebc31-5947-4575-89df-8ae6f47c7c04/sdd/briefs/type-gate-gap-report.md`
+# for the full investigation each entry below is drawn from.
+
+# Third-party stub gaps (pyright is wrong, not the code):
+
+# gradio's stubs don't reflect its actual re-export surface for `gradio.themes.*`.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/app/gradio_app.py"
+reportPrivateImportUsage = "none"
+
+# `sqlalchemy.dialects` is a lazily-imported submodule; pyright's stub view of
+# the `sqlalchemy` package top-level doesn't see it get bound. Scoped to the
+# three migrations that reference it this way, not the whole `versions/` tree.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0016_announcement_reads.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0017_exam_dates.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/migrations/versions/0018_push_subscriptions.py"
+reportAttributeAccessIssue = "none"
+
+# `anyio.to_thread.run_sync` overload resolution artifact — pyright picks an
+# unrelated overload branch (`BrokenWorkerInterpreter`) that happens to lack
+# `run_sync`; unrelated to the actual call shape used at these sites.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/routers/student.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/routers/teacher.py"
+reportAttributeAccessIssue = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/web/sse.py"
+reportAttributeAccessIssue = "none"
+
+# sympy ships no `py.typed` / stubs; pyright's fallback typing of `Basic`
+# doesn't know `.name` or `.evalf(subs=...)`'s real signature.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/core/equivalence.py"
+reportAttributeAccessIssue = "none"
+reportArgumentType = "none"
+
+# `hasattr(payload, "model_dump")` inside a ternary doesn't narrow
+# `payload: object` for pyright here; functionally correct code, pyright
+# limitation (mypy's narrower checker doesn't hit this line at all).
+[[tool.pyright.executionEnvironments]]
+root = "lemely/app/cli.py"
+reportAttributeAccessIssue = "none"
+
+# Real findings, but out of scope for task #42 (which is the Field-default
+# migration + gating pyright itself, not a general pyright cleanup). Each is
+# tracked in the type-gate-gap report above for whoever owns that path next;
+# excluding them here only keeps the new gate from blocking on pre-existing,
+# unrelated defects the whole codebase is currently carrying regardless of
+# this gate's addition.
+
+# `_HasRowcount.rowcount` is a docstring-only `@property` inside a `Protocol`
+# (never instantiated), so pyright reads the fall-through as `-> None`. No
+# runtime effect since Protocols aren't called; cosmetic fix is a `...` body.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/notification_repo.py"
+reportReturnType = "none"
+
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/teacher_paper_repo.py"
+reportReturnType = "none"
+
+# `points_are_settleable(qr.points)` expects `Iterable[_HasGroupFlags]`;
+# `qr.points: list[QuestionResultPoint]` doesn't structurally satisfy
+# `_HasGroupFlags` per pyright — needs investigation by whoever owns the
+# self-review settlement path (unclear if this is a real attribute gap or an
+# inference artifact; not chased further here).
+[[tool.pyright.executionEnvironments]]
+root = "lemely/db/self_review_repo.py"
+reportArgumentType = "none"
+
+# pypdfium2's stub types `render`'s `scale` param as `int`; this call passes
+# `dpi / 72.0` (a `float`). Worth a runtime check for silent truncation —
+# not verified here, flagged for whoever owns the rasterisation path.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/io/rasterise.py"
+reportArgumentType = "none"
+
+# `LabellerHTTPServer`'s `server` attribute narrows the stdlib base class's
+# type, and `log_message`'s parameter is renamed from `format` to
+# `format_str`. Both are intentional and harmless in practice (internal
+# labelling tool, `socketserver` never calls either by keyword), but are
+# genuine LSP violations mypy's default override checking doesn't catch here.
+[[tool.pyright.executionEnvironments]]
+root = "lemely/labelling/server.py"
+reportIncompatibleVariableOverride = "none"
+reportIncompatibleMethodOverride = "none"
