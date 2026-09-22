@@ -56,6 +56,19 @@ def review_reasons_for(question: CorrectedQuestion) -> Iterator[ReviewReason]:
     ``_build_missing_corrected``'s or ``_build_dropped_corrected``'s output
     (also ``confidence_score`` 0.0, but ``needs_teacher_review=True`` there,
     so they already queue via ``marking_flagged`` regardless).
+
+    **Known limit, not fixed here.** The exemption's ``marker_source``/
+    ``review_reason`` pairing is a string match against
+    ``_BLANK_ANSWER_REVIEW_REASON`` — there is no dedicated boolean on
+    :class:`~lemely.core.schemas.CorrectedQuestion` marking "this is a
+    genuine blank", and adding one would mean editing that schema, which this
+    module does not own. If ``_BLANK_ANSWER_REVIEW_REASON`` and
+    ``_build_missing_corrected``'s message were ever made equal, this
+    function would start exempting ``--mcq-only``/no-AI-client skips too,
+    silently dropping their low-confidence queue row — the over-broad
+    direction, the worse one. The guard against that is
+    ``lemely.io.correction_ai``'s own pairwise-distinctness test (see
+    ``tests/test_correction_ai.py``), not anything in this module.
     """
     marking_flagged = question.needs_teacher_review and not question.plagiarism_flagged
     unflagged_blank = (

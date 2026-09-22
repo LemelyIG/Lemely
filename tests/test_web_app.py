@@ -414,6 +414,130 @@ def test_question_to_dto_surfaces_per_question_needs_teacher_review() -> None:
     assert unflagged_blank.model_dump()["needsTeacherReview"] is False
 
 
+def test_grading_queue_excludes_the_us039_unflagged_blank() -> None:
+    """MUST-FIX (added scope, second independent review of ``4166e535``).
+
+    ``GET /grading/queue`` (``lemely.web.routers.teacher.grading_queue``) is a
+    THIRD site applying the review-queue predicate, alongside
+    ``AttemptRepository.persist_correction`` and
+    ``TeacherPaperRepository._review_items_for`` -- and it does not go
+    through ``ReviewQueueItem`` at all: it recomputes
+    ``needs_teacher_review or confidence_score < REVIEW_CONFIDENCE_THRESHOLD``
+    straight off ``report_json``. Worse than the other two: the response is
+    sorted ascending by confidence, and a genuine US-039 blank has
+    ``confidence_score == 0.0``, so it used to sort to the very top -- a paper
+    with several unattempted parts put every one of them as the first rows a
+    teacher sees on the most visible surface in the grading console, with no
+    ``ReviewQueueItem`` row involved to exempt.
+
+    This exercises the real route function (not a re-derivation of its
+    predicate) against a fake repo, asserting on the ``GradingQueueDTO`` it
+    returns -- exactly the payload FastAPI serialises as the response body
+    for ``response_model=GradingQueueDTO``. A full HTTP round-trip through
+    ``TestClient`` against a real Postgres-backed app (the pattern
+    ``tests/test_web_teacher.py::test_grading_queue_flags_low_confidence``
+    uses) was not built here because that fixture stack
+    (``client``/``paper_repo``/``storage_backend``/``teacher_user``) lives in
+    a file this fix is not authorised to edit; see the accompanying report
+    for that trade-off.
+    """
+    import uuid
+    from datetime import UTC, datetime
+
+    from lemely.core.analytics import summarize_weaknesses
+    from lemely.core.schemas import AccuracyReport, GradePrediction
+    from lemely.db.models.enums import Role, UploadStatus
+    from lemely.db.teacher_paper_repo import TeacherPaperRow
+    from lemely.web.deps import AuthContext
+    from lemely.web.routers.teacher import grading_queue
+
+    def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
+        correction = CorrectionResult(
+            metadata=ExamMetadata(
+                subject_code="0625",
+                paper_number=4,
+                paper_variant=1,
+                session_month="May/June",
+                session_year=2020,
+            ),
+            questions=questions,
+        )
+        return AccuracyReport(
+            correction=correction,
+            weaknesses=summarize_weaknesses(correction),
+            grade_prediction=GradePrediction(
+                awarded_marks=correction.awarded_marks,
+                maximum_marks=correction.maximum_marks,
+                percentage=0.0,
+                grade="U",
+                confidence=ConfidenceBand.LOW,
+                needs_teacher_review=correction.needs_teacher_review,
+            ),
+        )
+
+    now = datetime.now(UTC)
+
+    def _paper_row(paper_id: uuid.UUID, questions: list[CorrectedQuestion]) -> TeacherPaperRow:
+        return TeacherPaperRow(
+            id=paper_id,
+            uploaded_by=uuid.uuid4(),
+            student_id=None,
+            storage_path="teacher/scan.pdf",
+            scheme_storage_path=None,
+            original_filename="scan.pdf",
+            content_type="application/pdf",
+            status=UploadStatus.complete,
+            stage=None,
+            progress=None,
+            metadata=None,
+            mark_scheme=None,
+            report=_report(questions),
+            error=None,
+            run_started_at=now,
+            created_at=now,
+            updated_at=now,
+            stale=False,
+        )
+
+    genuinely_low_confidence = CorrectedQuestion(
+        question_id="5b",
+        awarded_marks=0,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.2,
+        needs_teacher_review=True,
+        marker_source="ai",
+        topic="Moments",
+    )
+    blank = CorrectedQuestion(
+        question_id="3",
+        awarded_marks=0,
+        maximum_marks=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.0,
+        needs_teacher_review=False,
+        marker_source="missing",
+        review_reason="student left this question blank (0 awarded, no AI call made)",
+    )
+    paper_id = uuid.uuid4()
+    row = _paper_row(paper_id, [genuinely_low_confidence, blank])
+
+    class _FakeRepo:
+        def list_visible(self, *, viewer_id: uuid.UUID, viewer_role: Role) -> list[TeacherPaperRow]:
+            del viewer_id, viewer_role
+            return [row]
+
+    auth = AuthContext(user_id=str(uuid.uuid4()), role=Role.teacher.value)
+
+    dto = grading_queue(auth, _FakeRepo())  # type: ignore[arg-type]
+
+    body = dto.model_dump()
+    question_ids = {r["questionId"] for r in body["rows"]}
+    # Question "5b" (genuinely low-confidence) still queues; the unflagged
+    # blank ("3") must NOT.
+    assert question_ids == {"5b"}
+
+
 # -- The notification sweeper's lifespan (push-delivery spec §4) ---------------
 
 

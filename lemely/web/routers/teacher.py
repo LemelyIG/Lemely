@@ -81,6 +81,7 @@ from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
+from lemely.db.review_queue_rules import review_reasons_for
 from lemely.db.review_repo import ReviewService
 from lemely.db.student_profile_repo import StudentProfileService
 from lemely.io.gemini import GeminiClient
@@ -963,7 +964,22 @@ def grading_queue(
     auth: Annotated[AuthContext, Depends(get_auth_context)],
     repo: Annotated[TeacherPaperRepository, Depends(get_teacher_paper_repo)],
 ) -> GradingQueueDTO:
-    """Return low-confidence questions flagged for teacher review across visible papers."""
+    """Return low-confidence questions flagged for teacher review across visible papers.
+
+    Membership uses :func:`~lemely.db.review_queue_rules.review_reasons_for` --
+    the *same* predicate that decides whether a ``ReviewQueueItem`` row gets
+    written for this question (``AttemptRepository.persist_correction``,
+    ``TeacherPaperRepository._review_items_for``) -- rather than
+    re-deriving ``needs_teacher_review or confidence_score < _REVIEW_CONFIDENCE``
+    inline. This route does not read ``ReviewQueueItem`` at all (it
+    recomputes straight from ``report_json``), which is exactly how it
+    diverged from both repos: before this fix, a genuine US-039 blank
+    (``confidence_score == 0.0``) sorted to the very top of this
+    ascending-by-confidence list, so a paper with several unattempted parts
+    put every one of them as the first rows a teacher sees here -- the
+    product-owner-rejected outcome, on the most visible surface, with no
+    ``ReviewQueueItem`` row involved.
+    """
     viewer_id, viewer_role = _viewer(auth)
     rows: list[QueueRowDTO] = []
     for row in repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role):
@@ -971,20 +987,21 @@ def grading_queue(
         if report is None:
             continue
         for question in report.correction.questions:
-            if question.needs_teacher_review or question.confidence_score < _REVIEW_CONFIDENCE:
-                rows.append(
-                    QueueRowDTO(
-                        paperId=str(row.id),
-                        # `student_id` is always null today (D1.12), so a
-                        # queue row is named for its paper, same as the grid.
-                        name=_paper_label(row),
-                        questionId=question.question_id,
-                        topic=question.topic,
-                        confidence=round(question.confidence_score, 2),
-                        awardedMarks=question.awarded_marks,
-                        maxMarks=question.maximum_marks,
-                    )
+            if next(review_reasons_for(question), None) is None:
+                continue
+            rows.append(
+                QueueRowDTO(
+                    paperId=str(row.id),
+                    # `student_id` is always null today (D1.12), so a
+                    # queue row is named for its paper, same as the grid.
+                    name=_paper_label(row),
+                    questionId=question.question_id,
+                    topic=question.topic,
+                    confidence=round(question.confidence_score, 2),
+                    awardedMarks=question.awarded_marks,
+                    maxMarks=question.maximum_marks,
                 )
+            )
     rows.sort(key=lambda r: r.confidence if r.confidence is not None else 1.0)
     return GradingQueueDTO(rows=rows)
 
