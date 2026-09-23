@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Sequence
 from enum import StrEnum
 from pathlib import Path
 from typing import Final, Literal
@@ -257,6 +258,41 @@ class PointVerdict(StrictModel):
     re-marking the point with a substituted prior value (error carried
     forward). Always False when ``ecf_substitution`` is off or the point's
     scheme carries no ``ecf``/``ft``/``dep`` marker."""
+
+
+def dedupe_point_verdicts(
+    point_verdicts: Sequence[PointVerdict],
+) -> tuple[list[PointVerdict], list[PointVerdict]]:
+    """Split ``point_verdicts`` into ``(kept, dropped)`` by first-seen ``point_id``.
+
+    Nothing in ``AIMarkResponse`` stops a marker from reporting the same
+    ``point_id`` twice, and its two consumers used to disagree about what a
+    repeat means: ``lemely.io.correction_ai._awarded_from_verdicts`` summed
+    every awarded entry (inflating marks), while
+    ``lemely.db.question_points.derive_point_rows`` kept the LAST entry
+    (silently overwriting an earlier one) -- so an awarded-then-withheld pair
+    for one id produced an awarded total alongside a persisted
+    ``verdict='withheld'`` row for the same point. This is the single rule
+    both now call, so they can no longer disagree: first occurrence of a
+    ``point_id`` wins, every later one is reported back in ``dropped`` for
+    the caller to log (naming the question id and the verdict that was
+    dropped is a caller concern -- this function has neither).
+
+    Pure, like the rest of this module: no logging, no I/O. A caller that
+    must stay side-effect-free (``lemely.db.question_points``, "Pure: no
+    session, no I/O") can call this and simply ignore ``dropped``; a caller
+    that can log (``lemely.io.correction_ai``) uses it to warn.
+    """
+    kept: list[PointVerdict] = []
+    dropped: list[PointVerdict] = []
+    seen: set[str] = set()
+    for pv in point_verdicts:
+        if pv.point_id in seen:
+            dropped.append(pv)
+            continue
+        seen.add(pv.point_id)
+        kept.append(pv)
+    return kept, dropped
 
 
 class CorrectedQuestion(StrictModel):

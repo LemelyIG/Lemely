@@ -30,6 +30,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from lemely.core.schemas import dedupe_point_verdicts
+
 if TYPE_CHECKING:
     from collections.abc import Sequence
 
@@ -66,7 +68,17 @@ def derive_point_rows(
 
     matched = set(cq.matched_point_ids)
     notes = cq.point_notes or {}
-    verdicts = {pv.point_id: pv for pv in cq.point_verdicts}
+    # First occurrence of a repeated point_id wins -- the SAME rule
+    # ``lemely.io.correction_ai._awarded_from_verdicts`` applies to the same
+    # list, via the one shared helper, so the two can no longer disagree
+    # about a repeat (they used to: that function kept every awarded entry,
+    # this dict comprehension kept the LAST one, so an awarded-then-withheld
+    # pair for one id used to award marks for a point this function then
+    # persisted as ``verdict='withheld'``). Dropped duplicates are not logged
+    # here -- this module stays pure, no session, no I/O (module docstring)
+    # -- ``lemely.db.attempt_repo`` logs on this function's behalf.
+    kept_verdicts, _dropped_verdicts = dedupe_point_verdicts(cq.point_verdicts)
+    verdicts = {pv.point_id: pv for pv in kept_verdicts}
 
     kept: list[AnswerPoint] = []
     seen_ids: set[str] = set()

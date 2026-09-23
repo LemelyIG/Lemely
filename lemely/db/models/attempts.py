@@ -435,13 +435,30 @@ class QuestionResultPoint(TimestampMixin, Base):
 
     ``awarded`` (above) is NOT re-derived from this column and keeps its own
     live consumers (``SelfReviewPoints``, ``points_are_settleable``,
-    ``_settle_groups``); ``verdict`` is strictly richer beside it. Where both
-    are present, ``awarded == (verdict == "awarded")`` is an invariant a
-    marker inconsistency should violate loudly, not silently reconcile --
-    see ``tests/test_question_points.py``. ``verdict`` is what tells a
-    teacher, that could not tell from ``awarded`` alone, that the marker
-    judged the point absent (``withheld``) rather than unable to verify it
-    (``unverifiable``) -- both of which collapse to ``awarded=False``.
+    ``_settle_groups``); ``verdict`` is strictly richer beside it. A
+    repeated ``point_id`` in the marker's own ``point_verdicts`` output used
+    to make ``awarded`` and ``verdict`` disagree for that point --
+    ``lemely.io.correction_ai._awarded_from_verdicts`` summed every awarded
+    entry (inflating marks) while ``lemely.db.question_points.derive_point_rows``
+    kept the LAST entry, so an awarded-then-withheld pair could persist
+    ``awarded=True`` beside ``verdict="withheld"``. That specific
+    disagreement is now closed structurally: both consumers dedupe the same
+    list via the one shared ``lemely.core.schemas.dedupe_point_verdicts``
+    helper (deterministic first-occurrence-wins), so they can no longer
+    resolve a repeat differently -- see ``tests/test_question_points.py``.
+    A repeat is also, in its own right, a structural inconsistency in the
+    marker's raw output: on the verdict path,
+    ``lemely.io.correction_ai._check_coherence`` flags it as a coherence
+    violation, which routes the question to teacher review rather than
+    reconciling it silently -- see ``tests/test_correction_ai.py``. This
+    closes only the duplicate-``point_id`` case: ``awarded`` can still
+    diverge from ``verdict`` when ``_verify_calculated_answers`` rejects a
+    point's mark after its verdict was formed (the point's raw ``"awarded"``
+    verdict is not revised), a separate gap this fix does not touch.
+    ``verdict`` is what tells a teacher, that could not tell from
+    ``awarded`` alone, that the marker judged the point absent
+    (``withheld``) rather than unable to verify it (``unverifiable``) --
+    both of which collapse to ``awarded=False``.
     """
     evidence_span: Mapped[str] = mapped_column(
         sa.Text, nullable=False, server_default=sa.text("''")

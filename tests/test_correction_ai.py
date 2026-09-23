@@ -2014,6 +2014,144 @@ class PointVerdictBuildTests(unittest.TestCase):
         self.assertIsNone(cq.review_reason)
 
 
+class DuplicatePointVerdictTests(unittest.TestCase):
+    """Task #30 review MUST-FIX 1: a repeated ``point_id`` in
+    ``point_verdicts`` used to inflate marks (``_awarded_from_verdicts``
+    summed every awarded entry) and could persist a self-contradictory row
+    (``derive_point_rows`` kept the LAST entry, so an awarded-then-withheld
+    pair for one id awarded marks for a point then persisted
+    ``verdict="withheld"``). Both consumers now dedupe via the ONE shared
+    ``lemely.core.schemas.dedupe_point_verdicts`` helper (first occurrence
+    wins), and a repeat in the marker's raw output is itself surfaced as a
+    coherence violation on the verdict path only.
+
+    Probe: ``.omc/state/sessions/33cebc31-5947-4575-89df-8ae6f47c7c04/sdd/
+    probes/dup_verdict_probe.py`` demonstrated all three violations before
+    this fix and zero after; these are the committed regression tests for
+    the same three claims plus the coherence-scoping claim the probe does
+    not cover.
+    """
+
+    def _question(self, marks=2):
+        from lemely.core.loose_schemas import AnswerPoint, MathMarkType, Question, QuestionType
+
+        return Question.model_construct(
+            id="2",
+            marks=marks,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="method step", marks=1, math_mark_type=MathMarkType.M),
+                AnswerPoint(id="p2", point="final value", marks=1, math_mark_type=MathMarkType.A),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def _verdict(self, point_id, verdict="awarded", span=""):
+        from lemely.core.schemas import PointVerdict
+
+        return PointVerdict(point_id=point_id, verdict=verdict, evidence_span=span)
+
+    def _mark(self, point_verdicts, matched=None, confidence=0.95):
+        from lemely.core.schemas import AIMarkResponse
+
+        return AIMarkResponse(
+            awarded_marks=0,
+            confidence=confidence,
+            matched_point_ids=matched or [],
+            feedback="fb",
+            point_verdicts=point_verdicts,
+        )
+
+    def test_duplicate_awarded_verdict_does_not_inflate_marks(self):
+        """A 1-mark point awarded twice must be worth 1 mark, not 2."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p1", span="did the method"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q, "did the method", mark, student_working="did the method", equivalence_gate=True
+        )
+        self.assertEqual(cq.awarded_marks, 1)
+        self.assertEqual(cq.matched_point_ids, ["p1"])
+
+    def test_awarded_and_withheld_duplicate_does_not_persist_a_contradictory_row(self):
+        """First occurrence wins on BOTH sides: ``awarded`` (from
+        ``matched_point_ids``) and ``verdict`` (from ``point_verdicts``) must
+        agree about the SAME point, even when the marker's raw output
+        repeats the id with conflicting verdicts."""
+        from lemely.db.question_points import derive_point_rows
+        from lemely.io.correction_ai import _build_ai_corrected
+        from tests.conftest import _scheme
+
+        # `_scheme()` (tests/conftest.py) is a one-question scheme whose
+        # question_id is "1a" with points p1/p2/p3 -- reuse it rather than
+        # inventing a second scheme fixture, so `derive_point_rows` has a
+        # real `MarkScheme` to resolve against.
+        scheme: MarkScheme = _scheme()
+        q = scheme.get_question_by_id("1a")
+        assert q is not None
+        mark = self._mark(
+            [
+                self._verdict("p1", verdict="awarded", span="first"),
+                self._verdict("p1", verdict="withheld"),
+            ]
+        )
+        cq = _build_ai_corrected(q, "first", mark, equivalence_gate=True)
+        rows = derive_point_rows(cq, scheme)
+        p1_row = next(row for row in rows if row["mark_point_id"] == "p1")
+
+        # The point that "won" the dedupe (awarded, first occurrence) must
+        # be the SAME point on both sides of the row.
+        self.assertEqual(p1_row["awarded"], "p1" in cq.matched_point_ids)
+        self.assertEqual(p1_row["awarded"], p1_row["verdict"] == "awarded")
+        self.assertEqual(p1_row["verdict"], "awarded")
+        self.assertTrue(p1_row["awarded"])
+
+    def test_duplicate_point_id_triggers_coherence_review_on_verdict_path(self):
+        from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER, _build_ai_corrected
+
+        q = self._question()
+        mark = self._mark(
+            [
+                self._verdict("p1", verdict="awarded", span="did the method"),
+                self._verdict("p1", verdict="withheld"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q, "did the method", mark, student_working="did the method", equivalence_gate=True
+        )
+        self.assertTrue(cq.needs_teacher_review)
+        self.assertIn(COHERENCE_TRIGGER_MARKER, cq.review_reason or "")
+        self.assertIn("repeats", cq.review_reason or "")
+
+    def test_duplicate_point_id_does_not_trigger_review_on_legacy_path(self):
+        """Scoped deliberately: a duplicate ``matched_point_ids`` entry (the
+        LEGACY shape -- ``point_verdicts`` plays no part in that path) must
+        not newly trigger review through the point-verdicts-repeat check.
+        Isolated with a direct ``_check_coherence`` call rather than the
+        full ``_build_ai_corrected`` legacy body, because a duplicated
+        ``matched_point_ids`` entry ALSO doubles the pre-existing RANGE
+        check's implied total (both occurrences of "p1" sum into
+        ``implied_min``/``implied_max``) -- awarded_marks=2 satisfies that
+        pre-existing, unrelated check, isolating this test to the ONE claim
+        that matters: passing ``point_verdicts=None`` (what the legacy call
+        site actually passes) means the new repeat check cannot fire,
+        regardless of what ``matched_point_ids`` contains."""
+        from lemely.io.correction_ai import _check_coherence
+
+        q = self._question()
+        reason = _check_coherence(q, ["p1", "p1"], awarded_marks=2)
+        self.assertIsNone(reason)
+
+
 class VerdictPathLevelsBasedFallbackTests(unittest.TestCase):
     """Post-I6-review Critical A: the verdict path resolves every
     ``PointVerdict.point_id`` ONLY against ``question.answer_points``

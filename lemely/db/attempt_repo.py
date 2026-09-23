@@ -61,7 +61,7 @@ import structlog
 from sqlalchemy import select
 from sqlalchemy.exc import SQLAlchemyError
 
-from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, marker_scored
+from lemely.core.schemas import REVIEW_CONFIDENCE_THRESHOLD, dedupe_point_verdicts, marker_scored
 from lemely.core.topics import classify, is_writable
 from lemely.db.history_repo import month_to_enum, parse_user_id
 from lemely.db.models.attempts import (
@@ -626,6 +626,7 @@ def _safe_derive_point_rows(
         except Exception:
             question = None
     _warn_if_point_ids_were_deduplicated(cq, question, question_result_id, len(rows))
+    _warn_if_point_verdicts_were_deduplicated(cq, question_result_id)
     return rows
 
 
@@ -662,6 +663,40 @@ def _warn_if_point_ids_were_deduplicated(
                 question_id=cq.question_id,
                 row_count=row_count,
                 scheme_count=scheme_count,
+            )
+    except Exception:
+        return
+
+
+def _warn_if_point_verdicts_were_deduplicated(
+    cq: CorrectedQuestion, question_result_id: uuid.UUID
+) -> None:
+    """Log when ``derive_point_rows`` silently dropped a duplicate ``point_id``.
+
+    Same shape as :func:`_warn_if_point_ids_were_deduplicated` right above --
+    ``derive_point_rows`` (``lemely/db/question_points.py``) must stay pure
+    (module docstring: "no session, no I/O"), so it dedupes silently via
+    :func:`lemely.core.schemas.dedupe_point_verdicts` and this function does
+    the logging on its behalf, re-running the SAME dedupe over the SAME
+    ``cq.point_verdicts`` it read -- not duplicating its logic, just its
+    input, which is cheap (the list is at most one entry per mark point).
+
+    A duplicate ``point_id`` here is the marker's own output repeating
+    itself, not a scheme defect, so this is a separate signal from the
+    mark-point-id one above -- one can fire without the other.
+
+    Guarded end-to-end, same as the sibling function: nothing on this path
+    may ever fail a correction (spec 2026-09-17, "Error handling").
+    """
+    try:
+        _kept, dropped = dedupe_point_verdicts(cq.point_verdicts)
+        for pv in dropped:
+            log.warning(
+                "point_verdict_duplicate_dropped",
+                question_result_id=str(question_result_id),
+                question_id=cq.question_id,
+                point_id=pv.point_id,
+                verdict=pv.verdict,
             )
     except Exception:
         return

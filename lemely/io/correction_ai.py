@@ -28,6 +28,7 @@ from lemely.core.schemas import (
     ExtractedAnswers,
     PointVerdict,
     confidence_band_for_score,
+    dedupe_point_verdicts,
 )
 from lemely.io.gemini import GeminiClient, thinking_rank
 from lemely.io.prompts.correction_ai import (
@@ -598,18 +599,34 @@ _COHERENCE_EXEMPT_TYPES = frozenset(
 
 
 def _check_coherence(
-    question: Question, matched_point_ids: list[str], awarded_marks: int
+    question: Question,
+    matched_point_ids: list[str],
+    awarded_marks: int,
+    *,
+    point_verdicts: list[PointVerdict] | None = None,
 ) -> str | None:
     """Coherence check (M1.5, #40).
 
     The marker's claimed ``matched_point_ids`` must exist in the mark scheme
     and must reconcile with ``awarded_marks``.
 
-    Two independent failure modes, either one is a coherence violation. Every
+    Three independent failure modes, either one is a coherence violation. Every
     message this returns contains :data:`COHERENCE_TRIGGER_MARKER` so
     downstream (``harness.py``) can attribute the trigger without a second,
     parallel signal:
 
+    0. ``point_verdicts`` (I6's verdict path only -- ``None`` on the legacy
+       path, see below) repeats a ``point_id``. ``matched_point_ids`` and
+       ``awarded_marks`` have both already been through
+       :func:`_awarded_from_verdicts`'s ``dedupe_point_verdicts`` call by the
+       time they reach here, so a repeat is invisible in THEM; this check
+       looks at the marker's own RAW output instead, the same way the other
+       two modes below look at the marker's raw claim rather than a
+       downstream derivation. Scoped to the verdict path deliberately: the
+       legacy path's caller passes ``point_verdicts=None``, so a duplicate in
+       ``mark.matched_point_ids`` (whose ``awarded_marks`` comes from the
+       model, not a Python sum, and therefore has no inflation bug) cannot
+       newly trigger review here.
     1. A dangling point id: ``matched_point_ids`` references an id that does
        not exist in ``question.answer_points``. Previously silently accepted
        (``_verify_calculated_answers`` still tolerates it for its own,
@@ -652,6 +669,18 @@ def _check_coherence(
         # decomposed into discrete points by design (levels-based/
         # indicative-content marking, or the deterministic MCQ marker).
         return None
+
+    if point_verdicts is not None:
+        seen_ids: set[str] = set()
+        repeated: set[str] = set()
+        for pv in point_verdicts:
+            if pv.point_id in seen_ids:
+                repeated.add(pv.point_id)
+            seen_ids.add(pv.point_id)
+        if repeated:
+            return f"{COHERENCE_TRIGGER_MARKER}: point_verdicts repeats point id(s): " + ", ".join(
+                sorted(repeated)
+            )
 
     points_by_id = {p.id: p for p in question.answer_points}
     dangling = [pid for pid in matched_point_ids if pid not in points_by_id]
@@ -794,9 +823,26 @@ def _awarded_from_verdicts(
     Unresolved (dangling) point ids are excluded from the sum here -- the
     same dangling id is separately caught as a structural violation by
     ``_check_coherence`` on the returned ``matched_point_ids``.
+
+    A repeated ``point_id`` is deduplicated first, via
+    ``dedupe_point_verdicts`` (:mod:`lemely.core.schemas`) -- the same rule
+    ``derive_point_rows`` (:mod:`lemely.db.question_points`) applies to the
+    same list, so the two can no longer disagree about a repeat. Without
+    this, a repeated ``verdict="awarded"`` point summed its ``marks`` once
+    per occurrence.
     """
     points_by_id = {p.id: p for p in question.answer_points}
-    matched_point_ids = [pv.point_id for pv in point_verdicts if pv.verdict == "awarded"]
+    kept, dropped = dedupe_point_verdicts(point_verdicts)
+    if dropped:
+        log = structlog.get_logger()
+        for pv in dropped:
+            log.warning(
+                "point_verdict_duplicate_dropped",
+                question_id=question.id,
+                point_id=pv.point_id,
+                verdict=pv.verdict,
+            )
+    matched_point_ids = [pv.point_id for pv in kept if pv.verdict == "awarded"]
     total = sum(points_by_id[pid].marks for pid in matched_point_ids if pid in points_by_id)
     return min(total, question.marks), matched_point_ids
 
@@ -897,7 +943,9 @@ def _build_ai_corrected_from_verdicts(
     """
     capped, matched_point_ids = _awarded_from_verdicts(question, mark.point_verdicts)
 
-    coherence_reason = _check_coherence(question, matched_point_ids, capped)
+    coherence_reason = _check_coherence(
+        question, matched_point_ids, capped, point_verdicts=mark.point_verdicts
+    )
     coherence_mismatch = coherence_reason is not None
 
     coverage_reason: str | None = None
