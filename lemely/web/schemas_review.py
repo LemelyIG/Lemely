@@ -7,15 +7,15 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
-from typing import Literal
-
+from lemely.core.schemas import PointVerdictWire
 from lemely.web.schemas import ApiModel
 
-#: Mirrors ``lemely.db.review_repo.PointVerdictWire``. The wire boundary is
-#: where this ``Literal`` is load-bearing — pyright, not mypy, is what
-#: catches a plain ``str`` reaching it (see ``ReviewItemPointDTO.verdict``'s
-#: docstring).
-PointVerdictWire = Literal["awarded", "withheld", "unverifiable"]
+#: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
+#: ``Literal`` :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated
+#: with; mirrors ``lemely.db.review_repo.PointVerdictWire``, the other
+#: re-export of the same alias. The wire boundary is where this ``Literal``
+#: is load-bearing — pyright, not mypy, is what catches a plain ``str``
+#: reaching it (see ``ReviewItemPointDTO.verdict``'s docstring).
 
 
 class ReviewBreakdownDTO(ApiModel):
@@ -131,10 +131,15 @@ class ReviewItemDetailDTO(ApiModel):
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
     that part of the gap is real and stays real, so a future screen must not
     invent scan-crop or scheme-prose precision this backend cannot provide.
-    But ``matchedPointIds`` and ``studentAnswer`` are no longer the best this
-    backend can do for *marking evidence*: ``points`` (``ReviewItemPointDTO``)
-    now carries the marker's per-point verdict and quoted evidence span (I6,
-    US-013), which is strictly richer than a bare matched-point identifier.
+    Where ``points`` (``ReviewItemPointDTO``) carries a real per-point
+    ``verdict`` and quoted evidence span (I6, US-013 — an attempt-backed row
+    with a mark scheme, once the marker actually returns verdicts), it is
+    strictly richer marking evidence than a bare matched-point identifier.
+    That is not every row: on a ``"console_paper"`` row ``points`` is always
+    ``[]`` (there is no ``question_result_points`` row for a console item —
+    see below), on a no-scheme question (a quiz) it is also ``[]``, and on a
+    legacy row it carries no ``verdict`` at all. On any of those,
+    ``matchedPointIds`` remains the only marking evidence this backend has.
 
     On a ``"console_paper"`` row the marking evidence is read from the paper's
     stored report, but every **override** field (``isOverridden``,

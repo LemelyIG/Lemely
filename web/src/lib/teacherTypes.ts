@@ -769,12 +769,15 @@ export interface ReviewItemPoint {
  * point ids (inventing precision, UI-spec §1.4). That gap is real and stays
  * real: it is not what the paragraph below narrows.
  *
- * `matchedPointIds` is no longer the best marking evidence this backend can
- * provide — it was, before I6 (US-013): `points` (`ReviewItemPoint`) now
- * carries each point's marker verdict and quoted evidence span, strictly
- * richer than a bare identifier chip, so a bare `matchedPointIds` chip list
- * is demoted beneath the real per-point verdicts on this screen rather than
- * being the primary evidence surface.
+ * Where `points` (`ReviewItemPoint`) carries a real per-point `verdict` and
+ * quoted evidence span (I6, US-013 — an attempt-backed row with a mark
+ * scheme, once the marker actually returns verdicts), it is strictly richer
+ * marking evidence than a bare matched-point identifier, so a bare
+ * `matchedPointIds` chip list is demoted beneath the real per-point verdicts
+ * on this screen. That is not every row: on a `"console_paper"` row and on a
+ * no-scheme question (a quiz) `points` is always `[]`, and on a legacy row
+ * it carries no `verdict` at all — on any of those, `matchedPointIds`
+ * remains the only marking evidence this backend has.
  */
 export interface ReviewItemDetail extends ReviewQueueItem {
   studentAnswer: string | null

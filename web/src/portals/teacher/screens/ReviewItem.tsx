@@ -140,9 +140,9 @@ const POINT_VERDICT_LABEL: Record<"awarded" | "withheld" | "unverifiable", strin
   unverifiable: "Unverifiable, could not confirm",
 }
 
-const POINT_VERDICT_TONE: Record<"awarded" | "withheld" | "unverifiable", "ok" | "err" | "warn"> = {
+const POINT_VERDICT_TONE: Record<"awarded" | "withheld" | "unverifiable", "ok" | "neutral" | "warn"> = {
   awarded: "ok",
-  withheld: "err",
+  withheld: "neutral",
   unverifiable: "warn",
 }
 
@@ -180,7 +180,6 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
           >
             <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
-              <Chip tone="neutral">Marker: {point.awarded ? "awarded" : "not awarded"}</Chip>
               <Chip tone="neutral">
                 Student claims: {point.studentSelfmark ? "earned" : "not earned"}
               </Chip>
@@ -702,7 +701,7 @@ export function ReviewItem() {
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
                   The original scan image and the mark scheme's own wording aren't stored anywhere in
                   this product. What's below is the closest honest record: Lemely's own transcription
-                  of the student's answer, and the identifiers of the mark-scheme points it matched.
+                  of the student's answer.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
@@ -717,19 +716,17 @@ export function ReviewItem() {
                       <p className="text-body-md text-ink-faint m-0">No transcription recorded for this question.</p>
                     )}
                   </div>
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-3 min-w-0">
-                    <div>
-                      <div className="text-eyebrow text-ink-faint">
-                        Expected answer
-                      </div>
-                      {detail.expectedAnswer ? (
-                        <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
-                          {detail.expectedAnswer}
-                        </p>
-                      ) : (
-                        <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
-                      )}
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] min-w-0">
+                    <div className="text-eyebrow text-ink-faint">
+                      Expected answer
                     </div>
+                    {detail.expectedAnswer ? (
+                      <p className="text-body-lg leading-[1.55] text-pretty whitespace-pre-wrap mt-1 mb-0">
+                        {detail.expectedAnswer}
+                      </p>
+                    ) : (
+                      <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
+                    )}
                   </div>
                 </div>
                 {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
@@ -792,6 +789,8 @@ export function ReviewItem() {
                     ))}
                   </div>
                 </section>
+              ) : detail.points.length === 0 ? (
+                <p className="text-body-md text-ink-faint m-0">No points matched.</p>
               ) : null}
 
               <SelfReviewPoints points={detail.points} />

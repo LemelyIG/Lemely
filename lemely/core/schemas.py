@@ -247,9 +247,18 @@ class CostEstimate(StrictModel):
 # navigation to the class), while carrying no doc text into
 # ``model_json_schema()`` under EITHER interpreter mode, so the fingerprint
 # cannot depend on ``PYTHONOPTIMIZE`` again by construction.
+#: The three verdicts a marker can reach on one mark-scheme point (I6,
+#: US-013). Exported so every wire boundary that narrows a looser
+#: ``str | None`` back to these members (``lemely.db.review_repo``,
+#: ``lemely.web.schemas_review``) imports one ``Literal`` instead of
+#: hand-typing its own copy — migration ``0040`` already spent effort curing
+#: eight formulations of one concept; this keeps it at one.
+PointVerdictWire = Literal["awarded", "withheld", "unverifiable"]
+
+
 class PointVerdict(StrictModel):
     point_id: str
-    verdict: Literal["awarded", "withheld", "unverifiable"]
+    verdict: PointVerdictWire
     evidence_span: str = ""
     evidence_box: None = None
     note: str = ""

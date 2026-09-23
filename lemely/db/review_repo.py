@@ -103,7 +103,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, get_args
 
 import structlog
 from pydantic import ValidationError
@@ -115,7 +115,12 @@ from lemely.core.analytics import (
     grade_for_percentage,
     group_weak_areas,
 )
-from lemely.core.schemas import AccuracyReport, CorrectedQuestion, ExamMetadata
+from lemely.core.schemas import (
+    AccuracyReport,
+    CorrectedQuestion,
+    ExamMetadata,
+    PointVerdictWire,
+)
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
@@ -218,17 +223,17 @@ class ReviewQueuePage:
     total: int
 
 
-#: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Mirrors
-#: ``PointVerdict.verdict`` (``lemely/core/schemas.py``), but that ``Literal``
-#: is not reachable from here: ``QuestionResultPoint.verdict`` is stored as
-#: loose ``str | None`` (its docstring: a fourth verdict must not require a
-#: migration), so this alias is where the DB string gets narrowed back to the
-#: three known members on the way out. See ``EvidenceVerdictWire`` at
+#: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Re-exported
+#: from :data:`lemely.core.schemas.PointVerdictWire`, the same ``Literal``
+#: :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated with.
+#: ``QuestionResultPoint.verdict`` is stored as loose ``str | None`` (its
+#: docstring: a fourth verdict must not require a migration), so this alias
+#: is where the DB string gets narrowed back to the three known members on
+#: the way out. See ``EvidenceVerdictWire`` at
 #: ``lemely/web/schemas_student_self_review.py:27`` for the same pattern at
 #: the wire boundary.
-PointVerdictWire = Literal["awarded", "withheld", "unverifiable"]
 
-_KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(("awarded", "withheld", "unverifiable"))
+_KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(get_args(PointVerdictWire))
 
 
 def _narrow_point_verdict(raw: str | None, *, mark_point_id: str) -> PointVerdictWire | None:
@@ -277,7 +282,8 @@ class ReviewItemPoint:
     student_evidence: str | None
     evidence_verdict: str | None  # EvidenceVerdict.value, or None if never judged
     verdict: PointVerdictWire | None  # I6: None for a legacy-path point or an unknown DB value
-    evidence_span: str  # I6: '' when verdict is None, matching the DB column's own default
+    evidence_span: str  # I6: '' for a legacy-path point; a row whose verdict
+    # failed to narrow can still carry one
     ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
 
 

@@ -63,8 +63,11 @@ describe("ReviewItem.tsx — MarkerVerdicts renders I6/I7 for every point", () =
   it("is not filtered by studentSelfmark, unlike SelfReviewPoints beside it", () => {
     // The actual defect: SelfReviewPoints' filter hid every marker-verdicted
     // point the student never self-marked. MarkerVerdicts must not repeat it.
-    expect(body).not.toContain("studentSelfmark !== null")
-    expect(body).not.toContain("studentSelfmark !== undefined")
+    // Asserting the row-list structure, not the absence of one string: a
+    // `.filter(...)` gated on any other field (e.g. `p.verdict !== null`)
+    // would silently reintroduce the same defect and pass a substring check.
+    expect(body).toMatch(/\{points\.map\(/)
+    expect(body).not.toMatch(/points\.filter\(/)
   })
 
   it("bails out only on an empty points array, not any other filter", () => {
