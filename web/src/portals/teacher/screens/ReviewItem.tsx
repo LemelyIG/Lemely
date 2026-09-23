@@ -215,8 +215,12 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
  * `verdict === null` covers two indistinguishable cases on purpose
  * (`ReviewItemPoint`'s doc comment in `teacherTypes.ts`): a legacy
  * (non-verdict) point, or a raw DB value the backend could not narrow to one
- * of the three real members. Both render as "No verdict recorded", never as
- * a guessed real verdict.
+ * of the three real members. It does NOT mean nothing is known about the
+ * point: `awarded` is the marker's own verdict on every path, including the
+ * legacy one, and `derive_point_rows` never wrote anything else before I6 —
+ * so `null` falls back to rendering `awarded`, never to a bare denial that a
+ * verdict exists. It is still never guessed into one of the three richer
+ * verdicts; that stays reserved for a real `verdict` value.
  */
 function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
   if (points.length === 0) return null
@@ -236,7 +240,9 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
               {point.verdict ? (
                 <Chip tone={POINT_VERDICT_TONE[point.verdict]}>{POINT_VERDICT_LABEL[point.verdict]}</Chip>
               ) : (
-                <Chip tone="neutral">No verdict recorded</Chip>
+                <Chip tone={point.awarded ? "ok" : "neutral"}>
+                  Marker: {point.awarded ? "awarded" : "not awarded"} (no richer verdict recorded)
+                </Chip>
               )}
               {point.ecfApplied ? <Chip tone="info">Carried forward from a prior point (ECF)</Chip> : null}
             </div>

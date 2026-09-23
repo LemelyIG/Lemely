@@ -100,11 +100,21 @@ describe("ReviewItem.tsx — MarkerVerdicts renders I6/I7 for every point", () =
     expect(labelOf("withheld")).not.toBe(labelOf("unverifiable"))
   })
 
-  it("renders 'No verdict recorded' when verdict is null, never one of the three real verdicts", () => {
-    expect(body).toContain("No verdict recorded")
+  it("falls back to point.awarded when verdict is null, never to a bare denial that any verdict exists", () => {
+    // Team-lead finding on c15c119a: a pre-I6 point has no `verdict`, but
+    // `derive_point_rows` never wrote anything else before I6, so `awarded`
+    // IS that point's marker verdict. Rendering "No verdict recorded" and
+    // stopping there threw away real information the row carries -- worse
+    // than the invisibility defect this task exists to fix, because it
+    // replaces a real answer with an explicit denial that one exists.
+    expect(body).not.toContain("No verdict recorded")
     // The fallback branch must be gated on the verdict itself, not reachable
-    // only alongside one specific real verdict.
-    expect(body).toMatch(/point\.verdict\s*\?[\s\S]*?:\s*\(\s*<Chip tone="neutral">No verdict recorded/)
+    // only alongside one specific real verdict, and it must read `awarded`.
+    const fallbackMatch = body.match(/point\.verdict\s*\?[\s\S]*?:\s*\(([\s\S]*?)\)\s*}/)
+    expect(fallbackMatch, "verdict ? ... : ( ... ) branch not found").not.toBeNull()
+    const fallback = fallbackMatch?.[1] ?? ""
+    expect(fallback).toContain("point.awarded")
+    expect(fallback).toMatch(/awarded.*not awarded/)
   })
 
   it("marks an ecfApplied point as carried forward", () => {

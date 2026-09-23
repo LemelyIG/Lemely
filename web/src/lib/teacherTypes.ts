@@ -734,8 +734,12 @@ export interface ReviewBreakdown {
  * either a legacy (non-verdict) point, or a DB value the backend could not
  * narrow to one of the three members — the two are deliberately
  * indistinguishable here (`lemely.db.review_repo._narrow_point_verdict`):
- * an unrecognised value must render exactly like "no verdict", never as one
- * of the three real ones.
+ * an unrecognised value must render exactly like a legacy point, never as
+ * one of the three real verdicts. It must NOT render as an absence of
+ * information, either: `awarded` is still populated and still the marker's
+ * own verdict on both paths (`derive_point_rows` never wrote anything
+ * richer before I6), so a renderer's `verdict === null` branch should fall
+ * back to `awarded`, not to a bare "no verdict recorded" denial.
  */
 export interface ReviewItemPoint {
   markPointId: string
