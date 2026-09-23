@@ -103,7 +103,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 import structlog
 from pydantic import ValidationError
@@ -218,6 +218,42 @@ class ReviewQueuePage:
     total: int
 
 
+#: The narrowed wire type for :attr:`ReviewItemPoint.verdict`. Mirrors
+#: ``PointVerdict.verdict`` (``lemely/core/schemas.py``), but that ``Literal``
+#: is not reachable from here: ``QuestionResultPoint.verdict`` is stored as
+#: loose ``str | None`` (its docstring: a fourth verdict must not require a
+#: migration), so this alias is where the DB string gets narrowed back to the
+#: three known members on the way out. See ``EvidenceVerdictWire`` at
+#: ``lemely/web/schemas_student_self_review.py:27`` for the same pattern at
+#: the wire boundary.
+PointVerdictWire = Literal["awarded", "withheld", "unverifiable"]
+
+_KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(("awarded", "withheld", "unverifiable"))
+
+
+def _narrow_point_verdict(raw: str | None, *, mark_point_id: str) -> PointVerdictWire | None:
+    """Narrow the DB's loose ``str | None`` to the three known members.
+
+    ``QuestionResultPoint.verdict`` is narrowed once, here, at the point the
+    DB row is read.
+
+    A value outside the three members is a data defect, not a fourth verdict
+    to render (the only producer, ``derive_point_rows``, writes
+    ``PointVerdict.verdict``, itself already this ``Literal``; anything else
+    means manual SQL or a future migration nobody taught this function
+    about). It is logged and carried as ``None`` — rendered as "no verdict
+    recorded" — rather than crashing a teacher's screen or being silently
+    shown as one of the three real verdicts, either of which would be worse
+    than an honest gap.
+    """
+    if raw is None:
+        return None
+    if raw in _KNOWN_POINT_VERDICTS:
+        return raw  # type: ignore[return-value]  # narrowed by the membership check above
+    log.warning("review_point_verdict_unknown", mark_point_id=mark_point_id, verdict=raw)
+    return None
+
+
 @dataclass(frozen=True, slots=True)
 class ReviewItemPoint:
     """One mark point's self-review state.
@@ -227,6 +263,11 @@ class ReviewItemPoint:
     the aggregate fields ``ReviewItemDetail`` already carried (``feedback``,
     ``matched_point_ids``) — never the student's own claim or evidence, the
     exact sentence the queue row exists to have them adjudicate.
+
+    ``verdict``/``evidence_span``/``ecf_applied`` are I6/I7 (US-013)'s marker
+    verdict, read off ``QuestionResultPoint`` regardless of whether the
+    student ever self-marked this point — unlike ``student_selfmark`` et al.
+    below, which answer a different question (what the student claimed).
     """
 
     mark_point_id: str
@@ -235,6 +276,9 @@ class ReviewItemPoint:
     student_selfmark: bool | None  # the student's claim, None if not self-marked
     student_evidence: str | None
     evidence_verdict: str | None  # EvidenceVerdict.value, or None if never judged
+    verdict: PointVerdictWire | None  # I6: None for a legacy-path point or an unknown DB value
+    evidence_span: str  # I6: '' when verdict is None, matching the DB column's own default
+    ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
 
 
 @dataclass(frozen=True, slots=True)
@@ -469,6 +513,9 @@ class ReviewService:
                         student_selfmark=p.student_selfmark,
                         student_evidence=p.student_evidence,
                         evidence_verdict=p.evidence_verdict.value if p.evidence_verdict else None,
+                        verdict=_narrow_point_verdict(p.verdict, mark_point_id=p.mark_point_id),
+                        evidence_span=p.evidence_span,
+                        ecf_applied=p.ecf_applied,
                     )
                     for p in qr.points
                 ]

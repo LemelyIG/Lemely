@@ -27,12 +27,14 @@ from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
+import structlog.testing
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.analytics import summarize_weaknesses
+from lemely.core.loose_schemas import MarkScheme
 from lemely.core.schemas import (
     AccuracyReport,
     ConfidenceBand,
@@ -41,6 +43,7 @@ from lemely.core.schemas import (
     ExamMetadata,
     GradePrediction,
     MarkerSourceValue,
+    PointVerdict,
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -877,6 +880,199 @@ def test_get_item_malformed_id_is_value_error(
     teacher = _seed_user(pg_sessionmaker, Role.teacher)
     with pytest.raises(ValueError, match="must be a UUID"):
         review_service.get_item(teacher, Role.teacher, "not-a-uuid")
+
+
+# ── I6/I7 (US-013) marker verdicts on ReviewItemPoint (US-046) ──────────────
+
+
+def _two_point_scheme() -> MarkScheme:
+    """A one-question, two-point scheme, just enough for the point ledger
+
+    (``derive_point_rows``) to actually run: without a mark scheme,
+    ``AttemptRepository.persist_correction`` never writes
+    ``question_result_points`` rows at all (``_safe_derive_point_rows``).
+    """
+    return MarkScheme.model_validate(
+        {
+            "metadata": {
+                "subject": "Physics",
+                "subject_code": "9999",
+                "paper_number": 1,
+                "paper_variant": 1,
+                "session_month": "May/June",
+                "session_year": 2020,
+                "paper_type": "theory_core",
+                "maximum_mark": 2,
+                "scheme_format": "point_based",
+            },
+            "questions": [
+                {
+                    "id": "1",
+                    "marks": 2,
+                    "type": "explanation",
+                    "answer_points": [
+                        {"id": "p1", "point": "States the law", "marks": 1},
+                        {"id": "p2", "point": "Gives the unit", "marks": 1},
+                    ],
+                },
+            ],
+        }
+    )
+
+
+def _question_with_verdicts(
+    point_verdicts: list[PointVerdict], *, needs_review: bool = True
+) -> CorrectedQuestion:
+    # `derive_point_rows` derives `awarded` from `matched_point_ids`, not from
+    # `verdict` (`lemely/db/question_points.py`) -- the two are meant to
+    # agree (`ReviewItemPoint`'s own invariant: `awarded == (verdict ==
+    # "awarded")`), so a verdict-carrying fixture must set both consistently
+    # itself, the same way the real marker's `_build_ai_corrected` does.
+    awarded_ids = [v.point_id for v in point_verdicts if v.verdict == "awarded"]
+    return CorrectedQuestion(
+        question_id="1",
+        awarded_marks=len(awarded_ids),
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW if needs_review else ConfidenceBand.HIGH,
+        confidence_score=0.3 if needs_review else 0.95,
+        needs_teacher_review=needs_review,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=awarded_ids,
+        point_verdicts=point_verdicts,
+    )
+
+
+def test_get_item_marker_verdicts_render_for_every_point_including_never_self_marked(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The actual defect US-046 exists to fix, at the data-plumbing layer:
+
+    a point the marker verdicted, that the student never self-marked, must
+    still reach ``ReviewItemDetail.points`` (``student_selfmark`` stays
+    ``None`` throughout this test -- no self-review ever runs). ``withheld``
+    and ``unverifiable`` both read ``awarded=False``; ``verdict`` is what
+    still tells them apart.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [
+            PointVerdict(point_id="p1", verdict="unverifiable", evidence_span="tried it"),
+            PointVerdict(point_id="p2", verdict="withheld", evidence_span="", ecf_applied=True),
+        ]
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    assert len(detail.points) == 2
+    by_id = {p.mark_point_id: p for p in detail.points}
+
+    p1 = by_id["p1"]
+    assert p1.verdict == "unverifiable"
+    assert p1.awarded is False
+    assert p1.evidence_span == "tried it"
+    assert p1.ecf_applied is False
+    assert p1.student_selfmark is None  # never self-marked -- the defect this fixes
+
+    p2 = by_id["p2"]
+    assert p2.verdict == "withheld"
+    assert p2.awarded is False
+    assert p2.evidence_span == ""
+    assert p2.ecf_applied is True
+    assert p2.student_selfmark is None
+
+    # The distinction I6 exists to carry: both collapse to awarded=False,
+    # but verdict still tells them apart.
+    assert p1.verdict != p2.verdict
+
+
+def test_get_item_awarded_verdict_with_ecf_applied(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The third verdict, ``awarded``, combined with I7's ``ecf_applied``:
+
+    a point can be awarded only after re-marking against a substituted
+    prior value, and that provenance must survive to the teacher screen.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [
+            PointVerdict(point_id="p1", verdict="awarded", evidence_span="42", ecf_applied=True),
+            PointVerdict(point_id="p2", verdict="awarded", evidence_span="m/s"),
+        ],
+        needs_review=True,
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    by_id = {p.mark_point_id: p for p in detail.points}
+    assert by_id["p1"].verdict == "awarded"
+    assert by_id["p1"].awarded is True
+    assert by_id["p1"].ecf_applied is True
+    assert by_id["p2"].verdict == "awarded"
+    assert by_id["p2"].ecf_applied is False
+
+
+def test_get_item_unknown_verdict_value_is_dropped_and_logged(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A DB ``verdict`` value outside the three known members is a data
+
+    defect (only ``derive_point_rows`` writes this column, and it writes
+    only the three ``PointVerdict.verdict`` members) -- never manual SQL or
+    a future migration this reader was not taught about. It must never
+    crash the teacher's screen and must never be silently rendered as one
+    of the three real verdicts: it is logged and carried as ``None``, the
+    same value a legacy (non-verdict) point already carries.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question_with_verdicts(
+        [PointVerdict(point_id="p1", verdict="awarded", evidence_span="did it")]
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    with pg_sessionmaker() as session:
+        session.execute(
+            sa.text(
+                "UPDATE question_result_points SET verdict = :bogus WHERE mark_point_id = 'p1'"
+            ),
+            {"bogus": "definitely_not_a_real_verdict"},
+        )
+        session.commit()
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    with structlog.testing.capture_logs() as captured:
+        detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    p1 = next(p for p in detail.points if p.mark_point_id == "p1")
+    assert p1.verdict is None  # never the corrupted raw value, never a guessed real one
+
+    events = [e for e in captured if e.get("event") == "review_point_verdict_unknown"]
+    assert len(events) == 1, captured
+    assert events[0]["log_level"] == "warning"
+    assert events[0]["mark_point_id"] == "p1"
+    assert events[0]["verdict"] == "definitely_not_a_real_verdict"
 
 
 # ── resolve (accept / override) ─────────────────────────────────────────────

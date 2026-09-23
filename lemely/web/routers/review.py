@@ -148,6 +148,9 @@ def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
         studentSelfmark=point.student_selfmark,
         studentEvidence=point.student_evidence,
         evidenceVerdict=point.evidence_verdict,
+        verdict=point.verdict,
+        evidenceSpan=point.evidence_span,
+        ecfApplied=point.ecf_applied,
     )
 
 

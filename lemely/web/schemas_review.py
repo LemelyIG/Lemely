@@ -7,7 +7,15 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
+from typing import Literal
+
 from lemely.web.schemas import ApiModel
+
+#: Mirrors ``lemely.db.review_repo.PointVerdictWire``. The wire boundary is
+#: where this ``Literal`` is load-bearing — pyright, not mypy, is what
+#: catches a plain ``str`` reaching it (see ``ReviewItemPointDTO.verdict``'s
+#: docstring).
+PointVerdictWire = Literal["awarded", "withheld", "unverifiable"]
 
 
 class ReviewBreakdownDTO(ApiModel):
@@ -90,6 +98,17 @@ class ReviewItemPointDTO(ApiModel):
     without this, a teacher opening such an item has no way to see the
     student's own claim or evidence — the sentence the queue row exists to
     have them adjudicate.
+
+    ``verdict``/``evidenceSpan``/``ecfApplied`` are I6/I7 (US-013)'s marker
+    verdict, populated regardless of whether the student ever self-marked
+    this point. ``verdict`` is typed as the narrowed ``PointVerdictWire``, not
+    ``str``, because **the pydantic mypy plugin checks constructor keyword
+    arity, not field types** — mypy cannot see a plain ``str`` reaching a
+    ``Literal`` field here, only pyright can. ``lemely.db.review_repo``
+    already narrowed the DB's loose ``str | None`` before this DTO is built,
+    so this field's ``Literal`` is never violated by a well-formed caller;
+    pyright is what makes that provable at every call site rather than
+    merely true today.
     """
 
     markPointId: str
@@ -98,17 +117,24 @@ class ReviewItemPointDTO(ApiModel):
     studentSelfmark: bool | None
     studentEvidence: str | None
     evidenceVerdict: str | None
+    verdict: PointVerdictWire | None
+    evidenceSpan: str
+    ecfApplied: bool
 
 
 class ReviewItemDetailDTO(ApiModel):
     """Response for ``GET /api/teacher/review/{item_id}`` (T-08).
 
     Extends :class:`ReviewQueueItemDTO`'s fields with the question content,
-    AI marking evidence, and any recorded teacher override. There is no
+    AI marking evidence, and any recorded teacher override. There is still no
     persisted mark-scheme extract or scan-crop image on
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
-    ``matchedPointIds`` and ``studentAnswer`` are the honest substitutes this
-    backend can actually provide.
+    that part of the gap is real and stays real, so a future screen must not
+    invent scan-crop or scheme-prose precision this backend cannot provide.
+    But ``matchedPointIds`` and ``studentAnswer`` are no longer the best this
+    backend can do for *marking evidence*: ``points`` (``ReviewItemPointDTO``)
+    now carries the marker's per-point verdict and quoted evidence span (I6,
+    US-013), which is strictly richer than a bare matched-point identifier.
 
     On a ``"console_paper"`` row the marking evidence is read from the paper's
     stored report, but every **override** field (``isOverridden``,

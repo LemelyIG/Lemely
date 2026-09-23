@@ -723,6 +723,19 @@ export interface ReviewBreakdown {
  * student-facing surface — QUALITY-BAR's integrity sanitising is per call
  * site and does not apply here), but always rendered as plain text, never
  * interpreted as markup.
+ *
+ * `verdict`/`evidenceSpan`/`ecfApplied` are I6/I7 (US-013)'s marker verdict —
+ * populated regardless of `studentSelfmark`, because they answer a different
+ * question than the self-review fields above. `awarded` only ever says
+ * "earned the mark or not"; `verdict` is what tells a teacher, when it
+ * can't, *why* a point reads `awarded: false` — the marker judged it
+ * genuinely absent (`"withheld"`) versus could not confirm it either way
+ * (`"unverifiable"`), a distinction `awarded` alone collapses. `null` means
+ * either a legacy (non-verdict) point, or a DB value the backend could not
+ * narrow to one of the three members — the two are deliberately
+ * indistinguishable here (`lemely.db.review_repo._narrow_point_verdict`):
+ * an unrecognised value must render exactly like "no verdict", never as one
+ * of the three real ones.
  */
 export interface ReviewItemPoint {
   markPointId: string
@@ -731,6 +744,9 @@ export interface ReviewItemPoint {
   studentSelfmark: boolean | null
   studentEvidence: string | null
   evidenceVerdict: string | null
+  verdict: "awarded" | "withheld" | "unverifiable" | null
+  evidenceSpan: string
+  ecfApplied: boolean
 }
 
 /**
@@ -746,7 +762,15 @@ export interface ReviewItemPoint {
  * `ReviewItemDetailDTO`'s own docstring) — T-08 must label these as exactly
  * what they are and say plainly that the scan/scheme extract don't exist,
  * never render a placeholder image or reconstruct scheme prose from the
- * point ids (inventing precision, UI-spec §1.4).
+ * point ids (inventing precision, UI-spec §1.4). That gap is real and stays
+ * real: it is not what the paragraph below narrows.
+ *
+ * `matchedPointIds` is no longer the best marking evidence this backend can
+ * provide — it was, before I6 (US-013): `points` (`ReviewItemPoint`) now
+ * carries each point's marker verdict and quoted evidence span, strictly
+ * richer than a bare identifier chip, so a bare `matchedPointIds` chip list
+ * is demoted beneath the real per-point verdicts on this screen rather than
+ * being the primary evidence surface.
  */
 export interface ReviewItemDetail extends ReviewQueueItem {
   studentAnswer: string | null

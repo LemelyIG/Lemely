@@ -40,6 +40,12 @@ from lemely.core.schemas import (
     GradePrediction,
     WeaknessReport,
 )
+
+# Aliased: `lemely.db.self_review_repo.PointVerdict`, imported below, is the
+# STUDENT's self-review verdict (`mark_point_id`/`earned`/`evidence`) -- an
+# unrelated class that happens to share this name. This is I6/I7's MARKER
+# verdict (`point_id`/`verdict`/`evidence_span`), a `CorrectedQuestion` field.
+from lemely.core.schemas import PointVerdict as MarkerPointVerdict
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
@@ -459,6 +465,86 @@ def test_get_review_item_carries_the_students_self_review_points(
     assert p2["studentSelfmark"] is True  # the student's own claim
     assert p2["studentEvidence"] == "I gave the unit, m/s."
     assert p2["evidenceVerdict"] is None  # judge=None: never actually judged
+    # I6/I7 (US-013, US-046): this attempt was scored by the legacy
+    # (non-verdict) path, so the wire shape carries the new fields at their
+    # legacy defaults rather than omitting them.
+    assert p2["verdict"] is None
+    assert p2["evidenceSpan"] == ""
+    assert p2["ecfApplied"] is False
+
+
+def test_get_review_item_carries_marker_verdicts_for_points_the_student_never_touched(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """US-046: I6/I7's marker verdict must reach the wire even when the
+
+    student's self-review never ran at all -- unlike the fixture above, no
+    ``SelfReviewService.submit`` call happens here. ``withheld`` and
+    ``unverifiable`` both read ``awarded: false``; this asserts the wire
+    payload still tells them apart.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=0,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.3,
+        needs_teacher_review=True,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Physics",
+        marker_source="ai",
+        matched_point_ids=[],
+        point_verdicts=[
+            MarkerPointVerdict(point_id="p1", verdict="unverifiable", evidence_span="tried it"),
+            MarkerPointVerdict(
+                point_id="p2", verdict="withheld", evidence_span="", ecf_applied=True
+            ),
+        ],
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_point_scheme()
+    )
+    with pg_sessionmaker() as session:
+        item = session.scalars(
+            sa.select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+        ).first()
+        assert item is not None
+        item_id = item.id
+
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}")
+    assert resp.status_code == 200
+    points = resp.json()["points"]
+    assert len(points) == 2
+    by_id = {p["markPointId"]: p for p in points}
+
+    p1 = by_id["p1"]
+    assert p1["verdict"] == "unverifiable"
+    assert p1["awarded"] is False
+    assert p1["evidenceSpan"] == "tried it"
+    assert p1["ecfApplied"] is False
+    assert p1["studentSelfmark"] is None  # never self-marked: the defect this task fixes
+
+    p2 = by_id["p2"]
+    assert p2["verdict"] == "withheld"
+    assert p2["awarded"] is False
+    assert p2["ecfApplied"] is True
+    assert p2["studentSelfmark"] is None
+
+    # The distinction I6 exists to carry, both collapse to awarded=False.
+    assert p1["verdict"] != p2["verdict"]
 
 
 def test_resolve_accept_as_is_shape(

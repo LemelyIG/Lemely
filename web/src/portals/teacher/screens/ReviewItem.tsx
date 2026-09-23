@@ -61,9 +61,18 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  *  - `expectedAnswer` -> "Expected answer" (the mark scheme's target, not
  *    its full prose).
  *  - `matchedPointIds` -> rendered as bare identifier chips, labelled
- *    "identifiers only — the scheme's own wording isn't stored" — never
- *    reconstructed into scheme-sounding prose (UI-spec §1.4: never invent
- *    precision the data doesn't support).
+ *    "the scheme's own wording isn't stored" — never reconstructed into
+ *    scheme-sounding prose (UI-spec §1.4: never invent precision the data
+ *    doesn't support). Demoted below `MarkerVerdicts` (I6, US-013): a bare
+ *    id is no longer this backend's best marking evidence, only a fallback
+ *    for a legacy item with no `question_result_points` rows at all.
+ *
+ * **`MarkerVerdicts` renders I6/I7's marker verdict for every point**,
+ * unlike `SelfReviewPoints` beside it, which stays filtered to what the
+ * student self-marked (a different question, and merging the two lists
+ * loses the ability to tell them apart). `withheld` and `unverifiable` both
+ * collapse to `awarded: false`, so they get distinct tones AND distinct
+ * labels, not just one or the other.
  *
  * **Integrity items (`plagiarism_flag`) get dismiss
  * only on this screen; accept/adjust-marks controls render for every other
@@ -117,6 +126,26 @@ const EVIDENCE_VERDICT_LABEL: Record<string, string> = {
   not_required: "No reason was required for this point",
 }
 
+/*
+ * I6/I7 (US-013) marker verdicts. `withheld` and `unverifiable` both collapse
+ * to `awarded: false` on the same point, and that collapse is the whole
+ * distinction I6 exists to carry: a teacher seeing "not awarded" cannot tell
+ * "the marker judged this absent" from "the marker could not verify it".
+ * Distinct tones AND distinct labels, not just one or the other, so the
+ * difference survives someone scanning tone alone or reading text alone.
+ */
+const POINT_VERDICT_LABEL: Record<"awarded" | "withheld" | "unverifiable", string> = {
+  awarded: "Awarded",
+  withheld: "Withheld, judged absent",
+  unverifiable: "Unverifiable, could not confirm",
+}
+
+const POINT_VERDICT_TONE: Record<"awarded" | "withheld" | "unverifiable", "ok" | "err" | "warn"> = {
+  awarded: "ok",
+  withheld: "err",
+  unverifiable: "warn",
+}
+
 /**
  * The student's self-review of one mark point, for a teacher deciding a
  * `student_evidence_unjudged` item (S2 part2+3 final review, I-2). Without
@@ -166,6 +195,54 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
             {point.studentEvidence ? (
               <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
                 "{point.studentEvidence}"
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * I6/I7 (US-013) marker verdicts, for every point, not filtered by
+ * `studentSelfmark`. `SelfReviewPoints` above answers "what did the student
+ * claim", and its `studentSelfmark !== null` filter is correct for that
+ * question, but it meant a point the marker verdicted and the student never
+ * touched rendered nowhere on this screen at all. This is that point's own
+ * surface.
+ *
+ * `verdict === null` covers two indistinguishable cases on purpose
+ * (`ReviewItemPoint`'s doc comment in `teacherTypes.ts`): a legacy
+ * (non-verdict) point, or a raw DB value the backend could not narrow to one
+ * of the three real members. Both render as "No verdict recorded", never as
+ * a guessed real verdict.
+ */
+function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
+  if (points.length === 0) return null
+  return (
+    <section className="flex flex-col gap-3">
+      <div className="text-display-sm">Marker's per-point verdicts</div>
+      <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
+        {points.map((point, index) => (
+          <div
+            key={point.markPointId}
+            className={
+              index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
+            }
+          >
+            <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
+            <div className="flex flex-wrap items-center gap-2">
+              {point.verdict ? (
+                <Chip tone={POINT_VERDICT_TONE[point.verdict]}>{POINT_VERDICT_LABEL[point.verdict]}</Chip>
+              ) : (
+                <Chip tone="neutral">No verdict recorded</Chip>
+              )}
+              {point.ecfApplied ? <Chip tone="info">Carried forward from a prior point (ECF)</Chip> : null}
+            </div>
+            {point.evidenceSpan ? (
+              <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
+                "{point.evidenceSpan}"
               </p>
             ) : null}
           </div>
@@ -647,23 +724,6 @@ export function ReviewItem() {
                         <p className="text-body-md text-ink-faint mt-1 mb-0">No expected answer recorded.</p>
                       )}
                     </div>
-                    <div>
-                      <div className="text-eyebrow text-ink-faint">
-                        Matched mark-scheme points, identifiers only. The scheme's own wording isn't
-                        stored
-                      </div>
-                      {detail.matchedPointIds.length > 0 ? (
-                        <div className="flex flex-wrap gap-1.5 mt-1.5">
-                          {detail.matchedPointIds.map((id) => (
-                            <Chip key={id} tone="neutral">
-                              {id}
-                            </Chip>
-                          ))}
-                        </div>
-                      ) : (
-                        <p className="text-body-md text-ink-faint mt-1 mb-0">No points matched.</p>
-                      )}
-                    </div>
                   </div>
                 </div>
                 {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
@@ -705,6 +765,28 @@ export function ReviewItem() {
                   ) : null}
                 </div>
               </section>
+
+              <MarkerVerdicts points={detail.points} />
+
+              {/* Demoted beneath the real per-point verdicts above (I6, US-013):
+                  a bare identifier is what this backend had before it could
+                  actually say what happened to each point. Kept, not removed,
+                  because a legacy item with no `question_result_points` rows
+                  at all still has `matchedPointIds` and nothing else. */}
+              {detail.matchedPointIds.length > 0 ? (
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers, the scheme's own wording isn't stored
+                  </div>
+                  <div className="flex flex-wrap gap-1.5">
+                    {detail.matchedPointIds.map((id) => (
+                      <Chip key={id} tone="neutral">
+                        {id}
+                      </Chip>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
 
               <SelfReviewPoints points={detail.points} />
 
