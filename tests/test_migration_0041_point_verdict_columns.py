@@ -39,7 +39,6 @@ import os
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
-from pathlib import Path
 
 import pytest
 import sqlalchemy as sa
@@ -53,14 +52,6 @@ from lemely.runtime.config import DatabaseSettings
 
 _PRE_MIGRATION_REVISION = "0040_marker_source_blank"
 _MIGRATION_REVISION = "0041_point_verdict_columns"
-_MIGRATION_FILE = (
-    Path(__file__).resolve().parents[1]
-    / "lemely"
-    / "db"
-    / "migrations"
-    / "versions"
-    / f"{_MIGRATION_REVISION}.py"
-)
 
 
 def _server_reachable(base_url: str) -> bool:
