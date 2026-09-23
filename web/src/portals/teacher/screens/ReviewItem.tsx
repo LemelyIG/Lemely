@@ -17,7 +17,12 @@ import {
   useReviewItem,
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
-import type { ReviewBreakdown, ReviewItemDetail, ReviewItemPoint } from "@/lib/teacherTypes"
+import type {
+  PointVerdictWire,
+  ReviewBreakdown,
+  ReviewItemDetail,
+  ReviewItemPoint,
+} from "@/lib/teacherTypes"
 import { queuePosition } from "@/lib/queuePosition"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import {
@@ -134,13 +139,13 @@ const EVIDENCE_VERDICT_LABEL: Record<string, string> = {
  * Distinct tones AND distinct labels, not just one or the other, so the
  * difference survives someone scanning tone alone or reading text alone.
  */
-const POINT_VERDICT_LABEL: Record<"awarded" | "withheld" | "unverifiable", string> = {
+const POINT_VERDICT_LABEL: Record<PointVerdictWire, string> = {
   awarded: "Awarded",
   withheld: "Withheld, judged absent",
   unverifiable: "Unverifiable, could not confirm",
 }
 
-const POINT_VERDICT_TONE: Record<"awarded" | "withheld" | "unverifiable", "ok" | "neutral" | "warn"> = {
+const POINT_VERDICT_TONE: Record<PointVerdictWire, "ok" | "neutral" | "warn"> = {
   awarded: "ok",
   withheld: "neutral",
   unverifiable: "warn",

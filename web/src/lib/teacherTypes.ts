@@ -741,6 +741,16 @@ export interface ReviewBreakdown {
  * richer before I6), so a renderer's `verdict === null` branch should fall
  * back to `awarded`, not to a bare "no verdict recorded" denial.
  */
+/**
+ * The three verdicts a marker can reach on one mark-scheme point (I6, US-013).
+ * Mirrors `lemely.core.schemas.PointVerdictWire`, the single Python alias every
+ * wire boundary narrows back to. Declared once here for the same reason it is
+ * declared once there: this project spent migration `0040` curing eight
+ * formulations of one concept, and an inline union repeated per use site is how
+ * that starts.
+ */
+export type PointVerdictWire = "awarded" | "withheld" | "unverifiable"
+
 export interface ReviewItemPoint {
   markPointId: string
   pointText: string
@@ -748,7 +758,7 @@ export interface ReviewItemPoint {
   studentSelfmark: boolean | null
   studentEvidence: string | null
   evidenceVerdict: string | null
-  verdict: "awarded" | "withheld" | "unverifiable" | null
+  verdict: PointVerdictWire | null
   evidenceSpan: string
   ecfApplied: boolean
 }

@@ -42,7 +42,20 @@ describe("teacherTypes.ts — ReviewItemPoint carries the marker's verdict", () 
     expect(ifaceStart).toBeGreaterThan(-1)
     const ifaceEnd = teacherTypesSource.indexOf("}", ifaceStart)
     const body = teacherTypesSource.slice(ifaceStart, ifaceEnd)
-    expect(body).toMatch(/verdict:\s*"awarded"\s*\|\s*"withheld"\s*\|\s*"unverifiable"\s*\|\s*null/)
+    // `verdict` is typed by the exported alias rather than an inline union, so
+    // the three members are pinned at the alias's own declaration below. Both
+    // halves are asserted: the field must use the alias, and the alias must
+    // still name exactly those three members — checking only the field would
+    // let the alias widen silently, and checking only the alias would let the
+    // field stop using it.
+    expect(body).toMatch(/verdict:\s*PointVerdictWire\s*\|\s*null/)
+    // Anchored to end-of-line on purpose: an unanchored pattern matches a
+    // PREFIX, so `| "partial"` appended to the alias slides straight past it
+    // — verified by appending exactly that and watching the unanchored form
+    // still pass 12/12.
+    expect(teacherTypesSource).toMatch(
+      /^export type PointVerdictWire = "awarded" \| "withheld" \| "unverifiable"$/m,
+    )
     expect(body).toContain("evidenceSpan: string")
     expect(body).toContain("ecfApplied: boolean")
   })
