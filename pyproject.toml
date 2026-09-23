@@ -557,14 +557,3 @@ reportArgumentType = "none"
 [[tool.pyright.executionEnvironments]]
 root = "lemely/io/rasterise.py"
 reportArgumentType = "none"
-
-# DEFERRED (task #44): `LabellerHTTPServer`'s `server` attribute narrows
-# the stdlib base class's type, and `log_message`'s parameter is renamed
-# from `format` to `format_str`. Both are genuine LSP violations against
-# `BaseHTTPRequestHandler`; believed harmless in practice (internal
-# labelling tool, `socketserver` never calls either by keyword) but not
-# fixed here.
-[[tool.pyright.executionEnvironments]]
-root = "lemely/labelling/server.py"
-reportIncompatibleVariableOverride = "none"
-reportIncompatibleMethodOverride = "none"

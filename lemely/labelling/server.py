@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 from urllib.parse import parse_qs, urlparse
 
 from pydantic import ValidationError
@@ -103,7 +103,14 @@ class LabellerHTTPServer(ThreadingHTTPServer):
 class LabellerRequestHandler(BaseHTTPRequestHandler):
     """Serves the pass-1 and pass-2 views/routes for one labelling session."""
 
-    server: LabellerHTTPServer  # narrows the stdlib base class's generic attribute
+    @property
+    def _labeller_server(self) -> LabellerHTTPServer:
+        # `BaseRequestHandler.server` is typed as the stdlib's generic
+        # `socketserver.BaseServer`; this handler is only ever constructed
+        # by `create_server`/`LabellerHTTPServer`, which always passes this
+        # concrete subclass, so the cast reflects a real invariant rather
+        # than widening the base type (an LSP violation avoided).
+        return cast("LabellerHTTPServer", self.server)
 
     def _send_json(self, status: int, payload: object) -> None:
         body = json.dumps(payload).encode("utf-8")
@@ -256,7 +263,7 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
             if route == "/pass2":
                 question_id = self._query_param("question_id")
                 context = load_pass2_context(
-                    paper_id, self.server.labeller_id, question_id=question_id
+                    paper_id, self._labeller_server.labeller_id, question_id=question_id
                 )
                 self._send_html(200, render_pass2_page(context))
                 return
@@ -290,12 +297,14 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
             return
         try:
             if route == "/pass1":
-                record = append_transcription_record(paper_id, self.server.labeller_id, payload)
+                record = append_transcription_record(
+                    paper_id, self._labeller_server.labeller_id, payload
+                )
                 self._send_json(201, record)
                 return
             if route == "/pass2":
                 payload = self._build_marking_payload(paper_id, payload)
-                record = append_marking_record(paper_id, self.server.labeller_id, payload)
+                record = append_marking_record(paper_id, self._labeller_server.labeller_id, payload)
                 self._send_json(201, record)
                 return
         except InvalidIdentifierError as exc:
@@ -312,7 +321,12 @@ class LabellerRequestHandler(BaseHTTPRequestHandler):
             return
         self._send_json(404, {"error": "not found"})
 
-    def log_message(self, format_str: str, *args: object) -> None:
+    # `format` shadows the builtin, but this overrides
+    # `BaseHTTPRequestHandler.log_message`, which stdlib defines with this
+    # exact name — renaming it would break a caller passing `format=` by
+    # keyword. Ruff's flake8-builtins (A002) isn't enabled in this project,
+    # so no `noqa` is needed to keep the name.
+    def log_message(self, format: str, *args: object) -> None:
         # Silence the default stderr access log — keep the labeller quiet.
         return
 
