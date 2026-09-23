@@ -66,6 +66,23 @@ describe("ReviewItem.tsx — MarkerVerdicts renders I6/I7 for every point", () =
     // Asserting the row-list structure, not the absence of one string: a
     // `.filter(...)` gated on any other field (e.g. `p.verdict !== null`)
     // would silently reintroduce the same defect and pass a substring check.
+    //
+    // What this pins and what it cannot: this is source text, not a render,
+    // so it can only pin the SHAPE of the iteration — that the list comes
+    // from `{points.map(`, not from a `.filter(` placed around it. It cannot
+    // pin "every element of `points` produces output", which is a runtime
+    // property only a render can observe. A guard placed one level deeper,
+    // inside the map callback itself —
+    // `points.map((point) => point.verdict === null ? null : (...))` —
+    // re-creates the exact same invisible-point defect this test exists to
+    // catch, while still matching `{points.map(` and never matching
+    // `points.filter(`: it passes every assertion here, with a clean
+    // `tsc --noEmit`. This runner is `environment: "node"` with no jsdom
+    // (see the module doc comment above), so no render is possible in this
+    // file to close that gap. The real closure is a Playwright spec for
+    // `/teacher/review`, which does not exist yet (task #50) — do not add
+    // another regex here to chase the callback-guard shape; the next
+    // mutation just steps one level deeper again.
     expect(body).toMatch(/\{points\.map\(/)
     expect(body).not.toMatch(/points\.filter\(/)
   })

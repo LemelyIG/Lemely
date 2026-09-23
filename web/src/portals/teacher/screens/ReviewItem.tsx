@@ -178,6 +178,7 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
               index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
             }
           >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
             <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
               <Chip tone="neutral">
@@ -234,6 +235,7 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
               index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
             }
           >
+            <div className="text-eyebrow text-ink-faint">{point.markPointId}</div>
             <p className="text-body-md text-ink m-0 text-pretty">{point.pointText}</p>
             <div className="flex flex-wrap items-center gap-2">
               {point.verdict ? (
@@ -790,7 +792,12 @@ export function ReviewItem() {
                   </div>
                 </section>
               ) : detail.points.length === 0 ? (
-                <p className="text-body-md text-ink-faint m-0">No points matched.</p>
+                <section className="flex flex-col gap-1.5">
+                  <div className="text-eyebrow text-ink-faint">
+                    Matched mark-scheme point identifiers, the scheme's own wording isn't stored
+                  </div>
+                  <p className="text-body-md text-ink-faint m-0">No points matched.</p>
+                </section>
               ) : null}
 
               <SelfReviewPoints points={detail.points} />

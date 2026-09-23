@@ -610,13 +610,17 @@ def _check_coherence(
     The marker's claimed ``matched_point_ids`` must exist in the mark scheme
     and must reconcile with ``awarded_marks``.
 
-    Three independent failure modes, either one is a coherence violation. Every
-    message this returns contains :data:`COHERENCE_TRIGGER_MARKER` so
-    downstream (``harness.py``) can attribute the trigger without a second,
-    parallel signal:
+    Three independent failure modes, any one of which is a coherence
+    violation. Every message this returns contains
+    :data:`COHERENCE_TRIGGER_MARKER` so downstream (``harness.py``) can
+    attribute the trigger without a second, parallel signal:
 
     0. ``point_verdicts`` (I6's verdict path only -- ``None`` on the legacy
-       path, see below) repeats a ``point_id``. ``matched_point_ids`` and
+       path, see below) repeats a ``point_id``. Numbered 0, ahead of 1 and 2
+       below, rather than renumbering them: it inspects the marker's raw
+       ``point_verdicts`` output, upstream of what modes 1 and 2 inspect
+       (the already-derived ``matched_point_ids``/``awarded_marks``).
+       ``matched_point_ids`` and
        ``awarded_marks`` have both already been through
        :func:`_awarded_from_verdicts`'s ``dedupe_point_verdicts`` call by the
        time they reach here, so a repeat is invisible in THEM; this check
@@ -830,6 +834,14 @@ def _awarded_from_verdicts(
     same list, so the two can no longer disagree about a repeat. Without
     this, a repeated ``verdict="awarded"`` point summed its ``marks`` once
     per occurrence.
+
+    Emits ``point_verdict_duplicate_dropped`` for each dropped duplicate.
+    ``lemely.db.attempt_repo._warn_if_point_verdicts_were_deduplicated`` emits
+    a second, differently-shaped record for the SAME duplicate one layer
+    down, under the distinct name
+    ``point_verdict_duplicate_dropped_at_persist`` -- when this function ran
+    first (the normal path), that is a deliberate second record, not a bug;
+    see that function's docstring for why both are kept.
     """
     points_by_id = {p.id: p for p in question.answer_points}
     kept, dropped = dedupe_point_verdicts(point_verdicts)

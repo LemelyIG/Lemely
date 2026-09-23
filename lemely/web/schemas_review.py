@@ -7,15 +7,14 @@ Converters live in :mod:`lemely.web.routers.review`.
 
 from __future__ import annotations
 
-from lemely.core.schemas import PointVerdictWire
-from lemely.web.schemas import ApiModel
-
 #: Re-exported from :data:`lemely.core.schemas.PointVerdictWire`, the same
 #: ``Literal`` :attr:`~lemely.core.schemas.PointVerdict.verdict` is annotated
 #: with; mirrors ``lemely.db.review_repo.PointVerdictWire``, the other
 #: re-export of the same alias. The wire boundary is where this ``Literal``
 #: is load-bearing — pyright, not mypy, is what catches a plain ``str``
 #: reaching it (see ``ReviewItemPointDTO.verdict``'s docstring).
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire
+from lemely.web.schemas import ApiModel
 
 
 class ReviewBreakdownDTO(ApiModel):
@@ -137,9 +136,11 @@ class ReviewItemDetailDTO(ApiModel):
     strictly richer marking evidence than a bare matched-point identifier.
     That is not every row: on a ``"console_paper"`` row ``points`` is always
     ``[]`` (there is no ``question_result_points`` row for a console item —
-    see below), on a no-scheme question (a quiz) it is also ``[]``, and on a
-    legacy row it carries no ``verdict`` at all. On any of those,
-    ``matchedPointIds`` remains the only marking evidence this backend has.
+    see below) and on a no-scheme question (a quiz) it is also ``[]``; on
+    either, ``matchedPointIds`` is the only marking evidence this backend has.
+    On a legacy row ``points`` still carries each point's snapshotted scheme
+    text and ``awarded`` flag — richer than a bare identifier — but no
+    ``verdict``, so the withheld/unverifiable distinction is absent.
 
     On a ``"console_paper"`` row the marking evidence is read from the paper's
     stored report, but every **override** field (``isOverridden``,

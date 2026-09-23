@@ -119,7 +119,6 @@ from lemely.core.schemas import (
     AccuracyReport,
     CorrectedQuestion,
     ExamMetadata,
-    PointVerdictWire,
 )
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
 from lemely.db.models.enums import (
@@ -232,6 +231,7 @@ class ReviewQueuePage:
 #: the way out. See ``EvidenceVerdictWire`` at
 #: ``lemely/web/schemas_student_self_review.py:27`` for the same pattern at
 #: the wire boundary.
+from lemely.core.schemas import PointVerdictWire as PointVerdictWire  # noqa: E402
 
 _KNOWN_POINT_VERDICTS: frozenset[str] = frozenset(get_args(PointVerdictWire))
 

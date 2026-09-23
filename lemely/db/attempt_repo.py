@@ -685,6 +685,17 @@ def _warn_if_point_verdicts_were_deduplicated(
     itself, not a scheme defect, so this is a separate signal from the
     mark-point-id one above -- one can fire without the other.
 
+    ``_awarded_from_verdicts`` (``lemely/io/correction_ai.py``) already logs
+    ``point_verdict_duplicate_dropped`` for this exact same duplicate, one
+    layer up, when a ``CorrectedQuestion`` reaches here via
+    ``_build_ai_corrected``. This function emits under the distinct name
+    ``point_verdict_duplicate_dropped_at_persist`` instead of reusing that
+    name, because a ``CorrectedQuestion`` can also reach ``persist_correction``
+    without having just come through ``_build_ai_corrected`` (a replayed or
+    stored report) -- in that case this is the only emission -- and a naive
+    log-derived count must not have to know to group by a discriminator key
+    to stay correct.
+
     Guarded end-to-end, same as the sibling function: nothing on this path
     may ever fail a correction (spec 2026-09-17, "Error handling").
     """
@@ -692,7 +703,7 @@ def _warn_if_point_verdicts_were_deduplicated(
         _kept, dropped = dedupe_point_verdicts(cq.point_verdicts)
         for pv in dropped:
             log.warning(
-                "point_verdict_duplicate_dropped",
+                "point_verdict_duplicate_dropped_at_persist",
                 question_result_id=str(question_result_id),
                 question_id=cq.question_id,
                 point_id=pv.point_id,

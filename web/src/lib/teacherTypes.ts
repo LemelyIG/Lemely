@@ -774,10 +774,11 @@ export interface ReviewItemPoint {
  * scheme, once the marker actually returns verdicts), it is strictly richer
  * marking evidence than a bare matched-point identifier, so a bare
  * `matchedPointIds` chip list is demoted beneath the real per-point verdicts
- * on this screen. That is not every row: on a `"console_paper"` row and on a
- * no-scheme question (a quiz) `points` is always `[]`, and on a legacy row
- * it carries no `verdict` at all — on any of those, `matchedPointIds`
- * remains the only marking evidence this backend has.
+ * on this screen. On a `"console_paper"` row and on a no-scheme question (a
+ * quiz), `points` is `[]` and `matchedPointIds` is the only marking evidence
+ * this backend has. On a legacy row `points` still carries each point's
+ * snapshotted scheme text and `awarded` flag — richer than a bare identifier
+ * — but no `verdict`, so the withheld/unverifiable distinction is absent.
  */
 export interface ReviewItemDetail extends ReviewQueueItem {
   studentAnswer: string | null
