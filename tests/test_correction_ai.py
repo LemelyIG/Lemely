@@ -1886,6 +1886,108 @@ class PointVerdictBuildTests(unittest.TestCase):
         self.assertEqual(cq.awarded_marks, 1)
         self.assertEqual(cq.matched_point_ids, ["p2"])
 
+    def _question_with_calc(self, value=42.0):
+        """A verdict-path question where ``p2`` is gated on a calculated
+        answer -- the shape ``_verify_calculated_answers`` (D2.3) can reject."""
+        from lemely.core.loose_schemas import (
+            AnswerPoint,
+            CalculatedAnswer,
+            MathMarkType,
+            Question,
+            QuestionType,
+        )
+
+        calc = CalculatedAnswer(value=value)
+        return Question.model_construct(
+            id="2",
+            marks=2,
+            type=QuestionType.EXPLANATION,
+            answer_points=[
+                AnswerPoint(id="p1", point="method step", marks=1, math_mark_type=MathMarkType.M),
+                AnswerPoint(id="p2", point="final value", marks=1, calculated_answer=calc),
+            ],
+            parts=[],
+            assessment_objectives=[],
+            rejected_answers=[],
+            ignored_answers=[],
+        )
+
+    def test_overruled_calculated_answer_point_becomes_unverifiable(self):
+        """Task #52: a point ``_verify_calculated_answers`` rejects because
+        the mark-scheme value never appears in the student's work must not
+        keep rendering as the marker's raw ``verdict="awarded"`` claim --
+        that broke ``awarded == (verdict == "awarded")`` and put the review
+        screen's strongest positive chip on a point earning zero marks."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question_with_calc(value=42.0)
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="the answer is 99", note="marker's note", ecf=False),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, the answer is 99",  # 42 never appears
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        p2 = next(pv for pv in cq.point_verdicts if pv.point_id == "p2")
+        self.assertEqual(p2.verdict, "unverifiable")
+        self.assertNotIn("p2", cq.matched_point_ids)
+        self.assertEqual(cq.awarded_marks, 1)  # only p1's mark
+        # Everything else on the rewritten verdict survives untouched.
+        self.assertEqual(p2.evidence_span, "the answer is 99")
+        self.assertEqual(p2.note, "marker's note")
+        self.assertFalse(p2.ecf_applied)
+
+    def test_calculated_answer_present_keeps_awarded_verdict(self):
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question_with_calc(value=42.0)
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="the answer is 42"),
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, the answer is 42",
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        p2 = next(pv for pv in cq.point_verdicts if pv.point_id == "p2")
+        self.assertEqual(p2.verdict, "awarded")
+        self.assertIn("p2", cq.matched_point_ids)
+        self.assertEqual(cq.awarded_marks, 2)
+
+    def test_point_without_calculated_answer_verdict_untouched_by_rewrite(self):
+        """A point with no ``calculated_answer`` is never a candidate for
+        ``_verify_calculated_answers`` rejection, so its verdict must be
+        exactly what the marker returned, unchanged."""
+        from lemely.io.correction_ai import _build_ai_corrected
+
+        q = self._question_with_calc(value=42.0)
+        mark = self._mark(
+            [
+                self._verdict("p1", span="did the method"),
+                self._verdict("p2", span="the answer is 99"),  # will be rejected
+            ]
+        )
+        cq = _build_ai_corrected(
+            q,
+            "did the method, the answer is 99",
+            mark,
+            student_working="did the method",
+            equivalence_gate=True,
+        )
+        p1 = next(pv for pv in cq.point_verdicts if pv.point_id == "p1")
+        self.assertEqual(p1.verdict, "awarded")  # p1 has no calculated_answer -- untouched
+
     def test_awarded_point_with_no_matching_span_triggers_no_span_review(self):
         from lemely.io.correction_ai import POINT_EVIDENCE_TRIGGER_MARKER, _build_ai_corrected
 

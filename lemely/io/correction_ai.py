@@ -969,6 +969,7 @@ def _build_ai_corrected_from_verdicts(
         )
     coverage_mismatch = coverage_reason is not None
 
+    pre_verify_point_ids = set(matched_point_ids)
     awarded, matched_point_ids, rejections = _verify_calculated_answers(
         question,
         student_answer,
@@ -978,6 +979,32 @@ def _build_ai_corrected_from_verdicts(
         equivalence_gate=True,
     )
     value_mismatch = bool(rejections)
+
+    # Post-I6-review: a point ``_verify_calculated_answers`` rejects above is
+    # dropped from ``matched_point_ids`` (so it contributes no marks), but its
+    # carried ``PointVerdict`` still says ``verdict="awarded"`` -- the
+    # marker's raw, now-overruled claim -- which broke the
+    # ``awarded == (verdict == "awarded")`` invariant and rendered the
+    # review screen's strongest positive chip on a point that earned
+    # nothing. Rejected ids are derived as a set difference against the
+    # ids captured just above, not by parsing ``rejections`` (prose built
+    # for a human, not for coupling this logic to). ``unverifiable`` is the
+    # correct verdict -- the backstop could not confirm the value -- not
+    # ``withheld``, which means the marker itself judged the point absent.
+    # Only ``verdict`` changes: ``point_id``, ``evidence_span``, ``note``,
+    # and (I7's CODE-set-only contract, Item A above) ``ecf_applied`` are
+    # preserved verbatim via ``model_copy``.
+    rejected_point_ids = pre_verify_point_ids - set(matched_point_ids)
+    point_verdicts = (
+        [
+            pv.model_copy(update={"verdict": "unverifiable"})
+            if pv.point_id in rejected_point_ids
+            else pv
+            for pv in mark.point_verdicts
+        ]
+        if rejected_point_ids
+        else mark.point_verdicts
+    )
 
     evidence_reason = _check_point_evidence(
         question, mark.point_verdicts, student_answer, student_working
@@ -1020,7 +1047,7 @@ def _build_ai_corrected_from_verdicts(
         marker_source="ai",
         feedback=feedback,
         matched_point_ids=matched_point_ids,
-        point_verdicts=mark.point_verdicts,
+        point_verdicts=point_verdicts,
         extraction_confidence=extraction_confidence,
     )
 
