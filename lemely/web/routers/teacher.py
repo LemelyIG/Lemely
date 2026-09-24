@@ -891,6 +891,11 @@ def _raise_for_deletion(exc: PaperDeletionError) -> NoReturn:
         raise HTTPException(status_code=404, detail="No such paper") from exc
     if isinstance(exc, PaperNotRestorableError):
         raise HTTPException(status_code=410, detail=str(exc)) from exc
+    # Defensive only: `TeacherPaperDeletionService` raises no third subclass
+    # today (unlike the student flow, which also has `PaperNotDeletableError`
+    # for D8's hold). Kept so this function stays total over
+    # `PaperDeletionError` rather than falling through unhandled if a future
+    # subclass is added and this mapper is not updated alongside it.
     raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 

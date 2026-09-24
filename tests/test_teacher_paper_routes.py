@@ -10,13 +10,13 @@ about what it still shows.
 from __future__ import annotations
 
 import uuid
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import OperationalError
 from sqlalchemy.orm import Session, sessionmaker
@@ -26,6 +26,7 @@ from lemely.db.base import Base
 from lemely.db.deletion_repo import TeacherPaperDeletionService
 from lemely.db.models import TeacherPaper, User
 from lemely.db.models.enums import Role, UploadStatus
+from lemely.db.session import INCLUDE_DELETED
 from lemely.db.teacher_paper_repo import TeacherPaperRepository
 from lemely.runtime.config import DatabaseSettings
 from lemely.web import create_app
@@ -213,6 +214,23 @@ def test_restoring_a_never_deleted_paper_is_404(client: TestClient, paper: uuid.
     response = client.post(f"/api/papers/{paper}/restore")
     assert response.status_code == 404
     assert response.json()["detail"] == "No such paper"
+
+
+def test_restore_past_the_window_is_410(
+    client: TestClient, pg_sessionmaker: sessionmaker[Session], paper: uuid.UUID
+) -> None:
+    client.delete(f"/api/papers/{paper}")
+    expired = datetime.now(UTC) - timedelta(days=RETENTION_DAYS + 1)
+    with pg_sessionmaker.begin() as session:
+        row = session.scalars(
+            select(TeacherPaper)
+            .where(TeacherPaper.id == paper)
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).one()
+        row.deleted_at = expired
+
+    response = client.post(f"/api/papers/{paper}/restore")
+    assert response.status_code == 410
 
 
 def test_a_student_cannot_restore_a_console_paper(

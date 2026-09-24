@@ -573,6 +573,8 @@ class ClassPaperRowDTO(ApiModel):
     subjectCode: str
     paperNumber: int
     paperVariant: int
+    sessionMonth: str
+    sessionYear: int | None
     recordedAt: str
     unshared: bool
 

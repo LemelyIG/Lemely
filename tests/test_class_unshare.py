@@ -580,3 +580,28 @@ def test_an_unknown_class_is_404_for_the_papers_route(world: World) -> None:
     world.act_as(world.teacher, Role.teacher)
     resp = world.client.get(f"/api/classes/{uuid.uuid4()}/papers")
     assert resp.status_code == 404
+
+
+def test_a_teacher_of_another_class_is_refused_the_papers_route(world: World) -> None:
+    """Same 403 the unshare routes' own foreign-class test proves (D3.1's scope check)."""
+    other_teacher = world.seed_user(Role.teacher)
+    world.act_as(other_teacher, Role.teacher)
+    resp = world.client.get(f"/api/classes/{world.class_id}/papers")
+    assert resp.status_code == 403
+
+
+def test_a_soft_deleted_attempt_is_excluded_from_the_papers_route(world: World) -> None:
+    """Presence, then soft-delete, then absent — the loader criterion (T3) hides it here too."""
+    ids_before = {r["attemptId"] for r in _papers(world)}
+    assert str(world.latest_attempt) in ids_before
+
+    with world.sm.begin() as session:
+        session.execute(
+            sa.update(Attempt)
+            .where(Attempt.id == world.latest_attempt)
+            .values(deleted_at=sa.func.now())
+        )
+
+    ids_after = {r["attemptId"] for r in _papers(world)}
+    assert str(world.latest_attempt) not in ids_after
+    assert str(world.earlier_attempt) in ids_after

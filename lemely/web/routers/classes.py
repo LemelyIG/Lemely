@@ -790,6 +790,8 @@ def list_class_papers(
             subjectCode=record.metadata.subject_code,
             paperNumber=record.metadata.paper_number,
             paperVariant=record.metadata.paper_variant,
+            sessionMonth=record.metadata.session_month,
+            sessionYear=record.metadata.session_year,
             recordedAt=record.recorded_at,
             unshared=record.attempt_id in excluded,
         )
