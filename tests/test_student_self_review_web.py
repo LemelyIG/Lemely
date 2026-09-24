@@ -274,6 +274,14 @@ def test_post_reveals_and_applies_a_low_confidence_self_mark(
     assert [p["studentSelfmark"] for p in body["points"]] == [True, True, True]
     assert [p["markChanged"] for p in body["points"]] == [False, True, True]
     assert [p["evidenceVerdict"] for p in body["points"]] == [None, "not_required", "not_required"]
+    # Legacy path: the seeded question (`_low_confidence_report`) writes no
+    # `point_verdicts` row at all. `verdict` goes to None while `evidenceSpan`
+    # and `ecfApplied` fall back to their column defaults `""`/`False` --
+    # they do not default together in one obvious way, so pin all three
+    # together for every point here.
+    assert [p["verdict"] for p in body["points"]] == [None, None, None]
+    assert [p["evidenceSpan"] for p in body["points"]] == ["", "", ""]
+    assert [p["ecfApplied"] for p in body["points"]] == [False, False, False]
 
     # And a GET now reveals the same.
     again = api.get(_path(attempt_id, qr_id)).json()

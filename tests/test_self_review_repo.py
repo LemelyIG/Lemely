@@ -429,6 +429,31 @@ def test_revealed_point_carries_verdict_span_and_ecf(
     assert by_id["p2"].ecf_applied is False
 
 
+def test_revealed_point_defaults_when_no_verdict_was_ever_persisted(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """The legacy path: a question marked before I6/I7 existed writes no
+    ``point_verdicts`` row at all -- exactly the shape ``_high()``/``_low()``
+    seed, and what production ships today since ``equivalence_gate`` defaults
+    off. The three fields do NOT default together in one obvious way:
+    ``verdict`` goes to ``None`` while ``evidence_span``/``ecf_applied`` fall
+    back to the column defaults ``""``/``False``. Pin all three together, the
+    same way ``test_revealed_point_carries_verdict_span_and_ecf`` pins the
+    I6/I7 path -- so a future reader can't get the "they all just look empty"
+    case wrong.
+    """
+    student = _seed_user(pg_sessionmaker)
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [_high(), _low()])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    p1 = next(p for p in view.points if p.mark_point_id == "p1")
+    assert p1.verdict is None
+    assert p1.evidence_span == ""
+    assert p1.ecf_applied is False
+
+
 def test_get_reports_evidence_required_on_a_high_confidence_question(
     pg_sessionmaker: sessionmaker[Session],
 ) -> None:
