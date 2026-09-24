@@ -27,6 +27,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExtractedAnswers,
     PointVerdict,
+    SourceBox,
     confidence_band_for_score,
     dedupe_point_verdicts,
 )
@@ -48,8 +49,8 @@ def _is_leaf_marked(q: Question) -> bool:
 
 def _flatten_answers(
     extracted: ExtractedAnswers | Mapping[str, str],
-) -> dict[str, tuple[str, str | None, float]]:
-    """Return {question_id: (answer, working_out, confidence)} for every extracted answer.
+) -> dict[str, tuple[str, str | None, float, SourceBox | None]]:
+    """Map question_id to (answer, working_out, confidence, source_box) per extracted answer.
 
     NIT-B: two ``ExtractedAnswer``s can share one ``question_id`` -- each is
     individually well-formed, so nothing upstream (extraction validation,
@@ -71,12 +72,12 @@ def _flatten_answers(
     e.g. a question_id seen 3 times contributes 2 to its count, not 3.
     """
     if isinstance(extracted, ExtractedAnswers):
-        flattened: dict[str, tuple[str, str | None, float]] = {}
+        flattened: dict[str, tuple[str, str | None, float, SourceBox | None]] = {}
         duplicate_counts: dict[str, int] = {}
         for a in extracted.answers:
             if a.question_id in flattened:
                 duplicate_counts[a.question_id] = duplicate_counts.get(a.question_id, 0) + 1
-            flattened[a.question_id] = (a.answer, a.working_out, a.confidence)
+            flattened[a.question_id] = (a.answer, a.working_out, a.confidence, a.source_box)
         if duplicate_counts:
             bus.publish(
                 EventType.DUPLICATE_QUESTION_ID,
@@ -85,9 +86,10 @@ def _flatten_answers(
             )
         return flattened
     # Plain mapping fallback (Mapping[str, str]): no working_out or confidence
-    # available. A plain mapping cannot contain duplicate keys, so there is
-    # nothing to detect in this branch.
-    return {str(k): (str(v), None, 1.0) for k, v in extracted.items()}
+    # available. A plain mapping has no box either, for the same reason it
+    # has no working_out. A plain mapping cannot contain duplicate keys, so
+    # there is nothing to detect in this branch.
+    return {str(k): (str(v), None, 1.0, None) for k, v in extracted.items()}
 
 
 def _dropped_question_ids(extracted: ExtractedAnswers | Mapping[str, str]) -> frozenset[str]:
@@ -1591,7 +1593,7 @@ def _maybe_apply_ecf_substitution(
     equivalence_gate: bool,
     principles: list[str] | None,
     sibling_prior: dict[str, int] | None,
-    answers: dict[str, tuple[str, str | None, float]],
+    answers: dict[str, tuple[str, str | None, float, SourceBox | None]],
     top_level_leaves: list[Question],
     corrected_by_id: dict[str, CorrectedQuestion],
     log: structlog.BoundLogger,
@@ -1714,7 +1716,7 @@ def _maybe_apply_ecf_substitution(
     # -- substituting only the specific number the prerequisite point
     # produced, rather than the prerequisite leaf's whole answer -- is not
     # achievable with today's extraction. `answers` is
-    # `dict[str, tuple[str, str | None, float]]`, keyed by LEAF question
+    # `dict[str, tuple[str, str | None, float, SourceBox | None]]`, keyed by LEAF question
     # id; extraction never resolves a value below one question's
     # answer/working as a whole, so there is no per-point value to look up
     # in the first place, regardless of how this function is written. That
@@ -1732,7 +1734,7 @@ def _maybe_apply_ecf_substitution(
         # unambiguous once indented. `answer` is typed ``str`` in
         # `answers` (never ``None``), so no `or ""` fallback is needed for
         # it.
-        answer, working, _ = answers[leaf_id]
+        answer, working, _, _ = answers[leaf_id]
         lines = [f"answer: {answer}"]
         if working and working.strip():
             lines.append(f"working: {working.strip()}")
@@ -2100,4 +2102,17 @@ def correct_paper(
             total=total_leaves,
         )
 
+    # E (2026-09-24 production-readiness spec): attach each question's
+    # extraction bounding box here, at the ONE place the list is finished,
+    # rather than at the nine `CorrectedQuestion(` construction sites (six of
+    # which are reached through `corrected.append`). One write is one rule,
+    # and keying off `answers` means the box comes from whichever answer
+    # `_flatten_answers`' last-wins policy kept -- a second dedup rule cannot
+    # appear here, which is the failure `point_verdicts` already paid for.
+    corrected = [
+        cq.model_copy(update={"source_box": answers[cq.question_id][3]})
+        if cq.question_id in answers
+        else cq
+        for cq in corrected
+    ]
     return CorrectionResult(metadata=_exam_metadata(scheme), questions=corrected)

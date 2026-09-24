@@ -20,6 +20,7 @@ from lemely.core.schemas import (
     ExtractedAnswer,
     ExtractedAnswers,
     PointVerdict,
+    SourceBox,
 )
 from lemely.io import correction_ai
 from lemely.io.correction_ai import _build_mcq_corrected, _flatten_answers, correct_paper
@@ -278,6 +279,47 @@ class HybridCorrectPaperTests(unittest.TestCase):
         self.assertEqual(q1.awarded_marks, q1.maximum_marks)  # still correct
         self.assertTrue(q1.needs_teacher_review)
         self.assertNotEqual(q1.confidence, ConfidenceBand.HIGH)
+
+    def test_correct_paper_puts_the_extractors_box_on_the_corrected_question(self) -> None:
+        """The box must reach the output record, not stop at the flatten step.
+
+        Set once at the single ``CorrectionResult`` assembly rather than
+        threaded into nine ``CorrectedQuestion(`` sites: one write is one
+        rule, and it keys off the same ``answers`` dict, so
+        ``_flatten_answers``' last-wins dedup policy is inherited instead of
+        restated.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1",
+                    answer="A",
+                    confidence=0.9,
+                    source_box=SourceBox(page=2, box=[100, 100, 200, 200]),
+                )
+            ],
+        )
+        result = correct_paper(mark_scheme=self.ms, extracted_answers=extracted, mcq_only=True)
+        by_id = {cq.question_id: cq for cq in result.questions}
+        self.assertEqual(by_id["1"].source_box, SourceBox(page=2, box=[100, 100, 200, 200]))
+
+    def test_a_question_with_no_extracted_answer_has_no_box(self) -> None:
+        """A question absent from ``answers`` must not raise a KeyError on the
+        way through, and must come out with ``source_box=None``. Question "2"
+        of ``_hybrid_paper_mark_scheme`` has no extracted answer at all here;
+        question "1" has one but no box -- both must yield ``None``.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.9)],
+        )
+        result = correct_paper(mark_scheme=self.ms, extracted_answers=extracted, mcq_only=True)
+        by_id = {cq.question_id: cq for cq in result.questions}
+        self.assertIsNone(by_id["1"].source_box)
+        self.assertIsNone(by_id["2"].source_box)
 
 
 class DroppedAnswerReviewFlagTests(unittest.TestCase):
@@ -3639,8 +3681,8 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         # Policy: last-wins. Pinned here, not incidental to dict construction.
-        self.assertEqual(flattened["1"], ("second", None, 0.8))
-        self.assertEqual(flattened["2"], ("only", None, 0.9))
+        self.assertEqual(flattened["1"], ("second", None, 0.8, None))
+        self.assertEqual(flattened["2"], ("only", None, 0.9, None))
 
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0]["duplicate_counts"], {"1": 1})
@@ -3668,8 +3710,8 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         self.assertEqual(frames, [])
-        self.assertEqual(flattened["1"], ("A", None, 0.5))
-        self.assertEqual(flattened["2"], ("B", None, 0.9))
+        self.assertEqual(flattened["1"], ("A", None, 0.5, None))
+        self.assertEqual(flattened["2"], ("B", None, 0.9, None))
 
     def test_duplicate_count_is_extra_occurrences_not_total(self) -> None:
         """Pin the payload semantics at 3+ occurrences, where "extra
@@ -3699,7 +3741,7 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         # 3 occurrences -> 2 *extra* beyond the first, not 3 total.
-        self.assertEqual(flattened["1"], ("third", None, 0.7))
+        self.assertEqual(flattened["1"], ("third", None, 0.7, None))
         self.assertEqual(len(frames), 1)
         self.assertEqual(frames[0]["duplicate_counts"], {"1": 2})
         self.assertEqual(frames[0]["total_answers"], 3)
@@ -3719,8 +3761,62 @@ class DuplicateQuestionIdFlattenTests(unittest.TestCase):
             bus.unsubscribe(EventType.DUPLICATE_QUESTION_ID, _spy)
 
         self.assertEqual(frames, [])
-        self.assertEqual(flattened["1"], ("A", None, 1.0))
-        self.assertEqual(flattened["2"], ("B", None, 1.0))
+        self.assertEqual(flattened["1"], ("A", None, 1.0, None))
+        self.assertEqual(flattened["2"], ("B", None, 1.0, None))
+
+    def test_flatten_answers_carries_the_source_box(self) -> None:
+        """The extractor's box must survive into marking, not be discarded.
+
+        ``source_box`` has zero hits in ``lemely/db/`` and ``lemely/web/``: it
+        is produced at extraction, used in-process by the crop-and-re-read,
+        and then lost. This is the first hop that keeps it.
+        """
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1",
+                    answer="42",
+                    confidence=0.9,
+                    source_box=SourceBox(page=0, box=[100, 200, 300, 400]),
+                )
+            ],
+        )
+        flat = _flatten_answers(extracted)
+        self.assertEqual(flat["1"][3], SourceBox(page=0, box=[100, 200, 300, 400]))
+
+    def test_flatten_answers_yields_no_box_for_a_plain_mapping(self) -> None:
+        """A ``Mapping[str, str]`` is the correction-only/oracle bypass: it
+        never went through extraction, so there is no box to carry. It
+        already fabricates ``None`` working_out and ``1.0`` confidence; the
+        box follows the same shape.
+        """
+        flat = _flatten_answers({"1": "42"})
+        self.assertIsNone(flat["1"][3])
+
+    def test_a_duplicate_question_id_takes_the_box_from_the_surviving_answer(self) -> None:
+        """NIT-B: two answers can share one ``question_id``, and this
+        function's documented policy is last-wins. The box must come from
+        the SAME survivor, not from a second rule.
+
+        A second dedup rule is the failure this branch already paid for:
+        ``point_verdicts`` had two consumers resolving a duplicate
+        differently, and a 1-mark point scored 2.
+        """
+        first = SourceBox(page=0, box=[10, 10, 20, 20])
+        last = SourceBox(page=1, box=[30, 30, 40, 40])
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(question_id="1", answer="first", confidence=0.5, source_box=first),
+                ExtractedAnswer(question_id="1", answer="last", confidence=0.5, source_box=last),
+            ],
+        )
+        flat = _flatten_answers(extracted)
+        self.assertEqual(flat["1"][0], "last", "last-wins is the documented policy")
+        self.assertEqual(flat["1"][3], last, "the box must come from the surviving answer")
 
 
 class EcfChainResolverTests(unittest.TestCase):
