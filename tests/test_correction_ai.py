@@ -2124,7 +2124,7 @@ class PointVerdictBuildTests(unittest.TestCase):
         entries instead of reading them. A future change that pins the key to
         avoid the hash budget would break parsing on every cached hit.
         """
-        with self.assertRaises(ValidationError):
+        with self.assertRaisesRegex(ValidationError, "evidence_box"):
             PointVerdict(point_id="p1", verdict="awarded", evidence_box=None)
 
 
@@ -4665,7 +4665,7 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
     was FALSE about the mechanism -- ``subprocess.run`` inherits
     ``os.environ`` by default, so under a poisoned ambient
     ``PYTHONOPTIMIZE=2`` the "plain" subprocess is ALSO optimized, and
-    since ``886c4232e7a7`` (the post-fix value) happens to equal the
+    since ``b41db5c1bbd5`` (the post-fix value) happens to equal the
     STRIPPED (pre-fix, ``-OO``) hash, both assertions would pass on the
     PRE-fix code too -- the test was fully inert in that environment, not
     merely weakened. What actually protects local runs is
