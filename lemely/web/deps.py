@@ -771,7 +771,8 @@ def get_sweeper() -> Sweeper:
     announcement is delivered through exactly the code an immediate one is.
     Built even when ``settings.notifications.sweeper_enabled`` is false;
     ``create_app``'s lifespan decides whether to *run* it. Constructing it
-    opens no connection (the engine is lazy).
+    opens no connection (the engine is lazy), and neither does the storage
+    backend it carries for the purge job.
     """
     settings = get_settings()
     return Sweeper(
@@ -780,6 +781,8 @@ def get_sweeper() -> Sweeper:
         notifications=get_notification_service(),
         transport=get_push_transport(),
         settings=settings.notifications,
+        storage=get_storage_backend(),
+        bucket=settings.storage.bucket,
     )
 
 

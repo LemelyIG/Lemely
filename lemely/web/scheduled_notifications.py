@@ -1,6 +1,7 @@
 """The notification jobs a sweeper runs, and the fan-out they share with the composer.
 
-Push-delivery spec §1, §2 and §4. Three jobs live here:
+Push-delivery spec §1, §2 and §4. Three notification jobs live here, and the
+sweeper runs a fourth that is not a notification:
 
 * :func:`publish_due_announcements` — claim announcements whose ``publish_at``
   has passed and notify their audience (§1).
@@ -42,6 +43,7 @@ from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
+from lemely.web.purge import purge_expired_papers
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -51,6 +53,7 @@ if TYPE_CHECKING:
 
     from lemely.db.announcement_repo import AnnouncementRow, AnnouncementService
     from lemely.db.notification_repo import NotificationService
+    from lemely.io.storage import StorageBackend
     from lemely.runtime.config import NotificationsSettings
     from lemely.web.push import NotificationTransport
 
@@ -442,11 +445,15 @@ def _utcnow() -> datetime:
 
 @dataclass(slots=True)
 class Sweeper:
-    """One tick's worth of the three jobs, with the state that persists between ticks.
+    """One tick's worth of the jobs, with the state that persists between ticks.
 
     The two memos are the per-zone optimisation §4 describes and are the only
     state a sweeper carries; everything else is a collaborator the app already
     has. ``deps.get_sweeper`` builds one per process.
+
+    ``storage`` and ``bucket`` are for the purge job alone and default to
+    ``None``, which leaves purge out of the pass: a sweeper built only for
+    notifications (as most tests build one) never touches object storage.
     """
 
     sessionmaker: sessionmaker[Session]
@@ -457,42 +464,51 @@ class Sweeper:
     now: Callable[[], datetime] = _utcnow
     streak_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
     plan_memo: ZoneDateMemo = field(default_factory=ZoneDateMemo)
+    storage: StorageBackend | None = None
+    bucket: str | None = None
 
     def sweep_once(self) -> dict[str, int | None]:
-        """Run announcements, streak warnings and study-plan reminders, once each."""
+        """Run announcements, streak warnings, study-plan reminders and purge, once each."""
         moment = self.now()
-        return run_jobs(
-            [
-                (
-                    "publish_due_announcements",
-                    lambda: publish_due_announcements(
-                        self.announcements, self.notifications, self.transport, now=moment
-                    ),
+        jobs: list[tuple[str, Callable[[], int]]] = [
+            (
+                "publish_due_announcements",
+                lambda: publish_due_announcements(
+                    self.announcements, self.notifications, self.transport, now=moment
                 ),
-                (
-                    "warn_streaks",
-                    lambda: warn_streaks(
-                        self.sessionmaker,
-                        self.notifications,
-                        self.transport,
-                        now=moment,
-                        hour=self.settings.streak_warning_hour,
-                        memo=self.streak_memo,
-                    ),
+            ),
+            (
+                "warn_streaks",
+                lambda: warn_streaks(
+                    self.sessionmaker,
+                    self.notifications,
+                    self.transport,
+                    now=moment,
+                    hour=self.settings.streak_warning_hour,
+                    memo=self.streak_memo,
                 ),
-                (
-                    "remind_study_plans",
-                    lambda: remind_study_plans(
-                        self.sessionmaker,
-                        self.notifications,
-                        self.transport,
-                        now=moment,
-                        hour=self.settings.study_plan_reminder_hour,
-                        memo=self.plan_memo,
-                    ),
+            ),
+            (
+                "remind_study_plans",
+                lambda: remind_study_plans(
+                    self.sessionmaker,
+                    self.notifications,
+                    self.transport,
+                    now=moment,
+                    hour=self.settings.study_plan_reminder_hour,
+                    memo=self.plan_memo,
                 ),
-            ]
-        )
+            ),
+        ]
+        storage, bucket = self.storage, self.bucket
+        if storage is not None and bucket is not None:
+            jobs.append(
+                (
+                    "purge_expired_papers",
+                    lambda: purge_expired_papers(self.sessionmaker, storage, bucket, now=moment),
+                )
+            )
+        return run_jobs(jobs)
 
 
 async def run_sweeper(sweeper: Sweeper, *, poll_seconds: float, stop: asyncio.Event) -> None:

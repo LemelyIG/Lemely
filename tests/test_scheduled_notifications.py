@@ -571,3 +571,33 @@ def test_a_sweeper_pass_runs_all_three_jobs_against_an_empty_database(
         "warn_streaks": 0,
         "remind_study_plans": 0,
     }
+
+
+def test_a_sweeper_with_storage_also_runs_the_purge_job(
+    pg_sessionmaker: sessionmaker[Session],
+    notifications: NotificationService,
+    transport: RecordingPushTransport,
+) -> None:
+    """Purge joins the pass only when the sweeper was built with storage and a bucket."""
+    from lemely.db.announcement_repo import AnnouncementService
+    from lemely.db.class_repo import ClassService
+    from lemely.runtime.config import NotificationsSettings
+    from tests.storage_fakes import FakeStorageBackend
+
+    sweeper = Sweeper(
+        sessionmaker=pg_sessionmaker,
+        announcements=AnnouncementService(pg_sessionmaker, ClassService(pg_sessionmaker)),
+        notifications=notifications,
+        transport=transport,
+        settings=NotificationsSettings(),
+        now=lambda: CAIRO_EVENING,
+        storage=FakeStorageBackend(),
+        bucket="lemely-uploads-test",
+    )
+
+    assert sweeper.sweep_once() == {
+        "publish_due_announcements": 0,
+        "warn_streaks": 0,
+        "remind_study_plans": 0,
+        "purge_expired_papers": 0,
+    }
