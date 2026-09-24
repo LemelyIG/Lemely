@@ -35,7 +35,10 @@ from lemely.db.models import TeacherPaper, User
 from lemely.db.models.enums import ReviewReason, ReviewStatus, Role, UploadStatus
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
+    BulkApproveResult,
+    BulkApproveSkip,
     ReviewAlreadyClosedError,
+    ReviewNotFoundError,
     ReviewOwnershipError,
     ReviewService,
 )
@@ -329,26 +332,40 @@ def test_deletion_withdraws_its_queue_items_through_teacher_paper_id(
     assert untouched.status is ReviewStatus.open
 
 
+def _mid_run(sm: sessionmaker[Session], paper_id: uuid.UUID) -> None:
+    """Give a paper the stage and counter a run in flight leaves on it."""
+    with sm.begin() as session:
+        session.execute(
+            sa.update(TeacherPaper)
+            .where(TeacherPaper.id == paper_id)
+            .values(stage="mark", progress_index=2, progress_total=5)
+        )
+
+
 def test_delete_ends_a_processing_run_without_a_report_as_failed(
     service: TeacherPaperDeletionService, sessionmaker_: sessionmaker[Session], teacher: uuid.UUID
 ) -> None:
     """A run deleted mid-flight can no longer finish; restored, it must be re-runnable."""
     pid = _paper(sessionmaker_, teacher, status=UploadStatus.processing)
+    _mid_run(sessionmaker_, pid)
     service.delete(str(teacher), str(pid))
     row = _paper_row(sessionmaker_, pid)
     assert row is not None
     assert row.status is UploadStatus.failed
     assert row.error is not None
+    assert (row.stage, row.progress_index, row.progress_total) == (None, None, None)
 
 
 def test_delete_ends_a_processing_regrade_with_a_report_as_complete(
     service: TeacherPaperDeletionService, sessionmaker_: sessionmaker[Session], teacher: uuid.UUID
 ) -> None:
     pid = _paper(sessionmaker_, teacher, status=UploadStatus.processing, report=True)
+    _mid_run(sessionmaker_, pid)
     service.delete(str(teacher), str(pid))
     row = _paper_row(sessionmaker_, pid)
     assert row is not None
     assert row.status is UploadStatus.complete
+    assert (row.stage, row.progress_index, row.progress_total) == (None, None, None)
     assert row.error is None
 
 
@@ -612,7 +629,8 @@ def test_run_progress_writes_skip_a_deleted_paper(
 
     row = _paper_row(sessionmaker_, pid)
     assert row is not None
-    assert row.stage == "extract"
+    # Delete cleared the stage; the in-flight run's "mark" must not land.
+    assert row.stage is None
     assert row.progress_index is None
     assert row.metadata_json is None
     assert row.mark_scheme_json is None
@@ -669,10 +687,10 @@ def test_a_finish_arriving_mid_delete_waits_and_is_refused(
 
     def paused(
         self: TeacherPaperDeletionService, session: Session, paper_id: uuid.UUID, now: datetime
-    ) -> list[uuid.UUID]:
+    ) -> None:
         inside.set()
         assert release.wait(timeout=20)
-        return real(self, session, paper_id, now)
+        real(self, session, paper_id, now)
 
     monkeypatch.setattr(TeacherPaperDeletionService, "_withdraw_console_items", paused)
     deleting = _Paused(lambda: service.delete(str(teacher), str(pid)))
@@ -800,6 +818,116 @@ def test_a_close_arriving_mid_delete_is_refused_and_the_item_stays_withdrawn(
     assert item is not None
     assert item.status is ReviewStatus.withdrawn
     assert item.resolved_by is None
+
+
+def test_a_bulk_approval_racing_a_delete_leaves_the_item_withdrawn(
+    service: TeacherPaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    teacher: uuid.UUID,
+    console_paper: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bulk approve reads the item open, then waits on the delete's withdrawal of it.
+
+    The real delete is paused after its withdrawal UPDATE, so it holds the item
+    row. Once it commits, the approval must re-check the status and skip.
+    """
+    item_id = _item(sessionmaker_, console_paper)
+    reviews = ReviewService(sessionmaker_, ClassService(sessionmaker_))
+    inside, release = threading.Event(), threading.Event()
+    real = TeacherPaperDeletionService._withdraw_console_items
+
+    def paused(
+        self: TeacherPaperDeletionService, session: Session, paper_id: uuid.UUID, now: datetime
+    ) -> None:
+        real(self, session, paper_id, now)
+        inside.set()
+        assert release.wait(timeout=20)
+
+    monkeypatch.setattr(TeacherPaperDeletionService, "_withdraw_console_items", paused)
+    deleting = _Paused(lambda: service.delete(str(teacher), str(console_paper)))
+    assert inside.wait(timeout=20)
+    approving = _Paused(lambda: reviews.bulk_approve(teacher, Role.teacher, [item_id]))
+    _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
+    release.set()
+    deleting.join()
+    approving.join()
+
+    assert deleting.error is None
+    assert approving.error is None
+    assert isinstance(approving.result, BulkApproveResult)
+    assert approving.result.approved == []
+    assert approving.result.skipped == [BulkApproveSkip(item_id=item_id, reason="already_closed")]
+    item = _item_row(sessionmaker_, item_id)
+    assert item is not None
+    assert item.status is ReviewStatus.withdrawn
+    assert item.resolved_by is None
+
+    service.restore(str(teacher), str(console_paper))
+    reopened = _item_row(sessionmaker_, item_id)
+    assert reopened is not None
+    assert reopened.status is ReviewStatus.open
+
+
+def test_a_close_arriving_mid_real_delete_is_refused(
+    service: TeacherPaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    teacher: uuid.UUID,
+    console_paper: uuid.UUID,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real delete, paused before it withdraws, must already hold the paper lock."""
+    item_id = _item(sessionmaker_, console_paper)
+    reviews = ReviewService(sessionmaker_, ClassService(sessionmaker_))
+    inside, release = threading.Event(), threading.Event()
+    real = TeacherPaperDeletionService._withdraw_console_items
+
+    def paused(
+        self: TeacherPaperDeletionService, session: Session, paper_id: uuid.UUID, now: datetime
+    ) -> None:
+        inside.set()
+        assert release.wait(timeout=20)
+        real(self, session, paper_id, now)
+
+    monkeypatch.setattr(TeacherPaperDeletionService, "_withdraw_console_items", paused)
+    deleting = _Paused(lambda: service.delete(str(teacher), str(console_paper)))
+    assert inside.wait(timeout=20)
+    closing = _Paused(lambda: reviews.resolve(teacher, Role.teacher, item_id))
+    _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
+    release.set()
+    deleting.join()
+    closing.join()
+
+    assert deleting.error is None
+    assert isinstance(closing.error, ReviewOwnershipError)
+    item = _item_row(sessionmaker_, item_id)
+    assert item is not None
+    assert item.status is ReviewStatus.withdrawn
+
+
+def test_a_close_whose_item_a_regrade_replaced_is_a_404(
+    sessionmaker_: sessionmaker[Session], teacher: uuid.UUID, console_paper: uuid.UUID
+) -> None:
+    """A finishing regrade deletes the paper's open items while the close waits on the paper."""
+    item_id = _item(sessionmaker_, console_paper)
+    reviews = ReviewService(sessionmaker_, ClassService(sessionmaker_))
+
+    holder = sessionmaker_()
+    holder.begin()
+    holder.execute(
+        sa.text("SELECT id FROM teacher_papers WHERE id = :id FOR UPDATE"), {"id": console_paper}
+    )
+    closing = _Paused(lambda: reviews.resolve(teacher, Role.teacher, item_id))
+    try:
+        _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
+        holder.execute(sa.text("DELETE FROM review_queue WHERE id = :id"), {"id": item_id})
+        holder.commit()
+    finally:
+        holder.close()
+    closing.join()
+
+    assert isinstance(closing.error, ReviewNotFoundError)
+    assert _item_row(sessionmaker_, item_id) is None
 
 
 def test_a_close_queued_behind_another_close_reads_the_committed_status(

@@ -43,6 +43,7 @@ from lemely.db.models import (
     School,
     SchoolClass,
     Subscription,
+    TeacherPaper,
     Upload,
     User,
 )
@@ -164,12 +165,13 @@ class PipelineHealth:
     is, so the surface says the metric lives elsewhere instead of showing a
     number it cannot date.
 
-    ``purge_backlog`` is Task 10's sweeper made observable: attempts whose
-    ``deleted_at`` is more than a day past :func:`~lemely.core.deletion.purge_cutoff`
-    and are still present. A healthy sweeper keeps this at zero; a rising count
-    means purge is falling behind, which is the failure mode nothing else on this
-    screen would surface — the rows are already invisible to every tenant-facing
-    reader, so only an aggregate admin count catches a purge that keeps failing.
+    ``purge_backlog`` is Task 10's sweeper made observable: attempts and
+    teacher-console papers (R2) whose ``deleted_at`` is more than a day past
+    :func:`~lemely.core.deletion.purge_cutoff` and are still present. A healthy
+    sweeper keeps this at zero; a rising count means purge is falling behind,
+    which is the failure mode nothing else on this screen would surface — the
+    rows are already invisible to every tenant-facing reader, so only an
+    aggregate admin count catches a purge that keeps failing.
     """
 
     subjects: list[SubjectCoverage]
@@ -401,11 +403,20 @@ class PlatformAdminService:
                     .limit(10)
                 ).all()
             )
+            overdue = purge_cutoff(moment) - timedelta(days=1)
             backlog = int(
                 session.scalar(
                     select(func.count())
                     .select_from(Attempt)
-                    .where(Attempt.deleted_at <= purge_cutoff(moment) - timedelta(days=1))
+                    .where(Attempt.deleted_at <= overdue)
+                    .execution_options(**{INCLUDE_DELETED: True})
+                )
+                or 0
+            ) + int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(TeacherPaper)
+                    .where(TeacherPaper.deleted_at <= overdue)
                     .execution_options(**{INCLUDE_DELETED: True})
                 )
                 or 0

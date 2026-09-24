@@ -105,6 +105,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
+import sqlalchemy as sa
 import structlog
 from pydantic import ValidationError
 from sqlalchemy import select
@@ -682,8 +683,12 @@ class ReviewService:
         approved: list[uuid.UUID] = []
         skipped: list[BulkApproveSkip] = []
         now = datetime.now(UTC)
-        with self._sessionmaker() as session, session.begin():
-            for item_uuid in item_ids:
+        for item_uuid in item_ids:
+            # One transaction per item, so a batch holds at most one item row
+            # lock at a time. A paper deletion withdraws its items in one
+            # multi-row UPDATE; a batch holding item X while waiting on Y,
+            # against a deletion holding Y and waiting on X, would deadlock.
+            with self._sessionmaker() as session, session.begin():
                 # Reuse the single-item loader so both sources are checked by
                 # exactly the rule their own tenancy defines, then translate
                 # its exceptions into this call's skip reasons — a batch must
@@ -701,9 +706,25 @@ class ReviewService:
                 if item.status != ReviewStatus.open:
                     skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
                     continue
-                item.status = ReviewStatus.resolved
-                item.resolved_by = caller_uuid
-                item.resolved_at = now
+                # Conditional, never a write-back of the status read above: a
+                # deletion may withdraw the item after that read. Postgres
+                # re-checks `status` once the row lock is ours, so a withdrawn
+                # item is skipped rather than turned into a teacher closure —
+                # which for an integrity item would lift the student's own
+                # D8 hold (R4a).
+                closed = session.scalars(
+                    sa.update(ReviewQueueItem)
+                    .where(
+                        ReviewQueueItem.id == item_uuid,
+                        ReviewQueueItem.status == ReviewStatus.open,
+                    )
+                    .values(status=ReviewStatus.resolved, resolved_by=caller_uuid, resolved_at=now)
+                    .returning(ReviewQueueItem.id),
+                    execution_options={"synchronize_session": False},
+                ).one_or_none()
+                if closed is None:
+                    skipped.append(BulkApproveSkip(item_id=item_uuid, reason="already_closed"))
+                    continue
                 approved.append(item_uuid)
         return BulkApproveResult(approved=approved, skipped=skipped)
 
@@ -806,8 +827,17 @@ class ReviewService:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
             if for_update:
                 # The item was read before the lock; its status must be the
-                # one committed by whoever held the paper before us.
-                session.refresh(item)
+                # one committed by whoever held the paper before us. A
+                # regrade's `finish` deletes a paper's open items under that
+                # same lock, so the item may be gone.
+                fresh = session.scalars(
+                    select(ReviewQueueItem)
+                    .where(ReviewQueueItem.id == item_uuid)
+                    .execution_options(populate_existing=True)
+                ).one_or_none()
+                if fresh is None:
+                    raise ReviewNotFoundError(f"Unknown review item: {item_uuid}")
+                item = fresh
             return item, None, None, paper
         # ``for_update`` takes the same attempt-then-question lock, in the same
         # order, that ``SelfReviewService._owned_question`` takes. Mutual

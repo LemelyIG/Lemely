@@ -632,6 +632,10 @@ class TeacherPaperDeletionService:
                 else:
                     paper.status = UploadStatus.failed
                     paper.error = _RUN_STOPPED_BY_DELETE
+                # The run's position is meaningless once it cannot finish.
+                paper.stage = None
+                paper.progress_index = None
+                paper.progress_total = None
             self._withdraw_console_items(session, parsed_id, now)
             return DeletedTeacherPaper(
                 paper_id=paper.id,
@@ -722,25 +726,23 @@ class TeacherPaperDeletionService:
             raise PaperNotFoundError("No such paper")
         return paper
 
-    def _withdraw_console_items(
-        self, session: Session, paper_id: uuid.UUID, now: datetime
-    ) -> list[uuid.UUID]:
+    def _withdraw_console_items(self, session: Session, paper_id: uuid.UUID, now: datetime) -> None:
         """Flip every open review item on this paper to ``withdrawn`` at ``now``.
 
         Under the paper row lock, so a teacher's close and this withdrawal
         never both land (see the class docstring). ``resolved_by`` is untouched.
+        Nothing is returned: a teacher deleting their own console paper
+        notifies nobody, unlike a student's deletion.
         """
-        withdrawn = session.scalars(
+        session.execute(
             sa.update(ReviewQueueItem)
             .where(
                 ReviewQueueItem.teacher_paper_id == paper_id,
                 ReviewQueueItem.status == ReviewStatus.open,
             )
-            .values(status=ReviewStatus.withdrawn, withdrawn_at=now)
-            .returning(ReviewQueueItem.id),
+            .values(status=ReviewStatus.withdrawn, withdrawn_at=now),
             execution_options={"synchronize_session": False},
-        ).all()
-        return sorted(withdrawn)
+        )
 
 
 __all__ = [

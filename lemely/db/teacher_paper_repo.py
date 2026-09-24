@@ -351,6 +351,11 @@ class TeacherPaperRepository:
         then withdraws, and a delete that commits first makes this raise
         rather than queue reviews on a paper nobody can see (design §13).
 
+        A restore while an old run is still in flight makes the row live again,
+        so that run's ``finish`` lands on it, and a new ``claim_run`` may start
+        a second run beside it. Both write the same paper; the last ``finish``
+        wins. That is benign, and stated so nobody is surprised by it.
+
         Raises:
             TeacherPaperDeletedError: the paper was deleted or purged while
                 this run was in flight; nothing was written.

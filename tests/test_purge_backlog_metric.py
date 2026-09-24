@@ -23,7 +23,7 @@ import sqlalchemy as sa
 
 from lemely.core.deletion import purge_cutoff
 from lemely.db.admin_repo import PlatformAdminService
-from lemely.db.models import Attempt, Upload, User
+from lemely.db.models import Attempt, TeacherPaper, Upload, User
 from lemely.db.models.enums import Role
 
 if TYPE_CHECKING:
@@ -104,3 +104,43 @@ def test_backlog_is_zero_when_purge_is_keeping_up(
     )
 
     assert health.purge_backlog == 0
+
+
+def _seed_deleted_console_paper(sm: sessionmaker[Session], *, deleted_at: datetime) -> uuid.UUID:
+    """A teacher and one grading-console paper, soft-deleted at ``deleted_at`` (R2)."""
+    uid = uuid.uuid4()
+    paper_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(User(id=uid, email=f"{uid}@example.com", role=Role.teacher))
+        session.flush()
+        session.add(
+            TeacherPaper(
+                id=paper_id,
+                uploaded_by=uid,
+                storage_path=f"teacher/{uid}/{paper_id.hex}/scan.pdf",
+                deleted_at=deleted_at,
+            )
+        )
+    return paper_id
+
+
+def test_backlog_counts_an_overdue_console_paper_too(
+    migrated_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A stuck console purge is as invisible as a stuck student one, so it counts."""
+    _seed_deleted_attempt(
+        migrated_sessionmaker,
+        deleted_at=purge_cutoff(_NOW) - timedelta(days=1, minutes=1),
+    )
+    _seed_deleted_console_paper(
+        migrated_sessionmaker,
+        deleted_at=purge_cutoff(_NOW) - timedelta(days=1, minutes=1),
+    )
+    _seed_deleted_console_paper(migrated_sessionmaker, deleted_at=purge_cutoff(_NOW))
+    service = PlatformAdminService(migrated_sessionmaker)
+
+    health = service.pipeline_health(
+        exact_boundary_keys=0, subject_default_boundary_keys=0, now=_NOW
+    )
+
+    assert health.purge_backlog == 2

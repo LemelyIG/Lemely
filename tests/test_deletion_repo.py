@@ -1315,3 +1315,76 @@ def test_a_second_restore_queued_behind_the_first_is_a_404(
     assert isinstance(second.error, PaperNotFoundError)
     assert calls == 2
     assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
+
+
+def test_a_bulk_approval_racing_a_delete_cannot_lift_the_integrity_hold(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """R4a: a withdrawn integrity item must never become a teacher closure.
+
+    ``resolved`` is in the set that lifts D8's hold. A bulk approval that read
+    the item open, then overwrote the delete's ``withdrawn``, would leave it
+    ``resolved`` — never reopened by restore, and counted as a teacher having
+    cleared the flag. The real delete is paused after its withdrawal UPDATE so
+    the approval queues on the item row; it must re-check and skip.
+    """
+    from lemely.db.class_repo import ClassService
+    from lemely.db.review_repo import BulkApproveSkip, ReviewService
+
+    teacher = uuid.uuid4()
+    with sessionmaker_.begin() as session:
+        session.add(User(id=teacher, email=f"{teacher}@example.com", role=Role.teacher))
+    classes = ClassService(sessionmaker_)
+    cls = classes.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    classes.join_by_code(uuid.UUID(owner), cls.join_code)
+    # The integrity review exists while the flag booleans (the fact D8 reads)
+    # are not yet set, so this first delete is not held.
+    qr_id = _seed_question(sessionmaker_, attempt.attempt_id)
+    item_id = _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
+    reviews = ReviewService(sessionmaker_, classes)
+
+    inside, release = threading.Event(), threading.Event()
+    real = PaperDeletionService._withdraw_open_items
+
+    def paused(
+        self: PaperDeletionService, session: Session, attempt_ids: list[uuid.UUID], now: datetime
+    ) -> list[uuid.UUID]:
+        withdrawn = real(self, session, attempt_ids, now)
+        inside.set()
+        assert release.wait(timeout=20)
+        return withdrawn
+
+    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused)
+    deleting = _Paused(lambda: service.delete(owner, str(attempt.attempt_id)))
+    assert inside.wait(timeout=20)
+    approving = _Paused(lambda: reviews.bulk_approve(teacher, Role.teacher, [item_id]))
+    _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
+    release.set()
+    deleting.join()
+    approving.join()
+
+    assert deleting.error is None
+    assert approving.error is None
+    assert approving.result.skipped == [  # type: ignore[attr-defined]
+        BulkApproveSkip(item_id=item_id, reason="already_closed")
+    ]
+    assert _item_row(sessionmaker_, item_id).status is ReviewStatus.withdrawn
+
+    service.restore(owner, str(attempt.attempt_id))
+    assert _item_row(sessionmaker_, item_id).status is ReviewStatus.open
+    with sessionmaker_.begin() as session:
+        session.execute(
+            sa.update(QuestionResult)
+            .where(QuestionResult.id == qr_id)
+            .values(plagiarism_flagged=True)
+        )
+
+    with pytest.raises(PaperNotDeletableError) as exc:
+        service.delete(owner, str(attempt.attempt_id))
+    assert str(exc.value) == _HOLD_REFUSAL
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
