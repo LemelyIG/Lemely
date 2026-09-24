@@ -174,11 +174,14 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
    * — so this single click is the whole `POST /{id}/read` round trip asserted
    * end to end through the UI.
    *
-   * Scoped by title rather than by the bare "Mark as read" name. Every card
-   * renders an identically-named button, so the bare locator resolves today
-   * only because the seed seeds zero announcements and this flow posts exactly
-   * one. That is a precondition of the fixture, not a property of the screen:
-   * the day any session seeds an announcement, a bare locator becomes a
+   * Scoped by title rather than by the bare "Mark as read" name. Playwright's
+   * getByRole name match is substring-based by default, and every card's
+   * aria-label already embeds its own title ("Mark as read: {title}"), so a
+   * bare `{ name: "Mark as read" }` would substring-match every card on the
+   * screen the moment more than one exists. That only looks safe today
+   * because the seed seeds zero announcements and this flow posts exactly
+   * one — a precondition of the fixture, not a property of the screen: the
+   * day any session seeds an announcement, a bare locator becomes a
    * strict-mode violation in a spec that never changed. (P5.11 also gave the
    * button a title-bearing accessible name, which is what makes this scoping
    * possible — and fixes the same ambiguity for screen-reader users.)
