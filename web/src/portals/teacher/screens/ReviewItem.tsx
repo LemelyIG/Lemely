@@ -57,16 +57,17 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  *
  * **D3.14 §1 drives the whole evidence layout.** The spec asks for "the
  * student's actual scan crop, side by side with the mark scheme extract" —
- * neither is persisted anywhere in this product (`ReviewItemDetailDTO`'s own
- * docstring). What's rendered instead, explicitly labelled as such, with a
- * banner stating the scan/scheme extract don't exist rather than a
- * placeholder image or skeleton frame standing in for a missing asset:
+ * neither the scan crop nor a side-by-side extract is rendered here
+ * (`ReviewItemDetailDTO`'s own docstring). What's rendered instead,
+ * explicitly labelled as such, with a banner stating the scan doesn't
+ * appear on this screen rather than a placeholder image or skeleton frame
+ * standing in for a missing asset:
  *  - `studentAnswer` -> "Lemely's transcription of the student's answer —
  *    not the scan."
  *  - `expectedAnswer` -> "Expected answer" (the mark scheme's target, not
  *    its full prose).
  *  - `matchedPointIds` -> rendered as bare identifier chips, labelled
- *    "the scheme's own wording isn't stored" — never reconstructed into
+ *    "Matched mark-scheme point identifiers" — never reconstructed into
  *    scheme-sounding prose (UI-spec §1.4: never invent precision the data
  *    doesn't support). Demoted below `MarkerVerdicts` (I6, US-013): a bare
  *    id is no longer this backend's best marking evidence, only a fallback
@@ -234,14 +235,22 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
   // filter would instead re-create the invisible-point defect this component
   // exists to fix -- a reviewer demonstrated that a guard inside the map
   // callback passes every unit assertion with a clean tsc.
-  if (points.length === 0 || !points.some((p) => p.verdict !== null)) return null
+  //
+  // `|| p.rationale` matters on its own: with the gate off, `verdict` is
+  // always null, so a `verdict !== null`-only guard suppresses this section
+  // even when a point carries a marker's `rationale` -- the one thing this
+  // component exists to surface today. Testing both keeps the section
+  // suppressed when it would only restate the headline, while still letting
+  // a real rationale through.
+  if (points.length === 0 || !points.some((p) => p.verdict !== null || p.rationale)) return null
   return (
-    <section className="flex flex-col gap-3">
+    <section className="flex flex-col gap-3" role="region" aria-label="Marker's per-point verdicts">
       <div className="text-display-sm">Marker's per-point verdicts</div>
       <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-4">
         {points.map((point, index) => (
           <div
             key={point.markPointId}
+            data-testid="marker-verdict-row"
             className={
               index === 0 ? "flex flex-col gap-2" : "flex flex-col gap-2 border-t border-rule pt-4"
             }
@@ -717,10 +726,8 @@ export function ReviewItem() {
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-                  The mark scheme's own wording isn't stored anywhere in this
-                  product, and this screen does not display the original scan.
-                  What's below is Lemely's own transcription of the student's
-                  answer.
+                  This screen does not display the original scan. What's below
+                  is Lemely's own transcription of the student's answer.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
@@ -798,7 +805,7 @@ export function ReviewItem() {
               {detail.matchedPointIds.length > 0 ? (
                 <section className="flex flex-col gap-1.5">
                   <div className="text-eyebrow text-ink-faint">
-                    Matched mark-scheme point identifiers, the scheme's own wording isn't stored
+                    Matched mark-scheme point identifiers
                   </div>
                   <div className="flex flex-wrap gap-1.5">
                     {detail.matchedPointIds.map((id) => (
@@ -811,7 +818,7 @@ export function ReviewItem() {
               ) : detail.points.length === 0 ? (
                 <section className="flex flex-col gap-1.5">
                   <div className="text-eyebrow text-ink-faint">
-                    Matched mark-scheme point identifiers, the scheme's own wording isn't stored
+                    Matched mark-scheme point identifiers
                   </div>
                   <p className="text-body-md text-ink-faint m-0">No points matched.</p>
                 </section>

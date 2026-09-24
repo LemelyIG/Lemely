@@ -113,14 +113,23 @@ describe("ReviewItem.tsx — MarkerVerdicts renders I6/I7 for every point", () =
     expect(body).toContain("point.rationale")
   })
 
-  it("renders nothing when no point carries a verdict", () => {
+  it("suppresses the section only when no point carries a verdict or a rationale", () => {
     // Section-level suppression, NOT per-point: a per-point filter re-creates
     // the invisible-point defect this component exists to fix. Verified
     // behaviourally in web/e2e/teacher-review.spec.ts; this only pins that the
-    // guard is on the collection, not on each element.
-    expect(body).toMatch(/points\.some\(\(p\) => p\.verdict !== null\)/)
-    expect(body).toMatch(/\{points\.map\(/)
-    expect(body).not.toMatch(/points\.filter\(/)
+    // guard is on the collection, not on each element. The `{points.map(` /
+    // `not.toMatch(points.filter()` half of this is already pinned by "is not
+    // filtered by studentSelfmark" above; this test's own contribution is the
+    // guard expression itself.
+    //
+    // The `|| p.rationale` half matters: with `equivalence_gate` off, every
+    // `verdict` is null, so a `p.verdict !== null`-only guard would suppress
+    // this section even when a point carries a marker `rationale` -- the one
+    // thing this component exists to surface today. A guard narrowed back to
+    // `p.verdict !== null` alone passes every OTHER assertion in this file
+    // (including the one above) with a clean `tsc --noEmit`; only this line
+    // catches it.
+    expect(body).toMatch(/points\.some\(\(p\) => p\.verdict !== null \|\| p\.rationale\)/)
   })
 
   it("renders a distinct tone AND a distinct label for each of the three verdicts", () => {
@@ -225,21 +234,28 @@ describe("ReviewItem.tsx — evidence banner no longer misdescribes what's retai
   // implementation change.
   const normalizedSource = reviewItemSource.replace(/\s+/g, " ")
 
-  it("the evidence banner no longer claims the scan is not stored", () => {
-    // The scan itself IS retained (`Upload.storage_path`, reachable via
-    // `upload_id` — see `attempts.py:101`); only the mark scheme's own
-    // wording is genuinely absent. The old sentence conflated the two.
-    expect(normalizedSource).not.toContain("aren't stored anywhere in this product")
+  it("the evidence banner no longer claims the mark scheme's wording isn't stored", () => {
+    // False, and the same class of false as the sentence this test module's
+    // name commemorates fixing: `AnswerPoint.point` IS stored verbatim
+    // (`loose_schemas.py:205-208`, snapshotted onto `point_text` per
+    // `attempts.py:333,378`) and rendered on this same screen as
+    // `point.pointText` (`MarkerVerdicts`/`SelfReviewPoints`, a screenful
+    // below this banner). Dropped rather than replaced with another claim
+    // about what the scheme does or doesn't store -- every version of this
+    // clause tried so far has been false.
+    expect(normalizedSource).not.toContain("mark scheme's own wording isn't stored")
   })
 
-  it("still says the mark scheme's wording is not stored, and now says this screen does not display the scan", () => {
-    // Presence check alongside the absence check above: a deleted or
-    // vague-ified banner would also pass the absence assertion, so this pins
-    // the replacement is the true, non-overclaiming sentence, not just any
-    // edit that removes the old phrase.
+  it("says only that this screen does not display the scan, exactly", () => {
+    // Presence check anchored to the whole replacement sentence, not a
+    // fragment: a banner that kept some OTHER false clause alongside the true
+    // "does not display the scan" half would still pass a loose substring
+    // check. Anchoring to the full sentence, and separately asserting the
+    // scheme-wording clause is gone (above), is what makes this pair
+    // discriminate rather than both trivially passing against a half-fixed
+    // banner.
     expect(normalizedSource).toContain(
-      "mark scheme's own wording isn't stored anywhere in this product",
+      "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer.",
     )
-    expect(normalizedSource).toContain("this screen does not display the original scan")
   })
 })
