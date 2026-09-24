@@ -799,13 +799,15 @@ What is real sits one layer out, on the grading-console path rather than this qu
 
 That is why the lookup is a **repository method that applies the same guard**, and not "call `get_item` for authorization, then fetch the path separately". One guarded entry point cannot drift from itself.
 
+**Correction to that table's third row, from Task 3's review.** "No scan exists" was wrong: a console paper's scan does exist, as a `TeacherPaper` upload, and its box is often sitting in `report_json` too -- `grade_paper` calls the same `correct_paper` that attaches `source_box` unconditionally. The 404 is a deliberate scope boundary of this route, not an absence of data. Serving console crops would need a second lookup against `teacher_paper_visible`, which grants `platform_admin` every paper -- a visibility rule this queue deliberately does not honour (`review_repo.py:453`). That is why it is out of scope here rather than a small addition, and `has_source_box` stays `False` for console items so the wire never promises an affordance that 404s.
+
 **Follow `get_paper_preview` (`lemely/web/routers/teacher.py:940-1003`).** It is the same problem already solved once: `storage.download` behind a role guard, `StorageObjectNotFoundError` to 404, `page_count == 0` to 422, an unrenderable file to 422 with the reason logged, `Response(media_type="image/png")`, and `Cache-Control: private, max-age=3600`. Read it in full before writing this route. Do **not** call `rasterise_pdf_to_pages`: it renders every page of the document and this route needs one.
 
 The documented behaviours, from the spec:
 
 | Condition | Cause | Behaviour |
 |---|---|---|
-| `upload_id` is `NULL` | console paper, quiz, seeded data | 404, no scan exists |
+| `upload_id` is `NULL` | console paper, quiz, seeded data | 404, no scan reachable by this lookup |
 | `source_box_*` are `NULL` | common case | 404; the DTO already told the client not to ask |
 | caller cannot see the student | another school's teacher | whatever `ReviewOwnershipError` maps to today, never an image |
 | item does not exist | bad id | `ReviewNotFoundError`'s status |
