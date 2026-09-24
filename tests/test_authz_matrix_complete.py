@@ -255,7 +255,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/teacher/review/{item_id}/dismiss"): STAFF,
     ("POST", "/api/teacher/review/{item_id}/resolve"): STAFF,
     ("GET", "/api/teacher/students/{student_id}"): STAFF,
-    # ── STUDENT (60) ────────────────────
+    # ── STUDENT (63) ────────────────────
     ("GET", "/api/me/student-profile"): STUDENT,
     ("PATCH", "/api/me/student-profile"): STUDENT,
     ("POST", "/api/me/student-profile/complete-onboarding"): STUDENT,
@@ -293,6 +293,10 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
         "/api/student/attempts/{attempt_id}/questions/{question_result_id}/self-review",
     ): STUDENT,
     ("GET", "/api/student/attempts/{attempt_id}/questions"): STUDENT,
+    # Student paper deletion (design 2026-09-22-paper-deletion-design.md, §8).
+    ("DELETE", "/api/student/attempts/{attempt_id}"): STUDENT,
+    ("POST", "/api/student/attempts/{attempt_id}/restore"): STUDENT,
+    ("GET", "/api/student/attempts/deleted"): STUDENT,
     ("GET", "/api/student/overview"): STUDENT,
     ("GET", "/api/student/parent-links"): STUDENT,
     ("DELETE", "/api/student/parent-links/{parent_id}"): STUDENT,
