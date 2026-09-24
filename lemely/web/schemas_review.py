@@ -131,10 +131,15 @@ class ReviewItemDetailDTO(ApiModel):
 
     Extends :class:`ReviewQueueItemDTO`'s fields with the question content,
     AI marking evidence, and any recorded teacher override. There is still no
-    persisted mark-scheme extract or scan-crop image on
+    persisted mark-scheme extract on
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
     that part of the gap is real and stays real, so a future screen must not
-    invent scan-crop or scheme-prose precision this backend cannot provide.
+    invent scheme-prose precision this backend cannot provide. A scan crop is
+    a different matter: one is available whenever ``hasSourceBox`` is
+    ``true``, served on demand by ``GET
+    /api/teacher/review/{item_id}/crop``. It is QUESTION-level — where the
+    answer was read from on the page — never per mark point, so it must not
+    be read as showing which pixels justify any one awarded mark.
     Where ``points`` (``ReviewItemPointDTO``) carries a real per-point
     ``verdict`` and quoted evidence span (I6, US-013 — an attempt-backed row
     with a mark scheme, once the marker actually returns verdicts), it is
@@ -196,6 +201,11 @@ class ReviewItemDetailDTO(ApiModel):
     resolvedAt: str | None
     points: list[ReviewItemPointDTO]
     """Empty for a ``"console_paper"`` row — see ``ReviewItemDetail.points``."""
+    hasSourceBox: bool = False
+    """True when a scan crop is available for this question — see
+    ``ReviewItemDetail.has_source_box``. Always ``GET
+    /api/teacher/review/{item_id}/crop`` returns an image when this is
+    ``true``; the client never receives the coordinates themselves."""
 
 
 class ResolveReviewRequestDTO(ApiModel):

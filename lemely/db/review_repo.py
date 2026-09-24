@@ -321,6 +321,14 @@ class ReviewItemDetail:
     ``question_result_points`` rows, the same reason its override fields are
     always empty (see :func:`_console_item_detail`).
     """
+    has_source_box: bool = False
+    """True when this question result has all five `source_box_*` columns set,
+    so `GET /api/teacher/review/{item_id}/crop` will return an image.
+
+    A flag rather than the coordinates: the client asks the route for an
+    image and never does the arithmetic, and coordinates on the wire would be
+    student-derived data with no consumer. False is the common case.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -536,6 +544,13 @@ class ReviewService:
                 if qr is not None
                 else []
             )
+            # One column suffices as the test: `ck_question_results_source_box_all_or_none`
+            # makes the five all-or-nothing, so `source_box_page` alone is never
+            # `NULL` while the other four are set (or vice versa). Read here,
+            # not below, for the same reason as `points` above -- it is a
+            # scalar column so it would work either way, but it belongs next
+            # to the other reads made while the session is still open.
+            has_source_box = qr is not None and qr.source_box_page is not None
         return ReviewItemDetail(
             row=row,
             student_answer=qr.student_answer if qr is not None else None,
@@ -555,6 +570,7 @@ class ReviewService:
             resolved_by=item.resolved_by,
             resolved_at=item.resolved_at,
             points=points,
+            has_source_box=has_source_box,
         )
 
     # -- Mutations --------------------------------------------------------------

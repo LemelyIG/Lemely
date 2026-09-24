@@ -38,6 +38,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    SourceBox,
     WeaknessReport,
 )
 
@@ -597,6 +598,50 @@ def test_get_review_item_exposes_the_markers_rationale_on_the_legacy_path(
     p1 = next(p for p in points if p["markPointId"] == "p1")
     assert p1["rationale"] == "method mark: 2x not shown"
     assert p1["verdict"] is None  # legacy path: no PointVerdict ever written
+
+
+def test_review_item_detail_reports_whether_a_crop_exists(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """`hasSourceBox` must reach the HTTP response, not stop at the dataclass."""
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    boxed_question = _question("1", awarded=1, maximum=2)
+    boxed_question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    boxless_question = _question("2", awarded=1, maximum=2)
+
+    boxed_attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([boxed_question])
+    )
+    boxless_attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([boxless_question])
+    )
+
+    def _item_id_for(attempt_id: uuid.UUID) -> uuid.UUID:
+        with pg_sessionmaker() as session:
+            item = session.scalars(
+                sa.select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+            ).first()
+            assert item is not None
+            return item.id
+
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    boxed_resp = client.get(f"/api/teacher/review/{_item_id_for(boxed_attempt_id)}")
+    assert boxed_resp.status_code == 200
+    assert boxed_resp.json()["hasSourceBox"] is True
+
+    boxless_resp = client.get(f"/api/teacher/review/{_item_id_for(boxless_attempt_id)}")
+    assert boxless_resp.status_code == 200
+    assert boxless_resp.json()["hasSourceBox"] is False
 
 
 def test_resolve_accept_as_is_shape(

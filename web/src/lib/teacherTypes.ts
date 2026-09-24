@@ -777,13 +777,17 @@ export interface ReviewItemPoint {
  * **`studentAnswer` is Lemely's transcription of the student's handwriting,
  * not the scan image; `expectedAnswer`/`matchedPointIds` are the mark
  * scheme's expected answer and the identifiers of the points the AI matched
- * — not the scheme's prose.** Neither the original scan crop nor the mark
- * scheme's extract text is persisted anywhere in this product (D3.14 §1,
- * `ReviewItemDetailDTO`'s own docstring) — T-08 must label these as exactly
- * what they are and say plainly that the scan/scheme extract don't exist,
- * never render a placeholder image or reconstruct scheme prose from the
- * point ids (inventing precision, UI-spec §1.4). That gap is real and stays
- * real: it is not what the paragraph below narrows.
+ * — not the scheme's prose.** The mark scheme's extract text is still not
+ * persisted anywhere in this product (D3.14 §1, `ReviewItemDetailDTO`'s own
+ * docstring) — T-08 must label `expectedAnswer`/`matchedPointIds` as exactly
+ * what they are, never reconstruct scheme prose from the point ids
+ * (inventing precision, UI-spec §1.4). That gap is real and stays real: it
+ * is not what the paragraph below narrows. A scan crop is a different
+ * matter: one is available whenever `hasSourceBox` is `true`, fetched on
+ * demand from the crop route rather than persisted here. It is
+ * QUESTION-level — where the answer was read from on the page — never per
+ * mark point, so it must not be read as showing which pixels justify any
+ * one awarded mark.
  *
  * Where `points` (`ReviewItemPoint`) carries a real per-point `verdict` and
  * quoted evidence span (I6, US-013 — an attempt-backed row with a mark
@@ -814,6 +818,12 @@ export interface ReviewItemDetail extends ReviewQueueItem {
   resolvedBy: string | null
   resolvedAt: string | null
   points: ReviewItemPoint[]
+  /**
+   * True when a scan crop is available for this question — fetch it from
+   * the crop route rather than expecting coordinates on this DTO; `false`
+   * is the common case (see `ReviewItemDetailDTO.hasSourceBox`).
+   */
+  hasSourceBox: boolean
 }
 
 /**

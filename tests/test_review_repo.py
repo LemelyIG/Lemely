@@ -44,6 +44,7 @@ from lemely.core.schemas import (
     GradePrediction,
     MarkerSourceValue,
     PointVerdict,
+    SourceBox,
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -1112,6 +1113,42 @@ def test_get_item_point_carries_the_markers_rationale_on_the_legacy_path(
     p1 = next(p for p in detail.points if p.mark_point_id == "p1")
     assert p1.rationale == "method mark: 2x not shown"
     assert p1.verdict is None  # legacy path: no PointVerdict ever written
+
+
+def test_get_item_reports_a_source_box_when_one_was_persisted(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The teacher screen must know whether a crop exists before asking for it."""
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [question])
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is True
+
+
+def test_get_item_reports_no_source_box_when_the_columns_are_null(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The common case. `source_box=NULL` is normal, not an error: the extractor
+
+    may return no box, and a box it returned may have been dropped as unusable.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    attempt_id = _seed_attempt_with_review_items(pg_sessionmaker, student, [question])
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is False
 
 
 # ── resolve (accept / override) ─────────────────────────────────────────────

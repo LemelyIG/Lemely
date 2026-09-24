@@ -197,6 +197,7 @@ def _detail_to_dto(detail: ReviewItemDetail) -> ReviewItemDetailDTO:
         resolvedBy=str(detail.resolved_by) if detail.resolved_by else None,
         resolvedAt=detail.resolved_at.isoformat() if detail.resolved_at else None,
         points=[_point_to_dto(p) for p in detail.points],
+        hasSourceBox=detail.has_source_box,
     )
 
 
