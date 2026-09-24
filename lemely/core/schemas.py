@@ -216,16 +216,10 @@ class CostEstimate(StrictModel):
 # (``correction_ai._check_point_evidence``). Empty for ``withheld``/
 # ``unverifiable``, where there is nothing to quote.
 #
-# ``evidence_box`` is left ``None``-only for now (no OCR bounding-box
-# plumbing wired to the marker in this story — see
-# ``lemely.io.box_plausibility`` for the box work that does exist, which is
-# unrelated); declared per the plan's schema as a placeholder so the field
-# NAME exists on the wire today. Type ``None`` rejects every non-``None``
-# value, though, so it buys none of the forward-compatibility a first read
-# suggests: a later story that wants to populate this field must still widen
-# the annotation, which is its own marking-cache-invalidating schema change
-# (Important 7, US-013 review) — the same cost this comment used to claim
-# the field's presence avoided.
+# `PointVerdict` carries no bounding box. Marking is text-only -- `_mark_question`
+# sends the transcription, never the page image -- so the model cannot produce
+# one. Question-level boxes come from `ExtractedAnswer.source_box` on the
+# extraction side instead (see the 2026-09-24 production-readiness spec).
 #
 # Post-I6-review Critical B fix: this used to be the class's DOCSTRING, not
 # a comment. Pydantic derives a model's JSON-Schema ``description`` from
@@ -260,7 +254,6 @@ class PointVerdict(StrictModel):
     point_id: str
     verdict: PointVerdictWire
     evidence_span: str = ""
-    evidence_box: None = None
     note: str = ""
     ecf_applied: bool = False
     """I7 (US-013): True when this verdict was reached only after

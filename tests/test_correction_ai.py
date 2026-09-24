@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+from pydantic import ValidationError
+
 from lemely.core.loose_schemas import MarkScheme, Question, QuestionType
 from lemely.core.schemas import (
     ConfidenceBand,
@@ -2114,6 +2116,16 @@ class PointVerdictBuildTests(unittest.TestCase):
         self.assertEqual(cq.extraction_confidence, 0.77)
         self.assertFalse(cq.needs_teacher_review)
         self.assertIsNone(cq.review_reason)
+
+    def test_a_payload_carrying_evidence_box_is_now_rejected(self):
+        """`StrictModel` is `extra="forbid"`, so removing a wire-schema field
+        makes any cached payload still carrying it unparseable. That is why the
+        fingerprint MUST move with this deletion: the key change orphans those
+        entries instead of reading them. A future change that pins the key to
+        avoid the hash budget would break parsing on every cached hit.
+        """
+        with self.assertRaises(ValidationError):
+            PointVerdict(point_id="p1", verdict="awarded", evidence_box=None)
 
 
 class DuplicatePointVerdictTests(unittest.TestCase):
@@ -4608,6 +4620,18 @@ class ECFSubstitutionTests(unittest.TestCase):
         commit's message and ``MarkingSchemaHashStableAcrossPythonOptimizeTests``
         below for why the OLD value silently differed by interpreter mode.
         I7 itself still adds no field and moves nothing on its own.
+
+        Re-pinned to ``b41db5c1bbd5`` by the commit that deletes
+        ``PointVerdict.evidence_box`` (2026-09-24 production-readiness
+        Task 1): the field was typed ``None``-only and unfillable by
+        construction (marking is text-only; the marker never sees the page
+        image), so it carried no forward-compatibility despite its name.
+        ``StrictModel`` is ``extra="forbid"``, so this is exactly the class
+        of change ``GeminiClient._params_fingerprint`` exists to catch: any
+        payload cached under the old schema still carries ``evidence_box``
+        and would now fail validation on read, so the key MUST move rather
+        than stay pinned -- moving it is the mechanism that orphans those
+        stale entries instead of misparsing them.
         """
         import hashlib
         import json as json_module
@@ -4616,7 +4640,7 @@ class ECFSubstitutionTests(unittest.TestCase):
 
         schema_json = json_module.dumps(AIMarkResponse.model_json_schema(), sort_keys=True)
         actual = hashlib.sha256(schema_json.encode()).hexdigest()[:12]
-        self.assertEqual(actual, "886c4232e7a7")
+        self.assertEqual(actual, "b41db5c1bbd5")
 
 
 class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
@@ -4705,7 +4729,9 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
         self.assertEqual(optimized["optimize"], 2)
 
         self.assertEqual(normal["hash"], optimized["hash"])
-        self.assertEqual(normal["hash"], "886c4232e7a7")
+        # Re-pinned alongside test_schema_hash_unchanged above (2026-09-24
+        # production-readiness Task 1, evidence_box deletion).
+        self.assertEqual(normal["hash"], "b41db5c1bbd5")
 
 
 _GOLDEN_DIR = Path(__file__).parent / "golden"
