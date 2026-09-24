@@ -117,6 +117,7 @@ from lemely.core.analytics import (
 )
 from lemely.core.schemas import AccuracyReport, CorrectedQuestion, ExamMetadata
 from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.deletion import ClassPaperExclusion
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
@@ -347,7 +348,9 @@ class ReviewService:
         query's result set, not a narrower query, so ``total`` and ``rows``
         can never fall out of sync with each other or with the tenant scope.
         """
-        visible = self._visible_class_map(caller_id, caller_role, class_id_filter=class_id)
+        visible, student_classes = self._visible_rosters(
+            caller_id, caller_role, class_id_filter=class_id
+        )
         reason_enum: ReviewReason | None = None
         if reason is not None:
             try:
@@ -372,7 +375,17 @@ class ReviewService:
                 )
                 if reason_enum is not None:
                     stmt = stmt.where(ReviewQueueItem.reason == reason_enum)
+                unshared_from = _unshared_from(session, student_classes)
                 for item, attempt, qr in session.execute(stmt).all():
+                    # R3/R8: a read filter, never a status write — `withdrawn`
+                    # means only "the student deleted it". The item leaves
+                    # this caller's queue once its paper is unshared from
+                    # *every* one of their classes that rosters the student
+                    # (the one class, when `class_id` narrows the listing);
+                    # still shared via any of them, it stays. Resharing
+                    # restores it with its original `created_at`.
+                    if student_classes[attempt.user_id] <= unshared_from.get(attempt.id, set()):
+                        continue
                     class_id_, class_name, display_name = visible[attempt.user_id]
                     results.append(
                         _to_row(item, attempt, qr, class_id_, class_name, display_name, now=now)
@@ -703,7 +716,26 @@ class ReviewService:
         roster-union tenancy rule as
         ``lemely.web.routers.teacher._visible_students`` (see module docstring).
         """
+        mapping, _ = self._visible_rosters(caller_id, caller_role, class_id_filter=class_id_filter)
+        return mapping
+
+    def _visible_rosters(
+        self,
+        caller_id: uuid.UUID | str,
+        caller_role: Role | str,
+        *,
+        class_id_filter: uuid.UUID | str | None = None,
+    ) -> tuple[dict[uuid.UUID, tuple[uuid.UUID, str, str]], dict[uuid.UUID, set[uuid.UUID]]]:
+        """:meth:`_visible_class_map`, plus every visible class each student is in.
+
+        The first map keeps one display class per student (the last one
+        listed, exactly as before). The second holds the whole set — what
+        :meth:`list_queue`'s R8 unshare filter needs, since a student in two
+        of the caller's classes can be unshared from one and not the other.
+        One roster pass builds both.
+        """
         mapping: dict[uuid.UUID, tuple[uuid.UUID, str, str]] = {}
+        student_classes: dict[uuid.UUID, set[uuid.UUID]] = {}
         rows = self._class_service.list_classes(caller_id, caller_role)
         if class_id_filter is not None:
             class_uuid = _as_uuid(class_id_filter)
@@ -711,7 +743,8 @@ class ReviewService:
         for row in rows:
             for entry in self._class_service.roster(caller_id, caller_role, row.class_id):
                 mapping[entry.student_id] = (row.class_id, row.name, entry.display_name)
-        return mapping
+                student_classes.setdefault(entry.student_id, set()).add(row.class_id)
+        return mapping, student_classes
 
     def _find_any_item(
         self,
@@ -790,6 +823,26 @@ class ReviewService:
     def _boundaries_for(self, attempt: Attempt) -> tuple[dict[str, float], BoundarySource]:
         """Delegates to :func:`boundaries_for`."""
         return boundaries_for(attempt, self._boundaries)
+
+
+def _unshared_from(
+    session: Session, student_classes: dict[uuid.UUID, set[uuid.UUID]]
+) -> dict[uuid.UUID, set[uuid.UUID]]:
+    """Map each attempt to the caller's classes it is unshared from (D9, R8).
+
+    One query over every class in ``student_classes``, not one per student
+    or per item.
+    """
+    class_ids = set().union(*student_classes.values())
+    if not class_ids:
+        return {}
+    stmt = select(ClassPaperExclusion.attempt_id, ClassPaperExclusion.class_id).where(
+        ClassPaperExclusion.class_id.in_(class_ids)
+    )
+    unshared: dict[uuid.UUID, set[uuid.UUID]] = {}
+    for attempt_id, class_id in session.execute(stmt).all():
+        unshared.setdefault(attempt_id, set()).add(class_id)
+    return unshared
 
 
 def recompute_attempt_totals(

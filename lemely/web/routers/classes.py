@@ -25,8 +25,9 @@ authenticated student's own id, never a caller-supplied one (D1.6).
 
 from __future__ import annotations
 
+import uuid
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -43,7 +44,7 @@ from lemely.core.class_analytics import (
 )
 from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
 from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
-from lemely.db.class_exclusion_repo import ClassExclusionRepository
+from lemely.db.class_exclusion_repo import ClassExclusionRepository, ExclusionTargetNotFoundError
 from lemely.db.class_history import ClassScopedHistoryStore, load_roster_histories
 from lemely.db.class_repo import (
     ClassError,
@@ -102,9 +103,6 @@ from lemely.web.schemas_teacher import (
     StatCardDTO,
     StudentRowDTO,
 )
-
-if TYPE_CHECKING:
-    import uuid
 
 # The staff triple every class route is at least readable by; class-level
 # mutations (create/update/delete) narrow this further, per-route, to teacher
@@ -721,6 +719,86 @@ def remove_student(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# ---------------------------------------------------------------------------
+# Unshare / reshare one paper from one class (D9, design §5; R3/R8/R9).
+# ---------------------------------------------------------------------------
+
+_UNSHARE_PATH = "/classes/{class_id}/papers/{attempt_id}/unshare"
+
+
+def _unshare_target(
+    service: ClassService, auth: AuthContext, class_id: str, attempt_id: str
+) -> tuple[ClassRow, uuid.UUID, list[uuid.UUID]]:
+    """Resolve and authorise one unshare/reshare request, before any write.
+
+    The class goes through the same ``get_class``/``roster`` scope check as
+    every other route here (foreign class 403, unknown 404, malformed 422).
+    The attempt is then parsed here and owner-checked by the repository
+    against this roster, so an unknown or unrostered id is a 404 and never
+    reaches the foreign key.
+    """
+    try:
+        row = service.get_class(auth.user_id, auth.role, class_id)
+        roster = service.roster(auth.user_id, auth.role, class_id)
+        attempt_uuid = uuid.UUID(attempt_id)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return row, attempt_uuid, [entry.student_id for entry in roster]
+
+
+@router.post(_UNSHARE_PATH, status_code=204)
+def unshare_paper(
+    class_id: str,
+    attempt_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
+) -> None:
+    """Hide one student's paper from this class's view and analytics. Idempotent.
+
+    Reaches class pages only (R9) — the teacher overview, at-risk list and
+    per-student drill-down are not class-scoped. The student's own surfaces
+    never read the exclusion table at all (design §5). The paper's open review
+    items leave this caller's queue by read filter (R3/R8), never by a status
+    write: ``withdrawn`` stays reserved for a student's deletion.
+
+    Teacher and school_admin, the two roles that manage a class
+    (``platform_admin`` has no class scope to act in, D1.6/D1.10).
+    """
+    row, attempt_uuid, roster_ids = _unshare_target(service, auth, class_id, attempt_id)
+    try:
+        exclusion_repo.exclude(
+            row.class_id,
+            attempt_uuid,
+            roster_student_ids=roster_ids,
+            excluded_by=uuid.UUID(auth.user_id),
+        )
+    except ExclusionTargetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Unknown paper") from exc
+
+
+@router.delete(_UNSHARE_PATH, status_code=204)
+def reshare_paper(
+    class_id: str,
+    attempt_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
+) -> None:
+    """Undo :func:`unshare_paper`: the paper counts in this class again. Idempotent.
+
+    Resharing restores any review item unchanged, original ``created_at``
+    included, because unshare never mutated it.
+    """
+    row, attempt_uuid, roster_ids = _unshare_target(service, auth, class_id, attempt_id)
+    try:
+        exclusion_repo.include(row.class_id, attempt_uuid, roster_student_ids=roster_ids)
+    except ExclusionTargetNotFoundError as exc:
+        raise HTTPException(status_code=404, detail="Unknown paper") from exc
 
 
 # ---------------------------------------------------------------------------

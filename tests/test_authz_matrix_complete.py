@@ -113,7 +113,7 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     ("POST", "/api/admin/schools"): PLATFORM_ADMIN,
     ("PATCH", "/api/admin/schools/{school_id}"): PLATFORM_ADMIN,
     ("POST", "/api/admin/schools/{school_id}/admins"): PLATFORM_ADMIN,
-    # ── TEACHER_OR_SCHOOL_ADMIN (4) ────────────────────
+    # ── TEACHER_OR_SCHOOL_ADMIN (6) ────────────────────
     ("GET", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("POST", "/api/teacher/announcements"): TEACHER_OR_SCHOOL_ADMIN,
     ("DELETE", "/api/teacher/announcements/{announcement_id}"): TEACHER_OR_SCHOOL_ADMIN,
@@ -122,6 +122,13 @@ EXPECTED: dict[tuple[str, str], str | frozenset[str]] = {
     # the two roles that may manage a class's roster (D3.1) - platform_admin
     # cannot reach this route, mirroring every other class-mutating route.
     ("POST", "/api/school/classes/{class_id}/invite-code"): TEACHER_OR_SCHOOL_ADMIN,
+    # D9 (design §5): unshare/reshare one paper from one class. Router-level
+    # guard is the STAFF triple; narrowed per-route to the two roles that
+    # manage a class, like the invite code above - platform_admin has no class
+    # scope to act in. Row-level: the class scope check, then the attempt must
+    # belong to a student on that class's roster (else 404).
+    ("POST", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
+    ("DELETE", "/api/classes/{class_id}/papers/{attempt_id}/unshare"): TEACHER_OR_SCHOOL_ADMIN,
     # ── PARENT (4) ────────────────────
     ("GET", "/api/parent/children"): PARENT,
     ("GET", "/api/parent/children/{child_id}"): PARENT,
