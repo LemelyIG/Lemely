@@ -239,6 +239,18 @@ class QuestionResult(TimestampMixin, Base):
     before spec 2026-09-17, discarded at persist time.
     """
     rationale: Mapped[str | None] = mapped_column(sa.Text, nullable=True)
+    source_box_page: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    """0-based rasterised-page index for `source_box_*` (migration `0042`).
+
+    Question-level, not per mark point: marking is text-only, so the marker
+    never sees the page. See `CorrectedQuestion.source_box`. All five
+    `source_box_*` columns are all-or-nothing, enforced by
+    `ck_question_results_source_box_all_or_none`.
+    """
+    source_box_ymin: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_xmin: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_ymax: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
+    source_box_xmax: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     student_selfmark_marks: Mapped[int | None] = mapped_column(sa.Integer, nullable=True)
     student_selfmarked_at: Mapped[datetime | None] = mapped_column(
         sa.DateTime(timezone=True), nullable=True

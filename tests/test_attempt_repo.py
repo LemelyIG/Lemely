@@ -38,6 +38,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    SourceBox,
     WeakArea,
     WeaknessReport,
 )
@@ -1343,6 +1344,68 @@ def test_persist_survives_derive_point_rows_raising(
     revisions = _revisions_for(pg_sessionmaker, attempt_id)
     assert len(revisions) == 1
     assert revisions[0].points_snapshot == []
+
+
+def test_persist_writes_the_source_box_columns(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A box on the corrected question reaches the row, not just the object."""
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=_report_with_one_question(
+            matched_point_ids=["p1"],
+            source_box=SourceBox(page=1, box=[10, 20, 30, 40]),
+        ),
+        mark_scheme=_scheme(),
+    )
+
+    result = _only_result(pg_sessionmaker, attempt_id)
+
+    assert result.source_box_page == 1
+    assert result.source_box_ymin == 10
+    assert result.source_box_xmin == 20
+    assert result.source_box_ymax == 30
+    assert result.source_box_xmax == 40
+
+
+def test_persist_survives_an_unusable_source_box(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A bad box costs the box, never the attempt.
+
+    ``_safe_derive_point_rows`` can use ``session.begin_nested()`` because
+    ``question_result_points`` rows are added after a flush. These columns
+    are on the ``question_results`` row itself, attached to the attempt
+    BEFORE ``session.add(attempt)``, so no savepoint can protect them -- the
+    guard has to reject the value before the row is built. This test is what
+    proves it does.
+    """
+    report = _report_with_one_question(matched_point_ids=["p1"])
+    # `SourceBox.validate_box_coords` would reject this (ymax <= ymin and
+    # xmax <= xmin): `model_construct` is the one legitimate use of it here,
+    # since a real producer can never emit this value, and the point is that
+    # the WRITE path -- not pydantic -- is what has to catch it.
+    report.correction.questions[0].source_box = SourceBox.model_construct(
+        page=1, box=[500, 500, 100, 100]
+    )
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=report,
+        mark_scheme=_scheme(),
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+    assert len(results) == 1
+    assert results[0].source_box_page is None
+    assert results[0].source_box_ymin is None
+    assert results[0].source_box_xmin is None
+    assert results[0].source_box_ymax is None
+    assert results[0].source_box_xmax is None
 
 
 def test_persist_deduplicates_shared_point_ids_at_the_database(

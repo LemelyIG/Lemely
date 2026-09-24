@@ -561,6 +561,52 @@ def is_marking_low_confidence(qr: QuestionResult) -> bool:
     )
 
 
+def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
+    """Map `cq.source_box` onto the five `question_results` columns, or all `None`.
+
+    A pure guard rather than a savepoint, and deliberately so.
+    `_safe_derive_point_rows` can wrap its write in `session.begin_nested()`
+    because `question_result_points` rows are added separately, after a flush.
+    These columns live on the `question_results` row itself, which is attached
+    to the attempt before `session.add(attempt)` -- inside the outer
+    transaction, with no savepoint available. A value Postgres rejects there
+    would abort the whole transaction and take the attempt, every
+    `QuestionResult`, every `WeaknessRecord` and every `ReviewQueueItem` with
+    it: the student would lose their marked paper over a bounding box. Nothing
+    on this path may fail a correction (spec 2026-09-17, "Error handling"), so
+    the value is checked before it ever becomes a column.
+
+    `SourceBox`'s own validator already enforces range and positive area, so a
+    box that reached here through pydantic is sound. This re-checks anyway,
+    because the cost of being wrong is asymmetric and the check is four
+    comparisons.
+    """
+    empty: dict[str, int | None] = {
+        "source_box_page": None,
+        "source_box_ymin": None,
+        "source_box_xmin": None,
+        "source_box_ymax": None,
+        "source_box_xmax": None,
+    }
+    box = cq.source_box
+    if box is None:
+        return empty
+    if box.page < 0 or len(box.box) != 4:
+        return empty
+    ymin, xmin, ymax, xmax = box.box
+    if not all(0 <= coord <= 1000 for coord in box.box):
+        return empty
+    if ymax <= ymin or xmax <= xmin:
+        return empty
+    return {
+        "source_box_page": box.page,
+        "source_box_ymin": ymin,
+        "source_box_xmin": xmin,
+        "source_box_ymax": ymax,
+        "source_box_xmax": xmax,
+    }
+
+
 def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
     """Map one core :class:`CorrectedQuestion` onto a :class:`QuestionResult` row."""
     return QuestionResult(
@@ -591,6 +637,7 @@ def _to_question_result(cq: CorrectedQuestion) -> QuestionResult:
         # persists the flag as a `ReviewReason.plagiarism_flag` queue row
         # instead, which `_integrity_flagged` reads back.
         rationale=cq.rationale,
+        **_source_box_columns(cq),
     )
 
 
