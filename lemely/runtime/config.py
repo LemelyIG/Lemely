@@ -569,12 +569,19 @@ class GradingSettings(BaseModel):
     # a conflict only earns extra detail in the review reason. Acting on
     # the signal is a separate, later story.
     #
-    # Whole-branch review Minor C: declared ahead of wiring -- this field
-    # is not read by any `correct_paper` caller off a loaded config today
-    # (it is only ever passed as an explicit keyword argument, e.g. by
-    # tests and the accuracy harness). Setting `equivalence_gate = true`
-    # in `lemely.toml` currently has NO effect on a live `correct_paper`
-    # run; see US-040.
+    # Post-whole-branch-review C1 fix: this was previously an ASPIRATIONAL
+    # claim, not an enforced one -- `equivalence_gate` was declared here but
+    # read by no `correct_paper` caller off a loaded config, so no
+    # `lemely.toml` could ever enable US-005b's marking gate (US-040).
+    # `08df9302` closed US-040: this field is now read off a loaded config
+    # at all three existing `correct_paper` entry points -- `cli.py`'s
+    # `correct_paper_cmd`, `web/routers/student.py`'s upload flow and
+    # `web/routers/teacher.py`'s grading job -- each forwarding
+    # `settings.grading.equivalence_gate` through `grading.grade_paper` to
+    # `correct_paper`. Setting `equivalence_gate = true` in `lemely.toml`
+    # now changes how a live run marks non-MCQ answers. `ecf_substitution`
+    # immediately below is NOT wired the same way -- see its own comment --
+    # so these two adjacent flags do not behave alike.
     equivalence_gate: bool = False
     # I7 (US-013, D19): error-carried-forward by substitution. Defaults
     # False, threaded INDEPENDENTLY of `equivalence_gate` above -- neither

@@ -190,6 +190,14 @@ email_otp_ttl_seconds = 600
 # dead run (its instance died) and may be reclaimed by the next regrade.
 stale_run_after_seconds = 900
 
+# US-005b's marking gate (US-040, closed by `08df9302`): read at all three
+# `correct_paper` entry points -- CLI, student upload, teacher grading job.
+# Enabling it CHANGES HOW PAPERS ARE MARKED. This branch ships no accuracy
+# evidence that the verdict path marks better than the legacy path -- that
+# evidence needs a label campaign that has not started. Not a safe default
+# to flip; leave commented out until that evidence exists.
+# equivalence_gate = true
+
 [integrity]
 # Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed
 # the AI-generated-answer detector that used to live here — no evidence base,

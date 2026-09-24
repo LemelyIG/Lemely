@@ -13,8 +13,9 @@ the existing `rationale` column, and `PointVerdict.note` is the same concept
 from the verdict path. A second column would be the ninth formulation of "did a
 marker score this and why" — the disease `0040_marker_source_blank` spent a
 migration curing for `marker_source`, where eight formulations cost nine
-hand-found consumers. `PointVerdict.evidence_box` goes nowhere either: it is
-typed `None` and rejects every non-`None` value.
+hand-found consumers. `PointVerdict.evidence_box` went nowhere either: it was
+typed `None` and rejected every non-`None` value, and was deleted in
+`ccf230ee` for exactly that reason -- it never had a fourth column to give.
 
 * `verdict` — text, nullable. `NULL` for a point scored by the legacy
   (non-verdict) path.

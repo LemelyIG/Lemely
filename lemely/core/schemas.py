@@ -213,8 +213,13 @@ class CostEstimate(StrictModel):
 # ``evidence_span`` is the exact quoted substring from the student's
 # transcribed answer/working that justifies ``verdict`` — the whole point of
 # I6 is that an ``awarded`` verdict with no evidence can now be caught
-# (``correction_ai._check_point_evidence``). Empty for ``withheld``/
-# ``unverifiable``, where there is nothing to quote.
+# (``correction_ai._check_point_evidence``). Empty for a fresh ``withheld``
+# verdict, where there is nothing to quote. NOT reliably empty for
+# ``unverifiable`` since ``8b47b123``: when ``_verify_calculated_answers``
+# overrules an ``awarded`` point and rewrites its verdict to
+# ``unverifiable``, the rewrite preserves the marker's original
+# ``evidence_span`` via ``model_copy``, so an overruled point routinely
+# carries a non-empty span alongside ``unverifiable``.
 #
 # `PointVerdict` carries no bounding box. Marking is text-only -- `_mark_question`
 # sends the transcription, never the page image -- so the model cannot produce

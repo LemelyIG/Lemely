@@ -156,15 +156,18 @@ class TestEcfSubstitutionSettings:
 
 
 class TestUnwiredFlagsAreDisclosedInProse:
-    """Whole-branch review Minor C: ``equivalence_gate``/``ecf_substitution``
-    are declared here (US-005b, US-013) but no ``correct_paper`` caller
-    reads ``GradingSettings.equivalence_gate``/``.ecf_substitution`` off a
-    loaded config -- they are only ever passed as explicit keyword
-    arguments by tests and by the accuracy harness. US-040 records this
-    unreachability; what this pins is that the comment BESIDE each field
-    also says so, so an operator reading ``lemely.toml.example`` (or the
-    source) does not set ``equivalence_gate = true`` expecting an effect
-    and get a silent no-op.
+    """Whole-branch review Minor C, now asymmetric after `08df9302`.
+    ``ecf_substitution`` (US-013) is still declared here but read by no
+    ``correct_paper`` caller off a loaded config -- it is only ever passed
+    as an explicit keyword argument, e.g. by tests and by the accuracy
+    harness; US-040 stays half-closed on that account.  ``equivalence_gate``
+    (US-005b) is DIFFERENT: `08df9302` wired it into all three existing
+    `correct_paper` entry points, so setting it in ``lemely.toml`` now has a
+    real effect. What this pins is that the comment BESIDE each field tells
+    the truth for THAT field, so an operator reading
+    ``lemely.toml.example`` (or the source) is neither told
+    ``ecf_substitution`` works when it does not, nor told
+    ``equivalence_gate`` is a silent no-op when it is not.
     """
 
     def _comment_block_before(self, field_line: str) -> str:
@@ -187,7 +190,11 @@ class TestUnwiredFlagsAreDisclosedInProse:
     def test_equivalence_gate_names_us040(self) -> None:
         block = self._comment_block_before("equivalence_gate: bool = False")
         assert "US-040" in block
-        assert "not read by any" in block
+        # Wired by `08df9302`: the comment must say so, and must no longer
+        # carry the pre-wiring "not read by any" disclaimer.
+        assert "cli.py" in block
+        assert "08df9302" in block
+        assert "not read by any" not in block
 
     def test_ecf_substitution_names_us040(self) -> None:
         block = self._comment_block_before("ecf_substitution: bool = False")

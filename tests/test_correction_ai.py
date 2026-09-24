@@ -4665,10 +4665,15 @@ class MarkingSchemaHashStableAcrossPythonOptimizeTests(unittest.TestCase):
     was FALSE about the mechanism -- ``subprocess.run`` inherits
     ``os.environ`` by default, so under a poisoned ambient
     ``PYTHONOPTIMIZE=2`` the "plain" subprocess is ALSO optimized, and
-    since ``b41db5c1bbd5`` (the post-fix value) happens to equal the
-    STRIPPED (pre-fix, ``-OO``) hash, both assertions would pass on the
-    PRE-fix code too -- the test was fully inert in that environment, not
-    merely weakened. What actually protects local runs is
+    since ``886c4232e7a7`` (the post-Critical-B-fix value, before
+    ``evidence_box``'s later deletion re-pinned it again) happened to equal
+    the STRIPPED (pre-fix, ``-OO``) hash, both assertions would have passed
+    on the PRE-fix code too -- the test was fully inert in that
+    environment, not merely weakened. (The pin this test asserts today is
+    ``b41db5c1bbd5``, moved again by the ``evidence_box`` deletion and no
+    longer equal to that stripped hash -- the coincidence described here is
+    historical, about the value pinned at the time.) What actually protects
+    local runs is
     ``tests/conftest.py``'s ``UsageError`` refusal under ``PYTHONOPTIMIZE``
     (``5669d5f8``) -- but that guards the PYTEST process only; these bare
     interpreter subprocesses are invisible to it. Fixed two ways: each

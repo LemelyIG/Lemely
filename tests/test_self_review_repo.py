@@ -403,6 +403,14 @@ def test_revealed_point_carries_verdict_span_and_ecf(
     ``ReviewItemPoint``, now on the student's own ``RevealedPoint``. Two
     points, one ``withheld`` and one ``awarded``, so the test also proves
     ``withheld`` and ``awarded`` do not collapse into the same wire value.
+
+    ``p1``'s combination (``withheld`` + a non-empty ``evidence_span`` +
+    ``ecf_applied=True``) is not a shape the real marking pipeline produces
+    -- ``ecf_applied`` is set only by code, on a point the ECF-substitution
+    path re-marked, never alongside a fresh ``withheld`` verdict. It is used
+    here purely to prove these three columns thread through independently
+    of each other and of ``verdict``, not to model a realistic marking
+    outcome.
     """
     student = _seed_user(pg_sessionmaker)
     question = _question_with_verdicts(
