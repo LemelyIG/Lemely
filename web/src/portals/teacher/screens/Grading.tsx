@@ -1,4 +1,11 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 — re-scored, Task 17
+ * review: gained an interactive delete control on the grid card; R (was 4)
+ * moves to 5 now that it is a real sibling `<button>` with its own focus
+ * ring and a 44px tap target, keyboard-reachable and keyboard-operable
+ * independently of the card's own open control, rather than the earlier
+ * version's div-in-a-div that a keyboard reader could not use without also
+ * reopening the paper. No other axis changed: same primitives, same visual
+ * language. */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -6,6 +13,7 @@ import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { CameraCapture } from "@/components/CameraCapture"
 import { ConfirmModal } from "@/components/ui/confirm-modal"
+import { RETENTION_DAYS } from "@/lib/paperDeletion"
 import { ProgressRing } from "@/components/ui/progress-ring"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
@@ -140,13 +148,18 @@ const UPLOAD_STAGES: ProcessingStage[] = [
 ]
 
 /**
- * The console grid's per-card delete control (Task 17, R2). Unlike the
- * student result screen's `DeletePaperControl` (which lives on a dedicated
- * detail page), this one has to sit on a grid card without hijacking the
- * card's own click-to-open behaviour — every handler here calls
- * `stopPropagation` for that reason, including inside the modal, which
- * renders through a portal outside the card's DOM subtree but can still
- * receive a bubbled pointer event from `PaperCard`'s own `onClick`.
+ * The console grid's per-card delete control (Task 17, R2; restructured by
+ * the review that followed it — see `PaperCard`'s own comment on why).
+ *
+ * This component and its render output are **not nested inside** the
+ * open-paper `<button>` `PaperCard` renders — they are its sibling. That is
+ * the whole fix: a click or a keydown on this trigger, or on anything the
+ * portaled `ConfirmModal` renders, has no ancestor `onClick`/`onKeyDown` to
+ * bubble into, so nothing here needs `stopPropagation`, and nothing here
+ * needs `aria-hidden` on an interactive control to fence a boundary that no
+ * longer exists. `min-w-11 min-h-11` (44px, BUILD/REDESIGN-MISSION.md §"hit
+ * target floor") is the *tap* target; the visible circle stays smaller so a
+ * 64px-tall thumbnail is not dominated by a 44px badge.
  *
  * No pre-signalling to match: every card gets the same trash icon, since
  * there is no D8-style hold on a console paper to keep quiet about (R2's own
@@ -173,38 +186,30 @@ function DeletePaperControl({ paper }: { paper: PaperSummary }) {
         type="button"
         aria-label={`Delete ${paper.name}`}
         title="Delete"
-        onClick={(e) => {
-          e.stopPropagation()
+        onClick={() => {
           setError(null)
           setOpen(true)
         }}
-        className="absolute top-2.5 start-2.5 w-7 h-7 rounded-full bg-paper-raised/90 border border-rule flex items-center justify-center text-ink-faint transition-colors hover:text-err hover:border-err cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        className="group absolute top-2.5 start-2.5 min-w-11 min-h-11 flex items-center justify-center cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
       >
-        <Trash size={14} weight="bold" />
+        <span className="w-7 h-7 rounded-full bg-paper-raised/90 border border-rule flex items-center justify-center text-ink-faint transition-colors group-hover:text-err group-hover:border-err">
+          <Trash size={14} weight="bold" />
+        </span>
       </button>
-      {/* Not a scrim, and `aria-hidden` here hides nothing real: `Modal`
-          renders its dialog through `createPortal` at `document.body`, so
-          this wrapper's own DOM subtree is always empty — it exists only as
-          a React-tree stopPropagation boundary. React re-dispatches a
-          portal's events through the React tree, not the DOM tree, so a
-          click on Confirm/Cancel would otherwise bubble to `PaperCard`'s
-          `onClick` and reopen the paper it was just asked to delete. */}
-      <div aria-hidden="true" onClick={(e) => e.stopPropagation()}>
-        <ConfirmModal
-          open={open}
-          title="Delete this paper?"
-          consequence="It moves to Recently deleted, where you can restore it for a while."
-          confirmLabel="Delete"
-          pendingLabel="Deleting…"
-          pending={deletePaper.isPending}
-          error={error}
-          onConfirm={() => void handleConfirm()}
-          onCancel={() => {
-            setOpen(false)
-            setError(null)
-          }}
-        />
-      </div>
+      <ConfirmModal
+        open={open}
+        title="Delete this paper?"
+        consequence={`It moves to Recently deleted, where you can restore it for ${RETENTION_DAYS} days.`}
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deletePaper.isPending}
+        error={error}
+        onConfirm={() => void handleConfirm()}
+        onCancel={() => {
+          setOpen(false)
+          setError(null)
+        }}
+      />
     </>
   )
 }
@@ -234,74 +239,87 @@ function PaperCard({
       : "-"
 
   return (
+    // Not itself interactive. Task 17's keyboard-a11y review finding: the
+    // delete control used to render *inside* this element when this element
+    // itself was the `role="button" tabIndex={0} onKeyDown=...}` open
+    // target, so a keydown on the focused delete `<button>` (a real DOM
+    // descendant of this container, not a portal) bubbled straight to this
+    // container's own `onKeyDown` and fired `onOpen()` too — a keyboard
+    // reader could not reach the delete control without also reopening the
+    // paper. The fix is structural, not another stopPropagation: `onOpen`
+    // now lives on its own `<button>` sibling below, and `DeletePaperControl`
+    // is a sibling of that button rather than a descendant of it, so neither
+    // control's click or keydown has anywhere to bubble into the other.
     <div
       ref={setCardNode}
-      onClick={onOpen}
-      role="button"
-      tabIndex={0}
-      onKeyDown={(e) => {
-        if (e.key === "Enter" || e.key === " ") {
-          e.preventDefault()
-          onOpen()
-        }
-      }}
       className={cn(
-        "rounded-md overflow-hidden bg-paper-raised cursor-pointer transition-transform hover:-translate-y-0.5 border",
+        "relative rounded-md overflow-hidden bg-paper-raised border",
         paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
-      <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
-        {previewUrl ? (
-          // Top-anchored: a scan's identifying marks (subject, paper number,
-          // candidate box) are at the head of page 1, so a 64px window onto the
-          // top of the page is the part worth showing. `alt` is empty because
-          // the card's own name/status text already names this paper — a
-          // screen-reader would otherwise hear the same paper announced twice.
-          <img
-            src={previewUrl}
-            alt=""
-            decoding="async"
-            className="w-full h-full object-cover object-top"
-          />
-        ) : null}
-        {paper.kind === "review" ? (
-          <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
-            !
-          </div>
-        ) : null}
-        <DeletePaperControl paper={paper} />
-        {showSpinner ? (
-          <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
-            <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
-          </div>
-        ) : null}
-      </div>
-      <div className="px-[13px] py-3">
-        <div className="flex items-center gap-2">
-          {/* `min-w-0` + `truncate`: a flex child's default `min-width: auto`
-              refuses to shrink below its content, so a long name (the detected
-              label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
-              pushed the status chip off the card's right edge and clipped it. */}
-          <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
-            {paper.name}
-          </div>
-          <div
-            className={cn(
-              "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
-              CHIP_TONE[paper.kind],
-            )}
-          >
-            {paper.status}
-          </div>
-        </div>
-        <div className="flex items-baseline gap-2 mt-[9px]">
-          {confText ? (
-            <div className={cn("text-data-sm", confTone)}>{confText}</div>
+      <button
+        type="button"
+        onClick={onOpen}
+        aria-label={`Open ${paper.name}`}
+        className="block w-full text-start cursor-pointer transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      >
+        <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
+          {previewUrl ? (
+            // Top-anchored: a scan's identifying marks (subject, paper number,
+            // candidate box) are at the head of page 1, so a 64px window onto the
+            // top of the page is the part worth showing. `alt` is empty because
+            // the card's own name/status text already names this paper — a
+            // screen-reader would otherwise hear the same paper announced twice.
+            <img
+              src={previewUrl}
+              alt=""
+              decoding="async"
+              className="w-full h-full object-cover object-top"
+            />
           ) : null}
-          <div className="flex-1" />
-          <div className="text-data-md text-ink">{scoreText}</div>
+          {paper.kind === "review" ? (
+            <div className="absolute top-2.5 end-2.5 w-5 h-5 rounded-full bg-err text-accent-on text-data-sm flex items-center justify-center">
+              !
+            </div>
+          ) : null}
+          {showSpinner ? (
+            <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
+              <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />
+            </div>
+          ) : null}
         </div>
-      </div>
+        <div className="px-[13px] py-3">
+          <div className="flex items-center gap-2">
+            {/* `min-w-0` + `truncate`: a flex child's default `min-width: auto`
+                refuses to shrink below its content, so a long name (the detected
+                label is longer still — "Paper 1 V2 May/June 2020 - 2026-08-12")
+                pushed the status chip off the card's right edge and clipped it. */}
+            <div className="text-body-lg font-medium flex-1 min-w-0 truncate" title={paper.name}>
+              {paper.name}
+            </div>
+            <div
+              className={cn(
+                "text-eyebrow rounded-full px-[9px] py-1 whitespace-nowrap flex-none",
+                CHIP_TONE[paper.kind],
+              )}
+            >
+              {paper.status}
+            </div>
+          </div>
+          <div className="flex items-baseline gap-2 mt-[9px]">
+            {confText ? (
+              <div className={cn("text-data-sm", confTone)}>{confText}</div>
+            ) : null}
+            <div className="flex-1" />
+            <div className="text-data-md text-ink">{scoreText}</div>
+          </div>
+        </div>
+      </button>
+      {/* Sibling of the open-button above, not a descendant of it — see the
+          container comment. Positioned to sit over the same top-start
+          corner of the thumbnail it always has, since this container (not
+          the button) is what carries `relative` now. */}
+      <DeletePaperControl paper={paper} />
     </div>
   )
 }

@@ -1,6 +1,18 @@
 import type { DeletionRefusal } from "@/lib/studentTypes"
 
 /**
+ * The restore window's length, mirroring `lemely/core/deletion.py`'s
+ * `RETENTION_DAYS`. Pinned by `paperDeletion.test.ts`, the same technique
+ * `dataHandling.test.ts` uses for its own "30 days" literal — this is a
+ * second literal by construction (this file cannot import a Python
+ * constant), so a screen that names the window without a live
+ * `retentionDays` field to hand (e.g. `Grading.tsx`'s delete confirmation,
+ * which has no query carrying one) reads this instead of a bare "for a
+ * while" or a copy-pasted "30 days" nothing keeps honest.
+ */
+export const RETENTION_DAYS = 30
+
+/**
  * Narrows `ApiError.body` onto the flat 409 shape
  * (`{"detail": "...", "deletableFrom"?: "..."}`) the deletion hold route
  * sends (design §8; Task 8 amendment). `.body`, not `.detail` — the backend

@@ -48,14 +48,15 @@ export interface NotificationPreferences {
   studyPlanReminder: boolean
   atRiskAlert: boolean | null
   /**
-   * Unlike `atRiskAlert`, the backend (`routers/me.py:116`) sends this as a
-   * plain `bool` for every role — it is not nulled server-side. This screen
-   * still shows the switch to teachers only (R10): `NOTIFICATION_TOGGLES`'s
-   * `role` filter, not a `null` value, is what hides it from every other
-   * role, so a `reviewWithdrawn` sent by a non-teacher stays whatever the
-   * server answers rather than reading as "no such preference".
+   * `null` for every role but teacher (R10, `routers/me.py`'s
+   * `_REVIEW_WITHDRAWN_ROLES`) — the same role gate `atRiskAlert` gets,
+   * narrowed to the one role `review_withdrawn` ever fires for (Task 9's
+   * `_notify_withdrawn_reviewers`). `NOTIFICATION_TOGGLES`'s own `role`
+   * field hides the switch from a non-teacher mount as a second, belt-and-
+   * braces gate — this `null` is what makes that redundant rather than
+   * load-bearing on its own.
    */
-  reviewWithdrawn: boolean
+  reviewWithdrawn: boolean | null
   quietHoursStart: string | null
   quietHoursEnd: string | null
 }

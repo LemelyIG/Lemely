@@ -1035,10 +1035,17 @@ export function useUnshareClassPaper(): UseMutationResult<
         `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
         { method: "POST" },
       ),
+    // The `["teacher", "class", classId]` prefix already covers
+    // `["teacher", "class", classId, "papers"]` (react-query's default
+    // `exact: false`), so a third, narrower invalidation of the papers key
+    // alone would be redundant with the second. `["teacher", "review"]` is
+    // its own prefix, not a descendant of either: R3 filters the queue by
+    // this class's exclusion set, so an unshare/reshare changes which items
+    // that filter lets through, and the queue must refetch to reflect it.
     onSuccess: (_data, { classId }) => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId, "papers"] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
     },
   })
 }
@@ -1056,10 +1063,13 @@ export function useReshareClassPaper(): UseMutationResult<
         `/classes/${classId}/papers/${encodeURIComponent(attemptId)}/unshare`,
         { method: "DELETE" },
       ),
+    // Same three invalidations as `useUnshareClassPaper`, for the same
+    // reasons — a reshare moves the class-papers/class-detail/classes-list
+    // surfaces and the review queue exactly as far as an unshare does.
     onSuccess: (_data, { classId }) => {
-      queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId, "papers"] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "class", classId] })
       queryClient.invalidateQueries({ queryKey: ["teacher", "classes"] })
+      queryClient.invalidateQueries({ queryKey: ["teacher", "review"] })
     },
   })
 }

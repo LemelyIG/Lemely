@@ -8,8 +8,8 @@ import { EmptyState } from "@/components/ui/state-views"
 import { QueryState } from "@/components/ui/query-state"
 import { PanelSkeleton } from "@/components/ui/loading-shapes"
 import { relativeTime } from "@/lib/utils"
-import { unshareConsequence } from "@/lib/teacherPaperDeletion"
-import { teacherLoadFailureMessage, teacherMutationFailureMessage } from "@/lib/teacherOutcome"
+import { classPaperLabel, unshareConsequence } from "@/lib/teacherPaperDeletion"
+import { classPaperActionFailureMessage, teacherLoadFailureMessage } from "@/lib/teacherOutcome"
 import {
   useClassPapers,
   useReshareClassPaper,
@@ -52,7 +52,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
             setError(null)
             reshare.mutate(
               { classId, attemptId: row.attemptId },
-              { onError: (err) => setError(teacherMutationFailureMessage(err)) },
+              { onError: (err) => setError(classPaperActionFailureMessage(err)) },
             )
           }}
         >
@@ -82,9 +82,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
       <ConfirmModal
         open={open}
         title="Unshare this paper from the class?"
-        consequence={unshareConsequence(
-          `${row.subjectCode} Paper ${row.paperNumber} Variant ${row.paperVariant}`,
-        )}
+        consequence={unshareConsequence(classPaperLabel(row))}
         confirmLabel="Unshare"
         pendingLabel="Unsharing…"
         pending={unshare.isPending}
@@ -94,7 +92,7 @@ function UnshareControl({ classId, row }: { classId: string; row: ClassPaperRow 
             { classId, attemptId: row.attemptId },
             {
               onSuccess: () => setOpen(false),
-              onError: (err) => setError(teacherMutationFailureMessage(err)),
+              onError: (err) => setError(classPaperActionFailureMessage(err)),
             },
           )
         }}
@@ -149,9 +147,7 @@ export function ClassPapers() {
               {data.papers.map((row) => (
                 <TR key={row.attemptId}>
                   <TD className="text-data-sm">{row.studentName}</TD>
-                  <TD className="whitespace-nowrap text-data-sm">
-                    {row.subjectCode} · Paper {row.paperNumber} Variant {row.paperVariant}
-                  </TD>
+                  <TD className="whitespace-nowrap text-data-sm">{classPaperLabel(row)}</TD>
                   <TD className="whitespace-nowrap text-ink-muted">
                     {relativeTime(row.recordedAt)}
                   </TD>

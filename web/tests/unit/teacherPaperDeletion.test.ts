@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest"
 import {
+  classPaperLabel,
   deleteCountdown,
   reshareConsequence,
   teacherPaperCountdownLabel,
@@ -47,6 +48,54 @@ describe("unshareConsequence — D9's rule that a student loses nothing", () => 
 
   it("never implies the student loses anything — no delete/remove/gone language", () => {
     expect(copy).not.toMatch(/\bdelete(d)?\b|\bremove(d)?\b|\bgone\b|\blost\b/i)
+  })
+
+  it("says the roster is untouched — unshare hides results, it does not touch enrolment", () => {
+    expect(copy).toMatch(/roster is untouched/i)
+  })
+})
+
+describe("classPaperLabel — two sittings of one paper must read as distinct rows", () => {
+  it("includes the session and year", () => {
+    expect(
+      classPaperLabel({
+        subjectCode: "0625",
+        paperNumber: 4,
+        paperVariant: 2,
+        sessionMonth: "May/June",
+        sessionYear: 2024,
+      }),
+    ).toBe("0625 Paper 4 Variant 2, May/June 2024")
+  })
+
+  it("drops the year rather than rendering it when sessionYear is null", () => {
+    expect(
+      classPaperLabel({
+        subjectCode: "0625",
+        paperNumber: 4,
+        paperVariant: 2,
+        sessionMonth: "Specimen",
+        sessionYear: null,
+      }),
+    ).toBe("0625 Paper 4 Variant 2, Specimen")
+  })
+
+  it("distinguishes two resits of the same paper number by year alone", () => {
+    const first = classPaperLabel({
+      subjectCode: "0625",
+      paperNumber: 4,
+      paperVariant: 2,
+      sessionMonth: "May/June",
+      sessionYear: 2023,
+    })
+    const second = classPaperLabel({
+      subjectCode: "0625",
+      paperNumber: 4,
+      paperVariant: 2,
+      sessionMonth: "May/June",
+      sessionYear: 2024,
+    })
+    expect(first).not.toBe(second)
   })
 })
 

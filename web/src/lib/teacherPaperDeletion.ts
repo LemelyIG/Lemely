@@ -34,7 +34,27 @@ export function teacherPaperCountdownLabel(days: number): string {
  * wording is pinned by a test, not just eyeballed once in the component.
  */
 export function unshareConsequence(paperLabel: string): string {
-  return `${paperLabel} will no longer count in this class's roster, averages or review queue. The student's own copy is unchanged, and you can reshare it here at any time.`
+  return `${paperLabel} will no longer count in this class's results, averages or review queue. Its place on the roster is untouched, and the student's own copy is unchanged, so you can reshare it here at any time.`
+}
+
+/**
+ * A class-papers row's own label — "0625 Paper 4 Variant 2, May/June 2024" —
+ * carrying the session and year so two sittings of the same paper number
+ * (a resit, a specimen re-run) read as distinguishable rows rather than
+ * identical-looking duplicates. `sessionYear` is nullable
+ * (`ExamMetadata.session_year`), so it is dropped rather than rendered as
+ * "undefined" when absent.
+ */
+export function classPaperLabel(paper: {
+  subjectCode: string
+  paperNumber: number
+  paperVariant: number
+  sessionMonth: string
+  sessionYear: number | null
+}): string {
+  const session =
+    paper.sessionYear !== null ? `${paper.sessionMonth} ${paper.sessionYear}` : paper.sessionMonth
+  return `${paper.subjectCode} Paper ${paper.paperNumber} Variant ${paper.paperVariant}, ${session}`
 }
 
 /** The reshare control's own, much smaller, consequence line. */

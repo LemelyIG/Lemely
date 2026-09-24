@@ -1196,6 +1196,9 @@ export interface ClassPaperRow {
   subjectCode: string
   paperNumber: number
   paperVariant: number
+  /** e.g. "May/June" — already human-readable, no lookup table needed. */
+  sessionMonth: string
+  sessionYear: number | null
   recordedAt: string
   unshared: boolean
 }

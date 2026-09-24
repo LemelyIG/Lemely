@@ -1,11 +1,30 @@
 import { describe, expect, it } from "vitest"
+import fs from "node:fs"
+import path from "node:path"
 import { ApiError } from "@/lib/api"
-import { deleteCountdown, deletionRefusal, formatDay, isDeletionRefusal } from "@/lib/paperDeletion"
+import {
+  RETENTION_DAYS,
+  deleteCountdown,
+  deletionRefusal,
+  formatDay,
+  isDeletionRefusal,
+} from "@/lib/paperDeletion"
 import type { DeletionRefusal } from "@/lib/studentTypes"
 
 function iso(s: string): string {
   return s
 }
+
+const repoRoot = path.resolve(__dirname, "../../..")
+
+describe("RETENTION_DAYS", () => {
+  it("pins to lemely/core/deletion.py's RETENTION_DAYS, so the two cannot drift apart", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "lemely/core/deletion.py"), "utf8")
+    const match = source.match(/^RETENTION_DAYS\s*=\s*(\d+)/m)
+    expect(match, "RETENTION_DAYS not found in lemely/core/deletion.py").not.toBeNull()
+    expect(RETENTION_DAYS).toBe(Number(match![1]))
+  })
+})
 
 describe("formatDay", () => {
   it("reads day-then-month, no year, regardless of host locale", () => {

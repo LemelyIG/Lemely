@@ -274,7 +274,7 @@ export function NotificationSettingsSection({
             every query state — an sr-only heading here would duplicate it.
             No `isEmpty` either: the six toggles are a fixed enum (module
             note), so there is no "empty data" shape for this query to reach,
-            only the role-based filter below deciding which of the five apply.
+            only the role-based filter below deciding which of the six apply.
 
             One behaviour changed here and is worth naming. The pre-conversion
             branches were sibling expressions, not exclusive ones, so a refetch

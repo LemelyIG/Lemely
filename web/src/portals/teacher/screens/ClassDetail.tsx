@@ -51,6 +51,22 @@ import { BackArrow } from "@/components/ui/inline-arrow"
  * not just a layout choice.
  */
 
+/**
+ * The section-tab row's shared active/inactive styling (Roster/Analytics/
+ * Papers). Was three copies of the same `NavLink` `className` callback,
+ * kept in sync by hand — the "Papers" tab added by Task 17's review pass
+ * would otherwise have been a fourth to drift the same way `resolveTrail`'s
+ * own module doc warns a hand-maintained duplicate always eventually does.
+ */
+function classTabClassName({ isActive }: { isActive: boolean }): string {
+  return cn(
+    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
+    isActive
+      ? "border-accent text-ink font-medium"
+      : "border-transparent text-ink-muted transition-colors hover:text-ink",
+  )
+}
+
 export interface ClassDetailContext {
   classDetail: ClassDetailData
   classId: string
@@ -244,44 +260,13 @@ export function ClassDetailLayout() {
             </div>
 
             <nav aria-label="Class detail sections" className="flex gap-1 border-b border-rule">
-              <NavLink
-                to="."
-                end
-                className={({ isActive }) =>
-                  cn(
-                    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
-                    isActive
-                      ? "border-accent text-ink font-medium"
-                      : "border-transparent text-ink-muted transition-colors hover:text-ink",
-                  )
-                }
-              >
+              <NavLink to="." end className={classTabClassName}>
                 Roster
               </NavLink>
-              <NavLink
-                to="analytics"
-                className={({ isActive }) =>
-                  cn(
-                    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
-                    isActive
-                      ? "border-accent text-ink font-medium"
-                      : "border-transparent text-ink-muted transition-colors hover:text-ink",
-                  )
-                }
-              >
+              <NavLink to="analytics" className={classTabClassName}>
                 Analytics
               </NavLink>
-              <NavLink
-                to="papers"
-                className={({ isActive }) =>
-                  cn(
-                    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
-                    isActive
-                      ? "border-accent text-ink font-medium"
-                      : "border-transparent text-ink-muted transition-colors hover:text-ink",
-                  )
-                }
-              >
+              <NavLink to="papers" className={classTabClassName}>
                 Papers
               </NavLink>
             </nav>
