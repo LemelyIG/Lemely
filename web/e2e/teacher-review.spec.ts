@@ -12,19 +12,20 @@ import { readSeed } from "./seed"
  * still passing every one of those assertions with a clean `tsc`. These are
  * the assertions that cannot be satisfied by a string check.
  *
- * Only ONE seeded review-queue row exists (`seed.reviewItem`, task #66's
- * `inactive`-student T-08 item) and its one question now carries all three
- * I6 verdicts on its three points. There is no second, legacy (no-verdict)
- * review-queue row in the seed to open — the seed's only other attempts
- * (`declining`/`control`/`corrected`/`belowTarget`) are all persisted at
- * HIGH confidence and never fan out into `review_queue` at all
- * (`scripts/seed_e2e.py::accuracy_report_for_score`'s `needs_teacher_review`
- * defaults false). Producing that second scenario needs a change to
- * `scripts/seed_e2e.py`, out of this file set — see the report for task #7 for
- * what's missing. The "legacy item, no marker-verdict section" half of this
- * screen's behaviour is therefore verified today only by
- * `reviewItemMarkerVerdicts.test.ts`'s source-text guard
- * ("renders nothing when no point carries a verdict"), not by this spec.
+ * Two seeded review-queue rows exist:
+ *  - `seed.reviewItem` (task #66's `inactive`-student T-08 item), whose one
+ *    question carries all three I6 verdicts on its three points — the
+ *    "verdicts render, and are distinguishable" half below.
+ *  - `seed.reviewItem.legacyItemId` (task #67), a SECOND row whose one
+ *    question carries a mark scheme but neither a verdict nor a rationale on
+ *    any point — the ordinary legacy shape every row has in production today
+ *    (`equivalence_gate` defaults off) — the "no marker-verdict section at
+ *    all" half below. A real render is the only thing that can establish an
+ *    absence like this: `reviewItemMarkerVerdicts.test.ts`'s own source-text
+ *    guard ("renders nothing when no point carries a verdict") cannot tell a
+ *    correctly-suppressed section from a defect that silently drops content
+ *    one level *inside* the guard, which is exactly the failure mode task #7's
+ *    docstring above already describes for the verdicts-present case.
  */
 
 test("a teacher sees every point's marker verdict, with awarded, withheld and unverifiable distinguishable", async ({
@@ -66,6 +67,32 @@ test("a teacher sees every point's marker verdict, with awarded, withheld and un
   // present in the wire type.
   await expect(section.getByText('"a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2"')).toBeVisible()
   await expect(section.getByText("Carried forward from a prior point (ECF)")).toBeVisible()
+
+  expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
+})
+
+test("a legacy question with no per-point verdict or rationale renders no marker-verdict section", async ({
+  page,
+}) => {
+  const seed = readSeed()
+  const errors = watchConsole(page)
+  const { teacher, reviewItem } = seed
+
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(teacher.email)
+  await page.getByLabel("Password").fill(teacher.password)
+  await page.getByRole("button", { name: /sign in/i }).click()
+  await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+
+  await page.goto(`/teacher/review/${reviewItem.legacyItemId}`)
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+
+  // The screen itself must still have rendered (its own `<h1>`, distinct
+  // from the verdicts section) — this is not a blank/broken page, only one
+  // whose one question carries nothing for `MarkerVerdicts` to show.
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
+  await expect(page.getByText("Marker's per-point verdicts")).toHaveCount(0)
+  await expect(page.getByRole("region", { name: "Marker's per-point verdicts" })).toHaveCount(0)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

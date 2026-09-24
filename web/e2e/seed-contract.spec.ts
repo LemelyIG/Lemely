@@ -84,6 +84,10 @@ const SHAPE: Record<string, "string" | "number"> = {
   "reviewItem.itemId": "string",
   "reviewItem.attemptId": "string",
   "reviewItem.studentKey": "string",
+  // Task #67: the second, verdict-free review-queue row. Not tied to a
+  // `students` entry, so no `account(...)` spread accompanies these two.
+  "reviewItem.legacyItemId": "string",
+  "reviewItem.legacyAttemptId": "string",
 
   "quiz.quizId": "string",
   "quiz.assignmentId": "string",

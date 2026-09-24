@@ -36,6 +36,9 @@ from scripts.seed_e2e import (
     DECLINING_DAYS_AGO,
     DECLINING_SCORES,
     INACTIVE_SCORE,
+    LEGACY_REVIEW_CONFIDENCE_SCORE,
+    LEGACY_REVIEW_DAYS_AGO,
+    LEGACY_REVIEW_SCORE,
     PLACEMENT_MATHS_SAMPLE,
     PLACEMENT_MCQ_ANSWER,
     PLACEMENT_PAPER_NUMBER,
@@ -63,6 +66,8 @@ from scripts.seed_e2e import (
     default_run_tag,
     inactive_recorded_at,
     is_placement_seed_prompt,
+    legacy_review_recorded_at,
+    legacy_review_scheme,
     paper_record_for_scenario,
     wrong_mcq_answer,
 )
@@ -132,6 +137,13 @@ class TestDateArithmetic:
         """Recent is what keeps rule 3 out of this account's flag list."""
         at = below_target_recorded_at(_NOW)
         assert (_NOW - at).days < 14
+
+    def test_legacy_review_recorded_at_is_recent(self) -> None:
+        """Recent, and the account's only attempt -- neither the inactive nor
+        the declining-trend rule can ever fire on this student (task #67)."""
+        at = legacy_review_recorded_at(_NOW)
+        assert (_NOW - at).days < 14
+        assert (_NOW - at).days == LEGACY_REVIEW_DAYS_AGO
 
 
 # ---------------------------------------------------------------------------
@@ -650,7 +662,13 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
             "accessToken": "tok-p1",
             "linkedStudent": "declining",
         },
-        "review_item": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
+        "review_item": {
+            "itemId": "ri1",
+            "attemptId": "at1",
+            "studentKey": "inactive",
+            "legacyItemId": "ri2",
+            "legacyAttemptId": "at2",
+        },
         "quiz": {
             "quizId": "q1",
             "assignmentId": "as1",
@@ -753,7 +771,13 @@ class TestBuildResultPayload:
                 "accessToken": "tok-p1",
                 "linkedStudent": "declining",
             },
-            "reviewItem": {"itemId": "ri1", "attemptId": "at1", "studentKey": "inactive"},
+            "reviewItem": {
+                "itemId": "ri1",
+                "attemptId": "at1",
+                "studentKey": "inactive",
+                "legacyItemId": "ri2",
+                "legacyAttemptId": "at2",
+            },
             "quiz": {
                 "quizId": "q1",
                 "assignmentId": "as1",
@@ -911,3 +935,42 @@ class TestReviewItemVerdicts:
         # test_low_confidence_override_carries_the_score_and_needs_review pins.
         assert report.grade_prediction.percentage == INACTIVE_SCORE[0]
         assert report.grade_prediction.grade == INACTIVE_SCORE[1]
+
+
+class TestLegacyReviewItem:
+    """Task #67: the review queue's SECOND row -- a question with a mark
+    scheme but neither a verdict nor a rationale on any point, the ordinary
+    legacy shape `MarkerVerdicts`' section-suppression guard exists to hide
+    (`web/src/portals/teacher/screens/ReviewItem.tsx`) and the only shape
+    production sees today (`equivalence_gate` defaults off)."""
+
+    def test_legacy_review_question_carries_no_verdict_and_no_rationale(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+
+        report = accuracy_report_for_score(
+            LEGACY_REVIEW_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=LEGACY_REVIEW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            # Deliberately no matched_point_ids/point_verdicts -- see
+            # legacy_review_scheme()'s own docstring.
+        )
+        scheme = legacy_review_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert len(rows) == 2
+        assert [r["verdict"] for r in rows] == [None, None]
+        assert [r["rationale"] for r in rows] == [None, None]
+        assert [r["evidence_span"] for r in rows] == ["", ""]
+        assert [r["ecf_applied"] for r in rows] == [False, False]
+        # Marker-source stays "deterministic" -- unlike the verdict-bearing
+        # review item, nothing here is an I6 verdict.
+        assert question.marker_source == "deterministic"
+        assert question.needs_teacher_review is True
+        assert question.confidence_score == LEGACY_REVIEW_CONFIDENCE_SCORE
+        assert question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+        # Score/grade untouched by attaching a scheme -- same invariant
+        # TestReviewItemVerdicts pins for the verdict-bearing row.
+        assert report.grade_prediction.percentage == LEGACY_REVIEW_SCORE[0]
+        assert report.grade_prediction.grade == LEGACY_REVIEW_SCORE[1]

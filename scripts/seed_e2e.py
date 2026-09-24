@@ -62,6 +62,12 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   :meth:`~lemely.db.attempt_repo.AttemptRepository._persist`'s real fan-out
   queue it for review, through the same single writer every attempt in this
   script goes through. Never a hand-inserted ``review_queue`` row.
+* (task #67) a SECOND review-queue item, on its own dedicated student/class,
+  carrying a mark scheme but neither a verdict nor a rationale on any point —
+  the legacy shape ``MarkerVerdicts``' section-suppression guard exists to
+  hide (``web/src/portals/teacher/screens/ReviewItem.tsx``), and the only
+  shape production sees today. See ``legacy_review_scheme()`` and
+  ``reviewItem.legacyItemId``/``legacyAttemptId`` below.
 * (P3.10 chunk e1) a **quiz** (T-09/T-10): 5 MCQ ``question_bank`` rows
   (:func:`build_quiz_bank_questions`, D3.7's empty-bank workaround), built
   into a quiz, assigned to the seeded class, and submitted — every answer
@@ -131,7 +137,8 @@ path::
       "parent": {"userId": "...", "email": "...", "password": "...",
                  "accessToken": "...", "linkedStudent": "declining"},
       "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
-                     "studentKey": "inactive"},
+                     "studentKey": "inactive",
+                     "legacyItemId": "<review_queue.id>", "legacyAttemptId": "<attempt uuid>"},
       "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
@@ -485,6 +492,73 @@ def review_item_point_verdicts() -> list[PointVerdict]:
     ]
 
 
+# ---------------------------------------------------------------------------
+# Task #67: a SECOND review-queue row, deliberately carrying NEITHER a verdict
+# NOR a rationale on any point -- the legacy shape `MarkerVerdicts`' section
+# guard exists to suppress (`web/src/portals/teacher/screens/ReviewItem.tsx`),
+# and the ONLY shape production sees today (`equivalence_gate` defaults off).
+# `review_item_scheme()`/`review_item_point_verdicts()` above cannot stand in
+# for this: every point there carries a verdict. This is a separate student,
+# in a separate (THIRD) class of the same teacher's -- never the roster class
+# (`class_row`, whose 3-student/69%-average/2-at-risk figures
+# `teacher-journey.spec.ts` hardcodes) and never the below-target class
+# (`below_target_class_row`, whose own single-purpose docstring this would
+# muddy) -- so this addition cannot move a number any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- recent so it can never fire the
+#: inactive rule (>=14 days), and the student's only attempt so it can never
+#: fire the declining-trend rule (needs 3). No target grade is ever set for
+#: this student, so the below-target rule has nothing to evaluate either.
+#: This account is intentionally NOT exposed under the contract's `students`
+#: key -- nothing needs to log in as it, only to read the review-queue row
+#: its attempt produced.
+LEGACY_REVIEW_SCORE: tuple[float, str] = (60.0, "C")
+LEGACY_REVIEW_DAYS_AGO = 1
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same as `REVIEW_ITEM_CONFIDENCE_SCORE`
+#: -- the one thing that makes this attempt's real fan-out queue it for review.
+LEGACY_REVIEW_CONFIDENCE_SCORE = 0.5
+
+
+def legacy_review_scheme() -> MarkScheme:
+    """A second, independent point-based scheme for the legacy review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    -- so a Playwright spec that opened the wrong item id could never pass by
+    accident against the other row's fixture. `accuracy_report_for_score` is
+    called for this row with neither `matched_point_ids` nor `point_verdicts`
+    (both default to empty) and no `point_notes` either, so
+    `derive_point_rows` leaves every point's `verdict` AND `rationale` `None`
+    -- an ordinary legacy shape (the marker returning no per-point
+    commentary), not a contrived one.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="States the correct formula", marks=1),
+                    AnswerPoint(id="p2", point="Gives the answer to the correct unit", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
 #: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
 #: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
 #: (1.0, 3.0, 1.0) exactly, no remainder to break a tie over. If either of
@@ -731,6 +805,17 @@ def below_target_recorded_at(now: datetime) -> datetime:
     ``?reason=inactive`` list, which is exhaustive.
     """
     return now - timedelta(days=BELOW_TARGET_DAYS_AGO)
+
+
+def legacy_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the legacy-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key.
+    """
+    return now - timedelta(days=LEGACY_REVIEW_DAYS_AGO)
 
 
 def paper_record_for_scenario(
@@ -1501,6 +1586,58 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         )
     review_item_row = review_rows[0]
 
+    _log(
+        "Signing up a legacy-review student and persisting a SECOND, deliberately "
+        "verdict-free and rationale-free low-confidence attempt (task #67's other "
+        "T-08 review-queue row -- the shape every row has in production today, "
+        "since equivalence_gate defaults off)"
+    )
+    legacy_review = _signup_account("legacy-review", Role.student, run_tag)
+    # A dedicated THIRD class -- never the roster class (`class_row`, whose
+    # 3-student/69%-average/2-at-risk figures `teacher-journey.spec.ts`
+    # hardcodes) and never the below-target class (`below_target_class_row`,
+    # a different rule's own single-purpose fixture) -- so this student's
+    # presence can never move a number an existing spec already asserts.
+    legacy_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"P67 Legacy Review Class {run_tag}"
+    )
+    assert legacy_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(legacy_review["userId"]), legacy_review_class_row.join_code
+    )
+    legacy_review_report = accuracy_report_for_score(
+        LEGACY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=LEGACY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        # Deliberately NEITHER matched_point_ids NOR point_verdicts: the
+        # legacy shape this row exists to seed has neither, so
+        # derive_point_rows leaves every point's verdict AND rationale None.
+    )
+    legacy_review_attempt_id = attempt_repo.persist_correction(
+        user_id=legacy_review["userId"],
+        report=legacy_review_report,
+        recorded_at=legacy_review_recorded_at(now).isoformat(),
+        mark_scheme=legacy_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the legacy-review attempt's fan-out created (task #67)")
+    legacy_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=legacy_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    legacy_review_rows = [r for r in legacy_review_rows if r.attempt_id == legacy_review_attempt_id]
+    if len(legacy_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{legacy_review_attempt_id}, found {len(legacy_review_rows)} — "
+            "LEGACY_REVIEW_CONFIDENCE_SCORE may no longer be below REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    legacy_review_item_row = legacy_review_rows[0]
+
     _log("Seeding the quiz's question bank (generated rows, paper_id=None — D3.7)")
     teacher_uuid = uuid.UUID(teacher["userId"])
     question_bank_service.add_questions(build_quiz_bank_questions(teacher_uuid))
@@ -1725,6 +1862,13 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "itemId": str(review_item_row.item_id),
         "attemptId": str(review_item_row.attempt_id),
         "studentKey": "inactive",
+        # Task #67: a SECOND review-queue row whose one question carries no
+        # verdict and no rationale on any point -- the legacy shape
+        # `MarkerVerdicts`' section guard exists to suppress. Not tied to a
+        # `students` entry -- the account behind it exists only to own this
+        # attempt, and no spec needs to log in as it.
+        "legacyItemId": str(legacy_review_item_row.item_id),
+        "legacyAttemptId": str(legacy_review_attempt_id),
     }
     quiz = {
         "quizId": str(quiz_row.quiz_id),
