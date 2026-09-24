@@ -119,8 +119,9 @@ from lemely.core.schemas import (
     AccuracyReport,
     CorrectedQuestion,
     ExamMetadata,
+    SourceBox,
 )
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
@@ -142,6 +143,17 @@ if TYPE_CHECKING:
     from lemely.db.class_repo import ClassService
 
 log = structlog.get_logger(__name__)
+
+CROP_ABSENT_DETAIL = "No scan crop for review item {item_id}"
+"""The one wording every "there is no crop here" answer uses.
+
+Shared with :mod:`lemely.web.routers.review` rather than spelled twice, because
+the whole point is that the caller cannot tell *which* absence it hit — no such
+item, a console item, no upload, no box, or a stored object that has since
+expired. Two copies of this string would drift, and the drift would be an
+existence oracle for a student's scan. The interpolated id is the caller's own
+input and so carries nothing back it did not already supply.
+"""
 
 
 class ReviewError(Exception):
@@ -572,6 +584,100 @@ class ReviewService:
             points=points,
             has_source_box=has_source_box,
         )
+
+    def get_item_crop_source(
+        self, caller_id: uuid.UUID | str, caller_role: Role | str, item_id: uuid.UUID | str
+    ) -> tuple[str, SourceBox]:
+        """Return the stored object path and box for one review item's scan crop.
+
+        Applies the SAME visibility rule as :meth:`get_item` —
+        :meth:`_visible_class_map` then :meth:`_find_any_item` — rather than
+        letting the crop route implement its own. An image endpoint that
+        resolves its own authorization is where IDOR gets written, because it
+        reads as "just serve bytes".
+
+        The returned :class:`~lemely.core.schemas.SourceBox` is reconstructed
+        from the five columns rather than handed out as a live ORM read, so its
+        validator runs once more on the way out and every caller gets its own
+        object to scale into pixels.
+
+        Raises:
+            ReviewNotFoundError: no such item; or the item is console-sourced;
+                or the item has no upload; or the item has no persisted box.
+                All of these are "there is no image here" and are deliberately
+                indistinguishable to the caller — same type, same message: a
+                404 that varied by reason would let a caller probe which
+                students have scans, and confirm that a guessed id names a real
+                item. The distinguishable reason is logged server-side.
+            ReviewOwnershipError: the item exists but its attempt's owner is not
+                one of the caller's visible students (403).
+            ReviewValidationError: the five columns do not form a usable box
+                (422). Unreachable while
+                ``ck_question_results_source_box_positive_area`` and its
+                siblings hold; kept because the consequence of trusting a bad
+                box is a blank crop rendered beside a real student's answer,
+                which ``CorrectedQuestion.source_box`` forbids outright.
+        """
+        item_uuid = _as_uuid(item_id)
+        absent = CROP_ABSENT_DETAIL.format(item_id=item_uuid)
+        visible = self._visible_class_map(caller_id, caller_role)
+        with self._sessionmaker() as session:
+            try:
+                item, attempt, qr, paper = self._find_any_item(
+                    session, item_uuid, visible, caller_id=caller_id, caller_role=caller_role
+                )
+            except ReviewNotFoundError:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_such_item")
+                raise ReviewNotFoundError(absent) from None
+            if paper is not None:
+                # Console papers are out of scope (issue #245) — not for want of
+                # a scan, which a `TeacherPaper` upload holds, but because
+                # reaching it needs a second lookup against
+                # `teacher_paper_visible`, whose `platform_admin` grant this
+                # queue refuses on purpose (see `_find_any_item`). Declining
+                # here rather than widening keeps that refusal intact.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="console_item")
+                raise ReviewNotFoundError(absent)
+            attempt = _require_attempt(item, attempt)
+            if attempt.upload_id is None:
+                # A quiz, or a seeded/imported attempt: no scan was ever stored.
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_upload")
+                raise ReviewNotFoundError(absent)
+            # All five columns, not just `source_box_page`: the all-or-none
+            # CHECK makes the other four redundant as a test, but reading them
+            # explicitly is what narrows them from `int | None` for the
+            # constructor below, and leaves the box usable if that CHECK is ever
+            # relaxed rather than trusting it from one column.
+            if (
+                qr is None
+                or qr.source_box_page is None
+                or qr.source_box_ymin is None
+                or qr.source_box_xmin is None
+                or qr.source_box_ymax is None
+                or qr.source_box_xmax is None
+            ):
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="no_box")
+                raise ReviewNotFoundError(absent)
+            coords = [
+                qr.source_box_ymin,
+                qr.source_box_xmin,
+                qr.source_box_ymax,
+                qr.source_box_xmax,
+            ]
+            page = qr.source_box_page
+            upload = session.get(Upload, attempt.upload_id)
+            if upload is None:
+                log.info("review_crop_absent", item_id=str(item_uuid), reason="upload_row_missing")
+                raise ReviewNotFoundError(absent)
+            storage_path = upload.storage_path
+        try:
+            box = SourceBox(page=page, box=coords)
+        except ValidationError as exc:
+            log.warning("review_crop_box_invalid", item_id=str(item_uuid), page=page, box=coords)
+            raise ReviewValidationError(
+                f"Stored crop region for review item {item_uuid} is not usable"
+            ) from exc
+        return storage_path, box
 
     # -- Mutations --------------------------------------------------------------
 

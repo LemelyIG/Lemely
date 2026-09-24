@@ -19,12 +19,14 @@ import base64
 import binascii
 import uuid
 from datetime import datetime
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
-from fastapi import APIRouter, Depends, HTTPException
+import structlog
+from fastapi import APIRouter, Depends, HTTPException, Response
 
 from lemely.db.models.enums import Role
 from lemely.db.review_repo import (
+    CROP_ABSENT_DETAIL,
     ReviewAlreadyClosedError,
     ReviewError,
     ReviewItemDetail,
@@ -35,7 +37,25 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
-from lemely.web.deps import AuthContext, get_review_service, require_role
+from lemely.io.rasterise import RasterisedPage
+from lemely.io.reread import crop_and_upscale
+from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
+
+# A runtime import, not a TYPE_CHECKING one: FastAPI resolves
+# `Annotated[Settings, Depends(get_settings)]` when the route is registered, and
+# a `Settings` that only exists to the type checker makes it a required query
+# parameter instead of a dependency — a 422 on every request. Suppressed here
+# rather than file-wide (the blanket `TC001`/`TC002`/`TC003` ignore the sibling
+# routers carry in `pyproject.toml`) so a future type-only import in this file
+# still gets flagged.
+from lemely.runtime.config import Settings  # noqa: TC001
+from lemely.web.deps import (
+    AuthContext,
+    get_review_service,
+    get_settings,
+    get_storage_backend,
+    require_role,
+)
 from lemely.web.schemas_review import (
     BulkApproveRequestDTO,
     BulkApproveResponseDTO,
@@ -48,6 +68,11 @@ from lemely.web.schemas_review import (
     ReviewQueueItemDTO,
     ReviewQueueListDTO,
 )
+
+if TYPE_CHECKING:
+    from lemely.core.schemas import SourceBox
+
+log = structlog.get_logger(__name__)
 
 # Mirrors teacher.py's/classes.py's staff triple.
 _STAFF_ROLES = (Role.teacher, Role.school_admin, Role.platform_admin)
@@ -275,6 +300,155 @@ def get_review_item(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return _detail_to_dto(detail)
+
+
+# 150 dpi, not ``get_paper_preview``'s 72. That route renders a whole A4 page
+# into a 64px card strip, where 72 dpi is already sharper than the consumer;
+# this one renders one region of a page for a teacher reading a student's
+# handwriting at a few hundred CSS pixels. At 150 dpi a box a tenth of the page
+# tall is ~175px before ``crop_and_upscale``'s 2x upscale, which is legible; at
+# 72 dpi it is ~84px, which is not. Deliberately below the extractor's
+# ``EXTRACTION_DPI`` of 200, which is pinned to Gemini's image-tokenisation
+# tiers — a budget that has nothing to say about what a person can read, and
+# one this route does not share because it renders a single page on request.
+_CROP_RENDER_DPI = 150
+
+
+def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
+    """Re-check a box read back from columns before any pixel arithmetic runs.
+
+    :class:`~lemely.core.schemas.SourceBox`'s validator runs at construction
+    only — ``model_copy``/``model_construct`` do not re-run it — so a box that
+    reached this route through a copy, or out of columns written before
+    ``ck_question_results_source_box_positive_area`` existed, is not guaranteed
+    sane. ``PIL.Image.crop`` does not raise on an inverted or zero-area
+    rectangle: it returns an empty or garbage image. That would render as a
+    blank crop beside a real student's answer, the one outcome
+    ``CorrectedQuestion.source_box`` forbids ("absence must render as absence,
+    never as a failed crop"). So the bounds and the area are checked here and
+    the route fails closed, rather than inferring either from what came out.
+    """
+    ymin, xmin, ymax, xmax = box.box
+    if not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
+        log.warning("review_crop_box_unusable", item_id=item_id, page=box.page, box=box.box)
+        raise HTTPException(status_code=422, detail="Stored crop region is not renderable")
+
+
+@router.get(
+    "/{item_id}/crop",
+    responses={200: {"content": {"image/png": {}}, "description": "The boxed region of the scan"}},
+)
+def get_review_item_crop(
+    item_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
+    settings: Annotated[Settings, Depends(get_settings)],
+    service: Annotated[ReviewService, Depends(get_review_service)],
+    storage: Annotated[StorageBackend, Depends(get_storage_backend)],
+) -> Response:
+    """Render the region of the student's scan this question's answer was read from.
+
+    Question-level, not per mark point: marking is text-only, so the marker
+    never sees the page and cannot attribute a region to one mark point. This
+    answers "where did this answer come from".
+
+    A ``def`` route, not ``async def``: FastAPI runs a synchronous handler in
+    its own worker thread, so the blocking ``storage.download`` needs no
+    explicit ``anyio.to_thread`` wrap — the same reasoning ``get_paper_preview``
+    records.
+
+    Authorization comes from :meth:`ReviewService.get_item_crop_source`, which
+    applies the review item's own visibility rule. This route does not resolve
+    ownership itself, and must not learn to: an image endpoint that resolves
+    its own is where IDOR gets written, because it reads as "just serve bytes".
+
+    Every "there is no image here" — no such item, a console item, no upload, no
+    box, or a stored object that has expired — answers with the same 404 and the
+    same body, so the response cannot be used to probe which students have scans
+    on file. The distinguishable reason is logged server-side instead.
+    """
+    try:
+        object_path, box = service.get_item_crop_source(auth.user_id, auth.role, item_id)
+    except ReviewError as exc:
+        _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    _require_renderable_box(box, item_id=item_id)
+
+    try:
+        data = storage.download(settings.storage.bucket, object_path)
+    except StorageObjectNotFoundError:
+        # A stored scan is not forever (GCS lifecycle, a cleared dev
+        # filesystem). 404 with the same body as every other absence; the
+        # reason is here in the log, where "the object expired" and "this item
+        # never had a box" need different operational responses.
+        log.warning("review_crop_object_missing", item_id=item_id, object_path=object_path)
+        # `uuid.UUID` cannot raise here: the lookup above already parsed the
+        # same value. Canonicalised so this body is byte-identical to the one
+        # the lookup's own absences produce, whatever spelling of the id the
+        # caller sent — a difference there would be the oracle this collapse
+        # exists to close.
+        raise HTTPException(
+            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=uuid.UUID(item_id))
+        ) from None
+
+    import pymupdf
+
+    # Sniffed from the bytes, not from ``uploads.content_type``: a scan may be
+    # an ``image/*`` upload rather than a PDF (``rasterise_scan_to_pages``
+    # accepts both, and dispatches on content for the same reason), and MuPDF
+    # identifies an image stream itself when given no ``filetype``.
+    filetype = "pdf" if data.startswith(b"%PDF") else None
+    try:
+        # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
+        # call needs the ignore. Narrowed to this one code, not the module.
+        with pymupdf.open(stream=data, filetype=filetype) as doc:  # type: ignore[no-untyped-call]
+            # Before anything is rendered: a box captured against a different
+            # render of this upload, or against the upload it replaced, must
+            # cost a bounds check rather than a page render. Covers the
+            # zero-page document too, since ``box.page`` is non-negative.
+            if box.page >= doc.page_count:
+                log.warning(
+                    "review_crop_page_out_of_range",
+                    item_id=item_id,
+                    page=box.page,
+                    page_count=doc.page_count,
+                )
+                raise HTTPException(
+                    status_code=422,
+                    detail=(
+                        f"Stored crop region names page {box.page + 1} "
+                        f"of a {doc.page_count}-page scan"
+                    ),
+                )
+            pixmap = doc.load_page(box.page).get_pixmap(dpi=_CROP_RENDER_DPI)
+            png: bytes = pixmap.tobytes("png")
+            page_width, page_height = pixmap.width, pixmap.height
+    except HTTPException:
+        raise
+    except Exception as exc:
+        # A scan that cannot be rendered is not a server fault — it is a stored
+        # file that is not the document type it claimed to be.
+        log.warning("review_crop_render_failed", item_id=item_id, error=str(exc))
+        raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
+
+    # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8% padding
+    # and the degenerate-rounding case; a second copy of it here is where one of
+    # those edges would get missed. Handed a fresh list, so nothing downstream
+    # can rescale the box this request was given in place.
+    crop = crop_and_upscale(
+        RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
+        list(box.box),
+    )
+
+    # Immutable for the lifetime of the item id: the stored scan never changes
+    # once uploaded and the box is written once, so the crop is cacheable for
+    # the same reason the console's page-1 thumbnail is.
+    return Response(
+        content=crop,
+        media_type="image/png",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @router.post("/bulk-approve", response_model=BulkApproveResponseDTO)

@@ -51,7 +51,7 @@ from lemely.db.base import Base
 from lemely.db.class_repo import ClassService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
-from lemely.db.models.attempts import Attempt, QuestionResult, WeaknessRecord
+from lemely.db.models.attempts import Attempt, QuestionResult, Upload, WeaknessRecord
 from lemely.db.models.enums import Role
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
@@ -1721,3 +1721,232 @@ def test_module_level_recompute_is_what_the_service_uses(
             ).all()
             == []
         )
+
+
+# ── The crop lookup (`get_item_crop_source`) ────────────────────────────────
+#
+# The route that consumes this serves an image of a real student's handwriting,
+# so every scan below is a path string only: nothing here reads or writes bytes,
+# and no fixture in this file is, or derives from, a real scan.
+
+_CROP_BOX = [100, 100, 300, 400]  # [ymin, xmin, ymax, xmax], 0-1000 scale
+
+
+def _seed_boxed_item(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    *,
+    page: int | None = 1,
+    with_upload: bool = True,
+    student_name: str = "Amelia",
+) -> tuple[uuid.UUID, uuid.UUID, str | None]:
+    """Seed one attempt-backed review item. Returns ``(teacher, item_id, path)``.
+
+    ``page=None`` leaves the five ``source_box_*`` columns NULL (the common
+    case); ``with_upload=False`` leaves ``attempts.upload_id`` NULL (a quiz or
+    a seeded attempt, which never had a scan).
+    """
+    teacher, student = _seed_teacher_with_student(
+        pg_sessionmaker, class_service, student_name=student_name
+    )
+
+    upload_id: uuid.UUID | None = None
+    object_path: str | None = None
+    if with_upload:
+        upload_id = uuid.uuid4()
+        object_path = f"students/{student}/{upload_id.hex}/scan.pdf"
+        with pg_sessionmaker.begin() as session:
+            session.add(
+                Upload(
+                    id=upload_id,
+                    user_id=student,
+                    storage_path=object_path,
+                    original_filename="scan.pdf",
+                    content_type="application/pdf",
+                    byte_size=11,
+                )
+            )
+
+    question = _question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)
+    if page is not None:
+        question.source_box = SourceBox(page=page, box=list(_CROP_BOX))
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), upload_id=upload_id
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+    return teacher, item.id, object_path
+
+
+def test_get_item_crop_source_returns_the_stored_path_and_the_box(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The two things the crop route needs, and nothing else."""
+    teacher, item_id, object_path = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    path, box = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+
+    assert path == object_path
+    assert isinstance(box, SourceBox)
+    assert (box.page, box.box) == (1, _CROP_BOX)
+
+
+def test_get_item_crop_source_out_of_scope_is_ownership_error(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """The same visibility rule ``get_item`` applies, not a second one.
+
+    A teacher from another school must not be able to reach a student's scan
+    through the crop lookup when the detail lookup refuses them — which is
+    asserted here by requiring both to raise the same error for the same
+    caller and item.
+    """
+    intruder = _seed_user(pg_sessionmaker, Role.teacher)
+    owner, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service, student_name="B")
+
+    with pytest.raises(ReviewOwnershipError):
+        review_service.get_item(intruder, Role.teacher, item_id)
+    with pytest.raises(ReviewOwnershipError):
+        review_service.get_item_crop_source(intruder, Role.teacher, item_id)
+
+    # The owner gets the crop inputs from the same row, so the refusal above is
+    # a refusal and not a lookup that fails for everybody.
+    assert review_service.get_item_crop_source(owner, Role.teacher, item_id)[1].page == 1
+
+
+def test_get_item_crop_source_unknown_id_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    with pytest.raises(ReviewNotFoundError):
+        review_service.get_item_crop_source(teacher, Role.teacher, uuid.uuid4())
+
+
+def test_get_item_crop_source_malformed_id_is_value_error(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    with pytest.raises(ValueError, match="must be a UUID"):
+        review_service.get_item_crop_source(teacher, Role.teacher, "not-a-uuid")
+
+
+def test_get_item_crop_source_collapses_all_three_absences_to_one_message(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """No item, no upload and no box are deliberately indistinguishable.
+
+    A 404 that varied by reason would let a caller probe which of their
+    students have scans on file, and would confirm that a guessed id names a
+    real item. Only the id the caller itself supplied may differ between the
+    three messages.
+    """
+    teacher, no_box, _ = _seed_boxed_item(pg_sessionmaker, class_service, page=None)
+    teacher_b, no_upload, _ = _seed_boxed_item(
+        pg_sessionmaker, class_service, with_upload=False, student_name="B"
+    )
+    unknown = uuid.uuid4()
+
+    messages = []
+    for caller, item_id in ((teacher, no_box), (teacher_b, no_upload), (teacher, unknown)):
+        with pytest.raises(ReviewNotFoundError) as caught:
+            review_service.get_item_crop_source(caller, Role.teacher, item_id)
+        messages.append(str(caught.value).replace(str(item_id), "<id>"))
+
+    assert len(set(messages)) == 1, messages
+
+
+def test_get_item_crop_source_console_item_is_not_found(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Console papers are out of scope for the crop route (issue #245).
+
+    Not for want of a scan: a console paper's scan is a ``TeacherPaper``
+    upload and its box is often inside ``report_json``. Reaching it would need
+    a second lookup against ``teacher_paper_visible``, whose ``platform_admin``
+    grant this queue refuses on purpose — so this lookup declines to reach a
+    console paper at all rather than inherit that grant one layer out.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    paper_id = _seed_console_paper(
+        pg_sessionmaker,
+        uploader=teacher,
+        questions=[_question("1", awarded=0, maximum=2, confidence_score=0.3, needs_review=True)],
+    )
+    with pg_sessionmaker() as session:
+        item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).first()
+    assert item is not None
+
+    with pytest.raises(ReviewNotFoundError):
+        review_service.get_item_crop_source(teacher, Role.teacher, item.id)
+
+
+def test_get_item_crop_source_hands_back_an_independent_box_each_call(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Mutating a returned box must not reach the next caller's copy.
+
+    The natural way to render a crop is to rescale the 0-1000 coordinates to
+    pixels in place. Task 1 shipped a deep copy on the way *in* specifically to
+    stop that aliasing the extractor's own box; a shared box on the way *out*
+    would reopen the same hole one layer further on.
+    """
+    teacher, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    _, first = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+    first.box[0] = 999
+    first.box[2] = 1000
+    _, second = review_service.get_item_crop_source(teacher, Role.teacher, item_id)
+
+    assert second.box == _CROP_BOX
+    assert second.box is not first.box
+
+
+def test_get_item_crop_source_refuses_a_box_the_constraints_would_now_reject(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """Reconstructing a real ``SourceBox`` re-runs the validator, and fails closed.
+
+    The positive-area CHECK is dropped here to produce the row, because
+    Postgres will not otherwise let one exist — which is the point: this guard
+    is for the row the constraint was added to prevent (a box written before
+    it, or by a future migration that relaxed it), not for one the constraint
+    lets through. Without it the inverted rectangle reaches ``PIL.Image.crop``,
+    which does not raise on one: it returns an empty image, and a blank crop
+    beside a real student's answer is the one outcome
+    ``CorrectedQuestion.source_box`` forbids.
+    """
+    teacher, item_id, _ = _seed_boxed_item(pg_sessionmaker, class_service)
+
+    with pg_sessionmaker.begin() as session:
+        name = session.execute(
+            sa.text(
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'question_results'::regclass "
+                "AND conname LIKE '%positive_area%'"
+            )
+        ).scalar_one()
+        session.execute(sa.text(f'ALTER TABLE question_results DROP CONSTRAINT "{name}"'))
+        session.execute(
+            sa.update(QuestionResult)
+            .where(QuestionResult.source_box_page.is_not(None))
+            .values(source_box_ymax=sa.literal(100), source_box_ymin=sa.literal(300))
+        )
+
+    with pytest.raises(ReviewValidationError):
+        review_service.get_item_crop_source(teacher, Role.teacher, item_id)
