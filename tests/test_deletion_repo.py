@@ -9,12 +9,14 @@ after a partial write cannot pass.
 
 from __future__ import annotations
 
+import threading
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING
 
 import pytest
+import sqlalchemy as sa
 from sqlalchemy import select
 
 from lemely.core.deletion import RETENTION_DAYS, integrity_hold_until, restore_deadline
@@ -23,6 +25,7 @@ from lemely.db.deletion_repo import (
     PaperDeletionService,
     PaperNotDeletableError,
     PaperNotFoundError,
+    PaperNotRestorableError,
     paper_label,
 )
 from lemely.db.history_repo import DbHistoryStore
@@ -36,11 +39,15 @@ from lemely.db.models.enums import (
     ReviewStatus,
     Role,
     SessionMonth,
+    UploadStatus,
 )
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
+from tests.test_attempt_repo import _Paused, _wait_until_a_backend_waits_on_a_lock
 
 if TYPE_CHECKING:
+    from collections.abc import Callable, Sequence
+
     from sqlalchemy.orm import Session, sessionmaker
 
 _HOLD_REFUSAL = "This paper can't be deleted yet."
@@ -674,3 +681,441 @@ def test_paper_label_degrades_without_doubling_words(
         session_year=session_year,
     )
     assert paper_label(attempt) == expected
+
+
+# ── restore (Task 6) ────────────────────────────────────────────────────────
+
+
+def _backdate_deletion(sm: sessionmaker[Session], upload_id: uuid.UUID | None, days: int) -> None:
+    """Move one deletion ``days`` into the past, keeping its instants equal.
+
+    Restore matches the attempts and items on equality with the upload's
+    ``deleted_at``, so all three are shifted together.
+    """
+    shift = timedelta(days=days)
+    with sm.begin() as session:
+        upload = session.scalars(
+            select(Upload)
+            .where(Upload.id == upload_id)
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).one()
+        instant = upload.deleted_at
+        assert instant is not None
+        session.execute(
+            sa.update(Attempt)
+            .where(Attempt.upload_id == upload_id, Attempt.deleted_at == instant)
+            .values(deleted_at=instant - shift)
+        )
+        session.execute(
+            sa.update(ReviewQueueItem)
+            .where(ReviewQueueItem.withdrawn_at == instant)
+            .values(withdrawn_at=instant - shift)
+        )
+        upload.deleted_at = instant - shift
+
+
+def _set_upload_status(
+    sm: sessionmaker[Session], upload_id: uuid.UUID | None, status: UploadStatus
+) -> None:
+    with sm.begin() as session:
+        session.execute(sa.update(Upload).where(Upload.id == upload_id).values(status=status))
+
+
+def _stamp_attempt(sm: sessionmaker[Session], attempt_id: uuid.UUID, when: datetime | None) -> None:
+    with sm.begin() as session:
+        session.execute(sa.update(Attempt).where(Attempt.id == attempt_id).values(deleted_at=when))
+
+
+@pytest.fixture
+def previously_dismissed_item(sessionmaker_: sessionmaker[Session], attempt: Seeded) -> uuid.UUID:
+    """A review a teacher closed before the delete: not the delete's to reopen."""
+    return _seed_item(
+        sessionmaker_, attempt.attempt_id, ReviewReason.low_confidence, ReviewStatus.dismissed
+    )
+
+
+def test_restore_brings_the_paper_back(
+    service: PaperDeletionService, store: DbHistoryStore, owner: str, attempt: Seeded
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    assert store.load(owner).records == []
+    service.restore(owner, str(attempt.attempt_id))
+    assert [r.attempt_id for r in store.load(owner).records] == [str(attempt.attempt_id)]
+
+
+def test_restore_clears_the_upload_stamp_but_not_the_released_key(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """The key was released for a re-upload and may belong to another row now."""
+    service.delete(owner, str(attempt.attempt_id))
+    service.restore(owner, str(attempt.attempt_id))
+    upload = _upload_row(sessionmaker_, attempt.upload_id)
+    assert upload.deleted_at is None
+    assert upload.idempotency_key is None
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
+
+
+def test_restore_reopens_exactly_the_items_this_deletion_withdrew(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    open_item: uuid.UUID,
+    previously_dismissed_item: uuid.UUID,
+) -> None:
+    """Delete then restore must not launder a review item out of the queue."""
+    original_created_at = _item_row(sessionmaker_, open_item).created_at
+    service.delete(owner, str(attempt.attempt_id))
+    assert _item_row(sessionmaker_, open_item).status is ReviewStatus.withdrawn
+
+    service.restore(owner, str(attempt.attempt_id))
+
+    reopened = _item_row(sessionmaker_, open_item)
+    untouched = _item_row(sessionmaker_, previously_dismissed_item)
+    assert reopened.status is ReviewStatus.open
+    assert reopened.withdrawn_at is None
+    assert reopened.created_at == original_created_at  # sorts where it always did
+    assert untouched.status is ReviewStatus.dismissed  # not swept up
+
+
+def test_restore_leaves_an_item_withdrawn_at_another_instant_alone(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    open_item: uuid.UUID,
+) -> None:
+    """The match is equality with this deletion's instant, not 'any withdrawn item'."""
+    stray = _seed_item(
+        sessionmaker_, attempt.attempt_id, ReviewReason.low_confidence, ReviewStatus.withdrawn
+    )
+    with sessionmaker_.begin() as session:
+        session.execute(
+            sa.update(ReviewQueueItem)
+            .where(ReviewQueueItem.id == stray)
+            .values(withdrawn_at=datetime.now(UTC) - timedelta(days=3))
+        )
+    service.delete(owner, str(attempt.attempt_id))
+    service.restore(owner, str(attempt.attempt_id))
+    assert _item_row(sessionmaker_, open_item).status is ReviewStatus.open
+    assert _item_row(sessionmaker_, stray).status is ReviewStatus.withdrawn
+
+
+def test_restore_after_the_window_is_refused(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    open_item: uuid.UUID,
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    _backdate_deletion(sessionmaker_, attempt.upload_id, days=RETENTION_DAYS + 1)
+    with pytest.raises(PaperNotRestorableError):
+        service.restore(owner, str(attempt.attempt_id))
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is not None
+    assert _upload_row(sessionmaker_, attempt.upload_id).deleted_at is not None
+    assert _item_row(sessionmaker_, open_item).status is ReviewStatus.withdrawn
+
+
+def test_restore_just_inside_the_window_succeeds(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    open_item: uuid.UUID,
+) -> None:
+    """The backdate keeps the instants equal, so only the window can refuse."""
+    service.delete(owner, str(attempt.attempt_id))
+    _backdate_deletion(sessionmaker_, attempt.upload_id, days=RETENTION_DAYS - 1)
+    service.restore(owner, str(attempt.attempt_id))
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
+    assert _item_row(sessionmaker_, open_item).status is ReviewStatus.open
+
+
+def test_restoring_a_live_paper_is_a_404(
+    service: PaperDeletionService, owner: str, attempt: Seeded
+) -> None:
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, str(attempt.attempt_id))
+
+
+def test_another_student_cannot_restore(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    stranger: str,
+    attempt: Seeded,
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    with pytest.raises(PaperNotFoundError):
+        service.restore(stranger, str(attempt.attempt_id))
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is not None
+
+
+@pytest.mark.parametrize("bad_id", ["not-a-uuid", ""])
+def test_restoring_a_malformed_id_is_a_404(
+    service: PaperDeletionService, owner: str, bad_id: str
+) -> None:
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, bad_id)
+
+
+def test_restoring_an_unknown_id_is_a_404(service: PaperDeletionService, owner: str) -> None:
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, str(uuid.uuid4()))
+
+
+def test_restoring_twice_is_a_404(
+    service: PaperDeletionService, owner: str, attempt: Seeded
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    service.restore(owner, str(attempt.attempt_id))
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, str(attempt.attempt_id))
+
+
+# ── R7: restore covers the whole upload ─────────────────────────────────────
+
+
+def test_restoring_one_attempt_restores_the_whole_upload(
+    service: PaperDeletionService,
+    store: DbHistoryStore,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """The unit of restore is the upload, as it is for delete."""
+    sibling = _seed_attempt(sessionmaker_, owner, attempt.upload_id)
+    sibling_item = _seed_item(sessionmaker_, sibling.attempt_id, ReviewReason.low_confidence)
+    service.delete(owner, str(sibling.attempt_id))
+
+    service.restore(owner, str(attempt.attempt_id))
+
+    assert {r.attempt_id for r in store.load(owner).records} == {
+        str(attempt.attempt_id),
+        str(sibling.attempt_id),
+    }
+    assert _item_row(sessionmaker_, sibling_item).status is ReviewStatus.open
+
+
+def test_restore_does_not_revive_an_attempt_deleted_at_another_instant(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """Only the attempts stamped with the upload's own instant come back."""
+    earlier = _seed_attempt(sessionmaker_, owner, attempt.upload_id)
+    _stamp_attempt(sessionmaker_, earlier.attempt_id, datetime.now(UTC) - timedelta(days=2))
+    service.delete(owner, str(attempt.attempt_id))
+
+    service.restore(owner, str(attempt.attempt_id))
+
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
+    assert _attempt_row(sessionmaker_, earlier.attempt_id).deleted_at is not None
+
+
+def test_restoring_an_attempt_not_deleted_with_its_upload_is_refused(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """Undoing the upload's deletion would not bring this attempt back, so refuse."""
+    earlier = _seed_attempt(sessionmaker_, owner, attempt.upload_id)
+    _stamp_attempt(sessionmaker_, earlier.attempt_id, datetime.now(UTC) - timedelta(days=2))
+    service.delete(owner, str(attempt.attempt_id))
+
+    with pytest.raises(PaperNotRestorableError):
+        service.restore(owner, str(earlier.attempt_id))
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is not None
+    assert _upload_row(sessionmaker_, attempt.upload_id).deleted_at is not None
+
+
+def test_a_deleted_sibling_owned_by_someone_else_refuses_the_restore(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    stranger: str,
+    attempt: Seeded,
+) -> None:
+    """Mirror of delete's check: restore never revives another student's attempt."""
+    service.delete(owner, str(attempt.attempt_id))
+    foreign = _seed_attempt(sessionmaker_, stranger, attempt.upload_id)
+    _stamp_attempt(
+        sessionmaker_, foreign.attempt_id, _upload_row(sessionmaker_, attempt.upload_id).deleted_at
+    )
+
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, str(attempt.attempt_id))
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is not None
+    assert _attempt_row(sessionmaker_, foreign.attempt_id).deleted_at is not None
+
+
+# ── the laundering cycle (I5, moved here from Task 5) ───────────────────────
+
+
+def test_a_flag_raised_while_deleted_holds_after_restore(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """A flag and its review that land on a deleted paper still bind it once restored."""
+    service.delete(owner, str(attempt.attempt_id))
+    _seed_question(sessionmaker_, attempt.attempt_id, plagiarism=True)
+    _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
+
+    service.restore(owner, str(attempt.attempt_id))
+
+    with pytest.raises(PaperNotDeletableError) as exc:
+        service.delete(owner, str(attempt.attempt_id))
+    assert str(exc.value) == _HOLD_REFUSAL
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None
+
+
+def test_delete_then_restore_puts_an_integrity_review_back_in_the_queue(
+    service: PaperDeletionService, sessionmaker_: sessionmaker[Session], owner: str
+) -> None:
+    """Past the hold the flagged paper may go, but restoring it restores its review."""
+    old = _seed_attempt(
+        sessionmaker_,
+        owner,
+        _seed_upload(sessionmaker_, owner),
+        recorded_at=datetime.now(UTC) - timedelta(days=RETENTION_DAYS + 1),
+    )
+    _seed_question(sessionmaker_, old.attempt_id, plagiarism=True)
+    item_id = _seed_item(sessionmaker_, old.attempt_id, ReviewReason.plagiarism_flag)
+    original_created_at = _item_row(sessionmaker_, item_id).created_at
+
+    service.delete(owner, str(old.attempt_id))
+    assert _item_row(sessionmaker_, item_id).status is ReviewStatus.withdrawn
+    service.restore(owner, str(old.attempt_id))
+
+    item = _item_row(sessionmaker_, item_id)
+    assert item.status is ReviewStatus.open
+    assert item.withdrawn_at is None
+    assert item.created_at == original_created_at
+
+
+# ── stale ``processing`` (Task 5a controller addition 3) ────────────────────
+
+
+def test_delete_ends_a_processing_upload_as_complete(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """Deleted mid-run, nothing else writes a terminal status; a restore would show a ghost run."""
+    _set_upload_status(sessionmaker_, attempt.upload_id, UploadStatus.processing)
+    service.delete(owner, str(attempt.attempt_id))
+    assert _upload_row(sessionmaker_, attempt.upload_id).status is UploadStatus.complete
+
+
+@pytest.mark.parametrize("status", [UploadStatus.complete, UploadStatus.failed])
+def test_delete_leaves_a_terminal_upload_status_alone(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    status: UploadStatus,
+) -> None:
+    _set_upload_status(sessionmaker_, attempt.upload_id, status)
+    service.delete(owner, str(attempt.attempt_id))
+    assert _upload_row(sessionmaker_, attempt.upload_id).status is status
+
+
+# ── concurrency ─────────────────────────────────────────────────────────────
+
+
+def _lock_and_write_order(sm: sessionmaker[Session], run: Callable[[], object]) -> list[str]:
+    """The tables ``run`` locks or writes, in statement order: ``"lock uploads"`` etc."""
+    engine = sm.kw["bind"]
+    seen: list[str] = []
+
+    def record(
+        conn: object, cursor: object, statement: str, *args: object, **kwargs: object
+    ) -> None:
+        sql = " ".join(statement.split())
+        if sql.endswith("FOR UPDATE"):
+            seen.append("lock " + sql.split(" FROM ", 1)[1].split(" ", 1)[0])
+        elif sql.startswith("UPDATE "):
+            seen.append("update " + sql.split(" ", 2)[1])
+
+    sa.event.listen(engine, "before_cursor_execute", record)
+    try:
+        run()
+    finally:
+        sa.event.remove(engine, "before_cursor_execute", record)
+    return seen
+
+
+def test_restore_locks_in_deletes_order(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    open_item: uuid.UUID,
+) -> None:
+    """Upload, then attempts, then review items — the order delete and persist take.
+
+    A restore that locked the attempts before the upload could hold them while
+    a delete, already holding the upload, waits on them: a lock cycle.
+    """
+    deleted = _lock_and_write_order(
+        sessionmaker_, lambda: service.delete(owner, str(attempt.attempt_id))
+    )
+    restored = _lock_and_write_order(
+        sessionmaker_, lambda: service.restore(owner, str(attempt.attempt_id))
+    )
+    expected = ["lock uploads", "lock attempts", "update review_queue"]
+    assert [step for step in deleted if step in expected] == expected, deleted
+    assert [step for step in restored if step in expected] == expected, restored
+
+
+def test_a_second_restore_queued_behind_the_first_is_a_404(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A double-clicked Undo: the second restore waits on the upload, then finds it live.
+
+    Its unlocked read saw the paper deleted, so only the re-check on the locked
+    copy stops it, and that copy must be the committed row, not the stale one.
+    """
+    service.delete(owner, str(attempt.attempt_id))
+
+    inside, release = threading.Event(), threading.Event()
+    real = PaperDeletionService._lock_siblings
+    calls = 0
+
+    def paused(
+        self: PaperDeletionService, session: Session, upload_id: uuid.UUID
+    ) -> Sequence[Attempt]:
+        nonlocal calls
+        calls += 1
+        siblings = real(self, session, upload_id)
+        if calls == 1:
+            inside.set()
+            assert release.wait(timeout=20)
+        return siblings
+
+    monkeypatch.setattr(PaperDeletionService, "_lock_siblings", paused)
+    first = _Paused(lambda: service.restore(owner, str(attempt.attempt_id)))
+    assert inside.wait(timeout=20)
+    second = _Paused(lambda: service.restore(owner, str(attempt.attempt_id)))
+    _wait_until_a_backend_waits_on_a_lock(sessionmaker_)
+    release.set()
+    first.join()
+    second.join()
+
+    assert first.error is None
+    assert isinstance(second.error, PaperNotFoundError)
+    assert calls == 2
+    assert _attempt_row(sessionmaker_, attempt.attempt_id).deleted_at is None

@@ -32,13 +32,18 @@ from typing import TYPE_CHECKING
 import sqlalchemy as sa
 from sqlalchemy import select
 
-from lemely.core.deletion import integrity_hold_until, restore_deadline
+from lemely.core.deletion import (
+    integrity_hold_until,
+    is_within_restore_window,
+    restore_deadline,
+)
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload
 from lemely.db.models.enums import (
     SESSION_MONTH_LABELS,
     AttemptOrigin,
     ReviewReason,
     ReviewStatus,
+    UploadStatus,
 )
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
@@ -145,7 +150,7 @@ def _parse_uuid(value: str) -> uuid.UUID | None:
 
 
 class PaperDeletionService:
-    """Soft-deletes a student's own uploaded paper, in one transaction."""
+    """Soft-deletes a student's own uploaded paper, or restores it, in one transaction."""
 
     def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
         self._sessionmaker = sessionmaker
@@ -219,6 +224,14 @@ class PaperDeletionService:
 
             for sibling in live:
                 sibling.deleted_at = now
+            # A run deleted mid-flight leaves ``processing`` with nothing to end
+            # it: a refused persist skips ``set_status``, and ``set_status`` cannot
+            # see a deleted row. Restored, it would read as marking and shadow a
+            # real run. Under the upload lock any concurrent run has either
+            # committed its attempt or will be refused, and the addressed attempt
+            # is on this upload, so the run's outcome is a completed one.
+            if upload.status is UploadStatus.processing:
+                upload.status = UploadStatus.complete
             # An upload already deleted keeps its instant: restore matches its
             # siblings on ``deleted_at`` equality, so re-stamping would strand them.
             if upload.deleted_at is None:
@@ -240,6 +253,82 @@ class PaperDeletionService:
                 withdrawn_item_ids=withdrawn,
                 sibling_attempt_ids=sibling_ids,
             )
+
+    def restore(self, user_id: str, attempt_id: str) -> None:
+        """Undo the deletion of ``attempt_id``'s upload inside the retention window.
+
+        The unit is the upload, as for :meth:`delete` (R7): every attempt whose
+        ``deleted_at`` equals the upload's comes back with it, and an attempt
+        deleted at another instant stays deleted. Reopens precisely the review
+        items this deletion withdrew, matched on ``withdrawn_at`` equal to that
+        instant, keeping their ids and ``created_at`` so they sort where they
+        always did. Without the reopen, delete-then-restore returns the paper
+        and silently drops the teacher's queue item — for an integrity item past
+        D8's hold, a student clearing their own flag (design 2026-09-22 §6).
+
+        The upload's ``idempotency_key`` stays ``NULL``: delete released it so a
+        re-upload of the same scan could succeed, and a key that may already
+        belong to another row cannot be reclaimed.
+
+        Locks in :meth:`delete`'s order — upload, then attempts by id, then
+        review items — which is also ``AttemptRepository._persist``'s upload-first
+        order. Any other order is a lock cycle with one of them.
+
+        Raises:
+            PaperNotFoundError: no deleted attempt with this id belongs to
+                ``user_id`` (a live paper, a malformed id, another student's),
+                or an attempt this restore would revive belongs to someone else.
+            PaperNotRestorableError: the retention window has passed, or the
+                attempt was not deleted together with its upload, so undoing
+                that deletion would not bring it back.
+        """
+        owner = _parse_uuid(user_id)
+        parsed_id = _parse_uuid(attempt_id)
+        if owner is None or parsed_id is None:
+            raise PaperNotFoundError("No such paper")
+        now = datetime.now(UTC)
+
+        with self._sessionmaker.begin() as session:
+            # Unlocked, only to learn the upload; the checks that count are
+            # repeated on the locked copies below.
+            addressed = session.scalars(
+                select(Attempt)
+                .where(Attempt.id == parsed_id)
+                .execution_options(**{INCLUDE_DELETED: True})
+            ).one_or_none()
+            if (
+                addressed is None
+                or addressed.user_id != owner
+                or addressed.deleted_at is None
+                or addressed.upload_id is None
+            ):
+                raise PaperNotFoundError("No such paper")
+            upload_id = addressed.upload_id
+
+            upload = session.scalars(
+                select(Upload)
+                .where(Upload.id == upload_id)
+                .with_for_update()
+                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+            ).one()
+            siblings = self._lock_siblings(session, upload_id)
+            addressed = next((a for a in siblings if a.id == parsed_id), None)
+            if addressed is None or addressed.user_id != owner or addressed.deleted_at is None:
+                raise PaperNotFoundError("No such paper")
+
+            instant = upload.deleted_at
+            if instant is None or addressed.deleted_at != instant:
+                raise PaperNotRestorableError("This paper can no longer be restored.")
+            if not is_within_restore_window(instant, now):
+                raise PaperNotRestorableError("This paper can no longer be restored.")
+            revived = [a for a in siblings if a.deleted_at == instant]
+            if any(a.user_id != owner for a in revived):
+                raise PaperNotFoundError("No such paper")
+
+            for sibling in revived:
+                sibling.deleted_at = None
+            upload.deleted_at = None
+            self._reopen_withdrawn_items(session, [a.id for a in revived], instant)
 
     def _lock_siblings(self, session: Session, upload_id: uuid.UUID) -> Sequence[Attempt]:
         """Lock every attempt on ``upload_id`` in id order, deleted ones included.
@@ -343,6 +432,27 @@ class PaperDeletionService:
             execution_options={"synchronize_session": False},
         ).all()
         return sorted(withdrawn)
+
+    def _reopen_withdrawn_items(
+        self, session: Session, attempt_ids: list[uuid.UUID], deleted_at: datetime
+    ) -> None:
+        """Reopen the items on these attempts that the deletion at ``deleted_at`` withdrew.
+
+        The inverse of :meth:`_withdraw_open_items`, under the same attempt row
+        locks. The ``withdrawn_at`` equality is what keeps a teacher's earlier
+        dismissal, or an item withdrawn by some other deletion, out of the
+        reopened set.
+        """
+        session.execute(
+            sa.update(ReviewQueueItem)
+            .where(
+                ReviewQueueItem.attempt_id.in_(attempt_ids),
+                ReviewQueueItem.status == ReviewStatus.withdrawn,
+                ReviewQueueItem.withdrawn_at == deleted_at,
+            )
+            .values(status=ReviewStatus.open, withdrawn_at=None),
+            execution_options={"synchronize_session": False},
+        )
 
 
 __all__ = [

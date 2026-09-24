@@ -1222,6 +1222,53 @@ def test_a_paper_deleted_mid_marking_ends_the_run_without_persisting(
     alert.assert_not_called()
 
 
+def test_a_paper_deleted_mid_marking_is_not_a_run_in_flight_once_restored(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A delete mid-run leaves a terminal status, so a restore shows no ghost run.
+
+    Nothing after the delete writes the upload's status: the refused persist
+    skips ``set_status``, and ``set_status`` cannot see a deleted row. Unless the
+    delete ends ``processing`` itself, the restored paper reads as marking for
+    the staleness bound and shadows a real run.
+    """
+    from lemely.db.models.attempts import Upload
+
+    api, student_id, _ = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+    api.post("/api/student/correct", json={"paperId": paper_id})
+    with pg_sessionmaker() as session:
+        (first_attempt,) = session.scalars(select(Attempt.id)).all()
+
+    real_extract = student.extract_answers
+
+    def delete_mid_marking(*args: object, **kwargs: object) -> ExtractedAnswers:
+        PaperDeletionService(pg_sessionmaker).delete(student_id, str(first_attempt))
+        return cast("ExtractedAnswers", real_extract(*args, **kwargs))
+
+    monkeypatch.setattr(student, "extract_answers", delete_mid_marking)
+    api.post("/api/student/correct", json={"paperId": paper_id})
+
+    with pg_sessionmaker() as session:
+        status = session.scalars(
+            select(Upload.status)
+            .where(Upload.id == uuid.UUID(paper_id))
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).one()
+    assert status in (UploadStatus.complete, UploadStatus.failed)
+
+    PaperDeletionService(pg_sessionmaker).restore(student_id, str(first_attempt))
+
+    assert api.get("/api/student/uploads/active").json() is None
+    assert api.get(f"/api/student/uploads/{paper_id}").json()["status"] == "complete"
+
+
 def test_set_status_leaves_a_deleted_upload_alone(
     client: tuple[TestClient, str, StudentUploadRepository],
     pg_sessionmaker: sessionmaker[Session],
