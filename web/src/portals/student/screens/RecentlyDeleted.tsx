@@ -31,8 +31,16 @@ import type { DeletedPaper } from "@/lib/studentTypes"
  * symmetric in cost, so they are not symmetric in ceremony.
  */
 
-function countdownLabel(deadline: string, now: string): string {
-  const days = deleteCountdown(deadline, now)
+/**
+ * `days` is computed once, by the caller (Task 14 review, Minor 2), and
+ * passed in rather than re-derived here — `DeletedPaperRow` was calling
+ * `deleteCountdown` a second time for its own `gone` flag, both reads of
+ * the same clock a render apart. Not a correctness bug (`now` is a stable
+ * per-render string, not `Date.now()` read twice), but two call sites doing
+ * the same arithmetic over the same inputs is exactly the drift risk this
+ * whole feature's pure-helper split exists to avoid.
+ */
+function countdownLabel(days: number): string {
   if (days <= 0) return "Restore window closed"
   if (days === 1) return "1 day left to restore"
   return `${days} days left to restore`
@@ -47,7 +55,8 @@ function DeletedPaperRow({
 }) {
   const restorePaper = useRestorePaper()
   const [error, setError] = useState<string | null>(null)
-  const gone = deleteCountdown(paper.restoreDeadline, now) <= 0
+  const daysLeft = deleteCountdown(paper.restoreDeadline, now)
+  const gone = daysLeft <= 0
 
   async function handleRestore() {
     setError(null)
@@ -66,7 +75,7 @@ function DeletedPaperRow({
             <Chip tone="neutral">{paper.subjectCode}</Chip>
             <span className="truncate text-body-md text-ink">{paper.paperLabel}</span>
           </div>
-          <span className="text-data-sm text-ink-muted">{countdownLabel(paper.restoreDeadline, now)}</span>
+          <span className="text-data-sm text-ink-muted">{countdownLabel(daysLeft)}</span>
         </div>
         <Button
           variant="secondary"

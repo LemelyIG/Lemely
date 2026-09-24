@@ -1,5 +1,28 @@
 import type { DeletionRefusal } from "@/lib/studentTypes"
 
+/**
+ * Narrows `ApiError.body` onto the flat 409 shape
+ * (`{"detail": "...", "deletableFrom"?: "..."}`) the deletion hold route
+ * sends (design §8; Task 8 amendment). `.body`, not `.detail` — the backend
+ * body is flat, so `deletableFrom` is a SIBLING of `detail`, not nested
+ * inside it, and `ApiError.detail` only ever carries the `detail` key's own
+ * value (Task 14 review, Critical 1: an earlier version of this file read
+ * `err.detail as DeletionRefusal`, which is a string, cast to an object type
+ * with no runtime check — `deletionRefusal()` then read `.detail`/
+ * `.deletableFrom` off a string and got `undefined` for both, rendering
+ * nothing for every 409, hold or not).
+ */
+export function isDeletionRefusal(body: unknown): body is DeletionRefusal {
+  if (typeof body !== "object" || body === null) return false
+  const candidate = body as Partial<DeletionRefusal>
+  return (
+    typeof candidate.detail === "string" &&
+    (candidate.deletableFrom === undefined ||
+      candidate.deletableFrom === null ||
+      typeof candidate.deletableFrom === "string")
+  )
+}
+
 /*
  * Pure state for student paper deletion (design §2.1, §4 R7, §8), kept out
  * of the hook and the screen so it is testable without a renderer — the same

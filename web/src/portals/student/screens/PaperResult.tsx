@@ -20,14 +20,14 @@ import { useToast } from "@/components/ui/toast"
 import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
-import { deletionRefusal } from "@/lib/paperDeletion"
+import { deletionRefusal, isDeletionRefusal } from "@/lib/paperDeletion"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
 import { useDeletePaper } from "@/lib/hooks/usePaperDeletionApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
-import type { DeletionRefusal, IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
+import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
 /*
  * Paper Result (isResult) - the flagship screen. Renders one result, from
@@ -172,8 +172,15 @@ function DeletePaperControl({
       // pre-delete list this whole flow exists to avoid trusting.
       navigate(`/student/subject/${subjectCode}`)
     } catch (err) {
-      if (err instanceof ApiError && err.status === 409 && err.detail) {
-        setError(deletionRefusal(err.detail as DeletionRefusal))
+      // `err.body` (the whole parsed JSON), not `err.detail` (just that
+      // one key's value): the deletion hold's 409 is a FLAT body —
+      // `{"detail": "...", "deletableFrom": "..."}` — so `deletableFrom`
+      // is a sibling of `detail`, never nested inside it. Narrowed through
+      // `isDeletionRefusal` rather than cast, so a 409 the guard doesn't
+      // recognise falls through to the generic message below instead of
+      // rendering `undefined` (Task 14 review, Critical 1).
+      if (err instanceof ApiError && err.status === 409 && isDeletionRefusal(err.body)) {
+        setError(deletionRefusal(err.body))
       } else if (err instanceof ApiError && err.status === 404) {
         setError("This paper isn't here anymore.")
       } else {

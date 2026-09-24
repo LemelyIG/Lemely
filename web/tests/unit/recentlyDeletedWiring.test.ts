@@ -75,8 +75,18 @@ describe("PaperResult.tsx — the delete control", () => {
     expect(navigateIndex).toBeGreaterThan(awaitIndex)
   })
 
-  it("renders the refusal through deletionRefusal, never a raw 409 detail", () => {
-    expect(source).toContain("deletionRefusal(err.detail")
+  it("renders the refusal through deletionRefusal, reading the flat body not just .detail", () => {
+    // Task 14 review, Critical 1: the backend's 409 is a flat body
+    // (`{"detail": "...", "deletableFrom": "..."}`), so `deletableFrom` is a
+    // sibling of `detail`, not nested in it — reading `err.detail` alone
+    // (as an earlier version of this file did, cast with `as`) loses it.
+    expect(source).toContain("deletionRefusal(err.body")
+    expect(source).not.toMatch(/deletionRefusal\(err\.detail/)
+  })
+
+  it("narrows err.body through a real type guard, never an `as` cast", () => {
+    expect(source).toContain("isDeletionRefusal(err.body)")
+    expect(source).not.toMatch(/err\.detail\s+as\s+DeletionRefusal/)
   })
 })
 
