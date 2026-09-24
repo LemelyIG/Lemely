@@ -179,33 +179,16 @@ function AnnouncementCard({
           {announcement.body}
         </p>
 
-        <div
-          className="flex flex-wrap items-center gap-3"
-          // Issue #246: this card sits inside the screen's pull-to-refresh
-          // surface (`Announcements`'s `pullSurfaceRef`), and
-          // `usePullToRefresh`/`useDragGesture` arms on every `pointerdown`
-          // at the scroll top — including a plain tap on one of these
-          // buttons — by calling `setPointerCapture` on that ancestor
-          // surface. A captured pointer retargets the tap's `click` away
-          // from the button entirely, so neither "Show more" nor "Mark as
-          // read" ever fired: not a mutation bug, not an optimistic-update
-          // bug, the button's own `onClick` never ran. `startFilter`'s own
-          // doc comment already anticipates exempting "a nested interactive
-          // control", it just isn't implemented there yet; stopping
-          // propagation here in the capture phase, before the surface's
-          // (bubble-phase) listener ever sees the event, is the same
-          // exemption applied at the point this screen controls.
-          //
-          // Trade-off, deliberate: a drag that STARTS with the finger down
-          // on this row no longer arms pull-to-refresh either, since the
-          // surface's `pointerdown` handler (which is what starts tracking
-          // the drag) never runs for it now. Confirmed a drag beginning
-          // anywhere else on the screen still refreshes normally — this
-          // only removes the button row as a possible drag-start point,
-          // which a pull gesture should never have accepted in the first
-          // place.
-          onPointerDownCapture={(event) => event.stopPropagation()}
-        >
+        {/* Issue #246/#247: this button row used to be swallowed by the
+            screen's pull-to-refresh surface — a plain tap here armed
+            `usePullToRefresh`'s gesture and its `setPointerCapture` retargeted
+            the tap's `click` away from the button entirely, so neither "Show
+            more" nor "Mark as read" ever fired. Fixed at the source in
+            `usePullToRefresh`'s own `startFilter` (it now exempts every
+            interactive control, not just this card), so this row needs no
+            special handling of its own any more — see that hook's comment for
+            the fix and the trade-off it carries. */}
+        <div className="flex flex-wrap items-center gap-3">
           <Button
             variant="ghost"
             size="sm"

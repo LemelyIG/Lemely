@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type RefObject } from "react"
 import { pullStartAllowed, pullState, usesOwnScrollTop } from "./pullMath"
 import { useDragGesture } from "./useDragGesture"
+import { GESTURE_INTERACTIVE_SELECTOR } from "./interactiveSelector"
 import { EDGE_ZONE_PX } from "@/lib/nav/edgeSwipeBack"
 
 /*
@@ -103,6 +104,34 @@ export function usePullToRefresh(
     // keep panning vertically or the page stops scrolling through it.
     transformClamp: "positive",
     startFilter: (event) => {
+      // Issue #246/#247: a plain tap on a button or `<Link>` at the scroll
+      // top used to arm this gesture exactly like a real drag would —
+      // `useDragGesture`'s `onPointerDown` calls `setPointerCapture`
+      // regardless of whether the pointer ever moves, and a captured
+      // pointer retargets the tap's `click` away from whatever was under
+      // it. That silently killed "Mark as read"/"Show more" on
+      // Announcements, "Mark as read"/"Open"/"Mark all as read" on
+      // Notifications, and `<Link>` navigation on Overview's subject rows
+      // (a swallowed click stops a router `<Link>` exactly as dead as it
+      // stops a mutation button) — confirmed broken on all three screens,
+      // not just structurally similar.
+      //
+      // `startFilter`'s own doc comment already names the fix: returning
+      // `false` here is defined as "lets the event fall through ... instead
+      // of starting a drag", not "starts a drag but skips it if the pointer
+      // never moves". So a press that begins on a control and is then
+      // dragged does NOT become a pull, even past `threshold` — it falls
+      // through to whatever the control's own touch behaviour is (a native
+      // scroll, most likely), same as it always has for every other
+      // `startFilter` exemption (the edge-swipe strip, the scroll-top
+      // check). Making a press-then-drag on a control promote into a pull
+      // instead would mean deferring `setPointerCapture` past pointerdown
+      // for every `useDragGesture` consumer (`EdgeSwipeBack`, the nav
+      // drawer's dismiss-drag, the flashcard/quiz swipes), a materially
+      // larger change to the shared primitive's timing than this fix
+      // touches, and not what its own contract currently promises.
+      const target = event.target
+      if (target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null) return false
       const el = ref.current
       if (el === null) return false
       scrollSourceRef.current = scrollSourceOf(el)
