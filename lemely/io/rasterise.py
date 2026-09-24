@@ -80,6 +80,26 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     return pages
 
 
+PDF_MAGIC = b"%PDF-"
+"""The PDF header. One definition, because two spellings of it drifted.
+
+:func:`looks_like_pdf` and ``lemely.web.routers.review``'s crop route each
+tested for this independently, and disagreed on its length — four bytes there,
+five here — so a stream of exactly ``b"%PDF"`` was a PDF to the route and not to
+the extractor whose box the route was cropping.
+"""
+
+
+def looks_like_pdf(data: bytes) -> bool:
+    """True when *data* starts with the PDF magic bytes.
+
+    The bytes-taking half of the sniff, for callers that already hold the
+    content: the crop route has downloaded the object before it must decide what
+    to hand MuPDF, so re-reading a path there is not an option.
+    """
+    return data.startswith(PDF_MAGIC)
+
+
 def _looks_like_pdf(path: Path) -> bool:
     """Sniff the magic bytes rather than trust the file extension.
 
@@ -88,11 +108,12 @@ def _looks_like_pdf(path: Path) -> bool:
     ``image/*`` uploads as well as PDFs (``lemely/web/routers/teacher.py``),
     and a client-supplied filename is not authoritative (see
     ``lemely.web.upload_utils.safe_upload_name``, which does not trust it as
-    a path either). The PDF magic bytes are ``%PDF-``.
+    a path either). Delegates to :func:`looks_like_pdf` so this module and the
+    crop route cannot disagree about what a PDF looks like.
     """
     with path.open("rb") as handle:
-        header = handle.read(5)
-    return header == b"%PDF-"
+        header = handle.read(len(PDF_MAGIC))
+    return looks_like_pdf(header)
 
 
 def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:

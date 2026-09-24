@@ -1120,7 +1120,51 @@ def test_get_item_reports_a_source_box_when_one_was_persisted(
     class_service: ClassService,
     review_service: ReviewService,
 ) -> None:
-    """The teacher screen must know whether a crop exists before asking for it."""
+    """The teacher screen must know whether a crop exists before asking for it.
+
+    The attempt carries an ``upload_id`` because the flag reports on both halves
+    of "a crop may be available", not just the box: an attempt with a box and no
+    scan behind it is one the crop route is certain to refuse, and this fixture
+    used to be exactly that — it asserted ``True`` for an item that could never
+    produce an image. See ``ReviewItemDetail.has_source_box``.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=upload_id,
+                user_id=student,
+                storage_path=f"students/{student}/{upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=11,
+            )
+        )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), upload_id=upload_id
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+
+    assert detail.has_source_box is True
+
+
+def test_get_item_reports_no_source_box_when_the_attempt_has_no_upload(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """A box with no scan behind it must not be reported as a crop.
+
+    The flag's published contract is that a crop *may* be available and that a
+    404 is absence rather than an error. "May" covers storage expiry, which is a
+    timing condition nothing here can rule out — it does not cover a case the
+    route is certain to refuse on data this very read already holds.
+    """
     teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
     question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
     question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
@@ -1129,7 +1173,7 @@ def test_get_item_reports_a_source_box_when_one_was_persisted(
 
     detail = review_service.get_item(teacher, Role.teacher, item.id)
 
-    assert detail.has_source_box is True
+    assert detail.has_source_box is False
 
 
 def test_get_item_reports_no_source_box_when_the_columns_are_null(

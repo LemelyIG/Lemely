@@ -618,7 +618,13 @@ def test_review_item_detail_reports_whether_a_crop_exists(
     class_service: ClassService,
     review_service: ReviewService,
 ) -> None:
-    """`hasSourceBox` must reach the HTTP response, not stop at the dataclass."""
+    """`hasSourceBox` must reach the HTTP response, not stop at the dataclass.
+
+    The boxed attempt carries an ``upload_id``: the flag reports "a crop may be
+    available", which needs the scan as well as the box. This fixture had the box
+    and no scan, so it asserted ``true`` for an item the crop route was certain
+    to refuse — see ``test_has_source_box_is_false_when_the_attempt_has_no_upload``.
+    """
     teacher = _seed_user(pg_sessionmaker, Role.teacher)
     student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
     cls = class_service.create_class(teacher, "Physics 10A")
@@ -629,8 +635,20 @@ def test_review_item_detail_reports_whether_a_crop_exists(
     boxed_question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
     boxless_question = _question("2", awarded=1, maximum=2)
 
+    upload_id = uuid.uuid4()
+    with pg_sessionmaker.begin() as session:
+        session.add(
+            Upload(
+                id=upload_id,
+                user_id=student,
+                storage_path=f"students/{student}/{upload_id.hex}/scan.pdf",
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=11,
+            )
+        )
     boxed_attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
-        user_id=str(student), report=_report([boxed_question])
+        user_id=str(student), report=_report([boxed_question]), upload_id=upload_id
     )
     boxless_attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=str(student), report=_report([boxless_question])
@@ -1293,7 +1311,13 @@ def _fill(rgb: tuple[int, int, int]) -> list[float]:
     return [channel / 255 for channel in rgb]
 
 
-def _synthetic_scan(*, pages: int = _SCAN_PAGES, marked_page: int = _MARKED_PAGE) -> bytes:
+def _synthetic_scan(
+    *,
+    pages: int = _SCAN_PAGES,
+    marked_page: int = _MARKED_PAGE,
+    width: float = _PAGE_WIDTH_PT,
+    height: float = _PAGE_HEIGHT_PT,
+) -> bytes:
     """A synthetic multi-page PDF standing in for a student's scan.
 
     The page at ``marked_page`` carries a filled red rectangle covering exactly
@@ -1308,14 +1332,9 @@ def _synthetic_scan(*, pages: int = _SCAN_PAGES, marked_page: int = _MARKED_PAGE
     doc = pymupdf.open()
     try:
         for index in range(pages):
-            page = doc.new_page(width=_PAGE_WIDTH_PT, height=_PAGE_HEIGHT_PT)
+            page = doc.new_page(width=width, height=height)
             page.draw_rect(
-                pymupdf.Rect(
-                    0.70 * _PAGE_WIDTH_PT,
-                    0.70 * _PAGE_HEIGHT_PT,
-                    0.95 * _PAGE_WIDTH_PT,
-                    0.95 * _PAGE_HEIGHT_PT,
-                ),
+                pymupdf.Rect(0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height),
                 color=None,
                 fill=_fill(_OUTSIDE_RGB),
             )
@@ -1323,10 +1342,10 @@ def _synthetic_scan(*, pages: int = _SCAN_PAGES, marked_page: int = _MARKED_PAGE
                 ymin, xmin, ymax, xmax = _MARK_BOX
                 page.draw_rect(
                     pymupdf.Rect(
-                        xmin / 1000 * _PAGE_WIDTH_PT,
-                        ymin / 1000 * _PAGE_HEIGHT_PT,
-                        xmax / 1000 * _PAGE_WIDTH_PT,
-                        ymax / 1000 * _PAGE_HEIGHT_PT,
+                        xmin / 1000 * width,
+                        ymin / 1000 * height,
+                        xmax / 1000 * width,
+                        ymax / 1000 * height,
                     ),
                     color=None,
                     fill=_fill(_MARK_RGB),
@@ -1341,6 +1360,13 @@ def _synthetic_scan(*, pages: int = _SCAN_PAGES, marked_page: int = _MARKED_PAGE
 def storage_backend() -> FakeStorageBackend:
     """An in-memory :class:`StorageBackend` double — no network, no local disk."""
     return FakeStorageBackend()
+
+
+def _queue_rows(client: TestClient, caller: uuid.UUID) -> list[dict[str, object]]:
+    """The queue as ``caller`` sees it."""
+    _auth_as(client, caller, Role.teacher)
+    rows: list[dict[str, object]] = client.get("/api/teacher/review").json()["items"]
+    return rows
 
 
 def _use_storage(client: TestClient, storage: FakeStorageBackend) -> None:
@@ -1620,10 +1646,12 @@ def test_crop_route_404s_identically_for_a_missing_item_and_a_missing_box(
     that an id it guessed names a real item at all. Same status, same body,
     with only the id the caller itself supplied differing.
 
-    The expired-object case is in here rather than alone: "this student had a
-    scan and it has since been deleted" is exactly the kind of thing a differing
-    body would leak, and it is answered on a different code path (the route's,
-    not the lookup's) so it is the one most likely to drift.
+    All six reasons are in here rather than the three that a body-equality
+    assertion first covered: the console item and the missing ``uploads`` row
+    were reasons nothing asserted, and the expired object is answered on a
+    different code path (the route's, not the lookup's) so it is the one most
+    likely to drift. "This student had a scan and it has since been deleted" is
+    exactly the kind of thing a differing body would leak.
     """
     teacher, boxless = _seed_boxed_review_item(
         pg_sessionmaker,
@@ -1640,6 +1668,23 @@ def test_crop_route_404s_identically_for_a_missing_item_and_a_missing_box(
         store_object=False,
         student_name="Cara",
     )
+    no_upload_teacher, no_upload = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_synthetic_scan(),
+        with_upload=False,
+        student_name="Dev",
+    )
+    orphan_teacher, orphan = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_synthetic_scan(),
+        student_name="Esme",
+    )
+    console_teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    console_paper = _seed_console_paper(pg_sessionmaker, uploader=console_teacher)
     unknown = uuid.uuid4()
     boxed_teacher, boxed = _seed_boxed_review_item(
         pg_sessionmaker,
@@ -1651,18 +1696,72 @@ def test_crop_route_404s_identically_for_a_missing_item_and_a_missing_box(
     _use_review_service(client, review_service)
     _use_storage(client, storage_backend)
 
+    # `upload_row_missing` cannot arise while the FK holds -- which is the point
+    # of the branch, and the reason the row has to be manufactured here. Dropped
+    # in this test's own throwaway database only.
+    with pg_sessionmaker.begin() as session:
+        fk = session.execute(
+            sa.text(
+                "SELECT conname FROM pg_constraint WHERE conrelid = 'attempts'::regclass "
+                "AND contype = 'f' AND pg_get_constraintdef(oid) LIKE '%uploads%'"
+            )
+        ).scalar_one()
+        session.execute(sa.text(f'ALTER TABLE attempts DROP CONSTRAINT "{fk}"'))
+        orphaned = session.execute(
+            sa.text(
+                "SELECT upload_id FROM attempts WHERE id = "
+                "(SELECT attempt_id FROM review_queue WHERE id = :item)"
+            ),
+            {"item": orphan},
+        ).scalar_one()
+        session.execute(sa.text("DELETE FROM uploads WHERE id = :uid"), {"uid": orphaned})
+
+    console_item = next(
+        row
+        for row in _queue_rows(client, console_teacher)
+        if row["source"] == "console_paper" and row["paperId"] == str(console_paper)
+    )["itemId"]
+
     # The route exists and serves images -- otherwise the 404s below would match
     # each other trivially, for the wrong reason.
     _auth_as(client, boxed_teacher, Role.teacher)
     assert client.get(f"/api/teacher/review/{boxed}/crop").status_code == 200
 
     bodies = set()
-    for caller, item_id in ((teacher, boxless), (gone_teacher, gone), (teacher, unknown)):
+    reasons = set()
+    absences = (
+        (teacher, boxless),
+        (gone_teacher, gone),
+        (no_upload_teacher, no_upload),
+        (orphan_teacher, orphan),
+        (console_teacher, console_item),
+        (teacher, unknown),
+    )
+    for caller, item_id in absences:
         _auth_as(client, caller, Role.teacher)
-        resp = client.get(f"/api/teacher/review/{item_id}/crop")
-        assert resp.status_code == 404
+        with structlog.testing.capture_logs() as logs:
+            resp = client.get(f"/api/teacher/review/{item_id}/crop")
+        assert resp.status_code == 404, (item_id, resp.status_code)
         bodies.add(resp.json()["detail"].replace(str(item_id), "<id>"))
+        for entry in logs:
+            if entry["event"] == "review_crop_absent":
+                reasons.add(entry["reason"])
+            elif entry["event"] == "review_crop_object_missing":
+                reasons.add("object_missing")
+
     assert len(bodies) == 1, bodies
+    # And each 404 came from the branch it was seeded to reach. Without this the
+    # six requests above could all be answered by one branch -- a fixture that
+    # failed to produce its condition would still return a matching body, and the
+    # equality assertion would pass while covering nothing.
+    assert reasons == {
+        "no_box",
+        "object_missing",
+        "no_upload",
+        "upload_row_missing",
+        "console_item",
+        "no_such_item",
+    }, reasons
 
 
 def test_crop_route_404s_when_the_stored_object_has_gone(
@@ -1853,6 +1952,18 @@ def test_crop_route_refuses_a_box_that_survived_without_revalidation() -> None:
             _require_renderable_box(SourceBox.model_construct(page=0, box=coords), item_id="item")
         assert caught.value.status_code == 422
 
+    # A negative page is the worst of these, and the only one that would not
+    # have looked like a failure: `SourceBox.page`'s `ge=0` is validator-only,
+    # the route's `box.page >= doc.page_count` bound does not exclude it, and
+    # `doc.load_page(-1)` does not raise -- it returns the LAST page. So an
+    # unvalidated `page=-1` served a different student's-page region with a 200
+    # and every appearance of success.
+    with pytest.raises(HTTPException) as caught:
+        _require_renderable_box(
+            SourceBox.model_construct(page=-1, box=list(_MARK_BOX)), item_id="item"
+        )
+    assert caught.value.status_code == 422
+
     # The same predicate must let a real box through, or it would prove nothing.
     assert _require_renderable_box(SourceBox(page=0, box=list(_MARK_BOX)), item_id="item") is None
 
@@ -1900,3 +2011,221 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
             ).convert("RGB")
             assert _dominant_colour(via_extractor) == expected_rgb
             assert _dominant_colour(via_renderer) == expected_rgb
+
+
+# ---------------------------------------------------------------------------
+# Review fixes on 1a0dabc2 (I-1, I-2, M-2, M-3, M-4).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def lenient_client() -> Iterator[TestClient]:
+    """A client that returns 500 rather than re-raising the handler's exception.
+
+    ``TestClient``'s default re-raises, which makes "this must never be a 500"
+    unassertable: the test errors out before it sees a status code. This one
+    lets the response through so the assertion can be written as the claim.
+    """
+    app = create_app()
+    yield TestClient(app, raise_server_exceptions=False)
+    app.dependency_overrides.clear()
+
+
+def test_crop_route_never_500s_on_a_page_too_large_to_rasterise(
+    lenient_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """A tiny PDF declaring enormous pages is a decompression bomb, not a big upload.
+
+    Under 1.4KB, three pages, each declaring an 8000x8000pt page: at 150 dpi that
+    is a ~278 megapixel render, past twice ``PIL``'s ``MAX_IMAGE_PIXELS``, so
+    ``DecompressionBombError`` is raised from ``Image.open`` inside
+    ``crop_and_upscale`` -- which sat outside the route's
+    ``except Exception -> 422`` block, so it escaped as a 500. A page landing
+    just under that ceiling did not raise at all and simply rendered, at
+    gigabytes of peak RSS for one request.
+
+    It is reachable: the student upload route validates neither content type nor
+    page geometry, and extraction does not pre-empt it either, because
+    ``rasterise_pdf_to_pages`` renders the same page fine (pypdfium2 has no bomb
+    ceiling). So a ``source_box`` is persisted for exactly the upload this route
+    then chokes on.
+
+    Whatever the outcome, it is this route's documented vocabulary -- an image,
+    or the 422 every other unrenderable scan gets. Never a 500.
+    """
+    _use_review_service(lenient_client, review_service)
+    _use_storage(lenient_client, storage_backend)
+
+    # 8000pt trips PIL's ceiling at the preferred DPI; 500,000pt is over the
+    # render ceiling even at 1 dpi, so it is refused before anything is
+    # rasterised. Both are the same class of input and both must stay inside this
+    # route's vocabulary.
+    for index, size in enumerate((8000.0, 500_000.0)):
+        scan = _synthetic_scan(width=size, height=size)
+        # The bomb's whole character: a trivially small file, so no upload-size
+        # limit anywhere upstream would ever have stopped it.
+        assert len(scan) < 2_000, (size, len(scan))
+
+        teacher, item_id = _seed_boxed_review_item(
+            pg_sessionmaker,
+            class_service,
+            storage=storage_backend,
+            scan=scan,
+            student_name=f"Bomb {index}",
+        )
+        _auth_as(lenient_client, teacher, Role.teacher)
+
+        resp = lenient_client.get(f"/api/teacher/review/{item_id}/crop")
+        assert resp.status_code != 500, (size, resp.text)
+        assert resp.status_code in (200, 422), (size, resp.status_code)
+
+
+def test_render_dpi_is_clamped_to_a_pixel_ceiling() -> None:
+    """The DPI is a resolution knob, so clamping it costs sharpness, never correctness.
+
+    ``source_box`` is normalised 0-1000, so the crop lands on the same region of
+    the page at any render scale -- which is exactly why a page whose area at
+    the preferred DPI would exceed ``_MAX_RENDER_PX`` can be rendered smaller
+    instead of refused. A4 at 150 dpi is ~2.2 megapixels, far under the ceiling,
+    so the ordinary case must come back unclamped.
+    """
+    from lemely.web.routers.review import (
+        _CROP_RENDER_DPI,
+        _MAX_RENDER_PX,
+        _render_dpi_for,
+    )
+
+    a4 = _render_dpi_for(595.0, 842.0)
+    assert a4 == _CROP_RENDER_DPI
+
+    for width, height in ((8000.0, 8000.0), (6000.0, 6000.0), (20_000.0, 3_000.0)):
+        dpi = _render_dpi_for(width, height)
+        assert dpi is not None, (width, height)
+        assert 1 <= dpi <= _CROP_RENDER_DPI
+        pixels = (width / 72 * dpi) * (height / 72 * dpi)
+        assert pixels <= _MAX_RENDER_PX, (width, height, dpi, pixels)
+        # Clamped, not merely capped at the preferred value: a page this size
+        # cannot be rendered at 150 dpi inside the ceiling, so a function that
+        # returned `_CROP_RENDER_DPI` regardless would pass the bound above
+        # only by accident of the arithmetic.
+        assert dpi < _CROP_RENDER_DPI, (width, height, dpi)
+
+    # Past 1 dpi there is nothing left to clamp, and a PDF may declare such a
+    # page -- pymupdf accepts a 500,000pt `MediaBox`. `None` is "refuse", which
+    # the route answers as 422; the alternative is a floor of 1 dpi that
+    # silently breaches the very ceiling this function holds.
+    assert _render_dpi_for(500_000.0, 500_000.0) is None
+
+
+def test_has_source_box_is_false_when_the_attempt_has_no_upload(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """The flag must not be true for an item the crop route is certain to refuse.
+
+    Five ``source_box_*`` columns and no ``attempts.upload_id`` is a real
+    combination -- a quiz or an imported attempt can carry a box with no scan
+    behind it -- and the flag said ``true`` for it while the crop route returned
+    404. The check costs nothing: ``get_item`` already holds the ``attempt``.
+
+    Storage expiry is deliberately NOT part of this: it is a timing condition,
+    so nothing checked when the detail is read can promise anything about the
+    object at crop time. That is why the flag's contract says a crop "may be"
+    available and a 404 is absence, not an error.
+    """
+    teacher, no_upload = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_synthetic_scan(),
+        with_upload=False,
+    )
+    with_upload_teacher, with_upload = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=_synthetic_scan(),
+        student_name="Ben",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    _auth_as(client, teacher, Role.teacher)
+    assert client.get(f"/api/teacher/review/{no_upload}").json()["hasSourceBox"] is False
+    assert client.get(f"/api/teacher/review/{no_upload}/crop").status_code == 404
+
+    # The box alone is not what the flag reports, but it is still necessary: the
+    # item that has both must still say true, or the flag would just be off.
+    _auth_as(client, with_upload_teacher, Role.teacher)
+    assert client.get(f"/api/teacher/review/{with_upload}").json()["hasSourceBox"] is True
+    assert client.get(f"/api/teacher/review/{with_upload}/crop").status_code == 200
+
+
+def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
+    lenient_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The area ceiling and the error handler are two defences, and this is the second.
+
+    With ``_MAX_RENDER_PX`` in place an ordinary scan never reaches PIL's own
+    ceiling, which would leave the handler's coverage of ``crop_and_upscale``
+    asserted by nothing. So PIL's ceiling is lowered instead of the page being
+    enlarged: ``Image.MAX_IMAGE_PIXELS`` is dropped far below an A4 render, which
+    makes ``Image.open`` inside ``crop_and_upscale`` raise
+    ``DecompressionBombError`` on a perfectly ordinary page.
+
+    That is the exact shape of the escape: ``crop_and_upscale`` used to sit after
+    the ``except Exception -> 422`` block, so anything PIL raised left the route
+    as a 500. Independent of page geometry, and of this module's own constant.
+    """
+    from PIL import Image as PILImage
+
+    monkeypatch.setattr(PILImage, "MAX_IMAGE_PIXELS", 16)
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(lenient_client, review_service)
+    _use_storage(lenient_client, storage_backend)
+    _auth_as(lenient_client, teacher, Role.teacher)
+
+    resp = lenient_client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 422, (resp.status_code, resp.text)
+    assert "Could not render this scan" in resp.json()["detail"]
+
+
+def test_the_route_and_the_extractor_sniff_a_pdf_the_same_way(tmp_path: Path) -> None:
+    """One check, two spellings, and they already disagreed on four bytes.
+
+    The crop route tested ``startswith(b"%PDF")``; ``rasterise`` tested
+    ``== b"%PDF-"``. A stream of exactly ``b"%PDF"`` was a PDF to one and not to
+    the other, which means the route could hand MuPDF a ``filetype`` the
+    extractor's own dispatch would have rejected. Asserted over the same bytes
+    through both entry points, so the two cannot drift apart again.
+    """
+    from lemely.io.rasterise import _looks_like_pdf, looks_like_pdf
+
+    headers = [
+        b"%PDF-1.4\n%\xe2\xe3\xcf\xd3\n",
+        b"%PDF-",
+        b"%PDF",  # the case the two spellings disagreed on
+        b"%PDFX",
+        b"\x89PNG\r\n\x1a\n",
+        b"%",
+        b"",
+    ]
+    for header in headers:
+        path = tmp_path / "scan"
+        path.write_bytes(header)
+        assert looks_like_pdf(header) == _looks_like_pdf(path), header

@@ -334,8 +334,16 @@ class ReviewItemDetail:
     always empty (see :func:`_console_item_detail`).
     """
     has_source_box: bool = False
-    """True when this question result has all five `source_box_*` columns set,
-    so `GET /api/teacher/review/{item_id}/crop` will return an image.
+    """True when all five `source_box_*` columns are set, so a crop may be
+    available. The crop route can still answer 404 — the attempt may have no
+    upload, or the stored object may have expired — so a client must render a
+    404 as absence, never as an error.
+
+    The no-upload case is excluded from the flag (it costs nothing: `get_item`
+    already holds the attempt). Storage expiry deliberately is not: it is a
+    *timing* condition, so nothing checked when this DTO is built can promise
+    anything about the object at crop time, and a check here would add a query
+    and a race without changing what the flag can honestly claim.
 
     A flag rather than the coordinates: the client asks the route for an
     image and never does the arithmetic, and coordinates on the wire would be
@@ -556,13 +564,22 @@ class ReviewService:
                 if qr is not None
                 else []
             )
-            # One column suffices as the test: `ck_question_results_source_box_all_or_none`
+            # One column suffices as the box test: `source_box_all_or_none`
             # makes the five all-or-nothing, so `source_box_page` alone is never
             # `NULL` while the other four are set (or vice versa). Read here,
             # not below, for the same reason as `points` above -- it is a
             # scalar column so it would work either way, but it belongs next
             # to the other reads made while the session is still open.
-            has_source_box = qr is not None and qr.source_box_page is not None
+            #
+            # `upload_id` is in the test because a box with no scan behind it is
+            # a real combination (a quiz, an imported attempt) for which the
+            # crop route is *certain* to 404 -- so reporting `true` for it would
+            # be the flag lying rather than the flag being approximate. Free:
+            # `attempt` is already in hand from the line above, no second query.
+            # Storage expiry stays out on purpose; see `has_source_box`.
+            has_source_box = (
+                qr is not None and qr.source_box_page is not None and attempt.upload_id is not None
+            )
         return ReviewItemDetail(
             row=row,
             student_answer=qr.student_answer if qr is not None else None,

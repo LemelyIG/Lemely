@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import math
 import uuid
 from datetime import datetime
 from typing import TYPE_CHECKING, Annotated, NoReturn
@@ -37,7 +38,7 @@ from lemely.db.review_repo import (
     ReviewService,
     ReviewValidationError,
 )
-from lemely.io.rasterise import RasterisedPage
+from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import crop_and_upscale
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
@@ -313,6 +314,46 @@ def get_review_item(
 # one this route does not share because it renders a single page on request.
 _CROP_RENDER_DPI = 150
 
+# An area ceiling on the render, because a scan's *page geometry* is unvalidated
+# and unbounded while its file size is neither large nor a useful proxy: a PDF
+# well under 2KB can declare three 8000x8000pt pages, which at
+# ``_CROP_RENDER_DPI`` is a ~278 megapixel image. ``PIL`` warns above
+# ``Image.MAX_IMAGE_PIXELS`` and raises ``DecompressionBombError`` above twice
+# it (~179 megapixels here), so that page raises; a page landing between the two
+# renders instead — at gigabytes of resident memory for one request. Nothing upstream
+# stops either: the student upload route checks neither content type nor page
+# geometry, and extraction does not pre-empt it because ``rasterise_pdf_to_pages``
+# renders the same page without complaint (pypdfium2 has no bomb ceiling), so a
+# ``source_box`` is persisted for exactly the upload this route would choke on.
+#
+# Clamping the DPI is safe here in a way it would not be for a page-faithful
+# render: ``source_box`` is normalised 0-1000, so a lower DPI lands the crop on
+# exactly the same region of the page and costs resolution only, never
+# correctness. 40 megapixels is ~18x an A4 page at ``_CROP_RENDER_DPI``, so no
+# real scan is ever clamped.
+_MAX_RENDER_PX = 40_000_000
+
+
+def _render_dpi_for(width_pt: float, height_pt: float) -> int | None:
+    """The DPI to render a ``width_pt`` x ``height_pt`` page at, area-bounded.
+
+    ``None`` when the page cannot be rendered within :data:`_MAX_RENDER_PX` at
+    all — reachable, since a PDF may declare a 500,000pt page, which exceeds the
+    ceiling even at 1 dpi. The caller answers 422 for that rather than rendering
+    something it has already decided is too large.
+    """
+    inches = (width_pt / 72.0) * (height_pt / 72.0)
+    if inches <= 0:
+        # A degenerate page is not a scale problem; let the renderer speak.
+        return _CROP_RENDER_DPI
+    # pixels = inches * dpi**2, so the largest usable dpi is sqrt(ceiling/inches).
+    # Truncated, never rounded: rounding up would put the render over the ceiling
+    # this function exists to hold.
+    dpi = int(math.sqrt(_MAX_RENDER_PX / inches))
+    if dpi < 1:
+        return None
+    return min(_CROP_RENDER_DPI, dpi)
+
 
 def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
     """Re-check a box read back from columns before any pixel arithmetic runs.
@@ -329,7 +370,13 @@ def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
     the route fails closed, rather than inferring either from what came out.
     """
     ymin, xmin, ymax, xmax = box.box
-    if not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
+    # ``page`` first, and not folded into the route's ``>= doc.page_count``
+    # bound: ``SourceBox.page``'s ``ge=0`` is validator-only too, that bound does
+    # not exclude a negative, and ``doc.load_page(-1)`` does not raise — it
+    # returns the LAST page. So an unvalidated ``page=-1`` served the wrong
+    # region of the wrong page with a 200 and every appearance of success, which
+    # is worse than any of the coordinate cases below.
+    if box.page < 0 or not (0 <= ymin < ymax <= 1000 and 0 <= xmin < xmax <= 1000):
         log.warning("review_crop_box_unusable", item_id=item_id, page=box.page, box=box.box)
         raise HTTPException(status_code=422, detail="Stored crop region is not renderable")
 
@@ -397,8 +444,10 @@ def get_review_item_crop(
     # Sniffed from the bytes, not from ``uploads.content_type``: a scan may be
     # an ``image/*`` upload rather than a PDF (``rasterise_scan_to_pages``
     # accepts both, and dispatches on content for the same reason), and MuPDF
-    # identifies an image stream itself when given no ``filetype``.
-    filetype = "pdf" if data.startswith(b"%PDF") else None
+    # identifies an image stream itself when given no ``filetype``. Through
+    # ``looks_like_pdf`` rather than a second spelling of the same check, which
+    # is how this and ``rasterise``'s own sniff came to disagree on four bytes.
+    filetype = "pdf" if looks_like_pdf(data) else None
     try:
         # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
         # call needs the ignore. Narrowed to this one code, not the module.
@@ -421,25 +470,44 @@ def get_review_item_crop(
                         f"of a {doc.page_count}-page scan"
                     ),
                 )
-            pixmap = doc.load_page(box.page).get_pixmap(dpi=_CROP_RENDER_DPI)
+            page = doc.load_page(box.page)
+            dpi = _render_dpi_for(page.rect.width, page.rect.height)
+            if dpi is None:
+                log.warning(
+                    "review_crop_page_too_large",
+                    item_id=item_id,
+                    page=box.page,
+                    width_pt=page.rect.width,
+                    height_pt=page.rect.height,
+                )
+                raise HTTPException(
+                    status_code=422, detail="This scan's pages are too large to render"
+                )
+            pixmap = page.get_pixmap(dpi=dpi)
             png: bytes = pixmap.tobytes("png")
             page_width, page_height = pixmap.width, pixmap.height
+
+        # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8%
+        # padding and the degenerate-rounding case; a second copy of it here is
+        # where one of those edges would get missed. Handed a fresh list, so
+        # nothing downstream can rescale the box this request was given in place.
+        #
+        # Inside this ``try``, not after it: everything PIL does is PIL raising,
+        # and ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
+        # outside, a page large enough to trip it escaped as a 500 instead of the
+        # 422 every other unrenderable scan gets.
+        crop = crop_and_upscale(
+            RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
+            list(box.box),
+        )
     except HTTPException:
         raise
     except Exception as exc:
         # A scan that cannot be rendered is not a server fault — it is a stored
-        # file that is not the document type it claimed to be.
+        # file that is not the document type it claimed to be, or one whose page
+        # geometry no renderer will accept.
         log.warning("review_crop_render_failed", item_id=item_id, error=str(exc))
         raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
-
-    # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8% padding
-    # and the degenerate-rounding case; a second copy of it here is where one of
-    # those edges would get missed. Handed a fresh list, so nothing downstream
-    # can rescale the box this request was given in place.
-    crop = crop_and_upscale(
-        RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
-        list(box.box),
-    )
 
     # Immutable for the lifetime of the item id: the stored scan never changes
     # once uploaded and the box is written once, so the crop is cacheable for

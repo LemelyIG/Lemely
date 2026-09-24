@@ -202,10 +202,11 @@ class ReviewItemDetailDTO(ApiModel):
     points: list[ReviewItemPointDTO]
     """Empty for a ``"console_paper"`` row — see ``ReviewItemDetail.points``."""
     hasSourceBox: bool = False
-    """True when a scan crop is available for this question — see
-    ``ReviewItemDetail.has_source_box``. Always ``GET
-    /api/teacher/review/{item_id}/crop`` returns an image when this is
-    ``true``; the client never receives the coordinates themselves."""
+    """True when all five ``source_box_*`` columns are set, so a crop may be
+    available — see ``ReviewItemDetail.has_source_box``. ``GET
+    /api/teacher/review/{item_id}/crop`` can still answer 404 (the stored object
+    may have expired), so a client must render a 404 as absence, never as an
+    error. The client never receives the coordinates themselves."""
 
 
 class ResolveReviewRequestDTO(ApiModel):
