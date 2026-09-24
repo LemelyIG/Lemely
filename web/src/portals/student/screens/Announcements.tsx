@@ -195,6 +195,15 @@ function AnnouncementCard({
           // propagation here in the capture phase, before the surface's
           // (bubble-phase) listener ever sees the event, is the same
           // exemption applied at the point this screen controls.
+          //
+          // Trade-off, deliberate: a drag that STARTS with the finger down
+          // on this row no longer arms pull-to-refresh either, since the
+          // surface's `pointerdown` handler (which is what starts tracking
+          // the drag) never runs for it now. Confirmed a drag beginning
+          // anywhere else on the screen still refreshes normally — this
+          // only removes the button row as a possible drag-start point,
+          // which a pull gesture should never have accepted in the first
+          // place.
           onPointerDownCapture={(event) => event.stopPropagation()}
         >
           <Button
