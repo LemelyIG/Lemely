@@ -13,7 +13,8 @@ sweeper runs a fourth that is not a notification:
   notification: permanently removes papers deleted longer ago than the
   retention window (paper-deletion design §7). It lives in
   :mod:`lemely.web.purge` and runs only on a sweeper built with storage and a
-  bucket.
+  bucket. :func:`lemely.web.purge.purge_expired_teacher_papers` runs beside it,
+  under the same condition, for a teacher's deleted console papers (R2).
 
 **Idempotency is migration 0018's unique index, not anything in this file.**
 Every job passes a ``dedupe_key`` that names the thing being announced (the
@@ -48,7 +49,7 @@ from lemely.db.models.study_plan import StudyPlanSession
 from lemely.db.models.users import User
 from lemely.db.xp_repo import DEFAULT_ZONE, resolve_zone
 from lemely.web.notify import notify_safely
-from lemely.web.purge import purge_expired_papers
+from lemely.web.purge import purge_expired_papers, purge_expired_teacher_papers
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Iterable, Sequence
@@ -511,6 +512,14 @@ class Sweeper:
                 (
                     "purge_expired_papers",
                     lambda: purge_expired_papers(self.sessionmaker, storage, bucket, now=moment),
+                )
+            )
+            jobs.append(
+                (
+                    "purge_expired_teacher_papers",
+                    lambda: purge_expired_teacher_papers(
+                        self.sessionmaker, storage, bucket, now=moment
+                    ),
                 )
             )
         return run_jobs(jobs)

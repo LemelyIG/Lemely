@@ -38,8 +38,9 @@ if TYPE_CHECKING:
 #: Permitted callers, and no others: this module (the definition),
 #: ``deletion_repo.py`` (delete, restore, and the recently-deleted lists,
 #: student and teacher), ``purge.py``, ``attempt_repo.py`` (``_lock_live_upload``
-#: must see a deleted upload to refuse it), and ``admin_repo.py`` (the
-#: purge-backlog metric). Anywhere else is a bug. Callers use this constant,
+#: must see a deleted upload to refuse it), ``admin_repo.py`` (the
+#: purge-backlog metric), and ``teacher_paper_repo.py`` (``finish`` must see a
+#: deleted console paper to refuse it). Anywhere else is a bug. Callers use this constant,
 #: never the bare string.
 INCLUDE_DELETED = "include_deleted"
 

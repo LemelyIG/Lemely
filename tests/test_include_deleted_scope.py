@@ -2,11 +2,14 @@
 
 ``INCLUDE_DELETED``/``include_deleted`` is the one way to see a soft-deleted
 ``Attempt``, ``Upload``, or ``TeacherPaper`` row, and it must not spread beyond
-its five permitted callers (``lemely/db/session.py``, the definition;
+its six permitted callers (``lemely/db/session.py``, the definition;
 ``lemely/db/deletion_repo.py``; ``lemely/web/purge.py``;
 ``lemely/db/attempt_repo.py``'s ``_lock_live_upload``, which must see a deleted
-upload to refuse persisting an attempt onto it — Task 5a; and, as of this task,
-``lemely/db/admin_repo.py``'s purge-backlog metric).
+upload to refuse persisting an attempt onto it — Task 5a;
+``lemely/db/admin_repo.py``'s purge-backlog metric; and
+``lemely/db/teacher_paper_repo.py``'s ``finish``, the console analogue of Task
+5a's lock, which must see a deleted paper to refuse writing a run onto it —
+Task 16).
 
 The detector walks each file's AST rather than grepping for text, so it
 recognises the three real spellings a caller can use --- the ``INCLUDE_DELETED``
@@ -17,9 +20,8 @@ ignoring the same text sitting in a docstring or a comment, which carries no
 runtime meaning. ``lemely/db/models/attempts.py`` mentions
 ``include_deleted`` only in a docstring and must NOT appear in the found set.
 
-Task 16 will add teacher-paper deletion inside ``deletion_repo.py`` and purge
-inside ``purge.py`` — both already-allowed files — so this allowlist should not
-need to grow when that lands.
+Task 16's delete, restore, list and purge landed in the already-allowed
+``deletion_repo.py`` and ``purge.py``; only the in-flight guard added a file.
 """
 
 from __future__ import annotations
@@ -58,13 +60,14 @@ def _find_include_deleted_files(root: Path) -> set[Path]:
 
 
 def test_include_deleted_appears_only_where_it_is_allowed() -> None:
-    """The escape hatch must not spread beyond its five permitted callers."""
+    """The escape hatch must not spread beyond its six permitted callers."""
     allowed = {
         Path("lemely/db/session.py"),
         Path("lemely/db/deletion_repo.py"),
         Path("lemely/web/purge.py"),
         Path("lemely/db/attempt_repo.py"),
         Path("lemely/db/admin_repo.py"),
+        Path("lemely/db/teacher_paper_repo.py"),
     }
     found = _find_include_deleted_files(Path("lemely"))
     assert found == allowed

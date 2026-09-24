@@ -59,6 +59,12 @@ to ignore it.
 deleted upload is logged at error and that upload is skipped whole; purge never
 cascades past it.
 
+**A teacher's console paper (R2) is purged by the same pass, separately.**
+:func:`purge_expired_teacher_papers` applies the same cutoff, the same
+object-first order and the same two-transaction re-check to ``teacher_papers``.
+It is simpler: one row, no attempts, its review items cascade with it, and its
+objects are the row's own ``storage_path`` and ``scheme_storage_path``.
+
 **Throughput limit, accepted.** A pass takes at most ``limit`` expired attempts,
 oldest ``(deleted_at, id)`` first. An upload whose objects persistently fail to
 delete, or which breaks the invariant, is re-selected every pass and holds its
@@ -79,6 +85,7 @@ from sqlalchemy import select
 
 from lemely.core.deletion import purge_cutoff
 from lemely.db.models.attempts import Attempt, Upload
+from lemely.db.models.teacher_papers import TeacherPaper
 from lemely.db.session import INCLUDE_DELETED
 from lemely.runtime.errors import ExternalServiceError
 
@@ -306,6 +313,104 @@ def _delete_attempts(
     return int(getattr(result, "rowcount", 0) or 0)
 
 
+def purge_expired_teacher_papers(
+    session_factory: sessionmaker[Session],
+    storage: StorageBackend,
+    bucket: str,
+    *,
+    now: datetime | None = None,
+    limit: int = DEFAULT_PURGE_LIMIT,
+) -> int:
+    """Permanently remove console papers deleted at or before :func:`purge_cutoff`.
+
+    Returns the number of papers removed. The same contract as
+    :func:`purge_expired_papers`: objects first with no lock held, then the row
+    under a re-taken lock, one paper's storage or SQLAlchemy failure logged
+    and skipped, anything else ending the pass.
+    """
+    cutoff = purge_cutoff(now or datetime.now(UTC))
+    with session_factory() as session:
+        candidates = session.scalars(
+            select(TeacherPaper.id)
+            .where(TeacherPaper.deleted_at.is_not(None), TeacherPaper.deleted_at <= cutoff)
+            .order_by(TeacherPaper.deleted_at, TeacherPaper.id)
+            .limit(limit)
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).all()
+    purged = 0
+    for paper_id in candidates:
+        try:
+            purged += _purge_teacher_paper(session_factory, storage, bucket, paper_id, cutoff)
+        except sa.exc.SQLAlchemyError:
+            log.warning("purge_teacher_paper_failed", paper_id=str(paper_id), exc_info=True)
+    if purged:
+        log.info("purge_expired_teacher_papers", count=purged)
+    return purged
+
+
+def _purge_teacher_paper(
+    session_factory: sessionmaker[Session],
+    storage: StorageBackend,
+    bucket: str,
+    paper_id: uuid.UUID,
+    cutoff: datetime,
+) -> int:
+    """Purge one console paper: its objects, then its row (review items cascade)."""
+    with session_factory.begin() as session:
+        paper = _lock_teacher_paper(session, paper_id)
+        decision = None if paper is None else _teacher_paper_objects(paper, cutoff)
+    if decision is None:
+        return 0
+
+    try:
+        for path in decision:
+            storage.delete(bucket, path)
+    except ExternalServiceError:
+        log.warning("purge_teacher_object_delete_failed", paper_id=str(paper_id), exc_info=True)
+        return 0
+
+    with session_factory.begin() as session:
+        paper = _lock_teacher_paper(session, paper_id)
+        if paper is None:
+            # A concurrent pass took the same decision and finished first.
+            log.info("purge_already_done", paper_id=str(paper_id))
+            return 0
+        if _teacher_paper_objects(paper, cutoff) != decision:
+            log.error(
+                "purge_teacher_paper_changed_after_object_delete",
+                paper_id=str(paper_id),
+                objects_deleted=True,
+            )
+            return 0
+        result = session.execute(
+            sa.delete(TeacherPaper)
+            .where(
+                TeacherPaper.id == paper_id,
+                TeacherPaper.deleted_at.is_not(None),
+                TeacherPaper.deleted_at <= cutoff,
+            )
+            .execution_options(**{INCLUDE_DELETED: True}, synchronize_session=False)
+        )
+        return int(getattr(result, "rowcount", 0) or 0)
+
+
+def _lock_teacher_paper(session: Session, paper_id: uuid.UUID) -> TeacherPaper | None:
+    """Lock the console paper row, deleted or not; ``None`` if it is gone."""
+    return session.scalars(
+        select(TeacherPaper)
+        .where(TeacherPaper.id == paper_id)
+        .with_for_update()
+        .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+    ).one_or_none()
+
+
+def _teacher_paper_objects(paper: TeacherPaper, cutoff: datetime) -> tuple[str, ...] | None:
+    """The objects to delete for an expired paper, or ``None`` if it has not expired."""
+    if paper.deleted_at is None or paper.deleted_at > cutoff:
+        return None
+    return tuple(p for p in (paper.storage_path, paper.scheme_storage_path) if p is not None)
+
+
 def _scheme_path(storage_path: str) -> str:
     """Where a student's own mark-scheme scan sits beside ``storage_path``.
 
@@ -315,4 +420,4 @@ def _scheme_path(storage_path: str) -> str:
     return f"{PurePosixPath(storage_path).parent.as_posix()}/mark_scheme.pdf"
 
 
-__all__ = ["DEFAULT_PURGE_LIMIT", "purge_expired_papers"]
+__all__ = ["DEFAULT_PURGE_LIMIT", "purge_expired_papers", "purge_expired_teacher_papers"]

@@ -632,8 +632,15 @@ class ReviewService:
         caller_uuid = _as_uuid(caller_id)
         visible = self._visible_class_map(caller_id, caller_role)
         with self._sessionmaker() as session, session.begin():
+            # Locked, as in `resolve`: a close must serialize with a deletion
+            # withdrawing the same item.
             item, attempt, qr, paper = self._find_any_item(
-                session, item_id, visible, caller_id=caller_id, caller_role=caller_role
+                session,
+                item_id,
+                visible,
+                caller_id=caller_id,
+                caller_role=caller_role,
+                for_update=True,
             )
             if item.reason not in (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_flag):
                 raise ReviewValidationError(
@@ -782,14 +789,25 @@ class ReviewService:
             role = _as_role(caller_role)
             if role is Role.platform_admin:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
-            paper = session.scalars(
-                select(TeacherPaper).where(
-                    TeacherPaper.id == item.teacher_paper_id,
-                    teacher_paper_visible(_as_uuid(caller_id), role),
+            # ``for_update`` locks the paper row: the lock a teacher's delete
+            # takes before it withdraws this paper's items. If the delete
+            # commits first, this re-read sees the paper gone and the close is
+            # refused; otherwise the delete waits and skips a closed item.
+            stmt = select(TeacherPaper).where(
+                TeacherPaper.id == item.teacher_paper_id,
+                teacher_paper_visible(_as_uuid(caller_id), role),
+            )
+            if for_update:
+                stmt = stmt.with_for_update(of=TeacherPaper).execution_options(
+                    populate_existing=True
                 )
-            ).one_or_none()
+            paper = session.scalars(stmt).one_or_none()
             if paper is None:
                 raise ReviewOwnershipError(f"Caller may not access review item {item_uuid}")
+            if for_update:
+                # The item was read before the lock; its status must be the
+                # one committed by whoever held the paper before us.
+                session.refresh(item)
             return item, None, None, paper
         # ``for_update`` takes the same attempt-then-question lock, in the same
         # order, that ``SelfReviewService._owned_question`` takes. Mutual
@@ -1044,6 +1062,16 @@ def _console_question(
     return next((q for q in report.correction.questions if q.question_id == question_id), None)
 
 
+def console_paper_label(paper: TeacherPaper) -> str:
+    """The console's name for ``paper``, parsing its stored report for the metadata.
+
+    For a caller holding one paper rather than a queue page, such as the
+    teacher's recently-deleted list, so it reads the same as the card and the
+    queue row.
+    """
+    return _console_paper_label(paper, _console_report(paper))
+
+
 def _console_paper_label(paper: TeacherPaper, report: AccuracyReport | None) -> str:
     """The console's own name for a paper — its identity line in the queue.
 
@@ -1213,6 +1241,7 @@ __all__ = [
     "ReviewService",
     "ReviewValidationError",
     "boundaries_for",
+    "console_paper_label",
     "recompute_attempt_totals",
     "recompute_weakness_records",
 ]

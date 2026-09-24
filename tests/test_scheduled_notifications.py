@@ -600,4 +600,5 @@ def test_a_sweeper_with_storage_also_runs_the_purge_job(
         "warn_streaks": 0,
         "remind_study_plans": 0,
         "purge_expired_papers": 0,
+        "purge_expired_teacher_papers": 0,
     }

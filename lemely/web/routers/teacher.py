@@ -77,7 +77,11 @@ from lemely.db.question_bank_repo import (
     generated_questions_to_bank_rows,
 )
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository, SchemeCorpusRow
-from lemely.db.teacher_paper_repo import TeacherPaperRepository, TeacherPaperRow
+from lemely.db.teacher_paper_repo import (
+    TeacherPaperDeletedError,
+    TeacherPaperRepository,
+    TeacherPaperRow,
+)
 
 if TYPE_CHECKING:
     from collections.abc import Mapping, Sequence
@@ -488,6 +492,11 @@ def _run_grading_job(
                 scheme, extracted, gemini_client=gemini_client, student_id=None, history_store=None
             )
             repo.finish(paper_id, report)
+    except TeacherPaperDeletedError:
+        # The teacher deleted the paper mid-run. Delete already ended the run
+        # on the row, and `fail` would be a no-op on it anyway: this is an
+        # outcome, not a grading failure.
+        log.info("teacher_grade_paper_deleted", paper_id=str(paper_id))
     except Exception as exc:
         # Marking is a long Gemini/parser call chain and can genuinely fail.
         # Recording it as a terminal state with the reason attached is the

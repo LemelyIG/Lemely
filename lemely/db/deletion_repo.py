@@ -1,4 +1,4 @@
-"""A student's paper deletion (design ``2026-09-22-paper-deletion-design.md``).
+"""Paper deletion, a student's and a teacher's (design ``2026-09-22-paper-deletion-design.md``).
 
 Deletion is a soft delete: ``deleted_at`` is stamped and the loader criterion in
 :mod:`lemely.db.session` hides the row from every ordinary reader. This module
@@ -47,6 +47,8 @@ from lemely.db.models.enums import (
     UploadStatus,
 )
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.models.teacher_papers import TeacherPaper
+from lemely.db.review_repo import console_paper_label
 from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
@@ -67,6 +69,11 @@ _INTEGRITY_REASONS = (ReviewReason.plagiarism_flag, ReviewReason.ai_detection_fl
 _HOLD_MESSAGE = "This paper can't be deleted yet."
 
 _NOT_UPLOADED_MESSAGE = "Only uploaded papers can be deleted."
+
+_NOT_RESTORABLE_MESSAGE = "This paper can no longer be restored."
+
+#: Why a console run deleted mid-flight stopped, shown if the paper is restored.
+_RUN_STOPPED_BY_DELETE = "Marking stopped when this paper was deleted. Re-run marking to try again."
 
 
 class PaperDeletionError(Exception):
@@ -126,6 +133,20 @@ class DeletedPaperSummary:
     """The upload's newest attempt, by ``recorded_at``: what labels the row."""
     subject_code: str | None
     paper_label: str
+    deleted_at: datetime
+    restore_deadline: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedTeacherPaper:
+    """One deleted grading-console paper: the outcome of a delete, or a list row (R2).
+
+    Not :class:`DeletedPaper`: a console paper has no attempt, no subject code
+    and no siblings, and its name is the console's own card label.
+    """
+
+    paper_id: uuid.UUID
+    label: str
     deleted_at: datetime
     restore_deadline: datetime
 
@@ -327,9 +348,9 @@ class PaperDeletionService:
 
             instant = upload.deleted_at
             if instant is None or addressed.deleted_at != instant:
-                raise PaperNotRestorableError("This paper can no longer be restored.")
+                raise PaperNotRestorableError(_NOT_RESTORABLE_MESSAGE)
             if not is_within_restore_window(instant, now):
-                raise PaperNotRestorableError("This paper can no longer be restored.")
+                raise PaperNotRestorableError(_NOT_RESTORABLE_MESSAGE)
             revived = [a for a in siblings if a.deleted_at == instant]
             if any(a.user_id != owner for a in revived):
                 raise PaperNotFoundError("No such paper")
@@ -558,13 +579,179 @@ class PaperDeletionService:
         )
 
 
+class TeacherPaperDeletionService:
+    """Soft-deletes a teacher's own grading-console paper, or restores it (R2, §2.2).
+
+    The student flow's shape, less what a console paper does not have: no
+    attempt, so nothing to cascade or keep in step; no integrity hold, because
+    ``student_id`` is always NULL and D8 protects evidence *about a student*;
+    and the owner is ``uploaded_by``. A school admin who can see a teacher's
+    paper still cannot delete it — it is the uploader's.
+
+    **Lock order: the ``teacher_papers`` row, then its review items.**
+    :meth:`~lemely.db.teacher_paper_repo.TeacherPaperRepository.finish` takes
+    the same row lock before it writes a report or queues items, and so does a
+    teacher closing a console item
+    (``review_repo._find_any_item(for_update=True)``). So a run finishing, a
+    review closing and a delete serialize on one row, and a withdrawn item is
+    never also resolved.
+    """
+
+    def __init__(self, sessionmaker: sessionmaker[Session]) -> None:
+        self._sessionmaker = sessionmaker
+
+    def delete(self, user_id: str, paper_id: str) -> DeletedTeacherPaper:
+        """Delete the console paper ``paper_id`` and withdraw its open review items.
+
+        Every open item on the paper is withdrawn with ``withdrawn_at`` equal to
+        the paper's ``deleted_at`` — the equality :meth:`restore` selects on. A
+        run still in flight is ended here: its ``finish`` will be refused, and
+        nothing else would move the row out of ``processing``.
+
+        Raises:
+            PaperNotFoundError: no live console paper with this id was uploaded
+                by ``user_id`` (including a malformed id, or another teacher's).
+        """
+        owner = _parse_uuid(user_id)
+        parsed_id = _parse_uuid(paper_id)
+        if owner is None or parsed_id is None:
+            raise PaperNotFoundError("No such paper")
+        now = datetime.now(UTC)
+
+        with self._sessionmaker.begin() as session:
+            paper = self._lock_paper(session, parsed_id)
+            if paper.uploaded_by != owner or paper.deleted_at is not None:
+                raise PaperNotFoundError("No such paper")
+            paper.deleted_at = now
+            if paper.status is UploadStatus.processing:
+                # A regrade keeps the previous run's report until it finishes,
+                # and that report is still a complete result; a first run has
+                # nothing, so it failed — which leaves it claimable on restore.
+                if paper.report_json is not None:
+                    paper.status = UploadStatus.complete
+                else:
+                    paper.status = UploadStatus.failed
+                    paper.error = _RUN_STOPPED_BY_DELETE
+            self._withdraw_console_items(session, parsed_id, now)
+            return DeletedTeacherPaper(
+                paper_id=paper.id,
+                label=console_paper_label(paper),
+                deleted_at=now,
+                restore_deadline=restore_deadline(now),
+            )
+
+    def restore(self, user_id: str, paper_id: str) -> None:
+        """Undo the deletion of ``paper_id`` inside the retention window.
+
+        Reopens precisely the review items that deletion withdrew, matched on
+        ``withdrawn_at`` equal to the paper's ``deleted_at``, keeping their ids
+        and ``created_at``.
+
+        Raises:
+            PaperNotFoundError: no deleted console paper with this id was
+                uploaded by ``user_id`` (a live paper, a malformed id, another
+                teacher's).
+            PaperNotRestorableError: the retention window has passed.
+        """
+        owner = _parse_uuid(user_id)
+        parsed_id = _parse_uuid(paper_id)
+        if owner is None or parsed_id is None:
+            raise PaperNotFoundError("No such paper")
+        now = datetime.now(UTC)
+
+        with self._sessionmaker.begin() as session:
+            paper = self._lock_paper(session, parsed_id)
+            instant = paper.deleted_at
+            if paper.uploaded_by != owner or instant is None:
+                raise PaperNotFoundError("No such paper")
+            if not is_within_restore_window(instant, now):
+                raise PaperNotRestorableError(_NOT_RESTORABLE_MESSAGE)
+            paper.deleted_at = None
+            session.execute(
+                sa.update(ReviewQueueItem)
+                .where(
+                    ReviewQueueItem.teacher_paper_id == parsed_id,
+                    ReviewQueueItem.status == ReviewStatus.withdrawn,
+                    ReviewQueueItem.withdrawn_at == instant,
+                )
+                .values(status=ReviewStatus.open, withdrawn_at=None),
+                execution_options={"synchronize_session": False},
+            )
+
+    def list_deleted(self, user_id: str) -> list[DeletedTeacherPaper]:
+        """This teacher's still-restorable console deletions, newest first.
+
+        A row past the restore window is omitted, as in the student list: it is
+        waiting on purge and :meth:`restore` would refuse it.
+        """
+        owner = _parse_uuid(user_id)
+        if owner is None:
+            return []
+        floor = restore_floor(datetime.now(UTC))
+        stmt = (
+            select(TeacherPaper)
+            .where(
+                TeacherPaper.uploaded_by == owner,
+                TeacherPaper.deleted_at.is_not(None),
+                TeacherPaper.deleted_at > floor,
+            )
+            .order_by(TeacherPaper.deleted_at.desc(), TeacherPaper.id.desc())
+            .execution_options(**{INCLUDE_DELETED: True})
+        )
+        with self._sessionmaker() as session:
+            return [
+                DeletedTeacherPaper(
+                    paper_id=paper.id,
+                    label=console_paper_label(paper),
+                    deleted_at=paper.deleted_at,
+                    restore_deadline=restore_deadline(paper.deleted_at),
+                )
+                for paper in session.scalars(stmt)
+                if paper.deleted_at is not None
+            ]
+
+    def _lock_paper(self, session: Session, paper_id: uuid.UUID) -> TeacherPaper:
+        """Lock the paper row, deleted or not; a missing or purged row is a 404."""
+        paper = session.scalars(
+            select(TeacherPaper)
+            .where(TeacherPaper.id == paper_id)
+            .with_for_update()
+            .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+        ).one_or_none()
+        if paper is None:
+            raise PaperNotFoundError("No such paper")
+        return paper
+
+    def _withdraw_console_items(
+        self, session: Session, paper_id: uuid.UUID, now: datetime
+    ) -> list[uuid.UUID]:
+        """Flip every open review item on this paper to ``withdrawn`` at ``now``.
+
+        Under the paper row lock, so a teacher's close and this withdrawal
+        never both land (see the class docstring). ``resolved_by`` is untouched.
+        """
+        withdrawn = session.scalars(
+            sa.update(ReviewQueueItem)
+            .where(
+                ReviewQueueItem.teacher_paper_id == paper_id,
+                ReviewQueueItem.status == ReviewStatus.open,
+            )
+            .values(status=ReviewStatus.withdrawn, withdrawn_at=now)
+            .returning(ReviewQueueItem.id),
+            execution_options={"synchronize_session": False},
+        ).all()
+        return sorted(withdrawn)
+
+
 __all__ = [
     "DeletedPaper",
     "DeletedPaperSummary",
+    "DeletedTeacherPaper",
     "PaperDeletionError",
     "PaperDeletionService",
     "PaperNotDeletableError",
     "PaperNotFoundError",
     "PaperNotRestorableError",
+    "TeacherPaperDeletionService",
     "paper_label",
 ]
