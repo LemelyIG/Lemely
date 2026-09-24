@@ -67,6 +67,16 @@ class Upload(TimestampMixin, Base):
         server_default=sa.text("'pending'::uploadstatus"),
     )
     idempotency_key: Mapped[str | None] = mapped_column(sa.String(128), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When the student deleted this row; NULL means live (design 2026-09-22 §3).
+
+    **Readers do not filter on this themselves.** A session-level loader
+    criterion registered in :mod:`lemely.db.session` excludes deleted rows from
+    every ORM select, so a query that does not opt in with
+    ``execution_options(include_deleted=True)`` never sees one. Adding a
+    belt-and-braces ``WHERE`` at a call site is actively harmful: it makes that
+    site's tests pass even when the criterion is dead.
+    """
 
     attempts: Mapped[list[Attempt]] = relationship("Attempt", back_populates="upload")
 
@@ -78,6 +88,14 @@ class Attempt(TimestampMixin, Base):
     __table_args__ = (
         sa.Index("ix_attempts_user_id_recorded_at", "user_id", "recorded_at"),
         sa.Index("ix_attempts_user_id_origin", "user_id", "origin"),
+        # Migration 0039's purge-candidate and recently-deleted queries: both
+        # look only at the small deleted minority, so a partial index avoids
+        # indexing every live row's NULL.
+        sa.Index(
+            "ix_attempts_deleted_at",
+            "deleted_at",
+            postgresql_where=sa.text("deleted_at IS NOT NULL"),
+        ),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -139,6 +157,16 @@ class Attempt(TimestampMixin, Base):
     invent precision and silently corrupt every grade-bearing consumer of
     student history (``docs/quiz-model.md`` §1.2). This column is schema
     only in chunk A; nothing here yet reads it (chunk G wires it up).
+    """
+    deleted_at: Mapped[datetime | None] = mapped_column(sa.DateTime(timezone=True), nullable=True)
+    """When the student deleted this row; NULL means live (design 2026-09-22 §3).
+
+    **Readers do not filter on this themselves.** A session-level loader
+    criterion registered in :mod:`lemely.db.session` excludes deleted rows from
+    every ORM select, so a query that does not opt in with
+    ``execution_options(include_deleted=True)`` never sees one. Adding a
+    belt-and-braces ``WHERE`` at a call site is actively harmful: it makes that
+    site's tests pass even when the criterion is dead.
     """
 
     upload: Mapped[Upload | None] = relationship("Upload", back_populates="attempts")

@@ -113,6 +113,7 @@ def _to_dto(row: NotificationPreferencesRow, *, role: str) -> NotificationPrefer
         streakWarning=row.streak_warning,
         studyPlanReminder=row.study_plan_reminder,
         atRiskAlert=row.at_risk_alert if role in _AT_RISK_ALERT_ROLES else None,
+        reviewWithdrawn=row.review_withdrawn,
         quietHoursStart=row.quiet_hours_start,
         quietHoursEnd=row.quiet_hours_end,
     )
@@ -198,6 +199,11 @@ def put_notification_preferences(
             at_risk_alert=(
                 _required_bool(payload.atRiskAlert, field="atRiskAlert")
                 if "atRiskAlert" in provided
+                else UNSET
+            ),
+            review_withdrawn=(
+                _required_bool(payload.reviewWithdrawn, field="reviewWithdrawn")
+                if "reviewWithdrawn" in provided
                 else UNSET
             ),
             quiet_hours_start=payload.quietHoursStart if "quietHoursStart" in provided else UNSET,

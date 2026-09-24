@@ -30,6 +30,7 @@ class NotificationPreferencesDTO(ApiModel):
     streakWarning: bool
     studyPlanReminder: bool
     atRiskAlert: bool | None = None
+    reviewWithdrawn: bool
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 
@@ -94,6 +95,7 @@ class NotificationPreferencesUpdateDTO(ApiModel):
     streakWarning: bool | None = None
     studyPlanReminder: bool | None = None
     atRiskAlert: bool | None = None
+    reviewWithdrawn: bool | None = None
     quietHoursStart: time | None = None
     quietHoursEnd: time | None = None
 

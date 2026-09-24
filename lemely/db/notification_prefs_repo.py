@@ -64,6 +64,7 @@ class NotificationPreferencesRow:
     streak_warning: bool = True
     study_plan_reminder: bool = True
     at_risk_alert: bool = True
+    review_withdrawn: bool = True
     quiet_hours_start: time | None = None
     quiet_hours_end: time | None = None
 
@@ -107,6 +108,7 @@ class NotificationPreferencesService:
         streak_warning: bool | _UnsetType = UNSET,
         study_plan_reminder: bool | _UnsetType = UNSET,
         at_risk_alert: bool | _UnsetType = UNSET,
+        review_withdrawn: bool | _UnsetType = UNSET,
         quiet_hours_start: time | _UnsetType | None = UNSET,
         quiet_hours_end: time | _UnsetType | None = UNSET,
     ) -> NotificationPreferencesRow:
@@ -150,6 +152,11 @@ class NotificationPreferencesService:
                     if isinstance(at_risk_alert, _UnsetType)
                     else at_risk_alert
                 ),
+                review_withdrawn=(
+                    current.review_withdrawn
+                    if isinstance(review_withdrawn, _UnsetType)
+                    else review_withdrawn
+                ),
                 quiet_hours_start=(
                     current.quiet_hours_start
                     if isinstance(quiet_hours_start, _UnsetType)
@@ -173,6 +180,7 @@ class NotificationPreferencesService:
             model_row.streak_warning = merged.streak_warning
             model_row.study_plan_reminder = merged.study_plan_reminder
             model_row.at_risk_alert = merged.at_risk_alert
+            model_row.review_withdrawn = merged.review_withdrawn
             model_row.quiet_hours_start = merged.quiet_hours_start
             model_row.quiet_hours_end = merged.quiet_hours_end
             session.flush()
@@ -186,6 +194,7 @@ def _row_from_model(model: NotificationPreference) -> NotificationPreferencesRow
         streak_warning=model.streak_warning,
         study_plan_reminder=model.study_plan_reminder,
         at_risk_alert=model.at_risk_alert,
+        review_withdrawn=model.review_withdrawn,
         quiet_hours_start=model.quiet_hours_start,
         quiet_hours_end=model.quiet_hours_end,
     )
