@@ -179,7 +179,24 @@ function AnnouncementCard({
           {announcement.body}
         </p>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div
+          className="flex flex-wrap items-center gap-3"
+          // Issue #246: this card sits inside the screen's pull-to-refresh
+          // surface (`Announcements`'s `pullSurfaceRef`), and
+          // `usePullToRefresh`/`useDragGesture` arms on every `pointerdown`
+          // at the scroll top — including a plain tap on one of these
+          // buttons — by calling `setPointerCapture` on that ancestor
+          // surface. A captured pointer retargets the tap's `click` away
+          // from the button entirely, so neither "Show more" nor "Mark as
+          // read" ever fired: not a mutation bug, not an optimistic-update
+          // bug, the button's own `onClick` never ran. `startFilter`'s own
+          // doc comment already anticipates exempting "a nested interactive
+          // control", it just isn't implemented there yet; stopping
+          // propagation here in the capture phase, before the surface's
+          // (bubble-phase) listener ever sees the event, is the same
+          // exemption applied at the point this screen controls.
+          onPointerDownCapture={(event) => event.stopPropagation()}
+        >
           <Button
             variant="ghost"
             size="sm"
