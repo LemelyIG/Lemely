@@ -100,8 +100,27 @@ describe("ReviewItem.tsx — MarkerVerdicts renders I6/I7 for every point", () =
     expect(body).not.toMatch(/points\.filter\(/)
   })
 
-  it("bails out only on an empty points array, not any other filter", () => {
-    expect(body).toContain("if (points.length === 0) return null")
+  it("still bails out on an empty points array, now as one arm of a broader suppression guard", () => {
+    // US-046 follow-up (task #4): the guard widened to also suppress a
+    // section where every point carries `verdict: null` (see the dedicated
+    // suppression test below) — `points.length === 0` remains one of its two
+    // conditions rather than the whole guard, so this only pins that the
+    // empty-array case still short-circuits, not the old exact-string form.
+    expect(body).toMatch(/points\.length === 0 \|\|/)
+  })
+
+  it("renders the marker's rationale when present", () => {
+    expect(body).toContain("point.rationale")
+  })
+
+  it("renders nothing when no point carries a verdict", () => {
+    // Section-level suppression, NOT per-point: a per-point filter re-creates
+    // the invisible-point defect this component exists to fix. Verified
+    // behaviourally in web/e2e/teacher-review.spec.ts; this only pins that the
+    // guard is on the collection, not on each element.
+    expect(body).toMatch(/points\.some\(\(p\) => p\.verdict !== null\)/)
+    expect(body).toMatch(/\{points\.map\(/)
+    expect(body).not.toMatch(/points\.filter\(/)
   })
 
   it("renders a distinct tone AND a distinct label for each of the three verdicts", () => {
@@ -193,5 +212,34 @@ describe("ReviewItem.tsx — matchedPointIds is demoted beneath the real per-poi
     expect(whatLemelyAwardedStart).toBeGreaterThan(evidenceSectionStart)
     const evidenceSection = reviewItemSource.slice(evidenceSectionStart, whatLemelyAwardedStart)
     expect(evidenceSection).not.toContain("detail.matchedPointIds.map")
+  })
+})
+
+describe("ReviewItem.tsx — evidence banner no longer misdescribes what's retained", () => {
+  // Whitespace-normalized: the JSX text wraps mid-sentence across several
+  // indented lines, so the literal multi-word phrase is never one contiguous
+  // substring of the raw source (different lines carry different indentation)
+  // — an un-normalized `.not.toContain` check on this exact phrase trivially
+  // passes even against the unfixed source, which is a false RED. Verified by
+  // running the un-normalized form first and watching it pass before any
+  // implementation change.
+  const normalizedSource = reviewItemSource.replace(/\s+/g, " ")
+
+  it("the evidence banner no longer claims the scan is not stored", () => {
+    // The scan itself IS retained (`Upload.storage_path`, reachable via
+    // `upload_id` — see `attempts.py:101`); only the mark scheme's own
+    // wording is genuinely absent. The old sentence conflated the two.
+    expect(normalizedSource).not.toContain("aren't stored anywhere in this product")
+  })
+
+  it("still says the mark scheme's wording is not stored, and now says this screen does not display the scan", () => {
+    // Presence check alongside the absence check above: a deleted or
+    // vague-ified banner would also pass the absence assertion, so this pins
+    // the replacement is the true, non-overclaiming sentence, not just any
+    // edit that removes the old phrase.
+    expect(normalizedSource).toContain(
+      "mark scheme's own wording isn't stored anywhere in this product",
+    )
+    expect(normalizedSource).toContain("this screen does not display the original scan")
   })
 })

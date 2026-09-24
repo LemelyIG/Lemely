@@ -761,6 +761,12 @@ export interface ReviewItemPoint {
   verdict: PointVerdictWire | null
   evidenceSpan: string
   ecfApplied: boolean
+  /**
+   * The marker's own reasoning for this point. Present on BOTH marking paths
+   * (`PointVerdict.note` on the verdict path, `point_notes` on the legacy one),
+   * so unlike `verdict` this is populated today with `equivalence_gate` off.
+   */
+  rationale: string | null
 }
 
 /**

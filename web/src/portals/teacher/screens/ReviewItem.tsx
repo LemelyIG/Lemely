@@ -228,7 +228,13 @@ function SelfReviewPoints({ points }: { points: ReviewItemPoint[] }) {
  * verdicts; that stays reserved for a real `verdict` value.
  */
 function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
-  if (points.length === 0) return null
+  // Section-level suppression. With `equivalence_gate` off every `verdict` is
+  // null, so without this the screen shows a section whose every row repeats
+  // the `awarded` boolean the matched-point chips already implied. A per-point
+  // filter would instead re-create the invisible-point defect this component
+  // exists to fix -- a reviewer demonstrated that a guard inside the map
+  // callback passes every unit assertion with a clean tsc.
+  if (points.length === 0 || !points.some((p) => p.verdict !== null)) return null
   return (
     <section className="flex flex-col gap-3">
       <div className="text-display-sm">Marker's per-point verdicts</div>
@@ -255,6 +261,11 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
             {point.evidenceSpan ? (
               <p className="text-body-md text-ink-muted leading-[1.5] m-0 text-pretty whitespace-pre-wrap">
                 "{point.evidenceSpan}"
+              </p>
+            ) : null}
+            {point.rationale ? (
+              <p className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3">
+                {point.rationale}
               </p>
             ) : null}
           </div>
@@ -706,9 +717,10 @@ export function ReviewItem() {
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-                  The original scan image and the mark scheme's own wording aren't stored anywhere in
-                  this product. What's below is the closest honest record: Lemely's own transcription
-                  of the student's answer.
+                  The mark scheme's own wording isn't stored anywhere in this
+                  product, and this screen does not display the original scan.
+                  What's below is Lemely's own transcription of the student's
+                  answer.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
