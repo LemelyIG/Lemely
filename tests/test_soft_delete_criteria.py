@@ -8,11 +8,13 @@ row, so none of them can pass because the row was actually removed.
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
@@ -62,7 +64,9 @@ def _seed(sm: sessionmaker[Session]) -> Seeded:
     return Seeded(user_id=uid, upload_id=upload_id, attempt_id=attempt_id)
 
 
-def _stamp(sm: sessionmaker[Session], model: type[Attempt | Upload | TeacherPaper], row_id: uuid.UUID) -> None:
+def _stamp(
+    sm: sessionmaker[Session], model: type[Attempt | Upload | TeacherPaper], row_id: uuid.UUID
+) -> None:
     """Soft-delete one row with a Core UPDATE (not filtered: it is not a select)."""
     with sm.begin() as session:
         result = session.execute(
@@ -106,7 +110,9 @@ def test_db_package_imports_cleanly_in_a_fresh_interpreter() -> None:
     breaks ``import lemely.db`` — and Alembic with it. Only a fresh interpreter
     sees that ordering; this process already has everything imported.
     """
-    proc = subprocess.run(  # noqa: S603 - fixed argv, our own interpreter
+    repo_root = Path(__file__).resolve().parents[1]
+    env = dict(os.environ, PYTHONPATH=str(repo_root))
+    proc = subprocess.run(
         [
             sys.executable,
             "-c",
@@ -115,6 +121,8 @@ def test_db_package_imports_cleanly_in_a_fresh_interpreter() -> None:
         capture_output=True,
         text=True,
         check=False,
+        cwd=repo_root,
+        env=env,
     )
     assert proc.returncode == 0, proc.stderr
 
@@ -141,9 +149,7 @@ def test_include_deleted_is_the_escape_hatch(
     stmt = select(Attempt).where(Attempt.id == deleted_attempt.attempt_id)
     with migrated_sessionmaker() as session:
         assert session.scalars(stmt).one_or_none() is None
-        opted_in = session.scalars(
-            stmt.execution_options(**{INCLUDE_DELETED: True})
-        ).one_or_none()
+        opted_in = session.scalars(stmt.execution_options(**{INCLUDE_DELETED: True})).one_or_none()
         assert opted_in is not None
         assert opted_in.id == deleted_attempt.attempt_id
         assert opted_in.deleted_at is not None
@@ -300,6 +306,57 @@ def test_a_live_row_is_never_hidden(
         assert session.get(Upload, seeded_attempt.upload_id) is not None
 
 
+def test_warm_identity_map_hides_a_concurrent_soft_delete(
+    migrated_sessionmaker: sessionmaker[Session], seeded_attempt: Seeded
+) -> None:
+    """Documented hazard: ``session.get`` on a warm identity map skips SQL entirely.
+
+    ``_exclude_soft_deleted`` only runs on ``do_orm_execute`` -- it cannot
+    intervene when no statement is executed. Once an ``Attempt`` is already in
+    a session's identity map, ``session.get`` for the same id short-circuits to
+    the cached object without issuing any SQL, so the filter never gets a
+    chance to run -- even immediately after that same session soft-deletes the
+    row via ``sa.update``. (The ``UPDATE`` itself does sync the cached
+    object's ``deleted_at`` in place via SQLAlchemy's default
+    ``synchronize_session`` evaluation, so the returned object is not stale --
+    but code that treats ``session.get(...) is None`` as its "was this
+    deleted" check will be fooled: the object is still returned, non-``None``.)
+    Delete/restore code must re-fetch with a fresh ``select`` (which the
+    do_orm_execute listener does see) rather than relying on ``session.get``
+    to observe its own soft-delete within one session.
+    """
+    with migrated_sessionmaker() as session:
+        attempt = session.get(Attempt, seeded_attempt.attempt_id)
+        assert attempt is not None  # loaded into the identity map, live
+        engine = session.get_bind()
+
+        session.execute(
+            sa.update(Attempt)
+            .where(Attempt.id == seeded_attempt.attempt_id)
+            .values(deleted_at=datetime.now(UTC))
+        )
+
+        queries: list[str] = []
+
+        def _record(*args: object) -> None:
+            queries.append(str(args[1]))
+
+        event.listen(engine, "before_cursor_execute", _record)
+        try:
+            same_session_get = session.get(Attempt, seeded_attempt.attempt_id)
+        finally:
+            event.remove(engine, "before_cursor_execute", _record)
+
+        assert same_session_get is attempt  # cached object, not re-fetched
+        assert same_session_get is not None  # the hazard: not excluded, unlike a fresh select
+        assert queries == []  # no SQL was issued to reach this answer at all
+
+        session.commit()
+
+    with migrated_sessionmaker() as fresh_session:
+        assert fresh_session.get(Attempt, seeded_attempt.attempt_id) is None
+
+
 # ── Upload ────────────────────────────────────────────────────────────────────
 
 
@@ -315,9 +372,7 @@ def test_upload_select_hides_a_stamped_row(
     with migrated_sessionmaker() as session:
         assert session.scalars(stmt).one_or_none() is None
         assert session.get(Upload, seeded_attempt.upload_id) is None
-        opted_in = session.scalars(
-            stmt.execution_options(**{INCLUDE_DELETED: True})
-        ).one_or_none()
+        opted_in = session.scalars(stmt.execution_options(**{INCLUDE_DELETED: True})).one_or_none()
         assert opted_in is not None
         assert opted_in.id == seeded_attempt.upload_id
 
@@ -348,8 +403,6 @@ def test_teacher_paper_select_hides_a_stamped_row(
     with migrated_sessionmaker() as session:
         assert session.scalars(stmt).one_or_none() is None
         assert session.get(TeacherPaper, paper_id) is None
-        opted_in = session.scalars(
-            stmt.execution_options(**{INCLUDE_DELETED: True})
-        ).one_or_none()
+        opted_in = session.scalars(stmt.execution_options(**{INCLUDE_DELETED: True})).one_or_none()
         assert opted_in is not None
         assert opted_in.id == paper_id

@@ -189,10 +189,20 @@ def _exclude_soft_deleted(state: ORMExecuteState) -> None:
 
     Relationship lazy loads are skipped here because they inherit the criterion
     from the statement that loaded their parent (``with_loader_criteria``
-    propagates to loaders); a parent loaded with ``include_deleted`` therefore
-    lazy-loads deleted children too, which is what restore and purge want.
-    Core statements that are not ORM-enabled (``session.execute(text(...))``,
-    ``update``/``delete``) are untouched.
+    propagates to loaders) -- but only when the parent actually was loaded by
+    such a statement. A parent constructed in-session (``session.add(Upload(...))``,
+    then flushed or refreshed) or first loaded with ``include_deleted`` carries
+    no criterion, so its relationship lazy loads return soft-deleted rows too.
+    Service code that must exclude deleted children queries them explicitly
+    rather than walking relationship attributes. Non-select statements
+    (``text()``, ORM or Core ``update``/``delete``) are untouched -- the
+    soft-delete filter never applies to UPDATE or DELETE.
+
+    The identity map is also a gap worth knowing: once a row is loaded into a
+    session, ``session.get`` returns the cached object straight from memory,
+    with no SQL and thus no filter, even immediately after that row is
+    soft-deleted by an ``update`` issued in the same session -- see
+    ``test_warm_identity_map_hides_a_concurrent_soft_delete``.
     """
     if not state.is_select or state.is_column_load or state.is_relationship_load:
         return
