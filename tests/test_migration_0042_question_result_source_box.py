@@ -278,11 +278,41 @@ class TestConstraintsRejectDegenerateBoxes:
             with pytest.raises(IntegrityError):
                 _insert_question_result(engine, page=0, ymin=100, xmin=200, ymax=300, xmax=1001)
 
+    def test_a_negative_coordinate_is_rejected(self) -> None:
+        """The same ``source_box_range`` constraint, from the other end of the
+        [0, 1000] band -- cheap insurance that the lower bound is checked too,
+        not just the upper one above."""
+        with _throwaway_db() as (cfg, engine):
+            command.upgrade(cfg, _MIGRATION_REVISION)
+            with pytest.raises(IntegrityError):
+                _insert_question_result(engine, page=0, ymin=-1, xmin=200, ymax=300, xmax=400)
+
+    def test_a_negative_page_is_rejected(self) -> None:
+        """``source_box_page_non_negative`` -- untested until now. Weakening it
+        to allow ``page < 0`` and replaying every insert in this module still
+        left the count assertion at 4 and every ``pytest.raises`` block
+        passing except this one, which is exactly what an untested property
+        looks like: the suite could not tell the constraint was gone."""
+        with _throwaway_db() as (cfg, engine):
+            command.upgrade(cfg, _MIGRATION_REVISION)
+            with pytest.raises(IntegrityError):
+                _insert_question_result(engine, page=-1, ymin=100, xmin=200, ymax=300, xmax=400)
+
     def test_ymax_not_greater_than_ymin_is_rejected(self) -> None:
         with _throwaway_db() as (cfg, engine):
             command.upgrade(cfg, _MIGRATION_REVISION)
             with pytest.raises(IntegrityError):
                 _insert_question_result(engine, page=0, ymin=300, xmin=200, ymax=300, xmax=400)
+
+    def test_xmax_not_greater_than_xmin_is_rejected(self) -> None:
+        """``source_box_positive_area``'s ``xmax > xmin`` half -- untested
+        until now. Only the ``ymax``/``ymin`` half above was covered; a
+        weakened ``xmax > xmin`` would have passed every other test in this
+        class unnoticed."""
+        with _throwaway_db() as (cfg, engine):
+            command.upgrade(cfg, _MIGRATION_REVISION)
+            with pytest.raises(IntegrityError):
+                _insert_question_result(engine, page=0, ymin=100, xmin=400, ymax=300, xmax=400)
 
     def test_a_half_written_box_is_rejected(self) -> None:
         with _throwaway_db() as (cfg, engine):

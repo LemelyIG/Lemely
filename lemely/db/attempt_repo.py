@@ -580,6 +580,21 @@ def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
     box that reached here through pydantic is sound. This re-checks anyway,
     because the cost of being wrong is asymmetric and the check is four
     comparisons.
+
+    Guarded end to end by ``try``/``except``, not just the comparisons below:
+    ``SourceBox.model_construct`` (the one legitimate way past pydantic's own
+    validation -- a real producer can never emit these) can hand this a
+    ``page`` or ``box`` of ``None``, or a ``box`` whose elements are not
+    numbers at all. A `TypeError` out of ``box.page < 0`` or ``len(box.box)``
+    used to propagate to the caller, and this row is built and attached to
+    the attempt *before* ``session.add(attempt)`` -- outside the savepoint
+    ``_safe_derive_point_rows`` gets, so it took the whole attempt down with
+    it. A bad box costs the box, never the attempt.
+
+    Also rejects a non-``int`` (e.g. a ``float`` like ``1.7``) ``page`` or
+    coordinate outright rather than let it flow into an ``Integer`` column:
+    Postgres would silently coerce it, storing the wrong page and cropping
+    from the wrong part of a student's script.
     """
     empty: dict[str, int | None] = {
         "source_box_page": None,
@@ -591,12 +606,22 @@ def _source_box_columns(cq: CorrectedQuestion) -> dict[str, int | None]:
     box = cq.source_box
     if box is None:
         return empty
-    if box.page < 0 or len(box.box) != 4:
-        return empty
-    ymin, xmin, ymax, xmax = box.box
-    if not all(0 <= coord <= 1000 for coord in box.box):
-        return empty
-    if ymax <= ymin or xmax <= xmin:
+
+    def _is_int(value: object) -> bool:
+        # `bool` is an `int` subclass; a box coordinate is never a boolean.
+        return isinstance(value, int) and not isinstance(value, bool)
+
+    try:
+        if not _is_int(box.page) or box.page < 0 or len(box.box) != 4:
+            return empty
+        ymin, xmin, ymax, xmax = box.box
+        if not all(_is_int(coord) for coord in box.box):
+            return empty
+        if not all(0 <= coord <= 1000 for coord in box.box):
+            return empty
+        if ymax <= ymin or xmax <= xmin:
+            return empty
+    except (TypeError, ValueError):
         return empty
     return {
         "source_box_page": box.page,

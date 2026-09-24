@@ -62,20 +62,31 @@ def upgrade() -> None:
     # area. Enforced here as well as in pydantic because the crop route reads
     # these columns, not the model, and a degenerate box is only visible as a
     # broken image at that point.
+    #
+    # Names passed here are UNPREFIXED: `env.py` sets `target_metadata =
+    # Base.metadata`, and Alembic's `op.create_check_constraint` builds its
+    # throwaway `Table` against that metadata's naming convention
+    # (`lemely/db/base.py`'s `"ck": "ck_%(table_name)s_%(constraint_name)s"`),
+    # which treats whatever name is passed as the `constraint_name` token and
+    # prefixes it -- so a name that already starts with `ck_question_results_`
+    # comes out doubled (`ck_question_results_ck_question_results_...`,
+    # hash-truncated past Postgres's 63-byte limit for the two longer ones).
+    # Passing the bare suffix here lets the convention apply exactly once,
+    # producing the names the docstrings above and on `attempts.py` claim.
     op.create_check_constraint(
-        "ck_question_results_source_box_page_non_negative",
+        "source_box_page_non_negative",
         "question_results",
         "source_box_page IS NULL OR source_box_page >= 0",
     )
     op.create_check_constraint(
-        "ck_question_results_source_box_range",
+        "source_box_range",
         "question_results",
         " AND ".join(
             f"({name} IS NULL OR ({name} >= 0 AND {name} <= 1000))" for name in _COORD_COLUMNS
         ),
     )
     op.create_check_constraint(
-        "ck_question_results_source_box_positive_area",
+        "source_box_positive_area",
         "question_results",
         "source_box_ymax IS NULL OR source_box_xmax IS NULL "
         "OR (source_box_ymax > source_box_ymin AND source_box_xmax > source_box_xmin)",
@@ -83,7 +94,7 @@ def upgrade() -> None:
     # A half-written box is meaningless: either the page and all four
     # coordinates are present, or none of them are.
     op.create_check_constraint(
-        "ck_question_results_source_box_all_or_none",
+        "source_box_all_or_none",
         "question_results",
         "(source_box_page IS NULL AND source_box_ymin IS NULL AND source_box_xmin IS NULL "
         "AND source_box_ymax IS NULL AND source_box_xmax IS NULL) "
@@ -95,11 +106,13 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     """Downgrade schema."""
+    # Same unprefixed names as `upgrade()` -- the naming convention resolves
+    # them to the same actual constraint names on the way out.
     for name in (
-        "ck_question_results_source_box_all_or_none",
-        "ck_question_results_source_box_positive_area",
-        "ck_question_results_source_box_range",
-        "ck_question_results_source_box_page_non_negative",
+        "source_box_all_or_none",
+        "source_box_positive_area",
+        "source_box_range",
+        "source_box_page_non_negative",
     ):
         op.drop_constraint(name, "question_results", type_="check")
     for name in ("source_box_xmax", "source_box_ymax", "source_box_xmin", "source_box_ymin"):

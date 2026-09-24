@@ -10,13 +10,14 @@ still coexists on the same tables.
 from __future__ import annotations
 
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
 import sqlalchemy as sa
 from sqlalchemy import create_engine, select
 from sqlalchemy.engine import make_url
-from sqlalchemy.exc import OperationalError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlalchemy.orm import Session, sessionmaker
 
 from lemely.core.analytics import summarize_weaknesses
@@ -1048,6 +1049,53 @@ def test_marking_detail_tables_exist_and_relate() -> None:
     assert "revisions" in QuestionResult.__mapper__.relationships
 
 
+def test_the_database_rejects_a_half_written_source_box_on_a_create_all_schema(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """`__table_args__`'s four ``source_box`` CHECK constraints are reachable
+    on a ``create_all()`` schema, not just on one that ran ``alembic upgrade
+    head``.
+
+    Modelled on ``test_ingest_thresholds.py``'s
+    ``test_a_non_positive_max_mark_is_rejected_by_the_database``. Before this
+    fix, ``QuestionResult.__table_args__`` held only the index, so a
+    ``create_all()`` schema -- what ``pg_sessionmaker`` (and every test in
+    this file) builds -- carried zero of migration ``0042``'s constraints.
+    This is a convention and test-fidelity fix, not a production-correctness
+    one: production always runs ``alembic upgrade head`` (CI and
+    ``deploy.yml`` both do), so a real database already carries all four.
+    """
+    with pg_sessionmaker() as session:
+        user_id = uuid.uuid4()
+        session.add(User(id=user_id, email=f"{user_id}@example.com", role=Role.student))
+        session.flush()
+        attempt = Attempt(
+            user_id=user_id,
+            awarded_marks=1,
+            maximum_marks=1,
+            percentage=100.0,
+            recorded_at=datetime.now(UTC),
+        )
+        session.add(attempt)
+        session.flush()
+        session.add(
+            QuestionResult(
+                attempt_id=attempt.id,
+                question_id="1",
+                awarded_marks=1,
+                maximum_marks=1,
+                confidence_band=DBConfidenceBand.high,
+                confidence_score=0.95,
+                marker_source=MarkerSource.ai,
+                # A half-written box: page set, every coordinate NULL --
+                # rejected by ``source_box_all_or_none``.
+                source_box_page=1,
+            )
+        )
+        with pytest.raises(IntegrityError):
+            session.flush()
+
+
 def _report_with_one_question(**overrides: object) -> AccuracyReport:
     """An AccuracyReport carrying exactly one question against ``_scheme()``.
 
@@ -1387,6 +1435,47 @@ def test_persist_survives_an_unusable_source_box(
     # the WRITE path -- not pydantic -- is what has to catch it.
     report.correction.questions[0].source_box = SourceBox.model_construct(
         page=1, box=[500, 500, 100, 100]
+    )
+
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=_seed_user(pg_sessionmaker),
+        report=report,
+        mark_scheme=_scheme(),
+    )
+
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+        results = session.scalars(
+            select(QuestionResult).where(QuestionResult.attempt_id == attempt_id)
+        ).all()
+    assert len(results) == 1
+    assert results[0].source_box_page is None
+    assert results[0].source_box_ymin is None
+    assert results[0].source_box_xmin is None
+    assert results[0].source_box_ymax is None
+    assert results[0].source_box_xmax is None
+
+
+def test_persist_survives_a_malformed_source_box(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """A malformed box costs the box, never the attempt.
+
+    Unlike ``test_persist_survives_an_unusable_source_box`` (a well-typed but
+    degenerate box), this is a box whose fields are the wrong *type* --
+    ``box=None`` on an otherwise-real ``SourceBox``. Before this fix,
+    ``len(box.box)`` at ``attempt_repo.py``'s guard raised ``TypeError``, and
+    that guard runs *outside* ``_persist``'s transaction (the row is built and
+    attached to the attempt before ``session.add(attempt)``), so the raise
+    took the whole attempt down with it -- the exact failure the guard's own
+    docstring and this test's name rule out.
+    """
+    report = _report_with_one_question(matched_point_ids=["p1"])
+    # `SourceBox.model_construct` is the one legitimate way past pydantic's
+    # own validation here, since a real producer can never emit this value.
+    report.correction.questions[0].source_box = SourceBox.model_construct(
+        page=1,
+        box=None,  # type: ignore[arg-type]
     )
 
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(

@@ -173,7 +173,44 @@ class QuestionResult(TimestampMixin, Base):
     """
 
     __tablename__ = "question_results"
-    __table_args__ = (sa.Index("ix_question_results_attempt_id", "attempt_id"),)
+    __table_args__ = (
+        sa.Index("ix_question_results_attempt_id", "attempt_id"),
+        # Mirrors migration `0042_question_result_source_box`'s four CHECK
+        # constraints. Names are UNPREFIXED for the same reason as there:
+        # `Base.metadata`'s naming convention (`ck_%(table_name)s_%(constraint_name)s`)
+        # treats a `name=` you pass as the `constraint_name` token, so a name that
+        # already starts with `ck_question_results_` comes out doubled. Passing
+        # the bare suffix here lets the convention apply once, producing the
+        # same names `0042` creates -- so a `create_all()` schema (tests only;
+        # production always runs `alembic upgrade head`) carries the identical
+        # constraints instead of silently omitting them.
+        sa.CheckConstraint(
+            "source_box_page IS NULL OR source_box_page >= 0",
+            name="source_box_page_non_negative",
+        ),
+        sa.CheckConstraint(
+            "(source_box_ymin IS NULL OR (source_box_ymin >= 0 AND source_box_ymin <= 1000)) "
+            "AND (source_box_xmin IS NULL OR (source_box_xmin >= 0 AND source_box_xmin <= 1000)) "
+            "AND (source_box_ymax IS NULL OR (source_box_ymax >= 0 AND source_box_ymax <= 1000)) "
+            "AND (source_box_xmax IS NULL OR (source_box_xmax >= 0 AND source_box_xmax <= 1000))",
+            name="source_box_range",
+        ),
+        # The leading `IS NULL` guards must stand alone: this constraint may
+        # not assume `source_box_all_or_none` holds, and vice versa.
+        sa.CheckConstraint(
+            "source_box_ymax IS NULL OR source_box_xmax IS NULL "
+            "OR (source_box_ymax > source_box_ymin AND source_box_xmax > source_box_xmin)",
+            name="source_box_positive_area",
+        ),
+        sa.CheckConstraint(
+            "(source_box_page IS NULL AND source_box_ymin IS NULL AND source_box_xmin IS NULL "
+            "AND source_box_ymax IS NULL AND source_box_xmax IS NULL) "
+            "OR (source_box_page IS NOT NULL AND source_box_ymin IS NOT NULL "
+            "AND source_box_xmin IS NOT NULL AND source_box_ymax IS NOT NULL "
+            "AND source_box_xmax IS NOT NULL)",
+            name="source_box_all_or_none",
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
