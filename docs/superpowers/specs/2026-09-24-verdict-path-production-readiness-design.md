@@ -63,7 +63,7 @@ wiring.
 
 ## Stories
 
-Six. Each is a separate reviewable commit with a disjoint file set except where
+Seven. Each is a separate reviewable commit with a disjoint file set except where
 noted, but they are not all independent — C, F and D form a chain.
 
 Lettered for cross-reference and listed in dependency order, which is why D
@@ -214,6 +214,48 @@ corrected banner.
 Depends on both: C, because they touch the same `ReviewItem.tsx`, and E, for the
 route and the box-presence field it renders against.
 
+### G — widen the student self-review payload
+
+The student surface has the same defect US-046 fixed for teachers, one portal
+over. `self_review_repo.py:965-978` builds each point from `awarded=p.awarded`
+and never reads `verdict`, so a student sees "not awarded" with no way to tell
+"the marker judged this absent" from "the marker could not verify it" — the exact
+collapse I6 exists to prevent.
+
+The columns are already persisted, so this is a read-path widening of the same
+shape as US-046, not schema work.
+
+**The existing contract decides where it goes.** That builder emits `awarded`, so
+it is the **revealed** shape. `selfReviewTypes.ts` says of the pending shape: *"If
+a field named `awarded` ever appears on the pending shape here, the backend
+contract has been broken, not extended."* A verdict is strictly more informative
+than `awarded`, so it can only join `SelfReviewRevealedPoint`.
+
+That also removes a pedagogical risk without needing a rule: the student sees the
+verdict only *after* committing their self-mark, so it cannot be used to decide
+what to claim.
+
+**All three fields reach the student** — `verdict`, `evidenceSpan`, `ecfApplied`.
+The two extras are arguably worth more here than on the teacher screen: the quoted
+span shows exactly which of their words were read, and the ECF badge tells a
+student that one early slip did not cascade through the rest of the question,
+which they cannot infer from a mark alone.
+
+**Student-specific copy, not the teacher labels.** "Unverifiable, could not
+confirm" is institutional hedging to a sixteen-year-old; the student wording should
+say the same thing and imply what to do differently. This is the one place in the
+design where two vocabularies for one concept is deliberate, so it is recorded
+here as intended rather than left for a reviewer to flag as drift. `check:copy`
+applies — no em-dashes, no exclamation marks.
+
+Unlike C and F, G's behaviour has somewhere real to be tested: `web/e2e/self-review.spec.ts`
+already exists and drives this flow against a seeded backend. G extends it, so it
+needs no companion story the way the teacher surface needs D.
+
+Files: `db/self_review_repo.py`, `web/schemas_student_self_review.py`,
+`lib/selfReviewTypes.ts`, the student self-review screen, and
+`web/e2e/self-review.spec.ts`. Disjoint from every other story.
+
 ### D — Playwright spec for `/teacher/review`
 
 Closes #50, and is the **actual** verification for C's suppression and F's crop.
@@ -234,7 +276,13 @@ marking against a seeded backend.
 
 ### Order
 
-A ∥ B ∥ E, then C, then F, then D.
+A ∥ B ∥ E ∥ G, then C, then F, then D.
+
+G is parallel-safe with the first wave: it touches the student portal and shares
+no file with A, B or E. Per the lesson of task #30's concurrency near-misses, each
+agent in that wave gets its file set and the explicit-path commit rule
+(`git commit -S -- <paths>`, never `-a` or `add -A`) before any of them starts —
+the index is shared, so a bare commit sweeps another agent's staged work.
 
 ## Why the marker cannot produce per-point boxes
 
@@ -329,6 +377,14 @@ the earlier coverage gap passed while the defect was live.
 * A malformed box degrades to `NULL` and the attempt still persists, following
   `test_persist_survives_derive_point_rows_raising`.
 
+**G.** The revealed payload carries all three fields; the **pending** payload
+carries none of them, asserted explicitly — that is the contract
+`selfReviewTypes.ts` documents, and a test is the only thing that keeps it true.
+Student copy differs from the teacher labels (deliberate, per the story), and
+`npm run check:copy` passes. Behaviour is verified in `web/e2e/self-review.spec.ts`
+rather than by source-text assertion, because that spec already exists for this
+flow.
+
 **D.** Legacy question renders no marker-verdict section; a verdict-bearing
 question renders every point with all three verdicts distinguishable; a boxless
 point shows no crop affordance.
@@ -368,5 +424,3 @@ outside this design's claims.
 * Per-point bounding boxes, which need page images on the marking call.
 * Per-school or per-run enablement granularity.
 * Arming the review-rate ratchet, which is an accuracy-milestone decision.
-* The student self-review surface's own `withheld`/`unverifiable` collapse, tracked
-  separately as task #49.
