@@ -1617,6 +1617,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     _persist_attempts(below_target["userId"], [BELOW_TARGET_SCORE], [below_target_recorded_at(now)])
 
     _log("Persisting the declining-trend run (single subject, 3 papers)")
+    student_profile_service.mark_onboarding_complete(declining["userId"])
     _persist_attempts(declining["userId"], DECLINING_SCORES, declining_recorded_ats(now))
 
     _log(
@@ -1624,6 +1625,10 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         "real review-queue item, same score/date as always, now with a per-point "
         "verdict ledger — task #66)"
     )
+    # "inactive" describes this account's last-activity gap (>=14 days), not its
+    # onboarding state — it must be onboarded like the others so any /student/*
+    # spec driving it doesn't get bounced to /student/onboard.
+    student_profile_service.mark_onboarding_complete(inactive["userId"])
     inactive_report = accuracy_report_for_score(
         INACTIVE_SCORE,
         paper_number=1,
@@ -1641,9 +1646,11 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     )
 
     _log("Persisting the healthy control's improving run")
+    student_profile_service.mark_onboarding_complete(control["userId"])
     _persist_attempts(control["userId"], CONTROL_SCORES, control_recorded_ats(now))
 
     _log("Persisting the standalone corrected paper")
+    student_profile_service.mark_onboarding_complete(corrected["userId"])
     corrected_attempt_ids = _persist_attempts(
         corrected["userId"], [CORRECTED_SCORE], [corrected_recorded_at(now)]
     )
