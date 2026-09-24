@@ -761,19 +761,24 @@ Message must state: a flag rather than coordinates and why, and that `ReviewItem
 
 ---
 
-## HUMAN GATE — disclosure, before Task 4
+## HUMAN GATE — disclosure, before Task 4: CLEARED 2026-09-24
 
-**Task 4 serves images of student work. Do not implement it until the user has answered.**
+**Ruling: the existing public disclosure already covers this. All five tasks proceed. No page edit is required, and none is to be made.**
 
-`Upload`'s class docstring (`lemely/db/models/attempts.py:34-42`) states: *"The public 'How Lemely handles your data' page cites this model for what an upload row keeps, so a change to that list is a change to a disclosure."* Serving a teacher a cropped region of a student's script is a new access path to retained data. Whether the public disclosure needs updating before that ships is a decision for a person, not an implementer.
+The gate existed because Task 4 serves a teacher a cropped region of a student's uploaded script, and `Upload`'s class docstring (`lemely/db/models/attempts.py:34-42`) states: *"The public 'How Lemely handles your data' page cites this model for what an upload row keeps, so a change to that list is a change to a disclosure."*
 
-The controller must put this to the user before dispatching Task 4, and record the answer in the progress ledger. The three shapes an answer can take:
+The page is `web/src/portals/marketing/dataHandling.ts`. Two of its panels bear on this, quoted as they stand:
 
-1. The disclosure already covers teacher access to retained scans; proceed.
-2. The disclosure needs updating first; Task 4 waits on that edit.
-3. Serve crops only in non-production environments for now; Task 4 ships behind a setting.
+- **"The papers you upload"** — *"A scan is kept as a file in Google Cloud Storage, along with its original filename, its type, its size and how many pages it has."* So retention is disclosed.
+- **"Who else can see your work"** — *"A teacher can see the work of students in their own classes. When Lemely is unsure about a paper it marked, that paper is put in a queue for a teacher to look at."* So class-scoped teacher access to the work, and the review queue by name, are both disclosed.
 
-Do not guess which. Tasks 1 to 3 persist and expose a flag and are safe to land regardless: nothing before this point serves an image.
+The user ruled that wording sufficient: a crop of the scan is the student's work, the viewer is a class-scoped teacher, and the surface is the queue that sentence names. **Nothing new is retained** by this plan either — crops are rendered on demand from the scan already in `Upload.storage_path`, which is exactly why the spec rejected generating them at persist time.
+
+**A second question was put separately and answered separately:** whether to add a clarifying sentence anyway, as accuracy work rather than as a gate. That file's convention is to state what is verifiably true and to rewrite panels when behaviour makes them stale — it did so once already when client error reporting shipped. The user ruled **leave the page as it is**. Recorded here so a later reader does not read the absence of a sentence as an oversight: it was considered and declined.
+
+**One thing Task 4's implementer must NOT read into this.** The ruling clears the disclosure question. It does not relax the authorization requirement, which is Task 4's headline risk and unchanged: the crop route reuses the review item's own visibility rule through one guarded lookup, and its first test is the one proving a teacher from another school gets no image. "A teacher can see the work of students in **their own classes**" is the disclosure this ruling rests on; a route that served any teacher any student's scan would break the disclosure the user just relied on.
+
+Related and pre-existing, not created here: `_visible_class_map` grants `Role.platform_admin` broader visibility than class scope (`lemely/db/review_repo.py:453`), and the page's "who else can see your work" panel does not mention administrators at all. That applies to the whole review queue today, not just crops, so it is out of this plan's scope — but it is the kind of gap worth an issue rather than silence.
 
 ---
 
