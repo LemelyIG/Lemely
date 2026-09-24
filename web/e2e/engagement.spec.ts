@@ -101,7 +101,7 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   const seed = readSeed()
   const { class: seedClass, teacher, students } = seed
 
-  // A title unique to this run: `Read it` and `Mark as read` are otherwise
+  // A title unique to this run: `Show more` and `Mark as read` are otherwise
   // per-card generic names, and the whole flow is scoped through this string.
   const title = `P5.11 announcement ${Date.now()}`
   const body = "Bring a calculator to Thursday's session."
@@ -174,16 +174,16 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
    * — so this single click is the whole `POST /{id}/read` round trip asserted
    * end to end through the UI.
    *
-   * Scoped by title rather than by the bare "Read it" name. Every card renders
-   * an identically-named button, so the bare locator resolves today only
-   * because the seed seeds zero announcements and this flow posts exactly one.
-   * That is a precondition of the fixture, not a property of the screen: the
-   * day any session seeds an announcement, a bare locator becomes a
+   * Scoped by title rather than by the bare "Mark as read" name. Every card
+   * renders an identically-named button, so the bare locator resolves today
+   * only because the seed seeds zero announcements and this flow posts exactly
+   * one. That is a precondition of the fixture, not a property of the screen:
+   * the day any session seeds an announcement, a bare locator becomes a
    * strict-mode violation in a spec that never changed. (P5.11 also gave the
    * button a title-bearing accessible name, which is what makes this scoping
    * possible — and fixes the same ambiguity for screen-reader users.)
    */
-  await page.getByRole("button", { name: `Read it: ${title}` }).click()
+  await page.getByRole("button", { name: `Mark as read: ${title}` }).click()
   await expect(page.getByText("Unread")).toHaveCount(0, { timeout: 15_000 })
   await expect(page.getByText(body)).toBeVisible()
 
