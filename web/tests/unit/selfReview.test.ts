@@ -60,6 +60,13 @@ function revealedPoint(overrides: Partial<SelfReviewRevealedPoint> = {}): SelfRe
     markChanged: false,
     absorbedByGroup: false,
     judgeReason: null,
+    // I6/I7 (task #63): required on the wire type, not optional — the
+    // Python DTO always serialises these (null/""/false when the marker
+    // took the legacy path), so a default of `undefined` here would be a
+    // test-only shape the real server never sends.
+    verdict: null,
+    evidenceSpan: "",
+    ecfApplied: false,
     ...overrides,
   }
 }
