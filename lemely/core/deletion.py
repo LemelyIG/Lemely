@@ -50,6 +50,16 @@ def purge_cutoff(now: datetime) -> datetime:
     return now - _RETENTION - PURGE_GRACE
 
 
+def restore_floor(now: datetime) -> datetime:
+    """Rows whose ``deleted_at`` is at or before this have left the restore window.
+
+    Used by a recently-deleted listing to drop a row awaiting purge, rather
+    than re-deriving ``now - timedelta(days=RETENTION_DAYS)`` at the call site.
+    """
+    _require_aware(now, "now")
+    return now - _RETENTION
+
+
 def is_within_restore_window(deleted_at: datetime, now: datetime) -> bool:
     """Whether a row stamped at ``deleted_at`` may still be restored."""
     _require_aware(deleted_at, "deleted_at")
@@ -64,4 +74,5 @@ __all__ = [
     "is_within_restore_window",
     "purge_cutoff",
     "restore_deadline",
+    "restore_floor",
 ]

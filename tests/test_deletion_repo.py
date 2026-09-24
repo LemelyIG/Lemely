@@ -22,6 +22,7 @@ from sqlalchemy import select
 from lemely.core.deletion import RETENTION_DAYS, integrity_hold_until, restore_deadline
 from lemely.db.deletion_repo import (
     DeletedPaper,
+    DeletedPaperSummary,
     PaperDeletionService,
     PaperNotDeletableError,
     PaperNotFoundError,
@@ -43,7 +44,7 @@ from lemely.db.models.enums import (
 )
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
-from tests.test_attempt_repo import _Paused, _wait_until_a_backend_waits_on_a_lock
+from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Sequence
@@ -229,6 +230,17 @@ def stranger(sessionmaker_: sessionmaker[Session]) -> str:
 @pytest.fixture
 def attempt(sessionmaker_: sessionmaker[Session], owner: str) -> Seeded:
     return _seed_attempt(sessionmaker_, owner, _seed_upload(sessionmaker_, owner))
+
+
+@pytest.fixture
+def second_attempt(sessionmaker_: sessionmaker[Session], owner: str) -> Seeded:
+    """A second, unrelated paper of the same owner's — its own upload."""
+    return _seed_attempt(sessionmaker_, owner, _seed_upload(sessionmaker_, owner))
+
+
+@pytest.fixture
+def other_students_attempt(sessionmaker_: sessionmaker[Session], stranger: str) -> Seeded:
+    return _seed_attempt(sessionmaker_, stranger, _seed_upload(sessionmaker_, stranger))
 
 
 @pytest.fixture
@@ -964,7 +976,11 @@ def test_a_flag_raised_while_deleted_holds_after_restore(
     owner: str,
     attempt: Seeded,
 ) -> None:
-    """A flag and its review that land on a deleted paper still bind it once restored."""
+    """A flag and its review that land on a deleted paper still bind it once restored.
+
+    Doesn't cover reopening a withdrawn review on restore — that's
+    ``test_restore_reopens_exactly_the_items_this_deletion_withdrew``.
+    """
     service.delete(owner, str(attempt.attempt_id))
     _seed_question(sessionmaker_, attempt.attempt_id, plagiarism=True)
     _seed_item(sessionmaker_, attempt.attempt_id, ReviewReason.plagiarism_flag)
@@ -981,11 +997,13 @@ def test_delete_then_restore_puts_an_integrity_review_back_in_the_queue(
     service: PaperDeletionService, sessionmaker_: sessionmaker[Session], owner: str
 ) -> None:
     """Past the hold the flagged paper may go, but restoring it restores its review."""
+    now = datetime.now(UTC)
+    retention = integrity_hold_until(now) - now
     old = _seed_attempt(
         sessionmaker_,
         owner,
         _seed_upload(sessionmaker_, owner),
-        recorded_at=datetime.now(UTC) - timedelta(days=RETENTION_DAYS + 1),
+        recorded_at=now - retention - timedelta(seconds=1),
     )
     _seed_question(sessionmaker_, old.attempt_id, plagiarism=True)
     item_id = _seed_item(sessionmaker_, old.attempt_id, ReviewReason.plagiarism_flag)
@@ -1029,20 +1047,185 @@ def test_delete_leaves_a_terminal_upload_status_alone(
     assert _upload_row(sessionmaker_, attempt.upload_id).status is status
 
 
+# ── a purge racing the unlocked read (Task 6 review Minor 4) ───────────────
+
+
+def _hard_purge_upload(sm: sessionmaker[Session], upload_id: uuid.UUID | None) -> None:
+    """Simulate a concurrent purge removing the upload and its attempts outright.
+
+    Attempts first, then the upload: the FK from ``attempts.upload_id`` forbids
+    the other order. Committed in its own transaction before the caller's
+    locked read runs, so this never contends with that read's lock — it is
+    gone before the lock is even attempted, exactly the race being proved.
+    """
+    with sm.begin() as session:
+        session.execute(sa.delete(Attempt).where(Attempt.upload_id == upload_id))
+        session.execute(sa.delete(Upload).where(Upload.id == upload_id))
+
+
+def test_delete_is_a_404_when_the_upload_vanishes_between_the_read_and_the_lock(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A concurrent purge here must read as 'gone', not crash the request."""
+    real = PaperDeletionService._lock_upload
+
+    def vanish(self: PaperDeletionService, session: Session, upload_id: uuid.UUID) -> Upload:
+        _hard_purge_upload(sessionmaker_, upload_id)
+        return real(self, session, upload_id)
+
+    monkeypatch.setattr(PaperDeletionService, "_lock_upload", vanish)
+    with pytest.raises(PaperNotFoundError):
+        service.delete(owner, str(attempt.attempt_id))
+
+
+def test_restore_is_a_404_when_the_upload_vanishes_between_the_read_and_the_lock(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    real = PaperDeletionService._lock_upload
+
+    def vanish(self: PaperDeletionService, session: Session, upload_id: uuid.UUID) -> Upload:
+        _hard_purge_upload(sessionmaker_, upload_id)
+        return real(self, session, upload_id)
+
+    monkeypatch.setattr(PaperDeletionService, "_lock_upload", vanish)
+    with pytest.raises(PaperNotFoundError):
+        service.restore(owner, str(attempt.attempt_id))
+
+
+# ── list_deleted (Task 7) ───────────────────────────────────────────────────
+
+
+def test_list_deleted_returns_only_this_students_deleted_papers(
+    service: PaperDeletionService,
+    owner: str,
+    stranger: str,
+    attempt: Seeded,
+    other_students_attempt: Seeded,
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    service.delete(stranger, str(other_students_attempt.attempt_id))
+    rows = service.list_deleted(owner)
+    assert [r.attempt_id for r in rows] == [attempt.attempt_id]
+
+
+def test_list_deleted_is_empty_before_any_deletion(
+    service: PaperDeletionService, owner: str, attempt: Seeded
+) -> None:
+    assert service.list_deleted(owner) == []
+
+
+def test_list_deleted_carries_the_restore_deadline(
+    service: PaperDeletionService, owner: str, attempt: Seeded
+) -> None:
+    deleted = service.delete(owner, str(attempt.attempt_id))
+    row = service.list_deleted(owner)[0]
+    assert isinstance(row, DeletedPaperSummary)
+    assert row.restore_deadline == restore_deadline(deleted.deleted_at)
+
+
+def test_list_deleted_excludes_rows_past_the_window(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """A paper awaiting purge is gone as far as the student is concerned."""
+    service.delete(owner, str(attempt.attempt_id))
+    _backdate_deletion(sessionmaker_, attempt.upload_id, days=RETENTION_DAYS + 1)
+    assert service.list_deleted(owner) == []
+
+
+def test_list_deleted_is_newest_first(
+    service: PaperDeletionService, owner: str, attempt: Seeded, second_attempt: Seeded
+) -> None:
+    service.delete(owner, str(attempt.attempt_id))
+    service.delete(owner, str(second_attempt.attempt_id))
+    rows = service.list_deleted(owner)
+    assert [r.attempt_id for r in rows] == [second_attempt.attempt_id, attempt.attempt_id]
+
+
+def test_list_deleted_returns_one_row_per_upload_labelled_from_the_newest_attempt(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """R7: siblings share ``deleted_at``; the row is labelled from the newest attempt."""
+    newer = _seed_attempt(
+        sessionmaker_,
+        owner,
+        attempt.upload_id,
+        recorded_at=attempt.recorded_at + timedelta(hours=1),
+    )
+
+    result = service.delete(owner, str(attempt.attempt_id))
+    rows = service.list_deleted(owner)
+
+    assert [r.attempt_id for r in rows] == [newer.attempt_id]
+    assert rows[0].deleted_at == result.deleted_at
+
+
+def test_list_deleted_excludes_an_attempt_stamped_at_another_instant(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """Controller addition: only an attempt equal to its upload's ``deleted_at`` is listed.
+
+    Otherwise the row offers an Undo that ``restore`` answers with 410.
+    """
+    stray = _seed_attempt(sessionmaker_, owner, attempt.upload_id)
+    service.delete(owner, str(attempt.attempt_id))
+    _stamp_attempt(sessionmaker_, stray.attempt_id, datetime.now(UTC) - timedelta(days=1))
+
+    rows = service.list_deleted(owner)
+
+    assert [r.attempt_id for r in rows] == [attempt.attempt_id]
+
+
+def test_list_deleted_is_one_of_three_include_deleted_callers(
+    service: PaperDeletionService, owner: str, attempt: Seeded
+) -> None:
+    """Documents the escape hatch's third permitted caller (``session.py``)."""
+    service.delete(owner, str(attempt.attempt_id))
+    row = service.list_deleted(owner)[0]
+    assert row.paper_label == "0625 Paper 4, May/June 2024"
+    assert row.subject_code == "0625"
+
+
 # ── concurrency ─────────────────────────────────────────────────────────────
 
 
-def _lock_and_write_order(sm: sessionmaker[Session], run: Callable[[], object]) -> list[str]:
-    """The tables ``run`` locks or writes, in statement order: ``"lock uploads"`` etc."""
+def _lock_and_write_order(
+    sm: sessionmaker[Session], run: Callable[[], object]
+) -> tuple[list[str], dict[str, str]]:
+    """The tables ``run`` locks or writes, in statement order, plus each lock's SQL text.
+
+    ``lock_sql`` lets a caller inspect a specific ``FOR UPDATE`` statement,
+    e.g. to confirm it carries the ``ORDER BY`` id-order locking depends on.
+    """
     engine = sm.kw["bind"]
     seen: list[str] = []
+    lock_sql: dict[str, str] = {}
 
     def record(
         conn: object, cursor: object, statement: str, *args: object, **kwargs: object
     ) -> None:
         sql = " ".join(statement.split())
         if sql.endswith("FOR UPDATE"):
-            seen.append("lock " + sql.split(" FROM ", 1)[1].split(" ", 1)[0])
+            step = "lock " + sql.split(" FROM ", 1)[1].split(" ", 1)[0]
+            seen.append(step)
+            lock_sql[step] = sql
         elif sql.startswith("UPDATE "):
             seen.append("update " + sql.split(" ", 2)[1])
 
@@ -1051,7 +1234,16 @@ def _lock_and_write_order(sm: sessionmaker[Session], run: Callable[[], object]) 
         run()
     finally:
         sa.event.remove(engine, "before_cursor_execute", record)
-    return seen
+    return seen, lock_sql
+
+
+def _relevant_steps(steps: list[str]) -> list[str]:
+    """Every lock, plus the review-queue write — not just the ones in the expected set.
+
+    An extra or renamed lock must fail the comparison, not be filtered away
+    with it.
+    """
+    return [step for step in steps if step.startswith("lock ") or step == "update review_queue"]
 
 
 def test_restore_locks_in_deletes_order(
@@ -1066,15 +1258,19 @@ def test_restore_locks_in_deletes_order(
     A restore that locked the attempts before the upload could hold them while
     a delete, already holding the upload, waits on them: a lock cycle.
     """
-    deleted = _lock_and_write_order(
+    expected = ["lock uploads", "lock attempts", "update review_queue"]
+
+    deleted, deleted_locks = _lock_and_write_order(
         sessionmaker_, lambda: service.delete(owner, str(attempt.attempt_id))
     )
-    restored = _lock_and_write_order(
+    restored, restored_locks = _lock_and_write_order(
         sessionmaker_, lambda: service.restore(owner, str(attempt.attempt_id))
     )
-    expected = ["lock uploads", "lock attempts", "update review_queue"]
-    assert [step for step in deleted if step in expected] == expected, deleted
-    assert [step for step in restored if step in expected] == expected, restored
+
+    assert _relevant_steps(deleted) == expected, deleted
+    assert _relevant_steps(restored) == expected, restored
+    assert "ORDER BY attempts.id" in deleted_locks["lock attempts"]
+    assert "ORDER BY attempts.id" in restored_locks["lock attempts"]
 
 
 def test_a_second_restore_queued_behind_the_first_is_a_404(

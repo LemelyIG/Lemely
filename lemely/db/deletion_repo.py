@@ -36,6 +36,7 @@ from lemely.core.deletion import (
     integrity_hold_until,
     is_within_restore_window,
     restore_deadline,
+    restore_floor,
 )
 from lemely.db.models.attempts import Attempt, QuestionResult, Upload
 from lemely.db.models.enums import (
@@ -110,6 +111,23 @@ class DeletedPaper:
     """Every review item this deletion withdrew, across all sibling attempts."""
     sibling_attempt_ids: list[uuid.UUID]
     """Every attempt this deletion stamped, the addressed one included, by id."""
+
+
+@dataclass(frozen=True, slots=True)
+class DeletedPaperSummary:
+    """One row of a student's recently-deleted list: one per upload (R7).
+
+    No ``withdrawn_item_ids``: a list row is read, never acted on the way
+    :class:`DeletedPaper` is by the undo toast, so it carries nothing the
+    listing itself does not show.
+    """
+
+    attempt_id: uuid.UUID
+    """The upload's newest attempt, by ``recorded_at``: what labels the row."""
+    subject_code: str | None
+    paper_label: str
+    deleted_at: datetime
+    restore_deadline: datetime
 
 
 def paper_label(attempt: Attempt) -> str:
@@ -198,12 +216,7 @@ class PaperDeletionService:
             # (``attempt_repo._lock_live_upload``). Reading the siblings first
             # would miss an attempt committed while this waited on the upload,
             # and leave it live on a deleted upload.
-            upload = session.scalars(
-                select(Upload)
-                .where(Upload.id == upload_id)
-                .with_for_update()
-                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
-            ).one()
+            upload = self._lock_upload(session, upload_id)
             siblings = self._lock_siblings(session, upload_id)
             addressed = next((a for a in siblings if a.id == parsed_id), None)
             if addressed is None or addressed.user_id != owner or addressed.deleted_at is not None:
@@ -228,8 +241,9 @@ class PaperDeletionService:
             # it: a refused persist skips ``set_status``, and ``set_status`` cannot
             # see a deleted row. Restored, it would read as marking and shadow a
             # real run. Under the upload lock any concurrent run has either
-            # committed its attempt or will be refused, and the addressed attempt
-            # is on this upload, so the run's outcome is a completed one.
+            # committed its attempt or will be refused, and ``complete`` is
+            # justified because the upload holds at least one completed
+            # attempt: the addressed one.
             if upload.status is UploadStatus.processing:
                 upload.status = UploadStatus.complete
             # An upload already deleted keeps its instant: restore matches its
@@ -305,12 +319,7 @@ class PaperDeletionService:
                 raise PaperNotFoundError("No such paper")
             upload_id = addressed.upload_id
 
-            upload = session.scalars(
-                select(Upload)
-                .where(Upload.id == upload_id)
-                .with_for_update()
-                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
-            ).one()
+            upload = self._lock_upload(session, upload_id)
             siblings = self._lock_siblings(session, upload_id)
             addressed = next((a for a in siblings if a.id == parsed_id), None)
             if addressed is None or addressed.user_id != owner or addressed.deleted_at is None:
@@ -329,6 +338,76 @@ class PaperDeletionService:
                 sibling.deleted_at = None
             upload.deleted_at = None
             self._reopen_withdrawn_items(session, [a.id for a in revived], instant)
+
+    def list_deleted(self, user_id: str) -> list[DeletedPaperSummary]:
+        """This student's still-restorable deletions, one row per upload, newest first.
+
+        One of three permitted callers of ``include_deleted``, alongside
+        :meth:`delete` and :meth:`restore`. Only an attempt stamped at the
+        same instant as its upload is listed (Task 6 review): an attempt
+        deleted at another instant would offer an Undo that :meth:`restore`
+        answers with :class:`PaperNotRestorableError`. Deadlines come from the
+        upload's own instant, and a row past the restore window is omitted —
+        it is waiting on purge, and no countdown there is honest about it.
+        """
+        owner = _parse_uuid(user_id)
+        if owner is None:
+            return []
+        now = datetime.now(UTC)
+        floor = restore_floor(now)
+        stmt = (
+            select(Attempt)
+            .join(Upload, Upload.id == Attempt.upload_id)
+            .where(
+                Attempt.user_id == owner,
+                Attempt.deleted_at.is_not(None),
+                Attempt.deleted_at == Upload.deleted_at,
+                Upload.deleted_at > floor,
+            )
+            .order_by(Attempt.upload_id, Attempt.recorded_at.desc(), Attempt.id.desc())
+            .execution_options(**{INCLUDE_DELETED: True})
+        )
+        with self._sessionmaker() as session:
+            attempts = session.scalars(stmt).all()
+
+        newest_by_upload: dict[uuid.UUID, Attempt] = {}
+        for a in attempts:
+            # The join and the equality filter above guarantee both are set;
+            # the check is only to narrow the type for what follows.
+            if a.upload_id is None or a.deleted_at is None:
+                continue
+            newest_by_upload.setdefault(a.upload_id, a)  # first seen per upload = newest
+
+        rows = [
+            DeletedPaperSummary(
+                attempt_id=a.id,
+                subject_code=a.subject_code,
+                paper_label=paper_label(a),
+                deleted_at=a.deleted_at,
+                restore_deadline=restore_deadline(a.deleted_at),
+            )
+            for a in newest_by_upload.values()
+            if a.deleted_at is not None
+        ]
+        rows.sort(key=lambda row: (row.deleted_at, row.attempt_id), reverse=True)
+        return rows
+
+    def _lock_upload(self, session: Session, upload_id: uuid.UUID) -> Upload:
+        """Lock the upload row, deleted or not, raising if it is gone.
+
+        A concurrent purge could remove the upload between the caller's
+        unlocked read and this lock; that is a 404, not a crash on
+        ``Result.one()``'s ``NoResultFound``.
+        """
+        upload = session.scalars(
+            select(Upload)
+            .where(Upload.id == upload_id)
+            .with_for_update()
+            .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+        ).one_or_none()
+        if upload is None:
+            raise PaperNotFoundError("No such paper")
+        return upload
 
     def _lock_siblings(self, session: Session, upload_id: uuid.UUID) -> Sequence[Attempt]:
         """Lock every attempt on ``upload_id`` in id order, deleted ones included.
@@ -457,6 +536,7 @@ class PaperDeletionService:
 
 __all__ = [
     "DeletedPaper",
+    "DeletedPaperSummary",
     "PaperDeletionError",
     "PaperDeletionService",
     "PaperNotDeletableError",

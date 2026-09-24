@@ -13,6 +13,7 @@ from lemely.core.deletion import (
     is_within_restore_window,
     purge_cutoff,
     restore_deadline,
+    restore_floor,
 )
 
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=UTC)
@@ -47,3 +48,15 @@ def test_restore_and_purge_windows_cannot_both_claim_one_row() -> None:
 def test_restore_window_rejects_a_naive_datetime() -> None:
     with pytest.raises(ValueError, match="timezone-aware"):
         is_within_restore_window(datetime(2026, 9, 1), NOW)
+
+
+def test_restore_floor_is_retention_ago() -> None:
+    assert restore_floor(NOW) == NOW - timedelta(days=30)
+
+
+def test_restore_floor_agrees_with_is_within_restore_window() -> None:
+    """The listing's floor and the restore check must draw the same line."""
+    just_inside = restore_floor(NOW) + timedelta(seconds=1)
+    just_outside = restore_floor(NOW) - timedelta(seconds=1)
+    assert is_within_restore_window(just_inside, NOW) is True
+    assert is_within_restore_window(just_outside, NOW) is False
