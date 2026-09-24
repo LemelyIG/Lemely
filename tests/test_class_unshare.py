@@ -512,3 +512,71 @@ def test_another_teachers_class_still_shows_the_item(world: World) -> None:
     world.client.post(world.unshare_path(world.latest_attempt))
 
     assert str(world.open_item) in world.queue_item_ids(other_teacher)
+
+
+# ---------------------------------------------------------------------------
+# GET /classes/{class_id}/papers — visible unshared state (controller
+# addition, Task 13's review: an unshare with no matching visibility).
+# ---------------------------------------------------------------------------
+
+
+def _papers(world: World) -> list[dict[str, Any]]:
+    world.act_as(world.teacher, Role.teacher)
+    resp = world.client.get(f"/api/classes/{world.class_id}/papers")
+    assert resp.status_code == 200, resp.text
+    return resp.json()["papers"]
+
+
+def test_lists_every_rostered_students_papers_unshared_false_by_default(world: World) -> None:
+    rows = _papers(world)
+    ids = {r["attemptId"] for r in rows}
+    assert ids == {str(world.earlier_attempt), str(world.latest_attempt)}
+    assert all(r["unshared"] is False for r in rows)
+
+
+def test_an_unshared_paper_stays_listed_but_flips_unshared_true(world: World) -> None:
+    """The whole point of this route: unsharing must not make the row vanish."""
+    world.act_as(world.teacher, Role.teacher)
+    world.client.post(world.unshare_path(world.latest_attempt))
+
+    rows = _papers(world)
+    ids = {r["attemptId"] for r in rows}
+    assert ids == {str(world.earlier_attempt), str(world.latest_attempt)}
+    by_id = {r["attemptId"]: r["unshared"] for r in rows}
+    assert by_id[str(world.latest_attempt)] is True
+    assert by_id[str(world.earlier_attempt)] is False
+
+
+def test_reshare_flips_unshared_back_to_false(world: World) -> None:
+    world.act_as(world.teacher, Role.teacher)
+    world.client.post(world.unshare_path(world.latest_attempt))
+    world.client.delete(world.unshare_path(world.latest_attempt))
+
+    rows = _papers(world)
+    by_id = {r["attemptId"]: r["unshared"] for r in rows}
+    assert by_id[str(world.latest_attempt)] is False
+
+
+def test_carries_the_student_identity_for_each_row(world: World) -> None:
+    rows = _papers(world)
+    assert all(r["studentId"] == str(world.student) for r in rows)
+    assert all(r["studentName"] == "Amelia" for r in rows)
+
+
+def test_a_platform_admin_cannot_read_the_class_papers_route(world: World) -> None:
+    admin = world.seed_user(Role.platform_admin)
+    world.act_as(admin, Role.platform_admin)
+    resp = world.client.get(f"/api/classes/{world.class_id}/papers")
+    assert resp.status_code == 403
+
+
+def test_a_student_cannot_read_the_class_papers_route(world: World) -> None:
+    world.act_as(world.student, Role.student)
+    resp = world.client.get(f"/api/classes/{world.class_id}/papers")
+    assert resp.status_code == 403
+
+
+def test_an_unknown_class_is_404_for_the_papers_route(world: World) -> None:
+    world.act_as(world.teacher, Role.teacher)
+    resp = world.client.get(f"/api/classes/{uuid.uuid4()}/papers")
+    assert resp.status_code == 404

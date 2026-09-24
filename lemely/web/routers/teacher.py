@@ -27,7 +27,7 @@ import uuid
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Annotated, Literal
+from typing import TYPE_CHECKING, Annotated, Literal, NoReturn
 
 import anyio
 import structlog
@@ -46,6 +46,7 @@ from lemely.core.at_risk import (
     assess_at_risk,
     flag_fingerprint,
 )
+from lemely.core.deletion import RETENTION_DAYS
 from lemely.core.generation import GeneratedQuestion, GeneratedQuiz
 from lemely.core.history import (
     GRADE_ORDER,
@@ -69,6 +70,13 @@ from lemely.db.at_risk_repo import (
     AtRiskAckService,
 )
 from lemely.db.class_repo import ClassService, RosterEntry
+from lemely.db.deletion_repo import (
+    DeletedTeacherPaper,
+    PaperDeletionError,
+    PaperNotFoundError,
+    PaperNotRestorableError,
+    TeacherPaperDeletionService,
+)
 from lemely.db.history_repo import parse_user_id
 from lemely.db.models.enums import SESSION_MONTH_LABELS, QuestionSource, Role, UploadStatus
 from lemely.db.question_bank_repo import (
@@ -107,6 +115,7 @@ from lemely.web.deps import (
     get_settings,
     get_storage_backend,
     get_student_profile_service,
+    get_teacher_paper_deletion_service,
     get_teacher_paper_repo,
     require_role,
 )
@@ -130,6 +139,8 @@ from lemely.web.schemas_teacher import (
     AtRiskFlagDTO,
     AtRiskStudentDTO,
     BatchTabDTO,
+    DeletedTeacherPaperDTO,
+    DeletedTeacherPapersDTO,
     DetectedFieldDTO,
     GradingQueueDTO,
     OverviewDTO,
@@ -855,6 +866,88 @@ def regrade_paper(
     row = _require_paper(repo, auth, paper_id)
     _start_run_if_claimed(row.id, settings, repo, storage, history_store, gemini_client, corpus)
     return {"paperId": paper_id, "status": "processing"}
+
+
+def _deleted_teacher_paper_dto(row: DeletedTeacherPaper) -> DeletedTeacherPaperDTO:
+    return DeletedTeacherPaperDTO(
+        paperId=str(row.paper_id),
+        label=row.label,
+        deletedAt=row.deleted_at,
+        restoreDeadline=row.restore_deadline,
+    )
+
+
+def _raise_for_deletion(exc: PaperDeletionError) -> NoReturn:
+    """Map a console delete/restore error to its status (R2, mirrors ``student_deletion``).
+
+    The 404 body is fixed at ``"No such paper"`` for not-yours and not-found
+    alike, so a foreign teacher's paper answers exactly as an unknown one
+    would — the same non-leak rule Task 8's student routes follow. There is
+    no D8 hold here (a console paper carries no student-facing integrity
+    finding), so :class:`PaperNotRestorableError` — the retention window has
+    closed — is the only other outcome, a 410.
+    """
+    if isinstance(exc, PaperNotFoundError):
+        raise HTTPException(status_code=404, detail="No such paper") from exc
+    if isinstance(exc, PaperNotRestorableError):
+        raise HTTPException(status_code=410, detail=str(exc)) from exc
+    raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@router.get("/papers/deleted", response_model=DeletedTeacherPapersDTO)
+def list_deleted_papers(
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
+) -> DeletedTeacherPapersDTO:
+    """The caller's still-restorable console deletions (R2, review amendment R7-R10).
+
+    Declared ahead of ``GET /papers/{paper_id}`` in this module so the
+    literal segment ``deleted`` can never be captured as a ``paper_id`` by
+    that route — the same ordering concern Task 8's
+    ``GET /student/attempts/deleted`` documents for its own router.
+    """
+    rows = service.list_deleted(auth.user_id)
+    return DeletedTeacherPapersDTO(
+        papers=[_deleted_teacher_paper_dto(r) for r in rows], retentionDays=RETENTION_DAYS
+    )
+
+
+@router.delete("/papers/{paper_id}", status_code=204)
+def delete_paper(
+    paper_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
+) -> Response:
+    """Soft-delete this teacher's own console paper and withdraw its open review items (R2).
+
+    204 on success. Only the uploader may delete their own paper — another
+    teacher's, or a school admin looking at it, gets the same fixed 404 as an
+    unknown id (:meth:`TeacherPaperDeletionService.delete`'s own docstring).
+    A run still in flight is stopped, not merely hidden.
+    """
+    try:
+        service.delete(auth.user_id, paper_id)
+    except PaperDeletionError as exc:
+        _raise_for_deletion(exc)
+    return Response(status_code=204)
+
+
+@router.post("/papers/{paper_id}/restore", status_code=204)
+def restore_paper(
+    paper_id: str,
+    auth: Annotated[AuthContext, Depends(get_auth_context)],
+    service: Annotated[TeacherPaperDeletionService, Depends(get_teacher_paper_deletion_service)],
+) -> Response:
+    """Undo the deletion of this teacher's own console paper within the retention window (R2).
+
+    204 on success. 404 if the id is not the caller's own or was never
+    deleted; 410 once the restore window has closed.
+    """
+    try:
+        service.restore(auth.user_id, paper_id)
+    except PaperDeletionError as exc:
+        _raise_for_deletion(exc)
+    return Response(status_code=204)
 
 
 @router.get("/papers/{paper_id}", response_model=PaperDetailDTO)

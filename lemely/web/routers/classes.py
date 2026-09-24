@@ -97,6 +97,8 @@ from lemely.web.schemas_invites import InviteCodeDTO
 from lemely.web.schemas_teacher import (
     ClassDetailDTO,
     ClassListDTO,
+    ClassPaperRowDTO,
+    ClassPapersDTO,
     ClassSummaryDTO,
     DistributionBarDTO,
     MasteryRowDTO,
@@ -748,6 +750,55 @@ def _unshare_target(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     return row, attempt_uuid, [entry.student_id for entry in roster]
+
+
+@router.get("/classes/{class_id}/papers", response_model=ClassPapersDTO)
+def list_class_papers(
+    class_id: str,
+    auth: Annotated[AuthContext, Depends(require_role(Role.teacher, Role.school_admin))],
+    service: Annotated[ClassService, Depends(get_class_service)],
+    history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
+) -> ClassPapersDTO:
+    """Every rostered student's papers in this class, with unshared state visible.
+
+    Added by the controller after Task 13's review: unshare/reshare shipped
+    with nowhere to see which papers were already hidden from this class's
+    view. Without this row a student who leaves and rejoins can have an
+    exclusion silently re-applied and their paper vanish from class
+    analytics with no visible cause — this route is the minimal read that
+    makes the hidden state visible again, over the **unscoped** history
+    store (unlike every other route in this file) so an already-unshared
+    paper still appears here, marked ``unshared: true``, rather than
+    disappearing from the one screen a teacher could use to reshare it.
+
+    A file-store record (``attempt_id`` is ``None``) cannot be addressed by
+    the unshare routes at all, so it is left out here too.
+    """
+    try:
+        row = service.get_class(auth.user_id, auth.role, class_id)
+        roster = service.roster(auth.user_id, auth.role, class_id)
+    except (ClassNotFoundError, ClassOwnershipError) as exc:
+        _raise_for(exc)
+    excluded = exclusion_repo.excluded_attempt_ids(row.class_id)
+    histories = load_roster_histories(history_store, roster)
+    rows = [
+        ClassPaperRowDTO(
+            attemptId=record.attempt_id,
+            studentId=str(entry.student_id),
+            studentName=entry.display_name,
+            subjectCode=record.metadata.subject_code,
+            paperNumber=record.metadata.paper_number,
+            paperVariant=record.metadata.paper_variant,
+            recordedAt=record.recorded_at,
+            unshared=record.attempt_id in excluded,
+        )
+        for entry, history in histories
+        for record in history.records
+        if record.attempt_id is not None
+    ]
+    rows.sort(key=lambda r: r.recordedAt, reverse=True)
+    return ClassPapersDTO(papers=rows)
 
 
 @router.post(_UNSHARE_PATH, status_code=204)

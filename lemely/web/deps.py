@@ -35,7 +35,7 @@ from lemely.db.catalogue_repo import CatalogueService
 from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.cooldown_repo import DbCooldownStore
-from lemely.db.deletion_repo import PaperDeletionService
+from lemely.db.deletion_repo import PaperDeletionService, TeacherPaperDeletionService
 from lemely.db.device_repo import DeviceRegistry
 from lemely.db.exam_calendar_repo import ExamCalendarService
 from lemely.db.flashcard_repo import FlashcardService
@@ -494,6 +494,12 @@ def get_self_review_service() -> SelfReviewService:
 def get_paper_deletion_service() -> PaperDeletionService:
     """Return the process-wide :class:`PaperDeletionService` singleton."""
     return PaperDeletionService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_teacher_paper_deletion_service() -> TeacherPaperDeletionService:
+    """Return the process-wide :class:`TeacherPaperDeletionService` singleton (R2)."""
+    return TeacherPaperDeletionService(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)
