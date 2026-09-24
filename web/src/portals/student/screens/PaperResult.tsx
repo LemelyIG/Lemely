@@ -1,10 +1,11 @@
 /* Hallmark · pre-emit critique: P4 H4 E4 S5 R4 V4 */
-import type { ReactNode } from "react"
+import { useState, type ReactNode } from "react"
 import { useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom"
-import { Check, Minus, ShareNetwork, Warning } from "@phosphor-icons/react"
+import { Check, Minus, ShareNetwork, Trash, Warning } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { Card } from "@/components/ui/card"
 import { Chip } from "@/components/ui/chip"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { PaperIdentity } from "@/components/ui/paper-identity"
 import { MarkDisplay } from "@/components/ui/mark-display"
 import { GradeBadge } from "@/components/ui/grade-badge"
@@ -19,12 +20,14 @@ import { useToast } from "@/components/ui/toast"
 import { SelfReviewPanel } from "@/portals/student/components/SelfReviewPanel"
 import { ApiError } from "@/lib/api"
 import { confidenceSummaryOf, confidenceTierFor } from "@/lib/markingConfidence"
+import { deletionRefusal } from "@/lib/paperDeletion"
 import { filterQuestions, markState, type QuestionFilter } from "@/lib/questionFilter"
 import { shareResult } from "@/lib/share"
 import { studentLoadFailureMessage } from "@/lib/studentOutcome"
 import { useAttemptQuestions } from "@/lib/hooks/useSelfReviewApi"
+import { useDeletePaper } from "@/lib/hooks/usePaperDeletionApi"
 import { useResult } from "@/lib/hooks/useStudentApi"
-import type { IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
+import type { DeletionRefusal, IntegrityRow, QuestionResult, Result } from "@/lib/studentTypes"
 
 /*
  * Paper Result (isResult) - the flagship screen. Renders one result, from
@@ -132,6 +135,85 @@ function ResultScreen({
   )
 }
 
+/**
+ * The delete control (spec 2026-09-22, Task 14). Lives on the result
+ * screen only, never in a list row — design §8's "no pre-signalling" rule
+ * means this button is identical for every paper, including one the server
+ * will refuse: there is no disabled state, no greyed-out variant, nothing
+ * that would tell a reader which papers are held before they try. The
+ * refusal (if any) is discovered on the request and rendered as copy inside
+ * the confirm dialog, via `deletionRefusal` — never a reason more specific
+ * than that.
+ *
+ * `attemptId` is required here, not optional: the caller only mounts this
+ * when `res.attemptId` is a real id, since a file-store record (the DTO's
+ * nullable case) has nothing this route can address.
+ */
+function DeletePaperControl({
+  attemptId,
+  subjectCode,
+}: {
+  attemptId: string
+  subjectCode: string
+}) {
+  const navigate = useNavigate()
+  const deletePaper = useDeletePaper()
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setError(null)
+    try {
+      await deletePaper.mutateAsync({ attemptId })
+      // Waits for `useDeletePaper`'s own `onSuccess` (the overview/subject
+      // invalidation) to settle before navigating away — `mutateAsync`
+      // resolves only once that promise does. Navigating on the DELETE's own
+      // 204 alone would land on the subject page with the same stale,
+      // pre-delete list this whole flow exists to avoid trusting.
+      navigate(`/student/subject/${subjectCode}`)
+    } catch (err) {
+      if (err instanceof ApiError && err.status === 409 && err.detail) {
+        setError(deletionRefusal(err.detail as DeletionRefusal))
+      } else if (err instanceof ApiError && err.status === 404) {
+        setError("This paper isn't here anymore.")
+      } else {
+        setError(studentLoadFailureMessage(err))
+      }
+    }
+  }
+
+  return (
+    <>
+      <Button
+        variant="ghost"
+        size="sm"
+        data-print="hide"
+        onClick={() => {
+          setError(null)
+          setOpen(true)
+        }}
+      >
+        <Trash size={16} weight="bold" />
+        Delete
+      </Button>
+      <ConfirmModal
+        open={open}
+        title="Delete this paper?"
+        consequence="It moves to Recently deleted, where you can restore it for a while."
+        confirmLabel="Delete"
+        pendingLabel="Deleting…"
+        pending={deletePaper.isPending}
+        error={error}
+        onConfirm={handleConfirm}
+        onCancel={() => {
+          setOpen(false)
+          setError(null)
+        }}
+      />
+    </>
+  )
+}
+
 function ResultHeader({
   res,
   reveal = false,
@@ -157,28 +239,36 @@ function ResultHeader({
               <PaperIdentity code={res.code} session={res.session} paperLabel={res.paper} />
               {res.markerLabel ? <Chip tone="neutral">{res.markerLabel}</Chip> : null}
             </div>
-            {paperId ? (
-              // C4 (Task 11): an interactive action, not paper content — a
-              // printed sheet has no click target for it.
-              <Button
-                variant="secondary"
-                size="sm"
-                data-print="hide"
-                onClick={() =>
-                  void shareResult(
-                    {
-                      url: `${location.origin}/student/result/${paperId}`,
-                      title: `${res.code} ${res.paper} result`,
-                      text: `${res.awarded}/${res.max}, ${res.grade}`,
-                    },
-                    { toast: (msg) => toast({ title: msg }) },
-                  )
-                }
-              >
-                <ShareNetwork size={16} weight="bold" />
-                Share
-              </Button>
-            ) : null}
+            <div className="flex flex-wrap items-center gap-2">
+              {paperId ? (
+                // C4 (Task 11): an interactive action, not paper content — a
+                // printed sheet has no click target for it.
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  data-print="hide"
+                  onClick={() =>
+                    void shareResult(
+                      {
+                        url: `${location.origin}/student/result/${paperId}`,
+                        title: `${res.code} ${res.paper} result`,
+                        text: `${res.awarded}/${res.max}, ${res.grade}`,
+                      },
+                      { toast: (msg) => toast({ title: msg }) },
+                    )
+                  }
+                >
+                  <ShareNetwork size={16} weight="bold" />
+                  Share
+                </Button>
+              ) : null}
+              {/* No file-store record can be addressed by this route (the
+                  DTO's `attemptId` is null there), so the control simply does
+                  not render for one — never a disabled version of itself. */}
+              {res.attemptId ? (
+                <DeletePaperControl attemptId={res.attemptId} subjectCode={res.code.split("/")[0]} />
+              ) : null}
+            </div>
           </div>
           {res.headline ? (
             <h1 className="mt-2.5 text-display-md text-ink">{res.headline}</h1>
