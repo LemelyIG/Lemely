@@ -1075,6 +1075,45 @@ def test_get_item_unknown_verdict_value_is_dropped_and_logged(
     assert events[0]["verdict"] == "definitely_not_a_real_verdict"
 
 
+def test_get_item_point_carries_the_markers_rationale_on_the_legacy_path(
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """``rationale`` is populated by ``derive_point_rows`` on the legacy path
+
+    too (from ``point_notes``, no ``point_verdicts`` at all), so it reaches
+    the teacher screen today, with ``equivalence_gate`` off -- unlike
+    ``verdict``, which is I6-only.
+    """
+    teacher, student = _seed_teacher_with_student(pg_sessionmaker, class_service)
+    question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.3,
+        needs_teacher_review=True,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=["p1"],
+        point_notes={"p1": "method mark: 2x not shown"},
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student),
+        report=_report([question]),
+        mark_scheme=_two_point_scheme(),
+    )
+    item = _review_items_for_attempt(pg_sessionmaker, attempt_id)[0]
+
+    detail = review_service.get_item(teacher, Role.teacher, item.id)
+    p1 = next(p for p in detail.points if p.mark_point_id == "p1")
+    assert p1.rationale == "method mark: 2x not shown"
+    assert p1.verdict is None  # legacy path: no PointVerdict ever written
+
+
 # ── resolve (accept / override) ─────────────────────────────────────────────
 
 

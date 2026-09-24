@@ -151,6 +151,7 @@ def _point_to_dto(point: ReviewItemPoint) -> ReviewItemPointDTO:
         verdict=point.verdict,
         evidenceSpan=point.evidence_span,
         ecfApplied=point.ecf_applied,
+        rationale=point.rationale,
     )
 
 

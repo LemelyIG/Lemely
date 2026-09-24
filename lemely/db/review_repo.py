@@ -273,6 +273,12 @@ class ReviewItemPoint:
     verdict, read off ``QuestionResultPoint`` regardless of whether the
     student ever self-marked this point — unlike ``student_selfmark`` et al.
     below, which answer a different question (what the student claimed).
+
+    ``rationale`` is the marker's own per-point reasoning. It is populated on
+    BOTH paths -- ``PointVerdict.note`` on the verdict path, ``point_notes``
+    on the legacy one, with the precedence rule in
+    :func:`lemely.db.question_points.derive_point_rows` -- so unlike
+    ``verdict`` it is present today with ``equivalence_gate`` off.
     """
 
     mark_point_id: str
@@ -285,6 +291,7 @@ class ReviewItemPoint:
     evidence_span: str  # I6: '' for a legacy-path point; a row whose verdict
     # failed to narrow can still carry one
     ecf_applied: bool  # I7: True only when verdict was reached after an ECF re-mark
+    rationale: str | None  # the marker's own reasoning for this point, either path
 
 
 @dataclass(frozen=True, slots=True)
@@ -522,6 +529,7 @@ class ReviewService:
                         verdict=_narrow_point_verdict(p.verdict, mark_point_id=p.mark_point_id),
                         evidence_span=p.evidence_span,
                         ecf_applied=p.ecf_applied,
+                        rationale=p.rationale,
                     )
                     for p in qr.points
                 ]

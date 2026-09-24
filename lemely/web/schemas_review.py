@@ -108,6 +108,10 @@ class ReviewItemPointDTO(ApiModel):
     so this field's ``Literal`` is never violated by a well-formed caller;
     pyright is what makes that provable at every call site rather than
     merely true today.
+
+    ``rationale`` is the marker's own per-point reasoning. Unlike ``verdict``,
+    it is present on both the verdict and legacy marking paths, so it reaches
+    this DTO today, with ``equivalence_gate`` off.
     """
 
     markPointId: str
@@ -119,6 +123,7 @@ class ReviewItemPointDTO(ApiModel):
     verdict: PointVerdictWire | None
     evidenceSpan: str
     ecfApplied: bool
+    rationale: str | None
 
 
 class ReviewItemDetailDTO(ApiModel):

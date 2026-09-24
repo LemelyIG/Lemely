@@ -547,6 +547,58 @@ def test_get_review_item_carries_marker_verdicts_for_points_the_student_never_to
     assert p1["verdict"] != p2["verdict"]
 
 
+def test_get_review_item_exposes_the_markers_rationale_on_the_legacy_path(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+) -> None:
+    """``rationale`` reaches the teacher wire from ``point_notes`` alone --
+
+    no ``point_verdicts`` at all -- so this is the one field on this DTO
+    that improves the teacher screen before ``equivalence_gate`` is ever on.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    student = _seed_user(pg_sessionmaker, Role.student, display_name="Amelia")
+    cls = class_service.create_class(teacher, "Physics 10A")
+    assert cls.join_code is not None
+    class_service.join_by_code(student, cls.join_code)
+
+    question = CorrectedQuestion(
+        question_id="1",
+        awarded_marks=1,
+        maximum_marks=2,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=0.3,
+        needs_teacher_review=True,
+        student_answer="answer-1",
+        expected_answer="expected-1",
+        topic="Physics",
+        marker_source="ai",
+        matched_point_ids=["p1"],
+        point_notes={"p1": "method mark: 2x not shown"},
+    )
+    attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
+        user_id=str(student), report=_report([question]), mark_scheme=_point_scheme()
+    )
+    with pg_sessionmaker() as session:
+        item = session.scalars(
+            sa.select(ReviewQueueItem).where(ReviewQueueItem.attempt_id == attempt_id)
+        ).first()
+        assert item is not None
+        item_id = item.id
+
+    _use_review_service(client, review_service)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}")
+    assert resp.status_code == 200
+    points = resp.json()["points"]
+    p1 = next(p for p in points if p["markPointId"] == "p1")
+    assert p1["rationale"] == "method mark: 2x not shown"
+    assert p1["verdict"] is None  # legacy path: no PointVerdict ever written
+
+
 def test_resolve_accept_as_is_shape(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
