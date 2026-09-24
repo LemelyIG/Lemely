@@ -26,7 +26,7 @@ authenticated student's own id, never a caller-supplied one (D1.6).
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NoReturn
 
 from fastapi import APIRouter, Depends, HTTPException
 
@@ -43,6 +43,8 @@ from lemely.core.class_analytics import (
 )
 from lemely.core.history import HistoryStoreProtocol, StudentHistory, latest_grade_bearing
 from lemely.db.at_risk_repo import AtRiskAcknowledgementRow, AtRiskAckService
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
+from lemely.db.class_history import ClassScopedHistoryStore, load_roster_histories
 from lemely.db.class_repo import (
     ClassError,
     ClassHasNoSchoolError,
@@ -60,6 +62,7 @@ from lemely.io.det.profiles import get_profile
 from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
+    get_class_exclusion_repository,
     get_class_service,
     get_history_store,
     get_invite_service,
@@ -99,6 +102,9 @@ from lemely.web.schemas_teacher import (
     StatCardDTO,
     StudentRowDTO,
 )
+
+if TYPE_CHECKING:
+    import uuid
 
 # The staff triple every class route is at least readable by; class-level
 # mutations (create/update/delete) narrow this further, per-route, to teacher
@@ -214,7 +220,7 @@ def _class_row_to_summary(
     ``StudentProfileService.target_grades_for_many`` call over this class's
     whole roster, not one query per student.
     """
-    histories = [history_store.load(str(entry.student_id)) for entry in roster]
+    histories = [history for _, history in load_roster_histories(history_store, roster)]
     average = _average_for(histories)
     targets_by_student = profile_service.target_grades_for_many(
         str(entry.student_id) for entry in roster
@@ -295,7 +301,7 @@ def _class_row_to_detail(
     roster, shared by both the per-row ``_student_row`` calls and the "At
     risk" stat card below, rather than a query per student.
     """
-    histories = [(entry, history_store.load(str(entry.student_id))) for entry in roster]
+    histories = load_roster_histories(history_store, roster)
     targets_by_student = profile_service.target_grades_for_many(
         str(entry.student_id) for entry in roster
     )
@@ -401,7 +407,7 @@ def _class_analytics_dto(
     from the analytics it wraps (the same anti-drift discipline
     ``_class_row_to_detail`` already applies to mastery/distribution).
     """
-    histories = [history_store.load(str(entry.student_id)) for entry in roster]
+    histories = [history for _, history in load_roster_histories(history_store, roster)]
     ranked = rank_topic_weaknesses(histories)
 
     return ClassAnalyticsDTO(
@@ -460,6 +466,19 @@ def _engagement_stats_dto(stats: EngagementStats) -> EngagementStatsDTO:
     )
 
 
+def _scoped_history_store(
+    history_store: HistoryStoreProtocol,
+    exclusion_repo: ClassExclusionRepository,
+    class_id: uuid.UUID,
+) -> ClassScopedHistoryStore:
+    """Wrap ``history_store`` with one class's exclusion set (D9, T12).
+
+    The exclusion set is fetched once per request here, not once per
+    roster student — the single call site every route below shares.
+    """
+    return ClassScopedHistoryStore(history_store, exclusion_repo.excluded_attempt_ids(class_id))
+
+
 # ---------------------------------------------------------------------------
 # Class list / detail (keeps the pre-P3.1 paths byte-identical).
 # ---------------------------------------------------------------------------
@@ -470,6 +489,7 @@ def list_classes(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassListDTO:
     """Return every class the caller may see, scoped by role (D3.1).
@@ -486,9 +506,8 @@ def list_classes(
     summaries = []
     for row in rows:
         roster = service.roster(auth.user_id, auth.role, row.class_id)
-        summaries.append(
-            _class_row_to_summary(row, roster, history_store, profile_service, now=now)
-        )
+        scoped_store = _scoped_history_store(history_store, exclusion_repo, row.class_id)
+        summaries.append(_class_row_to_summary(row, roster, scoped_store, profile_service, now=now))
     return ClassListDTO(classes=summaries)
 
 
@@ -498,6 +517,7 @@ def get_class(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
     ack_service: Annotated[AtRiskAckService, Depends(get_at_risk_ack_service)],
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassDetailDTO:
@@ -524,7 +544,8 @@ def get_class(
     acks = _acknowledgement_index(
         ack_service, auth, student_ids=[str(entry.student_id) for entry in roster]
     )
-    return _class_row_to_detail(row, roster, history_store, profile_service, now=now, acks=acks)
+    scoped_store = _scoped_history_store(history_store, exclusion_repo, row.class_id)
+    return _class_row_to_detail(row, roster, scoped_store, profile_service, now=now, acks=acks)
 
 
 @router.get("/classes/{class_id}/analytics", response_model=ClassAnalyticsDTO)
@@ -533,6 +554,7 @@ def class_analytics(
     auth: Annotated[AuthContext, Depends(require_role(*_STAFF_ROLES))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
 ) -> ClassAnalyticsDTO:
     """Return T-04 cohort analytics for one class (P3.3).
 
@@ -552,13 +574,14 @@ def class_analytics(
     and no class *data* crosses the boundary either way).
     """
     try:
-        service.get_class(auth.user_id, auth.role, class_id)  # existence + scope check only
+        row = service.get_class(auth.user_id, auth.role, class_id)  # existence + scope check
         roster = service.roster(auth.user_id, auth.role, class_id)
     except (ClassNotFoundError, ClassOwnershipError) as exc:
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _class_analytics_dto(roster, history_store)
+    scoped_store = _scoped_history_store(history_store, exclusion_repo, row.class_id)
+    return _class_analytics_dto(roster, scoped_store)
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +622,7 @@ def update_class(
     auth: Annotated[AuthContext, Depends(require_role(Role.teacher))],
     service: Annotated[ClassService, Depends(get_class_service)],
     history_store: Annotated[HistoryStoreProtocol, Depends(get_history_store)],
+    exclusion_repo: Annotated[ClassExclusionRepository, Depends(get_class_exclusion_repository)],
     profile_service: Annotated[StudentProfileService, Depends(get_student_profile_service)],
 ) -> ClassSummaryDTO:
     """Rename a class and/or change its subject code. Owner-scoped."""
@@ -611,7 +635,8 @@ def update_class(
         _raise_for(exc)
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
-    return _class_row_to_summary(row, roster, history_store, profile_service, now=datetime.now(UTC))
+    scoped_store = _scoped_history_store(history_store, exclusion_repo, row.class_id)
+    return _class_row_to_summary(row, roster, scoped_store, profile_service, now=datetime.now(UTC))
 
 
 @router.delete("/classes/{class_id}", status_code=204)

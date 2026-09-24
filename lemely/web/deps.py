@@ -32,6 +32,7 @@ from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.auth_token_repo import AuthTokenService
 from lemely.db.catalogue_repo import CatalogueService
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService
 from lemely.db.cooldown_repo import DbCooldownStore
 from lemely.db.deletion_repo import PaperDeletionService
@@ -430,6 +431,18 @@ def get_class_service() -> ClassService:
     service built on a throwaway Postgres database.
     """
     return ClassService(get_sessionmaker(get_settings()))
+
+
+@lru_cache(maxsize=1)
+def get_class_exclusion_repository() -> ClassExclusionRepository:
+    """Return the process-wide :class:`ClassExclusionRepository` singleton.
+
+    Read-only in Task 12 (:class:`~lemely.db.class_history.ClassScopedHistoryStore`'s
+    one caller); Task 13 adds the unshare/reshare writes onto the same table.
+    Tests override this dependency with a repo bound to a throwaway Postgres
+    database, never the ambient dev sessionmaker.
+    """
+    return ClassExclusionRepository(get_sessionmaker(get_settings()))
 
 
 @lru_cache(maxsize=1)

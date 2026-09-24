@@ -30,6 +30,7 @@ from lemely.core.history import PaperRecord
 from lemely.core.schemas import ExamMetadata, WeakArea
 from lemely.db.at_risk_repo import AtRiskAckService
 from lemely.db.base import Base
+from lemely.db.class_exclusion_repo import ClassExclusionRepository
 from lemely.db.class_repo import ClassService, JoinCodeError
 from lemely.db.models import School, SchoolMembership, Seat, User
 from lemely.db.models.enums import MembershipRole, Role, SeatStatus
@@ -40,6 +41,7 @@ from lemely.web.deps import (
     AuthContext,
     get_at_risk_ack_service,
     get_auth_context,
+    get_class_exclusion_repository,
     get_class_service,
     get_history_store,
     get_settings,
@@ -127,6 +129,12 @@ def client(
     # ``tests/test_web_teacher.py``'s ``_use_class_service`` helper).
     app.dependency_overrides[get_at_risk_ack_service] = lambda: AtRiskAckService(
         class_service._sessionmaker, class_service
+    )
+    # ``ClassScopedHistoryStore`` (T12) needs the real exclusion set for each
+    # class request; bind it to the same throwaway Postgres database as
+    # ``class_service`` rather than the ambient dev sessionmaker.
+    app.dependency_overrides[get_class_exclusion_repository] = lambda: ClassExclusionRepository(
+        class_service._sessionmaker
     )
     yield TestClient(app)
     app.dependency_overrides.clear()
