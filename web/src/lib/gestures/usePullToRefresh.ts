@@ -124,12 +124,29 @@ export function usePullToRefresh(
       // through to whatever the control's own touch behaviour is (a native
       // scroll, most likely), same as it always has for every other
       // `startFilter` exemption (the edge-swipe strip, the scroll-top
-      // check). Making a press-then-drag on a control promote into a pull
-      // instead would mean deferring `setPointerCapture` past pointerdown
-      // for every `useDragGesture` consumer (`EdgeSwipeBack`, the nav
-      // drawer's dismiss-drag, the flashcard/quiz swipes), a materially
-      // larger change to the shared primitive's timing than this fix
-      // touches, and not what its own contract currently promises.
+      // check).
+      //
+      // Considered and rejected: making a press-then-drag on a control
+      // promote into a pull, by having `useDragGesture` track the pointer
+      // on any target but defer `setPointerCapture` until real movement is
+      // confirmed, instead of hard-rejecting interactive targets here.
+      // That is buildable — `onPointerMove` already bubbles to `el` before
+      // capture exists, so pre-commit tracking works — but the "how much
+      // movement is real" question already has an answer in this codebase,
+      // `commitThreshold` (10px), and using anything looser risks
+      // recapturing the exact bug this fix removes: ordinary hand tremor on
+      // an intended tap reads as movement too. Gating capture on
+      // `commitThreshold` instead of on the first pixel means `onProgress`
+      // and the imperative transform — which currently start on the very
+      // first `pointermove`, unconditionally — would go silent for the
+      // first ~10px of every drag on all four `useDragGesture` consumers
+      // (`EdgeSwipeBack`, the nav drawer's dismiss-drag, the flashcard/quiz
+      // swipes, and this one), not just presses that start on a control.
+      // That is a felt, cross-cutting motion change to a shared primitive,
+      // not a scoped fix to a click-swallowing bug, and it is not what this
+      // issue asked for. Hard-rejecting here costs one interaction — a
+      // pull cannot be initiated by pressing directly on a control — in
+      // exchange for touching nothing else in the app.
       const target = event.target
       if (target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null) return false
       const el = ref.current
