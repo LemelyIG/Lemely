@@ -8,7 +8,7 @@ import {
   dataHandlingClose,
   dataHandlingIntro,
   dataHandlingSections,
-  notYetBuilt,
+  deletion,
 } from "@/portals/marketing/dataHandling"
 
 /*
@@ -23,16 +23,23 @@ import {
  *   1. The page acquires a promise. Reassurance is the natural register for a
  *      page about data, and every reassuring sentence available here would be
  *      an undertaking by an operator who does not exist in this code.
- *   2. The product changes and the page does not. The last panel says there is
- *      no way to delete an account or a scan. The day somebody builds one, that
- *      sentence becomes a lie told to exactly the reader who cares most, so the
- *      test below reads the backend rather than this page and fails when a
- *      deletion route appears.
+ *   2. The product changes and the page does not. Task 15 is the second kind of
+ *      drift actually happening: the page used to say there was no way to
+ *      delete a scan and no retention machinery, and paper deletion shipped
+ *      underneath it, which made both sentences false. The `deletion` export
+ *      that replaced the old "Not built yet" panel is checked below against
+ *      `lemely/core/deletion.py`'s own retention constant, `lemely/web/purge.py`,
+ *      `lemely/db/deletion_repo.py` and `lemely/db/xp_repo.py`, not just read
+ *      for plausible wording, and the backend-route check that used to prove
+ *      the opposite claim is now inverted to keep proving the current one:
+ *      the day account deletion ships, that assertion goes red the same way
+ *      the deletion one used to.
  *
- * The second is the one worth the effort. This project's recurring finding is
- * that a comment describing an intention is not evidence the code has it, and a
- * page describing the backend is the same shape: it is true on the day it is
- * written and nothing notices when it stops being.
+ * This project's recurring finding is that a comment describing an intention
+ * is not evidence the code has it, and a page describing the backend is the
+ * same shape: it is true on the day it is written and nothing notices when it
+ * stops being, which is why every fact below is checked against the module
+ * that implements it rather than against the copy alone.
  */
 
 const repoRoot = path.resolve(__dirname, "../../..")
@@ -54,13 +61,15 @@ function containsComponent(node: unknown, name: string): boolean {
   return containsComponent(el.props?.children, name)
 }
 
-/** Every sentence a reader can see on the page, flattened. */
-const allCopy = [
+/** Every sentence in the six ordinary sections plus the intro and closer, without the deletion panel. */
+const nonDeletionCopy = [
   ...Object.values(dataHandlingIntro),
   ...dataHandlingSections.flatMap((s) => [s.heading, s.body]),
-  ...Object.values(notYetBuilt),
   dataHandlingClose,
 ].join("\n")
+
+/** Every sentence a reader can see on the page, flattened. */
+const allCopy = [nonDeletionCopy, ...Object.values(deletion)].join("\n")
 
 describe("the data page is public and reachable — P6.5", () => {
   it("mounts /data at the top level", () => {
@@ -125,11 +134,6 @@ describe("the page states facts, not promises — D6.8", () => {
     [/\bguarantee/i, "a guarantee is an undertaking, not a behaviour"],
     [/\bcommitted?\s+to\b/i, "a commitment is an undertaking, not a behaviour"],
     [/\bwe (take|value|respect)\b/i, "the reassurance register, which says nothing"],
-    // A retention period is the single most common thing a page like this
-    // states, and this product has no retention machinery at all: nothing in
-    // `lemely/` purges, expires or anonymises anything. Naming a number of days
-    // would be inventing the feature in prose.
-    [/\b\d+\s*(days?|months?|years?)\b/i, "there is no retention rule to state"],
     // GDPR/CCPA language implies a legal analysis nobody in this repository has
     // done, and a controller nobody has named.
     [/\bGDPR\b|\bCCPA\b|\bdata controller\b/i, "no legal analysis backs this"],
@@ -139,6 +143,20 @@ describe("the page states facts, not promises — D6.8", () => {
 
   it.each(bannedPromises)("makes no claim matching %s (%s)", (pattern) => {
     expect(allCopy).not.toMatch(pattern)
+  })
+
+  /*
+   * A retention period used to be banned across the whole page, on the
+   * reasoning that this product had no retention machinery at all and a
+   * number of days would be inventing the feature in prose (D6.8). Paper
+   * deletion (Task 1) made that reasoning true of six of the seven panels
+   * and false of the seventh: `deletion` is now the one place a day count is
+   * a fact rather than an invention, checked below against
+   * `lemely/core/deletion.py`. Everywhere else, a stray "30 days" would still
+   * be exactly the invented-feature failure this test existed to catch.
+   */
+  it("invents no retention number outside the deletion panel", () => {
+    expect(nonDeletionCopy).not.toMatch(/\b\d+\s*(days?|months?|years?)\b/i)
   })
 
   /*
@@ -215,17 +233,19 @@ describe("the page cannot silently outlive the product it describes — D6.8", (
   })
 
   /*
-   * The panel says "Lemely has no account deletion and no way to remove a scan
-   * you have uploaded". Both halves are asserted against the backend, and the
-   * failure message is an instruction rather than a diff, because the right
-   * response to this test going red is to celebrate and then edit the page.
+   * The page still names only paper deletion, not account deletion (§5's
+   * `deletion` panel talks about a paper throughout and never claims an
+   * account can be removed). Both halves of that distinction are asserted
+   * against the backend, and the failure message is an instruction rather
+   * than a diff, because the right response to this test going red is to
+   * celebrate and then edit the page.
    */
-  it("still has no account-deletion route, as the page says", () => {
+  it("still has no account-deletion route, as the page implies by omission", () => {
     const suspicious = declaredDeleteRoutes().filter((r) => /account|^\/me\/?$|^\/users?\//.test(r))
     expect(
       suspicious,
-      "an account-deletion route now exists. That is good news, and it means the " +
-        '"Not built yet" panel on /data is now false: update ' +
+      "an account-deletion route now exists. That is good news, and it means " +
+        "the deletion panel on /data should say so: update " +
         "src/portals/marketing/dataHandling.ts before this ships.",
     ).toEqual([])
   })
@@ -234,9 +254,9 @@ describe("the page cannot silently outlive the product it describes — D6.8", (
    * Task 8 (paper deletion) built exactly the route the comment above warned
    * about: `DELETE /api/student/attempts/{attempt_id}` in
    * `lemely/web/routers/student_deletion.py`. This test used to assert no
-   * such route existed and is inverted here, on schedule — the panel copy
-   * itself is Task 15's job, not this one's, so it still says "Not built
-   * yet" until that task rewrites it.
+   * such route existed and was inverted on Task 8's schedule; Task 15 is what
+   * finally rewrote the panel copy to describe the route this test proves
+   * exists.
    */
   it("now has the student deletion route in student_deletion.py", () => {
     const suspicious = declaredDeleteRoutes().filter((r) => /upload|scan|attempt/.test(r))
@@ -278,5 +298,85 @@ describe("the page cannot silently outlive the product it describes — D6.8", (
     const source = fs.readFileSync(path.join(repoRoot, "lemely/db/models/users.py"), "utf8")
     expect(source).not.toMatch(/password/i)
     expect(allCopy).toMatch(/There is no password on it/)
+  })
+})
+
+/*
+ * Task 15: the disclosure page describes deletion truthfully.
+ *
+ * The plan's Step 1 draft asserted `dataHandlingSections` was a plain array
+ * and, in the same draft, wrote `dataHandlingSections.deletion.hold` as if it
+ * were not. The review amendment resolved that in favour of the array: the
+ * "no way to delete" copy moved out of `dataHandlingSections` into its own
+ * export from the start, and `deletion` replaces it, so every assertion here
+ * reads `deletion` directly rather than a property that was never on the
+ * array.
+ */
+describe("the disclosure page describes deletion truthfully — Task 15", () => {
+  const serialised = JSON.stringify(dataHandlingSections) + JSON.stringify(deletion)
+
+  it("no longer claims that nothing can be deleted", () => {
+    expect(serialised).not.toContain("There is no way to delete any of this")
+    expect(serialised).not.toContain("no retention machinery")
+  })
+
+  it("states the window, what goes, and what stays", () => {
+    expect(serialised).toContain("30 days")
+    expect(serialised).toMatch(/mark scheme/i) // kept (D2)
+    expect(serialised).toMatch(/XP|streak/) // kept (D7)
+  })
+
+  it("describes the hold without naming a reason", () => {
+    const hold = deletion.hold
+    expect(hold).toMatch(/can't be deleted for up to 30 days/)
+    expect(hold).not.toMatch(/plagiar|integrity|cheat|flag/i)
+  })
+
+  /*
+   * `RETENTION_DAYS` in `lemely/core/deletion.py` is the one number behind
+   * both the restore window and the integrity hold (its own module docstring
+   * says so, deliberately, so the two can never drift apart). This page
+   * cannot import a Python constant, so "30 days" here is a second literal
+   * by construction; this test is what keeps it from silently drifting from
+   * the first one if `RETENTION_DAYS` ever changes.
+   */
+  it("pins its 30-day window to RETENTION_DAYS, so the two cannot drift apart", () => {
+    const source = fs.readFileSync(path.join(repoRoot, "lemely/core/deletion.py"), "utf8")
+    const match = source.match(/^RETENTION_DAYS\s*=\s*(\d+)/m)
+    expect(match, "RETENTION_DAYS not found in lemely/core/deletion.py").not.toBeNull()
+    const days = match![1]
+    expect(deletion.window).toContain(`${days} days`)
+    expect(deletion.hold).toContain(`${days} days`)
+  })
+
+  it("says deletion covers every marking run of the scan (R7)", () => {
+    expect(deletion.removes).toMatch(/every marking run/i)
+  })
+
+  it("names the teacher's review-withdrawn notification as a surviving record", () => {
+    expect(deletion.keeps).toMatch(/review item was withdrawn/i)
+  })
+
+  it("says a teacher can delete their own console uploads on the same terms (R2)", () => {
+    expect(deletion.window).toMatch(/grading console/i)
+    expect(deletion.window).toMatch(/same 30-day terms/i)
+  })
+
+  it("says unsharing a paper from a class leaves the student's own copy untouched (D9)", () => {
+    expect(deletion.window).toMatch(/unshare/i)
+    expect(deletion.window).toMatch(/student's own copy is unchanged/i)
+  })
+
+  it("says a parent sees the student's live history and nothing about deletion", () => {
+    expect(deletion.keeps).toMatch(/parent linked to the student/i)
+    expect(deletion.keeps).toMatch(/nothing shown about a deletion/i)
+  })
+
+  it("no longer imports the old notYetBuilt export", () => {
+    const source = fs.readFileSync(
+      path.resolve(__dirname, "../../src/portals/marketing/dataHandling.ts"),
+      "utf8",
+    )
+    expect(source).not.toMatch(/\bnotYetBuilt\b/)
   })
 })

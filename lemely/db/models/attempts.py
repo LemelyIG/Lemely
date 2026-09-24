@@ -30,7 +30,16 @@ class Upload(TimestampMixin, Base):
     (:mod:`lemely.io.storage_gcs`); dev and CI use the local filesystem
     backend behind the same seam. The public "How Lemely handles your data"
     page cites this model for what an upload row keeps, so a change to that
-    list is a change to a disclosure — see :mod:`lemely.io.storage`.
+    list is a change to a disclosure, see :mod:`lemely.io.storage`.
+
+    A student can delete this row: :class:`~lemely.db.deletion_repo.PaperDeletionService`
+    stamps ``deleted_at`` on it and on every attempt marked from it in one
+    transaction (:data:`~lemely.core.deletion.RETENTION_DAYS` restore window),
+    and the row's object in storage is only removed once
+    :func:`~lemely.web.purge.purge_expired_papers` finds it past that window.
+    That page's "Deleting a paper" panel describes the same sequence; a change
+    here that widens or narrows what deletion touches is a change to that
+    disclosure too.
     """
 
     __tablename__ = "uploads"

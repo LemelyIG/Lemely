@@ -2,12 +2,7 @@
 import { Badge } from "@/components/ui/badge"
 import { Card } from "@/components/ui/card"
 import { Reveal } from "@/components/ui/reveal"
-import {
-  dataHandlingClose,
-  dataHandlingIntro,
-  dataHandlingSections,
-  notYetBuilt,
-} from "./dataHandling"
+import { dataHandlingClose, dataHandlingIntro, dataHandlingSections, deletion } from "./dataHandling"
 
 /*
  * "How Lemely handles your data" (P6.5, D6.8 option A).
@@ -66,20 +61,31 @@ export function DataHandling() {
         </div>
 
         {/*
-          The one panel on the page, and the one item that is an absence rather
-          than a behaviour. §4's rule for a caveat is a labelled chip rather
-          than a colour carrying the meaning alone, so the `warn` tone comes
-          with the words "Not built yet" inside it and the heading says the same
-          thing again in a full sentence.
+          The one panel on the page. It used to carry the one item that was an
+          absence rather than a behaviour ("Not built yet"); now that paper
+          deletion has shipped, it is the one item worth a chip because it is
+          the fact a reader who found this page is likeliest to be asking
+          about, not because it is a caveat. `info` replaces `warn` for the
+          same reason: nothing here is a shortfall.
 
           It sits at the foot rather than buried between two ordinary sections
-          because a reader who stops early should still have met it.
+          because a reader who stops early should still have met it. The hold
+          runs last and smaller, as a note rather than a fourth paragraph,
+          because it applies to some papers and not most of them.
         */}
         <Reveal>
+          {/* `className="p-8"` on `Card` itself is pinned by
+              `marketingCardPadding.test.ts` (C3e); the paragraph rhythm lives
+              on this inner wrapper instead of widening that string. */}
           <Card className="p-8">
-            <Badge tone="warn">{notYetBuilt.tag}</Badge>
-            <h2 className="mt-3.5 text-display-sm text-ink">{notYetBuilt.heading}</h2>
-            <p className="lm-prose mt-2.5 text-body-md text-ink-muted">{notYetBuilt.body}</p>
+            <div className="flex flex-col gap-2.5">
+              <Badge tone="info">{deletion.tag}</Badge>
+              <h2 className="mt-1 text-display-sm text-ink">{deletion.heading}</h2>
+              <p className="lm-prose text-body-md text-ink-muted">{deletion.removes}</p>
+              <p className="lm-prose text-body-md text-ink-muted">{deletion.keeps}</p>
+              <p className="lm-prose text-body-md text-ink-muted">{deletion.window}</p>
+              <p className="lm-prose mt-1 text-body-sm text-ink-faint">{deletion.hold}</p>
+            </div>
           </Card>
         </Reveal>
 
