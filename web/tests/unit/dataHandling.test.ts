@@ -230,13 +230,31 @@ describe("the page cannot silently outlive the product it describes — D6.8", (
     ).toEqual([])
   })
 
-  it("still has no upload-deletion route, as the page says", () => {
+  /*
+   * Task 8 (paper deletion) built exactly the route the comment above warned
+   * about: `DELETE /api/student/attempts/{attempt_id}` in
+   * `lemely/web/routers/student_deletion.py`. This test used to assert no
+   * such route existed and is inverted here, on schedule — the panel copy
+   * itself is Task 15's job, not this one's, so it still says "Not built
+   * yet" until that task rewrites it.
+   */
+  it("now has the student deletion route in student_deletion.py", () => {
     const suspicious = declaredDeleteRoutes().filter((r) => /upload|scan|attempt/.test(r))
     expect(
       suspicious,
-      "a scan or attempt can now be deleted. Update the \"Not built yet\" panel " +
-        "on /data (src/portals/marketing/dataHandling.ts) to say so.",
-    ).toEqual([])
+      "no scan/attempt deletion route was found in lemely/web/routers/*.py. " +
+        "If student_deletion.py's DELETE route was renamed or moved, update " +
+        "this test's expectation together with it.",
+    ).not.toEqual([])
+
+    const source = fs.readFileSync(
+      path.join(repoRoot, "lemely/web/routers/student_deletion.py"),
+      "utf8",
+    )
+    const routesInThatFile = Array.from(source.matchAll(/@router\.delete\(\s*\n?\s*"([^"]*)"/g)).map(
+      (m) => m[1],
+    )
+    expect(routesInThatFile).toContain("/{attempt_id}")
   })
 
   /*
