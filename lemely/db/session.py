@@ -7,6 +7,14 @@ plus a :func:`session_scope` context manager with commit/rollback semantics.
 Synchronous SQLAlchemy 2.0 is used deliberately: the rest of the codebase (CLI,
 Gradio, FastAPI sync routes) is synchronous, and FastAPI runs sync dependencies
 in a threadpool. This keeps the data layer simple and consistent.
+
+It also registers the soft-delete loader criterion (design
+``docs/superpowers/specs/2026-09-22-paper-deletion-design.md`` §3):
+:func:`_exclude_soft_deleted` hides every ``Attempt``, ``Upload`` and
+``TeacherPaper`` row whose ``deleted_at`` is set from every ORM select issued
+through *any* :class:`Session`. A statement sees deleted rows only by opting in
+with ``execution_options(include_deleted=True)`` — spelled
+:data:`INCLUDE_DELETED` outside this module.
 """
 
 from __future__ import annotations
@@ -14,13 +22,26 @@ from __future__ import annotations
 from contextlib import contextmanager
 from typing import TYPE_CHECKING
 
-from sqlalchemy import Engine, create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy import Engine, create_engine, event
+from sqlalchemy.orm import Session, sessionmaker, with_loader_criteria
 
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
+
+    from sqlalchemy.orm import ORMExecuteState
+
+    from lemely.db.base import Base
+
+#: Execution option that opts a statement out of the soft-delete filter.
+#: Permitted callers, and no others: this module (the definition),
+#: ``deletion_repo.py`` (delete, restore, and the recently-deleted lists,
+#: student and teacher), ``purge.py``, and ``admin_repo.py``. Anywhere else is a
+#: bug. Callers use this constant, never the bare string.
+INCLUDE_DELETED = "include_deleted"
+
+_soft_deleted: tuple[type[Base], ...] | None = None
 
 _engine: Engine | None = None
 _sessionmaker: sessionmaker[Session] | None = None
@@ -132,3 +153,56 @@ def dispose_engine() -> None:
     _engine = None
     _sessionmaker = None
     _engine_url = None
+
+
+def _soft_deleted_entities() -> tuple[type[Base], ...]:
+    """The mapped classes that carry ``deleted_at``, resolved on first use.
+
+    The import is deliberately function-local. Loading the models pulls in
+    ``lemely.auth.mirror``, which imports :func:`session_scope` from this
+    module; a top-level model import here would run that while this module is
+    half-initialised and break ``import lemely.db`` (and Alembic with it).
+    """
+    global _soft_deleted
+    if _soft_deleted is None:
+        from lemely.db.models.attempts import Attempt, Upload
+        from lemely.db.models.teacher_papers import TeacherPaper
+
+        _soft_deleted = (Attempt, Upload, TeacherPaper)
+    return _soft_deleted
+
+
+@event.listens_for(Session, "do_orm_execute")
+def _exclude_soft_deleted(state: ORMExecuteState) -> None:
+    """Hide soft-deleted attempts, uploads and teacher papers from every ORM select.
+
+    Registered on the :class:`Session` **class**, not on a sessionmaker
+    instance: ``sessionmaker`` is built independently here and in
+    ``tests/conftest.py``, and an instance-level listener would leave the whole
+    test suite unfiltered — green tests over an unprotected mechanism.
+
+    This is the structural half of decision D3. A reader that writes a plain
+    ``select(Attempt)`` is safe by default, and seeing a deleted row requires
+    the deliberate act of passing ``include_deleted=True``. The alternative
+    considered — a ``live_attempts()`` helper policed by a source lint — fails
+    on ``session.get`` and join shapes the lint cannot see.
+
+    Relationship lazy loads are skipped here because they inherit the criterion
+    from the statement that loaded their parent (``with_loader_criteria``
+    propagates to loaders); a parent loaded with ``include_deleted`` therefore
+    lazy-loads deleted children too, which is what restore and purge want.
+    Core statements that are not ORM-enabled (``session.execute(text(...))``,
+    ``update``/``delete``) are untouched.
+    """
+    if not state.is_select or state.is_column_load or state.is_relationship_load:
+        return
+    if state.execution_options.get(INCLUDE_DELETED):
+        return
+    for entity in _soft_deleted_entities():
+        state.statement = state.statement.options(
+            with_loader_criteria(
+                entity,
+                lambda cls: cls.deleted_at.is_(None),
+                include_aliases=True,
+            )
+        )
