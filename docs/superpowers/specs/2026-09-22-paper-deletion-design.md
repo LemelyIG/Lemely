@@ -643,5 +643,16 @@ corrections of fact.
   document flagged as unconfirmed. It filters all of them. The models are bound
   lazily inside the listener, because importing them at the top of
   `lemely/db/session.py` creates a circular import through `lemely.auth`.
-- **Known and accepted:** a correction or console regrade already in flight
-  when a paper is deleted can still write rows after the delete.
+- **No live attempt may reference a soft-deleted upload.** An earlier draft of
+  this section accepted that a marking run already in flight at deletion time
+  could still write rows afterwards. Task 5's review showed that is not benign:
+  the stray attempt puts the deleted paper back in the student's history; a
+  second delete of it re-stamps the upload, so restore strands the siblings
+  deleted first and never reopens their withdrawn review items; and purge then
+  either fails on the upload's foreign key every sweep or, cascading, hard-deletes
+  a paper the student can see. The persist path therefore locks the upload row
+  and refuses to insert onto a deleted one. Because delete locks the same row,
+  the two serialize: the run either commits first and becomes a sibling the
+  delete stamps, or is refused with a generic "deleted while it was being
+  marked" error. A console regrade in flight is the teacher-side analogue and
+  gets the same guard in Task 16.

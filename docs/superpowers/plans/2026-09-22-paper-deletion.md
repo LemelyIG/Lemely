@@ -2420,6 +2420,7 @@ git commit -S -m "docs(web): the data-handling page describes deletion truthfull
 > - **Teacher row type:** `DeletedTeacherPaper(paper_id, label, deleted_at, restore_deadline)` — do not reuse the attempt-shaped `DeletedPaper`.
 > - **Replace the tautology** with: a console paper deleted `RETENTION_DAYS` + 30 minutes ago is untouched; one deleted `RETENTION_DAYS` + 2 hours ago is purged.
 > - Purge deletes both `storage_path` and `scheme_storage_path` (`lemely/db/models/teacher_papers.py` ~:41) when set; assert both.
+> - **In-flight regrade guard (added after Task 5's review, see Task 5a):** a console regrade/marking run in flight when the teacher deletes the paper must not write results or open review items onto the deleted `teacher_papers` row. Lock the row `FOR UPDATE` (with `INCLUDE_DELETED`) in the write path that finishes a run (`TeacherPaperRepository.finish` and the regrade path) and refuse when `deleted_at` is set; mirror Task 5a's tests.
 > - Implement `TeacherPaperDeletionService` (delete/restore/list_deleted, withdraw/reopen via `teacher_paper_id`, owner = `uploaded_by`, **no integrity hold**) and `purge_expired_teacher_papers`, registered on the Sweeper beside Task 10's job. Follow Tasks 5–7 and 10's patterns, including the `INCLUDE_DELETED` constant.
 
 
