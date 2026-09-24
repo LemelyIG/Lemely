@@ -778,7 +778,9 @@ The user ruled that wording sufficient: a crop of the scan is the student's work
 
 **One thing Task 4's implementer must NOT read into this.** The ruling clears the disclosure question. It does not relax the authorization requirement, which is Task 4's headline risk and unchanged: the crop route reuses the review item's own visibility rule through one guarded lookup, and its first test is the one proving a teacher from another school gets no image. "A teacher can see the work of students in **their own classes**" is the disclosure this ruling rests on; a route that served any teacher any student's scan would break the disclosure the user just relied on.
 
-Related and pre-existing, not created here: `_visible_class_map` grants `Role.platform_admin` broader visibility than class scope (`lemely/db/review_repo.py:453`), and the page's "who else can see your work" panel does not mention administrators at all. That applies to the whole review queue today, not just crops, so it is out of this plan's scope — but it is the kind of gap worth an issue rather than silence.
+Related and pre-existing, not created here — **corrected from an earlier draft of this section, which had the code backwards.** The review queue has no super-role bypass: `platform_admin` sees no classes via `ClassService` (`class_repo.py:17`, `:535`), and `review_repo.py:453` is the line that *excludes* it from the console half explicitly, precisely so the one deliberately empty-scoped role does not gain a view of every teacher's marking. The earlier text claimed that line granted the visibility it in fact denies.
+
+What is real sits one layer out, on the grading-console path rather than this queue: `teacher_paper_visible` returns `sa.true()` for `platform_admin` (`teacher_paper_repo.py:159`, DS11), so that role can see every teacher paper, and `school_admin` sees the papers of teachers in their schools. The public "who else can see your work" panel names only class-scoped teachers and mentions neither role. That is a disclosure gap in the page, not in this plan, and it is worth an issue rather than silence.
 
 ---
 
