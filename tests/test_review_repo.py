@@ -1151,6 +1151,34 @@ def test_get_item_reports_no_source_box_when_the_columns_are_null(
     assert detail.has_source_box is False
 
 
+def test_get_item_reports_no_source_box_for_a_console_item_even_when_one_exists(
+    pg_sessionmaker: sessionmaker[Session],
+    review_service: ReviewService,
+) -> None:
+    """Pins the deliberate `False` for a console item, box or not (Plan 2 Task 3).
+
+    A console-graded question's `CorrectedQuestion` frequently *does* carry a
+    real `source_box` in `report_json` -- `correct_paper` attaches one
+    whenever the extractor found one, console papers included, exactly like
+    an attempt. But `_console_item_detail` reports `False` regardless,
+    because the crop route (Task 4) serves only attempt-backed items: a
+    console item's `upload_id` is NULL, so the route 404s there. Reporting
+    `True` would promise a crop affordance that 404s.
+    """
+    teacher = _seed_user(pg_sessionmaker, Role.teacher)
+    question = _question("1", awarded=1, maximum=2, confidence_score=0.3, needs_review=True)
+    question.source_box = SourceBox(page=1, box=[10, 20, 30, 40])
+    paper_id = _seed_console_paper(pg_sessionmaker, uploader=teacher, questions=[question])
+    with pg_sessionmaker() as session:
+        console_item = session.scalars(
+            select(ReviewQueueItem).where(ReviewQueueItem.teacher_paper_id == paper_id)
+        ).one()
+
+    detail = review_service.get_item(teacher, Role.teacher, console_item.id)
+
+    assert detail.has_source_box is False
+
+
 # ── resolve (accept / override) ─────────────────────────────────────────────
 
 

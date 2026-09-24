@@ -1203,6 +1203,15 @@ def _console_item_detail(
         resolved_by=item.resolved_by,
         resolved_at=item.resolved_at,
         points=[],  # no question_result_points row exists for a console item
+        # A source_box frequently *does* exist here: `correct_paper`
+        # (`correction_ai.py`) attaches one to `CorrectedQuestion` whenever the
+        # extractor found one, console papers included, exactly as it does for
+        # an attempt. This stays `False` anyway, because the crop route
+        # (`GET /api/teacher/review/{item_id}/crop`) serves only
+        # attempt-backed items -- a console item's `upload_id` is NULL, so the
+        # route 404s there. Reporting `True` would promise a crop affordance
+        # that 404s.
+        has_source_box=False,
     )
 
 
