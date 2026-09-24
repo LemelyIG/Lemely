@@ -46,6 +46,7 @@ from lemely.db.models.enums import (
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
 from lemely.runtime.errors import ExternalServiceError
+from lemely.web import purge as purge_module
 from lemely.web.purge import purge_expired_papers
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.storage_fakes import FakeStorageBackend
@@ -252,6 +253,9 @@ def _store_objects(storage: FakeStorageBackend, paper: SeededPaper) -> None:
 
 def _set_deleted_at(sm: sessionmaker[Session], paper: SeededPaper, value: datetime | None) -> None:
     with sm.begin() as session:
+        # Called from inside a storage hook: if purge ever held its row locks
+        # across the storage call, this would wait forever. Fail cleanly instead.
+        session.execute(sa.text("SET LOCAL lock_timeout = '2s'"))
         session.execute(
             sa.update(Attempt)
             .where(Attempt.id.in_(paper.attempt_ids))
@@ -644,6 +648,31 @@ def test_one_papers_storage_failure_does_not_stop_the_others(
     assert not _attempt_exists(sessionmaker_, fine.attempt_id)
 
 
+def test_one_papers_database_failure_does_not_stop_the_others(
+    sessionmaker_: sessionmaker[Session],
+    owner: uuid.UUID,
+    fake_storage: RecordingStorage,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    stuck = _seed_paper(sessionmaker_, owner, ago=_EXPIRED + timedelta(days=5))
+    fine = _seed_paper(sessionmaker_, owner)
+    real_lock = purge_module._lock
+
+    def lock(session: Session, upload_id: uuid.UUID) -> object:
+        if upload_id == stuck.upload_id:
+            raise sa.exc.OperationalError("SELECT ... FOR UPDATE", {}, Exception("boom"))
+        return real_lock(session, upload_id)
+
+    monkeypatch.setattr(purge_module, "_lock", lock)
+    with structlog.testing.capture_logs() as captured:
+        assert purge_expired_papers(sessionmaker_, fake_storage, BUCKET) == 1
+
+    failures = [e["upload_id"] for e in captured if e["event"] == "purge_paper_failed"]
+    assert failures == [str(stuck.upload_id)]
+    assert _attempt_exists(sessionmaker_, stuck.attempt_id)
+    assert not _attempt_exists(sessionmaker_, fine.attempt_id)
+
+
 def test_now_is_injectable(
     sessionmaker_: sessionmaker[Session], owner: uuid.UUID, fake_storage: RecordingStorage
 ) -> None:
@@ -721,3 +750,72 @@ def test_get_sweeper_wires_storage_and_the_uploads_bucket() -> None:
         assert sweeper.bucket == deps.get_settings().storage.bucket
     finally:
         deps.get_sweeper.cache_clear()
+
+
+# ── two replicas on one upload ──────────────────────────────────────────────
+
+
+def _racing_replica(sm: sessionmaker[Session], counts: list[int]) -> RecordingStorage:
+    """Storage whose first delete runs a whole second purge pass, as another replica would.
+
+    The outer pass has taken its decision and committed by then, so both
+    replicas hold the same decision, which is the interleaving under test.
+    """
+
+    def run_the_other_replica(_bucket: str, _path: str) -> None:
+        if not counts:
+            counts.append(purge_expired_papers(sm, RecordingStorage(), BUCKET))
+
+    return RecordingStorage(on_delete=run_the_other_replica)
+
+
+def test_a_replica_that_finds_the_work_done_is_not_an_error(
+    sessionmaker_: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    paper = _seed_paper(sessionmaker_, owner)
+    _populate(sessionmaker_, owner, paper.attempt_id)
+    inner: list[int] = []
+
+    with structlog.testing.capture_logs() as captured:
+        outer = purge_expired_papers(sessionmaker_, _racing_replica(sessionmaker_, inner), BUCKET)
+
+    assert inner, "the second replica never ran"
+    assert outer + inner[0] == 1
+    assert [e["event"] for e in captured if e["log_level"] == "error"] == []
+    assert "purge_already_done" in [e["event"] for e in captured]
+    assert not _attempt_exists(sessionmaker_, paper.attempt_id)
+    assert not _upload_exists(sessionmaker_, paper.upload_id)
+    assert _children(sessionmaker_, paper.attempt_id) == _ALL_ZERO
+
+
+def test_a_replica_that_finds_the_partial_work_done_is_not_an_error(
+    sessionmaker_: sessionmaker[Session], owner: uuid.UUID
+) -> None:
+    """The partial path touches no storage, so the race is staged between its two transactions."""
+    paper = _seed_paper(sessionmaker_, owner)
+    recent = _seed_attempt(
+        sessionmaker_, owner, paper.upload_id, deleted_at=datetime.now(UTC) - timedelta(days=2)
+    )
+    inner: list[int] = []
+    real_lock = purge_module._lock
+    calls: list[uuid.UUID] = []
+
+    def lock(session: Session, upload_id: uuid.UUID) -> object:
+        calls.append(upload_id)
+        if len(calls) == 2 and not inner:
+            # Between the outer pass's two transactions: the other replica.
+            inner.append(purge_expired_papers(sessionmaker_, RecordingStorage(), BUCKET))
+        return real_lock(session, upload_id)
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setattr(purge_module, "_lock", lock)
+        with structlog.testing.capture_logs() as captured:
+            outer = purge_expired_papers(sessionmaker_, RecordingStorage(), BUCKET)
+
+    assert inner, "the second replica never ran"
+    assert outer + inner[0] == 1
+    assert [e["event"] for e in captured if e["log_level"] == "error"] == []
+    assert "purge_already_done" in [e["event"] for e in captured]
+    assert not _attempt_exists(sessionmaker_, paper.attempt_id)
+    assert _attempt_exists(sessionmaker_, recent)
+    assert _upload_exists(sessionmaker_, paper.upload_id)

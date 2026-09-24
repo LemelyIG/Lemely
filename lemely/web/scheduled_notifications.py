@@ -9,6 +9,11 @@ sweeper runs a fourth that is not a notification:
   zone (§2). Added by a later task.
 * :func:`remind_study_plans` — ``study_plan_reminder`` at 08:00 in each
   student's own zone (§2). Added by a later task.
+* :func:`lemely.web.purge.purge_expired_papers` — the fourth job, not a
+  notification: permanently removes papers deleted longer ago than the
+  retention window (paper-deletion design §7). It lives in
+  :mod:`lemely.web.purge` and runs only on a sweeper built with storage and a
+  bucket.
 
 **Idempotency is migration 0018's unique index, not anything in this file.**
 Every job passes a ``dedupe_key`` that names the thing being announced (the

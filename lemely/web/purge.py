@@ -20,7 +20,10 @@ then the upload (``attempts.upload_id`` has no ``ondelete``, so the other order
 is refused by the FK). An expired attempt whose sibling is still inside the
 window, or whose upload is live and could be re-marked, loses its rows but not
 the scan. Leaving it whole would park it at the head of the ``(deleted_at, id)``
-order, taking a batch slot on every pass for up to thirty days.
+order, taking a batch slot on every pass for up to thirty days. On a live
+upload this can leave the upload with no attempts at all; that is harmless (it
+is a live, re-markable upload like any other) and only reachable through legacy
+rows, since delete stamps the upload with its attempts.
 
 **Lock order is upload, then attempts in id order** — the order
 :class:`~lemely.db.deletion_repo.PaperDeletionService` and
@@ -41,6 +44,16 @@ and the ``deleted_at <= cutoff`` every ``DELETE`` re-asserts in its own WHERE,
 are there for the case that should not happen — replica clock skew beyond the
 grace — and turn it into a logged error with the rows kept, never a deleted
 paper the student can see.
+
+**Two replicas on one upload are expected, not an error.** The upload lock
+serialises their transactions but does not exclude either, so both can take the
+same decision and both delete the objects (the second is a harmless missing
+object). The first to re-lock deletes the rows; the second then finds the
+upload gone, or none of the attempts it decided on still present, and logs
+``purge_already_done`` at info. ``purge_paper_changed_after_object_delete``
+stays an error only for rows that still exist but no longer qualify: it is the
+one signal of real, irreversible loss, and a false alarm there teaches people
+to ignore it.
 
 **The invariant from Task 5a is asserted, not assumed.** A live attempt on a
 deleted upload is logged at error and that upload is skipped whole; purge never
@@ -109,8 +122,13 @@ def purge_expired_papers(
 
     Returns the number of attempts removed. Idempotent: a second pass, or a
     second replica mid-pass, finds nothing left to remove and deletes a
-    missing object harmlessly. One upload's failure — storage or database —
-    is logged and never stops the rest of the batch.
+    missing object harmlessly. One upload's
+    :class:`~lemely.runtime.errors.ExternalServiceError` from storage, or
+    SQLAlchemy error, is logged and the rest of the batch carries on. Any
+    other exception ends the pass — notably the auth and transport errors
+    ``storage_gcs.delete`` does not wrap (it wraps only ``GoogleAPICallError``)
+    — and :func:`~lemely.web.scheduled_notifications.run_jobs` logs it; the
+    rows are untouched, so the next pass retries.
     """
     cutoff = purge_cutoff(now or datetime.now(UTC))
     purged = 0
@@ -137,7 +155,7 @@ def _candidates(
     """The oldest expired attempts, grouped by upload in first-seen order.
 
     Unlocked: it only nominates. Every decision that counts is taken again
-    under lock in :func:`_decide`.
+    under lock in :func:`_decision_from`.
     """
     with session_factory() as session:
         rows = session.execute(
@@ -163,7 +181,8 @@ def _purge_upload(
     """Purge one upload's expired attempts, and its objects when all of it has expired."""
     try:
         with session_factory.begin() as session:
-            decision = _decide(session, upload_id, cutoff)
+            locked = _lock(session, upload_id)
+            decision = None if locked is None else _decision_from(*locked, cutoff)
     except _InvariantBroken:
         log.error("purge_live_attempt_on_deleted_upload", upload_id=str(upload_id))
         return 0
@@ -178,8 +197,13 @@ def _purge_upload(
         return 0
 
     with session_factory.begin() as session:
+        locked = _lock(session, upload_id)
+        if locked is None or not {a.id for a in locked[1]} & set(decision.attempt_ids):
+            # A concurrent pass took the same decision and finished first.
+            log.info("purge_already_done", upload_id=str(upload_id))
+            return 0
         try:
-            again = _decide(session, upload_id, cutoff)
+            again = _decision_from(*locked, cutoff)
         except _InvariantBroken:
             again = None
         if again != decision:
@@ -206,12 +230,8 @@ def _purge_upload(
         return removed
 
 
-def _decide(session: Session, upload_id: uuid.UUID, cutoff: datetime) -> _Decision | None:
-    """Lock the upload then its attempts, and decide what may go; ``None`` for nothing.
-
-    Raises:
-        _InvariantBroken: a live attempt references this deleted upload.
-    """
+def _lock(session: Session, upload_id: uuid.UUID) -> tuple[Upload, Sequence[Attempt]] | None:
+    """Lock the upload, then its attempts in id order; ``None`` if the upload is gone."""
     upload = session.scalars(
         select(Upload)
         .where(Upload.id == upload_id)
@@ -227,6 +247,17 @@ def _decide(session: Session, upload_id: uuid.UUID, cutoff: datetime) -> _Decisi
         .with_for_update()
         .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
     ).all()
+    return upload, attempts
+
+
+def _decision_from(
+    upload: Upload, attempts: Sequence[Attempt], cutoff: datetime
+) -> _Decision | None:
+    """Decide what may go from the locked copies; ``None`` when nothing has expired.
+
+    Raises:
+        _InvariantBroken: a live attempt references this deleted upload.
+    """
     if upload.deleted_at is not None and any(a.deleted_at is None for a in attempts):
         raise _InvariantBroken
     expired = tuple(a.id for a in attempts if a.deleted_at is not None and a.deleted_at <= cutoff)
