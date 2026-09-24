@@ -68,6 +68,14 @@ scenario the Playwright/Puppeteer harnesses need across all 5 roles:
   hide (``web/src/portals/teacher/screens/ReviewItem.tsx``), and the only
   shape production sees today. See ``legacy_review_scheme()`` and
   ``reviewItem.legacyItemId``/``legacyAttemptId`` below.
+* (final review) a THIRD review-queue item, on its own dedicated
+  student/class, carrying a mark scheme and a marker's ``rationale``
+  (``point_notes``) but no ``verdict`` on any point — the shape production
+  ships whenever a marker writes a note without ``equivalence_gate`` on, and
+  the shape ``MarkerVerdicts``' guard was widened
+  (``p.verdict !== null || p.rationale``) to keep visible. See
+  ``rationale_only_review_scheme()`` and
+  ``reviewItem.rationaleOnlyItemId``/``rationaleOnlyAttemptId`` below.
 * (P3.10 chunk e1) a **quiz** (T-09/T-10): 5 MCQ ``question_bank`` rows
   (:func:`build_quiz_bank_questions`, D3.7's empty-bank workaround), built
   into a quiz, assigned to the seeded class, and submitted — every answer
@@ -138,7 +146,9 @@ path::
                  "accessToken": "...", "linkedStudent": "declining"},
       "reviewItem": {"itemId": "<review_queue.id>", "attemptId": "<attempt uuid>",
                      "studentKey": "inactive",
-                     "legacyItemId": "<review_queue.id>", "legacyAttemptId": "<attempt uuid>"},
+                     "legacyItemId": "<review_queue.id>", "legacyAttemptId": "<attempt uuid>",
+                     "rationaleOnlyItemId": "<review_queue.id>",
+                     "rationaleOnlyAttemptId": "<attempt uuid>"},
       "quiz": {"quizId": "...", "assignmentId": "...", "submissionId": "...",
                "submittedBy": "control", "status": "marked"},
       "emptyTeacher": {"userId": "...", "email": "...", "password": "...",
@@ -559,6 +569,104 @@ def legacy_review_scheme() -> MarkScheme:
     )
 
 
+# ---------------------------------------------------------------------------
+# Final-review coverage gap: a THIRD review-queue row, carrying a marker's
+# per-point `rationale` (`point_notes`) but no `verdict` on any point --
+# exactly the shape production ships today whenever a marker writes a note
+# without `equivalence_gate` on. Neither `review_item_scheme()` (every point
+# has a verdict) nor `legacy_review_scheme()` (no point has anything) can
+# stand in for this: `MarkerVerdicts`' section guard
+# (`web/src/portals/teacher/screens/ReviewItem.tsx`) was widened to
+# `p.verdict !== null || p.rationale` specifically so a rationale-only point
+# still renders, and that widening had no seeded row to prove it against
+# until now. A separate (FOURTH) class of the same teacher's, like
+# `legacy_review_class_row` -- never the roster class, the below-target
+# class, or the legacy-review class -- so this addition cannot move a number
+# any existing spec asserts.
+# ---------------------------------------------------------------------------
+
+#: A recent, unremarkable single attempt -- same reasoning as
+#: `LEGACY_REVIEW_SCORE`: recent so the inactive rule can never fire, and the
+#: student's only attempt so the declining-trend rule can never fire either.
+RATIONALE_ONLY_REVIEW_SCORE: tuple[float, str] = (58.0, "D")
+RATIONALE_ONLY_REVIEW_DAYS_AGO = 2
+
+#: Below `REVIEW_CONFIDENCE_THRESHOLD` (0.90), same reasoning as
+#: `REVIEW_ITEM_CONFIDENCE_SCORE`/`LEGACY_REVIEW_CONFIDENCE_SCORE` -- the one
+#: thing that makes this attempt's real fan-out queue it for review.
+RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE = 0.6
+
+#: The marker's per-point note on `p1` only -- `p2` gets none, so this
+#: fixture cannot be confused with one where every point carries commentary.
+#: Hardcoded, verbatim, in `web/e2e/teacher-review.spec.ts` too (the two are
+#: kept in lockstep by hand, same as every other seeded string this suite
+#: asserts on).
+RATIONALE_ONLY_REVIEW_NOTE = (
+    "Working shown but the final line is illegible; benefit of the doubt given."
+)
+
+
+def rationale_only_review_recorded_at(now: datetime) -> datetime:
+    """The single, deliberately RECENT timestamp for the rationale-only-review student.
+
+    Recent, and this student's only attempt, so neither the inactive rule
+    (>=14 days) nor the declining-trend rule (needs 3 records) can ever fire
+    on it -- this account carries no `expectedAtRiskReasons` at all and is
+    not exposed under the contract's `students` key, exactly like
+    `legacy_review_recorded_at`'s account.
+    """
+    return now - timedelta(days=RATIONALE_ONLY_REVIEW_DAYS_AGO)
+
+
+def rationale_only_review_scheme() -> MarkScheme:
+    """A third, independent point-based scheme for the rationale-only review row.
+
+    Deliberately its own question text -- distinct from `review_item_scheme()`
+    and `legacy_review_scheme()` -- so a Playwright spec that opened the wrong
+    item id could never pass by accident against another row's fixture.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=2,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=2,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Shows the correct working", marks=1),
+                    AnswerPoint(
+                        id="p2", point="States the final answer with correct unit", marks=1
+                    ),
+                ],
+            ),
+        ],
+    )
+
+
+def rationale_only_review_point_notes() -> dict[str, str]:
+    """`point_notes` for the rationale-only review row.
+
+    Passed to `accuracy_report_for_score` with neither `matched_point_ids`
+    nor `point_verdicts` -- the whole point of this row is the legacy path
+    (`equivalence_gate` off) where a marker's per-point note is the only
+    thing ever recorded: `derive_point_rows` leaves `verdict` `None` on every
+    point and falls back to `point_notes` for `rationale` (see that
+    function's own docstring, the `pv is None` branch), exactly the shape
+    `MarkerVerdicts`' widened guard exists to keep visible.
+    """
+    return {"p1": RATIONALE_ONLY_REVIEW_NOTE}
+
+
 #: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
 #: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
 #: (1.0, 3.0, 1.0) exactly, no remainder to break a tie over. If either of
@@ -861,6 +969,7 @@ def accuracy_report_for_score(
     needs_teacher_review: bool = False,
     matched_point_ids: list[str] | None = None,
     point_verdicts: list[PointVerdict] | None = None,
+    point_notes: dict[str, str] | None = None,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -882,16 +991,20 @@ def accuracy_report_for_score(
     ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
     stay untouched.
 
-    ``matched_point_ids``/``point_verdicts`` default to empty, exactly like
-    every :class:`CorrectedQuestion` field they feed — every original caller
-    is unaffected. Task #66 passes both, alongside ``mark_scheme=`` at the
-    ``persist_correction`` call site, so the review-queue item's own question
-    (still ``question_id="1"``) gets a real per-point verdict ledger through
+    ``matched_point_ids``/``point_verdicts``/``point_notes`` default to empty
+    (``None`` for the last, exactly like :class:`CorrectedQuestion`'s own
+    field), and every original caller is unaffected. Task #66 passes the
+    first two, alongside ``mark_scheme=`` at the ``persist_correction`` call
+    site, so the review-queue item's own question (still ``question_id="1"``)
+    gets a real per-point verdict ledger through
     :func:`~lemely.db.question_points.derive_point_rows`, the same as
     :func:`self_review_report`. ``marker_source`` becomes ``"ai"`` whenever
     verdicts are attached — I6 verdicts are an AI-marking concept, and a seed
     row claiming ``"deterministic"`` marking while carrying them would be a
-    lie the real pipeline never tells.
+    lie the real pipeline never tells. ``point_notes`` alone (no verdicts) is
+    the legacy path instead — :func:`rationale_only_review_point_notes` uses
+    it to seed a row with a marker's ``rationale`` but no ``verdict`` on any
+    point, and ``marker_source`` correctly stays ``"deterministic"`` for it.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -914,6 +1027,7 @@ def accuracy_report_for_score(
         marker_source="deterministic" if point_verdicts is None else "ai",
         matched_point_ids=matched_point_ids or [],
         point_verdicts=point_verdicts or [],
+        point_notes=point_notes,
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -1638,6 +1752,59 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         )
     legacy_review_item_row = legacy_review_rows[0]
 
+    _log(
+        "Signing up a rationale-only-review student and persisting a THIRD low-confidence "
+        "attempt whose one point carries a marker's rationale (point_notes) but no verdict "
+        "-- the shape production ships whenever a marker writes a note without "
+        "equivalence_gate on, and the shape MarkerVerdicts' widened guard exists to render"
+    )
+    rationale_only_review = _signup_account("rationale-only-review", Role.student, run_tag)
+    # A dedicated FOURTH class -- never the roster class, the below-target
+    # class, or the legacy-review class -- so this student's presence can
+    # never move a number an existing spec already asserts.
+    rationale_only_review_class_row = class_service.create_class(
+        uuid.UUID(teacher["userId"]), f"Rationale Only Review Class {run_tag}"
+    )
+    assert rationale_only_review_class_row.join_code is not None  # noqa: S101 - always generated, see create_class
+    class_service.join_by_code(
+        uuid.UUID(rationale_only_review["userId"]), rationale_only_review_class_row.join_code
+    )
+    rationale_only_review_report = accuracy_report_for_score(
+        RATIONALE_ONLY_REVIEW_SCORE,
+        paper_number=1,
+        confidence=ConfidenceBand.LOW,
+        confidence_score=RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+        needs_teacher_review=True,
+        point_notes=rationale_only_review_point_notes(),
+        # Deliberately no matched_point_ids/point_verdicts -- see
+        # rationale_only_review_point_notes()'s own docstring.
+    )
+    rationale_only_review_attempt_id = attempt_repo.persist_correction(
+        user_id=rationale_only_review["userId"],
+        report=rationale_only_review_report,
+        recorded_at=rationale_only_review_recorded_at(now).isoformat(),
+        mark_scheme=rationale_only_review_scheme(),
+    )
+
+    _log("Locating the review-queue row the rationale-only-review attempt's fan-out created")
+    rationale_only_review_rows = review_service.list_queue(
+        uuid.UUID(teacher["userId"]),
+        Role.teacher,
+        class_id=rationale_only_review_class_row.class_id,
+        reason="low_confidence",
+    ).rows
+    rationale_only_review_rows = [
+        r for r in rationale_only_review_rows if r.attempt_id == rationale_only_review_attempt_id
+    ]
+    if len(rationale_only_review_rows) != 1:
+        raise RuntimeError(
+            f"Expected exactly 1 low_confidence review-queue row for attempt "
+            f"{rationale_only_review_attempt_id}, found {len(rationale_only_review_rows)} — "
+            "RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE may no longer be below "
+            "REVIEW_CONFIDENCE_THRESHOLD."
+        )
+    rationale_only_review_item_row = rationale_only_review_rows[0]
+
     _log("Seeding the quiz's question bank (generated rows, paper_id=None — D3.7)")
     teacher_uuid = uuid.UUID(teacher["userId"])
     question_bank_service.add_questions(build_quiz_bank_questions(teacher_uuid))
@@ -1869,6 +2036,12 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         # attempt, and no spec needs to log in as it.
         "legacyItemId": str(legacy_review_item_row.item_id),
         "legacyAttemptId": str(legacy_review_attempt_id),
+        # A THIRD review-queue row whose one question carries a marker's
+        # rationale (point_notes) but no verdict on any point -- the shape
+        # `MarkerVerdicts`' guard was widened to render. Not tied to a
+        # `students` entry, same as `legacyItemId` above.
+        "rationaleOnlyItemId": str(rationale_only_review_item_row.item_id),
+        "rationaleOnlyAttemptId": str(rationale_only_review_attempt_id),
     }
     quiz = {
         "quizId": str(quiz_row.quiz_id),

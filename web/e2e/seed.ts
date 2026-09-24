@@ -112,6 +112,17 @@ export interface SeedContract {
      */
     legacyItemId: string
     legacyAttemptId: string
+    /**
+     * A THIRD review-queue row (final-review coverage gap), whose one
+     * question carries a marker's `rationale` (Python's `point_notes`) but
+     * no `verdict` on any point -- the shape production ships whenever a
+     * marker writes a note without `equivalence_gate` on, and exactly the
+     * shape `MarkerVerdicts`' guard was widened
+     * (`p.verdict !== null || p.rationale`) to keep rendering. Not tied to a
+     * `students` entry, same as `legacyItemId` above.
+     */
+    rationaleOnlyItemId: string
+    rationaleOnlyAttemptId: string
   }
   quiz: {
     quizId: string

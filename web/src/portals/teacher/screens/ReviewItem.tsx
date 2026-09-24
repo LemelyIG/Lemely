@@ -273,7 +273,10 @@ function MarkerVerdicts({ points }: { points: ReviewItemPoint[] }) {
               </p>
             ) : null}
             {point.rationale ? (
-              <p className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3">
+              <p
+                className="text-body-sm text-ink-faint leading-[1.5] m-0 text-pretty line-clamp-3"
+                title={point.rationale}
+              >
                 {point.rationale}
               </p>
             ) : null}

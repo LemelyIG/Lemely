@@ -12,7 +12,7 @@ import { readSeed } from "./seed"
  * still passing every one of those assertions with a clean `tsc`. These are
  * the assertions that cannot be satisfied by a string check.
  *
- * Two seeded review-queue rows exist:
+ * Three seeded review-queue rows exist:
  *  - `seed.reviewItem` (task #66's `inactive`-student T-08 item), whose one
  *    question carries all three I6 verdicts on its three points — the
  *    "verdicts render, and are distinguishable" half below.
@@ -26,6 +26,16 @@ import { readSeed } from "./seed"
  *    correctly-suppressed section from a defect that silently drops content
  *    one level *inside* the guard, which is exactly the failure mode task #7's
  *    docstring above already describes for the verdicts-present case.
+ *  - `seed.reviewItem.rationaleOnlyItemId` (final-review coverage gap), a
+ *    THIRD row whose one question carries a marker's `rationale`
+ *    (Python's `point_notes`) but no `verdict` on any point — the shape
+ *    production actually ships today whenever a marker writes a note
+ *    without `equivalence_gate` on, and exactly the shape
+ *    `MarkerVerdicts`' guard was widened
+ *    (`p.verdict !== null || p.rationale`) to keep rendering. Neither of the
+ *    two rows above can stand in for it: the first carries a verdict on
+ *    every point, the second carries neither a verdict nor a rationale on
+ *    any.
  */
 
 test("a teacher sees every point's marker verdict, with awarded, withheld and unverifiable distinguishable", async ({
@@ -93,6 +103,41 @@ test("a legacy question with no per-point verdict or rationale renders no marker
   await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
   await expect(page.getByText("Marker's per-point verdicts")).toHaveCount(0)
   await expect(page.getByRole("region", { name: "Marker's per-point verdicts" })).toHaveCount(0)
+
+  expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
+})
+
+test("a rationale-only question with no verdict still renders the marker's per-point rationale", async ({
+  page,
+}) => {
+  const seed = readSeed()
+  const errors = watchConsole(page)
+  const { teacher, reviewItem } = seed
+
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(teacher.email)
+  await page.getByLabel("Password").fill(teacher.password)
+  await page.getByRole("button", { name: /sign in/i }).click()
+  await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+
+  await page.goto(`/teacher/review/${reviewItem.rationaleOnlyItemId}`)
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+
+  // This is exactly the shape production ships today: a marker's note
+  // written with `equivalence_gate` off, so no point on this question ever
+  // carries a `verdict` — only a `rationale`. `MarkerVerdicts`' guard was
+  // widened to `p.verdict !== null || p.rationale` specifically to keep this
+  // section rendering for it, and a real render is the only thing that can
+  // prove the widening actually works at runtime — a source-text check
+  // (`reviewItemMarkerVerdicts.test.ts`) cannot tell a section that renders
+  // the rationale from one a narrower guard silently suppresses.
+  const section = page.getByRole("region", { name: "Marker's per-point verdicts" })
+  await expect(section).toBeVisible()
+  await expect(
+    section.getByText(
+      "Working shown but the final line is illegible; benefit of the doubt given.",
+    ),
+  ).toBeVisible()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

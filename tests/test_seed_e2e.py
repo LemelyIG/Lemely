@@ -50,6 +50,8 @@ from scripts.seed_e2e import (
     QUIZ_BANK_ANSWERS,
     QUIZ_BANK_BANDS,
     QUIZ_REQUESTED_COUNT,
+    RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+    RATIONALE_ONLY_REVIEW_SCORE,
     REVIEW_ITEM_CONFIDENCE_SCORE,
     SUBJECT_CODE,
     accuracy_report_for_score,
@@ -974,3 +976,53 @@ class TestLegacyReviewItem:
         # TestReviewItemVerdicts pins for the verdict-bearing row.
         assert report.grade_prediction.percentage == LEGACY_REVIEW_SCORE[0]
         assert report.grade_prediction.grade == LEGACY_REVIEW_SCORE[1]
+
+
+class TestRationaleOnlyReviewItem:
+    """Final-review coverage gap: a THIRD review-queue row, carrying a
+    marker's per-point ``rationale`` (``point_notes``) but no ``verdict`` on
+    any point -- the shape production ships today whenever a marker writes a
+    note without ``equivalence_gate`` on. Neither `TestReviewItemVerdicts`
+    (every point has a verdict) nor `TestLegacyReviewItem` (no point has
+    anything) can stand in for this: `MarkerVerdicts`' section guard
+    (`web/src/portals/teacher/screens/ReviewItem.tsx`) was widened to
+    `p.verdict !== null || p.rationale` specifically so this rationale-only
+    shape still renders, and that widening had no seeded row to prove it
+    against until now."""
+
+    def test_rationale_only_question_carries_rationale_but_no_verdict(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import (
+            RATIONALE_ONLY_REVIEW_NOTE,
+            rationale_only_review_point_notes,
+            rationale_only_review_scheme,
+        )
+
+        report = accuracy_report_for_score(
+            RATIONALE_ONLY_REVIEW_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            point_notes=rationale_only_review_point_notes(),
+            # Deliberately no matched_point_ids/point_verdicts -- see
+            # rationale_only_review_point_notes()'s own docstring.
+        )
+        scheme = rationale_only_review_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert len(rows) == 2
+        assert [r["verdict"] for r in rows] == [None, None]
+        assert [r["rationale"] for r in rows] == [RATIONALE_ONLY_REVIEW_NOTE, None]
+        assert [r["evidence_span"] for r in rows] == ["", ""]
+        assert [r["ecf_applied"] for r in rows] == [False, False]
+        # Marker-source stays "deterministic" -- point_notes alone is the
+        # legacy path, never an I6 verdict.
+        assert question.marker_source == "deterministic"
+        assert question.needs_teacher_review is True
+        assert question.confidence_score == RATIONALE_ONLY_REVIEW_CONFIDENCE_SCORE
+        assert question.confidence_score < REVIEW_CONFIDENCE_THRESHOLD
+        # Score/grade untouched by attaching a scheme -- same invariant
+        # TestLegacyReviewItem/TestReviewItemVerdicts pin for the other rows.
+        assert report.grade_prediction.percentage == RATIONALE_ONLY_REVIEW_SCORE[0]
+        assert report.grade_prediction.grade == RATIONALE_ONLY_REVIEW_SCORE[1]
