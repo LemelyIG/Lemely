@@ -37,8 +37,10 @@ if TYPE_CHECKING:
 #: Execution option that opts a statement out of the soft-delete filter.
 #: Permitted callers, and no others: this module (the definition),
 #: ``deletion_repo.py`` (delete, restore, and the recently-deleted lists,
-#: student and teacher), ``purge.py``, and ``admin_repo.py``. Anywhere else is a
-#: bug. Callers use this constant, never the bare string.
+#: student and teacher), ``purge.py``, ``attempt_repo.py`` (``_lock_live_upload``
+#: must see a deleted upload to refuse it), and ``admin_repo.py`` (the
+#: purge-backlog metric). Anywhere else is a bug. Callers use this constant,
+#: never the bare string.
 INCLUDE_DELETED = "include_deleted"
 
 _soft_deleted: tuple[type[Base], ...] | None = None

@@ -33,6 +33,7 @@ from typing import TYPE_CHECKING
 
 from sqlalchemy import func, select
 
+from lemely.core.deletion import purge_cutoff
 from lemely.db.models import (
     Attempt,
     MarkScheme,
@@ -52,6 +53,7 @@ from lemely.db.models.enums import (
     SubscriptionStatus,
     UploadStatus,
 )
+from lemely.db.session import INCLUDE_DELETED
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -161,6 +163,13 @@ class PipelineHealth:
     happened to last be written, with no way for the screen to know how stale it
     is, so the surface says the metric lives elsewhere instead of showing a
     number it cannot date.
+
+    ``purge_backlog`` is Task 10's sweeper made observable: attempts whose
+    ``deleted_at`` is more than a day past :func:`~lemely.core.deletion.purge_cutoff`
+    and are still present. A healthy sweeper keeps this at zero; a rising count
+    means purge is falling behind, which is the failure mode nothing else on this
+    screen would surface — the rows are already invisible to every tenant-facing
+    reader, so only an aggregate admin count catches a purge that keeps failing.
     """
 
     subjects: list[SubjectCoverage]
@@ -169,6 +178,7 @@ class PipelineHealth:
     subject_default_boundary_keys: int
     uploads_by_status: dict[str, int]
     recent_failed_uploads: list[uuid.UUID]
+    purge_backlog: int
 
 
 class PlatformAdminService:
@@ -347,7 +357,11 @@ class PlatformAdminService:
     # -- X-03 ---------------------------------------------------------------
 
     def pipeline_health(
-        self, *, exact_boundary_keys: int, subject_default_boundary_keys: int
+        self,
+        *,
+        exact_boundary_keys: int,
+        subject_default_boundary_keys: int,
+        now: datetime | None = None,
     ) -> PipelineHealth:
         """Return corpus coverage, boundary reliance, and ingestion outcomes.
 
@@ -355,7 +369,11 @@ class PlatformAdminService:
         come from :class:`~lemely.io.grade_boundaries.GradeBoundaryStore`, which
         is a file-backed I/O object, and this module deliberately touches nothing
         but the database.
+
+        ``now`` is injected for the same reason :meth:`counts` injects it: the
+        backlog boundary is a rolling window, and a test needs it reproducible.
         """
+        moment = now or datetime.now(UTC)
         with self._sessionmaker() as session:
             coverage_rows = session.execute(
                 select(
@@ -383,6 +401,15 @@ class PlatformAdminService:
                     .limit(10)
                 ).all()
             )
+            backlog = int(
+                session.scalar(
+                    select(func.count())
+                    .select_from(Attempt)
+                    .where(Attempt.deleted_at <= purge_cutoff(moment) - timedelta(days=1))
+                    .execution_options(**{INCLUDE_DELETED: True})
+                )
+                or 0
+            )
             return PipelineHealth(
                 subjects=[
                     SubjectCoverage(
@@ -397,6 +424,7 @@ class PlatformAdminService:
                 subject_default_boundary_keys=subject_default_boundary_keys,
                 uploads_by_status=self._uploads_by_status(session),
                 recent_failed_uploads=failed,
+                purge_backlog=backlog,
             )
 
     # -- Internals ----------------------------------------------------------
