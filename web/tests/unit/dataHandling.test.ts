@@ -372,6 +372,40 @@ describe("the disclosure page describes deletion truthfully — Task 15", () => 
     expect(deletion.keeps).toMatch(/nothing shown about a deletion/i)
   })
 
+  /*
+   * Task 17: the page's "a teacher who deletes a paper they uploaded through
+   * the grading console works to the same 30-day terms" claim (Task 15) was
+   * only true once Task 17's routes shipped. Same technique as the existing
+   * student-deletion route guard above: read the Python router source
+   * directly, so CI fails if the page ever promises a capability the code
+   * lacks, rather than trusting a comment that says so.
+   */
+  it("has the teacher console delete/restore routes backing its grading-console claim", () => {
+    expect(deletion.window).toMatch(/grading console/i)
+    expect(deletion.window).toMatch(/same 30-day terms/i)
+
+    const source = fs.readFileSync(
+      path.join(repoRoot, "lemely/web/routers/teacher.py"),
+      "utf8",
+    )
+    const deleteRoutes = Array.from(
+      source.matchAll(/@router\.delete\(\s*\n?\s*"([^"]*)"/g),
+    ).map((m) => m[1])
+    const restoreRoutes = Array.from(
+      source.matchAll(/@router\.post\(\s*\n?\s*"([^"]*)"/g),
+    ).map((m) => m[1])
+    expect(
+      deleteRoutes,
+      "no DELETE /papers/{paper_id} route found in lemely/web/routers/teacher.py — " +
+        "either the route was renamed/moved, or the grading-console claim in " +
+        "dataHandling.ts is no longer true and must be walked back.",
+    ).toContain("/papers/{paper_id}")
+    expect(
+      restoreRoutes,
+      "no POST /papers/{paper_id}/restore route found in lemely/web/routers/teacher.py.",
+    ).toContain("/papers/{paper_id}/restore")
+  })
+
   it("no longer imports the old notYetBuilt export", () => {
     const source = fs.readFileSync(
       path.resolve(__dirname, "../../src/portals/marketing/dataHandling.ts"),

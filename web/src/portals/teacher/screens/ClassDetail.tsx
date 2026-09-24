@@ -271,6 +271,19 @@ export function ClassDetailLayout() {
               >
                 Analytics
               </NavLink>
+              <NavLink
+                to="papers"
+                className={({ isActive }) =>
+                  cn(
+                    "px-4 py-2.5 text-body-lg border-b-2 -mb-px",
+                    isActive
+                      ? "border-accent text-ink font-medium"
+                      : "border-transparent text-ink-muted transition-colors hover:text-ink",
+                  )
+                }
+              >
+                Papers
+              </NavLink>
             </nav>
 
             <Outlet context={{ classDetail, classId: classId! } satisfies ClassDetailContext} />

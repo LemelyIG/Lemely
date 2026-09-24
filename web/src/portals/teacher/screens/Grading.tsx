@@ -2,9 +2,10 @@
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
-import { Camera } from "@phosphor-icons/react"
+import { Camera, Trash } from "@phosphor-icons/react"
 import { Button } from "@/components/ui/button"
 import { CameraCapture } from "@/components/CameraCapture"
+import { ConfirmModal } from "@/components/ui/confirm-modal"
 import { ProgressRing } from "@/components/ui/progress-ring"
 import { readSharedScan } from "@/lib/sharedScan"
 import { setHasUnsubmittedScan } from "@/lib/activeScanGuard"
@@ -24,6 +25,7 @@ import {
 import { failActiveStage } from "@/lib/pipelineStages"
 import { useInViewOnce } from "@/lib/hooks/useInViewOnce"
 import {
+  useDeleteTeacherPaper,
   usePapers,
   usePaperDetail,
   useRegradePaper,
@@ -137,6 +139,76 @@ const UPLOAD_STAGES: ProcessingStage[] = [
   { id: "upload", label: "Uploading the scan", status: "pending" },
 ]
 
+/**
+ * The console grid's per-card delete control (Task 17, R2). Unlike the
+ * student result screen's `DeletePaperControl` (which lives on a dedicated
+ * detail page), this one has to sit on a grid card without hijacking the
+ * card's own click-to-open behaviour — every handler here calls
+ * `stopPropagation` for that reason, including inside the modal, which
+ * renders through a portal outside the card's DOM subtree but can still
+ * receive a bubbled pointer event from `PaperCard`'s own `onClick`.
+ *
+ * No pre-signalling to match: every card gets the same trash icon, since
+ * there is no D8-style hold on a console paper to keep quiet about (R2's own
+ * docstring — a console paper carries no student-facing integrity finding).
+ */
+function DeletePaperControl({ paper }: { paper: PaperSummary }) {
+  const deletePaper = useDeleteTeacherPaper()
+  const [open, setOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  async function handleConfirm() {
+    setError(null)
+    try {
+      await deletePaper.mutateAsync({ paperId: paper.id })
+      setOpen(false)
+    } catch (err) {
+      setError(teacherMutationFailureMessage(err))
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        aria-label={`Delete ${paper.name}`}
+        title="Delete"
+        onClick={(e) => {
+          e.stopPropagation()
+          setError(null)
+          setOpen(true)
+        }}
+        className="absolute top-2.5 start-2.5 w-7 h-7 rounded-full bg-paper-raised/90 border border-rule flex items-center justify-center text-ink-faint transition-colors hover:text-err hover:border-err cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+      >
+        <Trash size={14} weight="bold" />
+      </button>
+      {/* Not a scrim, and `aria-hidden` here hides nothing real: `Modal`
+          renders its dialog through `createPortal` at `document.body`, so
+          this wrapper's own DOM subtree is always empty — it exists only as
+          a React-tree stopPropagation boundary. React re-dispatches a
+          portal's events through the React tree, not the DOM tree, so a
+          click on Confirm/Cancel would otherwise bubble to `PaperCard`'s
+          `onClick` and reopen the paper it was just asked to delete. */}
+      <div aria-hidden="true" onClick={(e) => e.stopPropagation()}>
+        <ConfirmModal
+          open={open}
+          title="Delete this paper?"
+          consequence="It moves to Recently deleted, where you can restore it for a while."
+          confirmLabel="Delete"
+          pendingLabel="Deleting…"
+          pending={deletePaper.isPending}
+          error={error}
+          onConfirm={() => void handleConfirm()}
+          onCancel={() => {
+            setOpen(false)
+            setError(null)
+          }}
+        />
+      </div>
+    </>
+  )
+}
+
 function PaperCard({
   paper,
   onOpen,
@@ -197,6 +269,7 @@ function PaperCard({
             !
           </div>
         ) : null}
+        <DeletePaperControl paper={paper} />
         {showSpinner ? (
           <div className="absolute inset-0 flex items-center justify-center bg-paper-sunk/70">
             <div className="w-[26px] h-[26px] rounded-full border-[3px] border-rule border-t-accent animate-spin" />

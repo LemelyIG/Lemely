@@ -1165,3 +1165,42 @@ export interface AnnouncementCreateResponse {
 export interface AnnouncementList {
   announcements: Announcement[]
 }
+
+// ── Console paper deletion (spec 2026-09-22, Task 17, R2) ─────────────────
+
+/**
+ * One row of `GET /papers/deleted` (mirrors `DeletedPaper` in
+ * `studentTypes.ts`, less `attemptId`/`subjectCode`: a console paper is not
+ * an attempt and carries no subject field of its own).
+ */
+export interface DeletedTeacherPaper {
+  paperId: string
+  label: string
+  deletedAt: string
+  restoreDeadline: string
+}
+
+/** Payload for `GET /papers/deleted`. */
+export interface DeletedTeacherPapers {
+  papers: DeletedTeacherPaper[]
+  retentionDays: number
+}
+
+// ── Class-scoped paper visibility (controller addition, Task 13's review) ─
+
+/** One rostered student's paper as seen from a class (mirrors `ClassPaperRowDTO`). */
+export interface ClassPaperRow {
+  attemptId: string
+  studentId: string
+  studentName: string
+  subjectCode: string
+  paperNumber: number
+  paperVariant: number
+  recordedAt: string
+  unshared: boolean
+}
+
+/** Payload for `GET /classes/{classId}/papers`. */
+export interface ClassPapers {
+  papers: ClassPaperRow[]
+}

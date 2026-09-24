@@ -119,7 +119,20 @@ function pushStateCopy(kind: string): { heading: string; body: string } {
  * in addition to the framed `NotificationSettings` below for the top-level
  * `/settings/notifications` lane (parent and admin still use that one).
  */
-export function NotificationSettingsSection() {
+/**
+ * `showTeacherOnly` (Task 17, R10): reveals the `reviewWithdrawn` toggle,
+ * which the backend sends as a plain `boolean` for every role (unlike
+ * `atRiskAlert`, never nulled server-side — `notificationPrefs.ts`'s own
+ * `NotificationPreferences.reviewWithdrawn` doc). Defaults to `false`, so
+ * every existing mount (student, parent, admin) is unaffected by this prop
+ * simply appearing; the teacher portal's own mount is the one call site
+ * that passes `true`.
+ */
+export function NotificationSettingsSection({
+  showTeacherOnly = false,
+}: {
+  showTeacherOnly?: boolean
+} = {}) {
   const prefs = useNotificationPreferences()
   const update = useUpdateNotificationPreferences()
   const pushConfig = usePushConfig()
@@ -259,7 +272,7 @@ export function NotificationSettingsSection() {
             section unconditionally, whether by `SettingsFrame` (the
             top-level lane) or `PortalSettingsLayout` (the in-portal one), in
             every query state — an sr-only heading here would duplicate it.
-            No `isEmpty` either: the five toggles are a fixed enum (module
+            No `isEmpty` either: the six toggles are a fixed enum (module
             note), so there is no "empty data" shape for this query to reach,
             only the role-based filter below deciding which of the five apply.
 
@@ -289,7 +302,14 @@ export function NotificationSettingsSection() {
                 // than "off". Rendering it unchecked would offer a switch the
                 // router answers with a 422.
                 (toggle) => valueFor(data, toggle.key) !== null,
-              ).map((toggle) => (
+              )
+                // R10: `reviewWithdrawn` is a `role: "teacher"` toggle (see its
+                // own doc) — the server sends it as a plain boolean for every
+                // role, so the `null` filter above cannot hide it the way it
+                // hides `atRiskAlert`. `showTeacherOnly` is this screen's own
+                // gate instead, mirroring `atRiskAlert`'s role restriction.
+                .filter((toggle) => toggle.role !== "teacher" || showTeacherOnly)
+                .map((toggle) => (
                 <li
                   key={toggle.key}
                   className="rounded-lg border border-rule bg-paper-raised p-4 sm:p-5"
