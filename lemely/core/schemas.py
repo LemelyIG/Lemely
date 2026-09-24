@@ -419,16 +419,19 @@ class CorrectedQuestion(StrictModel):
     """
     source_box: SourceBox | None = None
     """Where on the rasterised page this question's answer was read from
-    (E, 2026-09-24 production-readiness spec). QUESTION-level, not per mark
-    point: marking is text-only -- ``lemely/io/correction_ai.py`` references
-    no ``image``, ``RasterisedPage`` or ``media_resolution`` -- so the marker
-    never sees the page and cannot attribute a region to one point. It
-    answers "where did this answer come from", never "which pixels justify
-    this mark". ``None`` is the common case rather than an error: the
-    extractor may return no box, and a box it returned may have been dropped
-    as unusable (``ExtractedAnswers.source_box_drops``), and those two are
-    deliberately indistinguishable here. Absence must render as absence,
-    never as a failed crop."""
+    (E, 2026-09-24 production-readiness spec).
+
+    QUESTION-level, not per mark point: marking is text-only --
+    ``lemely/io/correction_ai.py`` references no ``image``,
+    ``RasterisedPage`` or ``media_resolution`` -- so the marker never sees
+    the page and cannot attribute a region to one point. It answers "where
+    did this answer come from", never "which pixels justify this mark".
+    ``None`` is the common case rather than an error: the extractor may
+    return no box, and a box it returned may have been dropped as unusable
+    (``ExtractedAnswers.source_box_drops``), and those two are deliberately
+    indistinguishable here. Absence must render as absence, never as a
+    failed crop.
+    """
     point_notes: dict[str, str] | None = None
     """Per-mark-point reasoning, keyed by ``AnswerPoint.id``.
 

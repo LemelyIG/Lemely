@@ -321,6 +321,40 @@ class HybridCorrectPaperTests(unittest.TestCase):
         self.assertIsNone(by_id["1"].source_box)
         self.assertIsNone(by_id["2"].source_box)
 
+    def test_the_returned_source_box_is_a_copy_not_the_extractors_own_instance(self) -> None:
+        """The assembly must hand out a box a consumer can mutate freely.
+
+        ``answers[cq.question_id][3]`` is the exact ``SourceBox`` the
+        extractor produced -- ``_flatten_answers`` never copies it, and
+        pydantic keeps an already-validated nested model by reference rather
+        than revalidating it. ``validate_box_coords`` runs at construction
+        time only, so a shared instance lets one holder's in-place mutation
+        of ``box`` (which skips the validator entirely) -- or a plain
+        attribute reassignment, accepted today since ``StrictModel`` sets no
+        ``validate_assignment`` -- silently corrupt every other holder's
+        copy. Assert distinctness and post-construction isolation; there is
+        no producible failing MARK today, so this proves the real predicate
+        rather than asserting against a fabricated defect.
+        """
+        extracted_box = SourceBox(page=2, box=[100, 100, 200, 200])
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[
+                ExtractedAnswer(
+                    question_id="1", answer="A", confidence=0.9, source_box=extracted_box
+                )
+            ],
+        )
+        result = correct_paper(mark_scheme=self.ms, extracted_answers=extracted, mcq_only=True)
+        by_id = {cq.question_id: cq for cq in result.questions}
+        returned_box = by_id["1"].source_box
+        assert returned_box is not None
+        self.assertIsNot(returned_box, extracted_box)
+
+        returned_box.box[0] = 999
+        self.assertEqual(extracted_box.box, [100, 100, 200, 200])
+
 
 class DroppedAnswerReviewFlagTests(unittest.TestCase):
     """US-031 review MUST-FIX 7, stronger fix: an answer the model RETURNED

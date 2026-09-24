@@ -1897,7 +1897,11 @@ def correct_paper(
     leaves = [q for q in scheme.all_questions_flat() if _is_leaf_marked(q)]
     leaf_by_id: dict[str, Question] = {q.id: q for q in leaves}
     prior_results_accumulated: dict[str, int] = {}  # question_id -> awarded_marks
-    corrected_by_id: dict[str, CorrectedQuestion] = {}  # I7: for _point_was_awarded
+    # I7: for _point_was_awarded. Predates the post-loop `source_box`
+    # assembly rewrite below -- every `CorrectedQuestion` stored here is the
+    # pre-rewrite object, so a future reader of this dict always sees
+    # `source_box=None`, never the extractor's box.
+    corrected_by_id: dict[str, CorrectedQuestion] = {}
     all_by_id: dict[str, Question] = {qq.id: qq for qq in scheme.all_questions_flat()}
     top_level_groups = _group_leaves_by_top_level(leaves, all_by_id)
     has_non_mcq = any(q.type != QuestionType.MCQ for q in leaves)
@@ -2109,8 +2113,23 @@ def correct_paper(
     # and keying off `answers` means the box comes from whichever answer
     # `_flatten_answers`' last-wins policy kept -- a second dedup rule cannot
     # appear here, which is the failure `point_verdicts` already paid for.
+    # Deep-copy the box (review finding 1): `answers[...][3]` is the exact
+    # `SourceBox` instance the extractor produced, and pydantic keeps an
+    # already-validated nested model by reference rather than revalidating
+    # it, so without copying, every `CorrectedQuestion` for a given question
+    # would alias the SAME box. `validate_box_coords` only runs at
+    # construction time, so a shared instance would let one holder's
+    # in-place `box[0] = ...` mutation -- or a plain attribute reassignment,
+    # since `StrictModel` sets no `validate_assignment` -- silently corrupt
+    # every other holder's copy.
     corrected = [
-        cq.model_copy(update={"source_box": answers[cq.question_id][3]})
+        cq.model_copy(
+            update={
+                "source_box": box.model_copy(deep=True)
+                if (box := answers[cq.question_id][3]) is not None
+                else None
+            }
+        )
         if cq.question_id in answers
         else cq
         for cq in corrected
