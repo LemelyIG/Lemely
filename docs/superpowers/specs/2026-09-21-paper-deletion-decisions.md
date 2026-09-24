@@ -161,3 +161,26 @@ student flow, the loader criterion, purge, teacher-console deletion, unshare
 and the page land together. Noted as a risk: the session-level loader
 criterion is the highest-consequence mechanism here and would have been
 reviewed in isolation under a split.
+
+## Owner rulings, 2026-09-24 (after plan review)
+
+Raised by the pre-execution plan review, which found behaviour the design had
+not specified.
+
+**R7 — The unit of deletion is the upload.** One scan can back several
+attempts: every re-run of marking on the same upload mints a new attempt.
+Deleting any attempt stamps every attempt on that upload, and the upload, in
+one transaction; restore brings them all back. This is D1 taken literally — the
+paper did not happen — and it prevents purge from deleting a scan that a
+still-live sibling attempt points to.
+
+**R8 — Unshare leaves a teacher's review queue only when the paper is unshared
+from every class of theirs that rosters the student.** Per-class grain, as D9
+requires: unshared in class A but still shared via class B, the item stays.
+
+**R9 — Unshare reaches class pages only.** The teacher overview, at-risk list
+and per-student drill-down are not class-scoped, so there is no single class to
+exclude against. The pull request body says so, so it is not read as a miss.
+
+**R10 — `review_withdrawn` is a toggleable notification, on by default**, like
+every other notification type.

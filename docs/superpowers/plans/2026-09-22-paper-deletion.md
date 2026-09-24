@@ -213,6 +213,14 @@ git commit -S -m "feat(core): one retention constant and the deletion window ari
 
 ### Task 2: Migration 0039 and the model columns
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Notification preferences (B2, R10).** `NotificationType.review_withdrawn` breaks two exhaustiveness pins unless it gets a preference. In 0039 add `notification_preferences.review_withdrawn BOOLEAN NOT NULL DEFAULT true`; add the model column; extend `NotificationPreferencesRow`, `DEFAULTS` and `set()` in `lemely/db/notification_prefs_repo.py` (~:66,109,148,175,188); add the entry to `PREFERENCE_FIELD_FOR_TYPE` in `lemely/db/notification_repo.py` (~:87-93); extend the preferences wire DTO; add `review_withdrawn` to the frontend `NotificationType` union in `web/src/lib/notificationTypes.ts` (~:21-26). The settings **toggle UI** is Task 17, not here. `tests/test_notification_repo.py:131` and `tests/test_db_schema.py:181-203` must stay green — run them.
+> - **`teacher_papers.deleted_at` goes in 0039 now (I4).** Add the nullable column and `TeacherPaper.deleted_at` model field in this task, so Task 16 never edits an already-applied migration. Cover it in `tests/test_migration_0039.py` and in `downgrade()`.
+> - **`EXPECTED_TABLES` (I11).** Add `class_paper_exclusions` to `EXPECTED_TABLES` in `tests/test_db_schema.py` (~:116) and commit that file.
+> - After Step 7, run `alembic downgrade -1 && alembic upgrade head` once and confirm clean.
+
+
 **Files:**
 - Create: `lemely/db/migrations/versions/0039_paper_soft_delete.py`
 - Modify: `lemely/db/models/attempts.py` (add `deleted_at` to `Upload` and `Attempt`)
@@ -554,6 +562,15 @@ git commit -S -m "feat(db): soft-delete columns, withdrawn review status, class 
 
 ### Task 3: The session-level exclusion, and its guards
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Circular import (B1, reproduced).** Do NOT import models at the top of `lemely/db/session.py`: `lemely.auth.mirror` imports `session_scope` from it mid-initialisation and `import lemely.db` then fails (so does Alembic). Resolve the entity tuple lazily inside the listener, cached in a module global (e.g. `_soft_deleted_entities()` doing a function-local import of `Attempt`, `Upload`, `TeacherPaper`). Add a guard test that runs `python -c "import lemely.db; import lemely.db.session; import lemely.db.review_repo"` in a **subprocess** and asserts exit 0.
+> - **Three entities, not two.** `TeacherPaper.deleted_at` exists from Task 2, so the criterion covers `(Attempt, Upload, TeacherPaper)` from the start. Add a `TeacherPaper` presence → absence → `include_deleted` test with the same three-assertion shape.
+> - The reviewer verified by experiment that the criterion filters every shape the plan relies on (column-only GROUP BY, joins, EXISTS/IN subqueries, `aliased`, `session.get`, lazy loads) on SQLAlchemy 2.0.51. Keep the tests; Step 4's fallback should not be needed.
+> - Put `ORMExecuteState` under `TYPE_CHECKING`.
+> - **Permitted `include_deleted` callers, one list:** `session.py` (definition), `deletion_repo.py` (delete, restore, list — student and teacher), `purge.py`, `admin_repo.py`. Use the constant `INCLUDE_DELETED` everywhere, never the bare string, outside `session.py`.
+
+
 **Files:**
 - Modify: `lemely/db/session.py`
 - Test: `tests/test_soft_delete_criteria.py`
@@ -731,6 +748,12 @@ git commit -S -m "feat(db): exclude soft-deleted attempts from every ORM select"
 
 ### Task 4: Behavioural proof for each bypass reader
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Seat reader (I12).** There is no `SeatRepository.last_attempt_at_for`. The reader is `SeatService._last_attempt_by_student(session, student_ids)` (`lemely/db/seat_repo.py` ~:141, 358-373); call it directly with a session in the test. Read every other repository's real constructor and method before writing its pair.
+> - Rename `test_weakness_rows_are_unreachable_except_through_an_attempt` to `test_weakness_join_excludes_a_deleted_attempt` and drop the docstring claim that it catches a future direct `select(WeaknessRecord)` — it cannot.
+
+
 **Files:**
 - Test: `tests/test_soft_delete_readers.py`
 - Modify (only if Task 3 Step 4 required it): `lemely/db/seat_repo.py`
@@ -810,6 +833,14 @@ git commit -S -m "test(db): prove every attempt reader excludes soft-deleted row
 ---
 
 ### Task 5: `PaperDeletionService.delete`
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Unit of deletion is the upload (B3, R7).** Lock, in `id` order, the addressed attempt and every attempt sharing its `upload_id` (`FOR UPDATE`, `include_deleted`). Ownership is checked on the addressed attempt. Refusals (non-past-paper, integrity hold) are evaluated across **all** sibling attempts — any held sibling refuses the whole delete. Stamp every sibling and the upload with one `now`; withdraw open review items on every sibling. `DeletedPaper` gains `sibling_attempt_ids: list[uuid.UUID]` (all stamped attempts, including the addressed one); `withdrawn_item_ids` covers all of them. Add a test: two attempts on one upload, delete one, both vanish from `DbHistoryStore.load`.
+> - **R4 lifting predicate, controller's resolution.** The hold lifts only when the attempt has at least one integrity review item (`reason IN (plagiarism_flag, ai_detection_flag)`) and **every** such item is in `(resolved, dismissed)`. An open or `withdrawn` integrity item keeps the hold. Replace the `_integrity_item_closed_by_teacher` query accordingly (an `EXISTS` of any integrity item AND NOT `EXISTS` of one outside `_TEACHER_CLOSED`) and add a test: two integrity items, one resolved, one open → still refused.
+> - **Move `test_delete_restore_delete_does_not_launder_the_hold` to Task 6** (I5) — it needs `restore`, and as written no fixture can satisfy it.
+> - Ignore stated pass counts ("10 passed"); the bar is: every test in the file passes, exit 0.
+
 
 **Files:**
 - Create: `lemely/db/deletion_repo.py`
@@ -1081,6 +1112,13 @@ git commit -S -m "feat(db): delete a paper, withholding the reason for an integr
 
 ### Task 6: `restore`, and reopening what the delete withdrew
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Restore covers the whole upload (R7):** unstamp every attempt on the upload whose `deleted_at` equals the addressed attempt's, plus the upload; reopen items on all of them matched by `withdrawn_at == deleted_at`.
+> - **Laundering tests, moved here from Task 5 and corrected (I5):** (1) delete an unflagged paper → set `plagiarism_flagged` and insert an open integrity item on it → restore → `delete` raises `PaperNotDeletableError`. (2) flagged, past the hold, with an open integrity item → delete (allowed) → restore → the item is `open` again with its original id and `created_at`.
+> - Ignore stated pass counts.
+
+
 **Files:**
 - Modify: `lemely/db/deletion_repo.py`
 - Modify: `tests/test_deletion_repo.py`
@@ -1210,6 +1248,13 @@ git commit -S -m "feat(db): restore a deleted paper and reopen the reviews it wi
 
 ### Task 7: The recently-deleted list
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **One row per upload (R7):** siblings share a `deleted_at`; return one row per upload, labelled from its newest attempt. Use a list-row dataclass without `withdrawn_item_ids` (e.g. `DeletedPaperSummary`) rather than filling it with `[]`.
+> - Add `restore_floor(now) -> datetime` to `lemely/core/deletion.py` (with a test in `tests/test_core_deletion.py`) instead of re-deriving `now - timedelta(days=RETENTION_DAYS)` here.
+> - Ignore stated pass counts.
+
+
 **Files:**
 - Modify: `lemely/db/deletion_repo.py`
 - Modify: `tests/test_deletion_repo.py`
@@ -1309,6 +1354,15 @@ git commit -S -m "feat(db): list a student's restorable deletions with their dea
 ---
 
 ### Task 8: Routes, DTOs, and the non-leak proof
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Flat 409 body (B4).** `HTTPException(detail=dict)` nests under `detail`. Return `JSONResponse(status_code=409, content={"detail": msg, "deletableFrom": iso})` for the hold (omit `deletableFrom` for the quiz refusal). Design §8 and Task 14 read the flat shape.
+> - **410 for restore past the window (I13):** map `PaperNotRestorableError` to 410 and test it.
+> - **Bad ids (Minor 5):** a non-UUID `attempt_id` (including the literal `deleted` on DELETE) returns the fixed 404 `"No such paper"`, never 422.
+> - **Shared leak helpers:** put the detectors in `tests/_integrity_leak.py` — `leaks_to_student(obj)` (integrity words **and** `review`) and `leaks_integrity(obj)` (integrity words only, for teacher-facing copy in Task 9). Both reuse `_INTEGRITY_REASON_PREFIXES` from `lemely/web/schemas.py`, and both are proven to detect.
+> - **Existing guard goes red here (I10).** `web/tests/unit/dataHandling.test.ts` has `still has no upload-deletion route` (~:233-240). Invert it in this task: assert the student deletion route now exists in `lemely/web/routers/student_deletion.py`. Task 15 adds the page-copy assertions.
+
 
 **Files:**
 - Create: `lemely/web/routers/student_deletion.py`
@@ -1493,6 +1547,15 @@ git commit -S -m "feat(web): student delete, restore and recently-deleted routes
 
 ### Task 9: Telling the teacher (D10)
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Recipients (I6):** use `ClassService.teachers_for_student` (`lemely/db/class_repo.py` ~:248); student name via `ClassService.display_name_for` (~:230). When `assigned_teacher_id` is set, notify only that teacher.
+> - **Copy vs detector (I6):** teacher-facing copy may say "review". Test it with `leaks_integrity` from `tests/_integrity_leak.py` (integrity words only), not the student detector.
+> - **No deep link (Minor 6):** a withdrawn item 403s when opened. Payload carries ids for record only; confirm the inbox renders `review_withdrawn` as non-navigable (check how the web inbox uses `payload` and handle the new type).
+> - Fixtures `notifications.for_user` / `broken_notifications` are illustrative — use the real `NotificationService` listing method and a transport/service double that raises.
+> - `withdrawn_item_ids` spans all sibling attempts (R7).
+
+
 **Files:**
 - Modify: `lemely/web/routers/student_deletion.py`
 - Modify: wherever notification-type preference defaults are governed (find it with `grep -rn "NotificationType.at_risk_alert" lemely/db/notification_prefs_repo.py`)
@@ -1599,6 +1662,14 @@ git commit -S -m "feat(web): notify a teacher when a deletion withdraws their re
 ---
 
 ### Task 10: The purge job
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Sweeper wiring (I8):** add `storage: StorageBackend | None = None` and `bucket: str | None = None` to the `Sweeper` dataclass (`lemely/web/scheduled_notifications.py` ~:443-457), skip purge when unset, and wire `get_storage_backend()` + `settings.storage.bucket` in `get_sweeper` (`lemely/web/deps.py` ~:770-776). Add `deps.py` to the commit.
+> - **Purge by upload (B3, R7):** delete the object(s) only when **every** attempt on the upload has `deleted_at <= cutoff`. Delete all those attempts, then the upload, each DELETE re-asserting `deleted_at <= cutoff`. Add a fixture with two attempts on one upload.
+> - Order candidates by `(deleted_at, id)`. Persistent GCS failures can hold up to `LIMIT` rows per pass; accept this, say so in the docstring, and rely on Task 11's backlog metric to surface it.
+> - If the FK-ordering question fails, write migration `0040`; never edit 0039.
+
 
 **Files:**
 - Create: `lemely/web/purge.py`
@@ -1774,6 +1845,12 @@ git commit -S -m "feat(web): purge expired deletions, object first, row as inten
 
 ### Task 11: Purge-backlog visibility and `include_deleted` containment
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **AST detector (I7):** write a function that walks `lemely/` ASTs and reports files using `INCLUDE_DELETED` (Name/Attribute), keyword `include_deleted=`, or the string `"include_deleted"` inside a Call — ignoring docstrings and comments. Assert the allowlist `{session.py, deletion_repo.py, purge.py, admin_repo.py}`. Prove it by running **the same function** over a `tmp_path` package containing an intruder and asserting it is reported.
+> - **Admin target (I14):** the method is `PlatformAdminService.pipeline_health()` returning `PipelineHealth` (`lemely/db/admin_repo.py` ~:147, 349-395). Expose `purgeBacklog` via the admin DTO (`lemely/web/schemas_admin.py`) and router (`lemely/web/routers/admin.py`); add those files.
+
+
 **Files:**
 - Modify: `lemely/db/admin_repo.py`
 - Test: `tests/test_purge_backlog_metric.py`, `tests/test_include_deleted_scope.py`
@@ -1853,6 +1930,14 @@ git commit -S -m "feat(db): surface the purge backlog and pin the include_delete
 ---
 
 ### Task 12: The class-scoped history store (D9's mechanism)
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Protocol (I9):** `HistoryStoreProtocol` is not `runtime_checkable`; replace the `isinstance` test with a mypy-checked assignment `store: HistoryStoreProtocol = ClassScopedHistoryStore(...)`.
+> - **One signature:** `ClassScopedHistoryStore(inner: HistoryStoreProtocol, excluded_attempt_ids: frozenset[str])`. Create `lemely/db/class_exclusion_repo.py` here with `ClassExclusionRepository(sessionmaker).excluded_attempt_ids(class_id) -> frozenset[str]` (read only; Task 13 adds writes).
+> - **Define `load_roster_histories(store, roster) -> list[tuple[RosterEntry, StudentHistory]]`**; callers at `classes.py` ~:217 and ~:404 take the histories from it, ~:298 uses the tuples.
+> - Existing tests to keep green: `tests/test_web_classes.py`, `tests/test_class_analytics.py` (not `test_classes_routes.py`).
+
 
 **Files:**
 - Create: `lemely/db/class_history.py`
@@ -1963,6 +2048,15 @@ git commit -S -m "refactor(web): one class-scoped history load, ready to honour 
 ---
 
 ### Task 13: The unshare routes
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Routes & status (I2):** POST/DELETE `/api/classes/{class_id}/papers/{attempt_id}/unshare`. A foreign class returns **403** (reuse the existing check in `classes.py` ~:124-125); fix the test to expect 403. Validate the attempt exists and belongs to a student on that class's roster, else 404 — never let an unknown id reach the FK.
+> - **Queue (I1, R8):** the teacher queue is `GET /api/teacher/review` and rows carry `itemId`. `list_queue` scopes by student via `_visible_class_map` (single class per student). Add a student → set-of-class-ids helper (do not change `_visible_class_map`'s existing consumers) and exclude an item only when its attempt is excluded in **every** caller class that rosters the student. Add a test: student in two of the teacher's classes, unshared in one → item stays. Add `lemely/db/review_repo.py` to Files and the commit.
+> - **Average (I2):** `average` is on `ClassSummaryDTO` from `GET /api/teacher/classes`, and is the mean of each student's *latest* percentage — the fixture must unshare the student's latest past paper, or the inequality is vacuous.
+> - **R9:** class pages only; `teacher.py` surfaces are unchanged. Note it for the PR body.
+> - Ignore stated pass counts.
+
 
 **Files:**
 - Modify: `lemely/web/routers/classes.py`
@@ -2120,6 +2214,14 @@ git commit -S -m "feat(web): a teacher unshares a paper from one class's view an
 
 ### Task 14: The student surfaces
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Hook location (Minor 4):** `web/src/lib/hooks/usePaperDeletionApi.ts` (convention: `useSelfReviewApi.ts`), not `portals/student/hooks/`. Find the student route table by grepping for an existing student screen's route (e.g. `PaperResult`).
+> - **409 body is flat** (`{detail, deletableFrom}`) per the Task 8 amendment; 410 means past the window.
+> - **Recently-deleted rows are per upload (R7).**
+> - Reuse the student leak regex from the plan; keep it consistent with `tests/_integrity_leak.py`'s student detector.
+
+
 **Files:**
 - Modify: `web/src/lib/studentTypes.ts` (wire types)
 - Create: `web/src/portals/student/hooks/usePaperDeletion.ts`
@@ -2229,6 +2331,13 @@ git commit -S -m "feat(web): delete a paper from the result screen, restore from
 
 ### Task 15: The disclosure page
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Structure (I10):** `dataHandlingSections` is an array; the "no way to delete" copy lives in the separate `notYetBuilt` export. Replace `notYetBuilt` with a concrete `deletion` export and test that export (and the absence of the old strings across **all** exports), so Step 2 genuinely fails before the change.
+> - `web/tests/unit/dataHandling.test.ts` already exists and imports `notYetBuilt` — rewrite those parts; Task 8 already inverted the route guard.
+> - Say that deletion covers every marking run of the scan (R7).
+
+
 **Files:**
 - Modify: `web/src/portals/marketing/dataHandling.ts`
 - Modify: `lemely/db/models/attempts.py` (`Upload` docstring)
@@ -2303,6 +2412,16 @@ git commit -S -m "docs(web): the data-handling page describes deletion truthfull
 ---
 
 ### Task 16: Teacher-console paper deletion (R2), backend
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **No migration work (I4):** `teacher_papers.deleted_at` exists from Task 2 and `TeacherPaper` is already in the criterion from Task 3. Skip Step 3's migration and entity-tuple edits.
+> - **Routes belong to Task 17:** move `test_the_console_list_hides_a_deleted_paper` there.
+> - **Teacher row type:** `DeletedTeacherPaper(paper_id, label, deleted_at, restore_deadline)` — do not reuse the attempt-shaped `DeletedPaper`.
+> - **Replace the tautology** with: a console paper deleted `RETENTION_DAYS` + 30 minutes ago is untouched; one deleted `RETENTION_DAYS` + 2 hours ago is purged.
+> - Purge deletes both `storage_path` and `scheme_storage_path` (`lemely/db/models/teacher_papers.py` ~:41) when set; assert both.
+> - Implement `TeacherPaperDeletionService` (delete/restore/list_deleted, withdraw/reopen via `teacher_paper_id`, owner = `uploaded_by`, **no integrity hold**) and `purge_expired_teacher_papers`, registered on the Sweeper beside Task 10's job. Follow Tasks 5–7 and 10's patterns, including the `INCLUDE_DELETED` constant.
+
 
 **Files:**
 - Modify: `lemely/db/migrations/versions/0039_paper_soft_delete.py` (add `teacher_papers.deleted_at`)
@@ -2428,6 +2547,13 @@ git commit -S -m "feat(db): soft delete, restore and purge for teacher console p
 
 ### Task 17: Teacher-console deletion, the console surface
 
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - **Real paths (I3):** teacher router prefix is `/api`; console routes are `/api/papers…`. New routes: `DELETE /api/papers/{paper_id}`, `POST /api/papers/{paper_id}/restore`, `GET /api/papers/deleted` — declare `/papers/deleted` **above** `get_paper` (`lemely/web/routers/teacher.py` ~:851) with a comment, and test that `GET /api/papers/deleted` returns the list DTO.
+> - Include `test_the_console_list_hides_a_deleted_paper` (moved from Task 16) against `GET /api/papers`.
+> - **Settings toggle (R10):** add the `review_withdrawn` toggle to `web/src/portals/settings/NotificationSettings.tsx`, on by default, under the design skills.
+
+
 **Files:**
 - Modify: `lemely/web/routers/teacher.py` (delete/restore/deleted routes)
 - Modify: the teacher console screens under `web/src/portals/teacher/`
@@ -2467,6 +2593,13 @@ git commit -S -m "feat(web): delete and restore a paper from the teacher console
 ---
 
 ### Task 18: End-to-end proof
+
+> **Review amendments (2026-09-24) — these OVERRIDE any conflicting text below in this task.** Source: pre-execution plan review (`.superpowers/sdd-deletion/plan-review.md`) and owner rulings R7–R10.
+>
+> - Scenario 6's average comes from `GET /api/teacher/classes` and the queue from `/api/teacher/review`; seed the unshared paper as the student's latest.
+> - Add a scenario: re-mark one scan twice, delete one result, both disappear (R7).
+> - PR body must note R9 (class pages only) and that a correction already in flight when a paper is deleted can still write rows (known, accepted).
+
 
 **Files:**
 - Modify: `scripts/seed_e2e.py`

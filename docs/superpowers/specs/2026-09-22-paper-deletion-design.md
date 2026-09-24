@@ -610,3 +610,38 @@ paid for real, the reasoning is still there to read.
 **Where to look first if something goes wrong:** R4a (a student lifting their
 own hold), R3 (a flagged paper quietly leaving a queue), and R6 (a defect in
 the loader criterion reaching production inside a large review).
+
+## 13. Amendments after plan review (2026-09-24)
+
+A pre-execution review of the plan against the code found behaviour this design
+had not specified. The owner ruled R7–R10 (decisions document); the rest are
+corrections of fact.
+
+- **The unit of deletion is the upload (R7).** Re-running marking on one scan
+  mints a new attempt each time, so one upload can back several attempts. Delete
+  stamps all of them and the upload together; restore unstamps all of them;
+  purge deletes the object only once every attempt on the upload is past the
+  cutoff. Without this, a sibling attempt stayed visible and purge would have
+  deleted a scan a live attempt still referenced.
+- **D8's lift, made precise.** The hold lifts only when the attempt has at least
+  one integrity review item and every one of them is `resolved` or `dismissed`.
+  An open or `withdrawn` integrity item keeps it. This is the conservative
+  reading of R4: closing the plagiarism item does not clear a still-open
+  AI-detection item.
+- **The 409 body is flat** — `{"detail", "deletableFrom"}` at the top level, as
+  §8 states. It is returned as a `JSONResponse`, because FastAPI nests a dict
+  passed to `HTTPException(detail=...)`.
+- **R8** — unshare leaves a teacher's queue only when the paper is unshared from
+  every class of theirs that rosters the student. **R9** — unshare reaches class
+  pages only. **R10** — `review_withdrawn` is a toggleable preference, on by
+  default, which the notification schema requires of every type anyway.
+- **`teacher_papers.deleted_at` ships in migration 0039**, and `TeacherPaper` is
+  in the loader criterion from the start, rather than editing an applied
+  migration later.
+- **The loader criterion was verified by experiment** on SQLAlchemy 2.0.51
+  against every query shape §3.2 names, including the column-only select this
+  document flagged as unconfirmed. It filters all of them. The models are bound
+  lazily inside the listener, because importing them at the top of
+  `lemely/db/session.py` creates a circular import through `lemely.auth`.
+- **Known and accepted:** a correction or console regrade already in flight
+  when a paper is deleted can still write rows after the delete.
