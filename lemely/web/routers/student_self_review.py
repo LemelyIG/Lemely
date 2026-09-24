@@ -191,6 +191,9 @@ def _revealed_dto(view: RevealedSelfReview) -> SelfReviewRevealedDTO:
                 markChanged=p.mark_changed,
                 absorbedByGroup=p.absorbed_by_group,
                 judgeReason=p.judge_reason,
+                verdict=p.verdict,
+                evidenceSpan=p.evidence_span,
+                ecfApplied=p.ecf_applied,
             )
             for p in view.points
         ],

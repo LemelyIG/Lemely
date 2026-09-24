@@ -44,6 +44,7 @@ from lemely.core.schemas import (
     GradePrediction,
     MarkerSourceValue,
 )
+from lemely.core.schemas import PointVerdict as MarkerPointVerdict
 from lemely.core.self_review import JudgeRequest, JudgeVerdict
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
@@ -238,6 +239,35 @@ def _high(question_id: str = "1", *, matched: list[str] | None = None) -> Correc
     return _question(question_id, matched=matched if matched is not None else ["p1"], maximum=2)
 
 
+def _question_with_verdicts(
+    question_id: str, point_verdicts: list[MarkerPointVerdict], *, maximum: int
+) -> CorrectedQuestion:
+    """A question carrying the marker's per-point verdicts (I6/I7 US-013),
+    for the revealed-point wire fields ``verdict``/``evidence_span``/
+    ``ecf_applied`` this file's ``verdict_span_and_ecf`` test pins.
+
+    Mirrors ``tests/test_review_repo.py::_question_with_verdicts``:
+    ``awarded``/``matched_point_ids`` are derived from ``point_verdicts``
+    rather than set independently, since ``RevealedPoint.awarded`` and
+    ``.verdict`` are meant to agree.
+    """
+    awarded_ids = [v.point_id for v in point_verdicts if v.verdict == "awarded"]
+    return CorrectedQuestion(
+        question_id=question_id,
+        awarded_marks=len(awarded_ids),
+        maximum_marks=maximum,
+        confidence=ConfidenceBand.HIGH,
+        confidence_score=0.95,
+        needs_teacher_review=False,
+        student_answer=f"answer-{question_id}",
+        expected_answer=f"expected-{question_id}",
+        topic="Waves",
+        marker_source="ai",
+        matched_point_ids=awarded_ids,
+        point_verdicts=point_verdicts,
+    )
+
+
 def _report(questions: list[CorrectedQuestion]) -> AccuracyReport:
     # subject_code "9999" matches no bundled boundary data, so grades resolve
     # against DEFAULT_GRADE_BOUNDARIES deterministically (as test_review_repo).
@@ -363,6 +393,40 @@ def test_get_before_submission_is_pending_and_carries_no_verdict(
         "evidence_required",
         "points",
     }
+
+
+def test_revealed_point_carries_verdict_span_and_ecf(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """I6/I7's marker verdict, evidence span and ECF flag reach the revealed
+    point -- the same three fields ``test_review_repo.py`` already pins on
+    ``ReviewItemPoint``, now on the student's own ``RevealedPoint``. Two
+    points, one ``withheld`` and one ``awarded``, so the test also proves
+    ``withheld`` and ``awarded`` do not collapse into the same wire value.
+    """
+    student = _seed_user(pg_sessionmaker)
+    question = _question_with_verdicts(
+        "1",
+        [
+            MarkerPointVerdict(
+                point_id="p1", verdict="withheld", evidence_span="v = 12.5", ecf_applied=True
+            ),
+            MarkerPointVerdict(point_id="p2", verdict="awarded"),
+        ],
+        maximum=2,
+    )
+    attempt_id = _seed_attempt(pg_sessionmaker, student, [question])
+    qr_id = _qr_id(pg_sessionmaker, attempt_id, "1")
+
+    view = _service(pg_sessionmaker).submit(student, attempt_id, qr_id, _all_earned(["p1", "p2"]))
+
+    by_id = {p.mark_point_id: p for p in view.points}
+    assert by_id["p1"].verdict == "withheld"
+    assert by_id["p1"].evidence_span == "v = 12.5"
+    assert by_id["p1"].ecf_applied is True
+    assert by_id["p2"].verdict == "awarded"
+    assert by_id["p2"].evidence_span == ""
+    assert by_id["p2"].ecf_applied is False
 
 
 def test_get_reports_evidence_required_on_a_high_confidence_question(
