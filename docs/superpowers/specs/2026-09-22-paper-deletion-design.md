@@ -433,6 +433,11 @@ statement, so this is expected to work — but it is not signed off without the
 fully-populated fixture in §11. If it fails, the fix is `ondelete="CASCADE"` on
 that FK in the same migration.
 
+**Signed off (Task 10, 2026-09-24):** the fully-populated fixture — question
+results, points, revisions, weakness rows, the upload, and a review item with
+`question_result_id` set — purges with a single attempt `DELETE` and no FK
+violation. No migration change was needed.
+
 ## 8. D8 — the integrity hold, told honestly
 
 **Predicate, as ruled (R4).** The paper is blocked when **all three** hold:
