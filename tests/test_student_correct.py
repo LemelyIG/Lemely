@@ -1242,7 +1242,8 @@ def test_a_paper_deleted_mid_marking_is_not_a_run_in_flight_once_restored(
         files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
     )
     paper_id = up.json()["paperId"]
-    api.post("/api/student/correct", json={"paperId": paper_id})
+    first = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert '"phase": "complete"' in first.text
     with pg_sessionmaker() as session:
         (first_attempt,) = session.scalars(select(Attempt.id)).all()
 
@@ -1261,7 +1262,7 @@ def test_a_paper_deleted_mid_marking_is_not_a_run_in_flight_once_restored(
             .where(Upload.id == uuid.UUID(paper_id))
             .execution_options(**{INCLUDE_DELETED: True})
         ).one()
-    assert status in (UploadStatus.complete, UploadStatus.failed)
+    assert status is UploadStatus.complete
 
     PaperDeletionService(pg_sessionmaker).restore(student_id, str(first_attempt))
 

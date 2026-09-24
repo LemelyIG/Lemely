@@ -10,7 +10,6 @@ still coexists on the same tables.
 from __future__ import annotations
 
 import threading
-import time
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING
@@ -67,10 +66,11 @@ from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.session import INCLUDE_DELETED
 from lemely.runtime.config import DatabaseSettings
+from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.conftest import _scheme
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Iterator
+    from collections.abc import Iterator
 
 
 def _server_reachable(url: str) -> bool:
@@ -1249,49 +1249,6 @@ def _soft_delete_upload(sm: sessionmaker[Session], upload_id: uuid.UUID) -> None
         session.execute(
             sa.update(Upload).where(Upload.id == upload_id).values(deleted_at=datetime.now(UTC))
         )
-
-
-def _wait_until_a_backend_waits_on_a_lock(sm: sessionmaker[Session]) -> None:
-    """Block until some connection to this database is queued on a row lock.
-
-    The concurrency tests below are only meaningful when the second
-    transaction really is waiting on the first; releasing the first early
-    would let the second run after it, sequentially, and pass on buggy code.
-    """
-    deadline = time.monotonic() + 10
-    while time.monotonic() < deadline:
-        with sm() as session:
-            waiting = session.scalar(
-                sa.text(
-                    "SELECT count(*) FROM pg_stat_activity "
-                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
-                )
-            )
-        if waiting:
-            return
-        time.sleep(0.05)
-    pytest.fail("the second transaction never queued behind the first")
-
-
-class _Paused:
-    """Run ``target`` on a thread, keeping what it returned or raised."""
-
-    def __init__(self, target: Callable[[], object]) -> None:
-        self.result: object = None
-        self.error: BaseException | None = None
-
-        def run() -> None:
-            try:
-                self.result = target()
-            except BaseException as exc:  # re-raised or asserted on by the test
-                self.error = exc
-
-        self._thread = threading.Thread(target=run, daemon=True)
-        self._thread.start()
-
-    def join(self) -> None:
-        self._thread.join(timeout=30)
-        assert not self._thread.is_alive(), "worker thread hung"
 
 
 def test_persist_onto_a_deleted_upload_is_refused_and_writes_nothing(
