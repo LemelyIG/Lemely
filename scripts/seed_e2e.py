@@ -313,6 +313,7 @@ from lemely.core.schemas import (
     CorrectionResult,
     ExamMetadata,
     GradePrediction,
+    PointVerdict,
     WeaknessReport,
 )
 from lemely.db.models.engagement import XpEvent
@@ -407,6 +408,82 @@ EMAIL_DOMAIN = "e2e.lemely.local"
 #: numbers (teacher-journey.spec.ts: 3 students, 69% average, 2 at-risk) never
 #: see a 4th enrolled student or a 4th grade-bearing attempt.
 REVIEW_ITEM_CONFIDENCE_SCORE = 0.55
+
+#: Task #66: `matched_point_ids` for the review-queue item's own question,
+#: paired with `review_item_point_verdicts()` below -- only `p1`'s verdict is
+#: `"awarded"`, so this is the one list both `derive_point_rows`'s `awarded`
+#: column and `_awarded_from_verdicts`'s real-pipeline invariant agree on
+#: (`derive_point_rows`'s `awarded` comes from `matched_point_ids`, never from
+#: `verdict`, so the two are supplied separately here and must be kept in
+#: step by hand).
+REVIEW_ITEM_MATCHED_POINT_IDS = ["p1"]
+
+
+def review_item_scheme() -> MarkScheme:
+    """The point-based scheme behind the review-queue item's own question (T-08).
+
+    Three independent points, one mark each -- deliberately not the same
+    scheme object as :func:`self_review_scheme` (a different question, a
+    different student's attempt, and a different paper number): confusing
+    the two would mean a Playwright spec against ``/teacher/review`` and one
+    against the self-review panel could pass against each other's fixture by
+    accident.
+    """
+    return MarkScheme(
+        metadata=MarkSchemeMetadata(
+            subject="Physics",
+            subject_code=SUBJECT_CODE,
+            paper_number=1,
+            paper_variant=1,
+            session_month=LooseSessionMonth.MAY_JUNE,
+            session_year=2024,
+            paper_type=PaperType.THEORY_CORE,
+            maximum_mark=3,
+            scheme_format=SchemeFormat.POINT_BASED,
+        ),
+        questions=[
+            SchemeQuestion(
+                id="1",
+                marks=3,
+                type=SchemeQuestionType.RECALL,
+                answer_points=[
+                    AnswerPoint(id="p1", point="Correct method shown", marks=1),
+                    AnswerPoint(id="p2", point="Correct substitution", marks=1),
+                    AnswerPoint(id="p3", point="Final answer to correct precision", marks=1),
+                ],
+            ),
+        ],
+    )
+
+
+def review_item_point_verdicts() -> list[PointVerdict]:
+    """All three I6 verdicts (US-013) on the review-queue item's one question.
+
+    Exactly what T-08's review-queue row needed and never had before task
+    #66: a first Playwright spec against ``/teacher/review`` (task #7) can
+    now assert the "Marker's per-point verdicts" section renders one chip per
+    verdict, a quoted evidence span on ``p1``, and an ECF chip on ``p3``
+    (``web/src/portals/teacher/screens/ReviewItem.tsx``'s ``POINT_VERDICT_LABEL``).
+    """
+    return [
+        PointVerdict(
+            point_id="p1",
+            verdict="awarded",
+            evidence_span="a = (v - u) / t = (20 - 0) / 4 = 5 m/s^2",
+        ),
+        PointVerdict(
+            point_id="p2",
+            verdict="withheld",
+            note="No substitution shown",
+        ),
+        PointVerdict(
+            point_id="p3",
+            verdict="unverifiable",
+            note="Carried forward from p2's substituted value; final figure illegible",
+            ecf_applied=True,
+        ),
+    ]
+
 
 #: `allocate_difficulty(None, 5)` (`lemely.core.difficulty`) for an untargeted
 #: quiz, worked out by hand: the balanced (0.2, 0.6, 0.2) mix * 5 questions =
@@ -697,6 +774,8 @@ def accuracy_report_for_score(
     confidence: ConfidenceBand = ConfidenceBand.HIGH,
     confidence_score: float = 0.95,
     needs_teacher_review: bool = False,
+    matched_point_ids: list[str] | None = None,
+    point_verdicts: list[PointVerdict] | None = None,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -717,6 +796,17 @@ def accuracy_report_for_score(
     fan-out (never a hand-inserted ``review_queue`` row) — see
     ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
     stay untouched.
+
+    ``matched_point_ids``/``point_verdicts`` default to empty, exactly like
+    every :class:`CorrectedQuestion` field they feed — every original caller
+    is unaffected. Task #66 passes both, alongside ``mark_scheme=`` at the
+    ``persist_correction`` call site, so the review-queue item's own question
+    (still ``question_id="1"``) gets a real per-point verdict ledger through
+    :func:`~lemely.db.question_points.derive_point_rows`, the same as
+    :func:`self_review_report`. ``marker_source`` becomes ``"ai"`` whenever
+    verdicts are attached — I6 verdicts are an AI-marking concept, and a seed
+    row claiming ``"deterministic"`` marking while carrying them would be a
+    lie the real pipeline never tells.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -736,7 +826,9 @@ def accuracy_report_for_score(
         student_answer="seeded",
         expected_answer="seeded",
         topic="Seed topic",
-        marker_source="deterministic",
+        marker_source="deterministic" if point_verdicts is None else "ai",
+        matched_point_ids=matched_point_ids or [],
+        point_verdicts=point_verdicts or [],
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -801,7 +893,16 @@ def self_review_scheme() -> MarkScheme:
 
 
 def self_review_report() -> AccuracyReport:
-    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence."""
+    """A 3/5 paper: "1" fully earned and confident; "2" 1/3 and low-confidence.
+
+    Task #66: "2"'s three points carry all three I6 verdicts (``p1``
+    ``"awarded"``, ``p2`` ``"withheld"``, ``p3`` ``"unverifiable"``), matching
+    its existing ``matched_point_ids=["p1"]`` exactly (only ``p1``'s verdict
+    is ``"awarded"``) so the "1 to 3 out of 3" self-mark story
+    ``web/e2e/self-review.spec.ts`` already tells stays true. Before this, the
+    verdict column was NULL for every seeded row and the spec's post-reveal
+    verdict-chip assertion could not be written.
+    """
     questions = [
         CorrectedQuestion(
             question_id="1",
@@ -830,6 +931,27 @@ def self_review_report() -> AccuracyReport:
             review_reason="Working hard to read",
             feedback="Method shown, but the substitution and rounding were not clear.",
             matched_point_ids=["p1"],
+            point_verdicts=[
+                PointVerdict(
+                    point_id="p1",
+                    verdict="awarded",
+                    evidence_span="F = ma = 2 x 6 = 12",
+                ),
+                PointVerdict(
+                    point_id="p2",
+                    verdict="withheld",
+                    note="Substitution not shown",
+                ),
+                PointVerdict(
+                    point_id="p3",
+                    verdict="unverifiable",
+                    note=(
+                        "Carried forward from p2's substituted value; "
+                        "rounding to 2 s.f. not confirmed"
+                    ),
+                    ecf_applied=True,
+                ),
+            ],
         ),
     ]
     correction = CorrectionResult(
@@ -1300,7 +1422,8 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
 
     _log(
         "Persisting the >=14-day-inactive attempt (deliberately LOW-confidence: T-08's "
-        "real review-queue item, same score/date as always)"
+        "real review-queue item, same score/date as always, now with a per-point "
+        "verdict ledger — task #66)"
     )
     inactive_report = accuracy_report_for_score(
         INACTIVE_SCORE,
@@ -1308,11 +1431,14 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         confidence=ConfidenceBand.LOW,
         confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
         needs_teacher_review=True,
+        matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
+        point_verdicts=review_item_point_verdicts(),
     )
     inactive_attempt_id = attempt_repo.persist_correction(
         user_id=inactive["userId"],
         report=inactive_report,
         recorded_at=inactive_recorded_at(now).isoformat(),
+        mark_scheme=review_item_scheme(),
     )
 
     _log("Persisting the healthy control's improving run")

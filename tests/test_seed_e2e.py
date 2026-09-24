@@ -856,3 +856,58 @@ class TestSelfReviewSeed:
         assert len(derive_point_rows(by_id["2"], scheme)) == 3
         assert [r["awarded"] for r in derive_point_rows(by_id["2"], scheme)] == [True, False, False]
         assert report.correction.awarded_marks == 3 and report.correction.maximum_marks == 5
+
+    def test_question_2_points_carry_all_three_verdicts(self) -> None:
+        """Task #66: without this, every seeded row leaves ``verdict`` NULL and
+        no Playwright spec can assert a verdict chip renders (self-review's
+        own post-reveal assertion is blocked on exactly this)."""
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import self_review_report, self_review_scheme
+
+        report = self_review_report()
+        scheme = self_review_scheme()
+        by_id = {q.question_id: q for q in report.correction.questions}
+        rows = derive_point_rows(by_id["2"], scheme)
+        assert [r["verdict"] for r in rows] == ["awarded", "withheld", "unverifiable"]
+        assert any(r["evidence_span"] for r in rows)
+        assert any(r["ecf_applied"] for r in rows)
+        # The verdict path's own "awarded" boolean must still agree with
+        # matched_point_ids -- the same invariant _awarded_from_verdicts
+        # enforces on the real marking path.
+        assert [r["awarded"] for r in rows] == [True, False, False]
+
+
+class TestReviewItemVerdicts:
+    """Task #66: the review-queue item (T-08) must also carry a per-point
+    verdict ledger, so a first Playwright spec against ``/teacher/review``
+    (task #7) has something non-null to assert on."""
+
+    def test_review_item_question_carries_all_three_verdicts(self) -> None:
+        from lemely.db.question_points import derive_point_rows
+        from scripts.seed_e2e import (
+            REVIEW_ITEM_MATCHED_POINT_IDS,
+            review_item_point_verdicts,
+            review_item_scheme,
+        )
+
+        report = accuracy_report_for_score(
+            INACTIVE_SCORE,
+            paper_number=1,
+            confidence=ConfidenceBand.LOW,
+            confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE,
+            needs_teacher_review=True,
+            matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
+            point_verdicts=review_item_point_verdicts(),
+        )
+        scheme = review_item_scheme()
+        question = report.correction.questions[0]
+        rows = derive_point_rows(question, scheme)
+        assert [r["verdict"] for r in rows] == ["awarded", "withheld", "unverifiable"]
+        assert any(r["evidence_span"] for r in rows)
+        assert any(r["ecf_applied"] for r in rows)
+        assert [r["awarded"] for r in rows] == [True, False, False]
+        # Score/grade untouched by attaching a scheme + verdicts -- same
+        # invariant TestAccuracyReportForScore.
+        # test_low_confidence_override_carries_the_score_and_needs_review pins.
+        assert report.grade_prediction.percentage == INACTIVE_SCORE[0]
+        assert report.grade_prediction.grade == INACTIVE_SCORE[1]
