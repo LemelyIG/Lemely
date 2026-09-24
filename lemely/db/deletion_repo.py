@@ -112,21 +112,29 @@ def paper_label(attempt: Attempt) -> str:
 
     Uses :data:`SESSION_MONTH_LABELS`, the same lookup ``attempt_to_record``
     uses for ``ExamMetadata``, so the paper reads the same here as in history.
+    Missing parts are dropped rather than filled: ``"Paper 4, May/June 2024"``
+    with no subject, ``"0625, May/June"`` with no paper number or year, and
+    ``"Past paper"`` only when neither subject nor paper number is known.
     """
     name = " ".join(
         part
         for part in (
-            attempt.subject_code or "Past paper",
+            attempt.subject_code,
             f"Paper {attempt.paper_number}" if attempt.paper_number is not None else None,
         )
         if part
     )
-    if attempt.session_month is None:
-        return name
-    session = SESSION_MONTH_LABELS[attempt.session_month]
-    if attempt.session_year is not None:
-        session = f"{session} {attempt.session_year}"
-    return f"{name}, {session}"
+    session = " ".join(
+        part
+        for part in (
+            SESSION_MONTH_LABELS[attempt.session_month]
+            if attempt.session_month is not None
+            else None,
+            str(attempt.session_year) if attempt.session_year is not None else None,
+        )
+        if part
+    )
+    return ", ".join(part for part in (name or "Past paper", session) if part)
 
 
 def _parse_uuid(value: str) -> uuid.UUID | None:
@@ -180,9 +188,24 @@ class PaperDeletionService:
                 raise PaperNotDeletableError(_NOT_UPLOADED_MESSAGE, deletable_from=None)
             upload_id = addressed.upload_id
 
+            # The upload is locked before its attempts are read, never after:
+            # a marking run persists a new attempt under this same lock
+            # (``attempt_repo._lock_live_upload``). Reading the siblings first
+            # would miss an attempt committed while this waited on the upload,
+            # and leave it live on a deleted upload.
+            upload = session.scalars(
+                select(Upload)
+                .where(Upload.id == upload_id)
+                .with_for_update()
+                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
+            ).one()
             siblings = self._lock_siblings(session, upload_id)
             addressed = next((a for a in siblings if a.id == parsed_id), None)
             if addressed is None or addressed.user_id != owner or addressed.deleted_at is not None:
+                raise PaperNotFoundError("No such paper")
+            # Nothing in the schema ties attempts.user_id to uploads.user_id, so
+            # a foreign attempt on this upload is refused rather than stamped.
+            if any(a.user_id != owner for a in siblings):
                 raise PaperNotFoundError("No such paper")
             live = [a for a in siblings if a.deleted_at is None]
 
@@ -196,16 +219,14 @@ class PaperDeletionService:
 
             for sibling in live:
                 sibling.deleted_at = now
-            upload = session.scalars(
-                select(Upload)
-                .where(Upload.id == upload_id)
-                .with_for_update()
-                .execution_options(**{INCLUDE_DELETED: True}, populate_existing=True)
-            ).one()
-            upload.deleted_at = now
-            # ux_uploads_user_idempotency survives the soft delete, so a re-upload
-            # of the same scan would collide with a row the student cannot see.
-            upload.idempotency_key = None
+            # An upload already deleted keeps its instant: restore matches its
+            # siblings on ``deleted_at`` equality, so re-stamping would strand them.
+            if upload.deleted_at is None:
+                upload.deleted_at = now
+                # ux_uploads_user_idempotency survives the soft delete, so a
+                # re-upload of the same scan would collide with a row the
+                # student cannot see.
+                upload.idempotency_key = None
 
             sibling_ids = [a.id for a in live]
             withdrawn = self._withdraw_open_items(session, sibling_ids, now)
@@ -296,8 +317,17 @@ class PaperDeletionService:
     ) -> list[uuid.UUID]:
         """Flip every open review item on these attempts to ``withdrawn`` at ``now``.
 
-        One conditional UPDATE, so an item a teacher closes concurrently is
-        either closed first (and left alone) or withdrawn — never both.
+        Never both a teacher close and a withdrawal on one item. That guarantee
+        comes from the **attempt row lock**, not from this UPDATE alone. The
+        siblings are locked ``FOR UPDATE`` before this runs, and a teacher's
+        close takes the same lock (``review_repo._find_any_item(for_update=True)``),
+        so the two are serialized. If the close commits first, the
+        ``status == open`` condition here skips its item. If this delete
+        commits first, the teacher's locked read re-evaluates the loader
+        criterion on the now-deleted attempt, finds nothing, and the close is
+        refused — the teacher side reads the item's status unlocked, so without
+        the lock it would overwrite ``withdrawn``. Removing either lock
+        reopens the race.
         ``resolved_by`` is untouched: a student's delete is not a teacher's
         judgement.
         """

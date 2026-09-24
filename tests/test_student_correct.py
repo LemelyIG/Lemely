@@ -40,11 +40,13 @@ from lemely.core.schemas import (
 )
 from lemely.db.attempt_repo import AttemptRepository
 from lemely.db.base import Base
+from lemely.db.deletion_repo import PaperDeletionService
 from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, QuestionResult
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
+from lemely.db.session import INCLUDE_DELETED
 from lemely.db.upload_repo import StudentUploadRepository
 from lemely.io.gemini import GeminiClient
 from lemely.runtime.config import DatabaseSettings, Settings, load_settings
@@ -1143,3 +1145,113 @@ def test_correct_complete_frame_names_no_awarded_mark_point(
     # The whole frame, not just that key: a point id reaching the student under
     # any other name is the same reveal.
     assert "p_method" not in json.dumps(complete_frame)
+
+
+# ---------------------------------------------------------------------------
+# A paper deleted while it was being marked (paper deletion, Task 5a).
+# ---------------------------------------------------------------------------
+
+
+def test_a_paper_deleted_mid_marking_ends_the_run_without_persisting(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The student deletes the paper after the ownership check, before persist.
+
+    The second run is a re-mark of an already-marked scan, the realistic shape:
+    the student deletes the first result while the re-mark is in Gemini. The
+    run must end on the ordinary error frame with generic copy, write no
+    attempt, leave the deleted upload's status alone, and award nothing.
+    """
+    api, student_id, upload_repo = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    paper_id = up.json()["paperId"]
+    first = api.post("/api/student/correct", json={"paperId": paper_id})
+    assert '"phase": "complete"' in first.text
+    with pg_sessionmaker() as session:
+        (first_attempt,) = session.scalars(select(Attempt.id)).all()
+
+    real_extract = student.extract_answers
+
+    def delete_mid_marking(*args: object, **kwargs: object) -> ExtractedAnswers:
+        PaperDeletionService(pg_sessionmaker).delete(student_id, str(first_attempt))
+        return cast("ExtractedAnswers", real_extract(*args, **kwargs))
+
+    statuses: list[UploadStatus] = []
+    real_set_status = upload_repo.set_status
+
+    def record_status(upload_id: uuid.UUID, status: UploadStatus) -> None:
+        statuses.append(status)
+        real_set_status(upload_id, status)
+
+    award, notify, alert = MagicMock(), MagicMock(), MagicMock()
+    monkeypatch.setattr(student, "extract_answers", delete_mid_marking)
+    monkeypatch.setattr(upload_repo, "set_status", record_status)
+    monkeypatch.setattr(student, "award_xp_safely", award)
+    monkeypatch.setattr(student, "notify_safely", notify)
+    monkeypatch.setattr(student, "_alert_teachers_and_parents", alert)
+
+    resp = api.post("/api/student/correct", json={"paperId": paper_id})
+
+    assert resp.status_code == 200
+    frames = [
+        json.loads(frame.removeprefix("data: "))
+        for frame in resp.text.split("\n\n")
+        if frame.startswith("data: {")
+    ]
+    errors = [f for f in frames if f["type"] == "error"]
+    assert [e["message"] for e in errors] == ["This paper was deleted while it was being marked."]
+    assert not any(f.get("phase") == "complete" for f in frames)
+    assert "[DONE]" in resp.text
+    assert "integrity" not in resp.text.lower()
+
+    with pg_sessionmaker() as session:
+        attempts = session.scalars(
+            select(Attempt).execution_options(**{INCLUDE_DELETED: True})
+        ).all()
+    assert [a.id for a in attempts] == [first_attempt]
+    assert attempts[0].deleted_at is not None
+    # `processing` was written before the delete; nothing after it.
+    assert statuses == [UploadStatus.processing]
+    award.assert_not_called()
+    notify.assert_not_called()
+    alert.assert_not_called()
+
+
+def test_set_status_leaves_a_deleted_upload_alone(
+    client: tuple[TestClient, str, StudentUploadRepository],
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    """``set_status`` reads through the loader criterion, so a deleted row is unseen."""
+    from lemely.db.models.attempts import Upload
+
+    api, student_id, upload_repo = client
+    up = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", b"%PDF-1.4 fake", "application/pdf")},
+    )
+    owned = upload_repo.get_owned_upload(user_id=student_id, upload_id=up.json()["paperId"])
+    assert owned is not None
+
+    def status() -> UploadStatus:
+        with pg_sessionmaker() as session:
+            return session.scalars(
+                select(Upload.status)
+                .where(Upload.id == owned.id)
+                .execution_options(**{INCLUDE_DELETED: True})
+            ).one()
+
+    # Presence before absence: a live upload takes the write.
+    upload_repo.set_status(owned.id, UploadStatus.processing)
+    assert status() is UploadStatus.processing
+
+    with pg_sessionmaker.begin() as session:
+        session.execute(
+            sa.update(Upload).where(Upload.id == owned.id).values(deleted_at=datetime.now(UTC))
+        )
+    upload_repo.set_status(owned.id, UploadStatus.failed)
+    assert status() is UploadStatus.processing

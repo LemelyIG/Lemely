@@ -17,12 +17,13 @@ from typing import TYPE_CHECKING
 import pytest
 from sqlalchemy import select
 
-from lemely.core.deletion import integrity_hold_until, restore_deadline
+from lemely.core.deletion import RETENTION_DAYS, integrity_hold_until, restore_deadline
 from lemely.db.deletion_repo import (
     DeletedPaper,
     PaperDeletionService,
     PaperNotDeletableError,
     PaperNotFoundError,
+    paper_label,
 )
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
@@ -444,7 +445,7 @@ def test_an_integrity_flag_past_the_retention_window_does_not_block(
         sessionmaker_,
         owner,
         _seed_upload(sessionmaker_, owner),
-        recorded_at=datetime.now(UTC) - timedelta(days=31),
+        recorded_at=datetime.now(UTC) - timedelta(days=RETENTION_DAYS + 1),
     )
     _seed_question(sessionmaker_, old.attempt_id, plagiarism=True)
     service.delete(owner, str(old.attempt_id))  # does not raise
@@ -564,3 +565,112 @@ def test_a_teacher_override_does_not_block_deletion(
     teacher = uuid.UUID(_seed_user(sessionmaker_))
     _seed_question(sessionmaker_, attempt.attempt_id, overridden_by=teacher)
     service.delete(owner, str(attempt.attempt_id))  # D10: does not raise
+
+
+# ── T5 review hardening ─────────────────────────────────────────────────────
+
+
+def test_a_sibling_owned_by_someone_else_refuses_the_delete(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    stranger: str,
+    attempt: Seeded,
+) -> None:
+    """No constraint ties attempts.user_id to uploads.user_id; the service does."""
+    foreign = _seed_attempt(sessionmaker_, stranger, attempt.upload_id)
+    with pytest.raises(PaperNotFoundError):
+        service.delete(owner, str(attempt.attempt_id))
+    _assert_untouched(sessionmaker_, attempt)
+    assert _attempt_row(sessionmaker_, foreign.attempt_id).deleted_at is None
+
+
+def test_an_upload_already_deleted_keeps_its_instant_and_key(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """Restore matches siblings on ``deleted_at``; re-stamping would strand them."""
+    earlier = datetime.now(UTC) - timedelta(days=1)
+    with sessionmaker_.begin() as session:
+        upload = _upload_row(sessionmaker_, attempt.upload_id)
+        session.add(upload)
+        upload.deleted_at = earlier
+        upload.idempotency_key = "kept"
+
+    result = service.delete(owner, str(attempt.attempt_id))
+
+    after = _upload_row(sessionmaker_, attempt.upload_id)
+    assert result.deleted_at != earlier
+    assert after.deleted_at == earlier
+    assert after.idempotency_key == "kept"
+
+
+def test_two_held_siblings_are_deletable_from_the_later_hold_end(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    """The whole upload is deletable only once every hold has ended."""
+    now = datetime.now(UTC)
+    older = _seed_attempt(
+        sessionmaker_, owner, attempt.upload_id, recorded_at=now - timedelta(days=10)
+    )
+    newer = _seed_attempt(
+        sessionmaker_, owner, attempt.upload_id, recorded_at=now - timedelta(days=2)
+    )
+    _seed_question(sessionmaker_, older.attempt_id, plagiarism=True)
+    _seed_question(sessionmaker_, newer.attempt_id, ai_detection=True)
+
+    with pytest.raises(PaperNotDeletableError) as exc:
+        service.delete(owner, str(attempt.attempt_id))
+
+    assert exc.value.deletable_from == integrity_hold_until(newer.recorded_at)
+    assert exc.value.deletable_from != integrity_hold_until(older.recorded_at)
+    _assert_untouched(sessionmaker_, attempt)
+
+
+def test_a_non_past_paper_sibling_on_the_upload_refuses_the_delete(
+    service: PaperDeletionService,
+    sessionmaker_: sessionmaker[Session],
+    owner: str,
+    attempt: Seeded,
+) -> None:
+    quiz = _seed_attempt(sessionmaker_, owner, attempt.upload_id, origin=AttemptOrigin.quiz)
+    with pytest.raises(PaperNotDeletableError) as exc:
+        service.delete(owner, str(attempt.attempt_id))
+    assert exc.value.deletable_from is None
+    _assert_untouched(sessionmaker_, attempt)
+    assert _attempt_row(sessionmaker_, quiz.attempt_id).deleted_at is None
+
+
+@pytest.mark.parametrize(
+    ("subject_code", "paper_number", "session_month", "session_year", "expected"),
+    [
+        ("0625", 4, SessionMonth.may_june, 2024, "0625 Paper 4, May/June 2024"),
+        (None, 4, SessionMonth.may_june, 2024, "Paper 4, May/June 2024"),
+        ("0625", None, SessionMonth.may_june, 2024, "0625, May/June 2024"),
+        (None, None, SessionMonth.may_june, 2024, "Past paper, May/June 2024"),
+        ("0625", 4, SessionMonth.may_june, None, "0625 Paper 4, May/June"),
+        ("0625", 4, None, 2024, "0625 Paper 4, 2024"),
+        ("0625", 4, None, None, "0625 Paper 4"),
+        (None, None, None, None, "Past paper"),
+    ],
+)
+def test_paper_label_degrades_without_doubling_words(
+    subject_code: str | None,
+    paper_number: int | None,
+    session_month: SessionMonth | None,
+    session_year: int | None,
+    expected: str,
+) -> None:
+    """Task 9 interpolates this into teacher notifications, so it must read well."""
+    attempt = Attempt(
+        subject_code=subject_code,
+        paper_number=paper_number,
+        session_month=session_month,
+        session_year=session_year,
+    )
+    assert paper_label(attempt) == expected

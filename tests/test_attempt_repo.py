@@ -9,7 +9,10 @@ still coexists on the same tables.
 
 from __future__ import annotations
 
+import threading
+import time
 import uuid
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING
 
 import pytest
@@ -43,10 +46,12 @@ from lemely.core.schemas import (
 )
 from lemely.db.attempt_repo import (
     AttemptRepository,
+    UploadDeletedError,
     fill_correction_topics,
     is_marking_low_confidence,
 )
 from lemely.db.base import Base
+from lemely.db.deletion_repo import PaperDeletionService
 from lemely.db.history_repo import DbHistoryStore
 from lemely.db.models import User
 from lemely.db.models.attempts import (
@@ -54,16 +59,18 @@ from lemely.db.models.attempts import (
     QuestionResult,
     QuestionResultPoint,
     QuestionResultRevision,
+    Upload,
     WeaknessRecord,
 )
 from lemely.db.models.enums import BoundarySource, MarkerSource, ReviewReason, RevisionSource, Role
 from lemely.db.models.enums import ConfidenceBand as DBConfidenceBand
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.session import INCLUDE_DELETED
 from lemely.runtime.config import DatabaseSettings
 from tests.conftest import _scheme
 
 if TYPE_CHECKING:
-    from collections.abc import Iterator
+    from collections.abc import Callable, Iterator
 
 
 def _server_reachable(url: str) -> bool:
@@ -1198,3 +1205,237 @@ def test_question_result_ids_pairs_each_question_with_its_own_row(
     assert set(expected) == {"1a", "1b"}, "fixture must persist two distinct questions"
     assert ids == expected
     assert ids["1a"] != ids["1b"]
+
+
+# ---------------------------------------------------------------------------
+# A marking run never lands on a deleted upload (paper deletion, Task 5a).
+#
+# The invariant: no live attempt references a soft-deleted upload. A run that
+# was already marking when its student deleted the paper would otherwise put
+# the deleted paper back in their history, and a second delete of that stray
+# attempt would re-stamp the upload and strand the first delete's siblings.
+# ---------------------------------------------------------------------------
+
+
+def _seed_upload(sm: sessionmaker[Session], owner: str) -> uuid.UUID:
+    upload_id = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(
+            Upload(
+                id=upload_id,
+                user_id=uuid.UUID(owner),
+                storage_path=f"uploads/{upload_id}.pdf",
+                idempotency_key=f"scan-{upload_id}",
+            )
+        )
+    return upload_id
+
+
+def _attempts_on(
+    sm: sessionmaker[Session], upload_id: uuid.UUID
+) -> dict[uuid.UUID, datetime | None]:
+    """Every attempt on the upload, deleted ones included: ``id -> deleted_at``."""
+    with sm() as session:
+        rows = session.execute(
+            select(Attempt.id, Attempt.deleted_at)
+            .where(Attempt.upload_id == upload_id)
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).all()
+    return {attempt_id: deleted_at for attempt_id, deleted_at in rows}
+
+
+def _soft_delete_upload(sm: sessionmaker[Session], upload_id: uuid.UUID) -> None:
+    with sm.begin() as session:
+        session.execute(
+            sa.update(Upload).where(Upload.id == upload_id).values(deleted_at=datetime.now(UTC))
+        )
+
+
+def _wait_until_a_backend_waits_on_a_lock(sm: sessionmaker[Session]) -> None:
+    """Block until some connection to this database is queued on a row lock.
+
+    The concurrency tests below are only meaningful when the second
+    transaction really is waiting on the first; releasing the first early
+    would let the second run after it, sequentially, and pass on buggy code.
+    """
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        with sm() as session:
+            waiting = session.scalar(
+                sa.text(
+                    "SELECT count(*) FROM pg_stat_activity "
+                    "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+                )
+            )
+        if waiting:
+            return
+        time.sleep(0.05)
+    pytest.fail("the second transaction never queued behind the first")
+
+
+class _Paused:
+    """Run ``target`` on a thread, keeping what it returned or raised."""
+
+    def __init__(self, target: Callable[[], object]) -> None:
+        self.result: object = None
+        self.error: BaseException | None = None
+
+        def run() -> None:
+            try:
+                self.result = target()
+            except BaseException as exc:  # re-raised or asserted on by the test
+                self.error = exc
+
+        self._thread = threading.Thread(target=run, daemon=True)
+        self._thread.start()
+
+    def join(self) -> None:
+        self._thread.join(timeout=30)
+        assert not self._thread.is_alive(), "worker thread hung"
+
+
+def test_persist_onto_a_deleted_upload_is_refused_and_writes_nothing(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    upload_id = _seed_upload(pg_sessionmaker, owner)
+    # Presence before absence: the same call onto the live upload succeeds.
+    first = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+    assert set(_attempts_on(pg_sessionmaker, upload_id)) == {first}
+
+    _soft_delete_upload(pg_sessionmaker, upload_id)
+    with pytest.raises(UploadDeletedError):
+        repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+
+    assert set(_attempts_on(pg_sessionmaker, upload_id)) == {first}
+    with pg_sessionmaker() as session:
+        orphans = session.scalars(
+            select(QuestionResult.id)
+            .where(QuestionResult.attempt_id != first)
+            .execution_options(**{INCLUDE_DELETED: True})
+        ).all()
+    assert orphans == []
+
+
+def test_a_quiz_attempt_needs_no_upload_lock(pg_sessionmaker: sessionmaker[Session]) -> None:
+    """``upload_id=None`` is a quiz: there is no upload to lock or refuse on."""
+    repo = AttemptRepository(pg_sessionmaker)
+    attempt_id = repo.persist_correction(user_id=_seed_user(pg_sessionmaker), report=_report())
+    with pg_sessionmaker() as session:
+        assert session.get(Attempt, attempt_id) is not None
+
+
+def test_delete_then_persist_on_the_same_upload_is_refused(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    upload_id = _seed_upload(pg_sessionmaker, owner)
+    first = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+
+    PaperDeletionService(pg_sessionmaker).delete(owner, str(first))
+
+    with pytest.raises(UploadDeletedError):
+        repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+    assert set(_attempts_on(pg_sessionmaker, upload_id)) == {first}
+
+
+def test_persist_then_delete_stamps_the_new_attempt_as_a_sibling(
+    pg_sessionmaker: sessionmaker[Session],
+) -> None:
+    repo = AttemptRepository(pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    upload_id = _seed_upload(pg_sessionmaker, owner)
+    first = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+    second = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+
+    result = PaperDeletionService(pg_sessionmaker).delete(owner, str(first))
+
+    assert result.sibling_attempt_ids == sorted([first, second])
+    assert _attempts_on(pg_sessionmaker, upload_id) == {
+        first: result.deleted_at,
+        second: result.deleted_at,
+    }
+
+
+def test_a_delete_arriving_mid_persist_waits_and_stamps_the_new_attempt(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The race the reviewer found, run for real on two connections.
+
+    The persist is held open inside its transaction, after its insert. A
+    delete then arrives. It must queue behind the persist and, once that
+    commits, see and stamp the attempt the persist wrote. Were the delete to
+    read the siblings before waiting on the upload, it would stamp only the
+    attempts that existed when it started, and leave a live attempt on a
+    deleted upload.
+    """
+    import lemely.db.attempt_repo as attempt_repo_module
+
+    repo = AttemptRepository(pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    upload_id = _seed_upload(pg_sessionmaker, owner)
+    first = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+
+    inside, release = threading.Event(), threading.Event()
+    real = attempt_repo_module._safe_derive_point_rows
+
+    def paused(*args: object, **kwargs: object) -> list[dict[str, object]]:
+        inside.set()
+        assert release.wait(timeout=20)
+        return real(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(attempt_repo_module, "_safe_derive_point_rows", paused)
+    persist = _Paused(
+        lambda: repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+    )
+    assert inside.wait(timeout=20)
+    delete = _Paused(lambda: PaperDeletionService(pg_sessionmaker).delete(owner, str(first)))
+    _wait_until_a_backend_waits_on_a_lock(pg_sessionmaker)
+    release.set()
+    persist.join()
+    delete.join()
+
+    assert persist.error is None
+    assert delete.error is None
+    second = persist.result
+    assert isinstance(second, uuid.UUID)
+    stamped = _attempts_on(pg_sessionmaker, upload_id)
+    assert set(stamped) == {first, second}
+    assert all(deleted_at is not None for deleted_at in stamped.values()), stamped
+
+
+def test_a_persist_arriving_mid_delete_waits_and_is_refused(
+    pg_sessionmaker: sessionmaker[Session], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The mirror race: the delete holds the upload; the persist must not slip in."""
+    repo = AttemptRepository(pg_sessionmaker)
+    owner = _seed_user(pg_sessionmaker)
+    upload_id = _seed_upload(pg_sessionmaker, owner)
+    first = repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+
+    inside, release = threading.Event(), threading.Event()
+    real = PaperDeletionService._withdraw_open_items
+
+    def paused(
+        self: PaperDeletionService, session: Session, ids: list[uuid.UUID], now: datetime
+    ) -> list[uuid.UUID]:
+        inside.set()
+        assert release.wait(timeout=20)
+        return real(self, session, ids, now)
+
+    monkeypatch.setattr(PaperDeletionService, "_withdraw_open_items", paused)
+    delete = _Paused(lambda: PaperDeletionService(pg_sessionmaker).delete(owner, str(first)))
+    assert inside.wait(timeout=20)
+    persist = _Paused(
+        lambda: repo.persist_correction(user_id=owner, report=_report(), upload_id=upload_id)
+    )
+    _wait_until_a_backend_waits_on_a_lock(pg_sessionmaker)
+    release.set()
+    delete.join()
+    persist.join()
+
+    assert delete.error is None
+    assert isinstance(persist.error, UploadDeletedError)
+    assert set(_attempts_on(pg_sessionmaker, upload_id)) == {first}
