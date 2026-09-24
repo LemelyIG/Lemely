@@ -38,6 +38,23 @@ test("a student self-marks a low-confidence question and the verdict is revealed
   // Nothing about the marker's verdict is in the DOM before submission.
   await expect(page.getByTestId("self-review-outcome")).toHaveCount(0)
   await expect(page.getByText(/^Marker:/)).toHaveCount(0)
+  // The three student-facing verdict strings (I6, task #63) use student
+  // wording, deliberately distinct from the teacher screen's, and appear
+  // only post-reveal.
+  //
+  // NOTE: the seeded `selfReview` student's paper is marked with
+  // `equivalence_gate` off (`scripts/seed_e2e.py::self_review_report`), so
+  // every point's `verdict` is null server-side (see
+  // `lemely/db/review_repo.py`'s own comment: "unlike verdict [evidence_span]
+  // is present today with equivalence_gate off"). That means the post-reveal
+  // half of this assertion cannot yet be exercised by this seed: no verdict
+  // chip ever renders for this student today. Extending the seed to produce
+  // a verdict-bearing row requires `scripts/seed_e2e.py` (Python), which is
+  // out of this task's file set. Only the pre-submit absence is asserted
+  // below until that seed change lands.
+  await expect(
+    page.getByText(/Marked correct|Not shown in your answer|We could not find this in your working/),
+  ).toHaveCount(0)
 
   const submit = form.getByRole("button", { name: /submit and reveal/i })
   await expect(submit).toBeDisabled()

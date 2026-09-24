@@ -86,10 +86,50 @@ describe("SelfReviewPanel.tsx", () => {
       "effectiveMarks",
       "markChanged",
       "judgeReason",
+      // I6/I7 (task #63): the marker's per-point verdict, evidence quote and
+      // ECF flag, added to `SelfReviewRevealedPoint` alongside the fields
+      // above. `verdict` alone is too generic to ban bare (`setVerdict`,
+      // `verdictValue` and `draft.verdicts` are the student's own draft and
+      // legitimately live above this line), so it is pinned dotted, the only
+      // shape the marker's verdict is ever read in.
+      "point.verdict",
+      "ecfApplied",
+      "evidenceSpan",
     ]) {
       expect(aboveRevealed).not.toContain(field)
     }
     expect(aboveRevealed).not.toContain("as unknown as SelfReviewRevealed")
+  })
+
+  it("declares student-facing labels for the three verdicts, deliberately not the teacher's (task #63, spec 2026-09-24)", () => {
+    // Anchored on the map's own literal entries, not a loose substring
+    // search, so a widened alias or a copy/paste of the teacher's wording
+    // cannot slip past this.
+    const labelStart = source.indexOf("STUDENT_VERDICT_LABEL")
+    expect(labelStart).toBeGreaterThan(-1)
+    const labelBraceStart = source.indexOf("{", labelStart)
+    const labelBraceEnd = source.indexOf("}", labelBraceStart)
+    const labelBlock = source.slice(labelBraceStart, labelBraceEnd + 1)
+    expect(labelBlock).toContain('awarded: "Marked correct"')
+    expect(labelBlock).toContain('withheld: "Not shown in your answer"')
+    expect(labelBlock).toContain('unverifiable: "We could not find this in your working"')
+    // Two vocabularies for one concept are intended here (see the task
+    // brief), so the teacher screen's institutional-hedging wording must
+    // never appear on this student-facing file.
+    expect(source).not.toContain("Withheld, judged absent")
+    expect(source).not.toContain("Unverifiable, could not confirm")
+  })
+
+  it("renders the verdict chip, ECF chip and evidence span only inside RevealedOutcome", () => {
+    const outcomeStart = source.indexOf("function RevealedOutcome")
+    expect(outcomeStart).toBeGreaterThan(-1)
+    const outcomeBody = source.slice(outcomeStart)
+    expect(outcomeBody).toContain("point.verdict ?")
+    expect(outcomeBody).toContain("STUDENT_VERDICT_LABEL[point.verdict]")
+    expect(outcomeBody).toContain("point.ecfApplied ?")
+    expect(outcomeBody).toContain("Carried forward, so one earlier slip did not cost you twice")
+    expect(outcomeBody).toContain("point.evidenceSpan ?")
+    expect(outcomeBody).toContain("{point.evidenceSpan}")
   })
 
   it("only RevealedOutcome reads the verdict fields, and only from SelfReviewRevealed", () => {
@@ -155,5 +195,31 @@ describe("SelfReviewPanel.tsx", () => {
     // `canSubmit` — assert the guard AND the visible error live in the same
     // slice.
     expect(body).toContain("missing.includes(point.markPointId)")
+  })
+})
+
+describe("selfReviewTypes.ts — SelfReviewRevealedPoint carries verdict/evidenceSpan/ecfApplied (task #63)", () => {
+  const source = readSource("src/lib/selfReviewTypes.ts")
+
+  it("adds the three I6/I7 fields to SelfReviewRevealedPoint, not to the pending shape", () => {
+    const revealedStart = source.indexOf("export interface SelfReviewRevealedPoint")
+    expect(revealedStart).toBeGreaterThan(-1)
+    const revealedEnd = source.indexOf("}", revealedStart)
+    const revealedBody = source.slice(revealedStart, revealedEnd)
+    expect(revealedBody).toMatch(/verdict:\s*"awarded"\s*\|\s*"withheld"\s*\|\s*"unverifiable"\s*\|\s*null/)
+    expect(revealedBody).toContain("evidenceSpan: string")
+    expect(revealedBody).toContain("ecfApplied: boolean")
+
+    // The file's own header states the contract this test enforces: a field
+    // named `awarded` on the pending shape means the backend contract was
+    // broken, not extended. A verdict is strictly more informative than
+    // `awarded`, so it is held to the same rule.
+    const pendingStart = source.indexOf("export interface SelfReviewPendingPoint")
+    expect(pendingStart).toBeGreaterThan(-1)
+    const pendingEnd = source.indexOf("}", pendingStart)
+    const pendingBody = source.slice(pendingStart, pendingEnd)
+    expect(pendingBody).not.toContain("verdict")
+    expect(pendingBody).not.toContain("evidenceSpan")
+    expect(pendingBody).not.toContain("ecfApplied")
   })
 })
