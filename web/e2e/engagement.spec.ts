@@ -142,7 +142,17 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   // The success signal is server-derived — the count comes from the rows the
   // server says it created, not an optimistic local value — and the screen
   // does not navigate, so asserting on a URL change would wait forever.
-  await expect(page.getByRole("status")).toContainText("Saved to 1 class", {
+  //
+  // Scoped by text rather than a bare role: `role="status"` is used
+  // deliberately across many components (offline/queued/install banners,
+  // pull-indicator, state-views, loading-shapes), and this screen's seeded
+  // teacher has an unverified email, so the unverified-email banner is a
+  // second, legitimate `role="status"` region on screen at the same time
+  // (issue #240 — a bare `getByRole("status")` is a strict-mode violation
+  // here, not a passing-by-luck locator).
+  await expect(
+    page.getByRole("status").filter({ hasText: "Saved to" }),
+  ).toContainText("Saved to 1 class", {
     timeout: 15_000,
   })
 
