@@ -392,6 +392,30 @@ class PaperDeletionService:
         rows.sort(key=lambda row: (row.deleted_at, row.attempt_id), reverse=True)
         return rows
 
+    def assigned_teachers_for(
+        self, item_ids: Sequence[uuid.UUID]
+    ) -> dict[uuid.UUID, uuid.UUID | None]:
+        """Return each withdrawn item's ``assigned_teacher_id``, keyed by item id.
+
+        Reads :class:`ReviewQueueItem` alone — never joins to the ``Attempt``
+        it belongs to. A caller notifying teachers about its own deletion
+        already knows the student (it is the caller), so the one fact still
+        needed from the withdrawn item is who, if anyone, was assigned it;
+        nothing here touches the now-soft-deleted attempt, so
+        :data:`~lemely.db.session.INCLUDE_DELETED` is not needed either. An
+        id with no matching row (already purged, or never existed) is simply
+        absent from the result rather than raising.
+        """
+        if not item_ids:
+            return {}
+        with self._sessionmaker() as session:
+            rows = session.execute(
+                select(ReviewQueueItem.id, ReviewQueueItem.assigned_teacher_id).where(
+                    ReviewQueueItem.id.in_(item_ids)
+                )
+            ).all()
+            return {row.id: row.assigned_teacher_id for row in rows}
+
     def _lock_upload(self, session: Session, upload_id: uuid.UUID) -> Upload:
         """Lock the upload row, deleted or not, raising if it is gone.
 

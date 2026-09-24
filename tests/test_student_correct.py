@@ -45,6 +45,8 @@ from lemely.db.models import User
 from lemely.db.models.attempts import Attempt, QuestionResult
 from lemely.db.models.enums import Role, UploadStatus
 from lemely.db.models.ops import ReviewQueueItem
+from lemely.db.notification_prefs_repo import NotificationPreferencesService
+from lemely.db.notification_repo import NotificationService
 from lemely.db.scheme_corpus_repo import SchemeCorpusRepository
 from lemely.db.session import INCLUDE_DELETED
 from lemely.db.upload_repo import StudentUploadRepository
@@ -56,12 +58,15 @@ from lemely.web.deps import (
     get_attempt_repo,
     get_auth_context,
     get_gemini_client,
+    get_notification_service,
+    get_push_transport,
     get_scheme_corpus_repo,
     get_settings,
     get_storage_backend,
     get_student_upload_repo,
     get_user_mirror,
 )
+from lemely.web.push import RecordingPushTransport
 from lemely.web.routers import student
 from lemely.web.routers.student import resolve_mark_scheme
 from lemely.web.upload_utils import check_upload_cap
@@ -343,6 +348,16 @@ def client(
     )
     # Issue #10 / D7.5: see `_PgUserMirror`'s own docstring above.
     app.dependency_overrides[get_user_mirror] = lambda: _PgUserMirror(pg_sessionmaker)
+    # Task 9 review (Minor 6): unoverridden, this route's `notify_safely`
+    # calls resolve `get_notification_service`/`get_push_transport` straight
+    # through, landing the `grade_ready`/`at_risk_alert` writes on the
+    # ambient dev database — never this test's throwaway one, and swallowed
+    # either way by `notify_safely`'s fail-open contract. Binding both here
+    # is what makes that write path live in this file's tests at all.
+    app.dependency_overrides[get_notification_service] = lambda: NotificationService(
+        pg_sessionmaker, NotificationPreferencesService(pg_sessionmaker)
+    )
+    app.dependency_overrides[get_push_transport] = RecordingPushTransport
     yield TestClient(app), student_id, upload_repo
     app.dependency_overrides.clear()
 
