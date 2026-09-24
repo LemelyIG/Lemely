@@ -975,19 +975,21 @@ Message must state: authorization reuses the review item's visibility rule via o
 - Consumes: `hasSourceBox` from Task 3, and `GET /api/teacher/review/{item_id}/crop` from Task 4.
 - Produces: no new backend surface.
 
-**The banner has to change again, and correctly.** Plan 1's Task 4 replaced a false sentence with a true one. As committed it reads:
+**The banner has to change again, and correctly.** As committed at `e0717433` it reads, in full:
 
-> "The mark scheme's own wording isn't stored anywhere in this product, and this screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."
+> "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."
 
-When a crop renders, the middle clause becomes false. So the display clause is now **conditional**: when `hasSourceBox` is true the screen does show a region of the scan, and the copy must say so. The mark-scheme clause stays true in both branches and must survive.
+That is the whole sentence. **Do not reintroduce a clause about the mark scheme's wording.** An earlier draft of this task quoted a longer version claiming *"The mark scheme's own wording isn't stored anywhere in this product"* and instructed that the clause "stays true in both branches and must survive". That was wrong: the clause is **false** — `AnswerPoint.point` is "Exact text of the mark point, preserved from the source", snapshotted onto the non-nullable `question_result_points.point_text`, and rendered on this very screen as `point.pointText`. It was deleted in `e0717433` for exactly that reason, along with the same claim in two eyebrow labels, which now read only "Matched mark-scheme point identifiers".
 
-Get this right rather than approximately. This one sentence has now been wrong twice: first claiming the scan is not stored when `Upload.storage_path` retains it, and then, if this task is careless, claiming the scan is not displayed on a screen that displays it.
+What this task changes: when a crop renders, "this screen does not display the original scan" becomes false. So that clause is **conditional** — when `hasSourceBox` is true the screen does show a region of the scan and the copy must say so. The transcription sentence stays in both branches.
+
+Get this right rather than approximately. This one sentence has now been wrong **twice already**: first claiming the scan is not stored when `Upload.storage_path` retains it, then claiming the scheme's wording is not stored when `point_text` holds it. If this task is careless it will be wrong a third time, claiming the scan is not displayed on a screen displaying it. Before you write any wording, check each clause against the code rather than against this plan's prose — this plan has been wrong about this sentence once already.
 
 - [ ] **Step 1: Write the failing test for the crop affordance**
 
 vitest is `environment: "node"` with no jsdom, by deliberate decision, so this suite tests source text. Write **anchored** assertions — an unanchored regex on this project once passed against a deliberately widened alias.
 
-In the vitest file that covers `ReviewItem.tsx`, assert that the source contains a `hasSourceBox`-guarded image whose `src` is built from the crop route, and that the guard wraps the image rather than sitting elsewhere in the file. Then assert the conditional banner: both branches present, the mark-scheme clause outside the conditional.
+In the vitest file that covers `ReviewItem.tsx`, assert that the source contains a `hasSourceBox`-guarded image whose `src` is built from the crop route, and that the guard wraps the image rather than sitting elsewhere in the file. Then assert the conditional banner: both branches present, and the transcription sentence outside the conditional. Assert that no clause about the mark scheme's wording being stored has reappeared.
 
 Be explicit in your report about what these assertions can and cannot prove. They cannot establish "renders" or "does not render". Step 4 is what establishes that.
 
