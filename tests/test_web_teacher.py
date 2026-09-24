@@ -81,6 +81,16 @@ if TYPE_CHECKING:
 # sibling of this same PDF).
 _REAL_SCHEME_PDF = Path("Sources/Physics/MarkingSchemes/0625_m20_ms_12.pdf")
 
+
+class _StopForTest(Exception):
+    """Raised by a ``correct_paper`` spy to short-circuit ``grade_paper``.
+
+    Lets the ``equivalence_gate`` forwarding tests below assert on the
+    kwargs ``grade_paper`` passed along, without needing a Gemini client or
+    letting the (unmocked) rest of the pipeline run.
+    """
+
+
 # ---------------------------------------------------------------------------
 # Fixtures.
 # ---------------------------------------------------------------------------
@@ -639,6 +649,44 @@ def test_detection_failure_is_recorded_without_failing_the_upload(
 # ---------------------------------------------------------------------------
 # Grading console.
 # ---------------------------------------------------------------------------
+
+
+def test_grade_paper_forwards_equivalence_gate_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The flag must reach ``correct_paper``, not merely exist in settings.
+
+    US-005b's own criteria tested only the OFF state, which passed happily
+    while nothing could turn the flag ON. A test that checks the default
+    cannot detect an unreachable flag.
+    """
+    from lemely.web.services import grading as grading_service
+
+    seen: dict[str, object] = {}
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _StopForTest
+
+    monkeypatch.setattr(grading_service, "correct_paper", _spy)
+    with pytest.raises(_StopForTest):
+        grading_service.grade_paper(_scheme(), {}, equivalence_gate=True)
+    assert seen["equivalence_gate"] is True
+
+
+def test_grade_paper_defaults_equivalence_gate_off(monkeypatch: pytest.MonkeyPatch) -> None:
+    from lemely.web.services import grading as grading_service
+
+    seen: dict[str, object] = {}
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _StopForTest
+
+    monkeypatch.setattr(grading_service, "correct_paper", _spy)
+    with pytest.raises(_StopForTest):
+        grading_service.grade_paper(_scheme(), {})
+    assert seen["equivalence_gate"] is False
 
 
 def test_upload_with_mark_scheme_grades_instead_of_stalling_at_queued(

@@ -356,6 +356,7 @@ def correct_paper_cmd(
         extracted_answers=extracted,  # type: ignore[arg-type]
         gemini_client=client,
         mcq_only=mcq_only,
+        equivalence_gate=settings.grading.equivalence_gate,
     )
     from lemely.io.grade_boundaries import GradeBoundaryStore
 

@@ -63,6 +63,7 @@ def grade_paper(
     history_store: HistoryStoreProtocol | None = None,
     boundary_store: GradeBoundaryStore | None = None,
     integrity_settings: IntegritySettings | None = None,
+    equivalence_gate: bool = False,
 ) -> AccuracyReport:
     """Grade a paper and optionally record it to a student's history.
 
@@ -84,6 +85,10 @@ def grade_paper(
         integrity_settings: Plagiarism advisory-flag settings (F4 removed the
             AI-detection half); the defensive default (plagiarism on) applies
             if omitted.
+        equivalence_gate: US-005b's marking gate. Forwarded to `correct_paper`;
+            defaults False so this function's behaviour is unchanged unless a
+            caller opts in. Enabling it changes how papers are marked and is a
+            deliberate act -- see the 2026-09-24 production-readiness spec.
 
     Returns:
         The assembled accuracy report.
@@ -93,6 +98,7 @@ def grade_paper(
         extracted_answers=extracted_answers,
         gemini_client=gemini_client,
         mcq_only=mcq_only,
+        equivalence_gate=equivalence_gate,
     )
     correction = apply_integrity_checks(
         correction,

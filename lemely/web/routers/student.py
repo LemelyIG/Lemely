@@ -1062,6 +1062,7 @@ def student_correct(
                     gemini_client=gemini_client,
                     student_id=None,
                     integrity_settings=settings.integrity,
+                    equivalence_gate=settings.grading.equivalence_gate,
                 )
                 attempt_id = attempt_repo.persist_correction(
                     user_id=auth.user_id,

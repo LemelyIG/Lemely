@@ -487,7 +487,12 @@ def _run_grading_job(
             # is always null today), so there is nobody to record a history
             # entry for. The marks live on this row and are served from it.
             report = grade_paper(
-                scheme, extracted, gemini_client=gemini_client, student_id=None, history_store=None
+                scheme,
+                extracted,
+                gemini_client=gemini_client,
+                student_id=None,
+                history_store=None,
+                equivalence_gate=settings.grading.equivalence_gate,
             )
             repo.finish(paper_id, report)
     except Exception as exc:
