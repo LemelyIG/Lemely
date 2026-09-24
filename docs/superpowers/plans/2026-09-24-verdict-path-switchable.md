@@ -341,7 +341,7 @@ Message: `feat(config): make equivalence_gate reachable from lemely.toml (closes
 ## Task 3: Carry the marker's `rationale` to the teacher wire
 
 **Files:**
-- Modify: `lemely/db/review_repo.py` — the `ReviewItemPoint` dataclass and its builder inside `get_item_detail`
+- Modify: `lemely/db/review_repo.py` — the `ReviewItemPoint` dataclass and its builder inside `get_item`
 - Modify: `lemely/web/schemas_review.py` — `ReviewItemPointDTO`
 - Modify: `lemely/web/routers/review.py:144` — `_point_to_dto`
 - Test: `tests/test_review_repo.py`, `tests/test_web_review.py`
@@ -362,7 +362,7 @@ def test_review_item_point_carries_the_markers_rationale(...):
     (from `point_notes`), so this reaches the teacher screen with the flag off.
     """
     # seed a question_result_points row with rationale="method mark: 2x not shown"
-    detail = service.get_item_detail(item_id, caller_id=..., caller_role=...)
+    detail = service.get_item(item_id, caller_id=..., caller_role=...)
     assert detail.points[0].rationale == "method mark: 2x not shown"
 ```
 
@@ -396,7 +396,7 @@ And extend the class docstring:
 
 - [ ] **Step 4: Read it in the builder**
 
-In `get_item_detail`'s `ReviewItemPoint(...)` comprehension — the one inside the open session, beside `verdict=`/`evidence_span=`/`ecf_applied=` — add:
+In `get_item`'s `ReviewItemPoint(...)` comprehension — the one inside the open session, beside `verdict=`/`evidence_span=`/`ecf_applied=` — add:
 
 ```python
                         rationale=p.rationale,
