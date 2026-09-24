@@ -111,8 +111,10 @@ describe("SelfReviewPanel.tsx", () => {
     const labelBraceEnd = source.indexOf("}", labelBraceStart)
     const labelBlock = source.slice(labelBraceStart, labelBraceEnd + 1)
     expect(labelBlock).toContain('awarded: "Marked correct"')
-    expect(labelBlock).toContain('withheld: "Not shown in your answer"')
-    expect(labelBlock).toContain('unverifiable: "We could not find this in your working"')
+    expect(labelBlock).toContain('withheld: "We did not see this step in your answer"')
+    expect(labelBlock).toContain(
+      'unverifiable: "The marker credited this, but we could not confirm your value"',
+    )
     // Two vocabularies for one concept are intended here (see the task
     // brief), so the teacher screen's institutional-hedging wording must
     // never appear on this student-facing file.

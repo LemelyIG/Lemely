@@ -53,7 +53,9 @@ test("a student self-marks a low-confidence question and the verdict is revealed
   // out of this task's file set. Only the pre-submit absence is asserted
   // below until that seed change lands.
   await expect(
-    page.getByText(/Marked correct|Not shown in your answer|We could not find this in your working/),
+    page.getByText(
+      /Marked correct|We did not see this step in your answer|The marker credited this, but we could not confirm your value/,
+    ),
   ).toHaveCount(0)
 
   const submit = form.getByRole("button", { name: /submit and reveal/i })

@@ -148,8 +148,8 @@ const GROUP_ACCENT: Record<"ok" | "warn" | "info", string> = {
  */
 const STUDENT_VERDICT_LABEL: Record<"awarded" | "withheld" | "unverifiable", string> = {
   awarded: "Marked correct",
-  withheld: "Not shown in your answer",
-  unverifiable: "We could not find this in your working",
+  withheld: "We did not see this step in your answer",
+  unverifiable: "The marker credited this, but we could not confirm your value",
 }
 
 function verdictValue(earned: boolean | undefined): string | undefined {
