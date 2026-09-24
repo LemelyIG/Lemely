@@ -34,7 +34,7 @@ Plan 2 (stories E and F, bounding boxes) is separate and follows this one.
 | File | Responsibility | Tasks |
 |---|---|---|
 | `lemely/core/schemas.py` | `PointVerdict` loses `evidence_box` | 1 |
-| `tests/test_accuracy_harness.py` | the pinned marking-cache fingerprint | 1 |
+| `tests/test_correction_ai.py` | the two pinned marking schema hashes, and the new rejection test | 1 |
 | `lemely/web/services/grading.py` | `grade_paper` accepts and forwards `equivalence_gate` | 2 |
 | `lemely/app/cli.py`, `lemely/web/routers/student.py`, `lemely/web/routers/teacher.py` | pass `settings.grading.equivalence_gate` | 2 |
 | `lemely/db/review_repo.py` | `ReviewItemPoint` carries `rationale` | 3 |
@@ -53,8 +53,10 @@ Plan 2 (stories E and F, bounding boxes) is separate and follows this one.
 
 **Files:**
 - Modify: `lemely/core/schemas.py` (the `PointVerdict` class, ~line 249-265)
-- Modify: `tests/test_accuracy_harness.py:1586` (the pinned hash)
+- Modify: `tests/test_correction_ai.py` — the two pinned marking schema hashes, in `ECFSubstitutionTests.test_schema_hash_unchanged` and `MarkingSchemaHashStableAcrossPythonOptimizeTests.test_schema_hash_identical_under_dash_oo`
 - Test: `tests/test_correction_ai.py` (new test in `PointVerdictBuildTests`)
+
+**Correction made during execution (2026-09-24):** an earlier draft of this task named `tests/test_accuracy_harness.py:1586` as the pin to move. That is wrong, and the correction is measured rather than argued. `af7fa9cd0e2a` there is `_build_run_manifest`'s **run-manifest archival key**, which by its own docstring deliberately excludes the per-call response-schema hash, because one sweep issues calls under several schemas. After this task's change it is still `af7fa9cd0e2a` and all 11 of its fingerprint tests pass untouched. The hash that actually keys the marking cache is the `sha256(model_json_schema())[:12]` that `GeminiClient._params_fingerprint` folds in, and it is pinned in `tests/test_correction_ai.py`. Do not edit `tests/test_accuracy_harness.py` for this task.
 
 **Interfaces:**
 - Consumes: nothing.
@@ -135,21 +137,23 @@ print('evidence_box present:', 'evidence_box' in blob)
 
 Expected: a hash different from `886c4232e7a7`, and `evidence_box present: False`. Record it.
 
-- [ ] **Step 7: Watch the pinned harness assertion fail, then re-pin it**
+- [ ] **Step 7: Watch the pinned marking schema hash fail, then re-pin it**
+
+```bash
+PATH="$PWD/.venv/bin:$PATH" python -m pytest tests/test_correction_ai.py -k schema_hash --no-cov -p no:cacheprovider
+```
+
+Expected: `ECFSubstitutionTests.test_schema_hash_unchanged` and `MarkingSchemaHashStableAcrossPythonOptimizeTests.test_schema_hash_identical_under_dash_oo` FAIL, because deleting a field changes `AIMarkResponse.model_json_schema()` and therefore the hash `GeminiClient._params_fingerprint` folds in. **That failure is the evidence the cache key moved** — record the expected-vs-actual values from the output.
+
+Then re-pin both to the value the failure reports. Re-pin to the number the failing gate prints, never to one computed ad hoc: three agents produced three incomparable hashes for this one invariant during task #30.
+
+Confirm separately that the run-manifest key did NOT move, since the two are easy to confuse:
 
 ```bash
 PATH="$PWD/.venv/bin:$PATH" python -m pytest tests/test_accuracy_harness.py -k params_fingerprint --no-cov -p no:cacheprovider
 ```
 
-Expected: `test_params_fingerprint_is_stable_for_identical_settings` FAILS, because the manifest fingerprint incorporates the response schema. **That failure is the evidence the cache moved** — record the expected-vs-actual values from the output.
-
-Then update `tests/test_accuracy_harness.py:1586` to the value the failure reports:
-
-```python
-        self.assertEqual(manifest.params_fingerprint, "<the value from the failure>")
-```
-
-Re-run: all 11 fingerprint tests pass.
+Expected: 11 passed, `af7fa9cd0e2a` unchanged, file untouched.
 
 - [ ] **Step 8: Full gate sweep**
 
@@ -167,7 +171,7 @@ Expected: `test_correction_ai.py` at 128 (127 + 1), `mypy` Success 308 files, `p
 - [ ] **Step 9: Commit**
 
 ```bash
-git commit -S -- lemely/core/schemas.py tests/test_correction_ai.py tests/test_accuracy_harness.py
+git commit -S -- lemely/core/schemas.py tests/test_correction_ai.py
 ```
 
 Message body must state: the before and after hashes, and that `extra="forbid"` makes the key change mandatory rather than optional.
