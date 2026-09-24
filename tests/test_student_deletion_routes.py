@@ -45,7 +45,7 @@ from lemely.web.deps import (
     get_user_mirror,
 )
 from tests import test_student_correct as _student_correct
-from tests._integrity_leak import leaks_integrity
+from tests._integrity_leak import leaks_to_student
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session, sessionmaker
@@ -214,6 +214,15 @@ def test_a_bad_id_is_the_same_fixed_404_never_a_422(client: TestClient) -> None:
     assert response.json()["detail"] == "No such paper"
 
 
+def test_the_literal_deleted_on_delete_is_the_same_fixed_404(client: TestClient) -> None:
+    """``DELETE .../deleted`` is not a UUID either — the collision that made
+    ``GET /deleted`` worth declaring ahead of ``/{attempt_id}`` in the first
+    place, proven from the DELETE side too."""
+    response = client.delete("/api/student/attempts/deleted")
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No such paper"
+
+
 def test_a_teacher_cannot_delete_a_students_paper(teacher_client: TestClient, attempt: str) -> None:
     assert teacher_client.delete(f"/api/student/attempts/{attempt}").status_code == 403
 
@@ -229,14 +238,18 @@ def test_integrity_hold_is_409_with_a_date_and_no_reason(
 
 
 def test_the_409_body_leaks_no_integrity_language(client: TestClient, flagged_attempt: str) -> None:
+    """Neither an integrity word nor "review" — a hold must not out-narrate itself."""
     response = client.delete(f"/api/student/attempts/{flagged_attempt}")
-    assert leaks_integrity(response.json()) is False
+    assert leaks_to_student(response.json()) is False
 
 
 def test_the_leak_detector_actually_detects() -> None:
     """A leak test whose detector has never detected is a test that cannot fail."""
-    assert leaks_integrity({"detail": "flagged for plagiarism (score 0.94)"}) is True
-    assert leaks_integrity({"detail": "This paper can't be deleted yet."}) is False
+    assert leaks_to_student({"detail": "flagged for plagiarism (score 0.94)"}) is True
+    # "review" alone, no integrity word: still a leak on a route that must
+    # never even concede a review happened.
+    assert leaks_to_student({"detail": "This is under review."}) is True
+    assert leaks_to_student({"detail": "This paper can't be deleted yet."}) is False
 
 
 def test_a_quiz_attempt_is_409_with_its_own_copy(client: TestClient, quiz_attempt: str) -> None:
@@ -245,6 +258,7 @@ def test_a_quiz_attempt_is_409_with_its_own_copy(client: TestClient, quiz_attemp
     body = response.json()
     assert body["detail"] == "Only uploaded papers can be deleted."
     assert "deletableFrom" not in body
+    assert leaks_to_student(body) is False
 
 
 def test_restore_returns_204_and_the_paper_comes_back(client: TestClient, attempt: str) -> None:
