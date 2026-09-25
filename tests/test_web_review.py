@@ -1384,6 +1384,7 @@ def _seed_boxed_review_item(
     store_object: bool = True,
     student_name: str = "Amelia",
     content_type: str = "application/pdf",
+    box: list[int] | None = None,
 ) -> tuple[uuid.UUID, uuid.UUID]:
     """Seed one attempt-backed review item whose scan is in ``storage``.
 
@@ -1418,7 +1419,7 @@ def _seed_boxed_review_item(
 
     question = _question("1", awarded=1, maximum=2)
     if page is not None:
-        question.source_box = SourceBox(page=page, box=list(_MARK_BOX))
+        question.source_box = SourceBox(page=page, box=list(box or _MARK_BOX))
     attempt_id = AttemptRepository(pg_sessionmaker).persist_correction(
         user_id=str(student), report=_report([question]), upload_id=upload_id
     )
@@ -2339,43 +2340,6 @@ def test_crop_route_never_500s_on_a_page_too_large_to_rasterise(
         assert resp.status_code in (200, 422), (size, resp.status_code)
 
 
-def test_render_dpi_is_clamped_to_a_pixel_ceiling() -> None:
-    """The DPI is a resolution knob, so clamping it costs sharpness, never correctness.
-
-    ``source_box`` is normalised 0-1000, so the crop lands on the same region of
-    the page at any render scale -- which is exactly why a page whose area at
-    the preferred DPI would exceed ``_MAX_RENDER_PX`` can be rendered smaller
-    instead of refused. A4 at 150 dpi is ~2.2 megapixels, far under the ceiling,
-    so the ordinary case must come back unclamped.
-    """
-    from lemely.web.routers.review import (
-        _CROP_RENDER_DPI,
-        _MAX_RENDER_PX,
-        _render_dpi_for,
-    )
-
-    a4 = _render_dpi_for(595.0, 842.0)
-    assert a4 == _CROP_RENDER_DPI
-
-    for width, height in ((8000.0, 8000.0), (6000.0, 6000.0), (20_000.0, 3_000.0)):
-        dpi = _render_dpi_for(width, height)
-        assert dpi is not None, (width, height)
-        assert 1 <= dpi <= _CROP_RENDER_DPI
-        pixels = (width / 72 * dpi) * (height / 72 * dpi)
-        assert pixels <= _MAX_RENDER_PX, (width, height, dpi, pixels)
-        # Clamped, not merely capped at the preferred value: a page this size
-        # cannot be rendered at 150 dpi inside the ceiling, so a function that
-        # returned `_CROP_RENDER_DPI` regardless would pass the bound above
-        # only by accident of the arithmetic.
-        assert dpi < _CROP_RENDER_DPI, (width, height, dpi)
-
-    # Past 1 dpi there is nothing left to clamp, and a PDF may declare such a
-    # page -- pymupdf accepts a 500,000pt `MediaBox`. `None` is "refuse", which
-    # the route answers as 422; the alternative is a floor of 1 dpi that
-    # silently breaches the very ceiling this function holds.
-    assert _render_dpi_for(500_000.0, 500_000.0) is None
-
-
 def test_has_source_box_is_false_when_the_attempt_has_no_upload(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -2433,7 +2397,7 @@ def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
 ) -> None:
     """The area ceiling and the error handler are two defences, and this is the second.
 
-    With ``_MAX_RENDER_PX`` in place an ordinary scan never reaches PIL's own
+    With ``_MAX_CROP_PX`` in place an ordinary scan never reaches PIL's own
     ceiling, which would leave the handler's coverage of ``crop_and_upscale``
     asserted by nothing. So PIL's ceiling is lowered instead of the page being
     enlarged: ``Image.MAX_IMAGE_PIXELS`` is dropped far below an A4 render, which
@@ -2484,3 +2448,295 @@ def test_the_route_and_the_extractor_sniff_a_pdf_the_same_way(tmp_path: Path) ->
         path = tmp_path / "scan"
         path.write_bytes(header)
         assert looks_like_pdf(header) == _looks_like_pdf(path), header
+
+
+# ---------------------------------------------------------------------------
+# The crop's pixel ceiling. The render was bounded, but the response was not:
+# padding and the 2x upscale took a 40 Mpx render to a 160 Mpx PNG, ~1.4 GB of
+# peak memory for one request on a 1 GiB instance.
+# ---------------------------------------------------------------------------
+
+# The review's page: at 150 dpi it lands on the old 40 Mpx render ceiling.
+_OVERSIZED_PAGE_PT = 3035.0
+_WHOLE_PAGE_BOX = [0, 0, 1000, 1000]
+
+
+@pytest.mark.parametrize("box", [_MARK_BOX, _WHOLE_PAGE_BOX], ids=["mark", "whole-page"])
+def test_crop_of_an_oversized_pdf_page_stays_under_the_pixel_ceiling(
+    box: list[int],
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """A 520-byte PDF can declare a page this big, so its size bounds nothing.
+
+    The census on the mark case shows the smaller output is still the right
+    region; the ceiling is paid for in resolution, never in place.
+    """
+    from lemely.web.routers.review import _MAX_CROP_PX
+
+    scan = _synthetic_scan(width=_OVERSIZED_PAGE_PT, height=_OVERSIZED_PAGE_PT)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=scan, box=box
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    assert got.width * got.height <= _MAX_CROP_PX, got.size
+
+    if box == _MARK_BOX:
+        reddish, bluish, total = _colour_counts(got)
+        assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+        assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
+
+
+def test_pdf_crop_plan_keeps_every_output_under_the_ceiling() -> None:
+    """The plan picks the DPI and the upscale from the padded box, not the page.
+
+    An ordinary answer on an A4 page must come out exactly as it did before the
+    ceiling existed (full DPI, full upscale), or the ceiling would cost every
+    teacher sharpness to guard against a crafted file.
+    """
+    import pymupdf
+
+    from lemely.io.reread import REREAD_UPSCALE
+    from lemely.web.routers.review import _CROP_RENDER_DPI, _MAX_CROP_PX, _pdf_crop_plan
+
+    a4 = _pdf_crop_plan(pymupdf.Rect(0, 0, _PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), list(_MARK_BOX))
+    assert a4 is not None
+    assert (a4.dpi, a4.upscale) == (_CROP_RENDER_DPI, REREAD_UPSCALE)
+
+    sizes = ((_PAGE_WIDTH_PT, _PAGE_HEIGHT_PT), (_OVERSIZED_PAGE_PT, _OVERSIZED_PAGE_PT))
+    sizes += ((8000.0, 8000.0), (20_000.0, 3_000.0), (14_400.0, 14_400.0))
+    boxes = (_WHOLE_PAGE_BOX, list(_MARK_BOX), [0, 0, 1, 1000], [499, 0, 501, 1000])
+    for width, height in sizes:
+        for box in boxes:
+            plan = _pdf_crop_plan(pymupdf.Rect(0, 0, width, height), box)
+            assert plan is not None, (width, height, box)
+            region_w, region_h = plan.size
+            assert region_w * region_h * plan.upscale**2 <= _MAX_CROP_PX, (width, height, box)
+            assert 1 <= plan.dpi <= _CROP_RENDER_DPI
+
+    # Clamped, not merely capped: a whole 8000pt page cannot fit at 150 dpi, so
+    # a plan that kept the preferred DPI would only pass the bound above by
+    # accident of the arithmetic.
+    big = _pdf_crop_plan(pymupdf.Rect(0, 0, 8000, 8000), _WHOLE_PAGE_BOX)
+    assert big is not None
+    assert big.dpi < _CROP_RENDER_DPI
+
+    # A page no DPI can fit is refused; the route answers 422.
+    assert _pdf_crop_plan(pymupdf.Rect(0, 0, 500_000, 500_000), _WHOLE_PAGE_BOX) is None
+
+
+@pytest.mark.parametrize("rotation", [0, 90, 180, 270])
+@pytest.mark.parametrize("cropbox", [False, True], ids=["mediabox", "cropbox"])
+def test_a_clipped_render_is_the_same_pixels_as_cropping_the_whole_page(
+    rotation: int, cropbox: bool
+) -> None:
+    """The route renders only the padded box. That is only safe if it is the
+    same image as rendering the page and cropping, on turned and cropped pages
+    too, where MuPDF's page space and the rendered page differ.
+    """
+    import pymupdf
+
+    from lemely.io.reread import padded_crop_rect
+    from lemely.web.routers.review import _pdf_crop_plan
+
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=_PAGE_WIDTH_PT, height=_PAGE_HEIGHT_PT)
+        page.draw_rect(pymupdf.Rect(60, 100, 200, 250), color=None, fill=_fill(_MARK_RGB))
+        page.draw_rect(pymupdf.Rect(300, 500, 420, 700), color=None, fill=_fill(_OUTSIDE_RGB))
+        page.insert_text((100, 400), "x = 3.2 m/s", fontsize=20)
+        if cropbox:
+            page.set_cropbox(pymupdf.Rect(40, 60, 500, 700))
+        page.set_rotation(rotation)
+
+        for box in (list(_MARK_BOX), _WHOLE_PAGE_BOX, [37, 911, 38, 912]):
+            plan = _pdf_crop_plan(page.rect, box)
+            assert plan is not None
+            clipped = page.get_pixmap(matrix=pymupdf.Matrix(plan.zoom, plan.zoom), clip=plan.clip)
+            assert (clipped.width, clipped.height) == plan.size, box
+
+            whole = page.get_pixmap(matrix=pymupdf.Matrix(plan.zoom, plan.zoom))
+            rect = padded_crop_rect(whole.width, whole.height, box)
+            expected = Image.open(io.BytesIO(whole.tobytes("png"))).convert("RGB").crop(rect)
+            got = Image.open(io.BytesIO(clipped.tobytes("png"))).convert("RGB")
+            assert got.tobytes() == expected.tobytes(), box
+    finally:
+        doc.close()
+
+
+def _streamed_png(width: int, height: int) -> bytes:
+    """A grey PNG built row by row, so the test never holds the decoded image."""
+    import struct
+    import zlib
+
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        crc = struct.pack(">I", zlib.crc32(tag + data))
+        return struct.pack(">I", len(data)) + tag + data + crc
+
+    compressor = zlib.compressobj(9)
+    row = b"\x00" + b"\x80" * width
+    idat = bytearray()
+    for _ in range(height):
+        idat += compressor.compress(row)
+    idat += compressor.flush()
+    header = struct.pack(">IIBBBBB", width, height, 8, 0, 0, 0, 0)
+    signature = b"\x89PNG\r\n\x1a\n"
+    return signature + chunk(b"IHDR", header) + chunk(b"IDAT", bytes(idat)) + chunk(b"IEND", b"")
+
+
+def test_an_image_scan_too_large_to_decode_is_refused_before_decoding(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """An image has no DPI to turn down, so its decode is bounded by refusing it.
+
+    A few hundred kilobytes of PNG can declare tens of megapixels. PIL lets it
+    through (its own bomb ceiling is higher), so extraction can box it. The
+    route reads the size from the header and refuses first.
+    """
+    from lemely.web.routers.review import _MAX_DECODE_PX
+
+    side = int(_MAX_DECODE_PX**0.5) + 100
+    scan = _streamed_png(side, side)
+    assert len(scan) < 200_000
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=0,
+        content_type="image/png",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 422, (resp.status_code, len(resp.content))
+    assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
+        "review_crop_page_too_large"
+    ]
+
+
+def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A 43 Mpx JPEG is a real phone photo (high-resolution mode), not an attack.
+
+    It is over the decode ceiling, so it is decoded at a reduced scale, which
+    JPEG supports natively, rather than refused. The box is normalised, so the
+    smaller decode lands on the same region.
+    """
+    from PIL import ImageDraw
+
+    from lemely.web.routers.review import _MAX_CROP_PX, _MAX_DECODE_PX
+
+    width, height = 8000, 5400
+    assert width * height > _MAX_DECODE_PX
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height), fill=_OUTSIDE_RGB)
+    ymin, xmin, ymax, xmax = _MARK_BOX
+    draw.rectangle(
+        (xmin / 1000 * width, ymin / 1000 * height, xmax / 1000 * width, ymax / 1000 * height),
+        fill=_MARK_RGB,
+    )
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", quality=90)
+    del image, draw
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=buf.getvalue(),
+        page=0,
+        content_type="image/jpeg",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    # Lifted only after the route has answered, so an oversized response is
+    # reported as its size below rather than as PIL's own bomb error.
+    monkeypatch.setattr(Image, "MAX_IMAGE_PIXELS", None)
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    assert got.width * got.height <= _MAX_CROP_PX, got.size
+
+    reddish, bluish, total = _colour_counts(got)
+    assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+    assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
+
+
+@pytest.mark.parametrize("mode", ["RGB", "L", "P"])
+def test_an_image_region_over_the_ceiling_is_scaled_down_not_refused(
+    mode: str,
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """A whole-page answer on a large scan is a real region, just a big one.
+
+    It is scaled to fit rather than refused, in every mode a scanner writes:
+    colour, greyscale and palette. The page is one-pixel black and white
+    stripes, the finest detail handwriting has. Filtered, they come out grey;
+    point-sampled, which is what PIL does to a palette image it resizes as
+    is, they come out as aliased black and white.
+    """
+    from PIL import ImageDraw
+
+    from lemely.web.routers.review import _MAX_CROP_PX
+
+    width, height = 3000, 2000
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    for x in range(0, width, 2):
+        draw.line((x, 0, x, height), fill=(0, 0, 0))
+    image = image.convert(mode)
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=buf.getvalue(),
+        page=0,
+        content_type="image/png",
+        box=_WHOLE_PAGE_BOX,
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    assert width * height > _MAX_CROP_PX
+    assert got.width * got.height <= _MAX_CROP_PX, got.size
+    assert abs(got.width / got.height - width / height) < 0.01
+    grey = got.convert("L")
+    histogram = grey.histogram()
+    mid_tones = sum(histogram[32:224]) / (grey.width * grey.height)
+    assert mid_tones > 0.5, f"{mid_tones:.2f} mid-tone: the stripes were point-sampled"

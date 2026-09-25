@@ -21,7 +21,7 @@ import io
 import math
 import uuid
 from datetime import datetime
-from typing import TYPE_CHECKING, Annotated, NoReturn
+from typing import TYPE_CHECKING, Annotated, NamedTuple, NoReturn
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -40,7 +40,7 @@ from lemely.db.review_repo import (
     ReviewValidationError,
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
-from lemely.io.reread import crop_and_upscale, padded_crop_rect
+from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -72,6 +72,7 @@ from lemely.web.schemas_review import (
 )
 
 if TYPE_CHECKING:
+    import pymupdf
     from PIL.Image import Image as PILImage
 
     from lemely.core.schemas import SourceBox
@@ -317,45 +318,82 @@ def get_review_item(
 # one this route does not share because it renders a single page on request.
 _CROP_RENDER_DPI = 150
 
-# An area ceiling on the render, because a scan's *page geometry* is unvalidated
-# and unbounded while its file size is neither large nor a useful proxy: a PDF
-# well under 2KB can declare three 8000x8000pt pages, which at
-# ``_CROP_RENDER_DPI`` is a ~278 megapixel image. ``PIL`` warns above
-# ``Image.MAX_IMAGE_PIXELS`` and raises ``DecompressionBombError`` above twice
-# it (~179 megapixels here), so that page raises; a page landing between the two
-# renders instead — at gigabytes of resident memory for one request. Nothing upstream
-# stops either: the student upload route checks neither content type nor page
-# geometry, and extraction does not pre-empt it because ``rasterise_pdf_to_pages``
-# renders the same page without complaint (pypdfium2 has no bomb ceiling), so a
-# ``source_box`` is persisted for exactly the upload this route would choke on.
+# A scan's size bounds nothing. A PDF well under 2KB can declare an 8000x8000pt
+# page, and a PNG of a few hundred kilobytes can declare tens of megapixels.
+# Nothing upstream stops either: the student upload route checks neither content
+# type nor page geometry, and extraction renders or decodes the same file (so a
+# ``source_box`` is persisted for it). So the route bounds its own pixels.
 #
-# Clamping the DPI is safe here in a way it would not be for a page-faithful
-# render: ``source_box`` is normalised 0-1000, so a lower DPI lands the crop on
-# exactly the same region of the page and costs resolution only, never
-# correctness. 40 megapixels is ~18x an A4 page at ``_CROP_RENDER_DPI``, so no
-# real scan is ever clamped.
-_MAX_RENDER_PX = 40_000_000
+# ``_MAX_CROP_PX`` bounds the response, and for a PDF the render too: only the
+# padded box is rendered (``_pdf_crop_plan``), at a DPI and upscale chosen so the
+# response fits. ``source_box`` is normalised 0-1000, so a lower DPI or a skipped
+# upscale lands on the same region and costs resolution only. An A4 page is
+# ~2.2 Mpx at 150 dpi, so it is never rendered lower, and a box keeps its 2x
+# upscale until its padded area passes ~45% of the page.
+_MAX_CROP_PX = 4_000_000
+
+# An image scan has no DPI to turn down: PIL decodes the whole image before any
+# region of it can be cut out. So its decode is bounded instead, by refusing a
+# larger image or, for a JPEG, by decoding it at a reduced scale. 40 Mpx admits a
+# 600 dpi A4 scan (~35 Mpx) and any phone photo that is not in a
+# high-resolution mode.
+_MAX_DECODE_PX = 40_000_000
 
 
-def _render_dpi_for(width_pt: float, height_pt: float) -> int | None:
-    """The DPI to render a ``width_pt`` x ``height_pt`` page at, area-bounded.
+class _PdfCropPlan(NamedTuple):
+    """How to render one padded box out of one PDF page."""
 
-    ``None`` when the page cannot be rendered within :data:`_MAX_RENDER_PX` at
-    all — reachable, since a PDF may declare a 500,000pt page, which exceeds the
-    ceiling even at 1 dpi. The caller answers 422 for that rather than rendering
-    something it has already decided is too large.
+    dpi: int
+    zoom: float
+    clip: pymupdf.Rect
+    """In page space: exactly the padded box's pixels at ``zoom``."""
+    size: tuple[int, int]
+    upscale: int
+
+
+def _upscale_within_ceiling(pixels: int) -> int:
+    """``crop_and_upscale``'s upscale when the result fits the ceiling, else none."""
+    return REREAD_UPSCALE if pixels * REREAD_UPSCALE**2 <= _MAX_CROP_PX else 1
+
+
+def _pdf_crop_plan(page_rect: pymupdf.Rect, box: list[int]) -> _PdfCropPlan | None:
+    """The DPI, clip and upscale that render ``box`` under :data:`_MAX_CROP_PX`.
+
+    The padded rectangle is the one ``crop_and_upscale`` would cut from a
+    whole-page render at the same DPI, so rendering only that clip gives the same
+    pixels. ``None`` when no DPI fits, which is reachable: a PDF may declare a
+    500,000pt page. The caller answers 422 for that.
     """
-    inches = (width_pt / 72.0) * (height_pt / 72.0)
-    if inches <= 0:
-        # A degenerate page is not a scale problem; let the renderer speak.
-        return _CROP_RENDER_DPI
-    # pixels = inches * dpi**2, so the largest usable dpi is sqrt(ceiling/inches).
-    # Truncated, never rounded: rounding up would put the render over the ceiling
-    # this function exists to hold.
-    dpi = int(math.sqrt(_MAX_RENDER_PX / inches))
-    if dpi < 1:
-        return None
-    return min(_CROP_RENDER_DPI, dpi)
+    import pymupdf
+
+    dpi = _CROP_RENDER_DPI
+    while dpi >= 1:
+        zoom = dpi / 72.0
+        # MuPDF's own rounding of the page to pixels at this zoom, which is the
+        # size of the whole-page pixmap it would render. PyMuPDF's geometry
+        # constructors are untyped, hence the narrow ignores.
+        matrix = pymupdf.Matrix(zoom, zoom)  # type: ignore[no-untyped-call]
+        page_px = (page_rect * matrix).irect
+        left, upper, right, lower = padded_crop_rect(page_px.width, page_px.height, box)
+        pixels = (right - left) * (lower - upper)
+        if pixels <= _MAX_CROP_PX:
+            clip = pymupdf.Rect(  # type: ignore[no-untyped-call]
+                page_rect.x0 + left / zoom,
+                page_rect.y0 + upper / zoom,
+                page_rect.x0 + right / zoom,
+                page_rect.y0 + lower / zoom,
+            )
+            return _PdfCropPlan(
+                dpi=dpi,
+                zoom=zoom,
+                clip=clip,
+                size=(right - left, lower - upper),
+                upscale=_upscale_within_ceiling(pixels),
+            )
+        # Pixels scale with dpi squared. Truncated, and always at least one
+        # lower, so the loop ends even when rounding keeps a step just over.
+        dpi = min(dpi - 1, int(dpi * math.sqrt(_MAX_CROP_PX / pixels)))
+    return None
 
 
 def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
@@ -434,8 +472,28 @@ def _upright(region: PILImage, orientation: object) -> PILImage:
     return region if method is None else region.transpose(method)
 
 
+def _refuse_too_large(box: SourceBox, *, item_id: str, **size: float) -> NoReturn:
+    """422 for a scan no ceiling-respecting render can serve, with its size logged."""
+    log.warning("review_crop_page_too_large", item_id=item_id, page=box.page, **size)
+    raise HTTPException(status_code=422, detail="This scan's pages are too large to render")
+
+
+def _upscaled_png(png: bytes, width: int, height: int, *, page: int) -> bytes:
+    """Upscale an already-cropped region within the ceiling, as PNG bytes.
+
+    Through ``crop_and_upscale`` with the whole region and no padding, so the
+    resampling and encoding stay the re-read's own.
+    """
+    return crop_and_upscale(
+        RasterisedPage(index=page, width=width, height=height, png_bytes=png),
+        list(_WHOLE_REGION),
+        padding_frac=0.0,
+        upscale=_upscale_within_ceiling(width * height),
+    )
+
+
 def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
-    """Render the page ``box`` names and crop ``box`` out of it."""
+    """Render only the padded ``box`` of the page it names (see ``_pdf_crop_plan``)."""
     import pymupdf
 
     # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
@@ -443,27 +501,62 @@ def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
     with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
         _require_page_in_range(box, doc.page_count, item_id=item_id)
         page = doc.load_page(box.page)
-        dpi = _render_dpi_for(page.rect.width, page.rect.height)
-        if dpi is None:
-            log.warning(
-                "review_crop_page_too_large",
-                item_id=item_id,
-                page=box.page,
-                width_pt=page.rect.width,
-                height_pt=page.rect.height,
+        # A fresh list, so nothing downstream can rescale this request's box.
+        plan = _pdf_crop_plan(page.rect, list(box.box))
+        if plan is None:
+            _refuse_too_large(
+                box, item_id=item_id, width_pt=page.rect.width, height_pt=page.rect.height
             )
-            raise HTTPException(status_code=422, detail="This scan's pages are too large to render")
-        pixmap = page.get_pixmap(dpi=dpi)
+        matrix = pymupdf.Matrix(plan.zoom, plan.zoom)  # type: ignore[no-untyped-call]
+        pixmap = page.get_pixmap(matrix=matrix, clip=plan.clip)
         png: bytes = pixmap.tobytes("png")
-        page_width, page_height = pixmap.width, pixmap.height
+        width, height = pixmap.width, pixmap.height
+    return _upscaled_png(png, width, height, page=box.page)
 
-    # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8% padding
-    # and the degenerate-rounding case. Handed a fresh list, so nothing
-    # downstream can rescale the box this request was given in place.
-    return crop_and_upscale(
-        RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
-        list(box.box),
-    )
+
+def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) -> None:
+    """Keep ``opened``'s decode under :data:`_MAX_DECODE_PX`, before it happens.
+
+    ``Image.open`` has read only the header, so the size is known and nothing
+    is decoded yet. A JPEG can be decoded at 1/2, 1/4 or 1/8 scale natively
+    (``draft``); anything else over the ceiling is refused.
+    """
+    width, height = opened.size
+    if width * height <= _MAX_DECODE_PX:
+        return
+    if opened.format == "JPEG":
+        for scale in (2, 4, 8):
+            if -(-width // scale) * -(-height // scale) <= _MAX_DECODE_PX:
+                # Floor division here: ``draft`` picks the largest scale whose
+                # result is no smaller than the size asked for.
+                opened.draft(None, (width // scale, height // scale))
+                break
+        if opened.width * opened.height <= _MAX_DECODE_PX:
+            return
+    _refuse_too_large(box, item_id=item_id, width_px=width, height_px=height)
+
+
+def _fitted_region(image: PILImage, rect: tuple[int, int, int, int]) -> PILImage:
+    """``rect`` of ``image`` as RGB, scaled down if needed to fit :data:`_MAX_CROP_PX`.
+
+    A region over the ceiling is resampled straight out of ``image`` rather
+    than cropped first, which would copy up to the whole decode once more.
+    """
+    from PIL import Image
+
+    left, upper, right, lower = rect
+    width, height = right - left, lower - upper
+    if width * height <= _MAX_CROP_PX:
+        region = image.crop(rect)
+    else:
+        # Floored, so the product cannot round back over the ceiling.
+        scale = math.sqrt(_MAX_CROP_PX / (width * height))
+        fitted = (max(1, int(width * scale)), max(1, int(height * scale)))
+        if image.mode not in ("RGB", "L"):
+            # PIL resamples palette and bilevel images by nearest neighbour.
+            image = image.convert("RGB")
+        region = image.resize(fitted, Image.Resampling.LANCZOS, box=rect, reducing_gap=3.0)
+    return region if region.mode == "RGB" else region.convert("RGB")
 
 
 def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
@@ -482,18 +575,14 @@ def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
 
     with Image.open(io.BytesIO(data)) as opened:
         _require_page_in_range(box, 1, item_id=item_id)
+        _decode_within_ceiling(opened, box, item_id=item_id)
         rect = padded_crop_rect(opened.width, opened.height, list(box.box))
         orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
-        region = _upright(opened.crop(rect).convert("RGB"), orientation)
+        region = _fitted_region(opened, rect)
+    region = _upright(region, orientation)
     buf = io.BytesIO()
     region.save(buf, format="PNG")
-    return crop_and_upscale(
-        RasterisedPage(
-            index=box.page, width=region.width, height=region.height, png_bytes=buf.getvalue()
-        ),
-        list(_WHOLE_REGION),
-        padding_frac=0.0,
-    )
+    return _upscaled_png(buf.getvalue(), region.width, region.height, page=box.page)
 
 
 @router.get(
