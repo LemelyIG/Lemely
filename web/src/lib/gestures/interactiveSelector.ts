@@ -32,11 +32,12 @@
  * present call site but one reaches this file through `.closest()` on a live
  * node — `useLongPress.ts`, `FlashcardReview.tsx`, `nav-drawer.tsx`,
  * `edge-swipe-back.tsx`, `usePullToRefresh.ts` — so all five gain the two new
- * attribute checks for free. Only `quizSwipe.ts`'s Node-testable decision
- * cannot see them; `QuizTaker.tsx`'s own call site already runs
- * `.closest(GESTURE_INTERACTIVE_SELECTOR)` first and only falls back to
- * `isInteractiveTagOrRole` when that finds nothing, so the gap there is the
- * pre-existing tag/role-only path, not a new one this pass opened.
+ * attribute checks for free. The quiz swipe does not. `QuizTaker.tsx` runs
+ * `.closest(GESTURE_INTERACTIVE_SELECTOR)`, but then passes the match's tag
+ * and role to `quizSwipeAllowed`, which decides through
+ * `isInteractiveTagOrRole`. A match found only by `[contenteditable]` or
+ * `[tabindex]` is usually a `DIV` with no role, which that check reads as
+ * non-interactive, so the quiz swipe still starts on it.
  */
 
 const INTERACTIVE_TAGS = new Set(["BUTTON", "A", "INPUT", "TEXTAREA", "SELECT", "LABEL", "SUMMARY"])

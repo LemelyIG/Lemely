@@ -129,9 +129,10 @@ export function usePullToRefresh(
     // even if capture were deferred to allow it. A fix that works
     // *sometimes* is indistinguishable from broken, which is what #246 was.
     //
-    // There is no user need traded away here to note as a cost: both
-    // screens this reaches render a heading above the content a student
-    // would tap, a pull from there still refreshes normally, and pulling by
+    // There is no user need traded away here to note as a cost: all three
+    // screens this reaches (Announcements, Notifications, Overview) render a
+    // heading above the content a student would tap, a pull from there still
+    // refreshes normally, and pulling by
     // pressing directly on a button was never how anyone reaches for this
     // gesture.
     //

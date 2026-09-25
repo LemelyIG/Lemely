@@ -459,10 +459,12 @@ _REVIEW_ITEM_SCAN_BOX_FILL: dict[str, tuple[int, int, int]] = {
     "b": (0, 200, 0),  # green
 }
 
-#: Same scheme `tests/test_web_review.py`'s `_synthetic_scan` uses: a colour
-#: OUTSIDE the box, distinct from either variant's box colour, so a crop of
-#: the wrong region (or the whole uncropped page) reads as neither pure red
-#: nor pure green -- it is a mix of this and the box colour, or this alone.
+#: A scheme similar to `tests/test_web_review.py`'s `_synthetic_scan`, not the
+#: same one (that test draws a small rectangle well outside the box; this seed
+#: fills the whole page background): a colour OUTSIDE the box, distinct from
+#: either variant's box colour, so a crop of the wrong region (or the whole
+#: uncropped page) reads as neither pure red nor pure green -- it is a mix of
+#: this and the box colour, or this alone.
 _REVIEW_ITEM_SCAN_OUTSIDE_FILL: tuple[int, int, int] = (0, 0, 255)  # blue
 
 
