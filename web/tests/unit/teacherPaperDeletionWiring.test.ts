@@ -49,28 +49,48 @@ describe("Grading.tsx — the delete control is not trapped inside the open cont
     expect(body).not.toMatch(/role="button"/)
   })
 
-  it("the open button's focus ring is drawn inside, not clipped by the container's overflow-hidden", () => {
-    // Review finding, second pass: the container carries `overflow-hidden`
-    // and the button fills it edge to edge, so the kit's usual *outset*
-    // ring (`focus-visible:outline-offset-2`) was drawn entirely in the
-    // clipped area — a keyboard user tabbing the grid could not see which
-    // card was focused. A negative offset draws the ring 2px inside the
-    // button's own border box instead, which the container's clip never
-    // reaches.
+  it("the visible focus ring lives on the container, as a box-shadow, not an outline", () => {
+    // Review finding, third pass: index.css's global `:focus-visible` rule
+    // (~:776) sits outside any `@layer`, so it overrides every Tailwind
+    // `focus-visible:outline-*` utility app-wide — an *inset* offset
+    // (second pass) lost to it exactly as the outset one (first pass) did,
+    // because the class string never controlled the computed outline to
+    // begin with. A `box-shadow` ring on the container sidesteps the
+    // global rule entirely (it sets `outline`, never `box-shadow`) without
+    // editing that pre-existing, app-wide rule. Source text alone cannot
+    // prove the ring is *visible* — see the "Fix 3" section of
+    // .superpowers/sdd-deletion/task-17-report.md for the computed-style
+    // proof (a real browser, tabbed via the keyboard, reading
+    // getComputedStyle) — but it can prove the outline approach is gone
+    // and the box-shadow approach is present.
     const body = functionBody(source, "PaperCard")
-    expect(body).toMatch(/focus-visible:outline-offset-\[-2px\]/)
-    expect(body).not.toMatch(/focus-visible:outline-offset-2\b/)
+    expect(body).not.toMatch(/focus-visible:outline/)
+    expect(body).toMatch(/has-\[\[data-open-trigger\]:focus-visible\]:ring-2/)
+    expect(body).toMatch(/has-\[\[data-open-trigger\]:focus-visible\]:ring-focus-ring/)
   })
 
-  it("the hover lift lives on the container, not the clipped button", () => {
+  it("the ring selector names the open button specifically, not any focused descendant", () => {
+    // A bare `has-[:focus-visible]` would also fire when the delete
+    // button (a sibling, but still a direct child of the same container)
+    // is focused, stacking this ring on top of that button's own separate
+    // one. `data-open-trigger` on the open button, referenced from the
+    // container's selector, is what keeps the two rings from doubling up.
+    const body = functionBody(source, "PaperCard")
+    expect(body).toMatch(/data-open-trigger=""/)
+  })
+
+  it("the hover lift lives on the container, not the clipped button, and is guarded for touch", () => {
     // Same review pass, Minor 1: `hover:-translate-y-0.5` on the button
     // shifted only the button's own content inside the container's fixed
     // frame — clipping the thumbnail's top edge and leaving a gap at the
     // bottom. `has-[:hover]` on the container moves the whole card as one
     // box instead, since a container's `overflow-hidden` clips its
-    // children, never its own transform.
+    // children, never its own transform. `[@media(hover:hover)]` guards
+    // it for touch — unlike the kit's own `hover:` utility, arbitrary
+    // `has-[:hover]` carries no such guard by default, so a tap could
+    // otherwise leave the card stuck lifted after the finger lifts.
     const body = functionBody(source, "PaperCard")
-    expect(body).toMatch(/has-\[:hover\]:-translate-y-0\.5/)
+    expect(body).toMatch(/\[@media\(hover:hover\)\]:has-\[:hover\]:-translate-y-0\.5/)
     expect(body).not.toMatch(/\bhover:-translate-y-0\.5/)
   })
 

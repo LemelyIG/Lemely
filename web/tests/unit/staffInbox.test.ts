@@ -109,7 +109,7 @@ describe("staffTypeLabel", () => {
   /* Task 9/17 (D10): a teacher's inbox is where review_withdrawn actually
    * lands (student-triggered deletion), so it must not fall back to the
    * raw enum string the way an unknown type does. */
-  it("labels review_withdrawn, the second notification type the teacher inbox receives", () => {
+  it("labels review_withdrawn, teacher-only unlike at_risk_alert above", () => {
     expect(staffTypeLabel("review_withdrawn")).toBe("Review withdrawn")
   })
 })
