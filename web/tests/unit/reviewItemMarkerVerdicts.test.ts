@@ -358,4 +358,23 @@ describe("cropUrlFor — the C1 fix, as a real behavioural unit (team-lead revie
   it("returns null when itemId is undefined", () => {
     expect(cropUrlFor(undefined, boxedA)).toBeNull()
   })
+
+  // F2 (team-lead review): the unit cases above close the RULE, but they say
+  // nothing about whether `useReviewItemCrop` actually CALLS `cropUrlFor` --
+  // a hook that bypasses it (e.g. `return { url: fetched?.url ?? null,
+  // onDecodeError }`) keeps all four green, since none of them import or
+  // exercise the hook itself. Traced against the C1 Playwright test: on
+  // navigating back to A, a bypassed hook renders B's stale entry under A's
+  // name for exactly the one render before its OWN effect resets and
+  // refetches -- the same racy window the original defect lived in, and one
+  // `expect.poll` waiting for `naturalWidth > 0` can miss it entirely if A's
+  // refetch resolves before the poll's next tick. So this IS a structural
+  // invariant that is behaviourally unreachable without jsdom (D3.20 rules
+  // that out) -- the same justification the kept Rules-of-Hooks check
+  // carries, and the opposite of the five pins deleted earlier in this
+  // task's review, which Playwright already covered without racing.
+  it("F2: useReviewItemCrop's return actually composes cropUrlFor, not a bypass", () => {
+    const hooksSource = readSource("src/lib/hooks/useTeacherApi.ts")
+    expect(hooksSource).toContain("url: cropUrlFor(itemId, fetched)")
+  })
 })

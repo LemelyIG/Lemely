@@ -1,4 +1,4 @@
-import { test, expect, type Locator } from "@playwright/test"
+import { test, expect, type Locator, type Page } from "@playwright/test"
 import { watchConsole } from "./console-errors"
 import { readSeed } from "./seed"
 
@@ -60,11 +60,23 @@ import { readSeed } from "./seed"
  * fill cannot tell a correctly-cropped region from the wrong one or the
  * whole page uncropped) specifically so the two items' crops are
  * distinguishable by a pixel sample, not merely by both being present. The
- * navigation test below walks
- * `itemId` (A) -> `rationaleOnlyItemId` (B) -> back to A via the on-screen
- * "Next item" control and the browser's own back button — real client-side
+ * navigation test below walks forward between `itemId` and
+ * `rationaleOnlyItemId` (whichever the teacher's queue puts first this run
+ * -- an implementation detail of `scripts/seed_e2e.py`'s own persist order,
+ * see `walkForwardTo`'s own doc) and back via the on-screen "Next item"
+ * control and the browser's own back button -- real client-side
  * transitions, never `page.goto` between two detail routes, which would
  * remount the screen and never exercise the bug at all.
+ *
+ * F2 (team-lead review, second pass): that test's name originally claimed to
+ * prove the C1 timing fix specifically. Reverting `cropUrlFor` to bypass its
+ * identity check and running the test alone showed it still passes most of
+ * the time -- the effect's own reset-then-refetch usually resolves before
+ * the test's own polling catches the stale render, so the test is real
+ * evidence of steady-state correctness but cannot be trusted as evidence for
+ * the timing fix specifically. Renamed to say only what it actually proves;
+ * the timing rule itself is pinned by `cropUrlFor`'s unit suite and the
+ * structural composition pin beside it (`reviewItemMarkerVerdicts.test.ts`).
  */
 
 test("a teacher sees every point's marker verdict, with awarded, withheld and unverifiable distinguishable", async ({
@@ -364,7 +376,157 @@ async function sampleCropCentrePixel(crop: Locator): Promise<[number, number, nu
   })
 }
 
-test("C1: navigating boxed item A to boxed item B and back to A shows A's crop, never B's", async ({
+/**
+ * Full-image colour census for one crop, counting pixels matching `boxRgb`
+ * (the box's own colour) and `outsideRgb` (the padding ring's colour)
+ * against the crop's total pixel count.
+ *
+ * F3 (team-lead review): `naturalWidth > 0` and a single centre-pixel sample
+ * (`sampleCropCentrePixel` above) prove LOCATION -- that the crop landed
+ * somewhere inside the right region -- not GEOMETRY. A mis-scaled box, a
+ * dropped 2x upscale, or a `REREAD_PADDING_FRAC` quietly changed from 0.08 to
+ * (say) 0.5 could all still land red at dead centre while getting the box's
+ * AREA badly wrong, and none of that would move a single sampled pixel.
+ *
+ * The expected proportion is DERIVED, not measured-then-hardcoded: the box
+ * in `scripts/seed_e2e.py`'s seed is drawn EXACTLY aligned to
+ * `REVIEW_ITEM_SOURCE_BOX`, and `crop_and_upscale`'s own `REREAD_PADDING_FRAC`
+ * (0.08) pads that box by 8% on each side before cropping -- so the box
+ * occupies `1 / 1.16^2 ~= 0.743` of the padded crop's total area, a property
+ * of the route's own arithmetic, true regardless of what any one run happens
+ * to measure. Banded (0.65-0.80 / 0.18-0.32), not asserted exactly, to
+ * tolerate the anti-aliasing a 2x upscale introduces at the box/outside
+ * boundary -- narrower bands centred on the actual 72.9%/24.7% this seed
+ * measures would make the test detect deviation from a specific run instead
+ * of deviation from the geometry it exists to protect.
+ */
+async function sampleCropCensus(
+  crop: Locator,
+  boxRgb: [number, number, number],
+  outsideRgb: [number, number, number],
+): Promise<{ boxFraction: number; outsideFraction: number }> {
+  await expect(crop).toBeVisible()
+  await expect
+    .poll(() => crop.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 })
+    .toBeGreaterThan(0)
+  return crop.evaluate(
+    (el, [box, outside]) => {
+      const img = el as HTMLImageElement
+      const canvas = document.createElement("canvas")
+      canvas.width = img.naturalWidth
+      canvas.height = img.naturalHeight
+      const ctx = canvas.getContext("2d")
+      if (!ctx) throw new Error("2d canvas context unavailable")
+      ctx.drawImage(img, 0, 0)
+      const { data } = ctx.getImageData(0, 0, img.naturalWidth, img.naturalHeight)
+      let boxCount = 0
+      let outsideCount = 0
+      for (let i = 0; i < data.length; i += 4) {
+        if (data[i] === box[0] && data[i + 1] === box[1] && data[i + 2] === box[2]) {
+          boxCount += 1
+        } else if (
+          data[i] === outside[0] &&
+          data[i + 1] === outside[1] &&
+          data[i + 2] === outside[2]
+        ) {
+          outsideCount += 1
+        }
+      }
+      const total = data.length / 4
+      return { boxFraction: boxCount / total, outsideFraction: outsideCount / total }
+    },
+    [boxRgb, outsideRgb],
+  )
+}
+
+// `crop_and_upscale`'s own `REREAD_PADDING_FRAC` (`lemely/io/reread.py`): the
+// box is padded by this fraction (0.08) on each side before cropping, so the
+// box occupies `1 / (1 + 2 * 0.08)^2 = 1 / 1.16^2 ~= 0.743` of the padded
+// crop's total area -- a property of the route's own arithmetic, not of any
+// one run's measurement. `0.743` sits centred inside the `0.65-0.80` box-
+// fraction band asserted below.
+
+/**
+ * Walk forward via the on-screen "Next item" control -- a real client-side
+ * `navigate()`, never `page.goto` -- from wherever `page` currently is,
+ * until `targetId`'s own URL is reached or the queue's real end is hit (the
+ * control reading "Back to queue"). Returns the hop count on success, or
+ * `null` if the real end was hit first.
+ *
+ * `null`, not a thrown error: this queue holds THREE low-confidence rows for
+ * the teacher this run (the two boxed items under test, plus the boxless
+ * legacy one), not two, and their relative order is an implementation
+ * detail of `scripts/seed_e2e.py`'s own persist order that has been observed
+ * to vary between runs (`list_queue`'s `ORDER BY created_at, id` ties on
+ * `created_at` when rows are written close enough together, and the
+ * tie-break is then a per-run-random UUID). Walking forward from item X and
+ * hitting the true end without ever finding item Y does not mean anything
+ * is broken -- it means Y sits BEFORE X in this run's order, which the
+ * caller resolves by trying the walk in the other direction instead.
+ */
+async function walkForwardTo(page: Page, targetId: string, maxHops = 5): Promise<number | null> {
+  let hops = 0
+  while (!page.url().endsWith(`/teacher/review/${targetId}`)) {
+    // The "Next item" vs "Back to queue" label depends on `useReviewQueue()`,
+    // a SEPARATE query from the detail panel's own loading state -- while it's
+    // still in flight, `nextItemId` computes as `undefined` (an empty
+    // `queueIds` array), which reads identically to "this item is genuinely
+    // last". `QueueStrip`'s "Item X of Y" only renders once the queue has
+    // resolved AND this item's position was found in it, so waiting for it
+    // here is what tells "still loading" apart from "actually last".
+    await expect(page.getByText(/^Item \d+ of \d+$/)).toBeVisible({ timeout: 15_000 })
+    // F6 (team-lead review): the control's own label reads "Back to queue",
+    // not "Next item", on the queue's LAST item (`{nextItemId ? "Next item"
+    // : "Back to queue"}` in ReviewItem.tsx) -- a `getByRole` locator built
+    // once, before the loop, on `/next item/i` would find nothing on that
+    // render and time out at Playwright's default (30s), which reads as an
+    // unrelated hang rather than this function's own fast, legible return.
+    // Built fresh each iteration and checked before clicking.
+    const nextItemButton = page.getByRole("button", { name: "Next item" })
+    if ((await nextItemButton.count()) === 0) return null
+    hops += 1
+    if (hops > maxHops) {
+      throw new Error(
+        `Did not reach ${targetId} within ${maxHops} hops via "Next item" -- current URL: ${page.url()}`,
+      )
+    }
+    await nextItemButton.click()
+    await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+  }
+  return hops
+}
+
+/** The current crop's centre-pixel colour and full-image census, in one
+ * round trip against the same `<img>` element. */
+async function sampleCrop(
+  page: Page,
+  boxRgb: [number, number, number],
+  outsideRgb: [number, number, number],
+): Promise<{
+  color: [number, number, number]
+  census: { boxFraction: number; outsideFraction: number }
+}> {
+  const crop = page.getByAltText(SCAN_CROP_ALT)
+  const color = await sampleCropCentrePixel(crop)
+  const census = await sampleCropCensus(crop, boxRgb, outsideRgb)
+  return { color, census }
+}
+
+// F2 (team-lead review): this test's ORIGINAL name claimed to prove the C1
+// timing fix -- that the render-time `cropUrlFor` identity check, not just
+// the effect's eventual reset, is what stops a stale crop from committing.
+// Run against a build where `cropUrlFor` was reverted to bypass that check
+// entirely (`return fetched?.url ?? null`), this test still passed on 2 of
+// 3 runs: the effect's own reset-then-refetch resolves before
+// `expect.poll`'s next tick in the common case, so the race the render-time
+// check exists for is real but too narrow a window for this test's own
+// polling cadence to reliably observe. The name below no longer claims what
+// it cannot prove. `cropUrlFor`'s own unit suite
+// (`reviewItemMarkerVerdicts.test.ts`) is what actually pins the render-time
+// rule; the structural pin there (`useReviewItemCrop's return actually
+// composes cropUrlFor`) is what stops a bypass from going unnoticed, since
+// this test alone cannot be trusted to catch one.
+test("navigating between two boxed items and back always shows the currently-viewed item's own crop", async ({
   page,
 }) => {
   const seed = readSeed()
@@ -377,54 +539,80 @@ test("C1: navigating boxed item A to boxed item B and back to A shows A's crop, 
   await page.getByRole("button", { name: /sign in/i }).click()
   await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
 
-  // First visit to A: a real navigation is fine here, this establishes the
-  // fiber the rest of the test reuses -- there is no "same instance" claim
-  // to protect on a first mount.
-  await page.goto(`/teacher/review/${reviewItem.itemId}`)
-  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
-  const colorA1 = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
+  // Which of the two boxed items sorts EARLIER in the teacher's unfiltered
+  // queue is an implementation detail of `scripts/seed_e2e.py`'s own persist
+  // order (see `walkForwardTo`'s own doc for why), observed to flip between
+  // runs -- and a THIRD, boxless row (the legacy item) can sit between them,
+  // so "does the starting item have a Next" does not by itself prove the
+  // OTHER boxed item is reachable forward from it. Resolved by probing: try
+  // walking A -> B; if the real end is hit first, B must be BEFORE A in this
+  // run's order, so retry the whole thing starting from B instead. Whichever
+  // one succeeds gives the actual "first"/"second" pair the rest of the test
+  // uses -- the win is only ever known reachable to have been forward AND
+  // real; nothing here randomly commits to a doomed direction, and the
+  // journey never touches the boxless item by identity, only by hopping
+  // through it.
+  const itemA = { id: reviewItem.itemId, box: [255, 0, 0] as [number, number, number] }
+  const itemB = { id: reviewItem.rationaleOnlyItemId, box: [0, 200, 0] as [number, number, number] }
+  const OUTSIDE_RGB: [number, number, number] = [0, 0, 255]
 
-  // Walk forward via the on-screen "Next item" control -- a real client-side
-  // `navigate()`, never `page.goto` -- until item B's own URL is reached.
-  // The teacher's own unfiltered queue only ever holds this run's own three
-  // low-confidence rows (queue visibility is scoped to the teacher's own
-  // roster, so nothing from any other seed run or any other teacher can
-  // appear in it), so this is bounded and terminates quickly; the count is
-  // not hardcoded because the ordering is an implementation detail of
-  // `scripts/seed_e2e.py`'s own persist order, not a contract this spec
-  // should pin.
-  const nextItemButton = page.getByRole("button", { name: /next item/i })
-  let hops = 0
-  while (!page.url().endsWith(`/teacher/review/${reviewItem.rationaleOnlyItemId}`)) {
-    hops += 1
-    if (hops > 5) {
+  // First visit is a real navigation, fine either way: there is no "same
+  // instance" claim to protect on a first mount, whichever item this ends
+  // up being `first`.
+  await page.goto(`/teacher/review/${itemA.id}`)
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+  let firstSample = await sampleCrop(page, itemA.box, OUTSIDE_RGB)
+  let first = itemA
+  let second = itemB
+  let hops = await walkForwardTo(page, second.id)
+
+  if (hops === null) {
+    // A can't reach B forward within this run's order -- B must come first.
+    // Restart cleanly from B; this is still a first-visit real navigation,
+    // for the same reason the one above was.
+    first = itemB
+    second = itemA
+    await page.goto(`/teacher/review/${first.id}`)
+    await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+    firstSample = await sampleCrop(page, first.box, OUTSIDE_RGB)
+    hops = await walkForwardTo(page, second.id)
+    if (hops === null) {
       throw new Error(
-        `Could not reach rationaleOnlyItemId (${reviewItem.rationaleOnlyItemId}) from itemId ` +
-          `(${reviewItem.itemId}) via "Next item" within 5 hops -- current URL: ${page.url()}`,
+        `Neither ${itemA.id} nor ${itemB.id} can reach the other via "Next item" forward ` +
+          `walking in either direction -- the teacher's queue may not contain both.`,
       )
     }
-    await nextItemButton.click()
-    await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
   }
-  const colorB = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
-  expect(colorB).not.toEqual(colorA1)
 
-  // Back to A, `hops` times, via the BROWSER's own back button -- a real
-  // `popstate`-driven client-side transition, same fiber throughout. This is
-  // the render C1 names: `ReviewItem`'s route carries no `key`, so React
-  // Router does not remount the screen on this transition, and the first
-  // render after it is exactly the render that used to commit B's
-  // still-live object URL under A's name before the render-time `itemId` tag
-  // (`useReviewItemCrop`) closed it.
+  // F3 (team-lead review): region GEOMETRY, not just location -- see
+  // `sampleCropCensus`'s own doc for why a centre-pixel sample alone cannot
+  // catch a mis-scaled box or a dropped upscale. Bands, not exact values.
+  expect(firstSample.census.boxFraction).toBeGreaterThan(0.65)
+  expect(firstSample.census.boxFraction).toBeLessThan(0.8)
+  expect(firstSample.census.outsideFraction).toBeGreaterThan(0.18)
+  expect(firstSample.census.outsideFraction).toBeLessThan(0.32)
+
+  // Now at `second`'s page, reached entirely via `walkForwardTo`'s
+  // client-side "Next item" clicks.
+  const colorSecond = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
+  expect(colorSecond).not.toEqual(firstSample.color)
+
+  // Back to `first`, `hops` times, via the BROWSER's own back button -- a
+  // real `popstate`-driven client-side transition, same fiber throughout.
+  // This is the render C1 names: `ReviewItem`'s route carries no `key`, so
+  // React Router does not remount the screen on this transition, and the
+  // first render after it is exactly the render that used to commit
+  // `second`'s still-live object URL under `first`'s name before the
+  // render-time `itemId` tag (`useReviewItemCrop`) closed it.
   for (let i = 0; i < hops; i += 1) {
     await page.goBack()
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
   }
-  expect(page.url()).toContain(`/teacher/review/${reviewItem.itemId}`)
-  const colorA2 = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
+  expect(page.url()).toContain(`/teacher/review/${first.id}`)
+  const colorFirst2 = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
 
-  expect(colorA2).toEqual(colorA1)
-  expect(colorA2).not.toEqual(colorB)
+  expect(colorFirst2).toEqual(firstSample.color)
+  expect(colorFirst2).not.toEqual(colorSecond)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })

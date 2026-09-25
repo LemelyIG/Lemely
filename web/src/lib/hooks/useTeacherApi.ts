@@ -405,8 +405,8 @@ export interface FetchedCrop {
  *
  * Broken out of the hook so this one rule — the actual fix for C1, not the
  * blob lifecycle around it — has its own fast, DOM-free unit test
- * (`useTeacherApi.test.ts`), rather than only a Playwright assertion that
- * needs the real stack to run at all.
+ * (`reviewItemMarkerVerdicts.test.ts`), rather than only a Playwright
+ * assertion that needs the real stack to run at all.
  */
 export function cropUrlFor(itemId: string | undefined, fetched: FetchedCrop | null): string | null {
   return fetched !== null && fetched.itemId === itemId ? fetched.url : null
