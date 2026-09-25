@@ -20,8 +20,13 @@ describe("main.tsx — persisted query cache", () => {
     expect(source).toMatch(/PersistQueryClientProvider/)
   })
 
-  it("dehydrates only allowlisted keys via isPersistableQueryKey", () => {
-    expect(source).toMatch(/isPersistableQueryKey/)
+  // Task 18 e2e fix: `shouldDehydrateQuery` now wires straight to
+  // `shouldPersistQuery` (`lib/offline/persistAllowlist.ts`), which itself
+  // requires both the allowlist AND `query.state.status === "success"` —
+  // see that function's own doc comment and `persistAllowlist.test.ts` for
+  // the regression this replaced `isPersistableQueryKey` alone here.
+  it("dehydrates only successful, allowlisted queries via shouldPersistQuery", () => {
+    expect(source).toMatch(/shouldPersistQuery/)
   })
 })
 
