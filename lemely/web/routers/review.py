@@ -420,7 +420,14 @@ def get_review_item_crop(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    _require_renderable_box(box, item_id=item_id)
+    # One spelling of the id in everything this request emits. The lookup logs the
+    # canonical form; logging the caller's raw path string here as well would make
+    # a single request carry two spellings of one id, for no reason other than that
+    # nobody normalised it -- and a reader joining the two lines pays for that.
+    # `uuid.UUID` cannot raise: the lookup above already parsed this same value.
+    logged_id = str(uuid.UUID(item_id))
+
+    _require_renderable_box(box, item_id=logged_id)
 
     try:
         data = storage.download(settings.storage.bucket, object_path)
@@ -429,14 +436,13 @@ def get_review_item_crop(
         # filesystem). 404 with the same body as every other absence; the
         # reason is here in the log, where "the object expired" and "this item
         # never had a box" need different operational responses.
-        log.warning("review_crop_object_missing", item_id=item_id, object_path=object_path)
-        # `uuid.UUID` cannot raise here: the lookup above already parsed the
-        # same value. Canonicalised so this body is byte-identical to the one
-        # the lookup's own absences produce, whatever spelling of the id the
+        log.warning("review_crop_object_missing", item_id=logged_id, object_path=object_path)
+        # Canonicalised (see `logged_id`) so this body is byte-identical to the
+        # one the lookup's own absences produce, whatever spelling of the id the
         # caller sent — a difference there would be the oracle this collapse
         # exists to close.
         raise HTTPException(
-            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=uuid.UUID(item_id))
+            status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
         ) from None
 
     import pymupdf
@@ -459,7 +465,7 @@ def get_review_item_crop(
             if box.page >= doc.page_count:
                 log.warning(
                     "review_crop_page_out_of_range",
-                    item_id=item_id,
+                    item_id=logged_id,
                     page=box.page,
                     page_count=doc.page_count,
                 )
@@ -475,7 +481,7 @@ def get_review_item_crop(
             if dpi is None:
                 log.warning(
                     "review_crop_page_too_large",
-                    item_id=item_id,
+                    item_id=logged_id,
                     page=box.page,
                     width_pt=page.rect.width,
                     height_pt=page.rect.height,
@@ -506,7 +512,7 @@ def get_review_item_crop(
         # A scan that cannot be rendered is not a server fault — it is a stored
         # file that is not the document type it claimed to be, or one whose page
         # geometry no renderer will accept.
-        log.warning("review_crop_render_failed", item_id=item_id, error=str(exc))
+        log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
         raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
 
     # Immutable for the lifetime of the item id: the stored scan never changes

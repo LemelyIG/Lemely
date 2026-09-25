@@ -1383,6 +1383,7 @@ def _seed_boxed_review_item(
     with_upload: bool = True,
     store_object: bool = True,
     student_name: str = "Amelia",
+    content_type: str = "application/pdf",
 ) -> tuple[uuid.UUID, uuid.UUID]:
     """Seed one attempt-backed review item whose scan is in ``storage``.
 
@@ -1408,12 +1409,12 @@ def _seed_boxed_review_item(
                     user_id=student,
                     storage_path=object_path,
                     original_filename="scan.pdf",
-                    content_type="application/pdf",
+                    content_type=content_type,
                     byte_size=len(scan),
                 )
             )
         if store_object:
-            storage.upload(get_settings().storage.bucket, object_path, scan, "application/pdf")
+            storage.upload(get_settings().storage.bucket, object_path, scan, content_type)
 
     question = _question("1", awarded=1, maximum=2)
     if page is not None:
@@ -1552,6 +1553,103 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     assert abs(got.width / got.height - expected_aspect) < 0.03 * expected_aspect
 
 
+def _synthetic_image_scan() -> bytes:
+    """A single-page scan that is a PNG, not a PDF.
+
+    A student scan is not always a PDF: the upload route applies no content-type
+    restriction, and ``rasterise_scan_to_pages`` dispatches on content and wraps a
+    non-PDF as one ``RasterisedPage(index=0)``. So an ``image/*`` upload really
+    does get a ``source_box`` persisted against it, and the crop route really does
+    have to serve one. Same marks and same geometry as ``_synthetic_scan`` so the
+    colour census below can be the identical assertion.
+    """
+    from PIL import ImageDraw
+
+    width, height = int(_PAGE_WIDTH_PT), int(_PAGE_HEIGHT_PT)
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height), fill=_OUTSIDE_RGB)
+    ymin, xmin, ymax, xmax = _MARK_BOX
+    draw.rectangle(
+        (
+            xmin / 1000 * width,
+            ymin / 1000 * height,
+            xmax / 1000 * width,
+            ymax / 1000 * height,
+        ),
+        fill=_MARK_RGB,
+    )
+    buf = io.BytesIO()
+    image.save(buf, format="PNG")
+    return buf.getvalue()
+
+
+def test_crop_route_serves_the_boxed_region_of_an_image_scan(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """An ``image/*`` scan must crop like a PDF one, and still honour ``box.page``.
+
+    The route deliberately does not refuse a non-PDF: the 500 this route used to
+    answer came from page *geometry*, which the area clamp now bounds for images
+    and PDFs alike, so refusing images would 422 every legitimate image-scan crop
+    while leaving the actual hole open.
+
+    Both halves are needed. The first proves the crop is real and correctly placed
+    -- the same colour census the PDF happy path uses, so "it worked" means the
+    same thing for both. The second proves ``box.page`` is still enforced: a
+    single-page image has only page 0, and a route that skipped the page bound for
+    image streams would pass the first half alone.
+    """
+    scan = _synthetic_image_scan()
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=0,
+        content_type="image/png",
+    )
+    stale_teacher, stale_page = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=1,
+        content_type="image/png",
+        student_name="Ben",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+
+    _auth_as(client, teacher, Role.teacher)
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    assert resp.headers["content-type"] == "image/png"
+
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+    reddish, bluish, total = _colour_counts(got)
+    assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+    assert reddish / total > 0.6, "the mark inside the box is missing -- this is a failed crop"
+
+    # A one-page image has no page 1, and the bound that says so must apply to an
+    # image stream exactly as it does to a PDF. Asserted on the logged event, not
+    # on the status alone: skipping the bound for image streams also produces a
+    # 422, because `load_page(1)` then raises and the generic handler maps it --
+    # and its message happens to contain the word "page" too. Only the event name
+    # separates "refused by the bound" from "crashed and was caught".
+    _auth_as(client, stale_teacher, Role.teacher)
+    with structlog.testing.capture_logs() as logs:
+        stale = client.get(f"/api/teacher/review/{stale_page}/crop")
+    assert stale.status_code == 422, stale.text
+    assert [e["event"] for e in logs if e["event"].startswith("review_crop_")] == [
+        "review_crop_page_out_of_range"
+    ]
+
+
 def test_crop_route_404s_for_an_item_whose_attempt_has_no_upload(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
@@ -1583,9 +1681,15 @@ def test_crop_route_404s_for_an_item_whose_attempt_has_no_upload(
     _use_storage(client, storage_backend)
 
     _auth_as(client, teacher, Role.teacher)
-    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 404
     assert resp.headers["content-type"] != "image/png"
+    # The bodies are deliberately collapsed, so the logged reason is the only
+    # thing that can tell this 404 apart from the no-box one. Without this, a
+    # lookup that checked the box columns before the upload would answer both
+    # cases identically and no test here would notice.
+    assert [e["reason"] for e in logs if e["event"] == "review_crop_absent"] == ["no_upload"]
 
     _auth_as(client, scan_teacher, Role.teacher)
     assert client.get(f"/api/teacher/review/{with_scan}/crop").status_code == 200
@@ -1623,9 +1727,12 @@ def test_crop_route_404s_for_an_item_with_no_persisted_box(
 
     _auth_as(client, teacher, Role.teacher)
     assert client.get(f"/api/teacher/review/{item_id}").json()["hasSourceBox"] is False
-    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    with structlog.testing.capture_logs() as logs:
+        resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 404
     assert resp.headers["content-type"] != "image/png"
+    # As above: the reason is the discriminator, because the body cannot be.
+    assert [e["reason"] for e in logs if e["event"] == "review_crop_absent"] == ["no_box"]
 
     _auth_as(client, boxed_teacher, Role.teacher)
     assert client.get(f"/api/teacher/review/{boxed}").json()["hasSourceBox"] is True
@@ -1788,11 +1895,16 @@ def test_crop_route_404s_when_the_stored_object_has_gone(
     _use_storage(client, storage_backend)
     _auth_as(client, teacher, Role.teacher)
 
+    # Requested with an upper-cased id on purpose: the lookup logs the canonical
+    # form, so a route logging the caller's raw path string would make one request
+    # emit two spellings of one id, for no reason but that nobody normalised it.
     with structlog.testing.capture_logs() as logs:
-        resp = client.get(f"/api/teacher/review/{item_id}/crop")
+        resp = client.get(f"/api/teacher/review/{str(item_id).upper()}/crop")
     assert resp.status_code == 404
     assert resp.headers["content-type"] != "image/png"
-    assert any(entry["event"] == "review_crop_object_missing" for entry in logs)
+    missing = [entry for entry in logs if entry["event"] == "review_crop_object_missing"]
+    assert missing, [entry["event"] for entry in logs]
+    assert missing[0]["item_id"] == str(item_id)
 
 
 def test_crop_route_422s_for_a_page_out_of_range_without_rendering(
@@ -2001,6 +2113,18 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
     extractor_pages = rasterise_pdf_to_pages(pdf_path)
     assert [page.index for page in extractor_pages] == [0, 1, 2]
 
+    # The instrument first. This test cannot go red while the two renderers agree
+    # on page order -- that is what a characterisation test is -- so the only
+    # failure available to it is its own apparatus breaking: three pages that
+    # rendered identically, or a `_dominant_colour` that stopped discriminating,
+    # would satisfy every "page N shows mark N" assertion below while proving
+    # nothing at all.
+    rendered = {
+        _dominant_colour(Image.open(io.BytesIO(page.png_bytes)).convert("RGB"))
+        for page in extractor_pages
+    }
+    assert len(rendered) == 3, rendered
+
     with pymupdf.open(pdf_path) as renderer:  # type: ignore[no-untyped-call]
         for index, expected_rgb in enumerate(marks):
             via_extractor = Image.open(io.BytesIO(extractor_pages[index].png_bytes)).convert("RGB")
@@ -2011,6 +2135,10 @@ def test_page_indices_agree_between_the_extractor_and_the_crop_renderer(
             ).convert("RGB")
             assert _dominant_colour(via_extractor) == expected_rgb
             assert _dominant_colour(via_renderer) == expected_rgb
+            # Named negatively too: "page N is not page N+1's colour" is what
+            # an off-by-one in either renderer would actually break, and it
+            # fails even if `expected_rgb` and the fixture drifted together.
+            assert _dominant_colour(via_renderer) != marks[(index + 1) % len(marks)]
 
 
 # ---------------------------------------------------------------------------
