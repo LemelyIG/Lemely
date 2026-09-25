@@ -468,8 +468,11 @@ async function sampleCropCensus(
  * writes). A tie would therefore need two independent transactions to start
  * in the same microsecond. That is not impossible the way a same-transaction
  * tie is, so the protection is empirical rather than structural -- and if it
- * ever happened, `ORDER BY created_at, id` would fall back to the UUID and
- * this test could see either order. Measured directly against Postgres
+ * ever happened, `ORDER BY created_at, id` would fall back to the UUID. If
+ * that put B before A, walking forward from A would never reach B, so the
+ * walk below would fail with one of its own named errors ("Back to queue",
+ * or the hop limit) rather than pass on a swapped order. Measured directly
+ * against Postgres
  * (`SELECT created_at FROM review_queue WHERE ...`, across several fresh
  * seed runs): the four low-confidence rows a run creates (`inactive`,
  * `self_review` -- invisible to this teacher, `legacy_review`,
