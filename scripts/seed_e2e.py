@@ -331,8 +331,10 @@ from lemely.core.schemas import (
     ExamMetadata,
     GradePrediction,
     PointVerdict,
+    SourceBox,
     WeaknessReport,
 )
+from lemely.db.models.attempts import Upload
 from lemely.db.models.engagement import XpEvent
 from lemely.db.models.enums import (
     DifficultySource,
@@ -434,6 +436,48 @@ REVIEW_ITEM_CONFIDENCE_SCORE = 0.55
 #: `verdict`, so the two are supplied separately here and must be kept in
 #: step by hand).
 REVIEW_ITEM_MATCHED_POINT_IDS = ["p1"]
+
+#: Task #72: the review-queue item's own question also carries a persisted
+#: `source_box`, so `web/e2e/teacher-review.spec.ts` has a real crop to load.
+#: `[ymin, xmin, ymax, xmax]`, 0-1000 scale (`SourceBox`'s own doc) -- well
+#: inside a single page, not near an edge, so `crop_and_upscale`'s 8% padding
+#: never clips against the page bounds.
+REVIEW_ITEM_SOURCE_BOX = SourceBox(page=0, box=[100, 100, 400, 400])
+
+
+def review_item_source_scan() -> bytes:
+    """A one-page PDF standing in for the `inactive` student's scan.
+
+    Only `GET /teacher/review/{itemId}/crop` (task #71) ever opens this file:
+    it renders page 0 with PyMuPDF and crops `REVIEW_ITEM_SOURCE_BOX` out of
+    it, so the only requirement here is a valid, renderable single page --
+    unlike `test_web_review.py`'s `_synthetic_scan`, this doesn't need a
+    second colour census, since no test asserts what the crop's pixels show,
+    only that one loads (`naturalWidth > 0`).
+
+    **This repository is public and this is the seed everyone runs.** The
+    page is a flat generated colour block plus machine-set label text, not a
+    render of anything resembling handwriting on a real script -- no
+    scanned-paper texture, no simulated ruled lines, nothing a screenshot of
+    this fixture could be mistaken for a student's actual work. Team-lead
+    review of task #72's seed extension named this explicitly: synthetic
+    shapes are fine, anything incidentally script-like is not.
+    """
+    import pymupdf
+
+    doc = pymupdf.open()
+    try:
+        page = doc.new_page(width=595, height=842)  # A4 at 72 dpi
+        page.draw_rect(page.rect, color=None, fill=(0.85, 0.85, 0.9))
+        page.insert_text(
+            (40, 60),
+            "SEED FIXTURE -- NOT A REAL SCAN",
+            fontsize=18,
+            color=(0.2, 0.2, 0.2),
+        )
+        return doc.tobytes()
+    finally:
+        doc.close()
 
 
 def review_item_scheme() -> MarkScheme:
@@ -970,6 +1014,7 @@ def accuracy_report_for_score(
     matched_point_ids: list[str] | None = None,
     point_verdicts: list[PointVerdict] | None = None,
     point_notes: dict[str, str] | None = None,
+    source_box: SourceBox | None = None,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -1005,6 +1050,12 @@ def accuracy_report_for_score(
     the legacy path instead — :func:`rationale_only_review_point_notes` uses
     it to seed a row with a marker's ``rationale`` but no ``verdict`` on any
     point, and ``marker_source`` correctly stays ``"deterministic"`` for it.
+
+    ``source_box`` (task #72) defaults to ``None``, same as
+    :class:`CorrectedQuestion`'s own field -- every original caller is
+    unaffected. Set only for the ``inactive`` student's attempt, alongside a
+    real ``upload_id`` (see ``seed()``): a box with no upload behind it is a
+    box the crop route is certain to 404 on, which would test nothing.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -1028,6 +1079,7 @@ def accuracy_report_for_score(
         matched_point_ids=matched_point_ids or [],
         point_verdicts=point_verdicts or [],
         point_notes=point_notes,
+        source_box=source_box,
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -1629,6 +1681,36 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     # onboarding state — it must be onboarded like the others so any /student/*
     # spec driving it doesn't get bounced to /student/onboard.
     student_profile_service.mark_onboarding_complete(inactive["userId"])
+    _log(
+        "Storing a real scan behind the inactive attempt (task #72), so its "
+        "review item's source_box resolves to an actual crop"
+    )
+    inactive_uuid = uuid.UUID(inactive["userId"])
+    inactive_upload_id = uuid.uuid4()
+    inactive_scan_object_path = f"students/{inactive_uuid}/{inactive_upload_id.hex}/scan.pdf"
+    inactive_scan_bytes = review_item_source_scan()
+    with get_sessionmaker()() as upload_session, upload_session.begin():
+        upload_session.add(
+            Upload(
+                id=inactive_upload_id,
+                user_id=inactive_uuid,
+                storage_path=inactive_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(inactive_scan_bytes),
+            )
+        )
+    # The same backend `lemely.web.deps.get_storage_backend` hands the running
+    # app (`local` by default -- `StorageSettings`'s own doc), so a crop
+    # request against this item during an e2e run finds a real object, not a
+    # 404 from a box with nothing behind it.
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        inactive_scan_object_path,
+        inactive_scan_bytes,
+        "application/pdf",
+    )
+
     inactive_report = accuracy_report_for_score(
         INACTIVE_SCORE,
         paper_number=1,
@@ -1637,10 +1719,12 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         needs_teacher_review=True,
         matched_point_ids=REVIEW_ITEM_MATCHED_POINT_IDS,
         point_verdicts=review_item_point_verdicts(),
+        source_box=REVIEW_ITEM_SOURCE_BOX,
     )
     inactive_attempt_id = attempt_repo.persist_correction(
         user_id=inactive["userId"],
         report=inactive_report,
+        upload_id=inactive_upload_id,
         recorded_at=inactive_recorded_at(now).isoformat(),
         mark_scheme=review_item_scheme(),
     )

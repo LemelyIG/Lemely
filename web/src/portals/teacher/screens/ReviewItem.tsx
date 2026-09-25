@@ -15,6 +15,7 @@ import {
   useDismissReviewItem,
   useResolveReviewItem,
   useReviewItem,
+  useReviewItemCrop,
   useReviewQueue,
 } from "@/lib/hooks/useTeacherApi"
 import type {
@@ -564,6 +565,12 @@ export function ReviewItem() {
 
   const detailQuery = useReviewItem(itemId)
   const queueQuery = useReviewQueue({ classId, reason: filterReason, minAgeHours })
+  // Called here, at the top level, rather than inside the `<QueryState>`
+  // render prop below: `detailQuery.data` is already available at this
+  // point, and a hook called inside that render prop would belong to
+  // `QueryState`'s own fiber, not this component's — see every other hook
+  // in this file, all called up here for the same reason.
+  const cropUrl = useReviewItemCrop(itemId, detailQuery.data?.hasSourceBox ?? false)
 
   const acceptHandlerRef = useRef<(() => void) | null>(null)
   const registerAccept = useCallback((fn: (() => void) | null) => {
@@ -656,6 +663,13 @@ export function ReviewItem() {
       >
         {(detail) => {
           const integrity = isIntegrityReason(detail.reason)
+          // `detail.hasSourceBox` alone is not enough to claim the scan is
+          // shown (D3.14 §1 / task #71's docstring): the flag means a box was
+          // persisted, not that the crop route actually has bytes to serve.
+          // `cropUrl` is `null` for both "no box" and "box, but the route
+          // 404'd" -- the ONE boolean the banner and the image below share,
+          // so the two can never claim different things.
+          const scanCropVisible = Boolean(detail.hasSourceBox && cropUrl)
 
           return (
             <>
@@ -729,8 +743,10 @@ export function ReviewItem() {
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-                  This screen does not display the original scan. What's below
-                  is Lemely's own transcription of the student's answer.
+                  {scanCropVisible
+                    ? "This screen shows the region of the student's scan this answer was read from."
+                    : "This screen does not display the original scan."}{" "}
+                  What's below is Lemely's own transcription of the student's answer.
                 </div>
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
@@ -758,6 +774,26 @@ export function ReviewItem() {
                     )}
                   </div>
                 </div>
+                {/* Question-level, not per mark point (D3.14 §1 / task #71):
+                    marking is text-only, so nothing here attributes this
+                    region to any one awarded mark -- the caption says only
+                    where the answer was read from. `scanCropVisible` alone
+                    would not let TS narrow `cropUrl` to non-null below, so
+                    the same condition is repeated; the two must never drift
+                    apart, since a defect here is a broken-image icon on a
+                    screen showing a student's handwriting. */}
+                {scanCropVisible && cropUrl ? (
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <img
+                      src={cropUrl}
+                      alt="The region of the student's scan this question's answer was read from"
+                      className="rounded-md border border-rule max-w-full"
+                    />
+                    <div className="text-body-sm text-ink-faint">
+                      The region of the student's scan this answer was read from
+                    </div>
+                  </div>
+                ) : null}
                 {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
               </section>
 

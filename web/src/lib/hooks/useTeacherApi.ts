@@ -392,6 +392,71 @@ export function useReviewItem(itemId: string | undefined): UseQueryResult<Review
 }
 
 /**
+ * `GET /teacher/review/{itemId}/crop` (task #71/#72) — the boxed region of
+ * the student's scan the question's answer was read from, fetched as a blob
+ * and handed to `<img src>` as an object URL. Same reason and the same
+ * ownership pattern as `useScanPreview` below: the route sits behind
+ * `require_role`, and `<img src>` cannot send an `Authorization` header on
+ * its own.
+ *
+ * `enabled` should be `hasSourceBox` — `false` is the common case (a
+ * console-uploaded paper, or one marked through `correct_mcq_answers`) and
+ * must not cost a request that is certain to answer nothing.
+ * `ReviewItemDetailDTO.hasSourceBox`'s own doc is explicit that `true` does
+ * not guarantee an image either: the attempt may have no upload, or the
+ * stored object may have expired, and the route answers 404 either way.
+ * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
+ * this hook to `null` exactly like a network failure would — the caller must
+ * render that as absence, never as a broken-image icon or an error toast.
+ *
+ * `url` is reset to `null` at the START of every effect run, before the new
+ * fetch even begins — unlike `useScanPreview`, where `paperId` names an
+ * unrelated card in a grid and a stale thumbnail lingering one tick is
+ * harmless. Here `itemId` names a specific student's review item, and
+ * `hasSourceBox` can flip between two items in the same queue (this screen
+ * is reached one item at a time, via "next item"); carrying the previous
+ * item's object URL forward across that transition would be a different
+ * student's handwriting rendered under the wrong name for one paint.
+ */
+export function useReviewItemCrop(itemId: string | undefined, enabled: boolean): string | null {
+  const [url, setUrl] = useState<string | null>(null)
+
+  useEffect(() => {
+    setUrl(null)
+    if (!enabled || !itemId) return
+
+    let cancelled = false
+    let objectUrl: string | null = null
+
+    fetchBlobUrl(`/teacher/review/${itemId}/crop`)
+      .then((fetched) => {
+        if (cancelled) {
+          // Unmounted, or `itemId`/`enabled` changed, while in flight —
+          // nothing will ever render this one, so release it instead of
+          // stranding it.
+          URL.revokeObjectURL(fetched)
+          return
+        }
+        objectUrl = fetched
+        setUrl(fetched)
+      })
+      .catch(() => {
+        // 404 (no upload, no box, an expired object) or any other failure —
+        // see this hook's own doc for why every one of these renders as
+        // absence, not as an error.
+        if (!cancelled) setUrl(null)
+      })
+
+    return () => {
+      cancelled = true
+      if (objectUrl !== null) URL.revokeObjectURL(objectUrl)
+    }
+  }, [itemId, enabled])
+
+  return url
+}
+
+/**
  * `POST /teacher/review/bulk-approve` (T-07). Skip-and-report, not
  * all-or-nothing (`BulkApproveResponseDTO`'s own doc) — the caller must
  * render `data.skipped`, never assume every requested id succeeded just

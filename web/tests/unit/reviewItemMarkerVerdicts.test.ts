@@ -246,16 +246,98 @@ describe("ReviewItem.tsx — evidence banner no longer misdescribes what's retai
     expect(normalizedSource).not.toContain("mark scheme's own wording isn't stored")
   })
 
-  it("says only that this screen does not display the scan, exactly", () => {
-    // Presence check anchored to the whole replacement sentence, not a
-    // fragment: a banner that kept some OTHER false clause alongside the true
-    // "does not display the scan" half would still pass a loose substring
-    // check. Anchoring to the full sentence, and separately asserting the
-    // scheme-wording clause is gone (above), is what makes this pair
-    // discriminate rather than both trivially passing against a half-fixed
-    // banner.
+  it("the 'does not display the scan' clause survives, gated behind whatever renders the crop", () => {
+    // Task #72: the clause is no longer unconditionally true -- once a crop
+    // renders, this screen DOES display a region of the scan. The false
+    // branch must still read exactly this, since it remains the honest
+    // answer for the (common) case where no crop is showing.
+    expect(normalizedSource).toContain("This screen does not display the original scan.")
+    // Anchored to the exact boolean this task's own binding requirement
+    // names: `hasSourceBox` alone over-promises (a 404 is still possible),
+    // so the guard must also depend on `cropUrl` actually being present, not
+    // just on the flag.
+    expect(normalizedSource).toMatch(/detail\.hasSourceBox && cropUrl/)
+  })
+
+  it("the transcription sentence sits outside the conditional, exactly once", () => {
+    // If this sentence were duplicated inside both ternary branches (rather
+    // than written once, after the conditional), it would still read
+    // correctly on screen but would double the surface area for the two
+    // copies to drift apart, which is exactly the failure mode this banner
+    // has now hit twice. Counting occurrences (not just presence) is what
+    // catches a regression back to "one copy per branch".
+    const sentence = "What's below is Lemely's own transcription of the student's answer."
+    const occurrences = normalizedSource.split(sentence).length - 1
+    expect(occurrences).toBe(1)
+  })
+
+  it("the true branch says the screen shows the region of the scan, not just that a box exists", () => {
     expect(normalizedSource).toContain(
-      "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer.",
+      "This screen shows the region of the student's scan this answer was read from.",
     )
+  })
+})
+
+describe("ReviewItem.tsx — the scan crop renders only when a crop is actually available", () => {
+  it("useReviewItemCrop is called at the top level, gated on hasSourceBox, not inside the render prop", () => {
+    // Rules-of-Hooks: a hook called inside `<QueryState>`'s render-prop
+    // callback would belong to QueryState's own fiber, not this component's,
+    // and QueryState does not call that callback on every one of ITS
+    // renders (loading/error branches skip it) -- exactly the conditional
+    // hook call React's rules forbid. Every other per-detail hook in this
+    // file (none exist yet) would hit the same trap; this one is called
+    // where `detailQuery`/`queueQuery` already are.
+    const topLevelStart = reviewItemSource.indexOf("const detailQuery = useReviewItem(itemId)")
+    const renderPropStart = reviewItemSource.indexOf("{(detail) => {")
+    const cropHookCall = reviewItemSource.indexOf("useReviewItemCrop(itemId,")
+    expect(topLevelStart).toBeGreaterThan(-1)
+    expect(renderPropStart).toBeGreaterThan(topLevelStart)
+    expect(cropHookCall).toBeGreaterThan(topLevelStart)
+    expect(cropHookCall).toBeLessThan(renderPropStart)
+    expect(reviewItemSource).toContain("detailQuery.data?.hasSourceBox ?? false")
+  })
+
+  it("guards the image on hasSourceBox AND the fetched url, and the guard wraps the whole image", () => {
+    // "wraps the image" rather than sitting elsewhere: the img element must
+    // be inside the branch this condition selects, not merely present
+    // somewhere later in the file. `functionBody`-style slicing isn't
+    // available here (this isn't a named function), so the check is
+    // structural: the guard, the `<img`, and its closing `) : null}` appear
+    // in that order with nothing but the image's own card between them.
+    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
+    expect(guardStart).toBeGreaterThan(-1)
+    const imgStart = reviewItemSource.indexOf("<img", guardStart)
+    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
+    expect(imgStart).toBeGreaterThan(guardStart)
+    expect(guardEnd).toBeGreaterThan(imgStart)
+  })
+
+  it("the image src is built from the crop route, with alt text naming what it is", () => {
+    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
+    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
+    const block = reviewItemSource.slice(guardStart, guardEnd)
+    expect(block).toContain("src={cropUrl}")
+    // `cropUrl` itself comes from `useReviewItemCrop`, which fetches
+    // `/teacher/review/${itemId}/crop` -- asserted on the hook, not here,
+    // since this block only ever sees the already-fetched object URL. What
+    // this DOES pin: the alt text names the region as what it is, and never
+    // as evidence for one mark point (question-level, not per-point).
+    expect(block).toMatch(/alt="[^"]*region of the student's scan[^"]*"/)
+    expect(block).not.toMatch(/alt="[^"]*mark point[^"]*"/)
+  })
+
+  it("useReviewItemCrop fetches the crop route and never introduces a lightbox, zoom, or placeholder image", () => {
+    const hooksSource = readSource("src/lib/hooks/useTeacherApi.ts")
+    expect(hooksSource).toContain("`/teacher/review/${itemId}/crop`")
+    expect(reviewItemSource).not.toMatch(/lightbox/i)
+    expect(reviewItemSource).not.toMatch(/zoom/i)
+  })
+
+  it("the caption does not imply the region justifies a particular mark point", () => {
+    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
+    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
+    const block = reviewItemSource.slice(guardStart, guardEnd)
+    expect(block).toContain("The region of the student's scan this answer was read from")
+    expect(block).not.toMatch(/mark point|justifies|awarded this mark/i)
   })
 })

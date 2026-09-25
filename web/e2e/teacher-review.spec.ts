@@ -36,6 +36,17 @@ import { readSeed } from "./seed"
  *    two rows above can stand in for it: the first carries a verdict on
  *    every point, the second carries neither a verdict nor a rationale on
  *    any.
+ *
+ * Task #72 adds the scan-crop coverage below. `seed.reviewItem.itemId`'s
+ * question now also carries a real `source_box` and a real stored scan
+ * (`scripts/seed_e2e.py`'s `review_item_source_scan`/`REVIEW_ITEM_SOURCE_BOX`,
+ * added alongside this task), so it doubles as the box-bearing case;
+ * `seed.reviewItem.legacyItemId` carries neither, so it doubles as the
+ * boxless case. Neither of `reviewItemMarkerVerdicts.test.ts`'s new source-
+ * text assertions can tell "the guard renders nothing" from "the guard
+ * renders something the fetch then silently fails to load" — only a real
+ * render, and a real check that the image actually decoded
+ * (`naturalWidth > 0`), can.
  */
 
 test("a teacher sees every point's marker verdict, with awarded, withheld and unverifiable distinguishable", async ({
@@ -137,6 +148,74 @@ test("a rationale-only question with no verdict still renders the marker's per-p
     section.getByText(
       "Working shown but the final line is illegible; benefit of the doubt given.",
     ),
+  ).toBeVisible()
+
+  expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
+})
+
+const SCAN_CROP_ALT = "The region of the student's scan this question's answer was read from"
+
+test("a boxless question shows no scan-crop affordance", async ({ page }) => {
+  const seed = readSeed()
+  const errors = watchConsole(page)
+  const { teacher, reviewItem } = seed
+
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(teacher.email)
+  await page.getByLabel("Password").fill(teacher.password)
+  await page.getByRole("button", { name: /sign in/i }).click()
+  await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+
+  // `legacyItemId`'s question carries no `source_box` (task #67's seed never
+  // set one), so `hasSourceBox` is `false` and no crop request should even go
+  // out — see `useReviewItemCrop`'s own doc for why `enabled` must be exactly
+  // that flag.
+  await page.goto(`/teacher/review/${reviewItem.legacyItemId}`)
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+  await expect(page.getByRole("heading", { level: 1 })).toBeVisible()
+
+  await expect(page.getByAltText(SCAN_CROP_ALT)).toHaveCount(0)
+  await expect(page.getByText("This screen does not display the original scan.")).toBeVisible()
+
+  expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
+})
+
+test("a box-bearing question shows the scan crop, and the image actually loads", async ({
+  page,
+}) => {
+  const seed = readSeed()
+  const errors = watchConsole(page)
+  const { teacher, reviewItem } = seed
+
+  await page.goto("/login")
+  await page.getByLabel("Email").fill(teacher.email)
+  await page.getByLabel("Password").fill(teacher.password)
+  await page.getByRole("button", { name: /sign in/i }).click()
+  await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
+
+  // `reviewItem.itemId`'s question now carries a real `source_box` AND a
+  // real stored scan (`scripts/seed_e2e.py`'s `review_item_source_scan`), so
+  // `GET .../crop` answers 200, not the 404 a box with no upload behind it
+  // would produce.
+  await page.goto(`/teacher/review/${reviewItem.itemId}`)
+  await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
+
+  const crop = page.getByAltText(SCAN_CROP_ALT)
+  await expect(crop).toBeVisible()
+  // Presence in the DOM is not proof the image loaded -- a 404'd `src` is
+  // still an `<img>` element sitting there. `naturalWidth` stays 0 until the
+  // browser has actually decoded real image bytes into it, so this is the
+  // one assertion that tells "the object URL resolved to a real PNG" apart
+  // from "the fetch failed and this is a broken image". `expect.poll`, not a
+  // bare `evaluate`, because the blob fetch that produces `src` is itself
+  // asynchronous relative to the element first mounting.
+  await expect
+    .poll(() => crop.evaluate((el) => (el as HTMLImageElement).naturalWidth), {
+      timeout: 15_000,
+    })
+    .toBeGreaterThan(0)
+  await expect(
+    page.getByText("This screen shows the region of the student's scan this answer was read from."),
   ).toBeVisible()
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
