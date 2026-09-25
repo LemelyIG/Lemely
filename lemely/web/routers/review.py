@@ -520,11 +520,21 @@ def _decode_within_ceiling(opened: PILImage, box: SourceBox, *, item_id: str) ->
     ``Image.open`` has read only the header, so the size is known and nothing
     is decoded yet. A JPEG can be decoded at 1/2, 1/4 or 1/8 scale natively
     (``draft``); anything else over the ceiling is refused.
+
+    Checked by ``isinstance``, not ``opened.format == "JPEG"``: a phone JPEG
+    carrying a second embedded image (Android Ultra HDR's gain map, some
+    iPhone exports) is reported by Pillow as ``format == "MPO"`` through
+    ``MpoImageFile``, which subclasses ``JpegImageFile`` and supports the
+    same ``draft`` reduced-scale decode. The format-string check refused
+    exactly the high-resolution phone photos this reduced-scale path exists
+    for.
     """
+    from PIL import JpegImagePlugin
+
     width, height = opened.size
     if width * height <= _MAX_DECODE_PX:
         return
-    if opened.format == "JPEG":
+    if isinstance(opened, JpegImagePlugin.JpegImageFile):
         for scale in (2, 4, 8):
             if -(-width // scale) * -(-height // scale) <= _MAX_DECODE_PX:
                 # Floor division here: ``draft`` picks the largest scale whose

@@ -1715,7 +1715,46 @@ def _corner_position(image: Image.Image) -> tuple[float, float]:
     )
 
 
-@pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
+def _expected_upright_crop(scan: bytes) -> Image.Image:
+    """The route's crop, computed a second, independent way.
+
+    The route crops the box out of the RAW frame and rotates the small crop
+    upright (``_upright``). This instead rotates the WHOLE photo upright
+    first (``ImageOps.exif_transpose``) and then crops the box's rectangle
+    mapped into that upright frame -- found by transposing a same-sized mask
+    painted with the raw rectangle and reading back its bounding box, so the
+    mapping does not rely on any of the route's own arithmetic. If the two
+    orders of operations (crop-then-rotate vs. rotate-then-crop) disagree for
+    any orientation, this comparison catches it byte for byte; the census and
+    corner checks below only catch it for most of them (see orientation 5).
+    """
+    from PIL import ImageOps
+
+    from lemely.io.reread import REREAD_UPSCALE, padded_crop_rect
+
+    raw = Image.open(io.BytesIO(scan))
+    raw.load()
+    rect = padded_crop_rect(raw.width, raw.height, list(_MARK_BOX))
+
+    mask = Image.new("L", raw.size, 0)
+    mask.paste(255, rect)
+    orientation_tag = raw.getexif().get(_EXIF_ORIENTATION_TAG, 1)
+    mask_exif = Image.Exif()
+    mask_exif[_EXIF_ORIENTATION_TAG] = orientation_tag
+    mask.info["exif"] = mask_exif.tobytes()
+    transposed_mask = ImageOps.exif_transpose(mask)
+    bbox = transposed_mask.getbbox()
+    assert bbox is not None
+
+    upright_whole = ImageOps.exif_transpose(raw).convert("RGB")
+    region = upright_whole.crop(bbox)
+    return region.resize(
+        (region.width * REREAD_UPSCALE, region.height * REREAD_UPSCALE),
+        Image.Resampling.LANCZOS,
+    )
+
+
+@pytest.mark.parametrize("orientation", [1, 2, 3, 4, 5, 6, 7, 8])
 def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
     orientation: int,
     client: TestClient,
@@ -1733,6 +1772,20 @@ def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
     image, which is a different part of the photo. The colour census shows the
     region is right. The green corner's position, measured against PIL's own
     ``exif_transpose`` of the whole photo, shows the crop is upright.
+
+    Orientation 1 (no rotation) is a control: it proves the census/corner/
+    pixel-exact checks agree when there is nothing to rotate, so a pass on
+    the rotated orientations is not an artefact of the checks themselves.
+
+    ``_expected_upright_crop`` is a pixel-exact, independently-computed
+    comparison (see its own docstring for why it is independent of the
+    route's own crop-then-rotate order). It is the hard check: the census
+    passes at 0.45 red against a 0.5 floor for orientation 5 even when the
+    route rotates before cropping (a real regression), which is too close to
+    trust on its own, and the corner check does not catch orientation 5
+    either -- 5 (TRANSPOSE) mirrors across the exact diagonal the corner
+    mark sits on, so a wrongly-ordered crop still lands the corner in
+    roughly the right relative place.
     """
     from PIL import ImageOps
 
@@ -1769,13 +1822,22 @@ def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
     assert reddish / total > 0.5, "the mark inside the box is missing -- wrong region"
 
     # Upright: the mark is wide in the raw frame, so it is tall once turned by
-    # a quarter (5-8) and still wide after a half turn or a mirror (2-4).
+    # a quarter (5-8) and still wide after a half turn or a mirror (2-4), and
+    # unchanged for the orientation-1 control.
     assert (got.height > got.width) == (orientation in (5, 6, 7, 8)), got.size
     upright = ImageOps.exif_transpose(Image.open(io.BytesIO(scan))).convert("RGB")
     want_x, want_y = _corner_position(upright)
     got_x, got_y = _corner_position(got)
     assert abs(got_x - want_x) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
     assert abs(got_y - want_y) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
+
+    want = _expected_upright_crop(scan)
+    assert got.size == want.size, (orientation, got.size, want.size)
+    assert got.tobytes() == want.tobytes(), (
+        orientation,
+        "the route's crop is not byte-identical to the independently-computed "
+        "upright crop -- the region or its rotation is wrong",
+    )
 
 
 def test_crop_route_404s_for_an_item_whose_attempt_has_no_upload(
@@ -2691,7 +2753,9 @@ def test_an_image_scan_too_large_to_decode_is_refused_before_decoding(
     ]
 
 
+@pytest.mark.parametrize("image_format", ["JPEG", "MPO"])
 def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
+    image_format: str,
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
     class_service: ClassService,
@@ -2704,6 +2768,12 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
     It is over the decode ceiling, so it is decoded at a reduced scale, which
     JPEG supports natively, rather than refused. The box is normalised, so the
     smaller decode lands on the same region.
+
+    The ``MPO`` case is the same photo saved as a multi-picture JPEG: Android
+    Ultra HDR and some iPhone exports carry a second embedded image (e.g. an
+    HDR gain map) this way, and Pillow reports the format as ``MPO``, not
+    ``JPEG``, through ``MpoImageFile`` -- which subclasses ``JpegImageFile``
+    and supports the same reduced-scale ``draft`` decode.
     """
     from PIL import ImageDraw
 
@@ -2720,7 +2790,11 @@ def test_a_high_resolution_photo_is_decoded_smaller_and_still_cropped_right(
         fill=_MARK_RGB,
     )
     buf = io.BytesIO()
-    image.save(buf, format="JPEG", quality=90)
+    if image_format == "MPO":
+        second = Image.new("RGB", (400, 300), (0, 0, 0))
+        image.save(buf, format="MPO", save_all=True, append_images=[second], quality=90)
+    else:
+        image.save(buf, format="JPEG", quality=90)
     del image, draw
 
     teacher, item_id = _seed_boxed_review_item(
