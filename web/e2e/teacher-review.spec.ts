@@ -60,13 +60,12 @@ import { readSeed } from "./seed"
  * fill cannot tell a correctly-cropped region from the wrong one or the
  * whole page uncropped) specifically so the two items' crops are
  * distinguishable by a pixel sample, not merely by both being present. The
- * navigation test below walks forward between `itemId` and
- * `rationaleOnlyItemId` (whichever the teacher's queue puts first this run
- * -- an implementation detail of `scripts/seed_e2e.py`'s own persist order,
- * see `walkForwardTo`'s own doc) and back via the on-screen "Next item"
- * control and the browser's own back button -- real client-side
- * transitions, never `page.goto` between two detail routes, which would
- * remount the screen and never exercise the bug at all.
+ * navigation test below walks forward from `itemId` to `rationaleOnlyItemId`
+ * (`itemId` sorts first in the teacher's queue every run -- verified
+ * directly against Postgres, see `walkForwardTo`'s own doc) and back via the
+ * on-screen "Next item" control and the browser's own back button -- real
+ * client-side transitions, never `page.goto` between two detail routes,
+ * which would remount the screen and never exercise the bug at all.
  *
  * F2 (team-lead review, second pass): that test's name originally claimed to
  * prove the C1 timing fix specifically. Reverting `cropUrlFor` to bypass its
@@ -449,22 +448,33 @@ async function sampleCropCensus(
 /**
  * Walk forward via the on-screen "Next item" control -- a real client-side
  * `navigate()`, never `page.goto` -- from wherever `page` currently is,
- * until `targetId`'s own URL is reached or the queue's real end is hit (the
- * control reading "Back to queue"). Returns the hop count on success, or
- * `null` if the real end was hit first.
+ * until `targetId`'s own URL is reached. Returns the hop count.
  *
- * `null`, not a thrown error: this queue holds THREE low-confidence rows for
- * the teacher this run (the two boxed items under test, plus the boxless
- * legacy one), not two, and their relative order is an implementation
- * detail of `scripts/seed_e2e.py`'s own persist order that has been observed
- * to vary between runs (`list_queue`'s `ORDER BY created_at, id` ties on
- * `created_at` when rows are written close enough together, and the
- * tie-break is then a per-run-random UUID). Walking forward from item X and
- * hitting the true end without ever finding item Y does not mean anything
- * is broken -- it means Y sits BEFORE X in this run's order, which the
- * caller resolves by trying the walk in the other direction instead.
+ * **Ordering correction (team-lead review, second pass).** An earlier
+ * version of this function assumed the teacher's queue could order the two
+ * boxed items either way between runs, attributing it to `list_queue`'s
+ * `ORDER BY created_at, id` tying on `created_at` and falling back to a
+ * per-run-random UUID. Checked directly against Postgres after that claim
+ * was questioned (`SELECT created_at FROM review_queue WHERE ...`, across
+ * several fresh seed runs): the four low-confidence rows a run creates
+ * (`inactive`, `self_review` -- invisible to this teacher, `legacy_review`,
+ * `rationale_only`, in that call order) land tens to hundreds of
+ * milliseconds apart, every time, with zero ties observed -- each
+ * `persist_correction` call opens its own transaction
+ * (`AttemptRepository._persist`'s `with self._sm.begin()`), and Postgres's
+ * `now()` is transaction-scoped, so distinct transactions separated by real
+ * seed-script work (signups, class creation, storage writes) never
+ * coincide. `itemId` (`inactive`) is created before `rationaleOnlyItemId`
+ * every run, so the queue orders them the same way every run. The
+ * intermittent test failures that motivated the original (now-removed)
+ * bidirectional-probe version of this function were a SEPARATE,
+ * already-filed issue (#253, `persistQueryClientRestore` in
+ * `web/src/lib/offline/queryPersister.ts`) intermittently corrupting or
+ * delaying `useReviewQueue()`'s client-side data, not a database ordering
+ * problem at all -- this function stays simple, and the flake is tracked
+ * where it actually lives.
  */
-async function walkForwardTo(page: Page, targetId: string, maxHops = 5): Promise<number | null> {
+async function walkForwardTo(page: Page, targetId: string, maxHops = 5): Promise<number> {
   let hops = 0
   while (!page.url().endsWith(`/teacher/review/${targetId}`)) {
     // The "Next item" vs "Back to queue" label depends on `useReviewQueue()`,
@@ -480,10 +490,15 @@ async function walkForwardTo(page: Page, targetId: string, maxHops = 5): Promise
     // : "Back to queue"}` in ReviewItem.tsx) -- a `getByRole` locator built
     // once, before the loop, on `/next item/i` would find nothing on that
     // render and time out at Playwright's default (30s), which reads as an
-    // unrelated hang rather than this function's own fast, legible return.
-    // Built fresh each iteration and checked before clicking.
+    // unrelated hang rather than this loop's own fast, named failure. Built
+    // fresh each iteration and checked before clicking.
     const nextItemButton = page.getByRole("button", { name: "Next item" })
-    if ((await nextItemButton.count()) === 0) return null
+    if ((await nextItemButton.count()) === 0) {
+      throw new Error(
+        `The "Next item" control read "Back to queue" instead, part-way through walking to ` +
+          `${targetId} -- current URL: ${page.url()}`,
+      )
+    }
     hops += 1
     if (hops > maxHops) {
       throw new Error(
@@ -539,80 +554,50 @@ test("navigating between two boxed items and back always shows the currently-vie
   await page.getByRole("button", { name: /sign in/i }).click()
   await expect(page).toHaveURL(/\/teacher$/, { timeout: 15_000 })
 
-  // Which of the two boxed items sorts EARLIER in the teacher's unfiltered
-  // queue is an implementation detail of `scripts/seed_e2e.py`'s own persist
-  // order (see `walkForwardTo`'s own doc for why), observed to flip between
-  // runs -- and a THIRD, boxless row (the legacy item) can sit between them,
-  // so "does the starting item have a Next" does not by itself prove the
-  // OTHER boxed item is reachable forward from it. Resolved by probing: try
-  // walking A -> B; if the real end is hit first, B must be BEFORE A in this
-  // run's order, so retry the whole thing starting from B instead. Whichever
-  // one succeeds gives the actual "first"/"second" pair the rest of the test
-  // uses -- the win is only ever known reachable to have been forward AND
-  // real; nothing here randomly commits to a doomed direction, and the
-  // journey never touches the boxless item by identity, only by hopping
-  // through it.
-  const itemA = { id: reviewItem.itemId, box: [255, 0, 0] as [number, number, number] }
-  const itemB = { id: reviewItem.rationaleOnlyItemId, box: [0, 200, 0] as [number, number, number] }
+  // `itemId` (A, red) sorts before `rationaleOnlyItemId` (B, green) in the
+  // teacher's queue every run -- `walkForwardTo`'s own doc has the direct
+  // Postgres verification for why this is safe to assume rather than
+  // something this test needs to detect at runtime.
   const OUTSIDE_RGB: [number, number, number] = [0, 0, 255]
+  const boxA: [number, number, number] = [255, 0, 0]
 
-  // First visit is a real navigation, fine either way: there is no "same
-  // instance" claim to protect on a first mount, whichever item this ends
-  // up being `first`.
-  await page.goto(`/teacher/review/${itemA.id}`)
+  // First visit to A: a real navigation is fine here, this establishes the
+  // fiber the rest of the test reuses -- there is no "same instance" claim
+  // to protect on a first mount.
+  await page.goto(`/teacher/review/${reviewItem.itemId}`)
   await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
-  let firstSample = await sampleCrop(page, itemA.box, OUTSIDE_RGB)
-  let first = itemA
-  let second = itemB
-  let hops = await walkForwardTo(page, second.id)
-
-  if (hops === null) {
-    // A can't reach B forward within this run's order -- B must come first.
-    // Restart cleanly from B; this is still a first-visit real navigation,
-    // for the same reason the one above was.
-    first = itemB
-    second = itemA
-    await page.goto(`/teacher/review/${first.id}`)
-    await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
-    firstSample = await sampleCrop(page, first.box, OUTSIDE_RGB)
-    hops = await walkForwardTo(page, second.id)
-    if (hops === null) {
-      throw new Error(
-        `Neither ${itemA.id} nor ${itemB.id} can reach the other via "Next item" forward ` +
-          `walking in either direction -- the teacher's queue may not contain both.`,
-      )
-    }
-  }
+  const sampleA1 = await sampleCrop(page, boxA, OUTSIDE_RGB)
 
   // F3 (team-lead review): region GEOMETRY, not just location -- see
   // `sampleCropCensus`'s own doc for why a centre-pixel sample alone cannot
   // catch a mis-scaled box or a dropped upscale. Bands, not exact values.
-  expect(firstSample.census.boxFraction).toBeGreaterThan(0.65)
-  expect(firstSample.census.boxFraction).toBeLessThan(0.8)
-  expect(firstSample.census.outsideFraction).toBeGreaterThan(0.18)
-  expect(firstSample.census.outsideFraction).toBeLessThan(0.32)
+  expect(sampleA1.census.boxFraction).toBeGreaterThan(0.65)
+  expect(sampleA1.census.boxFraction).toBeLessThan(0.8)
+  expect(sampleA1.census.outsideFraction).toBeGreaterThan(0.18)
+  expect(sampleA1.census.outsideFraction).toBeLessThan(0.32)
 
-  // Now at `second`'s page, reached entirely via `walkForwardTo`'s
-  // client-side "Next item" clicks.
-  const colorSecond = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
-  expect(colorSecond).not.toEqual(firstSample.color)
+  // Walk forward via the on-screen "Next item" control -- a real client-side
+  // `navigate()`, never `page.goto` -- until B's own URL is reached.
+  const hops = await walkForwardTo(page, reviewItem.rationaleOnlyItemId)
+  const colorB = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
+  expect(colorB).not.toEqual(sampleA1.color)
 
-  // Back to `first`, `hops` times, via the BROWSER's own back button -- a
-  // real `popstate`-driven client-side transition, same fiber throughout.
-  // This is the render C1 names: `ReviewItem`'s route carries no `key`, so
-  // React Router does not remount the screen on this transition, and the
-  // first render after it is exactly the render that used to commit
-  // `second`'s still-live object URL under `first`'s name before the
-  // render-time `itemId` tag (`useReviewItemCrop`) closed it.
+  // Back to A, `hops` times, via the BROWSER's own back button -- a real
+  // `popstate`-driven client-side transition, same fiber throughout. This is
+  // the render C1 names: `ReviewItem`'s route carries no `key`, so React
+  // Router does not remount the screen on this transition, and the first
+  // render after it is exactly the render that used to commit B's
+  // still-live object URL under A's name before the render-time `itemId` tag
+  // (`useReviewItemCrop`) closed it.
   for (let i = 0; i < hops; i += 1) {
     await page.goBack()
     await expect(page.getByRole("status", { name: "Loading" })).toHaveCount(0, { timeout: 15_000 })
   }
-  expect(page.url()).toContain(`/teacher/review/${first.id}`)
-  const colorFirst2 = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
+  expect(page.url()).toContain(`/teacher/review/${reviewItem.itemId}`)
+  const colorA2 = await sampleCropCentrePixel(page.getByAltText(SCAN_CROP_ALT))
 
-  expect(colorFirst2).toEqual(firstSample.color)
-  expect(colorFirst2).not.toEqual(colorSecond)
+  expect(colorA2).toEqual(sampleA1.color)
+  expect(colorA2).not.toEqual(colorB)
 
   expect(errors, `console/page errors: ${JSON.stringify(errors, null, 2)}`).toEqual([])
 })
