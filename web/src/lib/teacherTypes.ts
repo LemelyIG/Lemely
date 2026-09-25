@@ -784,12 +784,12 @@ export interface ReviewItemPoint {
  * (inventing precision, UI-spec §1.4). That gap is real and stays real: it
  * is not what the paragraph below narrows. A scan crop is a different
  * matter, but `hasSourceBox: true` is not itself a guarantee of one: it means
- * all five `source_box_*` columns were persisted, so a crop MAY be
- * available, fetched on demand from the crop route rather than persisted
- * here. `GET /teacher/review/{itemId}/crop` can still answer 404 — the
- * attempt may have no upload, or the stored object may have expired — so a
- * client must render that 404 as absence, never as an error (see
- * `useReviewItemCrop` in `lib/hooks/useTeacherApi.ts`, task #72). When a crop
+ * all five `source_box_*` columns are set AND the attempt has an upload, so a
+ * crop MAY exist, fetched on demand from the crop route rather than persisted
+ * here. `GET /teacher/review/{itemId}/crop` can still answer 404, for example
+ * when the stored object has expired, so a client must render that 404 as
+ * absence, never as an error (see `useReviewItemCrop` in
+ * `lib/hooks/useTeacherApi.ts`). When a crop
  * does render, it is QUESTION-level — where the answer was read from on the
  * page — never per mark point, so it must not be read as showing which
  * pixels justify any one awarded mark.
@@ -824,14 +824,14 @@ export interface ReviewItemDetail extends ReviewQueueItem {
   resolvedAt: string | null
   points: ReviewItemPoint[]
   /**
-   * True when all five `source_box_*` columns are set server-side, so a crop
-   * MAY be available — fetch it from the crop route rather than expecting
-   * coordinates on this DTO (see `ReviewItemDetailDTO.hasSourceBox`). `false`
-   * is the common case (a console-uploaded paper, or one marked through
-   * `correct_mcq_answers`, never carries a box). `true` does NOT guarantee a
-   * crop: `GET /teacher/review/{itemId}/crop` can still answer 404 (no
-   * upload, or the stored object has expired), and a client must render that
-   * as absence, never as an error.
+   * True when all five `source_box_*` columns are set server-side AND the
+   * attempt has an upload, so a crop MAY exist. Fetch it from the crop route;
+   * this DTO never carries coordinates (see `ReviewItemDetailDTO.hasSourceBox`).
+   * `true` does NOT guarantee a crop: `GET /teacher/review/{itemId}/crop` can
+   * still answer 404, for example when the stored object has expired, and a
+   * client must render that as absence, never as an error. Always `false` for
+   * a `"console_paper"` row, even when its question has a box, because the
+   * crop route serves only attempt-backed items.
    */
   hasSourceBox: boolean
 }

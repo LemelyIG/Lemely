@@ -135,9 +135,9 @@ class ReviewItemDetailDTO(ApiModel):
     :class:`~lemely.db.models.attempts.QuestionResult` (see its docstring) —
     that part of the gap is real and stays real, so a future screen must not
     invent scheme-prose precision this backend cannot provide. A scan crop is
-    a different matter: one is available whenever ``hasSourceBox`` is
-    ``true``, served on demand by ``GET
-    /api/teacher/review/{item_id}/crop``. It is QUESTION-level — where the
+    a different matter: one may exist when ``hasSourceBox`` is ``true``,
+    served on demand by ``GET /api/teacher/review/{item_id}/crop``, which can
+    still answer 404. It is QUESTION-level — where the
     answer was read from on the page — never per mark point, so it must not
     be read as showing which pixels justify any one awarded mark.
     Where ``points`` (``ReviewItemPointDTO``) carries a real per-point
@@ -202,11 +202,13 @@ class ReviewItemDetailDTO(ApiModel):
     points: list[ReviewItemPointDTO]
     """Empty for a ``"console_paper"`` row — see ``ReviewItemDetail.points``."""
     hasSourceBox: bool = False
-    """True when all five ``source_box_*`` columns are set, so a crop may be
-    available — see ``ReviewItemDetail.has_source_box``. ``GET
-    /api/teacher/review/{item_id}/crop`` can still answer 404 (the stored object
-    may have expired), so a client must render a 404 as absence, never as an
-    error. The client never receives the coordinates themselves."""
+    """True when all five ``source_box_*`` columns are set AND the attempt has
+    an upload, so a crop may exist. ``GET /api/teacher/review/{item_id}/crop``
+    can still answer 404, for example when the stored object has expired, so a
+    client must render a 404 as absence, never as an error. Always false for a
+    ``"console_paper"`` row, even when its question has a box: the crop route
+    serves only attempt-backed items. See ``ReviewItemDetail.has_source_box``.
+    The client never receives the coordinates themselves."""
 
 
 class ResolveReviewRequestDTO(ApiModel):

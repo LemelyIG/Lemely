@@ -685,8 +685,8 @@ export function ReviewItem() {
         {(detail) => {
           const integrity = isIntegrityReason(detail.reason)
           // `detail.hasSourceBox` alone is not enough to claim the scan is
-          // shown (D3.14 §1 / task #71's docstring): the flag means a box was
-          // persisted, not that the crop route actually has bytes to serve --
+          // shown (D3.14 §1 / task #71's docstring): the flag means a box and
+          // an upload exist, not that the crop route actually has bytes to serve --
           // `cropUrl` is `null` for both "no box" and "box, but the route
           // 404'd". Carrying the URL itself, not a derived boolean, is what
           // lets the banner and the image below share ONE condition instead

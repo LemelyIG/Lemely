@@ -430,12 +430,11 @@ export interface ReviewItemCrop {
  * `require_role`, and `<img src>` cannot send an `Authorization` header on
  * its own.
  *
- * `enabled` should be `hasSourceBox` — `false` is the common case (a
- * console-uploaded paper, or one marked through `correct_mcq_answers`) and
- * must not cost a request that is certain to answer nothing.
- * `ReviewItemDetailDTO.hasSourceBox`'s own doc is explicit that `true` does
- * not guarantee an image either: the attempt may have no upload, or the
- * stored object may have expired, and the route answers 404 either way.
+ * `enabled` should be `hasSourceBox`. `false` means the route is certain to
+ * answer nothing (no box, no upload, or a console paper's item), so it must
+ * not cost a request. `true` means a box AND an upload exist, so a crop may
+ * exist, but it does not guarantee one: the stored object may have expired,
+ * and the route answers 404 then.
  * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
  * `url` to `null` exactly like a network failure would — the caller must
  * render that as absence, never as a broken-image icon or an error toast.

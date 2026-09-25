@@ -334,16 +334,17 @@ class ReviewItemDetail:
     always empty (see :func:`_console_item_detail`).
     """
     has_source_box: bool = False
-    """True when all five `source_box_*` columns are set, so a crop may be
-    available. The crop route can still answer 404 — the attempt may have no
-    upload, or the stored object may have expired — so a client must render a
-    404 as absence, never as an error.
+    """True when all five `source_box_*` columns are set AND the attempt has an
+    upload, so a crop may exist. The crop route can still answer 404, for
+    example when the stored object has expired, so a client must render a 404
+    as absence, never as an error. Always False for a console paper's item,
+    even when its question has a box: the crop route serves only
+    attempt-backed items (see :func:`_console_item_detail`).
 
-    The no-upload case is excluded from the flag (it costs nothing: `get_item`
-    already holds the attempt). Storage expiry deliberately is not: it is a
-    *timing* condition, so nothing checked when this DTO is built can promise
-    anything about the object at crop time, and a check here would add a query
-    and a race without changing what the flag can honestly claim.
+    Storage expiry is deliberately not checked: it is a *timing* condition, so
+    nothing checked when this DTO is built can promise anything about the
+    object at crop time, and a check here would add a query and a race without
+    changing what the flag can honestly claim.
 
     A flag rather than the coordinates: the client asks the route for an
     image and never does the arithmetic, and coordinates on the wire would be
