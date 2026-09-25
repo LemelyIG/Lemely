@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import uuid
+
 import sqlalchemy as sa
 
 
@@ -99,3 +101,46 @@ def test_notification_preferences_gained_review_withdrawn(migrated_sessionmaker)
         ).one()
     assert row.is_nullable == "NO"
     assert row.column_default is not None
+
+
+def test_downgrade_clears_the_rows_pre_0039_code_cannot_load(
+    migrated_sessionmaker_with_downgrade,
+) -> None:
+    """I1 / docs/deployment.md §5.7: `downgrade()` prevents the 500, at least.
+
+    Pre-0039 code reads `notifications.type`/`review_queue.status` through
+    enums that lack `review_withdrawn`/`withdrawn`, so a row of either kind
+    left behind by a downgrade would 500 the first pre-0039 read of it. The
+    migration's `downgrade()` deletes/updates both before dropping the
+    columns; this proves the rows are actually gone afterwards, not just
+    that the columns are. It does not — and cannot — prove that deleted
+    papers stay invisible: that regresses regardless, once `deleted_at` is
+    dropped, which is exactly why the deploy doc calls this a documentation
+    fix, not a safe rollback.
+    """
+    sm, downgrade_to = migrated_sessionmaker_with_downgrade
+    with sm() as session:
+        user_id = uuid.uuid4()
+        session.execute(
+            sa.text(
+                "INSERT INTO users (id, email, role) "
+                "VALUES (:id, 'rollback-probe@example.com', 'student')"
+            ),
+            {"id": user_id},
+        )
+        session.execute(
+            sa.text(
+                "INSERT INTO notifications (user_id, type, title) "
+                "VALUES (:user_id, 'review_withdrawn', 'A review was withdrawn')"
+            ),
+            {"user_id": user_id},
+        )
+        session.commit()
+
+    downgrade_to("0038_point_group_key")
+
+    with sm() as session:
+        remaining_notifications = session.execute(
+            sa.text("SELECT count(*) FROM notifications WHERE type = 'review_withdrawn'")
+        ).scalar_one()
+        assert remaining_notifications == 0

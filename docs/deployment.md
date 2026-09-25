@@ -411,14 +411,16 @@ The nginx/web image never had this constraint and scales freely regardless.
 ### 5.2 The notification sweeper runs inside the API process, and Cloud Run can scale it to nothing
 
 `create_app` starts one asyncio task (`lemely/web/app.py`, `_lifespan`) that every
-`[notifications] sweep_poll_seconds` (60) runs three jobs from
+`[notifications] sweep_poll_seconds` (60) runs five jobs from
 `lemely/web/scheduled_notifications.py`: it publishes announcements whose `publish_at`
 has passed, sends `streak_warning` at `streak_warning_hour` (19:00) and
-`study_plan_reminder` at `study_plan_reminder_hour` (08:00), each in the recipient's
-**own** time zone (`users.timezone`). There is no separate worker to deploy, and no
-cron to add. Two replicas are safe — the announcement claim is `FOR UPDATE SKIP LOCKED`
-and every notification is deduped by the unique index on `notifications` — but §5.1
-still limits you to one for other reasons.
+`study_plan_reminder` at `study_plan_reminder_hour` (08:00) (each in the recipient's
+**own** time zone, `users.timezone`), and purges expired student and console papers
+(`purge_expired_papers`, `purge_expired_teacher_papers`) past their retention window.
+There is no separate worker to deploy, and no cron to add. Two replicas are safe — the
+announcement claim is `FOR UPDATE SKIP LOCKED` and every notification is deduped by
+the unique index on `notifications` — but §5.1 still limits you to one for other
+reasons.
 
 **Timely delivery needs `--min-instances=1`, and `deploy.yml` sets `--min-instances=0`.**
 At zero instances the container is not running and no sweep happens; the first request
@@ -428,6 +430,16 @@ the per-zone memo and the dedupe key are both scoped to the user's civil date, s
 warning that was never sent on the 5th is not sent on the 6th under the 5th's key.
 Raise `--min-instances` to 1 in `deploy.yml` when the notifications matter more than the
 idle cost; until then this section is the honest statement of what the platform gives.
+
+The same scale-to-zero gap applies to purge: at `--min-instances=0` a paper past its
+retention cutoff is not deleted from storage until the next sweep runs, however long
+the service sits idle. Unlike the streak warning, this is never a *skip* — the purge
+query is idempotent and its cutoff is inclusive, so a paper that missed one sweep is
+still purged by the next one, just later than the 30-day figure the data-handling page
+states. The admin pipeline health screen's `purgeBacklog` metric (`lemely/db/admin_repo.py`,
+`pipeline_health`) surfaces exactly this lag — the count of attempts and console papers
+still present more than a day past their purge cutoff — so raise `--min-instances` if
+that number runs persistently above zero.
 
 At-risk rule 3 (≥14 days inactive) is still **not** delivered by anything: the alert
 fires on correction, and a student who just uploaded is by definition active.
@@ -521,6 +533,29 @@ secret is, and §2 says why that must be overridden.
 Still needed for anything public-facing, none of it built here: TLS termination
 (nginx listens on plain `:80`), a rate limiter on the auth endpoints, and log
 shipping. `LEMELY_LOGGING__FORMAT=json` is the one lever that already exists.
+
+### 5.7 Rollback
+
+**Rolling back past the paper-deletion release (migration `0039_paper_soft_delete`)
+needs a forward fix, not a Cloud Run revision rollback.** Pre-0039 code cannot read
+the two new enum values a revision rollback leaves in place: a teacher who has
+received a `review_withdrawn` notice gets a `LookupError` (500) opening their inbox,
+and every place that used to apply the soft-delete loader criterion stops applying
+it, so deleted papers — including any already purged from storage — reappear in
+history, averages and parent views. A schema-only `alembic downgrade` doesn't avoid
+this either: dropping `deleted_at` makes deleted papers visible again on its own,
+regardless of which code is running.
+
+If a Cloud Run revision rollback is genuinely unavoidable, run these two statements
+against the database **before** rolling back, and expect deleted papers to stay
+visible until the roll-forward:
+
+```sql
+DELETE FROM notifications WHERE type = 'review_withdrawn';
+UPDATE review_queue SET status = 'dismissed' WHERE status = 'withdrawn';
+```
+
+The safe path is always a forward fix on top of `0039`, not a rollback under it.
 
 ---
 

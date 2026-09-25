@@ -20,11 +20,18 @@ break the enum/preference-column vocabulary pin
 lands. ``teacher_papers.deleted_at`` is also added here (R I4) so a later task
 never has to edit an already-applied migration.
 
-Reversible, with one Postgres limitation: ``downgrade`` drops the columns, the
-index and the table, but **cannot remove the added enum values** — Postgres has
-no ``DROP VALUE``, and recreating ``reviewstatus``/``notificationtype`` would
-mean rewriting every dependent column for no benefit. This matches how 0037
-handled ``reviewreason``.
+``downgrade`` reverses the schema — drops the columns, the index and the table
+— but that is **not** the same as reversing behaviour, and it is not a safe
+incident-response rollback on its own. Two things it cannot undo: the added
+enum values (Postgres has no ``DROP VALUE``, and recreating
+``reviewstatus``/``notificationtype`` would mean rewriting every dependent
+column for no benefit — this matches how 0037 handled ``reviewreason``), and
+the fact that dropping ``deleted_at`` makes every already-deleted paper
+visible again, which is true regardless of which application code is running.
+``downgrade`` clears the ``review_withdrawn`` notifications and
+``withdrawn`` review-queue rows first so pre-0039 code does not 500 reading
+them, but the visibility change is unavoidable and is documented, with the
+incident-response alternative, in ``docs/deployment.md`` §5.7.
 """
 
 from collections.abc import Sequence
@@ -107,7 +114,14 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    """Downgrade schema. The two enum values stay; Postgres cannot drop them."""
+    """Downgrade schema. The two enum values stay; Postgres cannot drop them.
+
+    Clears the rows pre-0039 code cannot load through the old enums before
+    dropping the columns — see the module docstring and ``docs/deployment.md``
+    §5.7 for what this does and does not restore.
+    """
+    op.execute("DELETE FROM notifications WHERE type = 'review_withdrawn'")
+    op.execute("UPDATE review_queue SET status = 'dismissed' WHERE status = 'withdrawn'")
     op.drop_table("class_paper_exclusions")
     op.drop_index("ix_attempts_deleted_at", table_name="attempts")
     op.drop_column("notification_preferences", "review_withdrawn")
