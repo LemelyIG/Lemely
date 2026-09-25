@@ -79,6 +79,12 @@ describe("Grading.tsx — the delete control is not trapped inside the open cont
     expect(body).toMatch(/data-open-trigger=""/)
   })
 
+  it("carries a forced-colors outline for Windows High Contrast, where box-shadow does not render (WCAG 2.4.7)", () => {
+    const body = functionBody(source, "PaperCard")
+    expect(body).toMatch(/forced-colors:has-\[\[data-open-trigger\]:focus-visible\]:outline\b/)
+    expect(body).toMatch(/forced-colors:has-\[\[data-open-trigger\]:focus-visible\]:outline-2/)
+  })
+
   it("the hover lift lives on the container, not the clipped button, and is guarded for touch", () => {
     // Same review pass, Minor 1: `hover:-translate-y-0.5` on the button
     // shifted only the button's own content inside the container's fixed
@@ -140,6 +146,22 @@ describe("useTeacherApi.ts — useDeleteTeacherPaper refreshes from the server",
   it("also invalidates the deleted list, the surface the row moves to", () => {
     const body = functionBody(source, "useDeleteTeacherPaper")
     expect(body).toMatch(/deletedTeacherPapersKey/)
+  })
+
+  it("also invalidates the review queue, so a withdrawn item stops showing there", () => {
+    const body = functionBody(source, "useDeleteTeacherPaper")
+    expect(body).toMatch(/\["teacher", "review"\]/)
+  })
+
+  it("also invalidates the overview, so the 'Need your eyes' count stops being stale", () => {
+    const body = functionBody(source, "useDeleteTeacherPaper")
+    expect(body).toMatch(/\["teacher", "overview"\]/)
+  })
+
+  it("useRestoreTeacherPaper invalidates the same review-queue and overview surfaces", () => {
+    const body = functionBody(source, "useRestoreTeacherPaper")
+    expect(body).toMatch(/\["teacher", "review"\]/)
+    expect(body).toMatch(/\["teacher", "overview"\]/)
   })
 })
 

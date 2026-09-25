@@ -1,20 +1,4 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 — re-scored three times,
- * Task 17 review, R only. Pass 1: sibling `<button>` restructure (focus
- * ring, 44px tap target) moved R 4→5 — premature, the ring was real in
- * code, invisible in the browser (`outline-offset-2` drawn outside the
- * button's box, clipped by the container's `overflow-hidden`). Pass 2:
- * `outline-offset-[-2px]` — still premature, and for a reason a class
- * string cannot catch: `index.css`'s unlayered global `:focus-visible`
- * rule overrides every Tailwind `focus-visible:outline-*` utility
- * app-wide, so the offset direction was never actually reaching the
- * screen either way. Pass 3, the one this score is now honest about: a
- * `box-shadow` ring on the container (`has-[[data-open-trigger]
- * :focus-visible]:ring-2`), which the global rule does not touch and the
- * container's own overflow cannot clip — proved with `getComputedStyle`
- * in a real, keyboard-tabbed browser (Fix 3, task-17-report.md), not just
- * a class-string gate. Same fix shape for the hover lift, media-guarded
- * for touch. R stays 5 now that every claim behind it has been checked
- * against the rendered page rather than the source alone. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -248,61 +232,26 @@ function PaperCard({
       : "-"
 
   return (
-    // Not itself interactive. Task 17's keyboard-a11y review finding: the
-    // delete control used to render *inside* this element when this element
-    // itself was the `role="button" tabIndex={0} onKeyDown=...}` open
-    // target, so a keydown on the focused delete `<button>` (a real DOM
-    // descendant of this container, not a portal) bubbled straight to this
-    // container's own `onKeyDown` and fired `onOpen()` too — a keyboard
-    // reader could not reach the delete control without also reopening the
-    // paper. The fix is structural, not another stopPropagation: `onOpen`
-    // now lives on its own `<button>` sibling below, and `DeletePaperControl`
-    // is a sibling of that button rather than a descendant of it, so neither
-    // control's click or keydown has anywhere to bubble into the other.
+    // Not itself interactive; `onOpen` and `DeletePaperControl` each live on
+    // their own sibling `<button>` below so neither control's keydown
+    // bubbles into the other.
     <div
       ref={setCardNode}
       className={cn(
-        // Two `has-[]` indicators live here, on the container, rather than
-        // on the open `<button>` inside it — both for the same reason (the
-        // review's second pass, Important 1 and Minor 1): the container's
-        // `overflow-hidden` clips anything the button itself draws outside
-        // its own box, and every fix tried on the button so far turned out
-        // to draw there.
-        //
-        // `has-[:focus-visible]:ring-2 ring-focus-ring` is the *third*
-        // attempt at the focus ring. The first (an outset
-        // `focus-visible:outline-offset-2` on the button) was clipped, as
-        // above. The second (`outline-offset-[-2px]`, drawn inside the
-        // button) still lost: `index.css`'s global `:focus-visible` rule
-        // sits outside any `@layer`, so its `outline: 2px solid
-        // var(--focus-ring); outline-offset: 2px` beats every Tailwind
-        // `focus-visible:outline-*` utility on specificity/layer order
-        // regardless of what that utility says — the button's ring was
-        // still drawn outset and clipped, this file's own Tailwind class
-        // notwithstanding. A `box-shadow` ring sidesteps that: the global
-        // rule sets `outline`, never `box-shadow`, so nothing overrides it,
-        // and it needs no `@layer` change to the pre-existing, app-wide
-        // rule (out of scope here — logged in the Task 17 report instead).
-        // `has-[:focus-visible]` puts it on the container reading the
-        // button's own focus state, so it is the container's own
-        // `box-shadow` — an element's `overflow-hidden` clips its
-        // children's paint, never its own. Scoped to
-        // `[data-open-trigger]:focus-visible`, not a bare
-        // `has-[:focus-visible]`: `DeletePaperControl`'s own trigger
-        // button is *also* a direct child of this container (it renders
-        // through a `<>` fragment, so React flattens it in beside this
-        // `<button>` rather than nesting it), and a bare `has-[]` cannot
-        // tell the two buttons apart — tabbing to Delete would have shown
-        // this ring stacked on top of the delete button's own, separate
-        // focus ring. The `data-open-trigger` attribute below exists
-        // solely so this selector can name the open button specifically.
-        //
-        // `[@media(hover:hover)]:has-[:hover]:-translate-y-0.5` — review's
-        // Minor 1, second pass: `has-[:hover]` alone (unlike the kit's
-        // `hover:` utility) carries no built-in `(hover: hover)` guard, so
-        // a touch tap that leaves a phantom `:hover` stuck active would
-        // otherwise leave the card visibly lifted after the tap ends.
-        "relative rounded-md overflow-hidden bg-paper-raised border transition-transform [@media(hover:hover)]:has-[:hover]:-translate-y-0.5 has-[[data-open-trigger]:focus-visible]:ring-2 has-[[data-open-trigger]:focus-visible]:ring-focus-ring",
+        // Focus ring is a `box-shadow` on this container, scoped to
+        // `has-[[data-open-trigger]:focus-visible]` (the open button's own
+        // `data-` attribute, not the sibling delete button's), because
+        // `index.css`'s unlayered global `:focus-visible` rule overrides
+        // every Tailwind `focus-visible:outline-*` utility app-wide and the
+        // container's `overflow-hidden` clips anything the button itself
+        // draws outside its own box — a `box-shadow` on the container is
+        // affected by neither. `forced-colors:outline-*` adds a real
+        // outline for Windows High Contrast, where `box-shadow` does not
+        // render (WCAG 2.4.7); the container's own outline is never clipped
+        // by its own `overflow-hidden`, which only clips descendants.
+        // `[@media(hover:hover)]:has-[:hover]` guards the hover lift so a
+        // touch tap's phantom `:hover` doesn't leave the card stuck lifted.
+        "relative rounded-md overflow-hidden bg-paper-raised border transition-transform [@media(hover:hover)]:has-[:hover]:-translate-y-0.5 has-[[data-open-trigger]:focus-visible]:ring-2 has-[[data-open-trigger]:focus-visible]:ring-focus-ring forced-colors:has-[[data-open-trigger]:focus-visible]:outline forced-colors:has-[[data-open-trigger]:focus-visible]:outline-2 forced-colors:has-[[data-open-trigger]:focus-visible]:outline-[CanvasText] forced-colors:has-[[data-open-trigger]:focus-visible]:outline-offset-2",
         paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
@@ -316,15 +265,10 @@ function PaperCard({
         // its descendant, but is still a direct child of the same
         // container).
         data-open-trigger=""
-        // No `focus-visible:outline-*` here (see the container's own
-        // comment on why two earlier attempts at exactly that both lost to
-        // `index.css`'s global rule) — the visible indicator lives on the
-        // container above instead, via `has-[:focus-visible]`. This button
-        // still receives the *invisible* global outline on focus (the
-        // pre-existing app-wide rule fires on every focusable element,
-        // unconditionally); that outline is real but permanently clipped
-        // here, which is precisely the defect this whole chain of fixes
-        // exists to route around without touching that shared rule.
+        // No `focus-visible:outline-*` here — the visible indicator lives on
+        // the container above instead, via `has-[:focus-visible]` (see its
+        // comment). This button still receives the app-wide global outline
+        // on focus, but it is permanently clipped by the container.
         className="block w-full rounded-md text-start cursor-pointer"
       >
         <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
