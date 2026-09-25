@@ -16,11 +16,13 @@ shell's exported vars (if any) still apply, exactly as in CI.
 
 from __future__ import annotations
 
+import logging
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog
 
 import lemely.runtime.config as config_module
 from lemely.core.loose_schemas import (
@@ -495,6 +497,77 @@ def _seed_ambient_grade_boundaries() -> Iterator[None]:
         except sa.exc.SQLAlchemyError:
             pass
         invalidate_reference_cache()
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_after_each_test() -> Iterator[None]:
+    """Undo any process-wide structlog configuration a test performs.
+
+    `lemely.runtime.logging.configure_logging()` calls `structlog.configure(...,
+    cache_logger_on_first_use=True)` and installs a bridge handler on the
+    stdlib root logger. It is invoked for real (not mocked) by a lot more of
+    this suite than its own tests: every CLI test that drives
+    `lemely.app.cli.main` reaches the `cli()` click group's callback, which
+    calls `configure_logging()` on *every single invocation*
+    (`lemely/app/cli.py:184`) -- and that is dozens of test functions across
+    `test_cli*.py`, `test_accuracy_harness.py`, `test_question_generation.py`,
+    `test_vapid_keygen.py`, and `tests/eval/test_labeller_cli.py`.
+    `tests/test_runtime_logging.py` and `tests/test_web_entrypoint.py` call it
+    directly too.
+
+    Once `cache_logger_on_first_use=True` is set, it is never reset by
+    anyone -- and every subsequent real `configure_logging()` call builds a
+    brand new `processors` list and replaces `structlog`'s global one with it
+    (`structlog.configure(processors=[...])`, a *new* list object each time,
+    not a mutation of the old one). Any module-level logger
+    (`log = structlog.get_logger(__name__)`, e.g. `lemely/db/review_repo.py`)
+    that has already been bound -- which happens the first time it is used
+    while caching is on -- keeps a permanent reference to whichever processors
+    list was live *at that moment*. A later, unrelated `configure_logging()`
+    call elsewhere in the suite orphans that reference for good: the logger
+    goes on using the old list forever, while
+    `structlog.testing.capture_logs()` (used by this suite's `capture_logs()`
+    tests) works by mutating *the current* global list in place. Once a
+    logger's cached reference and the current global list are different
+    objects, `capture_logs()` can mutate all it wants and that logger's output
+    will never show up in the captured entries -- reproduced in isolation as:
+    `configure_logging(); log.info(...)` (caches); `configure_logging()` again
+    (orphans it); `with capture_logs(): log.info(...)` yields `[]`.
+
+    This is exactly why `tests/test_web_review.py`'s crop-route tests
+    (`test_crop_route_404s_for_an_item_whose_attempt_has_no_upload` and
+    siblings) saw an empty captured-log list only when the full suite ran, and
+    passed every time the file ran alone: alphabetically-earlier CLI tests (and
+    `test_runtime_logging.py`/`test_web_entrypoint.py`) are what call
+    `configure_logging()` for real before `lemely.db.review_repo`'s logger
+    ever gets used, and it is *that* accumulated pollution -- not
+    `test_web_entrypoint.py` alone -- that orphans it. Fixing only
+    `test_web_entrypoint.py`'s own tests would leave the CLI tests free to
+    keep doing the same thing to the next logger some other test's
+    `capture_logs()` depends on. Resetting `structlog`'s global defaults after
+    *every* test, regardless of which one touched them, is the only fix that
+    covers all of these call sites at once without having to find, and keep
+    finding, every place that calls `configure_logging()` for real.
+
+    Restoring the stdlib root logger's handlers/level the same way
+    `test_web_entrypoint.py`'s own `pristine_root_logger` fixture already does
+    covers the other half of what `configure_logging()` mutates (it clears
+    root's handlers and installs its own bridge handler), so nothing here is
+    redundant with that fixture -- this one just makes the guarantee
+    suite-wide instead of local to one file.
+    """
+    root = logging.getLogger()
+    saved_handlers = list(root.handlers)
+    saved_level = root.level
+    try:
+        yield
+    finally:
+        structlog.reset_defaults()
+        for handler in list(root.handlers):
+            root.removeHandler(handler)
+        for handler in saved_handlers:
+            root.addHandler(handler)
+        root.setLevel(saved_level)
 
 
 @pytest.fixture
