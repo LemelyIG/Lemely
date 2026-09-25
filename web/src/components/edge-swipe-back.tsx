@@ -2,6 +2,7 @@
 import { useEffect, useRef } from "react"
 import { useLocation, useNavigate } from "react-router-dom"
 import { useDragGesture } from "@/lib/gestures/useDragGesture"
+import { GESTURE_INTERACTIVE_SELECTOR } from "@/lib/gestures/interactiveSelector"
 import { EDGE_ZONE_PX, edgeSwipeDecision } from "@/lib/nav/edgeSwipeBack"
 import { backTarget } from "@/lib/nav/backTarget"
 import { isStandaloneDisplay } from "@/lib/pwa/useInstallPrompt"
@@ -45,6 +46,17 @@ export function EdgeSwipeBack() {
     enabled: standalone,
     startFilter: (event) => {
       if (typeof window === "undefined") return false
+      // Issue #246/#247's exact mechanism, found by the opus review of that
+      // fix: `rootRef` is `document.documentElement`, so with no exemption
+      // here, a tap on ANY interactive control that happens to render inside
+      // the leading (or, under `dir="rtl"`, trailing) 24px edge strip — the
+      // first `BottomNav` item, a full-bleed row's own link — used to arm
+      // this gesture in a standalone PWA, `useDragGesture` captured the
+      // pointer on the document root, and the click never reached the
+      // control. Checked before the edge-zone math below so it applies
+      // regardless of direction.
+      const target = event.target
+      if (target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null) return false
       const dir = getComputedStyle(document.documentElement).direction === "rtl" ? -1 : 1
       dirRef.current = dir
       startXRef.current = event.clientX

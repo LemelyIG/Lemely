@@ -126,27 +126,40 @@ export function usePullToRefresh(
       // `startFilter` exemption (the edge-swipe strip, the scroll-top
       // check).
       //
-      // Considered and rejected: making a press-then-drag on a control
-      // promote into a pull, by having `useDragGesture` track the pointer
-      // on any target but defer `setPointerCapture` until real movement is
-      // confirmed, instead of hard-rejecting interactive targets here.
-      // That is buildable — `onPointerMove` already bubbles to `el` before
-      // capture exists, so pre-commit tracking works — but the "how much
-      // movement is real" question already has an answer in this codebase,
-      // `commitThreshold` (10px), and using anything looser risks
-      // recapturing the exact bug this fix removes: ordinary hand tremor on
-      // an intended tap reads as movement too. Gating capture on
-      // `commitThreshold` instead of on the first pixel means `onProgress`
-      // and the imperative transform — which currently start on the very
-      // first `pointermove`, unconditionally — would go silent for the
-      // first ~10px of every drag on all four `useDragGesture` consumers
-      // (`EdgeSwipeBack`, the nav drawer's dismiss-drag, the flashcard/quiz
-      // swipes, and this one), not just presses that start on a control.
-      // That is a felt, cross-cutting motion change to a shared primitive,
-      // not a scoped fix to a click-swallowing bug, and it is not what this
-      // issue asked for. Hard-rejecting here costs one interaction — a
-      // pull cannot be initiated by pressing directly on a control — in
-      // exchange for touching nothing else in the app.
+      // Considered and rejected, twice, on two different (wrong) reasons
+      // before landing on the real one — recorded so a third pass does not
+      // repeat the exercise: making a press-then-drag on a control promote
+      // into a pull, by having `useDragGesture` track the pointer on any
+      // target but defer `setPointerCapture` until real movement is
+      // confirmed, instead of hard-rejecting interactive targets in
+      // `startFilter`.
+      //
+      // The reason this stays hard-rejected: `setPointerCapture` at
+      // `pointerdown` is what guarantees `endDrag` ever runs at all.
+      // `useDragGesture` attaches `pointermove`/`pointerup`/`pointercancel`
+      // directly on the surface element, and today capture means every one
+      // of those events retargets to it regardless of where the pointer
+      // physically travels — off the element, off the screen, anywhere.
+      // Defer capture until `commitThreshold` is crossed and, during that
+      // pre-commit window, those listeners only fire while the pointer is
+      // still hit-testing inside the surface's own subtree: a fast enough
+      // pre-threshold movement — `commitThreshold` defaults to 10px here
+      // (this hook does not override it), and other `useDragGesture`
+      // consumers set it far higher still (`QuizTaker`'s is 60px, the nav
+      // drawer's is ~40% of its own panel width) — can carry the pointer
+      // out from under the surface (or under an intervening element)
+      // before capture would ever be requested, so `pointerup` fires
+      // somewhere the surface's own listener never sees.
+      // The result: `stateRef.current` never clears, the move/up/cancel
+      // listeners stay attached, and the drag never gets to `springBack`
+      // whatever it already wrote to `style.transform`. That is the exact
+      // failure class `useDragGesture.ts`'s own `H5` cleanup effect exists
+      // to prevent for a *different* trigger (a stale `enabled` toggle
+      // mid-drag) — deferred capture would reopen the same class of bug
+      // through a different door. Hard-rejecting here costs one
+      // interaction — a pull cannot be initiated by pressing directly on a
+      // control — in exchange for keeping that guarantee intact for every
+      // `useDragGesture` consumer, not just this one.
       const target = event.target
       if (target instanceof Element && target.closest(GESTURE_INTERACTIVE_SELECTOR) !== null) return false
       const el = ref.current
