@@ -712,6 +712,20 @@ def _payload_kwargs(**overrides: object) -> dict[str, object]:
                 "expectedOrderByStudentKey": ["declining", "inactive"],
             },
         },
+        "deletion": {
+            "classId": "dc1",
+            "className": "P8 Deletion Class tag123",
+            "student": {"userId": "ds1", "subjectCode": "0625", "attemptIds": ["da1", "da2"]},
+            "integrityStudent": {
+                "userId": "di1",
+                "subjectCode": "0625",
+                "attemptId": "dia1",
+                "reviewItemId": "dri1",
+            },
+            "remarkStudent": {"userId": "dr1", "attemptIds": ["drm1", "drm2"]},
+            "reviewItemId": "dqi1",
+            "consolePaperId": "dcp1",
+        },
     }
     base.update(overrides)
     return base
@@ -814,6 +828,20 @@ class TestBuildResultPayload:
                     "weeklyXpByStudentKey": {"declining": 200, "inactive": 150},
                     "expectedOrderByStudentKey": ["declining", "inactive"],
                 },
+            },
+            "deletion": {
+                "classId": "dc1",
+                "className": "P8 Deletion Class tag123",
+                "student": {"userId": "ds1", "subjectCode": "0625", "attemptIds": ["da1", "da2"]},
+                "integrityStudent": {
+                    "userId": "di1",
+                    "subjectCode": "0625",
+                    "attemptId": "dia1",
+                    "reviewItemId": "dri1",
+                },
+                "remarkStudent": {"userId": "dr1", "attemptIds": ["drm1", "drm2"]},
+                "reviewItemId": "dqi1",
+                "consolePaperId": "dcp1",
             },
         }
 

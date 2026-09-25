@@ -698,6 +698,7 @@ def accuracy_report_for_score(
     confidence: ConfidenceBand = ConfidenceBand.HIGH,
     confidence_score: float = 0.95,
     needs_teacher_review: bool = False,
+    plagiarism_flagged: bool = False,
 ) -> AccuracyReport:
     """Build a minimal, valid :class:`AccuracyReport` carrying ``score``.
 
@@ -718,6 +719,11 @@ def accuracy_report_for_score(
     fan-out (never a hand-inserted ``review_queue`` row) — see
     ``REVIEW_ITEM_CONFIDENCE_SCORE``'s docstring for why the score/date/subject
     stay untouched.
+
+    ``plagiarism_flagged`` (Task 18 e2e) is the same kind of override, for the
+    D8 integrity hold: ``AttemptRepository._persist``'s real fan-out queues a
+    genuine ``plagiarism_flag`` review item off this one flag, never a
+    hand-inserted row — see the paper-deletion student's own seeding below.
     """
     percentage, grade = score
     awarded = round(percentage)
@@ -738,6 +744,7 @@ def accuracy_report_for_score(
         expected_answer="seeded",
         topic="Seed topic",
         marker_source="deterministic",
+        plagiarism_flagged=plagiarism_flagged,
     )
     correction = CorrectionResult(metadata=_exam_metadata(paper_number), questions=[question])
     weaknesses = WeaknessReport(weak_areas=[])
@@ -1042,6 +1049,7 @@ def build_result_payload(
     practice: dict[str, Any],
     study_plan: dict[str, Any],
     engagement: dict[str, Any],
+    deletion: dict[str, Any],
 ) -> dict[str, Any]:
     """Assemble the documented output contract from already-computed pieces.
 
@@ -1056,7 +1064,10 @@ def build_result_payload(
     (issue #10, Task 23 e2e) — the pre-existing ``schoolAdmin`` above has no
     ``SchoolMembership`` (spec §1.1's own finding), so it cannot mint a seat
     invite; this is a second, real school_admin who administers a real school
-    with a real quota, via `_provision_school_with_admin`.
+    with a real quota, via `_provision_school_with_admin`. ``deletion`` is
+    additive on top of ``engagement`` (Task 18 e2e) — the paper-deletion
+    class and its three dedicated students back `paper-deletion.spec.ts`'s
+    eight design scenarios plus R7.
     """
     return {
         "runTag": run_tag,
@@ -1075,6 +1086,7 @@ def build_result_payload(
         "practice": practice,
         "studyPlan": study_plan,
         "engagement": engagement,
+        "deletion": deletion,
     }
 
 
@@ -2010,6 +2022,192 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         },
     }
 
+    # -- Paper deletion (Task 18 e2e, spec 2026-09-22) -------------------------
+    # A dedicated class plus three students backing the eight scenarios plus
+    # R7, kept off the P3.10 roster/below-target classes so none of their
+    # pinned numbers (teacher-journey.spec.ts's 3 students/69%/2 at-risk,
+    # at-risk-flags.spec.ts's exact reason lists) move.
+    _log("Creating the paper-deletion class and its three dedicated students")
+    deletion_class_row = class_service.create_class(teacher_uuid, f"P8 Deletion Class {run_tag}")
+    assert deletion_class_row.join_code is not None  # noqa: S101 - see create_class
+
+    deletion_student = _signup_account("deletion", Role.student, run_tag)
+    deletion_integrity_student = _signup_account("deletion-integrity", Role.student, run_tag)
+    deletion_remark_student = _signup_account("deletion-remark", Role.student, run_tag)
+    deletion_uuid = uuid.UUID(deletion_student["userId"])
+    deletion_integrity_uuid = uuid.UUID(deletion_integrity_student["userId"])
+    deletion_remark_uuid = uuid.UUID(deletion_remark_student["userId"])
+    # Only the two students whose papers a teacher must see (the review item,
+    # the class-papers/unshare surfaces) are enrolled — the re-mark student's
+    # own scenario (R7) never involves a teacher at all.
+    class_service.join_by_code(deletion_uuid, deletion_class_row.join_code)
+    class_service.join_by_code(deletion_integrity_uuid, deletion_class_row.join_code)
+    student_profile_service.mark_onboarding_complete(deletion_uuid)
+    student_profile_service.mark_onboarding_complete(deletion_integrity_uuid)
+    student_profile_service.mark_onboarding_complete(deletion_remark_uuid)
+
+    _log(
+        "Persisting the paper-deletion student's four distinct papers (paper_number "
+        "1..4, oldest to newest) — the last (latest) one deliberately low-confidence, "
+        "T-07's real review-queue fan-out, for the unshare/reshare scenarios (R3, and "
+        "R9's 'seed the unshared paper as the latest')"
+    )
+    deletion_scores: list[tuple[float, str]] = [(60.0, "D"), (68.0, "C"), (74.0, "B"), (81.0, "B")]
+    deletion_attempt_ids: list[uuid.UUID] = []
+    deletion_upload_repo = deps.get_student_upload_repo()
+    for offset, score in enumerate(deletion_scores):
+        recorded_at = now - timedelta(days=4 - offset)
+        is_latest = offset == len(deletion_scores) - 1
+        report = accuracy_report_for_score(
+            score,
+            paper_number=offset + 1,
+            confidence=ConfidenceBand.LOW if is_latest else ConfidenceBand.HIGH,
+            confidence_score=REVIEW_ITEM_CONFIDENCE_SCORE if is_latest else 0.95,
+            needs_teacher_review=is_latest,
+        )
+        # A real `uploads` row per paper — `PaperDeletionService.delete`
+        # refuses an attempt with no `upload_id` at all ("Only uploaded
+        # papers can be deleted."), the same refusal a quiz/file-store record
+        # gets, so a deletable paper needs one.
+        deletion_upload_id = deletion_upload_repo.create_upload(
+            user_id=deletion_student["userId"],
+            storage_path=f"e2e/{deletion_uuid}/paper-{offset + 1}/scan.pdf",
+            original_filename=f"e2e-deletion-paper-{offset + 1}.pdf",
+            content_type="application/pdf",
+            byte_size=1024,
+        )
+        deletion_attempt_ids.append(
+            attempt_repo.persist_correction(
+                user_id=deletion_student["userId"],
+                report=report,
+                upload_id=deletion_upload_id,
+                recorded_at=recorded_at.isoformat(),
+            )
+        )
+
+    _log("Locating the paper-deletion student's low_confidence review-queue row (R3/R9)")
+    deletion_review_rows = [
+        r
+        for r in review_service.list_queue(
+            teacher_uuid,
+            Role.teacher,
+            class_id=deletion_class_row.class_id,
+            reason="low_confidence",
+        ).rows
+        if r.attempt_id == deletion_attempt_ids[-1]
+    ]
+    if len(deletion_review_rows) != 1:
+        raise RuntimeError(
+            "Expected exactly 1 low_confidence review-queue row for the paper-deletion "
+            f"student's latest attempt, found {len(deletion_review_rows)}."
+        )
+    deletion_review_item = deletion_review_rows[0]
+
+    _log(
+        "Persisting the integrity-flagged paper (D8's hold): plagiarism_flagged on its "
+        "one question, real fan-out queues a genuine plagiarism_flag review item"
+    )
+    deletion_integrity_upload_id = deletion_upload_repo.create_upload(
+        user_id=deletion_integrity_student["userId"],
+        storage_path=f"e2e/{deletion_integrity_uuid}/paper-1/scan.pdf",
+        original_filename="e2e-deletion-integrity-paper-1.pdf",
+        content_type="application/pdf",
+        byte_size=1024,
+    )
+    deletion_integrity_attempt_id = attempt_repo.persist_correction(
+        user_id=deletion_integrity_student["userId"],
+        report=accuracy_report_for_score((66.0, "C"), paper_number=1, plagiarism_flagged=True),
+        upload_id=deletion_integrity_upload_id,
+        # Recent, so `integrity_hold_until(recorded_at)` (recorded_at +
+        # RETENTION_DAYS) is still in the future — a live hold to refuse
+        # against, with a real `deletableFrom` date in the 409 body.
+        recorded_at=now.isoformat(),
+    )
+    integrity_review_rows = [
+        r
+        for r in review_service.list_queue(
+            teacher_uuid,
+            Role.teacher,
+            class_id=deletion_class_row.class_id,
+            reason="plagiarism_flag",
+        ).rows
+        if r.attempt_id == deletion_integrity_attempt_id
+    ]
+    if len(integrity_review_rows) != 1:
+        raise RuntimeError(
+            "Expected exactly 1 plagiarism_flag review-queue row for the integrity "
+            f"student's attempt, found {len(integrity_review_rows)}."
+        )
+    deletion_integrity_review_item = integrity_review_rows[0]
+
+    _log(
+        "Persisting the re-mark student's shared upload (R7): the same scan marked "
+        "twice, two attempts sharing one upload_id — deleting either must take both"
+    )
+    deletion_remark_upload_id = deps.get_student_upload_repo().create_upload(
+        user_id=deletion_remark_student["userId"],
+        storage_path=f"e2e/{deletion_remark_uuid}/remark/scan.pdf",
+        original_filename="e2e-remark-scan.pdf",
+        content_type="application/pdf",
+        byte_size=2048,
+    )
+    deletion_remark_attempt_ids = [
+        attempt_repo.persist_correction(
+            user_id=deletion_remark_student["userId"],
+            report=accuracy_report_for_score((70.0, "C"), paper_number=1),
+            upload_id=deletion_remark_upload_id,
+            recorded_at=(now - timedelta(days=2)).isoformat(),
+        ),
+        attempt_repo.persist_correction(
+            user_id=deletion_remark_student["userId"],
+            report=accuracy_report_for_score((73.0, "B"), paper_number=1),
+            upload_id=deletion_remark_upload_id,
+            recorded_at=(now - timedelta(days=1)).isoformat(),
+        ),
+    ]
+
+    _log("Uploading one teacher-console paper for the R2 console-deletion scenario")
+    deletion_console_repo = deps.get_teacher_paper_repo()
+    deletion_console_paper_id = uuid.uuid4()
+    deletion_console_repo.create(
+        paper_id=deletion_console_paper_id,
+        uploaded_by=teacher_uuid,
+        storage_path=f"teacher/{teacher_uuid}/{deletion_console_paper_id.hex}/scan.pdf",
+        scheme_storage_path=None,
+        original_filename="e2e-console-scan.pdf",
+        content_type="application/pdf",
+        byte_size=4096,
+    )
+    # paper_number=9: distinct from every paper_number used above/elsewhere in
+    # this module, purely so a human skimming a screenshot of this console
+    # paper can tell it apart from the student-side fixtures; never read by
+    # any assertion.
+    deletion_console_repo.finish(
+        deletion_console_paper_id, accuracy_report_for_score((72.0, "C"), paper_number=9)
+    )
+
+    deletion_dict = {
+        "classId": str(deletion_class_row.class_id),
+        "className": deletion_class_row.name,
+        "student": {
+            **deletion_student,
+            "subjectCode": SUBJECT_CODE,
+            "attemptIds": [str(a) for a in deletion_attempt_ids],
+        },
+        "integrityStudent": {
+            **deletion_integrity_student,
+            "subjectCode": SUBJECT_CODE,
+            "attemptId": str(deletion_integrity_attempt_id),
+            "reviewItemId": str(deletion_integrity_review_item.item_id),
+        },
+        "remarkStudent": {
+            **deletion_remark_student,
+            "attemptIds": [str(a) for a in deletion_remark_attempt_ids],
+        },
+        "reviewItemId": str(deletion_review_item.item_id),
+        "consolePaperId": str(deletion_console_paper_id),
+    }
+
     _log("Seeding complete")
     return build_result_payload(
         run_tag=run_tag,
@@ -2028,6 +2226,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         practice=practice_dict,
         study_plan=study_plan_dict,
         engagement=engagement_dict,
+        deletion=deletion_dict,
     )
 
 
