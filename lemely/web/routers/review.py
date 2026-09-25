@@ -668,17 +668,19 @@ def get_review_item_crop(
     except Exception as exc:
         # A scan that cannot be rendered is not a server fault — it is a stored
         # file that is not the document type it claimed to be, or one whose page
-        # geometry no renderer will accept.
+        # geometry no renderer will accept. The renderer's own message is for
+        # the log; the client gets a fixed one.
         log.warning("review_crop_render_failed", item_id=logged_id, error=str(exc))
-        raise HTTPException(status_code=422, detail=f"Could not render this scan: {exc}") from exc
+        raise HTTPException(status_code=422, detail="Could not render this scan") from exc
 
-    # Immutable for the lifetime of the item id: the stored scan never changes
-    # once uploaded and the box is written once, so the crop is cacheable for
-    # the same reason the console's page-1 thumbnail is.
+    # Never stored. The bytes do not change for an item id, but who may see
+    # them does: a student leaves a class, a teacher signs out of a shared
+    # school computer. The browser cache is keyed by URL, not by the bearer
+    # token, so a cached crop would reopen with no authorization check at all.
     return Response(
         content=crop,
         media_type="image/png",
-        headers={"Cache-Control": "private, max-age=3600"},
+        headers={"Cache-Control": "private, no-store"},
     )
 
 

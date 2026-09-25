@@ -1525,7 +1525,7 @@ def test_crop_route_returns_a_png_of_the_boxed_region(
     resp = client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 200
     assert resp.headers["content-type"] == "image/png"
-    assert resp.headers["cache-control"] == "private, max-age=3600"
+    assert resp.headers["cache-control"] == "private, no-store"
     got = Image.open(io.BytesIO(resp.content)).convert("RGB")
 
     with pymupdf.open(stream=scan, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
@@ -2422,6 +2422,66 @@ def test_a_pil_failure_inside_the_crop_is_a_422_not_a_500(
     resp = lenient_client.get(f"/api/teacher/review/{item_id}/crop")
     assert resp.status_code == 422, (resp.status_code, resp.text)
     assert "Could not render this scan" in resp.json()["detail"]
+
+
+def test_the_crop_is_never_kept_in_the_browser_cache(
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+) -> None:
+    """A student's handwriting must not outlive the check that let a teacher see it.
+
+    The browser cache is keyed by URL, not by the bearer token. A cached crop
+    could be reopened on a shared school computer after the teacher signs out,
+    or after the student leaves the class, with no request reaching the server.
+    """
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200
+    directives = {d.strip() for d in resp.headers["cache-control"].split(",")}
+    assert "no-store" in directives, directives
+    assert not any(d.startswith("max-age") for d in directives), directives
+
+
+def test_an_unrenderable_scan_does_not_echo_the_renderer_error(
+    lenient_client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The client gets a fixed message; the renderer's own text goes to the log.
+
+    Requested with the id upper-cased, so the log line is shown to carry the
+    canonical id and not whatever spelling the caller sent.
+    """
+    from PIL import Image as PILImage
+
+    monkeypatch.setattr(PILImage, "MAX_IMAGE_PIXELS", 16)
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker, class_service, storage=storage_backend, scan=_synthetic_scan()
+    )
+    _use_review_service(lenient_client, review_service)
+    _use_storage(lenient_client, storage_backend)
+    _auth_as(lenient_client, teacher, Role.teacher)
+
+    with structlog.testing.capture_logs() as logs:
+        resp = lenient_client.get(f"/api/teacher/review/{str(item_id).upper()}/crop")
+    assert resp.status_code == 422, (resp.status_code, resp.text)
+    assert resp.json()["detail"] == "Could not render this scan"
+
+    (failed,) = [e for e in logs if e["event"] == "review_crop_render_failed"]
+    assert failed["item_id"] == str(item_id)
+    assert "decompression bomb" in failed["error"]
 
 
 def test_the_route_and_the_extractor_sniff_a_pdf_the_same_way(tmp_path: Path) -> None:
