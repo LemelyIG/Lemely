@@ -341,6 +341,7 @@ from lemely.db.models.enums import (
     QuestionSource,
     QuizQuestionStatus,
     Role,
+    UploadStatus,
     XpSource,
 )
 from lemely.db.models.flashcards import DeckOrigin, ReviewGrade
@@ -445,18 +446,57 @@ REVIEW_ITEM_MATCHED_POINT_IDS = ["p1"]
 REVIEW_ITEM_SOURCE_BOX = SourceBox(page=0, box=[100, 100, 400, 400])
 
 
-def review_item_source_scan() -> bytes:
-    """A one-page PDF standing in for the `inactive` student's scan.
+#: Box fill colour per `review_item_source_scan` variant, drawn EXACTLY
+#: box-aligned to `REVIEW_ITEM_SOURCE_BOX` (never a whole-page fill -- see
+#: that function's own doc for why a whole-page fill cannot prove the crop
+#: route cropped the right region at all). Two boxed items (the `inactive`
+#: student's, and the rationale-only student's, both below) need to be
+#: tellable apart by their rendered crop alone, for the C1 navigation test
+#: (`web/e2e/teacher-review.spec.ts`): open boxed item A, boxed item B, back
+#: to A, assert the crop shown is A's colour, never B's.
+_REVIEW_ITEM_SCAN_BOX_FILL: dict[str, tuple[int, int, int]] = {
+    "a": (255, 0, 0),  # red
+    "b": (0, 200, 0),  # green
+}
+
+#: Same scheme `tests/test_web_review.py`'s `_synthetic_scan` uses: a colour
+#: OUTSIDE the box, distinct from either variant's box colour, so a crop of
+#: the wrong region (or the whole uncropped page) reads as neither pure red
+#: nor pure green -- it is a mix of this and the box colour, or this alone.
+_REVIEW_ITEM_SCAN_OUTSIDE_FILL: tuple[int, int, int] = (0, 0, 255)  # blue
+
+
+def _fill(rgb: tuple[int, int, int]) -> list[float]:
+    """`draw_rect(fill=...)` wants 0-1 floats; `rgb` is documented in 0-255."""
+    return [channel / 255 for channel in rgb]
+
+
+def review_item_source_scan(variant: str = "a") -> bytes:
+    """A one-page PDF standing in for a boxed review item's scan.
 
     Only `GET /teacher/review/{itemId}/crop` (task #71) ever opens this file:
     it renders page 0 with PyMuPDF and crops `REVIEW_ITEM_SOURCE_BOX` out of
-    it, so the only requirement here is a valid, renderable single page --
-    unlike `test_web_review.py`'s `_synthetic_scan`, this doesn't need a
-    second colour census, since no test asserts what the crop's pixels show,
-    only that one loads (`naturalWidth > 0`).
+    it. A whole-page-uniform fill (this function's first version) cannot
+    prove that happened correctly: `naturalWidth > 0` passes identically for
+    the right region, the wrong region, the wrong page, and a blank image of
+    the right size, since every one of those renders SOME PNG the browser can
+    decode. So the fill is box-ALIGNED, not page-uniform: a colour EXACTLY at
+    `REVIEW_ITEM_SOURCE_BOX`'s coordinates (`_REVIEW_ITEM_SCAN_BOX_FILL`),
+    a DIFFERENT colour everywhere else (`_REVIEW_ITEM_SCAN_OUTSIDE_FILL`) --
+    the same scheme `tests/test_web_review.py`'s `_synthetic_scan` already
+    uses for exactly this reason. A correctly-cropped, correctly-padded
+    region samples as the box colour at its centre; the wrong region, the
+    whole page, or a blank image do not.
+
+    The label text sits at the bottom of the page (`y=800` on an 842pt-tall
+    page), well clear of `REVIEW_ITEM_SOURCE_BOX`'s `[100, 100, 400, 400]`
+    (0-1000 scale, so roughly the page's own top-left third) -- it labels the
+    page for anyone opening the PDF directly, and must never fall inside the
+    box itself, which needs to stay a pure, unbroken fill for the pixel
+    sample above to be deterministic.
 
     **This repository is public and this is the seed everyone runs.** The
-    page is a flat generated colour block plus machine-set label text, not a
+    page is generated colour blocks plus machine-set label text, not a
     render of anything resembling handwriting on a real script -- no
     scanned-paper texture, no simulated ruled lines, nothing a screenshot of
     this fixture could be mistaken for a student's actual work. Team-lead
@@ -468,12 +508,23 @@ def review_item_source_scan() -> bytes:
     doc = pymupdf.open()
     try:
         page = doc.new_page(width=595, height=842)  # A4 at 72 dpi
-        page.draw_rect(page.rect, color=None, fill=(0.85, 0.85, 0.9))
+        page.draw_rect(page.rect, color=None, fill=_fill(_REVIEW_ITEM_SCAN_OUTSIDE_FILL))
+        ymin, xmin, ymax, xmax = REVIEW_ITEM_SOURCE_BOX.box
+        page.draw_rect(
+            pymupdf.Rect(
+                xmin / 1000 * page.rect.width,
+                ymin / 1000 * page.rect.height,
+                xmax / 1000 * page.rect.width,
+                ymax / 1000 * page.rect.height,
+            ),
+            color=None,
+            fill=_fill(_REVIEW_ITEM_SCAN_BOX_FILL[variant]),
+        )
         page.insert_text(
-            (40, 60),
-            "SEED FIXTURE -- NOT A REAL SCAN",
-            fontsize=18,
-            color=(0.2, 0.2, 0.2),
+            (40, 800),
+            f"SEED FIXTURE {variant.upper()} -- NOT A REAL SCAN",
+            fontsize=14,
+            color=(1, 1, 1),
         )
         return doc.tobytes()
     finally:
@@ -1688,7 +1739,7 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     inactive_uuid = uuid.UUID(inactive["userId"])
     inactive_upload_id = uuid.uuid4()
     inactive_scan_object_path = f"students/{inactive_uuid}/{inactive_upload_id.hex}/scan.pdf"
-    inactive_scan_bytes = review_item_source_scan()
+    inactive_scan_bytes = review_item_source_scan("a")
     with get_sessionmaker()() as upload_session, upload_session.begin():
         upload_session.add(
             Upload(
@@ -1698,6 +1749,11 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
                 original_filename="scan.pdf",
                 content_type="application/pdf",
                 byte_size=len(inactive_scan_bytes),
+                # This attempt is already fully marked by the time this row is
+                # written -- `pending` (the server default) would misstate a
+                # fixture that never goes through the real extract/grade
+                # pipeline this status otherwise tracks.
+                status=UploadStatus.complete,
             )
         )
     # The same backend `lemely.web.deps.get_storage_backend` hands the running
@@ -1860,6 +1916,40 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
     class_service.join_by_code(
         uuid.UUID(rationale_only_review["userId"]), rationale_only_review_class_row.join_code
     )
+    _log(
+        "Storing a second, visually distinct scan behind the rationale-only "
+        "attempt (C1 review of task #72), so the navigation test has two "
+        "boxed items whose crops are tellable apart"
+    )
+    rationale_only_upload_id = uuid.uuid4()
+    rationale_only_uuid = uuid.UUID(rationale_only_review["userId"])
+    rationale_only_scan_object_path = (
+        f"students/{rationale_only_uuid}/{rationale_only_upload_id.hex}/scan.pdf"
+    )
+    rationale_only_scan_bytes = review_item_source_scan("b")
+    with (
+        get_sessionmaker()() as rationale_only_upload_session,
+        rationale_only_upload_session.begin(),
+    ):
+        rationale_only_upload_session.add(
+            Upload(
+                id=rationale_only_upload_id,
+                user_id=rationale_only_uuid,
+                storage_path=rationale_only_scan_object_path,
+                original_filename="scan.pdf",
+                content_type="application/pdf",
+                byte_size=len(rationale_only_scan_bytes),
+                # See the `inactive` upload's own comment above -- same reason.
+                status=UploadStatus.complete,
+            )
+        )
+    deps.get_storage_backend().upload(
+        deps.get_settings().storage.bucket,
+        rationale_only_scan_object_path,
+        rationale_only_scan_bytes,
+        "application/pdf",
+    )
+
     rationale_only_review_report = accuracy_report_for_score(
         RATIONALE_ONLY_REVIEW_SCORE,
         paper_number=1,
@@ -1869,10 +1959,12 @@ def seed(*, run_tag: str | None = None) -> dict[str, Any]:
         point_notes=rationale_only_review_point_notes(),
         # Deliberately no matched_point_ids/point_verdicts -- see
         # rationale_only_review_point_notes()'s own docstring.
+        source_box=REVIEW_ITEM_SOURCE_BOX,
     )
     rationale_only_review_attempt_id = attempt_repo.persist_correction(
         user_id=rationale_only_review["userId"],
         report=rationale_only_review_report,
+        upload_id=rationale_only_upload_id,
         recorded_at=rationale_only_review_recorded_at(now).isoformat(),
         mark_scheme=rationale_only_review_scheme(),
     )

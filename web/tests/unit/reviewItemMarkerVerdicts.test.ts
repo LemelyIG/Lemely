@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest"
 import { readFileSync } from "node:fs"
 import { join } from "node:path"
 import { stripComments } from "./support/jsxSource"
+import { cropUrlFor, type FetchedCrop } from "@/lib/hooks/useTeacherApi"
 
 /*
  * US-046 (task #46), the frontend half of US-013 acceptance 4. US-045
@@ -246,98 +247,115 @@ describe("ReviewItem.tsx — evidence banner no longer misdescribes what's retai
     expect(normalizedSource).not.toContain("mark scheme's own wording isn't stored")
   })
 
-  it("the 'does not display the scan' clause survives, gated behind whatever renders the crop", () => {
-    // Task #72: the clause is no longer unconditionally true -- once a crop
-    // renders, this screen DOES display a region of the scan. The false
-    // branch must still read exactly this, since it remains the honest
-    // answer for the (common) case where no crop is showing.
-    expect(normalizedSource).toContain("This screen does not display the original scan.")
-    // Anchored to the exact boolean this task's own binding requirement
-    // names: `hasSourceBox` alone over-promises (a 404 is still possible),
-    // so the guard must also depend on `cropUrl` actually being present, not
-    // just on the flag.
-    expect(normalizedSource).toMatch(/detail\.hasSourceBox && cropUrl/)
-  })
-
-  it("the transcription sentence sits outside the conditional, exactly once", () => {
-    // If this sentence were duplicated inside both ternary branches (rather
-    // than written once, after the conditional), it would still read
-    // correctly on screen but would double the surface area for the two
-    // copies to drift apart, which is exactly the failure mode this banner
-    // has now hit twice. Counting occurrences (not just presence) is what
-    // catches a regression back to "one copy per branch".
-    const sentence = "What's below is Lemely's own transcription of the student's answer."
-    const occurrences = normalizedSource.split(sentence).length - 1
-    expect(occurrences).toBe(1)
-  })
-
-  it("the true branch says the screen shows the region of the scan, not just that a box exists", () => {
+  // M1 (team-lead review of task #72): the false branch must stay
+  // byte-identical to the sentence committed at e0717433 and settled with
+  // the user -- not re-drafted, not merged into a shared tail with the true
+  // branch. The true branch is a DIFFERENT, independently complete sentence
+  // (no shared substring to drift apart from this one), so this is a
+  // presence check on each full sentence rather than an occurrence count --
+  // there is no longer a shared fragment for a count to protect.
+  it("the false branch is byte-identical to the sentence committed at e0717433", () => {
     expect(normalizedSource).toContain(
-      "This screen shows the region of the student's scan this answer was read from.",
+      "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer.",
+    )
+  })
+
+  it("the true branch says the screen shows the region of the scan, alongside the transcription", () => {
+    expect(normalizedSource).toContain(
+      "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it.",
     )
   })
 })
 
 describe("ReviewItem.tsx — the scan crop renders only when a crop is actually available", () => {
-  it("useReviewItemCrop is called at the top level, gated on hasSourceBox, not inside the render prop", () => {
+  it("useReviewItemCrop is called at the top level, not inside the render prop", () => {
     // Rules-of-Hooks: a hook called inside `<QueryState>`'s render-prop
     // callback would belong to QueryState's own fiber, not this component's,
     // and QueryState does not call that callback on every one of ITS
     // renders (loading/error branches skip it) -- exactly the conditional
-    // hook call React's rules forbid. Every other per-detail hook in this
-    // file (none exist yet) would hit the same trap; this one is called
-    // where `detailQuery`/`queueQuery` already are.
+    // hook call React's rules forbid, and one Playwright's console-error
+    // watch cannot be relied on to always surface (React's own detection of
+    // a hook-count mismatch is timing-sensitive). This is a structural
+    // invariant no rendered assertion expresses, so it stays a source check.
     const topLevelStart = reviewItemSource.indexOf("const detailQuery = useReviewItem(itemId)")
     const renderPropStart = reviewItemSource.indexOf("{(detail) => {")
-    const cropHookCall = reviewItemSource.indexOf("useReviewItemCrop(itemId,")
+    const cropHookCall = reviewItemSource.indexOf("useReviewItemCrop(")
     expect(topLevelStart).toBeGreaterThan(-1)
     expect(renderPropStart).toBeGreaterThan(topLevelStart)
     expect(cropHookCall).toBeGreaterThan(topLevelStart)
     expect(cropHookCall).toBeLessThan(renderPropStart)
-    expect(reviewItemSource).toContain("detailQuery.data?.hasSourceBox ?? false")
   })
 
-  it("guards the image on hasSourceBox AND the fetched url, and the guard wraps the whole image", () => {
-    // "wraps the image" rather than sitting elsewhere: the img element must
-    // be inside the branch this condition selects, not merely present
-    // somewhere later in the file. `functionBody`-style slicing isn't
-    // available here (this isn't a named function), so the check is
-    // structural: the guard, the `<img`, and its closing `) : null}` appear
-    // in that order with nothing but the image's own card between them.
-    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
-    expect(guardStart).toBeGreaterThan(-1)
-    const imgStart = reviewItemSource.indexOf("<img", guardStart)
-    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
-    expect(imgStart).toBeGreaterThan(guardStart)
-    expect(guardEnd).toBeGreaterThan(imgStart)
-  })
-
-  it("the image src is built from the crop route, with alt text naming what it is", () => {
-    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
-    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
-    const block = reviewItemSource.slice(guardStart, guardEnd)
-    expect(block).toContain("src={cropUrl}")
-    // `cropUrl` itself comes from `useReviewItemCrop`, which fetches
-    // `/teacher/review/${itemId}/crop` -- asserted on the hook, not here,
-    // since this block only ever sees the already-fetched object URL. What
-    // this DOES pin: the alt text names the region as what it is, and never
-    // as evidence for one mark point (question-level, not per-point).
-    expect(block).toMatch(/alt="[^"]*region of the student's scan[^"]*"/)
-    expect(block).not.toMatch(/alt="[^"]*mark point[^"]*"/)
-  })
-
-  it("useReviewItemCrop fetches the crop route and never introduces a lightbox, zoom, or placeholder image", () => {
-    const hooksSource = readSource("src/lib/hooks/useTeacherApi.ts")
-    expect(hooksSource).toContain("`/teacher/review/${itemId}/crop`")
-    expect(reviewItemSource).not.toMatch(/lightbox/i)
-    expect(reviewItemSource).not.toMatch(/zoom/i)
+  it("the crop card renders before the transcription/expected-answer grid, not after", () => {
+    // N5 (team-lead ruling): the crop is the SOURCE the transcription was
+    // read from, so derived text must not read ahead of it. Pinned as
+    // ordering, the same pattern already used below for
+    // MarkerVerdicts/matchedPointIds/SelfReviewPoints.
+    const cropGuardStart = reviewItemSource.indexOf("{scanCropUrl ? (")
+    const gridStart = reviewItemSource.indexOf('<div className="grid grid-cols-1 lg:grid-cols-2 gap-4">')
+    expect(cropGuardStart).toBeGreaterThan(-1)
+    expect(gridStart).toBeGreaterThan(cropGuardStart)
   })
 
   it("the caption does not imply the region justifies a particular mark point", () => {
-    const guardStart = reviewItemSource.indexOf("scanCropVisible && cropUrl ? (")
+    const guardStart = reviewItemSource.indexOf("{scanCropUrl ? (")
     const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
     const block = reviewItemSource.slice(guardStart, guardEnd)
+    expect(block).toContain("src={scanCropUrl}")
+    expect(block).toMatch(/alt="[^"]*region of the student's scan[^"]*"/)
+    expect(block).not.toMatch(/alt="[^"]*mark point[^"]*"/)
     expect(block).toContain("The region of the student's scan this answer was read from")
     expect(block).not.toMatch(/mark point|justifies|awarded this mark/i)
+  })
+
+  it("the crop is bounded by height, not width alone, and guards against a decode failure", () => {
+    const guardStart = reviewItemSource.indexOf("{scanCropUrl ? (")
+    const guardEnd = reviewItemSource.indexOf(") : null}", guardStart)
+    const block = reviewItemSource.slice(guardStart, guardEnd)
+    // A `max-w-full`-only image at card width can run well over a thousand
+    // CSS px tall for a normally-proportioned crop -- `max-h` is what keeps
+    // "What Lemely awarded" on screen below it.
+    expect(block).toMatch(/max-h-\[\d+px\]/)
+    // A 2xx response is not proof the bytes decode (`useReviewItemCrop`'s
+    // own doc) -- without this, a decode failure sits here as a bordered
+    // card around a broken-image icon, the exact fallback affordance this
+    // task was told never to add.
+    expect(block).toContain("onError={onCropDecodeError}")
+  })
+
+  it("useReviewItemCrop fetches the crop route", () => {
+    const hooksSource = readSource("src/lib/hooks/useTeacherApi.ts")
+    expect(hooksSource).toContain("`/teacher/review/${itemId}/crop`")
+  })
+})
+
+describe("cropUrlFor — the C1 fix, as a real behavioural unit (team-lead review of task #72)", () => {
+  // A genuine import and call, not a source-text check: `cropUrlFor` is a
+  // pure function with no DOM/render dependency, so this runs in
+  // milliseconds with no stack and actually exercises the rule C1 is about,
+  // rather than pinning its call site's spelling. This is strictly better
+  // than the Playwright navigation spec for THIS one rule -- the render test
+  // still exists (`web/e2e/teacher-review.spec.ts`) because it is the only
+  // thing that can prove the fix survives inside a real React render/effect
+  // cycle, not because this unit test is insufficient on its own terms.
+  const boxedA: FetchedCrop = { itemId: "item-a", url: "blob:a" }
+
+  it("returns the fetched url when it matches the current itemId", () => {
+    expect(cropUrlFor("item-a", boxedA)).toBe("blob:a")
+  })
+
+  it("returns null when nothing has been fetched yet", () => {
+    expect(cropUrlFor("item-a", null)).toBeNull()
+  })
+
+  it("C1: returns null when the fetched url belongs to a DIFFERENT itemId", () => {
+    // This is the exact shape of the bug: `fetched` still holds item A's
+    // (or B's) url from before a client-side navigation, and the CURRENT
+    // `itemId` has already moved on to a render restoring a different item.
+    expect(cropUrlFor("item-b", boxedA)).toBeNull()
+  })
+
+  it("returns null when itemId is undefined", () => {
+    expect(cropUrlFor(undefined, boxedA)).toBeNull()
   })
 })

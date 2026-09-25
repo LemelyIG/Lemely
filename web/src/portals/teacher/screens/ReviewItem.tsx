@@ -41,8 +41,13 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
 
 /*
  * Review item — remark (T-08). `GET /teacher/review/{itemId}`
- * (`useReviewItem()`) is the single fetch every panel below projects
- * directly.
+ * (`useReviewItem()`) is the main fetch this screen is built around, but
+ * NOT the only one: `useReviewItemCrop` (task #72) issues a second request,
+ * `GET /teacher/review/{itemId}/crop`, whenever `hasSourceBox` is true, and
+ * the crop card below is a panel projecting from that second fetch. The
+ * whole "a 404 renders as absence" contract lives in that second call, not
+ * in `useReviewItem()` -- a reader chasing crop behaviour who stops at this
+ * paragraph will not find it.
  *
  * **Route, not a pane beside the queue** (`/teacher/review/:itemId`). T-07's
  * filter querystring (`class_id`/`reason`/`min_age_hours`) is carried
@@ -53,22 +58,35 @@ import { BackArrow, ForwardArrow } from "@/components/ui/inline-arrow"
  * (2) the item is independently deep-linkable/bookmarkable/back-button-able
  * like every other drill-down route in this portal (T-03→T-05, T-06→T-05),
  * rather than a mode of the list that a page refresh or a shared link loses.
- * The filtered queue fetch usually costs nothing extra — same query key as
+ * The filtered queue fetch usually costs nothing extra -- same query key as
  * `Review.tsx` just used to get here, so react-query serves it from cache.
+ * That same cache behaviour -- react-query's 5-minute default `gcTime`, not
+ * overridden by `queryClient.ts` -- is exactly what makes a stale
+ * `useReviewItemCrop` render reachable when a teacher revisits a boxed item
+ * within that window (see `useReviewItemCrop`'s own doc for the fix).
  *
  * **D3.14 §1 drives the whole evidence layout.** The spec asks for "the
- * student's actual scan crop, side by side with the mark scheme extract" —
- * neither the scan crop nor a side-by-side extract is rendered here
- * (`ReviewItemDetailDTO`'s own docstring). What's rendered instead,
- * explicitly labelled as such, with a banner stating the scan doesn't
- * appear on this screen rather than a placeholder image or skeleton frame
- * standing in for a missing asset:
- *  - `studentAnswer` -> "Lemely's transcription of the student's answer —
- *    not the scan."
+ * student's actual scan crop, side by side with the mark scheme extract".
+ * Task #72 renders the first half -- a crop, question-level and never per
+ * mark point, guarded on `hasSourceBox` AND a 2xx from the crop route (a
+ * `true` flag alone does not guarantee bytes; see `useReviewItemCrop`'s
+ * doc) -- but the second half, a side-by-side extract of the mark scheme's
+ * own wording, is still not rendered here: that text is not persisted
+ * anywhere in this product (`ReviewItemDetailDTO`'s own docstring,
+ * `schemas_review.py`, documents `hasSourceBox` and the crop route, not an
+ * absent extract -- it is no longer the citation for this clause). What's
+ * rendered as an honest substitute for THAT still-missing half, with no
+ * placeholder image or skeleton frame standing in for a missing asset:
+ *  - the crop card, when `hasSourceBox` is true and the route answers 2xx --
+ *    the region of the scan the answer was read from, captioned as exactly
+ *    that.
+ *  - `studentAnswer` -> "Lemely's transcription of the student's answer,
+ *    not the scan" -- the banner above it states plainly whether the crop
+ *    card is also showing a region of the scan on this particular render.
  *  - `expectedAnswer` -> "Expected answer" (the mark scheme's target, not
  *    its full prose).
  *  - `matchedPointIds` -> rendered as bare identifier chips, labelled
- *    "Matched mark-scheme point identifiers" — never reconstructed into
+ *    "Matched mark-scheme point identifiers" -- never reconstructed into
  *    scheme-sounding prose (UI-spec §1.4: never invent precision the data
  *    doesn't support). Demoted below `MarkerVerdicts` (I6, US-013): a bare
  *    id is no longer this backend's best marking evidence, only a fallback
@@ -570,7 +588,10 @@ export function ReviewItem() {
   // point, and a hook called inside that render prop would belong to
   // `QueryState`'s own fiber, not this component's — see every other hook
   // in this file, all called up here for the same reason.
-  const cropUrl = useReviewItemCrop(itemId, detailQuery.data?.hasSourceBox ?? false)
+  const { url: cropUrl, onDecodeError: onCropDecodeError } = useReviewItemCrop(
+    itemId,
+    detailQuery.data?.hasSourceBox ?? false,
+  )
 
   const acceptHandlerRef = useRef<(() => void) | null>(null)
   const registerAccept = useCallback((fn: (() => void) | null) => {
@@ -665,11 +686,15 @@ export function ReviewItem() {
           const integrity = isIntegrityReason(detail.reason)
           // `detail.hasSourceBox` alone is not enough to claim the scan is
           // shown (D3.14 §1 / task #71's docstring): the flag means a box was
-          // persisted, not that the crop route actually has bytes to serve.
+          // persisted, not that the crop route actually has bytes to serve --
           // `cropUrl` is `null` for both "no box" and "box, but the route
-          // 404'd" -- the ONE boolean the banner and the image below share,
-          // so the two can never claim different things.
-          const scanCropVisible = Boolean(detail.hasSourceBox && cropUrl)
+          // 404'd". Carrying the URL itself, not a derived boolean, is what
+          // lets the banner and the image below share ONE condition instead
+          // of two that could drift: TypeScript narrows `scanCropUrl` to
+          // `string` wherever it's checked truthy, so there is no second
+          // `&& cropUrl` needed at the render site the way a boolean would
+          // have required.
+          const scanCropUrl = detail.hasSourceBox ? cropUrl : null
 
           return (
             <>
@@ -739,15 +764,51 @@ export function ReviewItem() {
                 </Button>
               </div>
 
-              {/* Evidence: honest substitutes for the scan crop / mark-scheme extract (D3.14 §1) */}
+              {/* Evidence: the scan crop when one is available (D3.14 §1's
+                  first half), Lemely's own transcription and the mark
+                  scheme's target as honest substitutes for its second half
+                  (a side-by-side extract of the scheme's own wording, which
+                  is not persisted anywhere in this product -- see the module
+                  doc above). The crop card renders FIRST, ahead of the
+                  transcription/expected-answer grid: it is the source the
+                  transcription was read from, and derived text reading ahead
+                  of its own source is backwards. */}
               <section className="flex flex-col gap-3">
                 <div className="text-display-sm">What Lemely saw</div>
                 <div className="text-body-sm text-ink-muted bg-paper-sunk border border-rule rounded-md px-3.5 py-3 text-pretty">
-                  {scanCropVisible
-                    ? "This screen shows the region of the student's scan this answer was read from."
-                    : "This screen does not display the original scan."}{" "}
-                  What's below is Lemely's own transcription of the student's answer.
+                  {scanCropUrl
+                    ? "This screen shows the region of the student's scan this answer was read from, alongside Lemely's own transcription of it."
+                    : "This screen does not display the original scan. What's below is Lemely's own transcription of the student's answer."}
                 </div>
+                {/* Question-level, not per mark point (D3.14 §1 / task #71):
+                    marking is text-only, so nothing here attributes this
+                    region to any one awarded mark -- the caption says only
+                    where the answer was read from.
+                    `max-h-[420px] w-auto max-w-full object-contain`: the
+                    rendered crop is upscaled 2x (`crop_and_upscale`) and can
+                    run over a thousand pixels tall for a normally-proportioned
+                    box, which at card width would push "What Lemely awarded"
+                    below the fold -- bounded by height, not just width, the
+                    same way `Grading.tsx`'s own scan thumbnail is.
+                    `onError={onCropDecodeError}`: a 2xx response is not proof
+                    the bytes decode (see `useReviewItemCrop`'s own doc) --
+                    without this, a decode failure would sit here as a
+                    bordered card around a broken-image icon, exactly the
+                    fallback-image affordance this task was told never to add. */}
+                {scanCropUrl ? (
+                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
+                    <img
+                      src={scanCropUrl}
+                      alt="The region of the student's scan this question's answer was read from"
+                      className="rounded-md border border-rule max-h-[420px] w-auto max-w-full object-contain"
+                      decoding="async"
+                      onError={onCropDecodeError}
+                    />
+                    <div className="text-body-sm text-ink-faint">
+                      The region of the student's scan this answer was read from
+                    </div>
+                  </div>
+                ) : null}
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
                   <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
                     <div className="text-eyebrow text-ink-faint">
@@ -774,26 +835,6 @@ export function ReviewItem() {
                     )}
                   </div>
                 </div>
-                {/* Question-level, not per mark point (D3.14 §1 / task #71):
-                    marking is text-only, so nothing here attributes this
-                    region to any one awarded mark -- the caption says only
-                    where the answer was read from. `scanCropVisible` alone
-                    would not let TS narrow `cropUrl` to non-null below, so
-                    the same condition is repeated; the two must never drift
-                    apart, since a defect here is a broken-image icon on a
-                    screen showing a student's handwriting. */}
-                {scanCropVisible && cropUrl ? (
-                  <div className="bg-paper-raised border border-rule rounded-lg p-[18px] flex flex-col gap-2 min-w-0">
-                    <img
-                      src={cropUrl}
-                      alt="The region of the student's scan this question's answer was read from"
-                      className="rounded-md border border-rule max-w-full"
-                    />
-                    <div className="text-body-sm text-ink-faint">
-                      The region of the student's scan this answer was read from
-                    </div>
-                  </div>
-                ) : null}
                 {detail.topic ? <div className="text-body-sm text-ink-faint">Topic: {detail.topic}</div> : null}
               </section>
 
