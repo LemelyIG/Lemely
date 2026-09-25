@@ -460,15 +460,16 @@ async function sampleCropCensus(
  * boxed items either way between runs, attributing it to `list_queue`'s
  * `ORDER BY created_at, id` tying on `created_at` and falling back to a
  * per-run-random UUID. That was never actually checked before it went into
- * a comment, and it was wrong: a `created_at` tie requires two rows written
- * in the SAME transaction, since Postgres's `now()` is
- * `transaction_timestamp()`, constant for the life of one transaction, not
- * per-statement. Each `persist_correction` call opens its OWN transaction
- * (`AttemptRepository._persist`'s `with self._sm.begin()`), so a tie between
- * `inactive`'s and `rationale_only`'s rows is excluded STRUCTURALLY, not
- * merely empirically -- it isn't that they usually don't coincide, it's that
- * they cannot, being different transactions. Measured directly against
- * Postgres anyway, as corroboration rather than as the guarantee itself
+ * a comment, and it does not happen in practice. Postgres's `now()` is
+ * `transaction_timestamp()`, so rows written inside ONE transaction would tie
+ * trivially -- but `inactive` and `rationale_only` are each written in their
+ * own transaction (`AttemptRepository._persist`'s `with self._sm.begin()`),
+ * separated by real seed-script work (signups, class creation, storage
+ * writes). A tie would therefore need two independent transactions to start
+ * in the same microsecond. That is not impossible the way a same-transaction
+ * tie is, so the protection is empirical rather than structural -- and if it
+ * ever happened, `ORDER BY created_at, id` would fall back to the UUID and
+ * this test could see either order. Measured directly against Postgres
  * (`SELECT created_at FROM review_queue WHERE ...`, across several fresh
  * seed runs): the four low-confidence rows a run creates (`inactive`,
  * `self_review` -- invisible to this teacher, `legacy_review`,
