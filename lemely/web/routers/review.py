@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import base64
 import binascii
+import io
 import math
 import uuid
 from datetime import datetime
@@ -39,7 +40,7 @@ from lemely.db.review_repo import (
     ReviewValidationError,
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
-from lemely.io.reread import crop_and_upscale
+from lemely.io.reread import crop_and_upscale, padded_crop_rect
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -71,6 +72,8 @@ from lemely.web.schemas_review import (
 )
 
 if TYPE_CHECKING:
+    from PIL.Image import Image as PILImage
+
     from lemely.core.schemas import SourceBox
 
 log = structlog.get_logger(__name__)
@@ -381,6 +384,118 @@ def _require_renderable_box(box: SourceBox, *, item_id: str) -> None:
         raise HTTPException(status_code=422, detail="Stored crop region is not renderable")
 
 
+def _require_page_in_range(box: SourceBox, page_count: int, *, item_id: str) -> None:
+    """Refuse a box naming a page the scan does not have, before anything is rendered.
+
+    A box captured against a different render of this upload, or against the
+    upload it replaced, must cost a bounds check rather than a page render.
+    Covers the zero-page document too, since ``box.page`` is non-negative.
+    """
+    if box.page >= page_count:
+        log.warning(
+            "review_crop_page_out_of_range",
+            item_id=item_id,
+            page=box.page,
+            page_count=page_count,
+        )
+        raise HTTPException(
+            status_code=422,
+            detail=f"Stored crop region names page {box.page + 1} of a {page_count}-page scan",
+        )
+
+
+# The whole of an image that is already the padded region: handed to
+# ``crop_and_upscale`` with no padding, it only upscales and encodes.
+_WHOLE_REGION = [0, 0, 1000, 1000]
+
+_EXIF_ORIENTATION_TAG = 0x0112
+
+
+def _upright(region: PILImage, orientation: object) -> PILImage:
+    """Turn a region cut from a photo's stored frame the way its EXIF flag says.
+
+    The EXIF table, as Pillow's ``ImageOps.exif_transpose`` applies it. That
+    function works on a whole image carrying its EXIF block; this region is a
+    crop that carries none, so the table is applied directly. Rotating the crop
+    after cutting it from the stored frame shows the same pixels as cutting the
+    matching rectangle from the upright photo.
+    """
+    from PIL import Image
+
+    method = {
+        2: Image.Transpose.FLIP_LEFT_RIGHT,
+        3: Image.Transpose.ROTATE_180,
+        4: Image.Transpose.FLIP_TOP_BOTTOM,
+        5: Image.Transpose.TRANSPOSE,
+        6: Image.Transpose.ROTATE_270,
+        7: Image.Transpose.TRANSVERSE,
+        8: Image.Transpose.ROTATE_90,
+    }.get(orientation if isinstance(orientation, int) else 0)
+    return region if method is None else region.transpose(method)
+
+
+def _crop_pdf_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
+    """Render the page ``box`` names and crop ``box`` out of it."""
+    import pymupdf
+
+    # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
+    # call needs the ignore. Narrowed to this one code, not the module.
+    with pymupdf.open(stream=data, filetype="pdf") as doc:  # type: ignore[no-untyped-call]
+        _require_page_in_range(box, doc.page_count, item_id=item_id)
+        page = doc.load_page(box.page)
+        dpi = _render_dpi_for(page.rect.width, page.rect.height)
+        if dpi is None:
+            log.warning(
+                "review_crop_page_too_large",
+                item_id=item_id,
+                page=box.page,
+                width_pt=page.rect.width,
+                height_pt=page.rect.height,
+            )
+            raise HTTPException(status_code=422, detail="This scan's pages are too large to render")
+        pixmap = page.get_pixmap(dpi=dpi)
+        png: bytes = pixmap.tobytes("png")
+        page_width, page_height = pixmap.width, pixmap.height
+
+    # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8% padding
+    # and the degenerate-rounding case. Handed a fresh list, so nothing
+    # downstream can rescale the box this request was given in place.
+    return crop_and_upscale(
+        RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
+        list(box.box),
+    )
+
+
+def _crop_image_scan(data: bytes, box: SourceBox, *, item_id: str) -> bytes:
+    """Crop ``box`` out of a non-PDF scan, in the pixel grid extraction boxed.
+
+    Extraction decodes an image upload with PIL and does not apply EXIF
+    orientation (``rasterise._rasterise_single_image``), so ``box`` is in the
+    photo's stored frame. This decodes with PIL too, and crops there. MuPDF,
+    which rendered images here before, applies the orientation first, so a
+    phone photo stored sideways was cropped in the wrong place.
+
+    The crop is then turned upright by the EXIF flag, so the teacher reads it
+    the right way up. A single image has one page, as it does for extraction.
+    """
+    from PIL import Image
+
+    with Image.open(io.BytesIO(data)) as opened:
+        _require_page_in_range(box, 1, item_id=item_id)
+        rect = padded_crop_rect(opened.width, opened.height, list(box.box))
+        orientation = opened.getexif().get(_EXIF_ORIENTATION_TAG)
+        region = _upright(opened.crop(rect).convert("RGB"), orientation)
+    buf = io.BytesIO()
+    region.save(buf, format="PNG")
+    return crop_and_upscale(
+        RasterisedPage(
+            index=box.page, width=region.width, height=region.height, png_bytes=buf.getvalue()
+        ),
+        list(_WHOLE_REGION),
+        padding_frac=0.0,
+    )
+
+
 @router.get(
     "/{item_id}/crop",
     responses={200: {"content": {"image/png": {}}, "description": "The boxed region of the scan"}},
@@ -445,67 +560,20 @@ def get_review_item_crop(
             status_code=404, detail=CROP_ABSENT_DETAIL.format(item_id=logged_id)
         ) from None
 
-    import pymupdf
-
-    # Sniffed from the bytes, not from ``uploads.content_type``: a scan may be
-    # an ``image/*`` upload rather than a PDF (``rasterise_scan_to_pages``
-    # accepts both, and dispatches on content for the same reason), and MuPDF
-    # identifies an image stream itself when given no ``filetype``. Through
-    # ``looks_like_pdf`` rather than a second spelling of the same check, which
-    # is how this and ``rasterise``'s own sniff came to disagree on four bytes.
-    filetype = "pdf" if looks_like_pdf(data) else None
     try:
-        # PyMuPDF's `open` is an untyped alias for `Document`, so a strict-mode
-        # call needs the ignore. Narrowed to this one code, not the module.
-        with pymupdf.open(stream=data, filetype=filetype) as doc:  # type: ignore[no-untyped-call]
-            # Before anything is rendered: a box captured against a different
-            # render of this upload, or against the upload it replaced, must
-            # cost a bounds check rather than a page render. Covers the
-            # zero-page document too, since ``box.page`` is non-negative.
-            if box.page >= doc.page_count:
-                log.warning(
-                    "review_crop_page_out_of_range",
-                    item_id=logged_id,
-                    page=box.page,
-                    page_count=doc.page_count,
-                )
-                raise HTTPException(
-                    status_code=422,
-                    detail=(
-                        f"Stored crop region names page {box.page + 1} "
-                        f"of a {doc.page_count}-page scan"
-                    ),
-                )
-            page = doc.load_page(box.page)
-            dpi = _render_dpi_for(page.rect.width, page.rect.height)
-            if dpi is None:
-                log.warning(
-                    "review_crop_page_too_large",
-                    item_id=logged_id,
-                    page=box.page,
-                    width_pt=page.rect.width,
-                    height_pt=page.rect.height,
-                )
-                raise HTTPException(
-                    status_code=422, detail="This scan's pages are too large to render"
-                )
-            pixmap = page.get_pixmap(dpi=dpi)
-            png: bytes = pixmap.tobytes("png")
-            page_width, page_height = pixmap.width, pixmap.height
-
-        # ``crop_and_upscale`` owns the 0-1000-to-pixel arithmetic, the 8%
-        # padding and the degenerate-rounding case; a second copy of it here is
-        # where one of those edges would get missed. Handed a fresh list, so
-        # nothing downstream can rescale the box this request was given in place.
+        # Sniffed from the bytes, not from ``uploads.content_type``, the same
+        # way ``rasterise_scan_to_pages`` dispatches, and through the same
+        # ``looks_like_pdf``. Anything that is not a PDF is decoded the way
+        # extraction decoded it (see ``_crop_image_scan``).
         #
-        # Inside this ``try``, not after it: everything PIL does is PIL raising,
-        # and ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
-        # outside, a page large enough to trip it escaped as a 500 instead of the
-        # 422 every other unrenderable scan gets.
-        crop = crop_and_upscale(
-            RasterisedPage(index=box.page, width=page_width, height=page_height, png_bytes=png),
-            list(box.box),
-        )
+        # Inside this ``try``: everything PIL does is PIL raising, and
+        # ``Image.open`` enforces its own ``MAX_IMAGE_PIXELS`` ceiling. Left
+        # outside, a page large enough to trip it escaped as a 500 instead of
+        # the 422 every other unrenderable scan gets.
+        if looks_like_pdf(data):
+            crop = _crop_pdf_scan(data, box, item_id=logged_id)
+        else:
+            crop = _crop_image_scan(data, box, item_id=logged_id)
     except HTTPException:
         raise
     except Exception as exc:

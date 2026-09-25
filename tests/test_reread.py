@@ -18,6 +18,7 @@ from lemely.io.reread import (
     REREAD_MEDIA_RESOLUTION,
     Rereader,
     crop_and_upscale,
+    padded_crop_rect,
     should_reread,
 )
 from lemely.runtime.config import PathsSettings, load_settings
@@ -113,6 +114,32 @@ class CropAndUpscaleTests(unittest.TestCase):
         # then 2x upscale -> 464x696.
         self.assertEqual(image.width, 696)
         self.assertEqual(image.height, 464)
+
+
+class PaddedCropRectTests(unittest.TestCase):
+    """The rectangle arithmetic, shared with the review crop route."""
+
+    def test_pins_the_padded_rectangle(self) -> None:
+        # 8% of 200 tall is 16, 8% of 300 wide is 24; floored low, rounded high.
+        self.assertEqual(padded_crop_rect(1000, 1000, [100, 100, 300, 400]), (76, 84, 424, 316))
+
+    def test_is_the_rectangle_crop_and_upscale_crops(self) -> None:
+        """The route crops with this helper instead of calling ``crop_and_upscale``
+        on the whole page, so the two must choose the same pixels."""
+        for width, height, box in (
+            (1000, 1000, [100, 100, 300, 400]),
+            (1241, 1754, [0, 0, 1000, 1000]),
+            (600, 300, [37, 911, 38, 912]),
+            (333, 777, [480, 10, 990, 620]),
+        ):
+            page = _page(width, height)
+            image = Image.open(io.BytesIO(crop_and_upscale(page, box, upscale=1)))
+            left, upper, right, lower = padded_crop_rect(width, height, box)
+            self.assertEqual((image.width, image.height), (right - left, lower - upper), box)
+            self.assertGreaterEqual(left, 0)
+            self.assertGreaterEqual(upper, 0)
+            self.assertLessEqual(right, width)
+            self.assertLessEqual(lower, height)
 
 
 def _client_returning(tmp: str, answer_text: str) -> tuple[GeminiClient, MagicMock]:

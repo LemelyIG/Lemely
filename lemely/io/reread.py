@@ -82,6 +82,43 @@ def should_reread(
     return answer.confidence < confidence_threshold
 
 
+def padded_crop_rect(
+    width: int,
+    height: int,
+    box: list[int],
+    *,
+    padding_frac: float = REREAD_PADDING_FRAC,
+) -> tuple[int, int, int, int]:
+    """The pixel rectangle ``crop_and_upscale`` crops from a ``width`` x ``height`` page.
+
+    ``box`` is on a 0-1000 scale, ``[ymin, xmin, ymax, xmax]``, padded by
+    ``padding_frac`` of the box's own dimensions and clamped to the page.
+    Returns PIL's ``(left, upper, right, lower)``. The review crop route uses it
+    to crop without handing the whole page to ``crop_and_upscale``.
+    """
+    ymin, xmin, ymax, xmax = box
+
+    px_ymin = ymin / 1000 * height
+    px_xmin = xmin / 1000 * width
+    px_ymax = ymax / 1000 * height
+    px_xmax = xmax / 1000 * width
+
+    pad_y = (px_ymax - px_ymin) * padding_frac
+    pad_x = (px_xmax - px_xmin) * padding_frac
+
+    left = max(0, int(px_xmin - pad_x))
+    upper = max(0, int(px_ymin - pad_y))
+    right = min(width, round(px_xmax + pad_x))
+    lower = min(height, round(px_ymax + pad_y))
+    # A degenerate box (validated to have positive area by SourceBox, but
+    # padding/rounding could still round two adjacent edges together on a
+    # tiny box) must not be handed to PIL's crop as an empty or inverted
+    # rectangle.
+    right = max(right, left + 1)
+    lower = max(lower, upper + 1)
+    return left, upper, right, lower
+
+
 def crop_and_upscale(
     page: RasterisedPage,
     box: list[int],
@@ -98,28 +135,8 @@ def crop_and_upscale(
     from PIL import Image
 
     image = Image.open(io.BytesIO(page.png_bytes)).convert("RGB")
-    ymin, xmin, ymax, xmax = box
-
-    px_ymin = ymin / 1000 * page.height
-    px_xmin = xmin / 1000 * page.width
-    px_ymax = ymax / 1000 * page.height
-    px_xmax = xmax / 1000 * page.width
-
-    pad_y = (px_ymax - px_ymin) * padding_frac
-    pad_x = (px_xmax - px_xmin) * padding_frac
-
-    left = max(0, int(px_xmin - pad_x))
-    upper = max(0, int(px_ymin - pad_y))
-    right = min(page.width, round(px_xmax + pad_x))
-    lower = min(page.height, round(px_ymax + pad_y))
-    # A degenerate box (validated to have positive area by SourceBox, but
-    # padding/rounding could still round two adjacent edges together on a
-    # tiny box) must not be handed to PIL's crop as an empty or inverted
-    # rectangle.
-    right = max(right, left + 1)
-    lower = max(lower, upper + 1)
-
-    cropped = image.crop((left, upper, right, lower))
+    rect = padded_crop_rect(page.width, page.height, box, padding_frac=padding_frac)
+    cropped = image.crop(rect)
     new_size = (max(1, cropped.width * upscale), max(1, cropped.height * upscale))
     upscaled = cropped.resize(new_size, Image.Resampling.LANCZOS)
 

@@ -1650,6 +1650,133 @@ def test_crop_route_serves_the_boxed_region_of_an_image_scan(
     ]
 
 
+_EXIF_ORIENTATION_TAG = 0x0112
+_CORNER_RGB = (0, 255, 0)
+# A landscape sensor frame, so a crop taken in the wrong orientation lands on a
+# different part of the photo rather than on a symmetric copy of the right one.
+_PHOTO_RAW_SIZE = (600, 300)
+
+
+def _synthetic_phone_photo(orientation: int) -> bytes:
+    """A JPEG whose pixels are stored sideways, with an EXIF flag saying so.
+
+    Phones store a portrait photo as a landscape sensor frame plus EXIF
+    orientation (6 is the usual one). The red mark covers ``_MARK_BOX`` in the
+    RAW pixel grid, which is the grid extraction boxes against. A green corner
+    inside the mark, at its raw top-left, shows which way up a crop was turned.
+    """
+    from PIL import ImageDraw
+
+    width, height = _PHOTO_RAW_SIZE
+    image = Image.new("RGB", (width, height), (255, 255, 255))
+    draw = ImageDraw.Draw(image)
+    draw.rectangle((0.70 * width, 0.70 * height, 0.95 * width, 0.95 * height), fill=_OUTSIDE_RGB)
+    ymin, xmin, ymax, xmax = _MARK_BOX
+    left, upper = xmin / 1000 * width, ymin / 1000 * height
+    right, lower = xmax / 1000 * width, ymax / 1000 * height
+    draw.rectangle((left, upper, right - 1, lower - 1), fill=_MARK_RGB)
+    draw.rectangle(
+        (left, upper, left + 0.25 * (right - left) - 1, upper + 0.4 * (lower - upper) - 1),
+        fill=_CORNER_RGB,
+    )
+    exif = Image.Exif()
+    exif[_EXIF_ORIENTATION_TAG] = orientation
+    buf = io.BytesIO()
+    image.save(buf, format="JPEG", exif=exif.tobytes(), quality=95)
+    return buf.getvalue()
+
+
+def _corner_position(image: Image.Image) -> tuple[float, float]:
+    """Where the green corner sits inside the red-and-green mark, as 0-1 fractions."""
+    mark_xs: list[int] = []
+    mark_ys: list[int] = []
+    corner_xs: list[int] = []
+    corner_ys: list[int] = []
+    pixels = image.load()
+    assert pixels is not None
+    for y in range(image.height):
+        for x in range(image.width):
+            r, g, b = pixels[x, y]  # type: ignore[misc]
+            is_red = r > 200 and g < 80 and b < 80
+            is_green = g > 200 and r < 80 and b < 80
+            if is_red or is_green:
+                mark_xs.append(x)
+                mark_ys.append(y)
+            if is_green:
+                corner_xs.append(x)
+                corner_ys.append(y)
+    assert corner_xs, "no green corner at all -- this crop missed the mark"
+    span_x = max(mark_xs) - min(mark_xs) or 1
+    span_y = max(mark_ys) - min(mark_ys) or 1
+    return (
+        (sum(corner_xs) / len(corner_xs) - min(mark_xs)) / span_x,
+        (sum(corner_ys) / len(corner_ys) - min(mark_ys)) / span_y,
+    )
+
+
+@pytest.mark.parametrize("orientation", [2, 3, 4, 5, 6, 7, 8])
+def test_crop_route_crops_an_exif_rotated_photo_where_extraction_boxed_it(
+    orientation: int,
+    client: TestClient,
+    pg_sessionmaker: sessionmaker[Session],
+    class_service: ClassService,
+    review_service: ReviewService,
+    storage_backend: FakeStorageBackend,
+    tmp_path: Path,
+) -> None:
+    """The box is in the raw pixel grid, so the crop must be taken there too.
+
+    Extraction decodes an image upload with PIL, which does not apply EXIF
+    orientation, so the model boxed the raw sensor frame. A renderer that
+    applies the flag first (MuPDF does) crops the same numbers out of a turned
+    image, which is a different part of the photo. The colour census shows the
+    region is right. The green corner's position, measured against PIL's own
+    ``exif_transpose`` of the whole photo, shows the crop is upright.
+    """
+    from PIL import ImageOps
+
+    from lemely.io.rasterise import rasterise_scan_to_pages
+
+    scan = _synthetic_phone_photo(orientation)
+
+    # The premise, pinned: extraction sees the raw frame. If extraction ever
+    # starts applying EXIF orientation, this fails, and the crop route has to
+    # change with it.
+    photo_path = tmp_path / "photo.jpg"
+    photo_path.write_bytes(scan)
+    (extracted,) = rasterise_scan_to_pages(photo_path)
+    assert (extracted.width, extracted.height) == _PHOTO_RAW_SIZE
+
+    teacher, item_id = _seed_boxed_review_item(
+        pg_sessionmaker,
+        class_service,
+        storage=storage_backend,
+        scan=scan,
+        page=0,
+        content_type="image/jpeg",
+    )
+    _use_review_service(client, review_service)
+    _use_storage(client, storage_backend)
+    _auth_as(client, teacher, Role.teacher)
+
+    resp = client.get(f"/api/teacher/review/{item_id}/crop")
+    assert resp.status_code == 200, resp.text
+    got = Image.open(io.BytesIO(resp.content)).convert("RGB")
+
+    reddish, bluish, total = _colour_counts(got)
+    assert bluish == 0, "the crop reaches outside the box -- this is the page, not the region"
+    assert reddish / total > 0.5, "the mark inside the box is missing -- wrong region"
+
+    # Upright: the mark is wide in the raw frame, so it is tall once turned by
+    # a quarter (5-8) and still wide after a half turn or a mirror (2-4).
+    assert (got.height > got.width) == (orientation in (5, 6, 7, 8)), got.size
+    upright = ImageOps.exif_transpose(Image.open(io.BytesIO(scan))).convert("RGB")
+    want_x, want_y = _corner_position(upright)
+    got_x, got_y = _corner_position(got)
+    assert abs(got_x - want_x) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
+    assert abs(got_y - want_y) < 0.15, (orientation, (got_x, got_y), (want_x, want_y))
+
+
 def test_crop_route_404s_for_an_item_whose_attempt_has_no_upload(
     client: TestClient,
     pg_sessionmaker: sessionmaker[Session],
