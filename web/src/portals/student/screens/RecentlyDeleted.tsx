@@ -72,7 +72,7 @@ function DeletedPaperRow({
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex min-w-0 flex-col gap-1">
           <div className="flex flex-wrap items-center gap-2">
-            <Chip tone="neutral">{paper.subjectCode}</Chip>
+            {paper.subjectCode != null ? <Chip tone="neutral">{paper.subjectCode}</Chip> : null}
             <span className="truncate text-body-md text-ink">{paper.paperLabel}</span>
           </div>
           <span className="text-data-sm text-ink-muted">{countdownLabel(daysLeft)}</span>

@@ -147,8 +147,9 @@ class PipelineHealthDTO(ApiModel):
     can reach, and a figure read off a file the screen cannot date would be worse
     than saying where it lives.
 
-    ``purgeBacklog`` is the count of attempts more than a day past their purge
-    cutoff and still present — a purge sweep that keeps failing, made visible.
+    ``purgeBacklog`` is the count of attempts and console papers more than a
+    day past their purge cutoff and still present — a purge sweep that keeps
+    failing, made visible.
     """
 
     subjects: list[SubjectCoverageDTO]

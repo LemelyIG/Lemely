@@ -271,7 +271,7 @@ export interface QuestionResult extends BaseQuestionResult {
 export interface DeletedPaper {
   attemptId: string
   paperLabel: string
-  subjectCode: string
+  subjectCode: string | null
   deletedAt: string
   restoreDeadline: string
 }

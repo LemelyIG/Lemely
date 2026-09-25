@@ -978,7 +978,10 @@ export function useDeletedTeacherPapers(): UseQueryResult<DeletedTeacherPapers, 
  *
  * Invalidates the console list and the deleted list, mirroring
  * `useDeletePaper` (student side): `usePapers`'s own optimistic removal is
- * not trusted for anything beyond the one row that disappeared.
+ * not trusted for anything beyond the one row that disappeared. Also
+ * invalidates the review queue and the overview — a withdrawn console item
+ * would otherwise stay visible in `["teacher", "review"]` (a stale row 403s
+ * on click) and the overview's "Need your eyes" count would stay stale.
  */
 export function useDeleteTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
   const queryClient = useQueryClient()
@@ -989,11 +992,17 @@ export function useDeleteTeacherPaper(): UseMutationResult<void, Error, { paperI
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
         queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
       ]),
   })
 }
 
-/** `POST /papers/{paperId}/restore` → 204; 410 once past the window, 404 otherwise. */
+/**
+ * `POST /papers/{paperId}/restore` → 204; 410 once past the window, 404
+ * otherwise. Invalidates the same surfaces a delete does — a restore is a
+ * delete undone.
+ */
 export function useRestoreTeacherPaper(): UseMutationResult<void, Error, { paperId: string }> {
   const queryClient = useQueryClient()
   return useMutation({
@@ -1003,6 +1012,8 @@ export function useRestoreTeacherPaper(): UseMutationResult<void, Error, { paper
       Promise.all([
         queryClient.invalidateQueries({ queryKey: ["teacher", "papers"] }),
         queryClient.invalidateQueries({ queryKey: deletedTeacherPapersKey }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "review"] }),
+        queryClient.invalidateQueries({ queryKey: ["teacher", "overview"] }),
       ]),
   })
 }

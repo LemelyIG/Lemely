@@ -54,12 +54,18 @@ export function useDeletePaper(): UseMutationResult<void, Error, { attemptId: st
     // a caller that navigates after `await mutateAsync(...)` waits for these
     // refetches rather than reusing a pre-delete index the instant the
     // DELETE itself returns.
-    onSuccess: () =>
-      Promise.all([
+    onSuccess: () => {
+      // `["student", "result", paperId]` is also positional (design §2.1),
+      // so an already-cached result for the just-deleted paper is dropped
+      // rather than left to serve a stale grade — and Delete control — to
+      // Back navigation until the next refetch settles.
+      queryClient.removeQueries({ queryKey: ["student", "result"] })
+      return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["student", "overview"] }),
         queryClient.invalidateQueries({ queryKey: ["student", "subject"] }),
         queryClient.invalidateQueries({ queryKey: deletedPapersKey }),
-      ]),
+      ])
+    },
   })
 }
 
@@ -76,11 +82,13 @@ export function useRestorePaper(): UseMutationResult<void, Error, { attemptId: s
       request<void>(`/student/attempts/${encodeURIComponent(attemptId)}/restore`, {
         method: "POST",
       }),
-    onSuccess: () =>
-      Promise.all([
+    onSuccess: () => {
+      queryClient.removeQueries({ queryKey: ["student", "result"] })
+      return Promise.all([
         queryClient.invalidateQueries({ queryKey: ["student", "overview"] }),
         queryClient.invalidateQueries({ queryKey: ["student", "subject"] }),
         queryClient.invalidateQueries({ queryKey: deletedPapersKey }),
-      ]),
+      ])
+    },
   })
 }

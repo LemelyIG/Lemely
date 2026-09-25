@@ -48,6 +48,18 @@ describe("usePaperDeletionApi.ts — useDeletePaper", () => {
     expect(body).toContain("invalidateQueries")
     expect(body).toMatch(/overview/)
   })
+
+  it("drops the cached result for the just-deleted paper, since its own URL is positional too", () => {
+    const body = functionBody(source, "useDeletePaper")
+    expect(body).toMatch(/removeQueries/)
+    expect(body).toMatch(/"student", "result"/)
+  })
+
+  it("useRestorePaper drops the same cached result", () => {
+    const body = functionBody(source, "useRestorePaper")
+    expect(body).toMatch(/removeQueries/)
+    expect(body).toMatch(/"student", "result"/)
+  })
 })
 
 describe("PaperResult.tsx — the delete control", () => {
