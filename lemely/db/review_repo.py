@@ -335,11 +335,11 @@ class ReviewItemDetail:
     """
     has_source_box: bool = False
     """True when all five `source_box_*` columns are set AND the attempt has an
-    upload, so a crop may exist. The crop route can still answer 404, for
-    example when the stored object has expired, so a client must render a 404
-    as absence, never as an error. Always False for a console paper's item,
-    even when its question has a box: the crop route serves only
-    attempt-backed items (see :func:`_console_item_detail`).
+    upload, so a crop may exist. The crop route can still fail (404 when the
+    stored object has expired, 422 when the scan cannot be rendered), so a
+    client must render any failure as absence, never as an error. Always
+    False for a console paper's item, even when its question has a box: the
+    crop route serves only attempt-backed items (see :func:`_console_item_detail`).
 
     Storage expiry is deliberately not checked: it is a *timing* condition, so
     nothing checked when this DTO is built can promise anything about the

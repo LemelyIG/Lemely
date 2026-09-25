@@ -688,9 +688,9 @@ export function ReviewItem() {
           // shown (D3.14 §1 / task #71's docstring): the flag means a box and
           // an upload exist, not that the crop route actually has bytes to serve --
           // `cropUrl` is `null` for both "no box" and "box, but the route
-          // 404'd". Carrying the URL itself, not a derived boolean, is what
-          // lets the banner and the image below share ONE condition instead
-          // of two that could drift: TypeScript narrows `scanCropUrl` to
+          // failed (404 or 422)". Carrying the URL itself, not a derived
+          // boolean, is what lets the banner and the image below share ONE
+          // condition instead of two that could drift: TypeScript narrows `scanCropUrl` to
           // `string` wherever it's checked truthy, so there is no second
           // `&& cropUrl` needed at the render site the way a boolean would
           // have required.

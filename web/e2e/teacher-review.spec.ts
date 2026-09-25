@@ -300,9 +300,9 @@ test("a 404 from the crop route renders as absence, even though hasSourceBox is 
 
   // `hasSourceBox` is true for this item -- it has a persisted `source_box`
   // and an upload -- but the crop route is forced to 404 here regardless,
-  // standing in for the case `ReviewItemDetailDTO.hasSourceBox`'s own doc
-  // names: the stored object may have expired, which the flag cannot rule
-  // out.
+  // standing in for one of the two failures `ReviewItemDetailDTO.hasSourceBox`'s
+  // own doc names: the stored object may have expired (the other, a 422, is a
+  // scan the route cannot render), and the flag cannot rule either out.
   await page.route(`**/teacher/review/${reviewItem.itemId}/crop`, async (route) => {
     await route.fulfill({
       status: 404,

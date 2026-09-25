@@ -786,10 +786,10 @@ export interface ReviewItemPoint {
  * matter, but `hasSourceBox: true` is not itself a guarantee of one: it means
  * all five `source_box_*` columns are set AND the attempt has an upload, so a
  * crop MAY exist, fetched on demand from the crop route rather than persisted
- * here. `GET /teacher/review/{itemId}/crop` can still answer 404, for example
- * when the stored object has expired, so a client must render that 404 as
- * absence, never as an error (see `useReviewItemCrop` in
- * `lib/hooks/useTeacherApi.ts`). When a crop
+ * here. `GET /teacher/review/{itemId}/crop` can still fail (404 when the
+ * stored object has expired, 422 when the scan cannot be rendered), so a
+ * client must render any failure as absence, never as an error (see
+ * `useReviewItemCrop` in `lib/hooks/useTeacherApi.ts`). When a crop
  * does render, it is QUESTION-level — where the answer was read from on the
  * page — never per mark point, so it must not be read as showing which
  * pixels justify any one awarded mark.
@@ -828,8 +828,9 @@ export interface ReviewItemDetail extends ReviewQueueItem {
    * attempt has an upload, so a crop MAY exist. Fetch it from the crop route;
    * this DTO never carries coordinates (see `ReviewItemDetailDTO.hasSourceBox`).
    * `true` does NOT guarantee a crop: `GET /teacher/review/{itemId}/crop` can
-   * still answer 404, for example when the stored object has expired, and a
-   * client must render that as absence, never as an error. Always `false` for
+   * still fail (404 when the stored object has expired, 422 when the scan
+   * cannot be rendered), and a client must render any failure as absence,
+   * never as an error. Always `false` for
    * a `"console_paper"` row, even when its question has a box, because the
    * crop route serves only attempt-backed items.
    */

@@ -433,8 +433,8 @@ export interface ReviewItemCrop {
  * `enabled` should be `hasSourceBox`. `false` means the route is certain to
  * answer nothing (no box, no upload, or a console paper's item), so it must
  * not cost a request. `true` means a box AND an upload exist, so a crop may
- * exist, but it does not guarantee one: the stored object may have expired,
- * and the route answers 404 then.
+ * exist, but it does not guarantee one: the route can still fail (404 when
+ * the stored object has expired, 422 when the scan cannot be rendered).
  * `fetchBlobUrl` rejects on any non-2xx response, and that rejection resolves
  * `url` to `null` exactly like a network failure would — the caller must
  * render that as absence, never as a broken-image icon or an error toast.
