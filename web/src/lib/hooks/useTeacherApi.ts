@@ -422,6 +422,11 @@ export function useReviewItemCrop(itemId: string | undefined, enabled: boolean):
   const [url, setUrl] = useState<string | null>(null)
 
   useEffect(() => {
+    // Reset before the new fetch even starts, not only in the catch below —
+    // `itemId`/`enabled` changing means a DIFFERENT student's review item is
+    // now on screen, and carrying the previous item's object URL forward
+    // even briefly would show one student's handwriting under another
+    // student's name. A disclosure problem, not just a caching nicety.
     setUrl(null)
     if (!enabled || !itemId) return
 
