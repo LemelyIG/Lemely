@@ -231,6 +231,10 @@ def test_restore_past_the_window_is_410(
 
     response = client.post(f"/api/papers/{paper}/restore")
     assert response.status_code == 410
+    # `teacherMutationFailureMessage` (web) shows `detail` verbatim to the
+    # teacher, so its exact wording is a fact about what a real person
+    # reads, not just an implementation detail this test can leave unpinned.
+    assert response.json()["detail"] == "This paper can no longer be restored."
 
 
 def test_a_student_cannot_restore_a_console_paper(

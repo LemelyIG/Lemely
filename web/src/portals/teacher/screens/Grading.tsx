@@ -1,11 +1,17 @@
-/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 — re-scored, Task 17
- * review: gained an interactive delete control on the grid card; R (was 4)
- * moves to 5 now that it is a real sibling `<button>` with its own focus
- * ring and a 44px tap target, keyboard-reachable and keyboard-operable
- * independently of the card's own open control, rather than the earlier
- * version's div-in-a-div that a keyboard reader could not use without also
- * reopening the paper. No other axis changed: same primitives, same visual
- * language. */
+/* Hallmark · pre-emit critique: P4 H4 E4 S5 R5 V4 — re-scored twice, Task 17
+ * review. First pass moved R from 4 to 5 for the sibling `<button>`
+ * restructure (own focus ring, 44px tap target, keyboard-operable
+ * independently of the card's open control) — but that score was itself
+ * premature: the ring it credited was real in code yet invisible in the
+ * browser, because the button's `focus-visible:outline-offset-2` drew
+ * outside the button's own box, and the container wrapping it clips
+ * exactly that area with `overflow-hidden`. A keyboard user tabbing the
+ * grid could focus a card and see nothing move. Second pass fixes the ring
+ * itself (`outline-offset-[-2px]`, drawn inside the button) and, while in
+ * the same file, the hover lift the same `overflow-hidden` was clipping
+ * for the same reason (moved from the button to the container via
+ * `has-[:hover]`). R stays 5 now that both are true rather than one of
+ * them being a claim the browser did not back up. */
 import { useEffect, useRef, useState, type ChangeEvent } from "react"
 import { useNavigate } from "react-router-dom"
 import { useQueryClient } from "@tanstack/react-query"
@@ -253,7 +259,15 @@ function PaperCard({
     <div
       ref={setCardNode}
       className={cn(
-        "relative rounded-md overflow-hidden bg-paper-raised border",
+        // `has-[:hover]:-translate-y-0.5` (moved off the button below by the
+        // review's Minor 1), not the button's own `hover:`: the button sits
+        // inside this element's own `overflow-hidden`, and translating the
+        // *button* shifted only its content within the frame — clipping the
+        // thumbnail's top edge and leaving a gap at the bottom. Translating
+        // this container instead moves the whole card (border, background,
+        // the lot) as one box; a container clips its children's overflow,
+        // never its own transform.
+        "relative rounded-md overflow-hidden bg-paper-raised border transition-transform has-[:hover]:-translate-y-0.5",
         paper.kind === "review" ? "border-err" : "border-rule",
       )}
     >
@@ -261,7 +275,16 @@ function PaperCard({
         type="button"
         onClick={onOpen}
         aria-label={`Open ${paper.name}`}
-        className="block w-full text-start cursor-pointer transition-transform hover:-translate-y-0.5 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus-ring"
+        // `outline-offset-[-2px]`, not the kit's usual positive offset (the
+        // review's Important 1): this button fills a container whose own
+        // `overflow-hidden` clips anything the button draws outside its own
+        // box, and an outset ring is exactly that — a keyboard user tabbing
+        // the grid could not see which card was focused. `-2px` draws the
+        // ring 2px inside the button's own edge instead, which the
+        // container's clip never reaches. `rounded-md` (matching the
+        // container) so the inset ring follows the same corners the card
+        // itself has, rather than squaring off against them.
+        className="block w-full rounded-md text-start cursor-pointer focus-visible:outline-2 focus-visible:outline-offset-[-2px] focus-visible:outline-focus-ring"
       >
         <div className="relative h-[64px] bg-paper-sunk border-b border-rule overflow-hidden">
           {previewUrl ? (

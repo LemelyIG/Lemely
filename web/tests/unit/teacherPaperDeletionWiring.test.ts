@@ -49,6 +49,31 @@ describe("Grading.tsx — the delete control is not trapped inside the open cont
     expect(body).not.toMatch(/role="button"/)
   })
 
+  it("the open button's focus ring is drawn inside, not clipped by the container's overflow-hidden", () => {
+    // Review finding, second pass: the container carries `overflow-hidden`
+    // and the button fills it edge to edge, so the kit's usual *outset*
+    // ring (`focus-visible:outline-offset-2`) was drawn entirely in the
+    // clipped area — a keyboard user tabbing the grid could not see which
+    // card was focused. A negative offset draws the ring 2px inside the
+    // button's own border box instead, which the container's clip never
+    // reaches.
+    const body = functionBody(source, "PaperCard")
+    expect(body).toMatch(/focus-visible:outline-offset-\[-2px\]/)
+    expect(body).not.toMatch(/focus-visible:outline-offset-2\b/)
+  })
+
+  it("the hover lift lives on the container, not the clipped button", () => {
+    // Same review pass, Minor 1: `hover:-translate-y-0.5` on the button
+    // shifted only the button's own content inside the container's fixed
+    // frame — clipping the thumbnail's top edge and leaving a gap at the
+    // bottom. `has-[:hover]` on the container moves the whole card as one
+    // box instead, since a container's `overflow-hidden` clips its
+    // children, never its own transform.
+    const body = functionBody(source, "PaperCard")
+    expect(body).toMatch(/has-\[:hover\]:-translate-y-0\.5/)
+    expect(body).not.toMatch(/\bhover:-translate-y-0\.5/)
+  })
+
   it("DeletePaperControl renders after the open button closes, as its sibling", () => {
     // A crude but effective structural proof: if the delete control's own
     // render were still nested inside the open button's JSX, the button's
