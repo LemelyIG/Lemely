@@ -202,4 +202,47 @@ test("a teacher's announcement reaches the class as a notice and an inbox row", 
   // Unlike `grade_ready`, an announcement DOES have a resolvable destination,
   // so this row carries a working Open button.
   await expect(page.getByRole("button", { name: "Open" }).first()).toBeVisible()
+
+  /*
+   * Issue #246/#247: a visibility assertion on "Open" would have passed
+   * throughout the whole pull-to-refresh click-swallowing bug — the button
+   * was visible the entire time, it just did nothing when tapped. This
+   * screen sits inside the same pull-to-refresh surface Announcements does
+   * (`usePullToRefresh`), so it needs its own click-level proof rather than
+   * inheriting Announcements' — a fix scoped to one screen's own DOM
+   * structure could pass Announcements and still leave this one broken.
+   */
+  await expect(page.getByText("Unread")).toBeVisible()
+  await page.getByRole("button", { name: "Mark as read" }).first().click()
+  await expect(page.getByText("Unread")).toHaveCount(0, { timeout: 15_000 })
+})
+
+test("Overview's subject row navigates on click, inside the same pull-to-refresh surface", async ({
+  page,
+}) => {
+  /*
+   * Issue #246/#247's other confirmed-broken screen, and the one whose first
+   * repro attempt gave a false negative: `/student/overview` is not a real
+   * route (it is `/student`, `end: true`), and a wrong route landed a click
+   * on the sidebar's own subject shortcut — outside the pull surface
+   * entirely — reading as a working link when the screen's own
+   * `SubjectLedgerRow` `<Link>` had never actually been exercised.
+   * `getByRole("main")` scopes past that trap: the sidebar is not landmark
+   * `main`, so a locator that resolves at all here is inside the actual
+   * screen content, under `pullSurfaceRef`, not beside it.
+   */
+  const seed = readSeed()
+  const student = seed.students.correctedPaper
+  await injectSession(page, {
+    accessToken: student.accessToken,
+    userId: student.userId,
+    role: "student",
+  })
+  await page.goto("/student")
+
+  const subjectLink = page.getByRole("main").locator("a[href^='/student/subject/']").first()
+  await expect(subjectLink).toBeVisible({ timeout: 15_000 })
+  const href = await subjectLink.getAttribute("href")
+  await subjectLink.click()
+  await expect(page).toHaveURL(new RegExp(`${href}$`))
 })

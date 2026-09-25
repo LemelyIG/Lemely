@@ -52,13 +52,36 @@ describe("C2 — pull-to-refresh never transforms the document root", () => {
 describe("C3 — the edge-swipe zone and the pull zone are disjoint", () => {
   it("usePullToRefresh refuses a drag that starts in either edge strip", () => {
     const src = sourceOf("src/lib/gestures/usePullToRefresh.ts")
-    expect(src).toContain("pullStartAllowed")
+    // The geometric decision moved into `pullStartDecision` (`pullMath.ts`,
+    // pinned directly by `pullMath.test.ts`) so this hook composes it rather
+    // than restating the edge-zone math itself; `EDGE_ZONE_PX` is still
+    // threaded through from here.
+    expect(src).toContain("pullStartDecision")
     expect(src).toContain("EDGE_ZONE_PX")
   })
 
   it("EdgeSwipeBack still owns the edge strip itself", () => {
     const src = sourceOf("src/components/edge-swipe-back.tsx")
     expect(src).toContain("EDGE_ZONE_PX")
+  })
+})
+
+// Issue #246/#247, opus review: nothing pinned this behaviour at all — the
+// five gesture test files in this suite passed unchanged with or without the
+// interactive exemption in `usePullToRefresh.ts`, so the fix could have been
+// silently reverted. `pullMath.test.ts`'s `pullStartDecision` tests are the
+// primary pin (the rule itself, node-testable by design — see that
+// function's own doc comment); this is the cheap backstop confirming the
+// wiring still calls into it.
+describe("Issue #246/#247 — pull-to-refresh's startFilter still calls the interactive-exemption decision", () => {
+  it("usePullToRefresh's startFilter checks GESTURE_INTERACTIVE_SELECTOR and composes pullStartDecision", () => {
+    const src = sourceOf("src/lib/gestures/usePullToRefresh.ts")
+    expect(src).toMatch(/closest\(GESTURE_INTERACTIVE_SELECTOR\)/)
+    const startFilterAt = src.indexOf("startFilter:")
+    expect(startFilterAt, "no startFilter found in usePullToRefresh.ts").toBeGreaterThan(-1)
+    const window = src.slice(startFilterAt, startFilterAt + 900)
+    expect(window).toContain("interactive")
+    expect(window).toContain("pullStartDecision")
   })
 })
 
