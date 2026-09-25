@@ -378,14 +378,22 @@ async function sampleCropCentrePixel(crop: Locator): Promise<[number, number, nu
 /**
  * Full-image colour census for one crop, counting pixels matching `boxRgb`
  * (the box's own colour) and `outsideRgb` (the padding ring's colour)
- * against the crop's total pixel count.
+ * against the crop's total pixel count, plus the image's own intrinsic
+ * `naturalWidth`.
  *
  * F3 (team-lead review): `naturalWidth > 0` and a single centre-pixel sample
  * (`sampleCropCentrePixel` above) prove LOCATION -- that the crop landed
- * somewhere inside the right region -- not GEOMETRY. A mis-scaled box, a
- * dropped 2x upscale, or a `REREAD_PADDING_FRAC` quietly changed from 0.08 to
- * (say) 0.5 could all still land red at dead centre while getting the box's
- * AREA badly wrong, and none of that would move a single sampled pixel.
+ * somewhere inside the right region -- not GEOMETRY. A mis-scaled box or a
+ * `REREAD_PADDING_FRAC` quietly changed from 0.08 to (say) 0.5 could still
+ * land red at dead centre while getting the box's AREA badly wrong, and
+ * neither would move a single sampled pixel; `boxFraction`/`outsideFraction`
+ * below are what catch those.
+ *
+ * A dropped 2x upscale is a THIRD failure mode the proportions alone cannot
+ * catch: area ratios are scale-invariant (halve every dimension and
+ * `boxFraction` still comes out ~0.743), so `naturalWidth` is returned
+ * separately for the caller to check against the route's actual absolute
+ * size -- see the intrinsic-dimension assertion at the call site.
  *
  * The expected proportion is DERIVED, not measured-then-hardcoded: the box
  * in `scripts/seed_e2e.py`'s seed is drawn EXACTLY aligned to
@@ -403,7 +411,7 @@ async function sampleCropCensus(
   crop: Locator,
   boxRgb: [number, number, number],
   outsideRgb: [number, number, number],
-): Promise<{ boxFraction: number; outsideFraction: number }> {
+): Promise<{ boxFraction: number; outsideFraction: number; naturalWidth: number }> {
   await expect(crop).toBeVisible()
   await expect
     .poll(() => crop.evaluate((el) => (el as HTMLImageElement).naturalWidth), { timeout: 15_000 })
@@ -432,18 +440,15 @@ async function sampleCropCensus(
         }
       }
       const total = data.length / 4
-      return { boxFraction: boxCount / total, outsideFraction: outsideCount / total }
+      return {
+        boxFraction: boxCount / total,
+        outsideFraction: outsideCount / total,
+        naturalWidth: img.naturalWidth,
+      }
     },
     [boxRgb, outsideRgb],
   )
 }
-
-// `crop_and_upscale`'s own `REREAD_PADDING_FRAC` (`lemely/io/reread.py`): the
-// box is padded by this fraction (0.08) on each side before cropping, so the
-// box occupies `1 / (1 + 2 * 0.08)^2 = 1 / 1.16^2 ~= 0.743` of the padded
-// crop's total area -- a property of the route's own arithmetic, not of any
-// one run's measurement. `0.743` sits centred inside the `0.65-0.80` box-
-// fraction band asserted below.
 
 /**
  * Walk forward via the on-screen "Next item" control -- a real client-side
@@ -454,20 +459,25 @@ async function sampleCropCensus(
  * version of this function assumed the teacher's queue could order the two
  * boxed items either way between runs, attributing it to `list_queue`'s
  * `ORDER BY created_at, id` tying on `created_at` and falling back to a
- * per-run-random UUID. Checked directly against Postgres after that claim
- * was questioned (`SELECT created_at FROM review_queue WHERE ...`, across
- * several fresh seed runs): the four low-confidence rows a run creates
- * (`inactive`, `self_review` -- invisible to this teacher, `legacy_review`,
+ * per-run-random UUID. That was never actually checked before it went into
+ * a comment, and it was wrong: a `created_at` tie requires two rows written
+ * in the SAME transaction, since Postgres's `now()` is
+ * `transaction_timestamp()`, constant for the life of one transaction, not
+ * per-statement. Each `persist_correction` call opens its OWN transaction
+ * (`AttemptRepository._persist`'s `with self._sm.begin()`), so a tie between
+ * `inactive`'s and `rationale_only`'s rows is excluded STRUCTURALLY, not
+ * merely empirically -- it isn't that they usually don't coincide, it's that
+ * they cannot, being different transactions. Measured directly against
+ * Postgres anyway, as corroboration rather than as the guarantee itself
+ * (`SELECT created_at FROM review_queue WHERE ...`, across several fresh
+ * seed runs): the four low-confidence rows a run creates (`inactive`,
+ * `self_review` -- invisible to this teacher, `legacy_review`,
  * `rationale_only`, in that call order) land tens to hundreds of
- * milliseconds apart, every time, with zero ties observed -- each
- * `persist_correction` call opens its own transaction
- * (`AttemptRepository._persist`'s `with self._sm.begin()`), and Postgres's
- * `now()` is transaction-scoped, so distinct transactions separated by real
- * seed-script work (signups, class creation, storage writes) never
- * coincide. `itemId` (`inactive`) is created before `rationaleOnlyItemId`
- * every run, so the queue orders them the same way every run. The
- * intermittent test failures that motivated the original (now-removed)
- * bidirectional-probe version of this function were a SEPARATE,
+ * milliseconds apart, every time. `itemId` (`inactive`) is created before
+ * `rationaleOnlyItemId` every run, so the queue orders them the same way
+ * every run. The intermittent test failures that motivated the original
+ * (now-removed) bidirectional-probe version of this function were a
+ * SEPARATE,
  * already-filed issue (#253, `persistQueryClientRestore` in
  * `web/src/lib/offline/queryPersister.ts`) intermittently corrupting or
  * delaying `useReviewQueue()`'s client-side data, not a database ordering
@@ -519,7 +529,7 @@ async function sampleCrop(
   outsideRgb: [number, number, number],
 ): Promise<{
   color: [number, number, number]
-  census: { boxFraction: number; outsideFraction: number }
+  census: { boxFraction: number; outsideFraction: number; naturalWidth: number }
 }> {
   const crop = page.getByAltText(SCAN_CROP_ALT)
   const color = await sampleCropCentrePixel(crop)
@@ -530,18 +540,23 @@ async function sampleCrop(
 // F2 (team-lead review): this test's ORIGINAL name claimed to prove the C1
 // timing fix -- that the render-time `cropUrlFor` identity check, not just
 // the effect's eventual reset, is what stops a stale crop from committing.
-// Run against a build where `cropUrlFor` was reverted to bypass that check
-// entirely (`return fetched?.url ?? null`), this test still passed on 2 of
-// 3 runs: the effect's own reset-then-refetch resolves before
-// `expect.poll`'s next tick in the common case, so the race the render-time
-// check exists for is real but too narrow a window for this test's own
-// polling cadence to reliably observe. The name below no longer claims what
-// it cannot prove. `cropUrlFor`'s own unit suite
-// (`reviewItemMarkerVerdicts.test.ts`) is what actually pins the render-time
-// rule; the structural pin there (`useReviewItemCrop's return actually
-// composes cropUrlFor`) is what stops a bypass from going unnoticed, since
-// this test alone cannot be trusted to catch one.
-test("navigating between two boxed items and back always shows the currently-viewed item's own crop", async ({
+// Run three times against a build where `cropUrlFor` was reverted to bypass
+// that check entirely (`return fetched?.url ?? null`): 2 of 3 runs PASSED
+// (this test cannot see the bypass at all); the third FAILED, but not on the
+// race -- it failed on the same "Next item" control reading "Back to queue"
+// mid-walk that #253 causes, unrelated to `cropUrlFor`. So ZERO of three
+// runs actually observed the race (a `colorA2` mismatch after navigating
+// back would have been the signature of that): the effect's own
+// reset-then-refetch resolves before `expect.poll`'s next tick in the common
+// case, so the race the render-time check exists for is real but too narrow
+// a window for this test's own polling cadence to ever reliably observe, not
+// merely most of the time. The name below no longer claims what it cannot
+// prove. `cropUrlFor`'s own unit suite (`reviewItemMarkerVerdicts.test.ts`)
+// is what actually pins the render-time rule; the structural pin there
+// (`useReviewItemCrop's return actually composes cropUrlFor`) is what stops
+// a bypass from going unnoticed, since this test alone cannot be trusted to
+// catch one.
+test("navigating between two boxed items and back shows the currently-viewed item's own crop", async ({
   page,
 }) => {
   const seed = readSeed()
@@ -570,11 +585,21 @@ test("navigating between two boxed items and back always shows the currently-vie
 
   // F3 (team-lead review): region GEOMETRY, not just location -- see
   // `sampleCropCensus`'s own doc for why a centre-pixel sample alone cannot
-  // catch a mis-scaled box or a dropped upscale. Bands, not exact values.
+  // catch a mis-scaled box or a changed padding fraction. Bands, not exact
+  // values.
   expect(sampleA1.census.boxFraction).toBeGreaterThan(0.65)
   expect(sampleA1.census.boxFraction).toBeLessThan(0.8)
   expect(sampleA1.census.outsideFraction).toBeGreaterThan(0.18)
   expect(sampleA1.census.outsideFraction).toBeLessThan(0.32)
+  // Area proportions are scale-invariant, so they cannot catch a dropped 2x
+  // upscale (`crop_and_upscale`) on their own -- this checks the ABSOLUTE
+  // size instead. `REVIEW_ITEM_SOURCE_BOX` padded 8% and rendered at
+  // `_CROP_RENDER_DPI` (150) on this seed's page measures ~864px wide
+  // upscaled, ~432px without the upscale; 600-1200 sits strictly between
+  // the two and well clear of either, so this fails if the upscale
+  // silently disappears without being tuned to the exact measured value.
+  expect(sampleA1.census.naturalWidth).toBeGreaterThan(600)
+  expect(sampleA1.census.naturalWidth).toBeLessThan(1200)
 
   // Walk forward via the on-screen "Next item" control -- a real client-side
   // `navigate()`, never `page.goto` -- until B's own URL is reached.
