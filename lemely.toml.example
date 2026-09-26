@@ -190,13 +190,20 @@ email_otp_ttl_seconds = 600
 # dead run (its instance died) and may be reclaimed by the next regrade.
 stale_run_after_seconds = 900
 
-# US-005b's marking gate (US-040, closed by `08df9302`): read at all three
-# `correct_paper` entry points -- CLI, student upload, teacher grading job.
-# Enabling it CHANGES HOW PAPERS ARE MARKED. This branch ships no accuracy
-# evidence that the verdict path marks better than the legacy path -- that
-# evidence needs a label campaign that has not started. Not a safe default
-# to flip; leave commented out until that evidence exists.
+# US-005b's marking gate (US-040, closed by `08df9302`): read by every
+# marking path -- the CLI, student paper uploads, the teacher grading job,
+# quiz marking, the accuracy harness and Gradio. Enabling it CHANGES HOW
+# PAPERS ARE MARKED, on every one of those paths at once. This branch ships
+# no accuracy evidence that the verdict path marks better than the legacy
+# path -- that evidence needs a label campaign that has not started. Not a
+# safe default to flip; leave commented out until that evidence exists.
+# Deployed, it is set by LEMELY_GRADING__EQUIVALENCE_GATE; see docs/ci-cd.md.
 # equivalence_gate = true
+# Error-carried-forward by substitution (I7/US-013). Threaded independently
+# of `equivalence_gate` above -- neither flag implies the other -- but it has
+# no observable effect unless `equivalence_gate` is ALSO true. Deployed, it
+# is set by LEMELY_GRADING__ECF_SUBSTITUTION.
+ecf_substitution = false
 
 [integrity]
 # Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed
