@@ -5,7 +5,9 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+import pypdfium2 as pdfium
 from PIL import Image
 
 from lemely.io.rasterise import (
@@ -14,6 +16,7 @@ from lemely.io.rasterise import (
     rasterise_pdf_to_pages,
     rasterise_scan_to_pages,
 )
+from lemely.io.scan_limits import ScanTooLargeError
 
 _FIXTURE = Path(__file__).parent / "fixtures" / "handwritten-59" / "0625_w24_qp_42.pdf"
 
@@ -114,6 +117,64 @@ class RasteriseScanToPagesTests(unittest.TestCase):
         # Rendered via the PDF path (EXTRACTION_DPI-scaled), not loaded as a
         # (corrupt) JPEG.
         self.assertGreater(pages[0].width, 0)
+
+
+class GeometryBoundedRasteriseTests(unittest.TestCase):
+    """Spec 2026-09-26 §6: rasterise plans every page before rendering any."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+
+    def _pdf(self, name: str, *sizes_pt: tuple[float, float]) -> Path:
+        pdf = pdfium.PdfDocument.new()
+        for width, height in sizes_pt:
+            pdf.new_page(width, height)
+        path = Path(self.tmp) / name
+        pdf.save(str(path))
+        pdf.close()
+        return path
+
+    def test_a_within_band_pdf_page_comes_back_downscaled_with_its_dpi_recorded(self) -> None:
+        # A1 (1684x2384pt, ~31 Mpx at 200 DPI) -- see the note in
+        # test_scan_limits.py's matching test for why this is A1's dimensions,
+        # not the brief's mislabelled "a2.pdf".
+        pages = rasterise_pdf_to_pages(self._pdf("a1.pdf", (1684.0, 2384.0)))
+        self.assertEqual(pages[0].dpi, 143.0)
+        self.assertLessEqual(pages[0].width * pages[0].height, 16_000_000)
+        self.assertEqual(pages[0].width, round(1684 * 143 / 72))
+
+    def test_an_oversized_pdf_page_is_rejected(self) -> None:
+        with self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(self._pdf("huge.pdf", (14400.0, 14400.0)))
+
+    def test_too_many_pages_are_rejected_before_any_render(self) -> None:
+        path = self._pdf("many.pdf", *([(595.0, 842.0)] * 41))
+        with patch.object(pdfium.PdfPage, "render") as render, self.assertRaises(ScanTooLargeError):
+            rasterise_pdf_to_pages(path)
+        render.assert_not_called()
+
+    def test_a_within_band_image_is_reduced(self) -> None:
+        image_path = Path(self.tmp) / "big.png"
+        Image.new("1", (5000, 5000), color=1).save(image_path, "PNG")
+        pages = rasterise_scan_to_pages(image_path)
+        self.assertEqual((pages[0].width, pages[0].height), (2500, 2500))
+
+    def test_a_within_band_jpeg_uses_the_native_reduced_decode(self) -> None:
+        image_path = Path(self.tmp) / "big.jpg"
+        Image.new("L", (5000, 5000), color=255).save(image_path, "JPEG")
+        pages = rasterise_scan_to_pages(image_path)
+        self.assertLessEqual(pages[0].width * pages[0].height, 16_000_000)
+
+    def test_an_oversized_image_is_rejected(self) -> None:
+        image_path = Path(self.tmp) / "huge.png"
+        Image.new("1", (7000, 7000), color=1).save(image_path, "PNG")
+        with self.assertRaises(ScanTooLargeError):
+            rasterise_scan_to_pages(image_path)
+
+    @unittest.skipUnless(_FIXTURE.is_file(), "handwritten-59 fixture not present")
+    def test_the_committed_fixture_is_unaffected(self) -> None:
+        pages = rasterise_pdf_to_pages(_FIXTURE)
+        self.assertEqual((pages[0].width, pages[0].height, pages[0].dpi), (1655, 2339, 200.0))
 
 
 if __name__ == "__main__":

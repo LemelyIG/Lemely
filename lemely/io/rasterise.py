@@ -15,6 +15,10 @@ against; 150 DPI is that script's *own* concern (matching the synthetic
 corpus's render scale for #59) and is unrelated to this budget. Pages are
 returned as in-memory PNG bytes rather than written back out to a flattened
 PDF — I1's extraction call sends one image part per page directly.
+
+Spec 2026-09-26 §6: every page is planned by `lemely.io.scan_limits` before
+any page is rendered — over-long documents and over-size pages are refused,
+pages within the band render at a lower DPI, recorded on `RasterisedPage.dpi`.
 """
 
 from __future__ import annotations
@@ -25,14 +29,27 @@ from typing import TYPE_CHECKING
 
 import pypdfium2 as pdfium
 
+from lemely.io.scan_limits import (
+    EXTRACTION_DPI,
+    PDF_MAGIC,
+    ScanTooLargeError,
+    looks_like_pdf,
+    plan_image,
+    plan_pdf_pages,
+)
+
 if TYPE_CHECKING:
     from pathlib import Path
 
-# Google's documented recommendation for image/PDF inputs (re-verified
-# 2026-09-02); keeps a rendered page's image-tokenisation cost at the
-# "medium" tier (560 tokens/page) rather than the ultra tier a higher DPI
-# would push it into.
-EXTRACTION_DPI: float = 200.0
+__all__ = [
+    "EXTRACTION_DPI",
+    "PDF_MAGIC",
+    "RasterisedPage",
+    "ScanTooLargeError",
+    "looks_like_pdf",
+    "rasterise_pdf_to_pages",
+    "rasterise_scan_to_pages",
+]
 
 
 @dataclass(frozen=True)
@@ -42,34 +59,44 @@ class RasterisedPage:
     0-based ``index`` matches the image-part order sent to Gemini, which is
     also the ``page`` index Gemini must echo back in
     ``ExtractedAnswer.source_box`` (see ``build_extractor_user_prompt``).
+    ``dpi`` is the DPI the page was rendered at: :data:`EXTRACTION_DPI`
+    unless the geometry plan lowered it (spec 2026-09-26 §6); nominal for an
+    image upload, which has no DPI of its own.
     """
 
     index: int
     width: int
     height: int
     png_bytes: bytes
+    dpi: float = EXTRACTION_DPI
 
 
 def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> list[RasterisedPage]:
-    """Render every page of *pdf_path* to a PNG image at *dpi*.
+    """Render every page of *pdf_path* to a PNG image at *dpi* (or the planned lower DPI).
 
-    Raises :class:`ValueError` if the PDF has no pages — an empty extraction
-    call would silently carry no evidence at all rather than fail loudly.
+    Raises :class:`ScanTooLargeError` before any render when the document
+    has more than ``MAX_SCAN_PAGES`` pages or a page beyond
+    ``MAX_DECODE_PX``, and :class:`ValueError` if the PDF has no pages — an
+    empty extraction call would silently carry no evidence at all rather
+    than fail loudly.
     """
     pdf = pdfium.PdfDocument(str(pdf_path))
     try:
-        scale = dpi / 72.0  # pypdfium2's scale is in units of 72dpi-points.
+        plans = plan_pdf_pages(pdf, dpi=dpi)
         pages: list[RasterisedPage] = []
-        for index, page in enumerate(pdf):
-            pil_image = page.render(scale=scale).to_pil().convert("RGB")
+        for plan in plans:
+            page = pdf[plan.index]
+            # pypdfium2's scale is in units of 72dpi-points.
+            pil_image = page.render(scale=plan.dpi / 72.0).to_pil().convert("RGB")
             buf = io.BytesIO()
             pil_image.save(buf, format="PNG")
             pages.append(
                 RasterisedPage(
-                    index=index,
+                    index=plan.index,
                     width=pil_image.width,
                     height=pil_image.height,
                     png_bytes=buf.getvalue(),
+                    dpi=plan.dpi,
                 )
             )
     finally:
@@ -80,36 +107,13 @@ def rasterise_pdf_to_pages(pdf_path: Path, *, dpi: float = EXTRACTION_DPI) -> li
     return pages
 
 
-PDF_MAGIC = b"%PDF-"
-"""The PDF header. One definition, because two spellings of it drifted.
-
-:func:`looks_like_pdf` and ``lemely.web.routers.review``'s crop route each
-tested for this independently, and disagreed on its length — four bytes there,
-five here — so a stream of exactly ``b"%PDF"`` was a PDF to the route and not to
-the extractor whose box the route was cropping.
-"""
-
-
-def looks_like_pdf(data: bytes) -> bool:
-    """True when *data* starts with the PDF magic bytes.
-
-    The bytes-taking half of the sniff, for callers that already hold the
-    content: the crop route has downloaded the object before it must decide what
-    to hand MuPDF, so re-reading a path there is not an option.
-    """
-    return data.startswith(PDF_MAGIC)
-
-
 def _looks_like_pdf(path: Path) -> bool:
     """Sniff the magic bytes rather than trust the file extension.
 
-    ``lemely.web.services.grading.extract_answers``'s own docstring says
-    ``scan_path`` is "PDF / image" — the teacher/student portals accept
-    ``image/*`` uploads as well as PDFs (``lemely/web/routers/teacher.py``),
-    and a client-supplied filename is not authoritative (see
-    ``lemely.web.upload_utils.safe_upload_name``, which does not trust it as
-    a path either). Delegates to :func:`looks_like_pdf` so this module and the
-    crop route cannot disagree about what a PDF looks like.
+    A client-supplied filename is not authoritative (see
+    ``lemely.web.upload_utils.safe_upload_name``). Delegates to
+    :func:`looks_like_pdf` so this module and the crop route cannot disagree
+    about what a PDF looks like.
     """
     with path.open("rb") as handle:
         header = handle.read(len(PDF_MAGIC))
@@ -121,14 +125,25 @@ def _rasterise_single_image(image_path: Path) -> list[RasterisedPage]:
 
     A raw ``image/*`` upload is already a raster image — it is loaded and
     re-encoded as PNG so :class:`RasterisedPage` always carries the same
-    format regardless of scan type, but it is not re-rasterised at
-    :data:`EXTRACTION_DPI`: it has no vector content to render at a chosen
-    DPI, unlike a PDF page.
+    format regardless of scan type. Spec 2026-09-26 §6: an image within the
+    band is reduced to fit ``MAX_PAGE_PX`` — a JPEG (which includes MPO)
+    through Pillow's native reduced-scale decode first, anything else by an
+    integer ``reduce`` after decoding — and one beyond ``MAX_DECODE_PX`` is
+    refused from its header, before any pixel is decoded.
     """
-    from PIL import Image
+    from PIL import Image, JpegImagePlugin
 
-    with Image.open(image_path) as opened:
-        pil_image = opened.convert("RGB")
+    try:
+        with Image.open(image_path) as opened:
+            factor = plan_image(opened.width, opened.height)
+            if factor > 1 and isinstance(opened, JpegImagePlugin.JpegImageFile):
+                opened.draft(None, (opened.width // factor, opened.height // factor))
+            pil_image = opened.convert("RGB")
+    except Image.DecompressionBombError as exc:
+        raise ScanTooLargeError("image declares too many pixels to decode") from exc
+    factor = plan_image(pil_image.width, pil_image.height)
+    if factor > 1:
+        pil_image = pil_image.reduce(factor)
     buf = io.BytesIO()
     pil_image.save(buf, format="PNG")
     return [

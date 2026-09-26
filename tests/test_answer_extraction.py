@@ -45,7 +45,7 @@ def _write_content_pdf(path: Path) -> None:
     for y in range(40, 2339 - 40, 24):
         for x in range(40, 1654 - 40, 140):
             draw.rectangle([x, y, x + 90, y + 14], outline=(0, 0, 0), width=2)
-    img.save(path, "PDF")
+    img.save(path, "PDF", resolution=200.0)
 
 
 def _minimal_mcq_mark_scheme() -> MarkScheme:
