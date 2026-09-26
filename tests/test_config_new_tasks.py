@@ -359,3 +359,79 @@ class TestLoadSettingsDropsRemovedKeys:
         monkeypatch.setenv("LEMELY_INTEGRITY__AI_DETECTION_ENABLD", "true")
         with pytest.raises(ValidationError):
             load_settings(cwd=tmp_path)
+
+
+class TestMarkingOptions:
+    """Spec 2026-09-26: one object carries both marking flags to every caller."""
+
+    def test_defaults_are_off(self) -> None:
+        from lemely.runtime.config import MarkingOptions
+
+        assert MarkingOptions() == MarkingOptions(equivalence_gate=False, ecf_substitution=False)
+
+    def test_is_frozen(self) -> None:
+        import dataclasses
+
+        import pytest
+
+        from lemely.runtime.config import MarkingOptions
+
+        with pytest.raises(dataclasses.FrozenInstanceError):
+            MarkingOptions().equivalence_gate = True  # type: ignore[misc]
+
+    def test_grading_settings_projects_both_flags(self) -> None:
+        from lemely.runtime.config import GradingSettings, MarkingOptions
+
+        s = GradingSettings(equivalence_gate=True, ecf_substitution=True)
+        assert s.marking_options() == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+    def test_projection_reads_env_vars(self, monkeypatch) -> None:
+        from lemely.runtime.config import MarkingOptions, Settings
+
+        monkeypatch.setenv("LEMELY_GRADING__EQUIVALENCE_GATE", "true")
+        monkeypatch.setenv("LEMELY_GRADING__ECF_SUBSTITUTION", "true")
+        settings = Settings()
+        assert settings.grading.marking_options() == MarkingOptions(
+            equivalence_gate=True, ecf_substitution=True
+        )
+
+    def test_from_untyped_settings(self) -> None:
+        from types import SimpleNamespace
+
+        from lemely.runtime.config import GradingSettings, MarkingOptions, marking_options_from
+
+        assert marking_options_from(None) == MarkingOptions()
+        assert marking_options_from(SimpleNamespace()) == MarkingOptions()
+        on = SimpleNamespace(grading=GradingSettings(equivalence_gate=True))
+        assert marking_options_from(on) == MarkingOptions(equivalence_gate=True)
+
+
+class TestMarkingFlagsEvent:
+    """The startup line's level rule, tested without logging."""
+
+    def test_consistent_flags_log_at_info(self) -> None:
+        from lemely.runtime.config import MarkingOptions, marking_flags_event
+
+        for opts in (
+            MarkingOptions(),
+            MarkingOptions(equivalence_gate=True),
+            MarkingOptions(equivalence_gate=True, ecf_substitution=True),
+        ):
+            level, fields = marking_flags_event(opts)
+            assert level == "info"
+            assert fields == {
+                "equivalence_gate": opts.equivalence_gate,
+                "ecf_substitution": opts.ecf_substitution,
+            }
+
+    def test_ecf_without_gate_warns_that_ecf_is_inert(self) -> None:
+        from lemely.runtime.config import MarkingOptions, marking_flags_event
+
+        level, fields = marking_flags_event(MarkingOptions(ecf_substitution=True))
+        assert level == "warning"
+        assert fields["equivalence_gate"] is False
+        assert fields["ecf_substitution"] is True
+        assert fields["ecf_inert"] is True
+        assert fields["reason"] == (
+            "ecf_substitution has no effect unless equivalence_gate is also on"
+        )

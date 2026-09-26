@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Annotated, Any, Literal
 from urllib.parse import urlsplit
 
+import structlog
 from pydantic import AliasChoices, BaseModel, BeforeValidator, ConfigDict, Field, SecretStr
 from pydantic_settings import BaseSettings, PydanticBaseSettingsSource, SettingsConfigDict
 
@@ -548,6 +550,21 @@ class IntegritySettings(BaseModel):
     plagiarism_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
 
 
+@dataclass(frozen=True)
+class MarkingOptions:
+    """The marking flags every ``correct_paper`` caller forwards together.
+
+    Built by :meth:`GradingSettings.marking_options`. Both flags travel in
+    one object so a caller cannot pass one and forget the other: three of
+    six callers once passed ``equivalence_gate`` and none passed
+    ``ecf_substitution``. Defaults are off, which marks exactly as a
+    caller that sets nothing.
+    """
+
+    equivalence_gate: bool = False
+    ecf_substitution: bool = False
+
+
 class GradingSettings(BaseModel):
     """Teacher grading run tuning (spec 2026-09-03 §4.2).
 
@@ -616,6 +633,57 @@ class GradingSettings(BaseModel):
     # either. Setting `ecf_substitution = true` in `lemely.toml` currently
     # has NO effect on a live `correct_paper` run; see US-040.
     ecf_substitution: bool = False
+
+    def marking_options(self) -> MarkingOptions:
+        """Return the marking flags as the object ``correct_paper`` takes."""
+        return MarkingOptions(
+            equivalence_gate=self.equivalence_gate,
+            ecf_substitution=self.ecf_substitution,
+        )
+
+
+_ECF_INERT_REASON = "ecf_substitution has no effect unless equivalence_gate is also on"
+
+
+def marking_options_from(settings: object) -> MarkingOptions:
+    """Read marking flags off an untyped or absent settings object.
+
+    For callers such as the accuracy harness, whose ``settings`` is typed
+    ``object`` and is ``None`` in unit tests. Anything without a real
+    ``GradingSettings`` at ``.grading`` yields the defaults.
+    """
+    grading = getattr(settings, "grading", None)
+    if isinstance(grading, GradingSettings):
+        return grading.marking_options()
+    return MarkingOptions()
+
+
+def marking_flags_event(
+    options: MarkingOptions,
+) -> tuple[Literal["info", "warning"], dict[str, object]]:
+    """Decide the level and fields of the startup ``marking_flags`` line.
+
+    ``ecf_substitution`` on with ``equivalence_gate`` off is a legal but
+    inert configuration: ECF is applied only on the verdicts path, which
+    the gate controls. It logs at warning level so the mismatch is visible
+    in Cloud Run logs; the process keeps running.
+    """
+    fields: dict[str, object] = {
+        "equivalence_gate": options.equivalence_gate,
+        "ecf_substitution": options.ecf_substitution,
+    }
+    if options.ecf_substitution and not options.equivalence_gate:
+        fields["ecf_inert"] = True
+        fields["reason"] = _ECF_INERT_REASON
+        return "warning", fields
+    return "info", fields
+
+
+def log_marking_flags(options: MarkingOptions) -> None:
+    """Emit one ``marking_flags`` line recording the process's marking mode."""
+    level, fields = marking_flags_event(options)
+    log = structlog.get_logger("lemely.marking")
+    getattr(log, level)("marking_flags", **fields)
 
 
 class StorageSettings(BaseModel):
