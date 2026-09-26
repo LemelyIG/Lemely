@@ -9,9 +9,12 @@ import threading
 import unittest
 from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
+import structlog
 from pydantic import BaseModel, Field
+from structlog.testing import capture_logs
 
 from lemely.io.gemini import (
     _MAX_OUTPUT_TOKENS,
@@ -1579,8 +1582,6 @@ class SpendLockTests(unittest.TestCase):
         self.assertEqual(held, [True])
 
     def test_record_spend_totals_are_exact_under_concurrent_callers(self) -> None:
-        import structlog
-
         from lemely.io.cost_ledger import CostLedger
         from lemely.io.gemini import _resolve_pricing
 
@@ -1611,6 +1612,70 @@ class SpendLockTests(unittest.TestCase):
         self.assertAlmostEqual(process_token_totals_by_task()["soak"], 400 * per_call, places=9)
         ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
         self.assertAlmostEqual(ledger.total(), 400 * per_call, places=9)
+
+    def test_record_spend_log_line_has_exactly_the_pinned_fields_for_the_structured_path(
+        self,
+    ) -> None:
+        """Fix round 1: pins the `gemini_call` field set M0.4 reads for a
+        plain call -- no `latency_ms`/`tool` leaking in from the
+        code-execution path's `extra_log_fields`."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+        log = structlog.get_logger()
+        with capture_logs() as logs:
+            client._record_spend(
+                response=_mock_response("x", in_tok=10, out_tok=20),
+                model="gemini-2.5-flash",
+                task_tag="extraction",
+                latency_ms=5,
+                log=log,
+                params_fingerprint="fp",
+            )
+        [entry] = [e for e in logs if e["event"] == "gemini_call"]
+        self.assertEqual(
+            set(entry) - {"log_level"},
+            {
+                "event",
+                "input_tokens",
+                "output_tokens",
+                "thoughts_tokens",
+                "usd_cost",
+                "cache_hit",
+                "params_fingerprint",
+            },
+        )
+
+    def test_record_spend_log_line_has_exactly_the_pinned_fields_for_the_code_execution_path(
+        self,
+    ) -> None:
+        """Fix round 1: pins the code-execution path's `extra_log_fields`
+        addition -- `latency_ms` and `tool`, on top of the shared fields."""
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=MagicMock())
+        log = structlog.get_logger()
+        with capture_logs() as logs:
+            client._record_spend(
+                response=_mock_response("x", in_tok=10, out_tok=20),
+                model="gemini-2.5-flash",
+                task_tag="question_validity",
+                latency_ms=5,
+                log=log,
+                params_fingerprint="fp",
+                extra_log_fields={"latency_ms": 5, "tool": "code_execution"},
+            )
+        [entry] = [e for e in logs if e["event"] == "gemini_call"]
+        self.assertEqual(
+            set(entry) - {"log_level"},
+            {
+                "event",
+                "input_tokens",
+                "output_tokens",
+                "thoughts_tokens",
+                "usd_cost",
+                "cache_hit",
+                "params_fingerprint",
+                "latency_ms",
+                "tool",
+            },
+        )
 
 
 class ImageUploadsTests(unittest.TestCase):
@@ -1703,6 +1768,37 @@ class ImageUploadsTests(unittest.TestCase):
         # Four parties met at the barrier, so four uploads were in flight at once.
         self.assertEqual(sorted(f.name for f in files), [f"files/fake-{i}" for i in (1, 2, 3, 4)])
 
+    def test_uploads_never_exceed_the_configured_concurrency(self) -> None:
+        """Fix round 1: `concurrency=2` over 6 pages must never let a third
+        upload run at once. A `Barrier(3)` that only 2 threads can ever
+        reach times out (proving the cap held); a counter proves the cap
+        was actually exercised (reached 2, not silently serialised to 1)."""
+        client, mock_genai = self._client()
+        lock = threading.Lock()
+        in_flight = 0
+        max_in_flight = 0
+        barrier = threading.Barrier(3, timeout=0.3)
+        barrier_broke = threading.Event()
+
+        def _hook(_data: bytes) -> None:
+            nonlocal in_flight, max_in_flight
+            with lock:
+                in_flight += 1
+                max_in_flight = max(max_in_flight, in_flight)
+            try:
+                barrier.wait()
+            except threading.BrokenBarrierError:
+                barrier_broke.set()
+            with lock:
+                in_flight -= 1
+
+        mock_genai.files.upload_hook = _hook
+        images = [b"a", b"b", b"c", b"d", b"e", b"f"]
+        with client.image_uploads(images, concurrency=2) as uploads:
+            uploads.ensure()
+        self.assertTrue(barrier_broke.is_set())
+        self.assertEqual(max_in_flight, 2)
+
     def test_uploaded_files_keep_page_order(self) -> None:
         client, mock_genai = self._client()
         images = [b"a", b"b", b"c", b"d", b"e", b"f"]
@@ -1714,9 +1810,12 @@ class ImageUploadsTests(unittest.TestCase):
         self.assertEqual([by_name[f"page-{i}"] for i in range(6)], images)
         self.assertEqual(len(files), 6)
 
-    def test_a_transient_upload_error_is_retried_then_raised_as_external_service_error(
+    def test_a_transient_upload_error_with_no_retries_left_is_raised_as_external_service_error(
         self,
     ) -> None:
+        """Fix round 1: renamed from "..._is_retried_then_raised..." -- with
+        `max_retries=0` there is exactly one attempt, so this test never
+        actually exercised a retry. See the next test for that."""
         client, mock_genai = self._client(max_retries=0)
         mock_genai.files.upload_hook = lambda _data: (_ for _ in ()).throw(
             RuntimeError("503 unavailable")
@@ -1726,6 +1825,29 @@ class ImageUploadsTests(unittest.TestCase):
             self.assertRaises(ExternalServiceError),
         ):
             uploads.ensure()
+
+    def test_a_transient_upload_error_retries_then_a_non_transient_one_raises(self) -> None:
+        """Fix round 1: proves the retry actually happens -- attempt 1 is
+        transient (retried), attempt 2 is not (raised immediately, no third
+        attempt) -- rather than asserting a bare failure that a single
+        no-retry attempt would also satisfy."""
+        client, mock_genai = self._client(max_retries=2, backoff_seconds=0.01)
+        attempts: list[int] = []
+
+        def _flaky_then_fatal(_data: bytes) -> None:
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise RuntimeError("503 unavailable")
+            raise RuntimeError("400 bad request")
+
+        mock_genai.files.upload_hook = _flaky_then_fatal
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+        self.assertEqual(len(attempts), 2)
 
     def test_a_transient_upload_error_is_retried_and_then_succeeds(self) -> None:
         client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)
@@ -1744,6 +1866,36 @@ class ImageUploadsTests(unittest.TestCase):
             files = uploads.ensure()
         self.assertEqual(len(files), 1)
         self.assertEqual(len(attempts), 2)
+
+    def test_partial_upload_failure_deletes_what_uploaded_and_skips_queued_pages(self) -> None:
+        """Fix round 1, Important 1: `ensure()` used to build `self.files`
+        with a plain list comprehension over `[f.result() for f in
+        futures]`, which raises on the FIRST failed future -- `self.files`
+        was then never set, so `delete()` (via `__exit__`) deleted nothing,
+        orphaning every page that HAD uploaded. With `concurrency=1` and 4
+        pages, page 2 failing must: (a) raise `ExternalServiceError`, (b)
+        still delete pages 0 and 1 (the ones that did upload), and (c) never
+        upload page 3 at all -- it was still queued behind the single
+        worker when page 2 failed."""
+        client, mock_genai = self._client(max_retries=0)
+
+        def _fail_on_c(data: bytes) -> None:
+            if data == b"c":
+                raise RuntimeError("400 bad request")
+
+        mock_genai.files.upload_hook = _fail_on_c
+        images = [b"a", b"b", b"c", b"d"]
+        with (
+            client.image_uploads(images, concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+        # "c"'s upload_hook raises before FakeFiles.upload records it, so only
+        # "a" and "b" ever reach `mock_genai.files.uploads`; "d" was still
+        # queued behind the single worker and is never attempted at all.
+        uploaded_data = [data for data, _ in mock_genai.files.uploads]
+        self.assertEqual(uploaded_data, [b"a", b"b"])
+        self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
 
     def test_cost_ceiling_is_checked_before_any_upload(self) -> None:
         from lemely.io.cost_ledger import CostLedger
@@ -1792,6 +1944,33 @@ class ImageUploadsTests(unittest.TestCase):
         ):
             uploads.ensure()
 
+    def test_a_transient_then_fatal_poll_error_raises_and_still_deletes_the_file(self) -> None:
+        """Fix round 1, Important 2: `files.get` in the ACTIVE poll was
+        unwrapped -- an SDK exception there escaped raw, not classified or
+        retried like an upload call. A transient 503 on the first poll is
+        retried; a non-transient 400 on the second raises
+        `ExternalServiceError`. The file WAS created (just never reached
+        ACTIVE), so it is still recorded for deletion."""
+        client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)
+        mock_genai.files.initial_state = "PROCESSING"
+        get_calls: list[int] = []
+
+        def _flaky_get(*, name: str, config: Any = None) -> Any:
+            get_calls.append(1)
+            if len(get_calls) == 1:
+                raise RuntimeError("503 unavailable")
+            raise RuntimeError("400 bad request")
+
+        mock_genai.files.get = _flaky_get
+        with (
+            patch("lemely.io.gemini.time.sleep"),
+            client.image_uploads([b"a"], concurrency=1) as uploads,
+            self.assertRaises(ExternalServiceError),
+        ):
+            uploads.ensure()
+        self.assertEqual(len(get_calls), 2)
+        self.assertEqual(mock_genai.files.deleted, ["files/fake-1"])
+
     def test_delete_removes_every_file_and_a_delete_failure_only_warns(self) -> None:
         client, mock_genai = self._client()
 
@@ -1800,10 +1979,14 @@ class ImageUploadsTests(unittest.TestCase):
                 raise RuntimeError("boom")
 
         mock_genai.files.delete_hook = _fail_first
-        with client.image_uploads([b"a", b"b"], concurrency=2) as uploads:
+        with capture_logs() as logs, client.image_uploads([b"a", b"b"], concurrency=2) as uploads:
             uploads.ensure()
         self.assertEqual(mock_genai.files.deleted, ["files/fake-2"])
         self.assertIsNone(uploads.files)
+        warnings = [e for e in logs if e["event"] == "gemini_file_delete_failed"]
+        self.assertEqual(len(warnings), 1)
+        self.assertEqual(warnings[0]["name"], "files/fake-1")
+        self.assertEqual(warnings[0]["error"], "boom")
 
     def test_retry_of_the_generate_call_does_not_re_upload(self) -> None:
         client, mock_genai = self._client(max_retries=1, backoff_seconds=0.01)
@@ -1826,6 +2009,27 @@ class ImageUploadsTests(unittest.TestCase):
             client.generate_structured(
                 system_prompt="s",
                 user_prompt="u",
+                image_uploads=uploads,
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
+
+    def test_image_uploads_carrying_different_images_than_image_parts_is_a_value_error(
+        self,
+    ) -> None:
+        """Fix round 1, Minor 2: `image_uploads` must be built from the SAME
+        page bytes as `image_parts` -- the cache key is derived from
+        `image_parts`, so a mismatch would silently cache one paper's key
+        against another paper's uploaded images."""
+        client, _ = self._client()
+        with (
+            client.image_uploads([b"a", b"b"], concurrency=1) as uploads,
+            self.assertRaises(ValueError),
+        ):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                image_parts=[b"a", b"different"],
                 image_uploads=uploads,
                 response_schema=_SimpleSchema,
                 prompt_version="1",

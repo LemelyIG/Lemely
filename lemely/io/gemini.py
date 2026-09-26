@@ -10,7 +10,7 @@ import re
 import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any, Literal, TypeVar, cast
@@ -300,13 +300,24 @@ def reset_process_counters() -> None:
 
 
 def process_token_totals() -> tuple[int, int]:
-    """Read-only accessor for tests / doctor: (input_tokens, output_tokens)."""
-    return _process_input_tokens, _process_output_tokens
+    """Read-only accessor for tests / doctor: (input_tokens, output_tokens).
+
+    Fix round 1: read under `_SPEND_LOCK` -- these counters are written
+    from worker threads (Files API uploads, wave-2 re-reads), so an
+    unlocked read could observe a torn update.
+    """
+    with _SPEND_LOCK:
+        return _process_input_tokens, _process_output_tokens
 
 
 def process_token_totals_by_task() -> dict[str, float]:
-    """Return accumulated USD cost broken down by task_tag."""
-    return dict(_process_cost_by_task)
+    """Return accumulated USD cost broken down by task_tag.
+
+    Fix round 1: read under `_SPEND_LOCK`, same reasoning as
+    :func:`process_token_totals`.
+    """
+    with _SPEND_LOCK:
+        return dict(_process_cost_by_task)
 
 
 def _resolve_pricing(
@@ -480,7 +491,24 @@ class ImageUploads:
         self._mime_type = mime_type
         self._lock = threading.Lock()
         self.files: list[Any] | None = None
+        # Fix round 1, Important 1: every raw file handle `raw.files.upload`
+        # returns, recorded the instant that call succeeds -- independently
+        # of whether it later reaches ACTIVE or `ensure()` fails on some
+        # OTHER page. `delete()` drains this, not `self.files`, so a page
+        # that uploaded but never reached ACTIVE (or a sibling page that
+        # failed) is still cleaned up.
+        self._uploaded: dict[int, Any] = {}
+        self._uploaded_lock = threading.Lock()
+        # Set by the first page to fail, inside the SAME worker thread that
+        # is about to move on to the next queued page (deterministic for
+        # `concurrency=1`; best effort above it) -- so a page queued behind
+        # an already-failed one is never even attempted.
+        self._stop_event = threading.Event()
         self._log = structlog.get_logger().bind(component="gemini_client", tool="files_api")
+
+    def matches(self, image_parts: list[bytes]) -> bool:
+        """Whether ``image_parts`` is the exact page sequence this uploads."""
+        return list(image_parts) == self._images
 
     def __enter__(self) -> ImageUploads:
         """Context-manager entry: no-op, returns ``self``."""
@@ -491,7 +519,15 @@ class ImageUploads:
         self.delete()
 
     def ensure(self) -> list[Any]:
-        """Upload every image once, in page order; idempotent and thread-safe."""
+        """Upload every image once, in page order; idempotent and thread-safe.
+
+        Fix round 1, Important 1: a page's result is recorded as its future
+        completes, not via a plain ``[f.result() for f in futures]`` (which
+        raises -- and abandons every already-uploaded page -- on the FIRST
+        failure). On the first failure, every future not yet started is
+        cancelled; futures already running still finish (so they, too, are
+        recorded) but nothing new begins.
+        """
         with self._lock:
             if self.files is not None:
                 return self.files
@@ -499,21 +535,57 @@ class ImageUploads:
                 self.files = []
                 return self.files
             workers = min(self._concurrency, len(self._images))
-            with ThreadPoolExecutor(max_workers=workers) as pool:
-                futures = [
-                    pool.submit(contextvars.copy_context().run, self._upload_one, index, data)
+            results: dict[int, Any] = {}
+            first_error: BaseException | None = None
+            pool = ThreadPoolExecutor(max_workers=workers)
+            try:
+                future_to_index = {
+                    pool.submit(
+                        contextvars.copy_context().run, self._upload_one, index, data
+                    ): index
                     for index, data in enumerate(self._images)
-                ]
-                self.files = [f.result() for f in futures]
+                }
+                for future in as_completed(future_to_index):
+                    index = future_to_index[future]
+                    try:
+                        results[index] = future.result()
+                    except BaseException as exc:
+                        if first_error is None:
+                            first_error = exc
+                            for pending in future_to_index:
+                                pending.cancel()
+            finally:
+                pool.shutdown(wait=True, cancel_futures=True)
+            if first_error is not None:
+                raise first_error
+            self.files = [results[i] for i in sorted(results)]
             return self.files
 
     def _upload_one(self, index: int, data: bytes) -> Any:
+        if self._stop_event.is_set():
+            raise ExternalServiceError(
+                f"Files API upload for page {index} skipped: an earlier page failed"
+            )
+        try:
+            return self._upload_and_wait(index, data)
+        except BaseException:
+            self._stop_event.set()
+            raise
+
+    def _upload_and_wait(self, index: int, data: bytes) -> Any:
+        uploaded = self._upload_with_retry(index, data)
+        with self._uploaded_lock:
+            self._uploaded[index] = uploaded
+        return self._wait_until_active(uploaded)
+
+    def _upload_with_retry(self, index: int, data: bytes) -> Any:
+        """Create the Files API entry, retrying transient failures."""
         raw = self._client._client
         try:
             for attempt in self._client._retry_policy(self._log, task_tag="upload", model="files"):
                 with attempt:
                     try:
-                        uploaded = raw.files.upload(
+                        return raw.files.upload(
                             file=io.BytesIO(data),
                             config={"mime_type": self._mime_type, "display_name": f"page-{index}"},
                         )
@@ -521,33 +593,64 @@ class ImageUploads:
                         if _is_transient(exc):
                             raise _TransientError(str(exc)) from exc
                         raise ExternalServiceError(str(exc)) from exc
-                    return self._wait_until_active(uploaded)
         except _TransientError as exc:
             raise ExternalServiceError(str(exc)) from exc
         raise ExternalServiceError("Unreachable")  # pragma: no cover
 
     def _wait_until_active(self, uploaded: Any) -> Any:
-        """Images come back ACTIVE at once; the poll is a guard, not the path."""
-        raw = self._client._client
+        """Images come back ACTIVE at once; the poll is a guard, not the path.
+
+        Fix round 1, Minor 1: polls on anything that is not ACTIVE or FAILED
+        (not only PROCESSING), so an unrecognised/STATE_UNSPECIFIED state is
+        poll-worthy too, bounded by the same timeout.
+        """
         deadline = time.monotonic() + _UPLOAD_ACTIVE_TIMEOUT_SECONDS
         current = uploaded
-        while _file_state_name(current.state) == "PROCESSING":
+        while _file_state_name(current.state) not in ("ACTIVE", "FAILED"):
             if time.monotonic() >= deadline:
                 raise ExternalServiceError(
-                    f"Files API upload {current.name} still PROCESSING after "
-                    f"{_UPLOAD_ACTIVE_TIMEOUT_SECONDS:.0f}s"
+                    f"Files API upload {current.name} still {_file_state_name(current.state)} "
+                    f"after {_UPLOAD_ACTIVE_TIMEOUT_SECONDS:.0f}s"
                 )
             time.sleep(_UPLOAD_ACTIVE_POLL_SECONDS)
-            current = raw.files.get(name=current.name)
+            current = self._poll_state(current.name)
         if _file_state_name(current.state) == "FAILED":
             raise ExternalServiceError(f"Files API upload {current.name} FAILED")
         return current
 
+    def _poll_state(self, name: str) -> Any:
+        """`files.get`, classified and retried exactly like an upload call.
+
+        Fix round 1, Important 2: it previously escaped raw, so a transient
+        503 during the ACTIVE poll surfaced as an unclassified SDK
+        exception instead of being retried.
+        """
+        raw = self._client._client
+        try:
+            for attempt in self._client._retry_policy(self._log, task_tag="upload", model="files"):
+                with attempt:
+                    try:
+                        return raw.files.get(name=name)
+                    except Exception as exc:
+                        if _is_transient(exc):
+                            raise _TransientError(str(exc)) from exc
+                        raise ExternalServiceError(str(exc)) from exc
+        except _TransientError as exc:
+            raise ExternalServiceError(str(exc)) from exc
+        raise ExternalServiceError("Unreachable")  # pragma: no cover
+
     def delete(self) -> None:
-        """Best effort: a delete that fails is logged and never fails the paper."""
+        """Best effort: a delete that fails is logged and never fails the paper.
+
+        Drains :attr:`_uploaded` (every page that was actually created on
+        Google's side), not :attr:`files` (only set on a fully successful
+        :meth:`ensure`) -- see Fix round 1, Important 1.
+        """
+        with self._uploaded_lock:
+            uploaded_files, self._uploaded = list(self._uploaded.values()), {}
         with self._lock:
-            files, self.files = self.files, None
-        if not files:
+            self.files = None
+        if not uploaded_files:
             return
         raw = self._client._client
 
@@ -557,8 +660,12 @@ class ImageUploads:
             except Exception as exc:
                 self._log.warning("gemini_file_delete_failed", name=uploaded.name, error=str(exc))
 
-        with ThreadPoolExecutor(max_workers=min(self._concurrency, len(files))) as pool:
-            list(pool.map(_delete_one, files))
+        with ThreadPoolExecutor(max_workers=min(self._concurrency, len(uploaded_files))) as pool:
+            futures = [
+                pool.submit(contextvars.copy_context().run, _delete_one, f) for f in uploaded_files
+            ]
+            for future in futures:
+                future.result()
 
 
 class GeminiClient:
@@ -894,10 +1001,17 @@ class GeminiClient:
             raise ValueError(
                 f"cache_mode must be one of 'read_write', 'bypass', 'refresh'; got {cache_mode!r}"
             )
-        if image_uploads is not None and not image_parts:
-            raise ValueError(
-                "image_uploads requires image_parts (the bytes the cache key is derived from)"
-            )
+        if image_uploads is not None:
+            if not image_parts:
+                raise ValueError(
+                    "image_uploads requires image_parts (the bytes the cache key is derived from)"
+                )
+            # Fix round 1, Minor 2: the cache key comes from `image_parts`,
+            # so a caller passing an `ImageUploads` built from a DIFFERENT
+            # set of pages would send one paper's images under another
+            # paper's cache key.
+            if not image_uploads.matches(image_parts):
+                raise ValueError("image_uploads must carry the same page images as image_parts")
         g = self._settings.gemini
         if model is not None:
             active_model = model
@@ -1158,8 +1272,10 @@ class GeminiClient:
             _process_accumulated_usd += usd
             if task_tag:
                 _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
-            # DS3: a ledgerless client (the web process) skips the ledger and
-            # the budget events. Spend is still observable via the log line.
+            # Persist cumulative spend to the cross-run ledger; this is the
+            # source of truth for the hard USD ceiling. DS3: a ledgerless
+            # client (the web process) skips the ledger and the budget
+            # events below. Spend is still observable via the log line.
             if self._ledger is not None:
                 new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
         if new_total is not None:
@@ -1180,6 +1296,9 @@ class GeminiClient:
             "gemini_call",
             input_tokens=in_tok,
             output_tokens=out_tok,
+            # Broken out separately from output_tokens (which now includes
+            # them) so a thinking-budget change is visible in the logs
+            # rather than showing up as unexplained output-token drift.
             thoughts_tokens=thoughts_tok,
             usd_cost=usd_rounded,
             cache_hit=False,
