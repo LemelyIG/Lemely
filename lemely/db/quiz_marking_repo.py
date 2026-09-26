@@ -85,7 +85,7 @@ from lemely.db.models.enums import QuizQuestionStatus, QuizSubmissionStatus
 from lemely.db.models.quizzes import Quiz, QuizAnswer, QuizAssignment, QuizQuestion, QuizSubmission
 from lemely.io.correction_ai import correct_paper
 from lemely.io.integrity import apply_integrity_checks
-from lemely.runtime.config import IntegritySettings
+from lemely.runtime.config import IntegritySettings, MarkingOptions
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -153,18 +153,21 @@ class QuizMarkingService:
         gemini_client: GeminiClient,
         *,
         integrity_settings: IntegritySettings | None = None,
+        marking_options: MarkingOptions | None = None,
         now: Callable[[], datetime] = _utcnow,
     ) -> None:
         """Wire the service to its collaborators and clock.
 
         ``integrity_settings`` defaults to a fresh
         :class:`~lemely.runtime.config.IntegritySettings` (plagiarism on,
-        AI-detection off) when omitted.
+        AI-detection off) when omitted. ``marking_options`` defaults to both
+        flags off when omitted.
         """
         self._sessionmaker = sessionmaker
         self._attempt_repo = attempt_repo
         self._gemini_client = gemini_client
         self._integrity_settings = integrity_settings
+        self._marking_options = marking_options or MarkingOptions()
         self._now = now
 
     def mark_submission(self, submission_id: uuid.UUID | str) -> MarkSubmissionResult:
@@ -264,6 +267,7 @@ class QuizMarkingService:
                 mark_scheme=mark_scheme,
                 extracted_answers=extracted,
                 gemini_client=self._gemini_client,
+                options=self._marking_options,
             )
             correction = apply_integrity_checks(
                 correction,

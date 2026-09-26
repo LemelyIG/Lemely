@@ -18,6 +18,7 @@ Three layers, per the chunk brief:
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import uuid
@@ -664,6 +665,89 @@ def test_mark_submission_unknown_id_is_not_found(
     )
     with pytest.raises(QuizMarkingNotFoundError):
         service.mark_submission(uuid.uuid4())
+
+
+def test_marking_passes_configured_marking_options(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    attempt_repo: AttemptRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The configured ``MarkingOptions`` reach ``correct_paper`` verbatim."""
+    from lemely.db import quiz_marking_repo
+    from lemely.runtime.config import MarkingOptions
+
+    teacher, class_id, assignment_id = _assigned_quiz(
+        quiz_service, class_service, pg_sessionmaker, mcq=True
+    )
+    student = _enroll(pg_sessionmaker, class_id)
+    submission_id = _submit_with_answer(taking_service, student, assignment_id, answer_text="B")
+
+    service = QuizMarkingService(
+        pg_sessionmaker,
+        attempt_repo,
+        _never_called_gemini_client(tmp_path),
+        marking_options=MarkingOptions(equivalence_gate=True, ecf_substitution=True),
+    )
+
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(quiz_marking_repo, "correct_paper", _spy)
+
+    with contextlib.suppress(Exception):
+        service.mark_submission(submission_id)
+
+    assert seen["options"] == MarkingOptions(equivalence_gate=True, ecf_substitution=True)
+
+
+def test_marking_defaults_marking_options_off(
+    pg_sessionmaker: sessionmaker[Session],
+    quiz_service: QuizService,
+    class_service: ClassService,
+    taking_service: QuizTakingService,
+    attempt_repo: AttemptRepository,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """When no ``marking_options`` is supplied, ``correct_paper`` gets both flags off."""
+    from lemely.db import quiz_marking_repo
+    from lemely.runtime.config import MarkingOptions
+
+    teacher, class_id, assignment_id = _assigned_quiz(
+        quiz_service, class_service, pg_sessionmaker, mcq=True
+    )
+    student = _enroll(pg_sessionmaker, class_id)
+    submission_id = _submit_with_answer(taking_service, student, assignment_id, answer_text="B")
+
+    service = QuizMarkingService(
+        pg_sessionmaker, attempt_repo, _never_called_gemini_client(tmp_path)
+    )
+
+    seen: dict[str, object] = {}
+
+    class _Stop(Exception):
+        pass
+
+    def _spy(**kwargs: object) -> None:
+        seen.update(kwargs)
+        raise _Stop
+
+    monkeypatch.setattr(quiz_marking_repo, "correct_paper", _spy)
+
+    with contextlib.suppress(Exception):
+        service.mark_submission(submission_id)
+
+    assert seen["options"] == MarkingOptions()
 
 
 def test_mark_submission_records_marking_error_and_leaves_status_submitted(
