@@ -266,6 +266,13 @@ def render_example_toml() -> str:
     lines.append("# no observable effect unless `equivalence_gate` is ALSO true. Deployed, it")
     lines.append("# is set by LEMELY_GRADING__ECF_SUBSTITUTION.")
     lines.append(f"ecf_substitution = {str(s.grading.ecf_substitution).lower()}")
+    lines.append("# Crop re-read substitution (spec 2026-09-26 §4): when on, an answer whose")
+    lines.append("# zoomed re-read disagrees with the first read is marked on the re-read text.")
+    lines.append("# It CHANGES HOW PAPERS ARE MARKED on every path and there is no accuracy")
+    lines.append("# evidence yet that the re-read is the better reading, so leave it off. The")
+    lines.append("# teacher-review flag fires on a disagreement whether or not this is on.")
+    lines.append("# Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.")
+    lines.append("# reread_substitution = true")
     lines.append("")
 
     lines.append("[integrity]")

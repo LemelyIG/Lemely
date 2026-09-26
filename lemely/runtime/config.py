@@ -579,10 +579,15 @@ class MarkingOptions:
     six callers once passed ``equivalence_gate`` and none passed
     ``ecf_substitution``. Defaults are off, which marks exactly as a
     caller that sets nothing.
+
+    ``reread_substitution`` (spec 2026-09-26 §4) marks an answer on its crop
+    re-read text when the re-read disagrees with the first read; it works on
+    its own and does not depend on ``equivalence_gate``.
     """
 
     equivalence_gate: bool = False
     ecf_substitution: bool = False
+    reread_substitution: bool = False
 
 
 class GradingSettings(BaseModel):
@@ -652,12 +657,22 @@ class GradingSettings(BaseModel):
     # startup when that is the case. In the deployed service it is set by
     # `LEMELY_GRADING__ECF_SUBSTITUTION`.
     ecf_substitution: bool = False
+    # Spec 2026-09-26 §4 (#9): when on, an answer whose crop re-read disagrees
+    # with the first read (`reread_agreement` below 0.8) is marked on the
+    # re-read text instead. Independent of `equivalence_gate`; applies to the
+    # deterministic MCQ path and the AI path alike. The review flag still
+    # fires either way -- substitution never hides a disagreement from the
+    # teacher. Off by default: it changes how papers are marked, and no
+    # accuracy evidence yet says the re-read is the better reading.
+    # Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION.
+    reread_substitution: bool = False
 
     def marking_options(self) -> MarkingOptions:
         """Return the marking flags as the object ``correct_paper`` takes."""
         return MarkingOptions(
             equivalence_gate=self.equivalence_gate,
             ecf_substitution=self.ecf_substitution,
+            reread_substitution=self.reread_substitution,
         )
 
 
@@ -690,6 +705,7 @@ def marking_flags_event(
     fields: dict[str, object] = {
         "equivalence_gate": options.equivalence_gate,
         "ecf_substitution": options.ecf_substitution,
+        "reread_substitution": options.reread_substitution,
     }
     if options.ecf_substitution and not options.equivalence_gate:
         fields["ecf_inert"] = True

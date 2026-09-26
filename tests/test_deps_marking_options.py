@@ -26,6 +26,7 @@ def test_quiz_marking_service_wires_configured_marking_flags(
 ) -> None:
     monkeypatch.setenv("LEMELY_GRADING__EQUIVALENCE_GATE", "true")
     monkeypatch.setenv("LEMELY_GRADING__ECF_SUBSTITUTION", "true")
+    monkeypatch.setenv("LEMELY_GRADING__REREAD_SUBSTITUTION", "true")
     deps.reset_singletons()
     try:
         # Scoped so these three singletons are un-patched again before the
@@ -38,7 +39,7 @@ def test_quiz_marking_service_wires_configured_marking_flags(
             m.setattr(deps, "get_gemini_client", lambda: MagicMock())
             service = deps.get_quiz_marking_service()
             assert service._marking_options == MarkingOptions(
-                equivalence_gate=True, ecf_substitution=True
+                equivalence_gate=True, ecf_substitution=True, reread_substitution=True
             )
     finally:
         deps.reset_singletons()

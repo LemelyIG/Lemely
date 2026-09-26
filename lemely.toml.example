@@ -213,6 +213,13 @@ stale_run_after_seconds = 900
 # no observable effect unless `equivalence_gate` is ALSO true. Deployed, it
 # is set by LEMELY_GRADING__ECF_SUBSTITUTION.
 ecf_substitution = false
+# Crop re-read substitution (spec 2026-09-26 §4): when on, an answer whose
+# zoomed re-read disagrees with the first read is marked on the re-read text.
+# It CHANGES HOW PAPERS ARE MARKED on every path and there is no accuracy
+# evidence yet that the re-read is the better reading, so leave it off. The
+# teacher-review flag fires on a disagreement whether or not this is on.
+# Deployed, it is set by LEMELY_GRADING__REREAD_SUBSTITUTION; see docs/ci-cd.md.
+# reread_substitution = true
 
 [integrity]
 # Plagiarism detection needs no Gemini key (stdlib difflib only). F4 removed

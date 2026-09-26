@@ -451,6 +451,20 @@ class TestMarkingOptions:
         on = SimpleNamespace(grading=GradingSettings(equivalence_gate=True))
         assert marking_options_from(on) == MarkingOptions(equivalence_gate=True)
 
+    def test_reread_substitution_defaults_off_and_projects(self) -> None:
+        from lemely.runtime.config import GradingSettings, MarkingOptions
+
+        assert MarkingOptions().reread_substitution is False
+        assert GradingSettings(reread_substitution=True).marking_options() == MarkingOptions(
+            reread_substitution=True
+        )
+
+    def test_reread_substitution_reads_its_env_var(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from lemely.runtime.config import Settings
+
+        monkeypatch.setenv("LEMELY_GRADING__REREAD_SUBSTITUTION", "true")
+        assert Settings().grading.marking_options().reread_substitution is True
+
 
 class TestMarkingFlagsEvent:
     """The startup line's level rule, tested without logging."""
@@ -468,6 +482,7 @@ class TestMarkingFlagsEvent:
             assert fields == {
                 "equivalence_gate": opts.equivalence_gate,
                 "ecf_substitution": opts.ecf_substitution,
+                "reread_substitution": opts.reread_substitution,
             }
 
     def test_ecf_without_gate_warns_that_ecf_is_inert(self) -> None:
@@ -481,6 +496,14 @@ class TestMarkingFlagsEvent:
         assert fields["reason"] == (
             "ecf_substitution has no effect unless equivalence_gate is also on"
         )
+
+    def test_reread_substitution_alone_logs_at_info(self) -> None:
+        from lemely.runtime.config import MarkingOptions, marking_flags_event
+
+        level, fields = marking_flags_event(MarkingOptions(reread_substitution=True))
+        assert level == "info"
+        assert fields["reread_substitution"] is True
+        assert "ecf_inert" not in fields
 
 
 class TestRereadStageSettings:
