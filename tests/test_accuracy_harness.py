@@ -1618,6 +1618,91 @@ class RunManifestTests(unittest.TestCase):
             "a different thinking_level_for['correction'] must change the run's params_fingerprint",
         )
 
+    def _manifest(self, settings: object) -> object:
+        from lemely.accuracy.harness import _build_run_manifest
+
+        return _build_run_manifest(
+            "run",
+            [self._case()],
+            settings,
+            {"extraction": "v1", "correction": "v1", "mark_scheme": "v1"},
+        )
+
+    def test_flag_off_fingerprint_is_unchanged(self) -> None:
+        """Settings with both flags off hash exactly as before this change.
+
+        Before the change the harness never read ``settings.grading``, so a
+        stand-in without it reproduces the old computation. Adding a
+        flags-off ``grading`` must not move the hash, or every existing
+        baseline becomes incomparable.
+        """
+        from lemely.runtime.config import GradingSettings
+
+        without = self._settings_with_models()
+        with_off = self._settings_with_models()
+        with_off.grading = GradingSettings()
+        self.assertEqual(
+            self._manifest(without).params_fingerprint,
+            self._manifest(with_off).params_fingerprint,
+        )
+
+    def test_each_flag_moves_the_fingerprint(self) -> None:
+        from lemely.runtime.config import GradingSettings
+
+        prints = set()
+        for grading in (
+            GradingSettings(),
+            GradingSettings(equivalence_gate=True),
+            GradingSettings(ecf_substitution=True),
+            GradingSettings(equivalence_gate=True, ecf_substitution=True),
+        ):
+            settings = self._settings_with_models()
+            settings.grading = grading
+            prints.add(self._manifest(settings).params_fingerprint)
+        self.assertEqual(len(prints), 4, "each flag combination must hash differently")
+
+    def test_measure_accuracy_passes_marking_options_from_settings(self) -> None:
+        """measure_accuracy must forward the settings' marking flags to
+        correct_paper as MarkingOptions, not merely read them for the
+        manifest fingerprint.
+
+        The spy patches ``lemely.io.correction_ai.correct_paper`` (not
+        ``lemely.accuracy.harness.correct_paper``): the harness imports
+        ``correct_paper`` freshly inside ``measure_accuracy``'s body on
+        every call (``from lemely.io.correction_ai import correct_paper``),
+        so there is no module-level ``lemely.accuracy.harness.correct_paper``
+        attribute to patch -- patching the real source, as the existing
+        ``test_leaf_key_sets_identical_between_arms_over_golden_corpus``
+        does above, is what actually intercepts the call.
+        """
+        import contextlib
+
+        from lemely.accuracy.harness import measure_accuracy
+        from lemely.runtime.config import GradingSettings, MarkingOptions
+
+        class _Stop(Exception):
+            pass
+
+        recorded: dict[str, object] = {}
+
+        def _spy(mark_scheme, extracted_answers, *, gemini_client=None, **kwargs):
+            recorded["options"] = kwargs["options"]
+            raise _Stop
+
+        settings = self._settings_with_models()
+        settings.grading = GradingSettings(equivalence_gate=True, ecf_substitution=True)
+
+        with (
+            patch("lemely.io.correction_ai.correct_paper", side_effect=_spy),
+            contextlib.suppress(_Stop),
+        ):
+            measure_accuracy([self._case()], gemini_client=None, settings=settings)
+
+        self.assertEqual(
+            recorded.get("options"),
+            MarkingOptions(equivalence_gate=True, ecf_substitution=True),
+        )
+
     def test_params_fingerprint_distinguishes_temperature_for(self):
         """US-028: ``temperature_for`` per-task overrides were never hashed —
         only the global ``temperature`` scalar was. The dict is live only for

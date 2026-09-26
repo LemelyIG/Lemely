@@ -275,6 +275,7 @@ def build_app(settings: Any = None) -> Any:
                     extracted_answers=reviewed,
                     gemini_client=client,
                     mcq_only=mcq_only,
+                    options=settings.grading.marking_options(),
                 )
                 store = GradeBoundaryStore()
                 boundaries, boundary_source = store.resolve(correction.metadata)

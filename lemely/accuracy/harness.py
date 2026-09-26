@@ -23,6 +23,7 @@ from lemely.eval.test_touch import DEFAULT_LEDGER_PATH, authorize_test_split_joi
 from lemely.io.answer_extraction import EXTRACTION_MEDIA_RESOLUTION
 from lemely.io.correction_ai import COHERENCE_TRIGGER_MARKER
 from lemely.io.gemini import _MAX_OUTPUT_TOKENS
+from lemely.runtime.config import log_marking_flags, marking_options_from
 from lemely.runtime.errors import CostCeilingError
 
 log = structlog.get_logger()
@@ -1006,6 +1007,17 @@ def _build_run_manifest(
             # line in this hash already guards against.
             f"|extraction_media_resolution={EXTRACTION_MEDIA_RESOLUTION}"
         )
+        # Spec 2026-09-26: the marking flags decide which calls a run issues
+        # (the verdicts path, ECF re-marks), so two sweeps differing only in
+        # them must not share a fingerprint. Each segment is appended only
+        # when its flag is ON, so a flags-off run hashes exactly as it did
+        # before the flags were read here and every existing baseline stays
+        # comparable.
+        marking = marking_options_from(settings)
+        if marking.equivalence_gate:
+            fingerprint_raw += "|equivalence_gate=True"
+        if marking.ecf_substitution:
+            fingerprint_raw += "|ecf_substitution=True"
         if arm is not None:
             fingerprint_raw += f"|arm={arm}"
     else:
@@ -1120,6 +1132,8 @@ def measure_accuracy(
     ``_build_run_manifest`` therefore trusts the ``split`` it is handed and
     does not re-gate, so exactly one ledger entry is written per run.
     """
+    marking_options = marking_options_from(settings)
+    log_marking_flags(marking_options)
     if run_id is None:
         run_id = f"run-{uuid.uuid4().hex[:12]}"
 
@@ -1210,6 +1224,7 @@ def measure_accuracy(
                 case.mark_scheme,
                 extracted,
                 gemini_client=gemini_client,  # type: ignore[arg-type]
+                options=marking_options,
             )
         except CostCeilingError as exc:
             raise _ceiling_aborted_sweep(
