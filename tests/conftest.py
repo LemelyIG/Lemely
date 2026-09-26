@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 import pytest
+import structlog
 
 import lemely.runtime.config as config_module
 from lemely.core.loose_schemas import (
@@ -85,6 +86,31 @@ def _disable_dotenv_file() -> Iterator[None]:
         yield
     finally:
         Settings.model_config["env_file"] = original
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog_config() -> Iterator[None]:
+    """Undo any real ``configure_logging()`` call so ``capture_logs()`` stays reliable.
+
+    ``lemely.runtime.logging.configure_logging`` — invoked for real by every
+    CLI test via ``CliRunner().invoke(cli, ...)`` — sets
+    ``cache_logger_on_first_use=True`` and hands structlog a brand-new
+    ``processors`` list on each call. The codebase's convention is a
+    module-level ``log = structlog.get_logger(__name__)``; the first time such
+    a logger is used, it freezes onto whichever processors list is current at
+    that moment. If a *later* real ``configure_logging()`` call swaps in a new
+    list before some other test enters ``structlog.testing.capture_logs()``,
+    that already-frozen logger keeps writing through the stale list —
+    ``capture_logs()`` relies on mutating the *current* list in place, so it
+    captures nothing. This is what made
+    ``tests/test_teacher_paper_deletion.py``'s purge log assertions fail only
+    in full-suite runs, never alone: resetting after every test keeps
+    ``cache_logger_on_first_use`` false for everyone except the one test that
+    turned it on, so no other test's module logger ever freezes onto a
+    soon-to-be-stale list.
+    """
+    yield
+    structlog.reset_defaults()
 
 
 @pytest.fixture(scope="session", autouse=True)
