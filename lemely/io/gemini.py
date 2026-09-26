@@ -550,8 +550,16 @@ class ImageUploads:
             if self.files is not None:
                 return self.files
             with self._error_lock:
-                if self._first_error is not None:
-                    raise self._first_error
+                first = self._first_error
+            if first is not None:
+                # Fix round 5, Minor 2: a SECOND `ensure()` call re-raises
+                # the stored error -- `raise` mutates `__traceback__`/
+                # `__context__` on whatever it raises, so re-raising the
+                # SAME stored instance here would corrupt what the FIRST
+                # (failing) call's own raise, below, recorded on it. A
+                # fresh exception chained `from` the original keeps that
+                # original untouched.
+                raise ExternalServiceError(str(first)) from first
             if not self._images:
                 self.files = []
                 return self.files
@@ -579,6 +587,11 @@ class ImageUploads:
                 pool.shutdown(wait=True, cancel_futures=True)
             with self._error_lock:
                 if self._first_error is not None:
+                    # This is the FIRST raise of this instance out of a
+                    # public method (fix round 5, Minor 2) -- unlike the
+                    # guard above and `_upload_one`'s below, there is no
+                    # earlier raise of it to protect, so it is raised as
+                    # is, keeping its own original traceback.
                     raise self._first_error
             self.files = [results[i] for i in sorted(results)]
             return self.files
@@ -586,8 +599,13 @@ class ImageUploads:
     def _upload_one(self, index: int, data: bytes) -> Any:
         if self._stop_event.is_set():
             with self._error_lock:
-                if self._first_error is not None:
-                    raise self._first_error
+                first = self._first_error
+            if first is not None:
+                # Fix round 5, Minor 2: a sibling worker's raise, from
+                # ANOTHER thread -- same reasoning as `ensure()`'s guard
+                # above, a fresh exception `from` the original rather than
+                # re-raising the stored instance itself.
+                raise ExternalServiceError(str(first)) from first
             # `_first_error` is always set BEFORE `_stop_event` (see
             # `_record_first_error`), so no other thread can observe the
             # event set with `_first_error` still `None` -- this is an

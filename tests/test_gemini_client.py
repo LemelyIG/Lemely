@@ -6,6 +6,7 @@ import hashlib
 import os
 import tempfile
 import threading
+import time
 import unittest
 from collections.abc import Callable
 from pathlib import Path
@@ -1768,18 +1769,26 @@ class ImageUploadsTests(unittest.TestCase):
         # Four parties met at the barrier, so four uploads were in flight at once.
         self.assertEqual(sorted(f.name for f in files), [f"files/fake-{i}" for i in (1, 2, 3, 4)])
 
-    def test_uploads_never_exceed_the_configured_concurrency(self) -> None:
-        """Fix round 3, Minor 3: replaces round 1's `Barrier(3, timeout=0.3)`
-        -- whose PASS depended on nobody reaching a third slot inside a
-        0.3s wall-clock window, flaky on a loaded runner -- with a
-        deterministic proof. A `Barrier(2)` rendezvous only returns once a
-        SECOND thread reaches it too, so it proves "at least 2 concurrent"
-        without any timing dependency on the happy path; its `timeout` is
-        a hang-guard for a genuine regression, not the pass/fail signal
-        (`ThreadPoolExecutor(max_workers=2)` itself mechanically prevents a
-        third from ever running at once, so there is nothing to time out
-        on if concurrency is wired correctly). The counter confirms
-        `concurrency` was actually threaded through as 2, not silently 1."""
+    def test_uploads_overlap_at_least_up_to_the_configured_concurrency(self) -> None:
+        """Fix round 3, Minor 3, narrowed by round 5, Minor 1: replaces
+        round 1's `Barrier(3, timeout=0.3)` -- whose PASS depended on
+        nobody reaching a third slot inside a 0.3s wall-clock window,
+        flaky on a loaded runner -- with a deterministic proof. A
+        `Barrier(2)` rendezvous only returns once a SECOND thread reaches
+        it too, so it proves "at least 2 concurrent" without any timing
+        dependency on the happy path; its `timeout` is a hang-guard for a
+        genuine regression, not the pass/fail signal.
+
+        This is the ">= 2" half only -- round 5: a Barrier only proves a
+        LOWER bound (enough parties showed up), never an upper one; with a
+        `concurrency=3` regression this same test's `max_in_flight` still
+        came out exactly 2 in 191/200 runs (three workers racing for two
+        rendezvous slots plus one still queued does not reliably surface
+        a third). The upper bound ("<= configured concurrency") is proven
+        deterministically by the `..._build_their_pool_with_max_workers...`
+        test below instead, which asserts the actual `max_workers`
+        argument rather than inferring it from observed timing.
+        """
         client, mock_genai = self._client()
         lock = threading.Lock()
         in_flight = 0
@@ -1800,7 +1809,35 @@ class ImageUploadsTests(unittest.TestCase):
         with client.image_uploads(images, concurrency=2) as uploads:
             files = uploads.ensure()
         self.assertEqual(len(files), 6)
-        self.assertEqual(max_in_flight, 2)
+        self.assertGreaterEqual(max_in_flight, 2)
+
+    def test_ensure_and_delete_build_their_pool_with_max_workers_equal_to_concurrency(
+        self,
+    ) -> None:
+        """Fix round 5, Minor 1: deterministic proof of the UPPER bound --
+        patches `lemely.io.gemini.ThreadPoolExecutor` with a recording
+        wrapper (still backed by the real executor) and asserts every
+        pool `ensure()`/`delete()` builds is constructed with
+        `max_workers` equal to the configured concurrency, never more."""
+        from lemely.io import gemini as gemini_module
+
+        client, mock_genai = self._client()
+        recorded: list[object] = []
+        real_executor = gemini_module.ThreadPoolExecutor
+
+        def _recording_executor(*args: object, **kwargs: object) -> Any:
+            recorded.append(kwargs.get("max_workers"))
+            return real_executor(*args, **kwargs)
+
+        images = [b"a", b"b", b"c", b"d", b"e", b"f"]
+        with (
+            patch.object(gemini_module, "ThreadPoolExecutor", _recording_executor),
+            client.image_uploads(images, concurrency=2) as uploads,
+        ):
+            files = uploads.ensure()
+        self.assertEqual(len(files), 6)
+        self.assertTrue(recorded)
+        self.assertTrue(all(w == 2 for w in recorded), recorded)
 
     def test_uploaded_files_keep_page_order(self) -> None:
         client, mock_genai = self._client()
@@ -1923,6 +1960,35 @@ class ImageUploadsTests(unittest.TestCase):
         # The second call must not have re-uploaded "a" again.
         self.assertEqual(len(mock_genai.files.uploads), 1)
 
+    def test_a_second_ensure_reraise_does_not_mutate_the_stored_exceptions_traceback(
+        self,
+    ) -> None:
+        """Fix round 5, Minor 2: `raise self._first_error` re-raises the
+        SAME stored exception object from multiple threads/call sites --
+        every `raise` mutates that object's `__traceback__` (and
+        `__context__`) as a side effect, corrupting whatever the FIRST
+        raise had recorded. A second `ensure()` call must instead raise a
+        FRESH `ExternalServiceError` chained `from` the original, leaving
+        the stored original -- and its traceback -- untouched."""
+        client, mock_genai = self._client(max_retries=0)
+
+        def _fail_on_b(data: bytes) -> None:
+            if data == b"b":
+                raise RuntimeError("400 bad request")
+
+        mock_genai.files.upload_hook = _fail_on_b
+        with client.image_uploads([b"a", b"b"], concurrency=1) as uploads:
+            with self.assertRaises(ExternalServiceError):
+                uploads.ensure()
+            original = uploads._first_error
+            original_traceback = original.__traceback__
+            with self.assertRaises(ExternalServiceError) as second:
+                uploads.ensure()
+        self.assertIs(uploads._first_error, original)
+        self.assertIs(original.__traceback__, original_traceback)
+        self.assertIsNot(second.exception, original)
+        self.assertIs(second.exception.__cause__, original)
+
     def test_cost_ceiling_is_checked_before_any_upload(self) -> None:
         from lemely.io.cost_ledger import CostLedger
 
@@ -2022,7 +2088,16 @@ class ImageUploadsTests(unittest.TestCase):
         still in flight) and missed every page `ensure()` went on to
         upload afterwards. `delete()` now takes `_lock` first -- the same
         lock `ensure()` holds for its whole pass -- so it blocks until
-        `ensure()` is done before draining."""
+        `ensure()` is done before draining.
+
+        Fix round 5, Minor 3: spins (bounded, no sleep-and-hope) until
+        `delete_thread` is both alive and genuinely blocked -- `_lock` is
+        locked (held by `ensure_thread` since before `delete_thread` even
+        started) -- before releasing the uploads, so this actually proves
+        `delete()` was waiting rather than merely finishing to race ahead
+        by luck. Asserts both threads are gone (`join` truly returned, not
+        timed out) at the end.
+        """
         client, mock_genai = self._client()
         lock = threading.Lock()
         started = 0
@@ -2048,9 +2123,16 @@ class ImageUploadsTests(unittest.TestCase):
         self.assertTrue(both_started.wait(timeout=5))
         delete_thread = threading.Thread(target=uploads.delete)
         delete_thread.start()
+        deadline = time.monotonic() + 5
+        while not (delete_thread.is_alive() and uploads._lock.locked()):
+            if time.monotonic() >= deadline:
+                self.fail("delete_thread never reached the blocked-on-_lock state")
+            time.sleep(0.01)
         release.set()
         ensure_thread.join(timeout=5)
         delete_thread.join(timeout=5)
+        self.assertFalse(ensure_thread.is_alive())
+        self.assertFalse(delete_thread.is_alive())
         self.assertEqual(sorted(mock_genai.files.deleted), ["files/fake-1", "files/fake-2"])
 
     def test_retry_of_the_generate_call_does_not_re_upload(self) -> None:
