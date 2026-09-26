@@ -780,6 +780,9 @@ def list_class_papers(
         roster = service.roster(auth.user_id, auth.role, class_id)
     except (ClassNotFoundError, ClassOwnershipError) as exc:
         _raise_for(exc)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+        _raise_for(exc)
     excluded = exclusion_repo.excluded_attempt_ids(row.class_id)
     histories = load_roster_histories(history_store, roster)
     rows = [
