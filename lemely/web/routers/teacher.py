@@ -783,9 +783,14 @@ async def upload_paper(
     return UploadResponseDTO(jobId=str(paper_id), paperId=str(paper_id), detected=[])
 
 
-def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
-    """Build the grid-card DTO for one stored paper."""
+def _paper_summary(row: TeacherPaperRow, viewer_id: uuid.UUID) -> PaperSummaryDTO:
+    """Build the grid-card DTO for one stored paper.
+
+    ``canDelete`` mirrors the uploader-only rule ``DELETE /papers/{id}``
+    enforces, so it can never disagree with what that route actually allows.
+    """
     kind = _row_kind(row)
+    can_delete = row.uploaded_by == viewer_id
     report = row.report if kind in ("graded", "review") else None
     if report is None:
         return PaperSummaryDTO(
@@ -794,6 +799,7 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
             kind=kind,
             status="Failed" if kind == "failed" else kind.capitalize(),
             error=_row_error(row),
+            canDelete=can_delete,
         )
     correction = report.correction
     min_conf = min(
@@ -809,6 +815,7 @@ def _paper_summary(row: TeacherPaperRow) -> PaperSummaryDTO:
         maxMarks=correction.maximum_marks,
         confidence=round(min_conf, 2),
         needsReview=correction.needs_teacher_review,
+        canDelete=can_delete,
     )
 
 
@@ -836,7 +843,7 @@ def list_papers(
     viewer_id, viewer_role = _viewer(auth)
     rows = repo.list_visible(viewer_id=viewer_id, viewer_role=viewer_role)
     return PaperListDTO(
-        papers=[_paper_summary(r) for r in rows],
+        papers=[_paper_summary(r, viewer_id) for r in rows],
         tabs=_batch_tabs(rows),
     )
 

@@ -31,8 +31,8 @@ from lemely.db.deletion_repo import (
     PaperNotRestorableError,
     TeacherPaperDeletionService,
 )
-from lemely.db.models import TeacherPaper, User
-from lemely.db.models.enums import ReviewReason, ReviewStatus, Role, UploadStatus
+from lemely.db.models import School, SchoolMembership, TeacherPaper, User
+from lemely.db.models.enums import MembershipRole, ReviewReason, ReviewStatus, Role, UploadStatus
 from lemely.db.models.ops import ReviewQueueItem
 from lemely.db.review_repo import (
     BulkApproveResult,
@@ -46,6 +46,7 @@ from lemely.db.session import INCLUDE_DELETED
 from lemely.db.teacher_paper_repo import TeacherPaperDeletedError, TeacherPaperRepository
 from lemely.web import purge as purge_module
 from lemely.web.purge import purge_expired_teacher_papers
+from lemely.web.routers.teacher import _paper_summary
 from tests._concurrency import _Paused, _wait_until_a_backend_waits_on_a_lock
 from tests.test_purge_job import FailingStorage, RecordingStorage
 from tests.test_teacher_paper_repo import _mark_scheme, _metadata, _report
@@ -115,6 +116,23 @@ def _item(
             )
         )
     return iid
+
+
+def _school_with(sm: sessionmaker[Session], *, admin: uuid.UUID, teacher: uuid.UUID) -> uuid.UUID:
+    """Mirrors ``test_teacher_paper_repo.py``'s builder of the same name (DS11)."""
+    sid = uuid.uuid4()
+    with sm.begin() as session:
+        session.add(School(id=sid, name=f"School {sid.hex[:6]}"))
+        session.flush()
+        session.add(
+            SchoolMembership(
+                school_id=sid, user_id=admin, membership_role=MembershipRole.school_admin
+            )
+        )
+        session.add(
+            SchoolMembership(school_id=sid, user_id=teacher, membership_role=MembershipRole.teacher)
+        )
+    return sid
 
 
 def _paper_row(sm: sessionmaker[Session], paper_id: uuid.UUID) -> TeacherPaper | None:
@@ -247,6 +265,59 @@ def test_the_console_reads_hide_a_deleted_paper(
     assert console_paper not in {
         r.id for r in repo.list_visible(viewer_id=teacher, viewer_role=Role.teacher)
     }
+
+
+def test_the_uploaders_listing_shows_canDelete_true(
+    repo: TeacherPaperRepository,
+    teacher: uuid.UUID,
+    console_paper: uuid.UUID,
+) -> None:
+    """PR #258: the DELETE route is uploader-only, so the card the uploader sees
+    must say so — this is the console list's own view of the paper it owns.
+    """
+    rows = repo.list_visible(viewer_id=teacher, viewer_role=Role.teacher)
+    row = next(r for r in rows if r.id == console_paper)
+
+    summary = _paper_summary(row, teacher)
+
+    assert summary.canDelete is True
+
+
+def test_a_school_admin_who_can_see_the_paper_still_cannot_delete_it(
+    sessionmaker_: sessionmaker[Session],
+    repo: TeacherPaperRepository,
+    teacher: uuid.UUID,
+    console_paper: uuid.UUID,
+) -> None:
+    """A school admin sees their school's teachers' papers (DS11) but the delete
+    route is uploader-only (:meth:`TeacherPaperDeletionService.delete`), so the
+    admin's copy of the same card must not claim it can be deleted.
+    """
+    admin = _user(sessionmaker_, Role.school_admin)
+    _school_with(sessionmaker_, admin=admin, teacher=teacher)
+    rows = repo.list_visible(viewer_id=admin, viewer_role=Role.school_admin)
+    row = next(r for r in rows if r.id == console_paper)
+
+    summary = _paper_summary(row, admin)
+
+    assert summary.canDelete is False
+    # The positive control: the same row, viewed by its uploader, is deletable.
+    assert _paper_summary(row, teacher).canDelete is True
+
+
+def test_a_platform_admin_who_can_see_every_paper_still_cannot_delete_it(
+    sessionmaker_: sessionmaker[Session],
+    repo: TeacherPaperRepository,
+    teacher: uuid.UUID,
+    console_paper: uuid.UUID,
+) -> None:
+    platform_admin = _user(sessionmaker_, Role.platform_admin)
+    rows = repo.list_visible(viewer_id=platform_admin, viewer_role=Role.platform_admin)
+    row = next(r for r in rows if r.id == console_paper)
+
+    summary = _paper_summary(row, platform_admin)
+
+    assert summary.canDelete is False
 
 
 def test_another_teacher_cannot_delete_it(

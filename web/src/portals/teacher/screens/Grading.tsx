@@ -154,9 +154,10 @@ const UPLOAD_STAGES: ProcessingStage[] = [
  * target floor") is the *tap* target; the visible circle stays smaller so a
  * 64px-tall thumbnail is not dominated by a 44px badge.
  *
- * No pre-signalling to match: every card gets the same trash icon, since
- * there is no D8-style hold on a console paper to keep quiet about (R2's own
- * docstring — a console paper carries no student-facing integrity finding).
+ * No pre-signalling beyond ownership: a card gets the trash icon exactly
+ * when `paper.canDelete` is true, matching `DELETE /papers/{id}`'s own
+ * uploader-only rule — a school/platform admin browsing another teacher's
+ * paper simply sees no icon, rather than a confirm dialog that 404s.
  */
 function DeletePaperControl({ paper }: { paper: PaperSummary }) {
   const deletePaper = useDeleteTeacherPaper()
@@ -326,8 +327,9 @@ function PaperCard({
       {/* Sibling of the open-button above, not a descendant of it — see the
           container comment. Positioned to sit over the same top-start
           corner of the thumbnail it always has, since this container (not
-          the button) is what carries `relative` now. */}
-      <DeletePaperControl paper={paper} />
+          the button) is what carries `relative` now. Rendered only for the
+          uploader — see `DeletePaperControl`'s own comment. */}
+      {paper.canDelete ? <DeletePaperControl paper={paper} /> : null}
     </div>
   )
 }

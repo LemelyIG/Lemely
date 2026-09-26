@@ -131,6 +131,10 @@ export interface PaperSummary {
   needsReview: boolean
   pageCount: number | null
   error: string | null
+  /** True only for the paper's uploader (mirrors `PaperSummaryDTO.canDelete`).
+   * A school/platform admin viewing another teacher's paper gets `false` —
+   * the grading grid must not offer a delete control that would 404. */
+  canDelete: boolean
 }
 
 /** Response for `GET /papers` (mirrors `PaperListDTO`). */

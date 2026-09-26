@@ -105,6 +105,11 @@ class PaperSummaryDTO(ApiModel):
     D1.12), so rendering it put a bare 32-char uuid on every card.
 
     ``error`` is populated only for ``kind == "failed"`` and carries why.
+
+    ``canDelete`` is True only when the viewer uploaded this paper — it mirrors
+    the uploader-only rule enforced by ``DELETE /papers/{id}``, so the UI can
+    hide the Delete action on papers it cannot actually delete (a school or
+    platform admin viewing another teacher's paper).
     """
 
     id: str
@@ -117,6 +122,7 @@ class PaperSummaryDTO(ApiModel):
     needsReview: bool = False
     pageCount: int | None = None
     error: str | None = None
+    canDelete: bool = False
 
 
 class PaperListDTO(ApiModel):
