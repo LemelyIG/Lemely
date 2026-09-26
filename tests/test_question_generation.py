@@ -486,9 +486,11 @@ class TestVerifyQuestionSympyGate:
 
         result = _expand_sci_x_notation("2 x 10^400 J")
         expr = parse_expr_safe(result)
+        j = parse_expr_safe("J")
         assert expr is not None
+        assert j is not None
         assert expr == parse_expr_safe("(2)*10**(400) J")
-        assert expr == 2 * 10**400 * parse_expr_safe("J")
+        assert expr == 2 * 10**400 * j
 
     def test_expand_sci_x_notation_handles_a_hugely_negative_exponent_without_underflow(
         self,
@@ -506,9 +508,11 @@ class TestVerifyQuestionSympyGate:
 
         result = _expand_sci_x_notation("2 x 10^-400 J")
         expr = parse_expr_safe(result)
+        j = parse_expr_safe("J")
         assert expr is not None
+        assert j is not None
         assert expr != 0
-        assert expr == 2 * parse_expr_safe("J") / 10**400
+        assert expr == 2 * j / 10**400
 
 
 class TestVerifyQuestionSandboxGate:
