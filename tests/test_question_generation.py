@@ -514,6 +514,63 @@ class TestVerifyQuestionSympyGate:
         assert expr != 0
         assert expr == 2 * j / 10**400
 
+    @pytest.mark.parametrize(
+        "stated",
+        ["24 km/s", "24 kJ/s", "24 / s", "24*s"],
+    )
+    def test_dangling_operator_tails_are_never_stripped(self, stated: str) -> None:
+        """Task 5 addendum (a), folded into fix round 5: `"24 km/s"` used
+        to strip to `"24 km/"`, `"24 kJ/s"` to `"24 kJ/"`, `"24 / s"` to
+        `"24 /"` and `"24*s"` to `"24*"` -- each a dangling operator that
+        fails to parse (UNPARSEABLE), buying a needless paid sandbox
+        call. `_UNIT_TAIL_RE`'s lookbehind now also excludes a preceding
+        separator (`/`, the middle dot, `*`, `^`), and
+        `_strip_trailing_unit` refuses a strip that would still leave one
+        dangling -- none of these four may be touched at all."""
+        from lemely.io.question_gates import _strip_trailing_unit
+
+        assert _strip_trailing_unit(stated) == stated
+
+    @pytest.mark.parametrize(
+        "stated",
+        ["24 km/s", "24 kJ/s", "24 / s", "24*s"],
+    )
+    def test_dangling_operator_tails_leave_step_1s_not_equal_standing(self, stated: str) -> None:
+        """Task 5 addendum (a): since none of these four are ever
+        stripped, `_compare_stated` never recurses into step 3 at all --
+        the verdict returned is exactly step 1's own real, structural
+        disproof, never silently downgraded to UNPARSEABLE (which would
+        route to the sandbox) by a bad strip."""
+        from lemely.core.equivalence import VerdictKind
+        from lemely.io.question_gates import _compare_stated
+
+        assert _compare_stated("24", stated).kind is VerdictKind.NOT_EQUAL
+
+    @pytest.mark.parametrize(
+        ("exact", "stated"),
+        [
+            ("2", "2 x 10^400"),
+            ("2", "2*10**400"),
+            ("2", "2 x 10^308"),
+        ],
+    )
+    def test_extreme_magnitude_comparisons_never_raise_and_never_verify(
+        self, exact: str, stated: str
+    ) -> None:
+        """Task 5 addendum (b), folded into fix round 5:
+        `_ToleranceSpec._sig_figs_candidate` (lemely/core/equivalence.py)
+        computes `math.floor(math.log10(abs(ref)))`, which raises
+        `OverflowError` once `ref` overflows to `inf` as a Python float --
+        reachable through `GATE_SIG_FIGS=3`, which every comparison this
+        module makes passes as `sig_figs`. `_safe_equivalent` catches it
+        (and a `ValueError`) and reports UNPARSEABLE instead of letting it
+        escape uncaught -- nothing catches it around `verify_question`."""
+        from lemely.core.equivalence import VerdictKind
+        from lemely.io.question_gates import _compare_stated
+
+        verdict = _compare_stated(exact, stated)
+        assert verdict.kind is not VerdictKind.EQUAL_PROVEN
+
 
 class TestVerifyQuestionSandboxGate:
     def test_nonparseable_expression_routes_to_code_execution(self) -> None:

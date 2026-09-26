@@ -125,13 +125,20 @@ _UNIT_ATOM_RE = rf"(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
 #: (not matched) from the end, rather than requiring a specific NUMBER
 #: shape before it, because Fix round 4's `_expand_sci_x_notation` can
 #: leave a compound expression (``"(2.4)*10**(4)"``) in front of the unit,
-#: not a plain number. The ``(?<![A-Za-z])`` guard is what makes a
+#: not a plain number. The ``(?<![A-Za-z/·*^])`` guard is what makes a
 #: PREFIXED tail like ``"kJ"`` fail entirely rather than partially --
 #: without it, the search would still find "J" alone (leaving a dangling,
 #: nonsensical "k" glued onto the number) since only "kJ" as a WHOLE is
-#: unrecognised, not "J" on its own.
+#: unrecognised, not "J" on its own. Fix round 5 addendum (a): widened to
+#: also exclude a preceding SEPARATOR ('/', '·', '*', '^') -- "24 km/s"
+#: and "24*s" have the exact same problem one letter over: "s" alone (with
+#: "24 km/" or "24*" left dangling) matches on its own once "km" (a
+#: letter-prefixed, unrecognised unit) or "*" is skipped past. This guard
+#: alone still lets `re.search` hop PAST a blocked separator when a SPACE
+#: sits between it and the next candidate start (see `_strip_trailing_unit`
+#: for the "24 / s" case that needs a second check).
 _UNIT_TAIL_RE = re.compile(
-    rf"(?<![A-Za-z])\s*(?P<unit>{_UNIT_ATOM_RE}(?:(?:[/·*]|\s){_UNIT_ATOM_RE})*)\s*$"
+    rf"(?<![A-Za-z/·*^])\s*(?P<unit>{_UNIT_ATOM_RE}(?:(?:[/·*]|\s){_UNIT_ATOM_RE})*)\s*$"
 )
 
 
@@ -164,13 +171,47 @@ def _strip_trailing_unit(stated: str) -> str:
     more whitelisted, UNPREFIXED unit atoms and nothing else, so ``"24
     J"`` strips to ``"24"`` but ``"6x"``, ``"24 pi"``, ``"24 J 5"`` and a
     PREFIXED tail like ``"24 kJ"`` are all left alone.
+
+    Fix round 5 addendum (a): :data:`_UNIT_TAIL_RE`'s lookbehind still lets
+    `re.search` hop PAST a blocked separator when a space follows it --
+    ``"24 / s"`` finds "s" alone starting right after that space (the
+    lookbehind only inspects the char immediately before ITS OWN match,
+    which is the space, not the "/" one character further back), leaving
+    a dangling ``"24 / "`` as the "value". A genuine ``"<value> <unit>"``
+    tail never ends in an operator once trailing whitespace is dropped, so
+    that shape is rejected here explicitly rather than returned as a
+    stripped (but nonsensical, unparseable) value.
     """
     stated = _expand_sci_x_notation(stated)
     match = _UNIT_TAIL_RE.search(stated)
     if match is None:
         return stated
-    value = stated[: match.start()]
-    return value if value.strip() else stated
+    value = stated[: match.start()].rstrip()
+    if not value or value[-1] in "/·*^":
+        return stated
+    return value
+
+
+def _safe_equivalent(a: str | sympy.Expr, b: str | sympy.Expr, *, sig_figs: int) -> Verdict:
+    """:func:`~lemely.core.equivalence.equivalent`, guarded against too extreme a magnitude.
+
+    Fix round 5 addendum (b): ``_ToleranceSpec._sig_figs_candidate``
+    (``lemely/core/equivalence.py``) computes ``math.floor(math.log10(abs(
+    ref)))`` -- for ``ref`` around ``10**308`` or beyond, converting it to
+    a Python ``float`` overflows to ``inf``, and ``math.floor(inf)`` raises
+    ``OverflowError``. ``GATE_SIG_FIGS`` always sets ``sig_figs``, so this
+    branch runs on every comparison this module makes -- a magnitude this
+    extreme is reachable in practice through ``_expand_sci_x_notation``
+    (``"2 x 10^400"``), not merely synthetic. Treated the same way
+    :func:`equivalent` itself treats a resource/timeout failure (I8 review
+    MUST-FIX #4): the comparison could not be completed, which is not a
+    disproof, so ``UNPARSEABLE`` rather than letting the exception escape
+    and abort the whole generation request.
+    """
+    try:
+        return equivalent(a, b, sig_figs=sig_figs)
+    except (OverflowError, ValueError) as exc:
+        return Verdict(VerdictKind.UNPARSEABLE, detail=f"magnitude too extreme to compare: {exc}")
 
 
 def _compare_stated(exact: str, stated: str) -> Verdict:
@@ -210,7 +251,7 @@ def _compare_stated(exact: str, stated: str) -> Verdict:
        through to whichever verdict step 1 or step 2 already computed --
        never silently stripped into a false match.
     """
-    verdict = equivalent(exact, stated, sig_figs=GATE_SIG_FIGS)
+    verdict = _safe_equivalent(exact, stated, sig_figs=GATE_SIG_FIGS)
     if verdict.kind is VerdictKind.EQUAL_PROVEN:
         return verdict
     exact_expr = parse_expr_safe(exact)
@@ -221,7 +262,7 @@ def _compare_stated(exact: str, stated: str) -> Verdict:
         and not exact_expr.free_symbols
         and not stated_expr.free_symbols
     ):
-        numeric_verdict = equivalent(
+        numeric_verdict = _safe_equivalent(
             sympy.N(exact_expr), sympy.N(stated_expr), sig_figs=GATE_SIG_FIGS
         )
         if numeric_verdict.kind is VerdictKind.EQUAL_PROVEN:
@@ -229,7 +270,17 @@ def _compare_stated(exact: str, stated: str) -> Verdict:
         verdict = numeric_verdict
     stripped = _strip_trailing_unit(stated)
     if stripped != stated:
-        return _compare_stated(exact, stripped)
+        recursive_verdict = _compare_stated(exact, stripped)
+        if recursive_verdict.kind is VerdictKind.UNPARSEABLE:
+            # Fix round 5 addendum (a): a strip that leaves something this
+            # module cannot itself compare must not SILENTLY DOWNGRADE a
+            # real verdict step 1/2 already computed (a hard NOT_EQUAL, or
+            # another EQUAL_PROVEN/EQUAL_SAMPLED found before stripping)
+            # into "could not verify" -- which would buy a needless paid
+            # sandbox call for a case this function already had an answer
+            # for.
+            return verdict
+        return recursive_verdict
     return verdict
 
 
