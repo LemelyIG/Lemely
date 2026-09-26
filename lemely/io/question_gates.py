@@ -98,52 +98,79 @@ _SCI_X_NOTATION_RE = re.compile(
     r"(?P<rest>.*)$"
 )
 
-#: Fix round 2 (Important 3): an SI prefix, applied to a base unit below.
-_UNIT_PREFIX_RE = r"(?:k|M|G|m|µ|u|n|c|d|da|p|T)"
+#: Fix round 4 (Important): a whitelist of UNPREFIXED base unit symbols
+#: only -- ``kg`` is its own entry (the SI base unit), never a composed
+#: ``k`` prefix + ``g`` base. Round 2/3 also allowed an SI prefix
+#: (k/M/G/m/...) in front of any base, which stripped a tail like ``"24
+#: kJ"`` down to bare ``"24"`` WITHOUT applying the prefix's magnitude --
+#: silently discarding a factor of 1000 in either direction (a wrong
+#: answer could verify; a correct one could be rejected). The controller
+#: decision is to never scale by prefix at all (``m`` as metre vs milli,
+#: ``T`` as tesla vs a variable, make that ambiguous) -- so a PREFIXED
+#: tail is simply never recognised as a unit and is left completely
+#: untouched; ``%`` is likewise never stripped (0.24 vs "24 %" needs a
+#: /100 scale this module refuses to guess at, same reasoning). An
+#: unrecognised letter (``x``, ``pi``) is still never treated as a unit
+#: either, which is what makes "24 pi"/"6x" fall through to a real
+#: (numeric or structural) disproof instead of being silently stripped
+#: away.
+_UNIT_BASE_RE = r"(?:kg|ohm|mol|eV|Pa|Hz|°C|m|s|g|J|N|W|V|A|K|C|L|Ω)"
 
-#: Fix round 2 (Important 3): a whitelist of base unit symbols. Deliberately
-#: closed -- an unrecognised letter (``x``, ``pi``) is never treated as a
-#: unit, which is what makes "24 pi"/"6x" fall through to a real (numeric
-#: or structural) disproof instead of being silently stripped away.
-_UNIT_BASE_RE = r"(?:kg|ohm|mol|eV|Pa|Hz|°C|m|s|g|J|N|W|V|A|K|C|L|Ω|%)"
+_UNIT_ATOM_RE = rf"(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
 
-_UNIT_ATOM_RE = rf"(?:{_UNIT_PREFIX_RE})?(?:{_UNIT_BASE_RE})(?:\^-?\d+)?"
-
-#: A stated answer of the shape ``<number> <unit>`` ("24 J", "19.6 m/s",
-#: "kg m/s^2"), where ``<unit>`` is one or more `_UNIT_ATOM_RE`s joined by
-#: '/', '·', '*' or a single space, and NOTHING else -- so "6x" ('x' is not
-#: whitelisted), "24 pi" ('pi' is not whitelisted) and "24 J 5" (a unit
-#: atom followed by a bare, non-unit "5") never match at all.
+#: A trailing tail of one or more `_UNIT_ATOM_RE`s joined by '/', '·', '*'
+#: or a single space, anchored at the END of the string -- so ``"24 J"``
+#: strips to ``"24"``, but ``"6x"``, ``"24 pi"`` and ``"24 J 5"`` (a unit
+#: atom followed by a bare, non-unit "5") never match at all. Searched
+#: (not matched) from the end, rather than requiring a specific NUMBER
+#: shape before it, because Fix round 4's `_expand_sci_x_notation` can
+#: leave a compound expression (``"(2.4)*10**(4)"``) in front of the unit,
+#: not a plain number. The ``(?<![A-Za-z])`` guard is what makes a
+#: PREFIXED tail like ``"kJ"`` fail entirely rather than partially --
+#: without it, the search would still find "J" alone (leaving a dangling,
+#: nonsensical "k" glued onto the number) since only "kJ" as a WHOLE is
+#: unrecognised, not "J" on its own.
 _UNIT_TAIL_RE = re.compile(
-    rf"^\s*(?P<value>[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?)\s*"
-    rf"(?P<unit>{_UNIT_ATOM_RE}(?:(?:[/·*]|\s){_UNIT_ATOM_RE})*)\s*$"
+    rf"(?<![A-Za-z])\s*(?P<unit>{_UNIT_ATOM_RE}(?:(?:[/·*]|\s){_UNIT_ATOM_RE})*)\s*$"
 )
 
 
 def _expand_sci_x_notation(stated: str) -> str:
-    """``"2.4 x 10^4 J"`` -> ``"24000.0 J"``; anything else is unchanged."""
+    """``"2.4 x 10^4 J"`` -> ``"(2.4)*10**(4) J"``; anything else unchanged.
+
+    Fix round 4 (Minor): rewritten as a SymPy-parseable EXPRESSION rather
+    than computed in Python floats (``mantissa * 10.0**exponent``) -- the
+    float computation raised an uncaught ``OverflowError`` for an exponent
+    like 400 (nothing catches it around ``verify_question``, so it aborted
+    the whole generation request) and silently underflowed a very negative
+    exponent (``"2 x 10^-400"``) to exactly ``0.0``. SymPy's own arbitrary-
+    precision arithmetic parses ``10**(400)``/``10**(-400)`` exactly, with
+    neither failure mode.
+    """
     match = _SCI_X_NOTATION_RE.match(stated)
     if match is None:
         return stated
-    mantissa = float(match.group("mantissa"))
-    exponent = int(match.group("exponent"))
-    return f"{mantissa * 10.0**exponent}{match.group('rest')}"
+    return f"({match.group('mantissa')})*10**({match.group('exponent')}){match.group('rest')}"
 
 
 def _strip_trailing_unit(stated: str) -> str:
     """Normalise CAIE-style magnitude/unit notation, or return unchanged.
 
     Two independent, sequential transforms: :func:`_expand_sci_x_notation`
-    resolves an "x 10^n" magnitude first (never a unit tail --
-    :data:`_UNIT_TAIL_RE` only ever sees a plain number afterwards), then a
-    trailing tail is dropped ONLY when it fully matches
-    :data:`_UNIT_TAIL_RE` -- one or more whitelisted unit atoms and nothing
-    else, so ``"24 J"`` strips to ``"24"`` but ``"6x"``, ``"24 pi"`` and
-    ``"24 J 5"`` are all left alone.
+    resolves an "x 10^n" magnitude first (a unit tail after it is still
+    found by :data:`_UNIT_TAIL_RE`, which searches from the end rather
+    than anchoring at a specific value shape), then a trailing tail is
+    dropped ONLY when it fully matches :data:`_UNIT_TAIL_RE` -- one or
+    more whitelisted, UNPREFIXED unit atoms and nothing else, so ``"24
+    J"`` strips to ``"24"`` but ``"6x"``, ``"24 pi"``, ``"24 J 5"`` and a
+    PREFIXED tail like ``"24 kJ"`` are all left alone.
     """
     stated = _expand_sci_x_notation(stated)
-    match = _UNIT_TAIL_RE.match(stated)
-    return match.group("value") if match else stated
+    match = _UNIT_TAIL_RE.search(stated)
+    if match is None:
+        return stated
+    value = stated[: match.start()]
+    return value if value.strip() else stated
 
 
 def _compare_stated(exact: str, stated: str) -> Verdict:

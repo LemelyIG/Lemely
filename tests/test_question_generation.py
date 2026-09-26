@@ -362,6 +362,26 @@ class TestVerifyQuestionSympyGate:
             # Plain wrong answers, no unit/notation involved at all.
             ("27.5", "25"),
             ("100/4", "27.5"),
+            # Fix round 4, Important: SI-prefixed and % tails are left
+            # completely untouched (never scaled), so a stated answer that
+            # is wrong by exactly the prefix's magnitude must still be
+            # rejected -- not silently accepted by a strip that discards
+            # the prefix without applying it.
+            ("0.5*3*4**2", "24 kJ"),
+            ("24", "24 mJ"),
+            ("24", "24 mm"),
+            ("24", "24.0 kJ"),
+            # Fix round 4, Important (documenting the actual outcome for
+            # the CORRECT-but-prefixed direction of the same policy): since
+            # a prefix is never scaled, a genuinely correct prefixed answer
+            # does not verify via SymPy either -- "24 kJ" parses as the
+            # free symbol `kJ` (spec 2026-09-26 controller decision: never
+            # scale by prefix, `m`/`T` are too ambiguous between unit and
+            # milli-/tesla-vs-variable), so the comparison against a
+            # unitless 24000 is a genuine structural mismatch, not a
+            # magnitude one.
+            ("24000", "24 kJ"),
+            ("0.024", "24 mm"),
         ],
     )
     def test_incorrect_or_malformed_stated_answers_are_rejected_by_sympy_not_sandbox(
@@ -385,6 +405,110 @@ class TestVerifyQuestionSympyGate:
         assert result.rejection_reason is not None
         assert "sympy" in result.rejection_reason
         client.generate_with_code_execution.assert_not_called()
+
+    def test_a_percent_stated_answer_is_rejected_though_not_by_sympy_directly(self) -> None:
+        """Fix round 4, Important: "%" is never stripped either (0.24 vs
+        "24 %" would need a /100 scale this module refuses to guess at,
+        same reasoning as an SI prefix). Unlike the plain prefix cases
+        above, "%" makes `parse_expr_safe` return `None` outright (it is
+        not a valid identifier character), so `_compare_stated` reports
+        UNPARSEABLE rather than NOT_EQUAL -- which correctly falls through
+        to the sandbox (the existing, documented UNPARSEABLE behaviour),
+        rather than a hard sympy-level reject. The final verified_by must
+        still end up None once the sandbox's own answer also fails to
+        match."""
+        question = _generated_question(
+            "Speed", question_type=QuestionType.CALCULATION, solution_expr="24", answer="24 %"
+        )
+        client = MagicMock()
+        client.generate_structured.return_value = _validity_response()
+        client.generate_with_code_execution.return_value = "24"
+        result = verify_question(client, question, subject_code="0625")
+
+        assert result.verified_by is None
+        assert result.rejection_reason is not None
+        client.generate_with_code_execution.assert_called_once()
+
+    @pytest.mark.parametrize(
+        "stated",
+        ["24 kJ", "24.0 kJ", "24 mJ", "24 mm", "24 %"],
+    )
+    def test_prefixed_or_percent_tails_are_never_stripped(self, stated: str) -> None:
+        """Fix round 4, Important, at the helper level: an SI-prefixed or
+        "%" tail must leave `stated` completely untouched -- round 2/3's
+        `_UNIT_ATOM_RE` allowed an optional prefix and included "%" in the
+        base whitelist, so it silently discarded the prefix's magnitude
+        (or the /100 scale) instead of refusing to strip at all."""
+        from lemely.io.question_gates import _strip_trailing_unit
+
+        assert _strip_trailing_unit(stated) == stated
+
+    def test_prefixed_stated_answers_never_report_equal_proven_via_the_stripper(self) -> None:
+        """Fix round 4, Important, at the helper level: neither direction
+        of the SI-prefix policy -- a wrong answer matching only because
+        the prefix's magnitude was discarded, or a genuinely correct
+        prefixed answer -- ever reaches `EQUAL_PROVEN` through
+        `_compare_stated`. Both come out `not_equal`: the prefixed tail is
+        never stripped, so it parses as a free symbol (`kJ`, `mm`) with a
+        real, unresolvable coefficient mismatch against the unitless
+        exact side, in EITHER direction."""
+        from lemely.core.equivalence import VerdictKind
+        from lemely.io.question_gates import _compare_stated
+
+        # Wrong-by-the-prefix's-magnitude (must never verify).
+        assert _compare_stated("0.5*3*4**2", "24 kJ").kind is VerdictKind.NOT_EQUAL
+        assert _compare_stated("24", "24 mJ").kind is VerdictKind.NOT_EQUAL
+        assert _compare_stated("24", "24 mm").kind is VerdictKind.NOT_EQUAL
+        # Correct-but-prefixed (documents the actual outcome: also
+        # not_equal, for the same reason -- a real, unresolvable free
+        # symbol, not a magnitude mismatch this module could fix by
+        # scaling).
+        assert _compare_stated("24000", "24 kJ").kind is VerdictKind.NOT_EQUAL
+        assert _compare_stated("0.024", "24 mm").kind is VerdictKind.NOT_EQUAL
+
+    def test_expand_sci_x_notation_handles_a_huge_exponent_without_overflow(self) -> None:
+        """Fix round 4, Minor: the old computation, ``mantissa *
+        10.0**exponent`` in Python floats, raised an uncaught
+        `OverflowError` for an exponent this large -- nothing catches it
+        around `verify_question`, so it aborted the whole generation
+        request. Tested directly against `_expand_sci_x_notation` (not
+        through `verify_question`/`_compare_stated`): for a magnitude this
+        extreme, `equivalence.equivalent`'s own tolerance check has a
+        separate, pre-existing blind spot (`_magnitude`'s
+        ``complex(value.evalf())`` itself overflows/underflows past
+        double-precision range, ~1e308) that resolves the comparison
+        before ever reaching this function either way -- so the full
+        pipeline cannot distinguish the fixed behaviour from the bug at
+        this magnitude, and the only way to prove this fix is to call the
+        function itself."""
+        from lemely.core.equivalence import parse_expr_safe
+        from lemely.io.question_gates import _expand_sci_x_notation
+
+        result = _expand_sci_x_notation("2 x 10^400 J")
+        expr = parse_expr_safe(result)
+        assert expr is not None
+        assert expr == parse_expr_safe("(2)*10**(400) J")
+        assert expr == 2 * 10**400 * parse_expr_safe("J")
+
+    def test_expand_sci_x_notation_handles_a_hugely_negative_exponent_without_underflow(
+        self,
+    ) -> None:
+        """Fix round 4, Minor: the same float computation silently
+        underflowed a very negative exponent to exactly ``0.0``,
+        discarding the mantissa entirely. The rewrite emits a SymPy
+        expression and lets SymPy's own arbitrary-precision arithmetic
+        parse it exactly -- never a Python float, so no underflow. See
+        the previous test's docstring for why this can only be proven at
+        the function level, not through the full `verify_question`
+        pipeline."""
+        from lemely.core.equivalence import parse_expr_safe
+        from lemely.io.question_gates import _expand_sci_x_notation
+
+        result = _expand_sci_x_notation("2 x 10^-400 J")
+        expr = parse_expr_safe(result)
+        assert expr is not None
+        assert expr != 0
+        assert expr == 2 * parse_expr_safe("J") / 10**400
 
 
 class TestVerifyQuestionSandboxGate:
