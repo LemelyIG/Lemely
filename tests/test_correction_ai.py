@@ -566,6 +566,28 @@ class DroppedAnswerReviewFlagTests(unittest.TestCase):
         # `topic_hint` so this assertion is a real regression guard.
         self.assertEqual(q2.topic, "forces")
 
+    def test_a_surviving_answer_for_a_dropped_id_is_marked_not_short_circuited(self) -> None:
+        """Spec 2026-09-26 §2 (#4): the extractor can return two entries for
+        one id -- one malformed (so the id lands in dropped_question_ids)
+        and one well-formed. The good answer must be marked; the drop is
+        telemetry about the other entry, not a verdict on the question."""
+        extracted = ExtractedAnswers(
+            paper_id="test",
+            source_scan="scan.png",
+            answers=[ExtractedAnswer(question_id="1", answer="A", confidence=0.9)],
+            dropped_question_ids=["1"],
+        )
+        result = correct_paper(
+            mark_scheme=self.ms,
+            extracted_answers=extracted,
+            gemini_client=None,
+            mcq_only=True,
+        )
+        q1 = next(q for q in result.questions if q.question_id == "1")
+        self.assertEqual(q1.marker_source, "deterministic")
+        self.assertEqual(q1.awarded_marks, 1)
+        self.assertNotIn("dropped", q1.review_reason or "")
+
 
 class BlankAnswerShortCircuitTests(unittest.TestCase):
     """US-039: a non-MCQ leaf the student left BLANK must not pay for a

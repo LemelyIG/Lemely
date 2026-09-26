@@ -1958,7 +1958,11 @@ def correct_paper(
     ecf_substitution = options.ecf_substitution
     scheme = _load_mark_scheme(mark_scheme)
     answers = _flatten_answers(extracted_answers)
-    dropped_ids = _dropped_question_ids(extracted_answers)
+    # Spec 2026-09-26 §2 (#4): `dropped_question_ids` records that AN ENTRY
+    # for the id was discarded, not that the question has no usable answer.
+    # Only an id with no surviving answer short-circuits below; both sides are
+    # post-`normalize_extracted_answers`, so canonicalised ids meet here.
+    dropped_ids = _dropped_question_ids(extracted_answers).difference(answers)
     log = structlog.get_logger().bind(component="correct_paper")
 
     # Validate mark scheme structure; warn but do not abort.
