@@ -17,6 +17,8 @@ from pathlib import Path
 
 from fastapi import HTTPException
 
+from lemely.io.scan_limits import ScanTooLargeError, check_scan_bytes
+
 # Hard cap on a single uploaded file (scan or mark scheme), enforced once the
 # whole body has been read into memory, before it is written anywhere —
 # object storage included.
@@ -54,8 +56,26 @@ def check_upload_cap(data: bytes, *, max_bytes: int = MAX_UPLOAD_BYTES) -> None:
         )
 
 
+def check_scan_geometry(data: bytes) -> None:
+    """Raise 422 when ``data`` declares a page geometry extraction will refuse.
+
+    Spec 2026-09-26 §6: both grading flows run outside a plain
+    request/response (the student run is an SSE stream, the teacher run a
+    daemon thread), so a geometry error at extraction time becomes a failed
+    status, not an HTTP code. The clear error therefore happens here, at
+    upload, from page sizes and image headers alone. Bytes that are not a
+    readable PDF or image pass: extraction fails on them later, as today.
+    413 (:func:`check_upload_cap`) stays the answer for byte size.
+    """
+    try:
+        check_scan_bytes(data)
+    except ScanTooLargeError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
 __all__ = [
     "MAX_UPLOAD_BYTES",
+    "check_scan_geometry",
     "check_upload_cap",
     "safe_upload_name",
 ]

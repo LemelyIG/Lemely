@@ -591,6 +591,26 @@ def test_upload_over_size_cap_is_413(client: TestClient, monkeypatch: pytest.Mon
     assert resp.status_code == 413
 
 
+def test_upload_rejects_an_oversized_page_geometry_with_422(client: TestClient) -> None:
+    """Spec 2026-09-26 §6: a PDF that declares a 14400 pt page is refused at
+    upload with a clear 422, before it is stored; 413 stays for byte size."""
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    pdf.new_page(14400, 14400)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    resp = client.post(
+        "/api/papers/upload",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "Mpx" in resp.json()["detail"]
+
+
 def test_detection_failure_is_recorded_without_failing_the_upload(
     settings: Settings,
     history_store: HistoryStore,

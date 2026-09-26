@@ -150,7 +150,7 @@ from lemely.web.schemas_teacher import (
     StudentRowDTO,
     UploadResponseDTO,
 )
-from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 
 log = structlog.get_logger(__name__)
 
@@ -760,6 +760,7 @@ async def upload_paper(
 
     scan_bytes = await scan.read()
     check_upload_cap(scan_bytes, max_bytes=_MAX_UPLOAD_BYTES)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes)
     scan_key = f"{prefix}/{_safe_upload_name(scan.filename, 'scan.pdf')}"
     await anyio.to_thread.run_sync(
         storage.upload, settings.storage.bucket, scan_key, scan_bytes, scan.content_type

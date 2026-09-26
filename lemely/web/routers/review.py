@@ -41,6 +41,7 @@ from lemely.db.review_repo import (
 )
 from lemely.io.rasterise import RasterisedPage, looks_like_pdf
 from lemely.io.reread import REREAD_UPSCALE, crop_and_upscale, padded_crop_rect
+from lemely.io.scan_limits import MAX_DECODE_PX as _MAX_DECODE_PX
 from lemely.io.storage import StorageBackend, StorageObjectNotFoundError
 
 # A runtime import, not a TYPE_CHECKING one: FastAPI resolves
@@ -332,12 +333,9 @@ _CROP_RENDER_DPI = 150
 # upscale until its padded area passes ~45% of the page.
 _MAX_CROP_PX = 4_000_000
 
-# An image scan has no DPI to turn down: PIL decodes the whole image before any
-# region of it can be cut out. So its decode is bounded instead, by refusing a
-# larger image or, for a JPEG, by decoding it at a reduced scale. 40 Mpx admits a
-# 600 dpi A4 scan (~35 Mpx) and any phone photo that is not in a
-# high-resolution mode.
-_MAX_DECODE_PX = 40_000_000
+# The image decode bound is `lemely.io.scan_limits.MAX_DECODE_PX` -- one
+# "too big to open" number for the app (spec 2026-09-26 §6); the local name is
+# kept because the route's tests import it.
 
 
 class _PdfCropPlan(NamedTuple):

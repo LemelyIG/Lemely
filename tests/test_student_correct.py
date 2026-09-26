@@ -743,6 +743,27 @@ def test_upload_over_size_cap_is_413(
     assert resp.status_code == 413
 
 
+def test_upload_rejects_an_oversized_page_geometry_with_422(
+    client: tuple[TestClient, str, StudentUploadRepository],
+) -> None:
+    import io
+
+    import pypdfium2 as pdfium
+
+    pdf = pdfium.PdfDocument.new()
+    pdf.new_page(14400, 14400)
+    buf = io.BytesIO()
+    pdf.save(buf)
+    pdf.close()
+    api, _, _ = client
+    resp = api.post(
+        "/api/student/uploads",
+        files={"scan": ("scan.pdf", buf.getvalue(), "application/pdf")},
+    )
+    assert resp.status_code == 422
+    assert "Mpx" in resp.json()["detail"]
+
+
 def test_correct_marks_upload_complete(
     client: tuple[TestClient, str, StudentUploadRepository],
 ) -> None:

@@ -135,7 +135,7 @@ from lemely.web.schemas_student import (
     WeakThreadDTO,
 )
 from lemely.web.services.grading import extract_answers, grade_paper
-from lemely.web.upload_utils import check_upload_cap, safe_upload_name
+from lemely.web.upload_utils import check_scan_geometry, check_upload_cap, safe_upload_name
 from lemely.web.xp_awards import award_xp_safely
 
 router = APIRouter(prefix="/api")
@@ -677,6 +677,7 @@ async def student_upload(
 
     scan_bytes = await scan.read()
     check_upload_cap(scan_bytes)
+    await anyio.to_thread.run_sync(check_scan_geometry, scan_bytes)
     object_path = f"{object_prefix}/{safe_upload_name(scan.filename, 'scan.pdf')}"
     # Off the event loop: this is ``async def``, and a blocking network call
     # made inline here would freeze every other request in the process for as
