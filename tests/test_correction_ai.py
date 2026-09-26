@@ -3160,10 +3160,8 @@ class F1EscalationReachabilityTests(unittest.TestCase):
     permanently dead.
     """
 
-    def test_borderline_mark_produces_three_calls_all_on_3x_correction_model(self):
-        from lemely.io.correction_ai import correct_paper
-
-        scheme = MarkScheme.model_validate(
+    def _scheme(self):
+        return MarkScheme.model_validate(
             {
                 "metadata": {
                     "subject": "Physics",
@@ -3189,75 +3187,117 @@ class F1EscalationReachabilityTests(unittest.TestCase):
                 ],
             }
         )
-        extracted = ExtractedAnswers(
+
+    def _extracted(self):
+        return ExtractedAnswers(
             paper_id="test",
             source_scan="s.pdf",
             answers=[ExtractedAnswer(question_id="1", answer="gravity", confidence=0.9)],
         )
 
-        def _resp(confidence: float, feedback: str) -> MagicMock:
-            body = json.dumps(
-                {
-                    "awarded_marks": 1,
-                    "confidence": confidence,
-                    "matched_point_ids": [],
-                    "feedback": feedback,
-                }
-            )
-            return MagicMock(
-                text=body,
-                candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
-                usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
-            )
+    @staticmethod
+    def _resp(confidence: float, feedback: str) -> MagicMock:
+        body = json.dumps(
+            {
+                "awarded_marks": 1,
+                "confidence": confidence,
+                "matched_point_ids": [],
+                "feedback": feedback,
+            }
+        )
+        return MagicMock(
+            text=body,
+            candidates=[MagicMock(finish_reason=MagicMock(__str__=lambda s: "STOP"))],
+            usage_metadata=MagicMock(prompt_token_count=10, candidates_token_count=20),
+        )
+
+    def _settings(self, tmp: str, thinking_level_for: dict[str, str] | None = None):
+        with _IsolatedEnv():
+            s = load_settings(toml_path=None, cwd=Path(tmp))
+        s = s.model_copy(
+            update={
+                "paths": PathsSettings(
+                    cache_dir=Path(tmp) / ".cache",
+                    output_dir=Path(tmp) / "outputs",
+                )
+            }
+        )
+        if thinking_level_for is not None:
+            gemini = s.gemini.model_copy(update={"thinking_level_for": thinking_level_for})
+            s = s.model_copy(update={"gemini": gemini})
+        self.assertEqual(s.gemini.model_for("correction"), "gemini-3.8-flash")
+        self.assertEqual(s.gemini.model_for("escalation"), "gemini-3.8-flash")
+        return s
+
+    def test_step_two_is_skipped_when_it_would_repeat_step_one(self):
+        """Spec 2026-09-26 §3 (#10): under the shipped defaults (correction
+        low, correction_borderline high, escalation high, one model) Step 1
+        already ran at (flash, high). Step 2 would be the identical call,
+        so it must not be made. Exactly two responses are queued: a third
+        call would raise StopIteration, which correct_paper's own
+        `except Exception` would turn into an "AI marking failed" row -- so
+        the call count, not the exception, is what proves the skip."""
+        from lemely.io.correction_ai import correct_paper
 
         with tempfile.TemporaryDirectory() as tmp:
-            with _IsolatedEnv():
-                # F1 defaults, untouched: correction_model == escalation_model
-                # == "gemini-3.8-flash"; thinking_level_for as shipped.
-                s = load_settings(toml_path=None, cwd=Path(tmp))
-            s = s.model_copy(
-                update={
-                    "paths": PathsSettings(
-                        cache_dir=Path(tmp) / ".cache",
-                        output_dir=Path(tmp) / "outputs",
-                    )
-                }
-            )
-            self.assertEqual(s.gemini.model_for("correction"), "gemini-3.8-flash")
-            self.assertEqual(s.gemini.model_for("escalation"), "gemini-3.8-flash")
-
+            s = self._settings(tmp)
             mock_genai = MagicMock()
-            # Call 1 (correction, low): confidence 0.5, below the 0.80 threshold.
-            # Call 2 (correction_borderline, high): still 0.6, below threshold.
-            # Call 3 (escalation, high): 0.95, resolves.
             mock_genai.models.generate_content.side_effect = [
-                _resp(0.5, "low"),
-                _resp(0.6, "high"),
-                _resp(0.95, "high-escalation"),
+                self._resp(0.5, "low"),
+                self._resp(0.6, "still low"),
             ]
             mock_genai.files.upload.return_value = MagicMock()
             client = GeminiClient(s, _genai_client=mock_genai)
 
             with _capturing(EventType.GEMINI_CALL_START) as captured:
-                correct_paper(scheme, extracted, gemini_client=client)
+                result = correct_paper(self._scheme(), self._extracted(), gemini_client=client)
 
             calls = mock_genai.models.generate_content.call_args_list
-            self.assertEqual(len(calls), 3, f"expected 3 calls, got {len(calls)}")
-
+            self.assertEqual(len(calls), 2, f"expected 2 calls, got {len(calls)}")
             starts = captured[EventType.GEMINI_CALL_START]
-            self.assertEqual(len(starts), 3)
+            self.assertEqual([e["task"] for e in starts], ["correction", "correction_borderline"])
+            levels = [_level(c.kwargs["config"].thinking_config.thinking_level) for c in calls]
+            self.assertEqual(levels, ["low", "high"])
+            self.assertNotIn("AI marking failed", result.questions[0].review_reason or "")
+
+    def test_step_two_runs_when_escalation_thinks_harder_than_step_one(self):
+        """F1 acceptance (4b), restated: with correction_model ==
+        escalation_model the Step-2 gate stays reachable -- when the
+        escalation tag thinks HARDER than the Step-1 retry did."""
+        from lemely.io.correction_ai import correct_paper
+
+        with tempfile.TemporaryDirectory() as tmp:
+            s = self._settings(
+                tmp,
+                thinking_level_for={
+                    "correction": "low",
+                    "correction_borderline": "medium",
+                    "escalation": "high",
+                    "extraction": "minimal",
+                    "generation": "low",
+                },
+            )
+            mock_genai = MagicMock()
+            mock_genai.models.generate_content.side_effect = [
+                self._resp(0.5, "low"),
+                self._resp(0.6, "medium"),
+                self._resp(0.95, "high-escalation"),
+            ]
+            mock_genai.files.upload.return_value = MagicMock()
+            client = GeminiClient(s, _genai_client=mock_genai)
+
+            with _capturing(EventType.GEMINI_CALL_START) as captured:
+                correct_paper(self._scheme(), self._extracted(), gemini_client=client)
+
+            calls = mock_genai.models.generate_content.call_args_list
+            self.assertEqual(len(calls), 3)
+            starts = captured[EventType.GEMINI_CALL_START]
             self.assertEqual(
                 [e["task"] for e in starts], ["correction", "correction_borderline", "escalation"]
             )
             self.assertTrue(all(e["model"] == "gemini-3.8-flash" for e in starts))
-            self.assertNotIn("gemini-2.5-flash", [e["model"] for e in starts])
-
-            # F1 review FIX 4: assert the actual thinking_level sent on each
-            # call, not just tags/models — an implementation that ignored
-            # thinking_level_for entirely and always sent "low" would still
-            # pass every assertion above.
             levels = [_level(c.kwargs["config"].thinking_config.thinking_level) for c in calls]
-            self.assertEqual(levels, ["low", "high", "high"])
+            self.assertEqual(levels, ["low", "medium", "high"])
 
     def test_no_escalation_when_all_three_tags_resolve_to_the_same_thinking(self):
         """F1 review FIX 4 (negative case): with correction ==

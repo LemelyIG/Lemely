@@ -192,6 +192,13 @@ class AICorrector:
             "correction_borderline", correction_model
         )
         borderline_gate = thinking_rank(borderline_thinking) > thinking_rank(correction_thinking)
+        # Spec 2026-09-26 §3 (#10): the Step-2 guard compares against the
+        # call that ACTUALLY RAN LAST, not the original correction call.
+        # Step 1 moves the baseline: after a borderline retry the last call
+        # ran at (correction_model, borderline_thinking), and under the
+        # shipped defaults (low / high / high on one model) the escalation
+        # tuple equals that -- Step 2 would bill the identical call again.
+        last_call = (correction_model, correction_thinking)
         if result.confidence < g.escalation_confidence_threshold and borderline_gate:
             bus.publish(
                 EventType.GEMINI_ESCALATE,
@@ -209,14 +216,15 @@ class AICorrector:
                 extra_cache_key=f"q={question.id}:thinking",
                 task_tag="correction_borderline",
             )
+            last_call = (correction_model, borderline_thinking)
 
         # Step 2: Pro escalation if confidence still below threshold.
         # F1 fix (4): under F1 defaults correction_model == escalation_model
         # (both "gemini-3.8-flash"), so a bare model-name comparison would make
         # this branch permanently unreachable — the whole point of the
-        # escalation step. The guard now compares the (model, thinking) tuple
-        # the escalation call would actually run with against the tuple the
-        # ORIGINAL (non-retried) correction call ran with: same model but a
+        # escalation step. The guard compares the (model, thinking) tuple the
+        # escalation call would run with against the tuple of the call that
+        # ran last (``last_call``), which Step 1 updates: same model but a
         # higher thinking_level_for["escalation"] still counts as a genuinely
         # different, worth-trying call. Both tuples are read via
         # ``resolved_thinking`` (F1 review MUST-FIX 2) rather than re-derived,
@@ -227,7 +235,7 @@ class AICorrector:
         if (
             escalation_model
             and (escalation_model, self._client.resolved_thinking("escalation", escalation_model))
-            != (correction_model, correction_thinking)
+            != last_call
             and result.confidence < g.escalation_confidence_threshold
         ):
             bus.publish(
