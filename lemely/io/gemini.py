@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import threading
 import time
 from collections.abc import Callable
 from datetime import UTC, date, datetime
@@ -238,6 +239,12 @@ _process_output_tokens: int = 0
 _process_accumulated_usd: float = 0.0
 _process_cost_by_task: dict[str, float] = {}
 
+#: Spec 2026-09-26 §9. The four process counters above and `CostLedger.add`
+#: are read-modify-write; the re-read stage and the Files API uploads run
+#: them from worker threads. One module-level lock, because the state it
+#: guards is module-level.
+_SPEND_LOCK = threading.Lock()
+
 
 def _reset_process_counters() -> None:
     global \
@@ -245,10 +252,11 @@ def _reset_process_counters() -> None:
         _process_output_tokens, \
         _process_accumulated_usd, \
         _process_cost_by_task
-    _process_input_tokens = 0
-    _process_output_tokens = 0
-    _process_accumulated_usd = 0.0
-    _process_cost_by_task = {}
+    with _SPEND_LOCK:
+        _process_input_tokens = 0
+        _process_output_tokens = 0
+        _process_accumulated_usd = 0.0
+        _process_cost_by_task = {}
 
 
 def reset_process_counters() -> None:
@@ -692,7 +700,8 @@ class GeminiClient:
     def _check_cost_ceiling(self) -> None:
         g = self._settings.gemini
         if g.per_run_token_ceiling is not None:
-            total = _process_input_tokens + _process_output_tokens
+            with _SPEND_LOCK:
+                total = _process_input_tokens + _process_output_tokens
             if total >= g.per_run_token_ceiling:
                 # CostCeilingError (not plain ExternalServiceError): a budget
                 # stop is a signal for the whole run, not a per-call failure
@@ -713,7 +722,8 @@ class GeminiClient:
             # cost_ledger.py's ruling). If this ever needs to raise instead
             # of merely logging, that is the fail-closed option the product
             # owner explicitly rejected for this story.
-            ledger_total = self._ledger.total()
+            with _SPEND_LOCK:
+                ledger_total = self._ledger.total()
             if ledger_total >= g.total_usd_ceiling:
                 raise CostCeilingError(
                     f"USD ceiling (${g.total_usd_ceiling:.4f}) exceeded; persistent "
@@ -948,11 +958,104 @@ class GeminiClient:
             task=task_tag or "untagged",
             model=active_model,
         )
-        raw_text = self._call_code_execution_once(active_model, prompt, log, task_tag)
+        raw_text = self._call_code_execution_once(
+            active_model, prompt, log, task_tag, params_fingerprint=params_fingerprint
+        )
 
         if cache_mode in ("read_write", "refresh"):
             cache_path.write_text(raw_text, encoding="utf-8")
         return raw_text
+
+    def _record_spend(
+        self,
+        *,
+        response: Any,
+        model: str,
+        task_tag: str | None,
+        latency_ms: int,
+        log: Any,
+        params_fingerprint: str,
+        extra_log_fields: dict[str, Any] | None = None,
+    ) -> None:
+        """Account for one paid response: counters, ledger, log line, events.
+
+        Spec 2026-09-26 §9 (#7): the ONE accounting path for both
+        `_call_once` and `_call_code_execution_once`. The code-execution
+        copy used to skip `_process_cost_by_task`, discard the thresholds
+        `CostLedger.add` returned (which the ledger had already recorded as
+        sent, so the warning was lost permanently) and never publish
+        `BUDGET_EXCEEDED`. The read-modify-write section runs under
+        `_SPEND_LOCK`; the log line and the bus publishes run after it is
+        released so the bus is never serialised behind the ledger file.
+
+        `extra_log_fields` is what a caller adds to the ``gemini_call`` line
+        beyond the shared fields -- the code-execution path's
+        ``latency_ms`` and ``tool``. The structured path passes none, so its
+        line keeps exactly the fields M0.4 reads today.
+        """
+        global \
+            _process_input_tokens, \
+            _process_output_tokens, \
+            _process_accumulated_usd, \
+            _process_cost_by_task
+        in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
+        candidates_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
+        # M0.2 / #26: thoughts_token_count was previously never counted, silently
+        # understating both the ledgered output-token count and its USD cost for
+        # any call made with a non-zero thinking budget.
+        thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
+        out_tok = candidates_tok + thoughts_tok
+        in_price, out_price = _resolve_pricing(model, self._settings)
+        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
+        usd_rounded = round(usd, 6)
+        g = self._settings.gemini
+        new_total: float | None = None
+        crossed: list[float] = []
+        with _SPEND_LOCK:
+            _process_input_tokens += in_tok
+            _process_output_tokens += out_tok
+            _process_accumulated_usd += usd
+            if task_tag:
+                _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
+            # DS3: a ledgerless client (the web process) skips the ledger and
+            # the budget events. Spend is still observable via the log line.
+            if self._ledger is not None:
+                new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
+        if new_total is not None:
+            for threshold in crossed:
+                bus.publish(
+                    EventType.BUDGET_WARNING,
+                    threshold=threshold,
+                    total_usd=round(new_total, 6),
+                    ceiling=g.total_usd_ceiling,
+                )
+            if g.total_usd_ceiling is not None and new_total >= g.total_usd_ceiling:
+                bus.publish(
+                    EventType.BUDGET_EXCEEDED,
+                    total_usd=round(new_total, 6),
+                    ceiling=g.total_usd_ceiling,
+                )
+        log.info(
+            "gemini_call",
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            thoughts_tokens=thoughts_tok,
+            usd_cost=usd_rounded,
+            cache_hit=False,
+            # M0.4 reads this off the log to record which generation parameters
+            # a sweep actually ran under.
+            params_fingerprint=params_fingerprint,
+            **(extra_log_fields or {}),
+        )
+        bus.publish(
+            EventType.GEMINI_CALL_END,
+            task=task_tag or "untagged",
+            model=model,
+            input_tokens=in_tok,
+            output_tokens=out_tok,
+            usd_cost=usd_rounded,
+            latency_ms=latency_ms,
+        )
 
     def _call_with_retry(
         self,
@@ -1104,75 +1207,15 @@ class GeminiClient:
 
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        global \
-            _process_input_tokens, \
-            _process_output_tokens, \
-            _process_accumulated_usd, \
-            _process_cost_by_task
-        in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
-        candidates_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
-        # M0.2 / #26: thoughts_token_count was previously never counted, silently
-        # understating both the ledgered output-token count and its USD cost for
-        # any call made with a non-zero thinking budget (e.g. mark_scheme's 8000).
-        thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
-        out_tok = candidates_tok + thoughts_tok
-        _process_input_tokens += in_tok
-        _process_output_tokens += out_tok
-
-        in_price, out_price = _resolve_pricing(model, self._settings)
-        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
-        usd_rounded = round(usd, 6)
-        _process_accumulated_usd += usd
-        if task_tag:
-            _process_cost_by_task[task_tag] = _process_cost_by_task.get(task_tag, 0.0) + usd
-
-        # Persist cumulative spend to the cross-run ledger; this is the source of
-        # truth for the hard USD ceiling. Emit budget events for the UI/ntfy.
-        # DS3: a ledgerless client (the web process) skips all of this — no
-        # ledger file, no budget events. Spend is still observable via the
-        # unconditional `gemini_call` log line below.
-        g = self._settings.gemini
-        if self._ledger is not None:
-            new_total, crossed = self._ledger.add(usd, thresholds=g.usd_warning_thresholds)
-            for threshold in crossed:
-                bus.publish(
-                    EventType.BUDGET_WARNING,
-                    threshold=threshold,
-                    total_usd=round(new_total, 6),
-                    ceiling=g.total_usd_ceiling,
-                )
-            if g.total_usd_ceiling is not None and new_total >= g.total_usd_ceiling:
-                bus.publish(
-                    EventType.BUDGET_EXCEEDED,
-                    total_usd=round(new_total, 6),
-                    ceiling=g.total_usd_ceiling,
-                )
-
-        log.info(
-            "gemini_call",
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            # Broken out separately from output_tokens (which now includes them)
-            # so a thinking-budget change is visible in the logs rather than
-            # showing up as unexplained output-token drift.
-            thoughts_tokens=thoughts_tok,
-            usd_cost=usd_rounded,
-            cache_hit=False,
-            # M0.4 reads this off the log to record which generation parameters
-            # a sweep actually ran under, without re-deriving them from config
-            # that may have changed since.
+        self._record_spend(
+            response=response,
+            model=model,
+            task_tag=task_tag,
+            latency_ms=latency_ms,
+            log=log,
             params_fingerprint=self._params_fingerprint(
                 model, task_tag, response_schema, media_resolution=media_resolution
             ),
-        )
-        bus.publish(
-            EventType.GEMINI_CALL_END,
-            task=task_tag or "untagged",
-            model=model,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            usd_cost=usd_rounded,
-            latency_ms=latency_ms,
         )
 
         raw = response.text or ""
@@ -1182,7 +1225,7 @@ class GeminiClient:
         return raw
 
     def _call_code_execution_once(
-        self, model: str, prompt: str, log: Any, task_tag: str | None
+        self, model: str, prompt: str, log: Any, task_tag: str | None, *, params_fingerprint: str
     ) -> str:
         """Send ``prompt`` with Gemini's ``code_execution`` tool enabled.
 
@@ -1215,37 +1258,14 @@ class GeminiClient:
             raise ExternalServiceError(str(exc)) from exc
         latency_ms = int((time.monotonic() - t0) * 1000)
 
-        global _process_input_tokens, _process_output_tokens, _process_accumulated_usd
-        in_tok = int(getattr(response.usage_metadata, "prompt_token_count", 0) or 0)
-        candidates_tok = int(getattr(response.usage_metadata, "candidates_token_count", 0) or 0)
-        thoughts_tok = int(getattr(response.usage_metadata, "thoughts_token_count", 0) or 0)
-        out_tok = candidates_tok + thoughts_tok
-        _process_input_tokens += in_tok
-        _process_output_tokens += out_tok
-        in_price, out_price = _resolve_pricing(model, self._settings)
-        usd = in_tok / 1000 * in_price + out_tok / 1000 * out_price
-        _process_accumulated_usd += usd
-        if self._ledger is not None:
-            self._ledger.add(usd, thresholds=self._settings.gemini.usd_warning_thresholds)
-
-        log.info(
-            "gemini_call",
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            thoughts_tokens=thoughts_tok,
-            usd_cost=round(usd, 6),
-            cache_hit=False,
-            latency_ms=latency_ms,
-            tool="code_execution",
-        )
-        bus.publish(
-            EventType.GEMINI_CALL_END,
-            task=task_tag or "untagged",
+        self._record_spend(
+            response=response,
             model=model,
-            input_tokens=in_tok,
-            output_tokens=out_tok,
-            usd_cost=round(usd, 6),
+            task_tag=task_tag,
             latency_ms=latency_ms,
+            log=log,
+            params_fingerprint=params_fingerprint,
+            extra_log_fields={"latency_ms": latency_ms, "tool": "code_execution"},
         )
 
         candidates = response.candidates or []

@@ -5,9 +5,11 @@ from __future__ import annotations
 import hashlib
 import os
 import tempfile
+import threading
 import unittest
+from collections.abc import Callable
 from pathlib import Path
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 from pydantic import BaseModel, Field
 
@@ -18,6 +20,7 @@ from lemely.io.gemini import (
     _reset_process_counters,
     _strip_schema,
     process_token_totals,
+    process_token_totals_by_task,
 )
 from lemely.runtime.config import PathsSettings, load_settings
 from lemely.runtime.errors import ExternalServiceError, ParseError
@@ -206,6 +209,18 @@ def _make_settings(tmp: str, **gemini_overrides: object):
     if gemini_overrides:
         s = s.model_copy(update={"gemini": s.gemini.model_copy(update=gemini_overrides)})
     return s
+
+
+def _capture(event_type: EventType) -> tuple[list[dict], Callable[[], None]]:
+    """Record every payload published on ``event_type``; call the returned
+    function to unsubscribe (``bus`` is a process-wide singleton)."""
+    seen: list[dict] = []
+
+    def _spy(**payload: object) -> None:
+        seen.append(payload)
+
+    bus.subscribe(event_type, _spy)
+    return seen, lambda: bus.unsubscribe(event_type, _spy)
 
 
 class GeminiClientTests(unittest.TestCase):
@@ -1479,6 +1494,122 @@ class CodeExecutionTests(unittest.TestCase):
 
         self.assertEqual((r1, r2), ("1", "2"))
         self.assertEqual(mock_genai.models.generate_content.call_count, 2)
+
+    def test_code_execution_spend_publishes_a_crossed_budget_warning(self) -> None:
+        """Spec 2026-09-26 §9 (#7): the code-execution path used to discard
+        the thresholds `CostLedger.add` returned -- and the ledger had
+        already recorded them as sent, so the warning was lost for good."""
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp, usd_warning_thresholds=[4.0], total_usd_ceiling=None)
+        CostLedger(settings.paths.output_dir / "gemini_spend.json").add(3.999, thresholds=[])
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response(
+            "42", in_tok=10_000_000, out_tok=10_000_000
+        )
+        client = GeminiClient(settings, _genai_client=mock_genai)
+        warnings, stop = _capture(EventType.BUDGET_WARNING)
+        try:
+            client.generate_with_code_execution(
+                prompt="compute 6*7", prompt_version="1", task_tag="question_validity"
+            )
+        finally:
+            stop()
+        self.assertEqual([w["threshold"] for w in warnings], [4.0])
+
+    def test_code_execution_spend_is_attributed_to_its_task_tag(self) -> None:
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response("42")
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+        client.generate_with_code_execution(
+            prompt="compute 6*7", prompt_version="1", task_tag="question_validity"
+        )
+        self.assertGreater(process_token_totals_by_task()["question_validity"], 0.0)
+
+    def test_code_execution_spend_publishes_budget_exceeded_at_the_ceiling(self) -> None:
+        from lemely.io.cost_ledger import CostLedger
+
+        settings = _make_settings(self.tmp, usd_warning_thresholds=[], total_usd_ceiling=5.0)
+        CostLedger(settings.paths.output_dir / "gemini_spend.json").add(4.9, thresholds=[])
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_code_execution_response(
+            "42", in_tok=10_000_000, out_tok=10_000_000
+        )
+        client = GeminiClient(settings, _genai_client=mock_genai)
+        exceeded, stop = _capture(EventType.BUDGET_EXCEEDED)
+        try:
+            client.generate_with_code_execution(prompt="compute 6*7", prompt_version="1")
+        finally:
+            stop()
+        self.assertEqual(len(exceeded), 1)
+        self.assertEqual(exceeded[0]["ceiling"], 5.0)
+
+
+class SpendLockTests(unittest.TestCase):
+    """Spec 2026-09-26 §9: the process counters and `CostLedger.add` are a
+    read-modify-write; wave-2's threaded re-reads and uploads make them
+    concurrent, so they run under one module-level lock."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.mkdtemp()
+        _reset_process_counters()
+
+    def test_record_spend_holds_the_spend_lock_around_the_ledger_write(self) -> None:
+        from lemely.io import gemini as gemini_module
+        from lemely.io.cost_ledger import CostLedger
+
+        held: list[bool] = []
+        original_add = CostLedger.add
+
+        def _spy(self_, usd, *, thresholds):  # type: ignore[no-untyped-def]
+            held.append(gemini_module._SPEND_LOCK.locked())
+            return original_add(self_, usd, thresholds=thresholds)
+
+        mock_genai = MagicMock()
+        mock_genai.models.generate_content.return_value = _mock_response('{"value": "x"}')
+        client = GeminiClient(_make_settings(self.tmp), _genai_client=mock_genai)
+        with patch.object(CostLedger, "add", _spy):
+            client.generate_structured(
+                system_prompt="s",
+                user_prompt="u",
+                response_schema=_SimpleSchema,
+                prompt_version="1",
+            )
+        self.assertEqual(held, [True])
+
+    def test_record_spend_totals_are_exact_under_concurrent_callers(self) -> None:
+        import structlog
+
+        from lemely.io.cost_ledger import CostLedger
+        from lemely.io.gemini import _resolve_pricing
+
+        settings = _make_settings(self.tmp, usd_warning_thresholds=[])
+        client = GeminiClient(settings, _genai_client=MagicMock())
+        in_price, out_price = _resolve_pricing("gemini-2.5-flash", settings)
+        per_call = 10 / 1000 * in_price + 20 / 1000 * out_price
+        log = structlog.get_logger()
+
+        def _worker() -> None:
+            for _ in range(50):
+                client._record_spend(
+                    response=_mock_response("x", in_tok=10, out_tok=20),
+                    model="gemini-2.5-flash",
+                    task_tag="soak",
+                    latency_ms=1,
+                    log=log,
+                    params_fingerprint="fp",
+                )
+
+        threads = [threading.Thread(target=_worker) for _ in range(8)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        self.assertEqual(process_token_totals(), (8 * 50 * 10, 8 * 50 * 20))
+        self.assertAlmostEqual(process_token_totals_by_task()["soak"], 400 * per_call, places=9)
+        ledger = CostLedger(settings.paths.output_dir / "gemini_spend.json")
+        self.assertAlmostEqual(ledger.total(), 400 * per_call, places=9)
 
 
 class US034MissingFlashRowTests(unittest.TestCase):
